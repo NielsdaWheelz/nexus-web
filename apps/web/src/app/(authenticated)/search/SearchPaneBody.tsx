@@ -27,7 +27,7 @@ import CollectionView from "@/components/collections/CollectionView";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
 import ContributorFilter, { useContributorFilterLabels } from "@/components/contributors/ContributorFilter";
-import type { ContributorSearchItem } from "@/lib/contributors/types";
+import type { ContributorSearchItem } from "@/lib/contributors/api";
 import KindChips from "@/components/search/KindChips";
 import CollectionFilterEditor from "@/components/workspace/CollectionFilterEditor";
 import AppliedFilters, {

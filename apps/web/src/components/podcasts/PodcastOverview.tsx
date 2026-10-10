@@ -1,6 +1,6 @@
-import ContributorRoleGroups from "@/components/contributors/ContributorRoleGroups";
+import { ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
 import MediaImage from "@/components/ui/MediaImage";
-import type { ContributorCredit } from "@/lib/contributors/types";
+import type { ContributorCredit } from "@/lib/contributors/credits";
 import type { MediaImageProxySrc } from "@/lib/media/imageProxy";
 import styles from "./PodcastOverview.module.css";
 

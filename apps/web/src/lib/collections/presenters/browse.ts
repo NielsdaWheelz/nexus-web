@@ -9,7 +9,7 @@ import {
 import { BROWSE_SOURCE_LABELS } from "@/lib/browse/query";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import type { CollectionRowView } from "@/lib/collections/types";
-import { selectMediaAuthors } from "@/lib/contributors/formatting";
+import { selectMediaAuthors } from "@/lib/contributors/credits";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 
 /** An InNexusMedia candidate carries its resolved media summary. */

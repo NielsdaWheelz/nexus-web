@@ -1,5 +1,9 @@
 "use client";
 
+// The metadata-research client: admission, one live observer per media (SSE
+// `state` frames, never terminal), and the in-browser revision that moves when
+// research changes a summary field (title, contributors, first publication).
+
 import { useCallback, useSyncExternalStore } from "react";
 import { apiFetch } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -12,10 +16,12 @@ export async function submitMetadataEnrichment(
   mediaId: string,
   request: Schema<"MetadataEnrichmentRequest">,
 ): Promise<Schema<"MetadataEnrichmentAccepted">> {
-  const response = await apiFetch<ApiJson<"/media/{media_id}/metadata-enrichment", "post">>(
-    `/api/media/${encodeURIComponent(mediaId)}/metadata-enrichment`,
-    { method: "POST", body: JSON.stringify(request) },
-  );
+  const response = await apiFetch<
+    ApiJson<"/media/{media_id}/metadata-enrichment", "post">
+  >(`/api/media/${encodeURIComponent(mediaId)}/metadata-enrichment`, {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
   return response.data;
 }
 
@@ -35,11 +41,12 @@ const collectionListeners = new Set<() => void>();
 let collectionRevision = 0;
 
 function entryFor(mediaId: string): Entry {
-  let entry = entries.get(mediaId);
-  if (!entry) {
-    entry = { snapshot: EMPTY, listeners: new Set(), stop: null };
-    entries.set(mediaId, entry);
-  }
+  const entry = entries.get(mediaId) ?? {
+    snapshot: EMPTY,
+    listeners: new Set(),
+    stop: null,
+  };
+  entries.set(mediaId, entry);
   return entry;
 }
 
@@ -62,19 +69,30 @@ function connect(mediaId: string, entry: Entry): void {
     isTerminal: () => false,
     onEvent: (view) => {
       const previous = entry.snapshot.view;
-      const previousStamp = previous?.last_enriched_at.kind === "Present"
-        ? previous.last_enriched_at.value : null;
-      const stamp = view.last_enriched_at.kind === "Present" ? view.last_enriched_at.value : null;
+      const previousStamp =
+        previous?.last_enriched_at.kind === "Present"
+          ? previous.last_enriched_at.value
+          : null;
+      const stamp =
+        view.last_enriched_at.kind === "Present"
+          ? view.last_enriched_at.value
+          : null;
       publish(entry, { view, disconnected: false });
       for (const listener of operationListeners) listener(mediaId);
       if (stamp === null || stamp === previousStamp) return;
-      const operation = view.operation.kind === "Present" ? view.operation.value : null;
+      const operation =
+        view.operation.kind === "Present" ? view.operation.value : null;
       // An older job can publish while a newer job is latest. Without its field
       // list, reconcile summaries conservatively through their existing owners.
-      const summaryChanged = operation?.status !== "completed"
-        || operation.outcome.completed_at !== stamp
-        || operation.outcome.changed_fields.some((field) =>
-          field === "title" || field === "contributors" || field === "original_published_date");
+      const summaryChanged =
+        operation?.status !== "completed" ||
+        operation.outcome.completed_at !== stamp ||
+        operation.outcome.changed_fields.some(
+          (field) =>
+            field === "title" ||
+            field === "contributors" ||
+            field === "original_published_date",
+        );
       if (summaryChanged) {
         collectionRevision += 1;
         for (const listener of collectionListeners) listener();
@@ -95,36 +113,52 @@ export function reconnectMetadataOperations(mediaId: string): void {
   if (entry.listeners.size > 0) connect(mediaId, entry);
 }
 
-export function useMediaMetadataOperations(mediaId: string | null): Observation {
-  const subscribe = useCallback((listener: () => void) => {
-    if (mediaId === null) return () => {};
-    const entry = entryFor(mediaId);
-    entry.listeners.add(listener);
-    if (entry.stop === null) connect(mediaId, entry);
-    return () => {
-      entry.listeners.delete(listener);
-      if (entry.listeners.size === 0) {
-        entry.stop?.();
-        entry.stop = null;
-      }
-    };
-  }, [mediaId]);
-  const getSnapshot = useCallback(() => mediaId === null ? EMPTY : entryFor(mediaId).snapshot, [mediaId]);
+export function useMediaMetadataOperations(
+  mediaId: string | null,
+): Observation {
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      if (mediaId === null) return () => {};
+      const entry = entryFor(mediaId);
+      entry.listeners.add(listener);
+      if (entry.stop === null) connect(mediaId, entry);
+      return () => {
+        entry.listeners.delete(listener);
+        if (entry.listeners.size === 0) {
+          entry.stop?.();
+          entry.stop = null;
+        }
+      };
+    },
+    [mediaId],
+  );
+  const getSnapshot = useCallback(
+    () => (mediaId === null ? EMPTY : entryFor(mediaId).snapshot),
+    [mediaId],
+  );
   return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY);
 }
 
-export function subscribeMetadataOperationChanges(listener: (mediaId: string) => void): () => void {
+export function subscribeMetadataOperationChanges(
+  listener: (mediaId: string) => void,
+): () => void {
   operationListeners.add(listener);
-  return () => { operationListeners.delete(listener); };
+  return () => {
+    operationListeners.delete(listener);
+  };
 }
 
-export function metadataCollectionSnapshot(): number { return collectionRevision; }
+export function metadataCollectionSnapshot(): number {
+  return collectionRevision;
+}
 
 export function useMetadataCollectionRevision(): number {
   return useSyncExternalStore(
     (listener) => {
       collectionListeners.add(listener);
-      return () => { collectionListeners.delete(listener); };
+      return () => {
+        collectionListeners.delete(listener);
+      };
     },
     metadataCollectionSnapshot,
     () => 0,
@@ -167,14 +201,21 @@ export const METADATA_RETRY_BLOCKED_COPY = {
 
 export function metadataOperationSummary(operation: MetadataOperation): string {
   switch (operation.status) {
-    case "queued": return "queued";
-    case "running": return "researching metadata";
-    case "recovering": return "recovering metadata research";
-    case "waiting": return "waiting to retry";
-    case "no_findings": return "no metadata found";
-    case "failed": return "metadata research failed";
+    case "queued":
+      return "queued";
+    case "running":
+      return "researching metadata";
+    case "recovering":
+      return "recovering metadata research";
+    case "waiting":
+      return "waiting to retry";
+    case "no_findings":
+      return "no metadata found";
+    case "failed":
+      return "metadata research failed";
     case "completed":
-      return operation.outcome.changed_fields.length === 0 ? "no changes"
+      return operation.outcome.changed_fields.length === 0
+        ? "no changes"
         : `updated: ${operation.outcome.changed_fields.map((field) => METADATA_FIELD_LABELS[field]).join(", ")}`;
   }
 }

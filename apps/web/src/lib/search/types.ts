@@ -1,5 +1,5 @@
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
-import type { ContributorCredit } from "@/lib/contributors/types";
+import type { ContributorCredit } from "@/lib/contributors/credits";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { Presence } from "@/lib/api/presence";

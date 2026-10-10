@@ -20,12 +20,10 @@ import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
 import AcquisitionControl from "@/components/browse/AcquisitionControl";
 import PodcastSubscriptionSettingsOverlay from "@/components/podcasts/PodcastSubscriptionSettingsOverlay";
 import MediaInfoOverlay from "@/components/media/MediaInfoOverlay";
-import { mapMediaAuthorCredits } from "@/lib/contributors/formatting";
-import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import { useFeedback } from "@/components/feedback/Feedback";
-import { useMediaBibliographyInvalidation } from "@/lib/media/MediaSummaryProvider";
 import {
   deleteMemberLibrary,
   getMemberLibrary,
@@ -39,10 +37,6 @@ import type {
 import { settleDeletedResourcePanes } from "@/lib/actions/resourceDeletionLifecycle";
 import type { LibraryOut } from "@/lib/libraries/contract";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
-import type {
-  ContributorCredit,
-  MediaAuthorCredit,
-} from "@/lib/contributors/types";
 import { PaneReturnVisitScope } from "@/lib/workspace/paneReturnMemento";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 
@@ -276,7 +270,7 @@ export function ResourceActionOverlays() {
     <PaneReturnVisitScope visitId={visitId} routeKey="resource-action-overlays">
       {linkComposer.open ? <LinkTargetDialog composer={linkComposer} /> : null}
       {authors ? (
-        <AuthorsEditorOverlay
+        <AuthorsEditor
           key={authors.key}
           mediaId={authors.id}
           mutation={authors.mutation}
@@ -329,34 +323,8 @@ const MediaAuthorsEditor = lazy(
   () => import("@/components/contributors/MediaAuthorsEditor"),
 );
 
-interface MediaAuthorsSource {
-  readonly authors: MediaAuthorCredit[];
-  readonly authorMode: "automatic" | "manual";
-}
-
-async function fetchMediaAuthorsSource(
-  mediaId: string,
-  signal: AbortSignal,
-): Promise<MediaAuthorsSource> {
-  const raw = await apiFetch<unknown>(`/api/media/${mediaId}`, { signal });
-  if (typeof raw !== "object" || raw === null || !("data" in raw)) {
-    throw new TypeError("Media envelope is invalid");
-  }
-  const data = (raw as { data: unknown }).data;
-  if (typeof data !== "object" || data === null) {
-    throw new TypeError("Media.data is invalid");
-  }
-  const record = data as {
-    contributors?: readonly ContributorCredit[] | null;
-    author_mode?: unknown;
-  };
-  return {
-    authors: mapMediaAuthorCredits(record.contributors),
-    authorMode: record.author_mode === "manual" ? "manual" : "automatic",
-  };
-}
-
-function AuthorsEditorOverlay({
+/** Mounts the lazy editor with the focus target captured at open. */
+function AuthorsEditor({
   mediaId,
   mutation,
   onClose,
@@ -365,61 +333,14 @@ function AuthorsEditorOverlay({
   mutation: ResourceActionMutationBoundary;
   onClose: () => void;
 }) {
-  const feedback = useFeedback();
-  const invalidateBibliography = useMediaBibliographyInvalidation();
-  const [source, setSource] = useState<MediaAuthorsSource | null>(null);
-  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const returnFocusTo = useMemo(returnFocusToActiveElement, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void (async () => {
-      try {
-        setSource(await fetchMediaAuthorsSource(mediaId, controller.signal));
-      } catch (error) {
-        if (controller.signal.aborted || handleUnauthenticatedApiError(error)) {
-          return;
-        }
-        if (isApiError(error) && !isSameSystemApiDefect(error)) {
-          feedback.publish({
-            kind: "Hud",
-            content: {
-              tone: "Danger",
-              title: "Authors couldn’t be loaded",
-              requestId: error.requestId,
-            },
-          });
-          onClose();
-          return;
-        }
-        setDefect({ error });
-      }
-    })();
-    return () => controller.abort();
-  }, [mediaId, feedback, onClose]);
-
-  if (defect) throw defect.error;
-  if (!source) return null;
-
   return (
     <Suspense fallback={null}>
       <MediaAuthorsEditor
-        open
         mediaId={mediaId}
-        authors={source.authors}
-        authorMode={source.authorMode}
-        returnFocusTo={returnFocusTo}
-        returnFocusFallback={() => null}
-        onClose={onClose}
         mutation={mutation}
-        onSaved={async (_next, lease) => {
-          invalidateBibliography(mediaId);
-          await lease.reconcile({
-            kind: "Subjects",
-            refs: [assumeCanonicalResourceRef(`media:${mediaId}`)],
-          });
-          await lease.commit();
-        }}
+        returnFocusTo={returnFocusTo}
+        onClose={onClose}
       />
     </Suspense>
   );

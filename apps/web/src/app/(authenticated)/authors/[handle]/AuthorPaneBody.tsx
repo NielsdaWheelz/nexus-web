@@ -1,577 +1,276 @@
 "use client";
 
-import { useMetadataCollectionRevision, metadataCollectionSnapshot } from "@/lib/media/mediaMetadataOperations";
+// The author pane: the person's other names and their visible works. The url
+// owns the works view (`sort`, `direction`) and passes it to the server, which
+// validates it; the text filter stays local. While the pane is active it loads
+// every page, so the filter and the "N works" count cover all works.
 
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import Button from "@/components/ui/Button";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import CollectionView from "@/components/collections/CollectionView";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
+import {
+  FeedbackNotice,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
 import PaneSurface from "@/components/ui/PaneSurface";
+import SelectField from "@/components/ui/SelectField";
+import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
 import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import {
+  apiTransportFeedback,
   isApiError,
-  isInvalidViewError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
+import { absent, present } from "@/lib/api/presence";
 import {
-  AUTHOR_WORKS_LIMIT,
-  contributorResource,
-  contributorWorksResource,
-} from "@/lib/api/resource";
+  listRowStatus,
+  useServerList,
+  useServerValue,
+  type ListData,
+  type Visit,
+} from "@/lib/api/serverState";
+import { presentMedia } from "@/lib/collections/presenters/media";
+import type { CollectionRowView } from "@/lib/collections/types";
 import {
-  type CollectionPage,
-  NO_CURSOR,
-  ZERO_REVISION,
-} from "@/lib/api/collectionPage";
-import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
-import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
-import { useResource } from "@/lib/api/useResource";
-import { fetchContributorWorks } from "@/lib/contributors/api";
-import type { ContributorWorkItem } from "@/lib/contributors/types";
+  getContributor,
+  listContributorWorks,
+  type ContributorDetail,
+  type ContributorWork,
+} from "@/lib/contributors/api";
 import {
-  AUTHOR_WORKS_SORT_OPTION_IDS,
-  CANONICAL_AUTHOR_WORKS_VIEW,
-  authorWorksSortOptionLabel,
-  authorWorksSortOptionOf,
-  authorWorksViewForSortOption,
-  decodeAuthorWorksView,
-  encodeAuthorWorksView,
-  type AuthorWorksSortOptionId,
-  type AuthorWorksView,
-  type DecodedAuthorWorksView,
-} from "@/lib/contributors/workView";
-import { presentContributorWork } from "@/lib/collections/presenters/presentContributorWork";
-import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
-import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
-import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
+  contributorRoleLabel,
+  selectMediaAuthors,
+} from "@/lib/contributors/credits";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import {
-  paneResourceLoaders,
-  type AuthorPaneSeed,
-} from "@/lib/panes/paneResourceLoaders";
-import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
+  useMediaQueryRevision,
+  useMediaSummaries,
+} from "@/lib/media/MediaSummaryProvider";
+import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
 import {
   usePaneIsActive,
-  usePaneIsVisible,
   usePaneParam,
+  usePaneRouter,
+  usePaneSearchParams,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
+import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import { usePodcastRevision } from "@/lib/podcasts/api";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import {
   definePaneVisitDataKey,
-  useClearAllPaneVisitData,
   usePaneReturnReady,
-  usePaneScrollRetention,
-  usePaneVisitData,
 } from "@/lib/workspace/paneReturnMemento";
-import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
-import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
-import SelectField from "@/components/ui/SelectField";
-import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { isAbortError } from "@/lib/errors";
-import { useRevalidationSettlement } from "@/lib/panes/useRevalidationSettlement";
 import styles from "./page.module.css";
 
-type AuthorConnectionsResource =
-  | { kind: "Ready"; ref: { scheme: "contributor"; id: string } }
-  | { kind: "Loading" }
-  | { kind: "Unavailable" };
+const DETAIL =
+  definePaneVisitDataKey<Visit<ContributorDetail>>("Author.Detail");
+const WORKS =
+  definePaneVisitDataKey<Visit<ListData<ContributorWork>>>("Author.Works");
 
-/** The author detail plus the works page committed as one exact works view. */
-interface CommittedAuthorWorks extends AuthorPaneSeed {
-  readonly metadataRevision: number;
-  readonly view: AuthorWorksView;
-}
+const NO_WORKS: readonly ContributorWork[] = [];
 
-const AUTHOR_VISIT_DATA =
-  definePaneVisitDataKey<CommittedAuthorWorks>("Author.Works");
+/** The four views; the first is the default and owns no url keys. */
+const SORTS = [
+  { id: "", label: "Oldest published" },
+  { id: "sort=published&direction=desc", label: "Newest published" },
+  { id: "sort=title&direction=asc", label: "Title A–Z" },
+  { id: "sort=title&direction=desc", label: "Title Z–A" },
+] as const;
 
-function authorLoadErrorMessage(error: unknown): FeedbackContent {
+function authorError(error: unknown, title: string): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  switch (error.code) {
-    case "E_NOT_FOUND":
-      return {
-        tone: "Danger",
-        title: "This author is no longer available",
-        requestId: error.requestId,
-      };
-    case "E_NETWORK":
-      return {
-        tone: "Danger",
-        title: "This author couldn’t be loaded",
-        message: "Check your connection and retry.",
-        requestId: error.requestId,
-      };
-    default:
-      throw error;
+  const { requestId } = error;
+  if (error.code === "E_NOT_FOUND") {
+    return {
+      tone: "Danger",
+      title: "This author is no longer available",
+      requestId,
+    };
   }
+  if (error.code === "E_COLLECTION_CHANGED") {
+    const message = "The works changed while loading.";
+    return { tone: "Danger", title, message, requestId };
+  }
+  const transport = apiTransportFeedback(error, title);
+  if (transport === null) throw error;
+  return transport;
 }
 
-/** The Connections surface needs the author's resource ref, which its load carries. */
-function authorConnectionsResource(
-  ref: string | undefined,
-  loadFailed: boolean,
-): AuthorConnectionsResource {
-  const parsed = ref ? parseResourceRef(ref) : null;
-  if (parsed?.scheme === "contributor") {
-    return { kind: "Ready", ref: { scheme: "contributor", id: parsed.id } };
+function presentWork(work: ContributorWork): CollectionRowView {
+  if (work.kind === "Media") {
+    const actionSubject = {
+      ref: assumeCanonicalResourceRef(work.actionSubject.ref),
+    };
+    return presentMedia(work.mediaSummary, {
+      id: actionSubject.ref,
+      primary: {
+        kind: "link",
+        href: work.href,
+        viewTransition: "media-reader",
+      },
+      actionSubject,
+      selected: false,
+    });
   }
-  return loadFailed ? { kind: "Unavailable" } : { kind: "Loading" };
+  const row = {
+    kind: "contributor_work",
+    primary: { kind: "link", href: work.href, paneLabelHint: work.title },
+    title: { text: work.title },
+    publicationDate: absent<string>(),
+    activity: absent<never>(),
+    exceptionalStatus: absent<never>(),
+    selected: false,
+  } as const;
+  if (work.kind === "ExternalWork") {
+    return {
+      ...row,
+      id: work.href,
+      mediaIdentity: "External",
+      contributors: selectMediaAuthors(work.contributors),
+      context: absent(),
+      actionSubject: null,
+    };
+  }
+  const roles = work.roleFacts.map((fact) =>
+    contributorRoleLabel(fact.role, 1),
+  );
+  const text = [...new Set(roles), "Publication date unknown"].join(" · ");
+  const ref = assumeCanonicalResourceRef(work.actionSubject.ref);
+  return {
+    ...row,
+    id: ref,
+    contributors: [],
+    context: present({ kind: "Text", text }),
+    actionSubject: { ref },
+  };
 }
 
 export default function AuthorPaneBody() {
   const handle = usePaneParam("handle");
-  if (!handle) {
-    throw new Error("author route requires a handle");
-  }
-  const isPaneActive = usePaneIsActive();
-  const isPaneVisible = usePaneIsVisible();
-  const metadataRevision = useMetadataCollectionRevision();
-  // The pane URL owns the works view through a strict, total codec; `view` is
-  // null only for an Invalid URL, a terminal, user-recoverable state.
-  const worksViewCodec = useMemo(
-    () => ({
-      basePath: `/authors/${encodeURIComponent(handle)}`,
-      decode: decodeAuthorWorksView,
-      encode: (
-        decoded: DecodedAuthorWorksView,
-        current: URLSearchParams,
-      ): URLSearchParams =>
-        encodeAuthorWorksView(
-          decoded.kind === "Valid" ? decoded.view : CANONICAL_AUTHOR_WORKS_VIEW,
-          current,
+  if (!handle) throw new Error("author route requires a handle");
+  const active = usePaneIsActive();
+  const router = usePaneRouter();
+  const params = usePaneSearchParams();
+  // The view keys pass through verbatim, duplicates included: the server
+  // rejects anything that is not one of the four views.
+  const view = new URLSearchParams([
+    ...params.getAll("sort").map((value) => ["sort", value]),
+    ...params.getAll("direction").map((value) => ["direction", value]),
+  ]).toString();
+  const stale = `${useMediaQueryRevision()}:${usePodcastRevision()}`;
+  const detail = useServerValue({
+    key: handle,
+    stale,
+    visit: DETAIL,
+    load: (signal) => getContributor(handle, signal),
+  });
+  const works = useServerList<ContributorWork>({
+    key: `${handle}?${view}`,
+    stale,
+    pageSize: 100,
+    visit: WORKS,
+    fetchPage: (page, signal) =>
+      listContributorWorks(
+        handle,
+        new URLSearchParams(`${view}&${page}`),
+        signal,
+      ),
+  });
+  // Drain while active: one page at a time, stopping at the first error.
+  const drain =
+    active &&
+    works.status === "ready" &&
+    !works.complete &&
+    !works.loadingMore &&
+    works.error === null;
+  useEffect(() => {
+    if (drain) works.loadMore();
+  });
+
+  const loaded = works.status === "ready" ? works.items : NO_WORKS;
+  const summaries = useMediaSummaries(
+    loaded.flatMap((work) =>
+      work.kind === "Media" ? [work.mediaSummary] : [],
+    ),
+  );
+  // A media work whose summary is no longer visible drops out.
+  const rows = useMemo(
+    () =>
+      loaded.flatMap((work) => {
+        if (work.kind !== "Media") return [presentWork(work)];
+        const summary = summaries.resolve(work.mediaSummary);
+        return summary.kind === "Absent"
+          ? []
+          : [presentWork({ ...work, mediaSummary: summary.value })];
+      }),
+    [loaded, summaries],
+  );
+  const complete = works.status === "ready" && works.complete;
+  const matches = useCallback(
+    (text: string) =>
+      rows.filter((row) =>
+        matchesPaneFilterQuery(
+          text,
+          mediaListFilterFields({
+            title: row.title.text,
+            contributors: row.contributors,
+          }),
         ),
-      replaceOptions: {
-        viewTransition: { kind: "collection-reflow" as const },
-      },
-    }),
-    [handle],
+      ),
+    [rows],
   );
-  const { state: decodedView, setState: setDecodedView } =
-    usePaneUrlState(worksViewCodec);
-  const view = decodedView.kind === "Valid" ? decodedView.view : null;
-  // Set when the backend rejects the requested view; cleared whenever another
-  // view is requested.
-  const [viewInvalid, setViewInvalid] = useState(false);
-  const invalidView = decodedView.kind === "Invalid" || viewInvalid;
-  const committedSnapshotRef = useRef<CommittedAuthorWorks | null>(null);
-  const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
-  const restored = usePaneVisitData(AUTHOR_VISIT_DATA, captureCommitted);
-  const initialRestored = useRef(restored).current;
-  const clearAllVisitData = useClearAllPaneVisitData();
-  const [firstPageVersion, setFirstPageVersion] = useState(0);
-  const firstPageVersionRef = useRef(0);
-  const revalidation = useRevalidationSettlement();
-  const completedAuthorRevalidationVersionRef = useRef<number | null>(null);
-  const [chainEpoch, setChainEpoch] = useState(0);
-  const [data, setData] = useState<CommittedAuthorWorks | null>(initialRestored);
-  const summaries = useMediaSummaries(data?.works.flatMap((work) =>
-    work.kind === "Media" ? [work.mediaSummary] : []) ?? []);
-  const initialQueryRevision = useRef(summaries.queryRevision).current;
-  const adoptedQueryRevisionRef = useRef(initialQueryRevision);
-  if (
-    committedSnapshotRef.current === null &&
-    initialRestored !== null &&
-    data === initialRestored
-  ) {
-    committedSnapshotRef.current = initialRestored;
-  }
-  const [error, setError] = useState<FeedbackContent | null>(null);
-  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const capturePaneScroll = usePaneScrollRetention(data);
-  // Set by a refresh so the already-committed view refetches once under a new
-  // request identity; cleared by the commit that answers it. A view change needs
-  // no flag — the requested and committed identities differ on their own.
-  const refreshPendingRef = useRef(initialRestored !== null);
-  const sortSelectRef = useRef<HTMLSelectElement | null>(null);
-  const setView = useCallback(
-    (next: AuthorWorksView) => {
-      capturePaneScroll();
-      setDecodedView({ kind: "Valid", view: next });
-    },
-    [capturePaneScroll, setDecodedView],
-  );
-  // The route seed composes the detail with the canonical first works page. Its
-  // works are adopted only for the canonical view; every other view takes just
-  // the detail and loads its own exact page.
-  const allowSeedAdoptionRef = useRef(initialRestored === null && metadataRevision === 0);
-  const seed = useResource<AuthorPaneSeed>({
-    cacheKey:
-      initialRestored === null && !invalidView
-        ? contributorResource.cacheKey({ handle })
-        : null,
-    load: (signal) =>
-      paneResourceLoaders.author!.load(clientResourceFetcher(signal), { handle }) as Promise<AuthorPaneSeed>,
-  });
-  const seedDetail = seed.status === "ready" ? seed.data.detail : null;
-
-  const requestedViewKey =
-    view === null ? null : contributorWorksResource.cacheKey({ handle, view });
-  const committedViewKey =
-    data === null
-      ? null
-      : contributorWorksResource.cacheKey({ handle, view: data.view });
-  const requestsFirstPage =
-    view !== null &&
-    !viewInvalid &&
-    (data === null
-      ? !(view.kind === "Canonical" && allowSeedAdoptionRef.current &&
-          summaries.queryRevision === initialQueryRevision)
-      : requestedViewKey !== committedViewKey || refreshPendingRef.current ||
-          adoptedQueryRevisionRef.current !== summaries.queryRevision);
-  const firstPageRequestKey =
-    requestsFirstPage && requestedViewKey !== null
-      ? `${requestedViewKey}:collection:${firstPageVersion}:facts:${summaries.queryRevision}`
-      : null;
-  const firstPage = useResource<{ page: CollectionPage<ContributorWorkItem>; metadataRevision: number; queryRevision: number }>({
-    cacheKey: firstPageRequestKey,
-    load: async (signal) => {
-      const metadataRevision = metadataCollectionSnapshot();
-      if (view === null) {
-        // justify-defect: a non-null request key is built from this exact view.
-        throw new Error("Author works request lost its view identity");
-      }
-      const retainedCount = data !== null && requestedViewKey === committedViewKey ? data.works.length : 0;
-      for (;;) {
-        try {
-          let page = await fetchContributorWorks(handle, {
-            view, limit: retainedCount === 0 ? AUTHOR_WORKS_LIMIT : Math.min(AUTHOR_WORKS_LIMIT, retainedCount), signal,
-          });
-          const items = [...page.items];
-          while (items.length < retainedCount && page.nextCursor.kind === "Present") {
-            page = await fetchContributorWorks(handle, {
-              view, limit: Math.min(AUTHOR_WORKS_LIMIT, retainedCount - items.length),
-              cursor: page.nextCursor.value, collectionRevision: page.collectionRevision, signal,
-            });
-            items.push(...page.items);
-          }
-          return { page: { ...page, items }, metadataRevision, queryRevision: summaries.queryRevision };
-        } catch (error) {
-          if (signal.aborted || !isApiError(error) || error.code !== "E_COLLECTION_CHANGED") throw error;
-        }
-      }
-    },
-  });
-
-  // Latest-wins atomic commit: the resource reports a result only for the
-  // current request identity, so a superseded view can never install its rows.
-  useEffect(() => {
-    const detail = data?.detail ?? seedDetail;
-    if (firstPage.status === "ready" && firstPage.data.metadataRevision === metadataRevision && firstPage.data.queryRevision === summaries.queryRevision && view !== null && detail !== null) {
-      allowSeedAdoptionRef.current = false;
-      refreshPendingRef.current = false;
-      adoptedQueryRevisionRef.current = firstPage.data.queryRevision;
-      const committed: CommittedAuthorWorks = {
-        detail,
-        view,
-        metadataRevision: firstPage.data.metadataRevision,
-        works: firstPage.data.page.items,
-        collectionRevision: firstPage.data.page.collectionRevision,
-        nextCursor: firstPage.data.page.nextCursor,
-      };
-      committedSnapshotRef.current = committed;
-      setData(committed);
-      setChainEpoch((epoch) => epoch + 1);
-      setError(null);
-
-      if (revalidation.isPending(firstPageVersion)) {
-        completedAuthorRevalidationVersionRef.current = firstPageVersion;
-      }
-      return;
-    }
-    if (firstPage.status === "error") {
-      if (isInvalidViewError(firstPage.error)) {
-        setViewInvalid(true);
-      } else if (data === null) {
-        try {
-          setError(authorLoadErrorMessage(firstPage.error));
-        } catch (caughtDefect) {
-          setDefect({ error: caughtDefect });
-        }
-      }
-
-      if (revalidation.isPending(firstPageVersion)) {
-        completedAuthorRevalidationVersionRef.current = null;
-        revalidation.reject(firstPage.error);
-      }
-    }
-  }, [
-    revalidation,
-    data,
-    firstPage,
-    firstPageVersion,
-    summaries.queryRevision,
-    metadataRevision,
-    seedDetail,
-    view,
-  ]);
-
-  // A newly requested view retires the previous view's rejection.
-  useEffect(() => setViewInvalid(false), [requestedViewKey]);
-
-  // The canonical seed commits as the canonical view; a seed failure is the
-  // pane's load failure whether or not a works request is also in flight.
-  useEffect(() => {
-    if (seed.status === "ready") {
-      if (!allowSeedAdoptionRef.current || metadataRevision !== 0) return;
-      allowSeedAdoptionRef.current = false;
-      if (view === null || view.kind !== "Canonical" ||
-        summaries.queryRevision !== initialQueryRevision) return;
-      const committed: CommittedAuthorWorks = { ...seed.data, view, metadataRevision: 0 };
-      committedSnapshotRef.current = committed;
-      setData(committed);
-      setChainEpoch((epoch) => epoch + 1);
-      setError(null);
-      return;
-    }
-    if (seed.status === "error") {
-      try {
-        setError(authorLoadErrorMessage(seed.error));
-      } catch (caughtDefect) {
-        setDefect({ error: caughtDefect });
-      }
-    }
-  }, [seed, view, metadataRevision, summaries.queryRevision, initialQueryRevision]);
-
-  useLayoutEffect(() => {
-    committedSnapshotRef.current = requestsFirstPage ? null : data;
-    const completedVersion = completedAuthorRevalidationVersionRef.current;
-    if (
-      data === null || requestsFirstPage ||
-      completedVersion === null ||
-      !revalidation.isPending(completedVersion)
-    ) {
-      return;
-    }
-    completedAuthorRevalidationVersionRef.current = null;
-    revalidation.resolve(completedVersion);
-  }, [revalidation, data, requestsFirstPage]);
-
-  const loading = !invalidView && error === null && data === null;
-  usePaneReturnReady(data !== null || error !== null || invalidView);
-  useSetPaneLabel(loading ? null : (data?.detail.displayName ?? "Author"));
-
-  const rejectPendingAuthorRevalidation = useCallback((error: unknown) => {
-    completedAuthorRevalidationVersionRef.current = null;
-    revalidation.reject(error);
-  }, [revalidation]);
-  // Refresh reloads the committed works view, never the canonical seed: the
-  // author detail is stable and a refreshed canonical page would contradict the
-  // requested view.
-  const refreshWorks = useCallback(() => {
-    rejectPendingAuthorRevalidation(
-      new DOMException("Author refresh was superseded.", "AbortError"),
-    );
-    capturePaneScroll();
-    allowSeedAdoptionRef.current = false;
-    refreshPendingRef.current = true;
-    clearAllVisitData();
-    setError(null);
-    const version = firstPageVersionRef.current + 1;
-    firstPageVersionRef.current = version;
-    setFirstPageVersion(version);
-  }, [capturePaneScroll, clearAllVisitData, rejectPendingAuthorRevalidation]);
-  const appliedMetadataRevision = useRef(initialRestored?.metadataRevision ?? metadataRevision);
-  useEffect(() => {
-    if (!isPaneVisible || appliedMetadataRevision.current === metadataRevision) return;
-    appliedMetadataRevision.current = metadataRevision;
-    refreshWorks();
-  }, [isPaneVisible, metadataRevision, refreshWorks]);
-
-  const revalidateWorks = useCallback(
-    (signal: AbortSignal): Promise<void> => {
-      if (signal.aborted) {
-        return Promise.reject(
-          signal.reason ??
-            new DOMException("Author refresh was aborted.", "AbortError"),
-        );
-      }
-      refreshWorks();
-      const version = firstPageVersionRef.current;
-      return revalidation.wait({
-        requestId: version,
-        signal,
-        onAbort: () => {
-          completedAuthorRevalidationVersionRef.current = null;
-        },
-      });
-    },
-    [refreshWorks, revalidation],
-  );
-  const commitWorksPage = useCallback(
-    (page: CollectionPage<ContributorWorkItem>): number => {
-      const current = committedSnapshotRef.current;
-      if (
-        current === null ||
-        current.collectionRevision !== page.collectionRevision
-      ) {
-        throw new Error("Author continuation settled for a stale collection");
-      }
-      const seen = new Set(current.works.map((work) => work.href));
-      const works = [...current.works];
-      for (const work of page.items) {
-        if (seen.has(work.href)) continue;
-        seen.add(work.href);
-        works.push(work);
-      }
-      const next: CommittedAuthorWorks = {
-        ...current,
-        works,
-        nextCursor: page.nextCursor,
-      };
-      committedSnapshotRef.current = next;
-      setData(next);
-      return works.length;
-    },
-    [],
-  );
-  // Continuation runs only while the committed view is the requested one, and
-  // every page of a chain carries that same view.
-  const exhaustion = useExhaustivePagination<ContributorWorkItem>({
-    active:
-      isPaneActive && !invalidView && view !== null && data !== null && !requestsFirstPage,
-    chainKey: JSON.stringify([
-      requestedViewKey,
-      committedViewKey,
-      invalidView,
-      firstPageVersion,
-      chainEpoch,
-      summaries.queryRevision,
-    ]),
-    cursor: data?.nextCursor ?? NO_CURSOR,
-    collectionRevision: data?.collectionRevision ?? ZERO_REVISION,
-    itemCount: data?.works.length ?? 0,
-    loadPage: (cursor, collectionRevision, signal) => {
-      if (data === null) {
-        // justify-defect: continuation runs only over a committed exact view.
-        throw new Error("Author works continuation lost its committed view");
-      }
-      return fetchContributorWorks(handle, {
-        view: data.view,
-        cursor,
-        collectionRevision,
-        limit: AUTHOR_WORKS_LIMIT,
-        signal,
-      });
-    },
-    commitPage: commitWorksPage,
-    refresh: refreshWorks,
-  });
-  const handledCollectionChangeRef = useRef<unknown>(null);
-  useEffect(() => {
-    if (requestsFirstPage || exhaustion.kind !== "RefreshRequired" ||
-      exhaustion.reason !== "CollectionChanged" || handledCollectionChangeRef.current === exhaustion.error) return;
-    handledCollectionChangeRef.current = exhaustion.error;
-    refreshWorks();
-  }, [requestsFirstPage, exhaustion, refreshWorks]);
-
-  const worksRefreshError = firstPage.status === "error" ? firstPage.error :
-    exhaustion.kind === "ResumeFailed" || exhaustion.kind === "RefreshRequired" ? exhaustion.error : null;
-  const works = useMemo(() => data?.works.flatMap<ContributorWorkItem>((work) => {
-    if (work.kind !== "Media") return [work];
-    const mediaSummary = summaries.resolve(work.mediaSummary);
-    return mediaSummary.kind === "Absent" ? [] : [{ ...work, mediaSummary: mediaSummary.value }];
-  }) ?? [], [data?.works, summaries]);
-  const workCount = works.length;
-  const workRows = useMemo(
-    () => works.map(presentContributorWork),
-    [works],
-  );
-  const getFilterStatus = useCallback(
-    (query: string) => {
-      const visibleCount =
-        workRows.filter((row) =>
-          matchesPaneFilterQuery(query, mediaListFilterFields({ title: row.title.text, contributors: row.contributors })),
-        ).length;
-      const unit = { singular: "work", plural: "works" };
-      if (data !== null && requestsFirstPage) {
-        return {
-          kind: "Retained" as const,
-          visibleCount,
-          loadedCount: workCount,
-          unit,
-          cause: firstPage.status === "error" ? "Failed" as const : "Updating" as const,
-        };
-      }
-      if (
-        (data === null && error !== null) ||
-        exhaustion.kind === "ResumeFailed" ||
-        exhaustion.kind === "RefreshRequired"
-      ) {
-        return { kind: "Failed" as const, visibleCount, loadedCount: workCount, unit };
-      }
-      return exhaustion.kind === "Complete"
-        ? {
-            kind: "Complete" as const,
-            visibleCount,
-            totalCount: workCount,
-            unit,
-          }
-        : {
-            kind: "Partial" as const,
-            visibleCount,
-            loadedCount: workCount,
-            unit,
-          };
-    },
-    [data, error, exhaustion.kind, firstPage.status, requestsFirstPage, workCount, workRows],
-  );
-  const {
-    query: filterQuery,
-    onQueryChange,
-    clearQuery,
-    rowStatus,
-  } = usePaneFilterRows({
+  const filterRows = usePaneFilterRows({
     sourceKey: `Author.Works:${handle}`,
-    getRowStatus: getFilterStatus,
+    getRowStatus: useCallback(
+      (text: string) =>
+        listRowStatus(
+          works.status,
+          complete,
+          rows.length,
+          matches(text).length,
+          "work",
+        ),
+      [complete, matches, rows.length, works.status],
+    ),
   });
-  const { inputRef, focusInput } = usePaneCollectionInput();
+  const text = filterRows.query.trim();
+
+  const { clearQuery } = filterRows;
+  const setView = useCallback(
+    (next: string) => {
+      const query = new URLSearchParams(next);
+      for (const [key, value] of params) {
+        if (key !== "sort" && key !== "direction") query.append(key, value);
+      }
+      const suffix = query.toString() ? `?${query}` : "";
+      router.replace(`/authors/${encodeURIComponent(handle)}${suffix}`, {
+        viewTransition: { kind: "collection-reflow" },
+      });
+    },
+    [handle, params, router],
+  );
+  const sortRef = useRef<HTMLSelectElement>(null);
   const resetView = useCallback(() => {
     clearQuery();
-    setView(CANONICAL_AUTHOR_WORKS_VIEW);
+    setView("");
+    // The pressed button goes away with the view: keep focus on the control.
+    requestAnimationFrame(() =>
+      sortRef.current?.focus({ preventScroll: true }),
+    );
   }, [clearQuery, setView]);
-  const domainFilterControls = useMemo(
-    () =>
-      invalidView || view === null ? undefined : (
-        <>
-          <SelectField
-            layout="Inline"
-            label="Sort works"
-            size="sm"
-            ref={sortSelectRef}
-            value={authorWorksSortOptionOf(view)}
-            onChange={(event) => {
-              setView(
-                authorWorksViewForSortOption(
-                  event.target.value as AuthorWorksSortOptionId,
-                ),
-              );
-            }}
-          >
-            {AUTHOR_WORKS_SORT_OPTION_IDS.map((optionId) => (
-              <option key={optionId} value={optionId}>
-                {authorWorksSortOptionLabel(optionId)}
-              </option>
-            ))}
-          </SelectField>
-        </>
-      ),
-    [invalidView, setView, view],
-  );
+  const { inputRef, focusInput } = usePaneCollectionInput();
+  const invalidView =
+    works.status === "failed" && works.error.code === "E_INVALID_REQUEST";
   const collection = useMemo(
     () =>
-      invalidView || view === null
+      invalidView
         ? undefined
         : {
             label: "Filter works",
@@ -580,236 +279,205 @@ export default function AuthorPaneBody() {
                 inputRef={inputRef}
                 inputLabel="Filter works"
                 placeholder="Filter works"
-                query={filterQuery}
-                onQueryChange={onQueryChange}
-                onClearQuery={clearQuery}
-                rowStatus={rowStatus}
-                filters={domainFilterControls}
-                controls={view.kind !== "Canonical" ? (
-                  <Button
-                    variant="ghost"
+                query={filterRows.query}
+                onQueryChange={filterRows.onQueryChange}
+                onClearQuery={filterRows.clearQuery}
+                rowStatus={filterRows.rowStatus}
+                filters={
+                  <SelectField
+                    ref={sortRef}
+                    layout="Inline"
+                    label="Sort works"
                     size="sm"
-                    onClick={() => {
-                      sortSelectRef.current?.focus({ preventScroll: true });
-                      resetView();
-                    }}
+                    value={view}
+                    onChange={(event) => setView(event.target.value)}
                   >
-                    Reset view
-                  </Button>
-                ) : undefined}
+                    {SORTS.map((sort) => (
+                      <option key={sort.id} value={sort.id}>
+                        {sort.label}
+                      </option>
+                    ))}
+                  </SelectField>
+                }
+                controls={
+                  view === "" ? undefined : (
+                    <Button variant="ghost" size="sm" onClick={resetView}>
+                      Reset view
+                    </Button>
+                  )
+                }
               />
             ),
             focusInput,
           },
-    [
-      resetView,
-      clearQuery,
-      domainFilterControls,
-      filterQuery,
-      focusInput,
-      inputRef,
-      invalidView,
-      onQueryChange,
-      rowStatus,
-      view,
-    ],
+    [filterRows, focusInput, inputRef, invalidView, resetView, setView, view],
   );
-  const filteredWorkRows = useMemo(
+
+  const ref =
+    detail.status === "ready"
+      ? parseResourceRef(detail.data.actionSubject.ref)
+      : null;
+  const contributorId = ref?.scheme === "contributor" ? ref.id : null;
+  const linkedItems = useMemo(
     () =>
-      workRows.filter((row) =>
-        matchesPaneFilterQuery(filterQuery, mediaListFilterFields({ title: row.title.text, contributors: row.contributors })),
-      ),
-    [filterQuery, workRows],
-  );
-  const canonicalHandle = data?.detail.handle ?? null;
-  const contributorRef = (data?.detail ?? seedDetail)?.actionSubject.ref;
-  const connectionsResource = useMemo(
-    () => authorConnectionsResource(contributorRef, error !== null),
-    [contributorRef, error],
-  );
-  const connectionsBody = useMemo(
-    () =>
-      connectionsResource.kind === "Ready" ? (
+      contributorId !== null ? (
         <ConnectionsSurface
-          resourceRef={connectionsResource.ref}
-        />
-      ) : connectionsResource.kind === "Loading" ? (
-        <FeedbackNotice
-          content={{ tone: "Info", title: "Loading connections…" }}
-          announcement="None"
+          resourceRef={{ scheme: "contributor", id: contributorId }}
         />
       ) : (
         <FeedbackNotice
-          content={{
-            tone: "Neutral",
-            title: "Connections unavailable",
-            message: "This author’s resource identity could not be resolved.",
-          }}
+          content={
+            detail.status === "failed"
+              ? { tone: "Neutral", title: "Connections unavailable" }
+              : { tone: "Info", title: "Loading connections…" }
+          }
           announcement="None"
         />
       ),
-    [connectionsResource],
+    [contributorId, detail.status],
   );
   const { companionAction } = useResourceInspector({
     scheme: "contributor",
-    handle: canonicalHandle,
-    bodies: { linkedItems: connectionsBody },
+    handle: detail.status === "ready" ? detail.data.handle : null,
+    bodies: { linkedItems },
   });
-  const executeRefresh = useCallback(
-    async ({ signal }: { readonly signal: AbortSignal }) => {
-      try {
-        await revalidateWorks(signal);
-        return {
-          kind: "Complete" as const,
-          announcement: "Author refreshed",
-        };
-      } catch (refreshError: unknown) {
-        if (isAbortError(refreshError)) throw refreshError;
-        return {
-          kind: "Failed" as const,
-          announcement: "Author failed to refresh",
-        };
-      }
-    },
-    [revalidateWorks],
+  useSetPaneLabel(
+    detail.status === "ready"
+      ? detail.data.displayName
+      : detail.status === "failed"
+        ? "Author"
+        : null,
   );
+  const { refetch: refetchDetail } = detail;
+  const { refetch: refetchWorks } = works;
+  const refresh = useCallback(async () => {
+    refetchDetail();
+    refetchWorks();
+    return { kind: "Complete" as const, announcement: "Refreshing author" };
+  }, [refetchDetail, refetchWorks]);
   usePanePrimaryChrome({
     collection,
+    companionAction: companionAction ?? undefined,
+    actionSubject:
+      detail.status === "ready"
+        ? { ref: assumeCanonicalResourceRef(detail.data.actionSubject.ref) }
+        : undefined,
     refresh: {
       kind: "Refreshable",
       sourceKey: `Author.Works:${handle}`,
-      execute: executeRefresh,
+      execute: refresh,
     },
-    companionAction: companionAction ?? undefined,
-    actionSubject: data ? data.detail.actionSubject : undefined,
     header: {
       kind: "Section",
       meta: invalidView
         ? { kind: "None" }
-        : loading || requestsFirstPage || exhaustion.kind !== "Complete"
-          ? { kind: "Pending" }
-          : { kind: "Count", value: workCount, unit: "work" },
+        : complete
+          ? { kind: "Count", value: rows.length, unit: "work" }
+          : { kind: "Pending" },
     },
   });
-
-  const otherNames = data?.detail.otherNames ?? [];
-  if (defect) throw defect.error;
+  usePaneReturnReady(detail.status !== "loading" && works.status !== "loading");
 
   if (invalidView) {
     return (
       <FeedbackNotice
         content={{ tone: "Danger", title: "Invalid works view" }}
         announcement="Assertive"
-        actions={[
-          {
-            label: "Reset view",
-            onClick: () => {
-              clearQuery();
-              setDecodedView({
-                kind: "Valid",
-                view: CANONICAL_AUTHOR_WORKS_VIEW,
-              });
-              requestAnimationFrame(() => sortSelectRef.current?.focus({ preventScroll: true }));
-            },
-          },
-        ]}
+        actions={[{ label: "Reset view", onClick: resetView }]}
+      />
+    );
+  }
+  const failure =
+    detail.status === "failed"
+      ? detail.error
+      : works.status === "failed"
+        ? works.error
+        : null;
+  if (failure !== null) {
+    const retry = () => {
+      if (detail.status === "failed") detail.refetch();
+      if (works.status === "failed") works.retry();
+    };
+    return (
+      <FeedbackNotice
+        content={authorError(failure, "This author couldn’t be loaded")}
+        announcement="Assertive"
+        actions={
+          failure.code === "E_NOT_FOUND"
+            ? undefined
+            : [{ label: "Retry", onClick: retry }]
+        }
+      />
+    );
+  }
+  if (detail.status !== "ready") {
+    return (
+      <PaneSurface
+        state={
+          <PaneLoadingState label="Loading author…" announcement="Polite" />
+        }
       />
     );
   }
 
+  const { otherNames } = detail.data;
   return (
-    <PaneSurface
-      state={
-        loading || (error && !data) ? (
-          <>
-            {loading ? (
-              <PaneLoadingState label="Loading author…" announcement="Polite" />
-            ) : null}
-            {loading && filterQuery.trim() ? (
-              <FeedbackNotice
-                content={{
-                  tone: "Neutral",
-                  title: "No matching work found so far.",
-                }}
-                announcement="None"
-              />
-            ) : null}
-            {error && !data ? (
-              <FeedbackNotice content={error} announcement="Assertive" />
-            ) : null}
-          </>
-        ) : null
-      }
-    >
-      {data ? (
-        <div className={styles.detail}>
-          {otherNames.length > 0 ? (
-            <section className={styles.otherNames}>
-              <h2 className={styles.sectionHeading}>Other names</h2>
-              <p className={styles.otherNamesList}>
-                {otherNames.map((name, index) => (
-                  <span key={`${name}-${index}`}>
-                    {index > 0 ? ", " : null}
-                    <span dir="auto">{name}</span>
-                  </span>
-                ))}
-              </p>
-            </section>
-          ) : null}
-
-          <section aria-label="Works">
-            <CollectionView
-              returnScope="Author.Works"
-              rows={filteredWorkRows}
-              status="ready"
-              ariaLabel="Works"
-              rowChangePresentation={{
-                kind: "ImmediateOnKeyChange",
-                key: filterQuery.trim(),
-              }}
-              collectionBusy={exhaustion.kind === "Draining"}
-              surface={false}
-              notice={
-                <MediaSummaryNotice
-                  error={worksRefreshError ?? summaries.error}
-                  retry={() => {
-                    if (summaries.error !== null) summaries.retry();
-                    if (firstPage.status === "error") firstPage.retry();
-                    if (exhaustion.kind === "ResumeFailed") exhaustion.retry();
-                    if (exhaustion.kind === "RefreshRequired") exhaustion.refresh();
-                  }}
-                />
-              }
-              empty={
-                filterQuery.trim() ? (
-                  exhaustion.kind === "Complete" ? (
-                    <FeedbackNotice
-                      content={{
-                        tone: "Neutral",
-                        title: "No works match this filter.",
-                      }}
-                      announcement="None"
-                    />
-                  ) : (
-                    <FeedbackNotice
-                      content={{
-                        tone: "Neutral",
-                        title: "No matching work found so far.",
-                      }}
-                      announcement="None"
-                    />
-                  )
-                ) : (
-                  <p className={styles.empty}>No works yet.</p>
-                )
-              }
-              footer={!requestsFirstPage && worksRefreshError === null
-                ? <CollectionExhaustionNotice state={exhaustion} /> : undefined}
-            />
+    <PaneSurface>
+      <div className={styles.detail}>
+        {otherNames.length > 0 ? (
+          <section className={styles.otherNames}>
+            <h2 className={styles.sectionHeading}>Other names</h2>
+            <p className={styles.otherNamesList}>
+              {otherNames.map((name, index) => (
+                <span key={`${name}-${index}`}>
+                  {index > 0 ? ", " : null}
+                  <span dir="auto">{name}</span>
+                </span>
+              ))}
+            </p>
           </section>
-
-        </div>
-      ) : null}
+        ) : null}
+        <section aria-label="Works">
+          <CollectionView
+            returnScope="Author.Works"
+            rows={matches(text)}
+            status={works.status === "loading" ? "loading" : "ready"}
+            ariaLabel="Works"
+            rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
+            collectionBusy={works.status === "ready" && works.loadingMore}
+            surface={false}
+            notice={
+              works.status === "ready" && works.error !== null ? (
+                <FeedbackNotice
+                  content={authorError(works.error, "Works couldn’t be loaded")}
+                  announcement="Polite"
+                  actions={[{ label: "Retry", onClick: works.retry }]}
+                />
+              ) : (
+                <MediaSummaryNotice
+                  error={summaries.error}
+                  retry={summaries.retry}
+                />
+              )
+            }
+            empty={
+              text ? (
+                <FeedbackNotice
+                  content={{
+                    tone: "Neutral",
+                    title: complete
+                      ? "No works match this filter."
+                      : "No matching work found so far.",
+                  }}
+                  announcement="None"
+                />
+              ) : (
+                <p className={styles.empty}>No works yet.</p>
+              )
+            }
+          />
+        </section>
+      </div>
     </PaneSurface>
   );
 }

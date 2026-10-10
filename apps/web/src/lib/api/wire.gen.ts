@@ -5147,6 +5147,10 @@ export interface components {
         Data_ListeningPositionOut_: {
             data: components["schemas"]["ListeningPositionOut"];
         };
+        /** Data[MediaAuthorsOut] */
+        Data_MediaAuthorsOut_: {
+            data: components["schemas"]["MediaAuthorsOut"];
+        };
         /** Data[MediaFileOut] */
         Data_MediaFileOut_: {
             data: components["schemas"]["MediaFileOut"];
@@ -6061,16 +6065,15 @@ export interface components {
              */
             kind: "Existing";
         };
-        /** ExternalContributorWorkItemOut */
+        /**
+         * ExternalContributorWorkItemOut
+         * @description A catalogue ebook: not a Nexus resource, so it has no action subject.
+         */
         ExternalContributorWorkItemOut: {
-            /** Actionsubject */
-            actionSubject: null;
             /** Contentkind */
             contentKind: string;
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
-            /** Date */
-            date: string | null;
             /** Href */
             href: string;
             /**
@@ -7630,6 +7633,14 @@ export interface components {
             mediaRef: string;
             /** Title */
             title: string;
+        };
+        /** MediaAuthorsOut */
+        MediaAuthorsOut: {
+            /**
+             * Authormode
+             * @enum {string}
+             */
+            authorMode: "automatic" | "manual";
         };
         /** MediaCompletionOut */
         MediaCompletionOut: {
@@ -9255,8 +9266,6 @@ export interface components {
             actionSubject: components["schemas"]["ResourceActionSubjectOut"];
             /** Contentkind */
             contentKind: string;
-            /** Date */
-            date: string | null;
             /** Href */
             href: string;
             /**
@@ -18224,9 +18233,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_MediaAuthorsOut_"];
                 };
             };
             /** @description Validation Error */

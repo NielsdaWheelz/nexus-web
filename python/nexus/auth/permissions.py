@@ -224,6 +224,32 @@ def visible_podcast_ids_cte_sql() -> str:
     """
 
 
+def media_viewer_ids_sql() -> str:
+    """Users who may see any of ``:media_ids``: the inverse of
+    :func:`visible_media_ids_cte_sql` without its narrowing tombstone and teardown
+    clauses, so a superset."""
+    return f"""
+        SELECT ms.user_id FROM library_entries le
+        JOIN memberships ms ON ms.library_id = le.library_id
+        WHERE le.media_id = ANY(CAST(:media_ids AS uuid[]))
+        UNION
+        {resource_grants.media_grant_path_user_ids_sql("CAST(:media_ids AS uuid[])")}
+    """
+
+
+def podcast_viewer_ids_sql() -> str:
+    """Users who may see any of ``:podcast_ids``: the inverse of
+    :func:`visible_podcast_ids_cte_sql`."""
+    return """
+        SELECT ps.user_id FROM podcast_subscriptions ps
+        WHERE ps.podcast_id = ANY(CAST(:podcast_ids AS uuid[]))
+        UNION
+        SELECT ms.user_id FROM library_entries le
+        JOIN memberships ms ON ms.library_id = le.library_id
+        WHERE le.podcast_id = ANY(CAST(:podcast_ids AS uuid[]))
+    """
+
+
 def active_podcast_subscription_exists_sql(podcast_id_expr: str = "p.id") -> str:
     """Active-subscription predicate for an outer Podcast row. Binds ``:viewer_id``."""
     return f"""EXISTS (

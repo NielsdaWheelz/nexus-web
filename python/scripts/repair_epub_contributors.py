@@ -14,7 +14,7 @@ from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.db.models import Media, MediaFile, User
 from nexus.db.retries import retry_serializable
 from nexus.db.session import create_session_factory
-from nexus.services.contributors import (
+from nexus.services.epub_contributor_repair import (
     EpubContributorRepairPlan,
     EpubContributorRepairReport,
     EpubContributorRepairSkipped,

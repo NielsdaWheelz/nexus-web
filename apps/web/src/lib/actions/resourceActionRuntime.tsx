@@ -53,7 +53,7 @@ import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime"
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { createMutationIntent, type MutationIntent } from "@/lib/contributors/mutationIntent";
+import { createMutationIntent, type MutationIntent } from "@/lib/actions/mutationIntent";
 import { submitMetadataEnrichment, subscribeMetadataOperationChanges } from "@/lib/media/mediaMetadataOperations";
 import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 

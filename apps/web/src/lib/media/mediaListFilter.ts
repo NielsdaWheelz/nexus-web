@@ -1,5 +1,7 @@
-import { selectMediaAuthors } from "@/lib/contributors/formatting";
-import type { ContributorCredit } from "@/lib/contributors/types";
+import {
+  selectMediaAuthors,
+  type ContributorCredit,
+} from "@/lib/contributors/credits";
 
 /** All credited and canonical author names, including visually collapsed names. */
 export function mediaListFilterFields(

@@ -6,7 +6,7 @@
 import type { ResourceRowPrimary } from "@/components/ui/ResourceActivation";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { Presence } from "@/lib/api/presence";
-import type { ContributorCredit } from "@/lib/contributors/types";
+import type { ContributorCredit } from "@/lib/contributors/credits";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { Schema } from "@/lib/api/wire";

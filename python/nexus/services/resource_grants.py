@@ -69,6 +69,24 @@ def media_grant_path_exists_sql(media_expr: str, viewer_param: str = ":viewer_id
     )"""
 
 
+def media_grant_path_user_ids_sql(media_ids_expr: str) -> str:
+    """Inverse of `media_grant_path_exists_sql`: the creators and grantees of grants on any of
+    these media or on their highlights, found in one pass over those grants."""
+    return f"""
+        SELECT party.user_id
+        FROM (
+            SELECT g.created_by_user_id, g.grantee_user_id FROM resource_grants g
+            WHERE g.subject_scheme = 'media' AND g.subject_id = ANY({media_ids_expr})
+            UNION ALL
+            SELECT g.created_by_user_id, g.grantee_user_id FROM resource_grants g
+            JOIN highlights h ON h.id = g.subject_id
+            WHERE g.subject_scheme = 'highlight' AND h.anchor_media_id = ANY({media_ids_expr})
+        ) path
+        CROSS JOIN LATERAL (VALUES (path.created_by_user_id), (path.grantee_user_id)) party(user_id)
+        WHERE party.user_id IS NOT NULL
+    """
+
+
 def highlight_grant_path_exists_sql(highlight_expr: str, viewer_param: str = ":viewer_id") -> str:
     """Text-SQL twin of `highlight_grant_path_exists_expr`."""
     return f"""EXISTS (

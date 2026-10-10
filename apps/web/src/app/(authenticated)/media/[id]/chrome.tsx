@@ -13,7 +13,7 @@ import PaneToolbar from "@/components/ui/PaneToolbar";
 import Select from "@/components/ui/Select";
 import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/formatting";
+import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/credits";
 import { MapRail, type RailMarker } from "@/lib/documentReader/chrome/MapRail";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import { PDF_ZOOM } from "@/lib/documentReader/model";

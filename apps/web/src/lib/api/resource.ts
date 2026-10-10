@@ -1,9 +1,5 @@
 import type { ApiPath } from "@/lib/api/client";
 import {
-  authorWorksViewQuery,
-  type AuthorWorksView,
-} from "@/lib/contributors/workView";
-import {
   type UpdatedTitleIndexView,
   updatedTitleIndexViewQuery,
 } from "@/lib/collections/updatedTitleIndexView";
@@ -52,17 +48,6 @@ export interface LibraryEntriesResourceParams
   // The current library view (order + completion). A canonical/all view emits no
   // sort/direction/completion keys; a factual view emits exactly its three keys.
   view?: LibraryEntryView;
-}
-
-interface ContributorResourceParams {
-  handle: string;
-}
-
-export interface ContributorWorksResourceParams
-  extends ContributorResourceParams,
-    CollectionPageParams {
-  // The current Author works view. Canonical emits no sort/direction keys.
-  view?: AuthorWorksView;
 }
 
 // The primary chats index uses 100 rows; the destination picker uses 25.
@@ -121,15 +106,6 @@ function libraryEntriesPageQuery(params: LibraryEntriesResourceParams): string {
   );
 }
 
-function contributorWorksPageQuery(
-  params: ContributorWorksResourceParams,
-): string {
-  return collectionPageQuery(
-    params,
-    params.view ? authorWorksViewQuery(params.view) : "",
-  );
-}
-
 const CONVERSATION_INDEX_LIMIT = 100;
 
 function conversationIndexViewQuery(
@@ -182,29 +158,6 @@ export const mediaResource: ResourceDescriptor<IdResourceParams> = {
   serverPath: ({ id }) => `/media/${encoded(id)}`,
   clientPath: ({ id }) => `/api/media/${encoded(id)}`,
 };
-
-export const contributorResource: ResourceDescriptor<ContributorResourceParams> =
-  {
-    cacheKey: ({ handle }) => `author:${handle}`,
-    serverPath: ({ handle }) => `/contributors/${encoded(handle)}`,
-    clientPath: ({ handle }) => `/api/contributors/${encoded(handle)}`,
-  };
-
-export const contributorWorksResource: ResourceDescriptor<ContributorWorksResourceParams> =
-  {
-    // View-scoped but cursor/limit-free: every page of one works view shares an entry.
-    cacheKey: (params) =>
-      `author:${params.handle}:works${params.view ? authorWorksViewQuery(params.view) : ""}`,
-    serverPath: (params) =>
-      `/contributors/${encoded(params.handle)}/works${contributorWorksPageQuery(params)}`,
-    clientPath: (params) =>
-      `/api/contributors/${encoded(params.handle)}/works${contributorWorksPageQuery(params)}`,
-  };
-
-// Works page size for an author pane's first paint — shared by the server seed, the
-// client mount, and the in-place reload so all three agree. The works cacheKey
-// ignores limit, so a mismatch would silently seed a different row count.
-export const AUTHOR_WORKS_LIMIT = 100;
 
 export const lecternSuggestionsResource: ResourceDescriptor<SuggestionsResourceParams> =
   {

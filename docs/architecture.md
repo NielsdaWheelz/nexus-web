@@ -702,9 +702,9 @@ Author identity is resolved inline, synchronously, inside each ingest/enrichment
 lane — there is no separate contributor-dedupe job, proposal table, or merge
 contract. `services/contributors.py` is the sole author-mutation facade: a
 resolver keyed on exact stable key → confirmed alias → new contributor
-(§8.6) runs in the same fresh SERIALIZABLE-retried transaction that replaces a
-lane's observed role slice, so duplicate identity is prevented at write time
-rather than proposed and reconciled after the fact.
+(§8.6) runs in the same transaction that replaces a lane's observed role slice,
+so duplicate identity is prevented at write time rather than proposed and
+reconciled after the fact.
 
 > Gotcha: `media_unit_build` declares `failed_result_statuses`. Other ingest
 > tasks that _return_ `{"status":"failed"}`
@@ -1431,39 +1431,41 @@ the hide-finished completion filter for reads — no DML on
 
 ### 8.6 Contributors
 
-A canonical authorship graph split across single owners: `contributor_taxonomy.py`
-(leaf — role vocabulary, name normalizers/handle generation, no DB import),
-`contributors.py` (the public author-operations facade: search, contributor
-detail, distinct works, ref resolve/hydrate for panes, observed role-slice
-replacement, media-author PUT/reset, rename, and the transaction-scoped
-target-cleanup helper — no second identity/write path exists),
-`contributor_writes.py` (the one write module it calls: identity-row
-resolution/creation/alias attachment, all credit-row DML, and the media
-manual/automatic pin), and `contributor_credits.py` (the read-side
-credit junction: canonical credit relation + visible-work queries). Every final
-`contributors` row is active — there is no self-FK, status, merge, split, or
-tombstone; duplicates were collapsed once by migration 0179 and never merge at
-runtime. `contributor_aliases` (searchable names, `resolves_identity` marks
-which ones bind a future observation) and `contributor_external_ids` (email
-address / X user / YouTube channel, globally unique per authority) support
-identity; `contributor_credits` attaches a contributor to exactly one
-media/podcast/Gutenberg-ebook role slice.
-Credit resolution prefers explicit id → exact stable key → confirmed alias →
-new contributor, and runs inline inside the same fresh SERIALIZABLE-retried
-transaction (`retry_serializable`, D-11 constraint allowlist) that replaces a
-lane's declared observed role slice — there is no separate dedupe job, proposal
-table, or merge contract (§ job registry, below).
-`media_author_observation_seam.py` is the sole in-memory carrier between source
-adapters and that facade. An absent carrier means no observation; a malformed
-container, tuple, media identity, observation, or source is a same-system defect
-and never degrades to empty authorship. Visibility predicates
-(`visible_podcast_ids_cte_sql`, `visible_content_credit_rows_sql`,
-`visible_contributor_ids_cte_sql`) live solely in `auth/permissions.py`.
-An orphaned contributor is already invisible under those predicates, so nothing
-prunes contributor rows. There is no `/authors`
-directory or root Authors pane; author search lives in desktop Nexus
-at `/search?kinds=people`, and author chips link to the `/authors/{handle}`
-detail-only pane (works list).
+One canonical person per author, attached to works by ordered, role-typed
+credits, across four python owners (`docs/modules/contributors.md`):
+`contributor_taxonomy.py` (pure values: role vocabulary, name keys, handle
+grammar and generation, observation values, `build_observation`),
+`contributor_writes.py` (the read-only identity planner, person creation,
+aliases, role-slice replacement, and the one invalidation rule
+`bump_credit_revisions`; never commits), `contributor_credits.py` (the sql
+fragments and batch loaders other modules compose), and `contributors.py`
+(the facade: search, detail, works, refs, and every write entry point — batch,
+in-transaction, prepare/apply, cleanup and the media-author PUT; it owns
+sessions, retries and when to invalidate). The saved-EPUB repair lives apart in
+`epub_contributor_repair.py`.
+Every `contributors` row is active — there is no self-FK, status, merge, split,
+rename or delete. `contributor_aliases` (searchable names; `resolves_identity`
+marks the display alias that binds a future observation) and
+`contributor_external_ids` (email address / X user / YouTube channel, globally
+unique per authority) support identity; `contributor_credits` attaches a person
+to exactly one media/podcast/Gutenberg-ebook role slice.
+Identity selection is bound handle → existing exact key → earliest-created
+owner of a resolving alias, unless that owner holds a different key of the same
+authority (then a new, distinct person) → new person. It runs inline inside the
+publishing transaction (batch publication opens a fresh SERIALIZABLE-retried
+session per 200 targets; source ingest, podcast identity and metadata research
+publish on their own transaction), so there is no dedupe job, proposal table,
+or merge contract. A publication that changes rows advances AuthorWorks plus the
+families whose rows embed that target's credits, for the viewers who can see
+it (catalogue ebooks: everyone), so a continuation across the change fails with
+`E_COLLECTION_CHANGED`. Visibility predicates (`visible_podcast_ids_cte_sql`,
+`visible_content_credit_rows_sql`, `visible_contributor_ids_cte_sql` and their
+inverses `media_viewer_ids_sql` / `podcast_viewer_ids_sql`) live solely in
+`auth/permissions.py`. An orphaned person is already invisible under those
+predicates, so nothing prunes contributor rows. There is no `/authors`
+directory or root Authors pane; author search lives in desktop Nexus at
+`/search?kinds=people`, and credit links open the `/authors/{handle}` pane
+(works list).
 
 ### 8.7 Notes and pages
 

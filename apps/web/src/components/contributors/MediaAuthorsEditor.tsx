@@ -1,729 +1,582 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+// Edit authors (media creator only). Loads the media's author slice, edits an
+// ordered list of credited names each bound to an existing visible author or a
+// new one, and saves it as a pinned manual list; "Reset to automatic authors"
+// releases the pin. A saved PUT is the commit point: a retry of an unchanged
+// draft reuses its client mutation id, and a failure after the PUT succeeded
+// never re-sends it.
+
+import { useEffect, useId, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Plus } from "lucide-react";
+import {
+  FeedbackNotice,
+  useFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import MobileSheet from "@/components/ui/MobileSheet";
-import {
-  FeedbackNotice,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import type { ResourceActionMutationBoundary } from "@/lib/actions/resourceActionMutation";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { useThrowLater } from "@/lib/api/serverState";
+import { useResource } from "@/lib/api/useResource";
+import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { putMediaAuthors } from "@/lib/contributors/api";
-import { MAX_CREDITS_PER_MANAGED_ROLE } from "@/lib/contributors/constants";
 import {
-  createMutationIntent,
-  type MutationIntent,
-} from "@/lib/contributors/mutationIntent";
-import type {
-  AuthorBinding,
-  ContributorSearchItem,
-  MediaAuthorCredit,
-  MediaAuthors,
-} from "@/lib/contributors/types";
+  getMediaAuthors,
+  putMediaAuthors,
+  type AuthorBinding,
+  type ContributorSearchItem,
+} from "@/lib/contributors/api";
+import { contributorNameKey } from "@/lib/contributors/credits";
 import { createRandomId } from "@/lib/createRandomId";
+import { useMediaBibliographyInvalidation } from "@/lib/media/MediaSummaryProvider";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
-import type {
-  ResourceActionMutationBoundary,
-  ResourceActionMutationLease,
-} from "@/lib/actions/resourceActionMutation";
-import AuthorSearchField, { normalizedNameKey } from "./AuthorSearchField";
+import AuthorSearchField from "./AuthorSearchField";
 import styles from "./MediaAuthorsEditor.module.css";
 
-/**
- * `MediaAuthorsEditor` is the edit-authors dialog (content spec §2). Desktop uses
- * the shared `Dialog` (on `useDialogOverlay`); mobile uses the stay-mounted
- * `MobileSheet`, chosen by `useIsMobileViewport`. Both route Escape / backdrop /
- * history-Back / drag through one dirty guard (`onDismissRequest`).
- *
- * Mount contract: keep this component mounted across the open/close cycle and
- * drive visibility with `open` (the media pane keeps it mounted once opened), so
- * the mobile sheet's history-dismiss can observe `open` going false. It reseeds
- * its editable state from `authors` each time it opens.
- */
+const MAX_AUTHORS = 20;
 
-interface BoundRow {
-  kind: "bound";
-  localId: string;
-  binding: AuthorBinding;
-  creditedName: string;
-  /** Canonical display of the bound identity — the row's context line. */
-  canonicalDisplay: string;
+interface Bound {
+  readonly id: string;
+  readonly binding: AuthorBinding;
+  readonly creditedName: string;
+  /** The bound person's canonical name: the row's context line. */
+  readonly canonical: string;
 }
+type Row =
+  | ({ readonly kind: "Bound" } & Bound)
+  | {
+      readonly kind: "Searching";
+      readonly id: string;
+      /** Change: the row to restore on abandon; Add: null (abandon removes it). */
+      readonly revert: Bound | null;
+    };
 
-interface SearchingRow {
-  kind: "searching";
-  localId: string;
-  initialQuery: string;
-  selectInitial: boolean;
-  /** null → a fresh Add (abandon removes the row); else the prior bound row to revert to on abandon. */
-  revertTo: BoundRow | null;
-}
+/** A PUT body before its client mutation id is chosen. */
+type Draft =
+  | Omit<Schema<"ManualMediaAuthorsRequest">, "clientMutationId">
+  | Omit<Schema<"AutomaticMediaAuthorsRequest">, "clientMutationId">;
 
-type EditorRow = BoundRow | SearchingRow;
-
-type PendingFocus = { type: "add" } | { type: "input"; localId: string };
-
-function seedRows(authors: MediaAuthorCredit[]): BoundRow[] {
-  return authors.map((author) => ({
-    kind: "bound",
-    localId: createRandomId("author-row"),
-    binding: { kind: "existing", contributorHandle: author.contributorHandle },
-    creditedName: author.creditedName,
-    canonicalDisplay: author.displayName,
-  }));
-}
-
-function bindingIdentity(binding: AuthorBinding): string {
-  return binding.kind === "existing"
+const bound = (row: Bound): Row => ({ kind: "Bound", ...row });
+const identity = (binding: AuthorBinding) =>
+  binding.kind === "existing"
     ? `existing:${binding.contributorHandle}`
-    : `new:${normalizedNameKey(binding.displayName)}`;
-}
+    : `new:${contributorNameKey(binding.displayName)}`;
+// JSON, so a credited name holding a delimiter can never collide two lists.
+const signature = (rows: readonly Bound[]) =>
+  JSON.stringify(rows.map((row) => [identity(row.binding), row.creditedName]));
+const authorCount = (n: number) =>
+  n === 0 ? "No authors" : n === 1 ? "1 author" : `${n} authors`;
 
-// JSON-encode each (identity, creditedName) tuple so a credited name that happens
-// to contain the join delimiters can never make two materially different row
-// lists compare equal (which would wrongly disable Save, or collide the intent
-// key). Value equality follows §2.5: existing rows by handle, new rows by the
-// normalized display key.
-function boundSignature(rows: BoundRow[]): string {
-  return JSON.stringify(rows.map((row) => [bindingIdentity(row.binding), row.creditedName]));
-}
-
-function loadedSignature(authors: MediaAuthorCredit[]): string {
-  return JSON.stringify(authors.map((a) => [`existing:${a.contributorHandle}`, a.creditedName]));
-}
-
-function removedAnnouncement(name: string, remaining: number): string {
-  const count =
-    remaining === 0 ? "No authors" : remaining === 1 ? "1 author" : `${new Intl.NumberFormat().format(remaining)} authors`;
-  return `Removed ${name}. ${count}.`;
-}
-
-function mediaAuthorsErrorMessage(error: unknown): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  switch (error.code) {
-    case "E_NETWORK":
-      return {
-        tone: "Danger",
-        title: "The change couldn’t be confirmed",
-        message: "Retry to safely check whether it was saved.",
-        requestId: error.requestId,
-      };
-    case "E_NOT_FOUND":
-      return {
-        tone: "Danger",
-        title: "This work is no longer available",
-        requestId: error.requestId,
-      };
-    case "E_FORBIDDEN":
-      return {
-        tone: "Danger",
-        title: "You can’t edit authors for this work",
-        requestId: error.requestId,
-      };
-    case "E_INVALID_REQUEST":
-      return {
-        tone: "Danger",
-        title: "The authors weren’t updated",
-        message: "Review every credited name and retry.",
-        requestId: error.requestId,
-      };
-    case "E_AUTHOR_ALREADY_LISTED":
-      return {
-        tone: "Danger",
-        title: "That author is already listed",
-        message: "Choose each author once.",
-        requestId: error.requestId,
-      };
-    case "E_AUTHOR_NOT_SELECTABLE":
-      return {
-        tone: "Danger",
-        title: "That author can’t be selected",
-        message: "Choose another author and retry.",
-        requestId: error.requestId,
-      };
-    case "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH":
-      return {
-        tone: "Danger",
-        title: "The authors weren’t updated",
-        message: "Retry the saved draft.",
-        requestId: error.requestId,
-      };
-    default:
-      throw error;
-  }
-}
-
-interface MediaAuthorsEditorProps {
-  /** Visibility gate. The media pane keeps this mounted; drive with this. */
-  open: boolean;
-  mediaId: string;
-  /**
-   * The loaded author-role credits (the media pane maps the media DTO's
-   * author-role credits into this camel shape). The editor reseeds from this each
-   * open and diffs against it for the dirty flag.
-   */
-  authors: MediaAuthorCredit[];
-  /** Whether authors are pinned to manual; drives the reset affordance. */
-  authorMode: "automatic" | "manual";
-  returnFocusTo: ReturnFocusTarget;
-  returnFocusFallback: ReturnFocusTarget;
-  /** Dismiss (accepted): close without a PUT. */
-  onClose: () => void;
-  /** Exact canonical action boundary acquired immediately before the PUT. */
-  mutation: ResourceActionMutationBoundary;
-  /** A successful PUT returned the fresh slice — resource credits update from it. */
-  onSaved: (
-    next: MediaAuthors,
-    lease: ResourceActionMutationLease,
-  ) => Promise<void>;
-}
+const ERRORS: Readonly<Record<string, readonly [string, string?]>> = {
+  E_NETWORK: [
+    "The change couldn’t be confirmed",
+    "Retry to safely check whether it was saved.",
+  ],
+  E_NOT_FOUND: ["This work is no longer available"],
+  E_FORBIDDEN: ["You can’t edit authors for this work"],
+  E_INVALID_REQUEST: [
+    "The authors weren’t updated",
+    "Review every credited name and retry.",
+  ],
+  E_AUTHOR_ALREADY_LISTED: [
+    "That author is already listed",
+    "Choose each author once.",
+  ],
+  E_AUTHOR_NOT_SELECTABLE: [
+    "That author can’t be selected",
+    "Choose another author and retry.",
+  ],
+  E_IDEMPOTENCY_KEY_REPLAY_MISMATCH: [
+    "The authors weren’t updated",
+    "Retry the saved draft.",
+  ],
+};
 
 export default function MediaAuthorsEditor({
-  open,
   mediaId,
-  authors,
-  authorMode,
-  returnFocusTo,
-  returnFocusFallback,
-  onClose,
   mutation,
-  onSaved,
-}: MediaAuthorsEditorProps) {
-  const isMobile = useIsMobileViewport();
-  const intentRef = useRef<MutationIntent | null>(null);
-  if (intentRef.current === null) intentRef.current = createMutationIntent();
-  const intent = intentRef.current;
+  returnFocusTo,
+  onClose,
+}: {
+  readonly mediaId: string;
+  /** The canonical action boundary, begun immediately before each PUT. */
+  readonly mutation: ResourceActionMutationBoundary;
+  readonly returnFocusTo: ReturnFocusTarget;
+  readonly onClose: () => void;
+}) {
+  const feedback = useFeedback();
+  const source = useResource({
+    cacheKey: `media-authors:${mediaId}`,
+    load: (signal) => getMediaAuthors(mediaId, signal),
+  });
+  useEffect(() => {
+    if (source.status !== "error") return;
+    feedback.publish({
+      kind: "Hud",
+      key: `media-authors:${mediaId}`,
+      content: {
+        tone: "Danger",
+        title: "Authors couldn’t be loaded",
+        requestId: source.error.requestId,
+      },
+    });
+    onClose();
+  }, [feedback, mediaId, onClose, source]);
+  if (source.status !== "ready") return null;
+  const loaded = source.data.authors.map((credit): Bound => ({
+    id: createRandomId("author-row"),
+    binding: {
+      kind: "existing",
+      contributorHandle: credit.contributor_handle!,
+    },
+    creditedName: credit.credited_name,
+    canonical: credit.contributor_display_name ?? credit.credited_name,
+  }));
+  return (
+    <Editor
+      mediaId={mediaId}
+      loaded={loaded}
+      manual={source.data.manual}
+      mutation={mutation}
+      returnFocusTo={returnFocusTo}
+      onClose={onClose}
+    />
+  );
+}
 
-  const [rows, setRows] = useState<EditorRow[]>(() => seedRows(authors));
+function Editor({
+  mediaId,
+  loaded,
+  manual,
+  mutation,
+  returnFocusTo,
+  onClose,
+}: {
+  readonly mediaId: string;
+  readonly loaded: readonly Bound[];
+  readonly manual: boolean;
+  readonly mutation: ResourceActionMutationBoundary;
+  readonly returnFocusTo: ReturnFocusTarget;
+  readonly onClose: () => void;
+}) {
+  const isMobile = useIsMobileViewport();
+  const feedback = useFeedback();
+  const invalidateBibliography = useMediaBibliographyInvalidation();
+  const throwLater = useThrowLater();
+  const [rows, setRows] = useState<readonly Row[]>(() => loaded.map(bound));
   const [notice, setNotice] = useState<FeedbackContent | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
   const [announcement, setAnnouncement] = useState("");
-  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-
-  const inputRefs = useRef(new Map<string, HTMLInputElement>());
-  const addButtonRef = useRef<HTMLButtonElement>(null);
+  const mutationId = useRef<{
+    readonly payload: string;
+    readonly id: string;
+  } | null>(null);
+  const focusTarget = useRef<string | null>(null);
+  const lastFocus = useRef<HTMLElement | null>(null);
+  const addRef = useRef<HTMLButtonElement>(null);
   const keepEditingRef = useRef<HTMLButtonElement>(null);
-  const lastFocusRef = useRef<HTMLElement | null>(null);
-  const pendingFocusRef = useRef<PendingFocus | null>(null);
-  const wasOpenRef = useRef(open);
+  const baseId = useId();
+  const capId = `${baseId}-cap`;
 
-  const idBase = useMemo(() => createRandomId("author-editor"), []);
-  const capNoticeId = `${idBase}-cap`;
-  const discardTitleId = `${idBase}-discard-title`;
-
-  // Reseed the editable state on the closed→open edge; never clobber edits while
-  // open (the media pane passes a fresh `authors` array each render).
+  // Move focus after the DOM settles: to a row's credited input, or to Add.
   useEffect(() => {
-    if (open && !wasOpenRef.current) {
-      setRows(seedRows(authors));
-      setNotice(null);
-      setSaving(false);
-      setConfirmingDiscard(false);
-      setAnnouncement("");
-      intent.discard();
-    }
-    wasOpenRef.current = open;
-  }, [open, authors, intent]);
-
-  // Apply a queued focus move after the DOM settles (add/remove/bind/abandon).
-  useEffect(() => {
-    const target = pendingFocusRef.current;
-    if (!target) return;
-    pendingFocusRef.current = null;
-    if (target.type === "add") addButtonRef.current?.focus();
-    else inputRefs.current.get(target.localId)?.focus();
+    const target = focusTarget.current;
+    focusTarget.current = null;
+    if (target === "add") addRef.current?.focus();
+    else if (target !== null)
+      document.getElementById(`${baseId}-${target}`)?.focus();
   });
-
   useEffect(() => {
     if (confirmingDiscard) keepEditingRef.current?.focus();
   }, [confirmingDiscard]);
 
-  const boundRows = rows.filter((row): row is BoundRow => row.kind === "bound");
-  const boundCount = boundRows.length;
-  // An in-progress Change is still visibly the row it started from until a new
-  // author is chosen: fold its prior binding (`revertTo`) back into the dirty
-  // diff and the save payload, so a pristine Change never enables Save and a Save
-  // mid-Change never silently drops (or prunes) the row being changed (F1).
-  const committedRows: BoundRow[] = rows.flatMap((row) =>
-    row.kind === "bound" ? [row] : row.revertTo ? [row.revertTo] : [],
+  const boundRows = rows.filter((row) => row.kind === "Bound");
+  // A row mid-Change still counts as the row it started from, so a pristine
+  // Change never enables Save and a Save mid-Change never drops the row.
+  const committed = rows.flatMap((row): Bound[] =>
+    row.kind === "Bound" ? [row] : row.revert ? [row.revert] : [],
   );
-  const atCap = boundCount >= MAX_CREDITS_PER_MANAGED_ROLE;
-  // Every row (bound or mid-search) can become at most one author; refuse to open
-  // a new search row once the total would reach the cap, so concurrent search
-  // rows can never be bound past 20 (F3).
-  const canAddRow = rows.length < MAX_CREDITS_PER_MANAGED_ROLE;
-  const dirty = boundSignature(committedRows) !== loadedSignature(authors);
-  const isPinned = authorMode === "manual";
+  const dirty = signature(committed) !== signature(loaded);
+  const takenHandles = new Set(
+    boundRows.flatMap((row) =>
+      row.binding.kind === "existing" ? [row.binding.contributorHandle] : [],
+    ),
+  );
+  const takenNewKeys = new Set(
+    boundRows.flatMap((row) =>
+      row.binding.kind === "new"
+        ? [contributorNameKey(row.binding.displayName)]
+        : [],
+    ),
+  );
 
-  const takenHandles = useMemo(() => {
-    const set = new Set<string>();
-    for (const row of rows) {
-      if (row.kind === "bound" && row.binding.kind === "existing") {
-        set.add(row.binding.contributorHandle);
-      }
-    }
-    return set;
-  }, [rows]);
-
-  const takenNewNameKeys = useMemo(() => {
-    const set = new Set<string>();
-    for (const row of rows) {
-      if (row.kind === "bound" && row.binding.kind === "new") {
-        set.add(normalizedNameKey(row.binding.displayName));
-      }
-    }
-    return set;
-  }, [rows]);
-
-  function addAuthor() {
-    if (!canAddRow || saving) return;
-    setNotice(null);
-    setRows((current) => [
-      ...current,
-      {
-        kind: "searching",
-        localId: createRandomId("author-row"),
-        initialQuery: "",
-        selectInitial: false,
-        revertTo: null,
-      },
-    ]);
-    // The new AuthorSearchField autofocuses on mount.
-  }
-
-  function changeRow(localId: string) {
+  const replace = (id: string, next: Row | null) =>
     setRows((current) =>
-      current.map((row) =>
-        row.localId === localId && row.kind === "bound"
-          ? {
-              kind: "searching",
-              localId: row.localId,
-              initialQuery: row.canonicalDisplay,
-              selectInitial: true,
-              revertTo: row,
-            }
-          : row,
-      ),
+      current.flatMap((row) => (row.id !== id ? [row] : next ? [next] : [])),
     );
+
+  function bind(id: string, revert: Bound | null, next: Bound) {
+    // Re-choosing the row's own author on a Change restores it verbatim.
+    const same =
+      revert !== null && identity(revert.binding) === identity(next.binding);
+    replace(id, bound(same ? revert : next));
+    focusTarget.current = id;
   }
 
-  function abandonSearching(localId: string) {
-    const row = rows.find((candidate) => candidate.localId === localId);
-    if (!row || row.kind !== "searching") return;
-    if (row.revertTo) {
-      const revert = row.revertTo;
-      setRows((current) => current.map((r) => (r.localId === localId ? revert : r)));
-      pendingFocusRef.current = { type: "input", localId };
-    } else {
-      setRows((current) => current.filter((r) => r.localId !== localId));
-      pendingFocusRef.current = { type: "add" };
-    }
+  function abandon(id: string, revert: Bound | null) {
+    replace(id, revert ? bound(revert) : null);
+    focusTarget.current = revert ? id : "add";
   }
 
-  function bindExisting(localId: string, item: ContributorSearchItem) {
-    setRows((current) =>
-      current.map((row) => {
-        if (row.localId !== localId || row.kind !== "searching") return row;
-        // N3: re-selecting the row's own author on a Change reverts verbatim (no reset).
-        if (
-          row.revertTo &&
-          row.revertTo.binding.kind === "existing" &&
-          row.revertTo.binding.contributorHandle === item.handle
-        ) {
-          return row.revertTo;
-        }
-        return {
-          kind: "bound",
-          localId,
-          binding: { kind: "existing", contributorHandle: item.handle },
-          creditedName: item.displayName,
-          canonicalDisplay: item.displayName,
-        };
-      }),
-    );
-    pendingFocusRef.current = { type: "input", localId };
-  }
-
-  function bindNew(localId: string, displayName: string) {
-    const cleaned = displayName.trim();
-    setRows((current) =>
-      current.map((row) =>
-        row.localId === localId && row.kind === "searching"
-          ? {
-              kind: "bound",
-              localId,
-              binding: { kind: "new", displayName: cleaned },
-              creditedName: cleaned,
-              canonicalDisplay: cleaned,
-            }
-          : row,
-      ),
-    );
-    pendingFocusRef.current = { type: "input", localId };
-  }
-
-  function editCreditedName(localId: string, value: string) {
-    setRows((current) =>
-      current.map((row) =>
-        row.localId === localId && row.kind === "bound" ? { ...row, creditedName: value } : row,
-      ),
-    );
-  }
-
-  function removeBound(localId: string) {
-    const index = boundRows.findIndex((row) => row.localId === localId);
-    if (index < 0) return;
-    const removed = boundRows[index]!;
-    const nextBound = boundRows[index + 1];
-    setRows((current) => current.filter((row) => row.localId !== localId));
-    pendingFocusRef.current = nextBound
-      ? { type: "input", localId: nextBound.localId }
-      : { type: "add" };
-    setAnnouncement(removedAnnouncement(removed.creditedName, boundCount - 1));
-  }
-
-  function moveBound(localId: string, direction: -1 | 1) {
-    const pos = boundRows.findIndex((row) => row.localId === localId);
-    if (pos < 0) return;
-    const targetPos = pos + direction;
-    if (targetPos < 0 || targetPos >= boundRows.length) return;
-    setRows((current) => {
-      const boundIndices = current
-        .map((row, index) => (row.kind === "bound" ? index : -1))
-        .filter((index) => index >= 0);
-      const a = boundIndices[pos]!;
-      const b = boundIndices[targetPos]!;
-      const next = current.slice();
-      const tmp = next[a]!;
-      next[a] = next[b]!;
-      next[b] = tmp;
-      return next;
-    });
+  function remove(row: Bound) {
+    const index = boundRows.findIndex((other) => other.id === row.id);
+    replace(row.id, null);
+    focusTarget.current = boundRows[index + 1]?.id ?? "add";
     setAnnouncement(
-      `Moved ${boundRows[pos]!.creditedName} to position ${targetPos + 1} of ${boundRows.length}`,
+      `Removed ${row.creditedName}. ${authorCount(boundRows.length - 1)}.`,
     );
-    // A move that lands on an extremity disables the button just pressed, so the
-    // browser would drop focus to <body>. Re-home focus onto the moved row's
-    // credited input so keyboard reorder keeps its place (M-1). Non-extreme moves
-    // keep focus on the still-enabled pressed button via keyed reconciliation.
-    if (targetPos === 0 || targetPos === boundRows.length - 1) {
-      pendingFocusRef.current = { type: "input", localId };
-    }
   }
 
-  function handleClose() {
-    intent.discard();
+  function move(row: Bound, by: -1 | 1) {
+    const position = boundRows.findIndex((other) => other.id === row.id);
+    const target = position + by;
+    const from = rows.findIndex((other) => other.id === row.id);
+    const to = rows.findIndex((other) => other.id === boundRows[target]!.id);
+    const next = rows.slice();
+    [next[from], next[to]] = [next[to]!, next[from]!];
+    setRows(next);
+    setAnnouncement(
+      `Moved ${row.creditedName} to position ${target + 1} of ${boundRows.length}`,
+    );
+    // An extreme move disables the pressed button; keep focus on the row.
+    if (target === 0 || target === boundRows.length - 1)
+      focusTarget.current = row.id;
+  }
+
+  async function submit(body: Draft) {
+    if (saving) return;
+    const lease = mutation.begin();
+    if (lease === null) return;
+    const payload = JSON.stringify(body);
+    if (mutationId.current?.payload !== payload) {
+      mutationId.current = { payload, id: createRandomId("media-authors") };
+    }
+    setSaving(true);
+    setNotice(null);
+    try {
+      await putMediaAuthors(mediaId, {
+        ...body,
+        clientMutationId: mutationId.current.id,
+      });
+    } catch (error) {
+      lease.abort();
+      setSaving(false);
+      if (handleUnauthenticatedApiError(error)) return;
+      const copy =
+        isApiError(error) && !isSameSystemApiDefect(error)
+          ? ERRORS[error.code]
+          : undefined;
+      if (copy === undefined || !isApiError(error))
+        return throwLater({ error });
+      // The key now names another request server-side: the next Save mints one.
+      if (error.code === "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH")
+        mutationId.current = null;
+      setNotice({
+        tone: "Danger",
+        title: copy[0],
+        message: copy[1],
+        requestId: error.requestId,
+      });
+      return;
+    }
+    // Saved. Refreshing other views is best effort and never re-sends the PUT.
+    invalidateBibliography(mediaId);
+    try {
+      await lease.reconcile({
+        kind: "Subjects",
+        refs: [assumeCanonicalResourceRef(`media:${mediaId}`)],
+      });
+      await lease.commit();
+    } catch (error) {
+      if (!isApiError(error) || isSameSystemApiDefect(error))
+        return throwLater({ error });
+      feedback.publish({
+        kind: "Hud",
+        content: {
+          tone: "Neutral",
+          title: "Authors saved",
+          message: "Some views will update when they next refresh.",
+          requestId: error.requestId,
+        },
+      });
+    }
     onClose();
   }
 
   function requestDismiss(): DismissDecision {
-    // A dismissal mid-flight would race the pending PUT (a successful onSaved/toast
-    // would land in a closed editor). Block it silently — Cancel is already
-    // disabled while saving, and the save resolves to either a close or an
-    // in-dialog error (F7).
+    // A dismissal mid-save would race the PUT; Cancel is disabled meanwhile.
     if (saving) return "blocked";
-    if (dirty) {
-      lastFocusRef.current = (document.activeElement as HTMLElement | null) ?? null;
-      setConfirmingDiscard(true);
-      return "blocked";
-    }
-    return "accepted";
-  }
-
-  function attemptCancel() {
-    if (requestDismiss() === "accepted") handleClose();
+    if (!dirty) return "accepted";
+    lastFocus.current = document.activeElement as HTMLElement | null;
+    setConfirmingDiscard(true);
+    return "blocked";
   }
 
   function keepEditing() {
     setConfirmingDiscard(false);
-    const target = lastFocusRef.current;
-    if (target && document.contains(target)) {
-      requestAnimationFrame(() => target.focus());
-    }
+    const target = lastFocus.current;
+    if (target?.isConnected) requestAnimationFrame(() => target.focus());
   }
 
-  function handleMutationError(error: unknown) {
-    setSaving(false);
-    if (handleUnauthenticatedApiError(error)) return;
-    if (
-      isApiError(error) &&
-      error.code === "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH"
-    ) {
-      intent.rotate();
-    }
-    try {
-      setNotice(mediaAuthorsErrorMessage(error));
-    } catch (caughtDefect) {
-      setDefect({ error: caughtDefect });
-    }
-  }
-
-  async function save() {
-    if (!dirty || saving) return;
-    const lease = mutation.begin();
-    if (lease === null) return;
-    const payloadAuthors = committedRows.map((row) => ({
-      creditedName: row.creditedName,
-      binding: row.binding,
-    }));
-    const clientMutationId = intent.clientMutationId(`manual|${boundSignature(committedRows)}`);
-    setSaving(true);
-    setNotice(null);
-    try {
-      const result = await putMediaAuthors(mediaId, {
-        clientMutationId,
-        mode: "manual",
-        authors: payloadAuthors,
-      });
-      intent.discard();
-      await onSaved(result, lease);
-      handleClose();
-    } catch (error) {
-      lease.abort();
-      handleMutationError(error);
-    }
-  }
-
-  async function resetToAutomatic() {
-    if (saving) return;
-    const lease = mutation.begin();
-    if (lease === null) return;
-    const clientMutationId = intent.clientMutationId("automatic");
-    setSaving(true);
-    setNotice(null);
-    try {
-      const result = await putMediaAuthors(mediaId, { clientMutationId, mode: "automatic" });
-      intent.discard();
-      await onSaved(result, lease);
-      handleClose();
-    } catch (error) {
-      lease.abort();
-      handleMutationError(error);
-    }
-  }
-
-  function renderRow(row: EditorRow) {
-    if (row.kind === "searching") {
+  function renderRow(row: Row) {
+    if (row.kind === "Searching") {
       return (
-        <li key={row.localId} className={styles.row} data-searching>
-          <div className={styles.searchWrap}>
-            <AuthorSearchField
-              initialQuery={row.initialQuery}
-              selectInitial={row.selectInitial}
-              takenHandles={takenHandles}
-              takenNewNameKeys={takenNewNameKeys}
-              onSelectExisting={(item) => bindExisting(row.localId, item)}
-              onCreateNew={(name) => bindNew(row.localId, name)}
-              onDismiss={() => abandonSearching(row.localId)}
-            />
-          </div>
-          <button
-            type="button"
-            className={styles.textButton}
-            aria-label={row.revertTo ? "Cancel changing author" : "Remove new author row"}
-            onClick={() => abandonSearching(row.localId)}
+        <li key={row.id} className={styles.row}>
+          <AuthorSearchField
+            initialQuery={row.revert?.canonical ?? ""}
+            selectInitial={row.revert !== null}
+            takenHandles={takenHandles}
+            takenNewKeys={takenNewKeys}
+            onSelectExisting={(item: ContributorSearchItem) =>
+              bind(row.id, row.revert, {
+                id: row.id,
+                binding: { kind: "existing", contributorHandle: item.handle },
+                creditedName: item.displayName,
+                canonical: item.displayName,
+              })
+            }
+            onCreateNew={(name) =>
+              bind(row.id, row.revert, {
+                id: row.id,
+                binding: { kind: "new", displayName: name },
+                creditedName: name,
+                canonical: name,
+              })
+            }
+            onDismiss={() => abandon(row.id, row.revert)}
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={
+              row.revert ? "Cancel changing author" : "Remove new author row"
+            }
+            onClick={() => abandon(row.id, row.revert)}
           >
-            {row.revertTo ? "Cancel" : "Remove"}
-          </button>
+            {row.revert ? "Cancel" : "Remove"}
+          </Button>
         </li>
       );
     }
-
-    const pos = boundRows.findIndex((candidate) => candidate.localId === row.localId);
-    const inputId = `${idBase}-credited-${row.localId}`;
+    const position = boundRows.indexOf(row);
     return (
-      <li key={row.localId} className={styles.row}>
+      <li key={row.id} className={styles.row}>
         <div className={styles.rowMain}>
-          <label className={styles.creditedLabel} htmlFor={inputId}>
+          <label className={styles.label} htmlFor={`${baseId}-${row.id}`}>
             Credited as
           </label>
           <Input
-            id={inputId}
-            ref={(el) => {
-              if (el) inputRefs.current.set(row.localId, el);
-              else inputRefs.current.delete(row.localId);
-            }}
-            className={styles.creditedInput}
+            id={`${baseId}-${row.id}`}
+            className={styles.input}
             value={row.creditedName}
             dir="auto"
             placeholder="Name as credited on this work"
-            onChange={(event) => editCreditedName(row.localId, event.target.value)}
+            onChange={(event) =>
+              replace(row.id, { ...row, creditedName: event.target.value })
+            }
           />
-          <div className={styles.context}>
+          <div className={styles.meta}>
             {row.binding.kind === "existing" ? (
-              <span dir="auto">{row.canonicalDisplay}</span>
+              <span dir="auto">{row.canonical}</span>
             ) : (
               "New author"
             )}
           </div>
         </div>
         <div className={styles.rowControls}>
-          <button
-            type="button"
-            className={styles.iconButton}
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
             aria-label={`Move ${row.creditedName} up`}
-            disabled={pos === 0}
-            onClick={() => moveBound(row.localId, -1)}
+            disabled={position === 0}
+            onClick={() => move(row, -1)}
           >
             <ArrowUp size={16} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className={styles.iconButton}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
             aria-label={`Move ${row.creditedName} down`}
-            disabled={pos === boundRows.length - 1}
-            onClick={() => moveBound(row.localId, 1)}
+            disabled={position === boundRows.length - 1}
+            onClick={() => move(row, 1)}
           >
             <ArrowDown size={16} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className={styles.textButton}
-            title="Change"
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
             aria-label={`Change author for ${row.creditedName}`}
-            onClick={() => changeRow(row.localId)}
+            onClick={() =>
+              replace(row.id, { kind: "Searching", id: row.id, revert: row })
+            }
           >
             Change
-          </button>
-          <button
-            type="button"
-            className={styles.textButton}
-            title="Remove"
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
             aria-label={`Remove ${row.creditedName}`}
-            onClick={() => removeBound(row.localId)}
+            onClick={() => remove(row)}
           >
             Remove
-          </button>
+          </Button>
         </div>
       </li>
     );
   }
 
-  function renderContent(showTitle: boolean) {
-    if (defect) throw defect.error;
-    return (
-      <div className={styles.editor}>
-        <div className={styles.head}>
-          {showTitle ? <h2 className={styles.title}>Edit authors</h2> : null}
-          <p className={styles.helper}>
-            Your changes apply to this work and will be kept when it is refreshed or enriched again.
-          </p>
-          {isPinned ? (
-            <div className={styles.pinnedRow}>
-              <span className={styles.pinned}>Authors edited manually</span>
-              <button
-                type="button"
-                className={styles.reset}
-                onClick={() => void resetToAutomatic()}
-                disabled={saving}
-              >
-                Reset to automatic authors
-              </button>
-            </div>
-          ) : null}
-        </div>
-
-        {notice ? (
-          <FeedbackNotice content={notice} announcement="Assertive" />
-        ) : null}
-
-        <ul className={styles.rows}>{rows.map((row) => renderRow(row))}</ul>
-
-        {/* Visual notice only — a freshly-inserted role="status" announces
-            unreliably (L-3); the disabled Add button's aria-describedby points
-            here so the limit is spoken on focus instead. */}
-        {atCap ? (
-          <p id={capNoticeId} className={styles.capNotice}>
-            A work can have up to 20 authors.
-          </p>
-        ) : null}
-        <div className={styles.addRow}>
-          <button
-            ref={addButtonRef}
-            type="button"
-            className={styles.addButton}
-            onClick={addAuthor}
-            disabled={!canAddRow || saving}
-            aria-label={atCap ? "Add author (limit reached)" : undefined}
-            aria-describedby={atCap ? capNoticeId : undefined}
+  const atCap = boundRows.length >= MAX_AUTHORS;
+  const content = (
+    <div className={styles.editor}>
+      <p className={styles.helper}>
+        Your changes apply to this work and will be kept when it is refreshed or
+        enriched again.
+      </p>
+      {manual ? (
+        <div className={styles.pinned}>
+          <span>Authors edited manually</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={saving}
+            onClick={() => void submit({ mode: "automatic" })}
           >
-            <Plus size={16} aria-hidden="true" /> Add author
-          </button>
+            Reset to automatic authors
+          </Button>
         </div>
-
-        <div className={styles.srOnly} role="status" aria-live="polite">
-          {announcement}
-        </div>
-
-        {confirmingDiscard ? (
-          // alertdialog + aria-labelledby so the destructive prompt is spoken when
-          // focus moves to "Keep editing" (a group aria-label is not reliably
-          // announced on programmatic focus-in) — H-1.
-          <div className={styles.confirm} role="alertdialog" aria-labelledby={discardTitleId}>
-            <p id={discardTitleId} className={styles.confirmTitle}>
-              Discard changes?
-            </p>
-            <div className={styles.confirmActions}>
-              <Button ref={keepEditingRef} variant="secondary" size="sm" onClick={keepEditing}>
-                Keep editing
-              </Button>
-              <Button variant="danger" size="sm" onClick={handleClose}>
-                Discard
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className={styles.footer}>
-            <Button variant="secondary" size="sm" onClick={attemptCancel} disabled={saving}>
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => void save()}
-              disabled={!dirty || saving}
-              loading={saving}
-            >
-              Save
-            </Button>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  if (isMobile) {
-    return (
-      <MobileSheet
-        active={open}
-        ariaLabel="Edit authors"
-        onDismiss={handleClose}
-        onDismissRequest={requestDismiss}
-        returnFocusTo={returnFocusTo}
-        returnFocusFallback={returnFocusFallback}
+      ) : null}
+      {notice ? (
+        <FeedbackNotice content={notice} announcement="Assertive" />
+      ) : null}
+      <ul className={styles.rows}>{rows.map(renderRow)}</ul>
+      {/* Visual only: the disabled Add button speaks the limit on focus. */}
+      {atCap ? (
+        <p id={capId} className={styles.meta}>
+          A work can have up to 20 authors.
+        </p>
+      ) : null}
+      <Button
+        ref={addRef}
+        variant="ghost"
+        size="sm"
+        leadingIcon={<Plus size={16} aria-hidden="true" />}
+        // Every row can become one author: no new search past the cap.
+        disabled={rows.length >= MAX_AUTHORS || saving}
+        aria-label={atCap ? "Add author (limit reached)" : undefined}
+        aria-describedby={atCap ? capId : undefined}
+        onClick={() => {
+          setNotice(null);
+          setRows([
+            ...rows,
+            {
+              kind: "Searching",
+              id: createRandomId("author-row"),
+              revert: null,
+            },
+          ]);
+        }}
       >
-        {renderContent(true)}
-      </MobileSheet>
-    );
-  }
-
-  return (
-    <Dialog
-      open={open}
-      title="Edit authors"
-      onClose={handleClose}
+        Add author
+      </Button>
+      <div className="sr-only" role="status" aria-live="polite">
+        {announcement}
+      </div>
+      {confirmingDiscard ? (
+        <div
+          className={styles.confirm}
+          role="alertdialog"
+          aria-labelledby={`${baseId}-discard`}
+        >
+          <p id={`${baseId}-discard`} className={styles.confirmTitle}>
+            Discard changes?
+          </p>
+          <div className={styles.footer}>
+            <Button
+              ref={keepEditingRef}
+              variant="secondary"
+              size="sm"
+              onClick={keepEditing}
+            >
+              Keep editing
+            </Button>
+            <Button variant="danger" size="sm" onClick={onClose}>
+              Discard
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className={styles.footer}>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={saving}
+            onClick={() => requestDismiss() === "accepted" && onClose()}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            loading={saving}
+            disabled={!dirty || saving}
+            onClick={() =>
+              void submit({
+                mode: "manual",
+                authors: committed.map((row) => ({
+                  creditedName: row.creditedName,
+                  binding: row.binding,
+                })),
+              })
+            }
+          >
+            Save
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+  return isMobile ? (
+    <MobileSheet
+      active
+      ariaLabel="Edit authors"
+      onDismiss={onClose}
       onDismissRequest={requestDismiss}
       returnFocusTo={returnFocusTo}
-      returnFocusFallback={returnFocusFallback}
+      returnFocusFallback={() => null}
     >
-      {renderContent(false)}
+      <h2 className={styles.title}>Edit authors</h2>
+      {content}
+    </MobileSheet>
+  ) : (
+    <Dialog
+      open
+      title="Edit authors"
+      onClose={onClose}
+      onDismissRequest={requestDismiss}
+      returnFocusTo={returnFocusTo}
+      returnFocusFallback={() => null}
+    >
+      {content}
     </Dialog>
   );
 }

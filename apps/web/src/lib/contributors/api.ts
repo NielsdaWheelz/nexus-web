@@ -1,180 +1,78 @@
-import { ApiError, type ApiPath, apiFetch } from "@/lib/api/client";
-import {
-  decodeCollectionCursor,
-  decodeCollectionRevision,
-  type CollectionCursor,
-  type CollectionPage,
-  type CollectionRevision,
-} from "@/lib/api/collectionPage";
-import { absent, present } from "@/lib/api/presence";
-import type { ApiJson } from "@/lib/api/wire";
-import { contributorWorksResource } from "@/lib/api/resource";
-import type { AuthorWorksView } from "@/lib/contributors/workView";
-import { parseContributorHandle } from "@/lib/contributors/handle";
-import { decodeOptionalPublicationDate } from "@/lib/dates/publicationDate";
-import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
-import type {
-  ContributorDetail,
-  ContributorSearchPage,
-  ContributorWorkItem,
-  MediaAuthorCredit,
-  MediaAuthors,
-  MediaAuthorsPutBody,
-} from "@/lib/contributors/types";
+// The contributor http surface on the generated wire types: author search,
+// detail, works pages, a media's author slice and the manual-authors PUT.
+// The server validates everything it is sent; nothing here re-validates it.
 
-interface Envelope<T> {
-  data: T;
+import { apiFetch } from "@/lib/api/client";
+import type { ServerPage } from "@/lib/api/serverState";
+import type { ApiJson, Schema } from "@/lib/api/wire";
+
+export type ContributorSearchItem = Schema<"ContributorSearchItemOut">;
+export type ContributorDetail = Schema<"ContributorDetailOut">;
+export type ContributorWork =
+  | Schema<"MediaContributorWorkItemOut">
+  | Schema<"PodcastContributorWorkItemOut">
+  | Schema<"ExternalContributorWorkItemOut">;
+export type AuthorBinding =
+  Schema<"ExistingAuthorBinding"> | Schema<"NewAuthorBinding">;
+type MediaAuthorsBody =
+  Schema<"ManualMediaAuthorsRequest"> | Schema<"AutomaticMediaAuthorsRequest">;
+
+const authorPath = (handle: string) =>
+  `/api/contributors/${encodeURIComponent(handle)}` as const;
+
+/** The first ten people whose names match `q`. */
+export async function searchContributors(
+  q: string,
+  signal: AbortSignal,
+): Promise<Schema<"ContributorSearchPageOut">> {
+  const query = new URLSearchParams({ q, limit: "10" });
+  type Body = ApiJson<"/contributors", "get">;
+  return (await apiFetch<Body>(`/api/contributors?${query}`, { signal })).data;
 }
 
-function encode(value: string): string {
-  return encodeURIComponent(value);
-}
-
-export function contributorDetailFromWire(
-  detail: ApiJson<"/contributors/{contributor_handle}", "get">["data"],
-): ContributorDetail {
-  return {
-    ...detail,
-    handle: parseContributorHandle(detail.handle),
-    actionSubject: { ref: assumeCanonicalResourceRef(detail.actionSubject.ref) },
-  };
-}
-
-export function contributorWorksPageFromWire(
-  page: ApiJson<"/contributors/{contributor_handle}/works", "get">["data"],
-): CollectionPage<ContributorWorkItem> {
-  try {
-    return {
-      items: page.items.map((item): ContributorWorkItem => {
-        if (item.kind === "Media") {
-          return {
-            ...item,
-            mediaSummary: item.mediaSummary,
-            actionSubject: { ref: assumeCanonicalResourceRef(item.actionSubject.ref) },
-          };
-        }
-        const date = decodeOptionalPublicationDate(item.date, "ContributorWorkItem.date");
-        if (item.kind === "Podcast") {
-          return {
-            ...item,
-            date,
-            actionSubject: { ref: assumeCanonicalResourceRef(item.actionSubject.ref) },
-          };
-        }
-        return { ...item, date };
-      }),
-      collectionRevision: decodeCollectionRevision(page.collectionRevision),
-      nextCursor: page.nextCursor.kind === "Present"
-        ? present(decodeCollectionCursor(page.nextCursor.value))
-        : absent(),
-    };
-  } catch (error) {
-    if (error instanceof ApiError) throw error;
-    throw new ApiError(
-      200,
-      "E_INVALID_RESPONSE",
-      error instanceof Error ? error.message : "Invalid CollectionPage",
-    );
-  }
-}
-
-function decodeMediaAuthorCredit(raw: unknown): MediaAuthorCredit {
-  const credit = raw as {
-    contributorHandle: string;
-    href: string;
-    displayName: string;
-    creditedName: string;
-  };
-  return {
-    contributorHandle: parseContributorHandle(credit.contributorHandle),
-    href: credit.href,
-    displayName: credit.displayName,
-    creditedName: credit.creditedName,
-  };
-}
-
-function decodeMediaAuthors(raw: unknown): MediaAuthors {
-  const authors = raw as {
-    authorMode: "automatic" | "manual";
-    authors?: unknown[] | null;
-    canEditAuthors: boolean;
-  };
-  return {
-    authorMode: authors.authorMode,
-    authors: Array.isArray(authors.authors) ? authors.authors.map(decodeMediaAuthorCredit) : [],
-    canEditAuthors: Boolean(authors.canEditAuthors),
-  };
-}
-
-export interface ContributorSearchOptions {
-  cursor?: string;
-  limit?: number;
-  signal?: AbortSignal;
-}
-
-export async function fetchContributorSearch(
-  query: string,
-  options: ContributorSearchOptions = {},
-): Promise<ContributorSearchPage> {
-  const params = new URLSearchParams();
-  params.set("q", query.trim());
-  if (options.cursor) params.set("cursor", options.cursor);
-  if (options.limit !== undefined) params.set("limit", String(options.limit));
-  const path = `/api/contributors?${params.toString()}` as ApiPath;
-  const response = await apiFetch<ApiJson<"/contributors", "get">>(
-    path,
-    { cache: "no-store", signal: options.signal },
-  );
-  return {
-    ...response.data,
-    contributors: response.data.contributors.map((item) => ({
-      ...item,
-      handle: parseContributorHandle(item.handle),
-    })),
-  };
-}
-
-export async function fetchContributorDetail(handle: string): Promise<ContributorDetail> {
-  const response = await apiFetch<ApiJson<"/contributors/{contributor_handle}", "get">>(
-    `/api/contributors/${encode(handle)}` as ApiPath,
-    { cache: "no-store" },
-  );
-  return contributorDetailFromWire(response.data);
-}
-
-export interface ContributorWorksOptions {
-  /** The exact works view this page belongs to; every page of a chain shares it. */
-  readonly view: AuthorWorksView;
-  readonly cursor?: CollectionCursor;
-  readonly collectionRevision?: CollectionRevision;
-  readonly limit?: number;
-  readonly signal?: AbortSignal;
-}
-
-export async function fetchContributorWorks(
+export async function getContributor(
   handle: string,
-  { view, cursor, collectionRevision, limit, signal }: ContributorWorksOptions,
-): Promise<CollectionPage<ContributorWorkItem>> {
-  const response = await apiFetch<ApiJson<"/contributors/{contributor_handle}/works", "get">>(
-    contributorWorksResource.clientPath({
-      handle,
-      view,
-      cursor,
-      collectionRevision,
-      limit,
-    }),
-    { cache: "no-store", signal },
-  );
-  return contributorWorksPageFromWire(response.data);
+  signal?: AbortSignal,
+): Promise<ContributorDetail> {
+  type Body = ApiJson<"/contributors/{contributor_handle}", "get">;
+  return (await apiFetch<Body>(authorPath(handle), { signal })).data;
+}
+
+/** One works page; `query` carries the view keys and the page keys as given. */
+export async function listContributorWorks(
+  handle: string,
+  query: URLSearchParams,
+  signal: AbortSignal,
+): Promise<ServerPage<ContributorWork>> {
+  type Body = ApiJson<"/contributors/{contributor_handle}/works", "get">;
+  const path = `${authorPath(handle)}/works?${query}` as const;
+  return (await apiFetch<Body>(path, { signal })).data;
+}
+
+/** The media's author-role credits that name a person, and its pin. */
+export async function getMediaAuthors(
+  mediaId: string,
+  signal: AbortSignal,
+): Promise<{
+  readonly authors: readonly Schema<"ContributorCreditOut">[];
+  readonly manual: boolean;
+}> {
+  type Body = ApiJson<"/media/{media_id}", "get">;
+  const path = `/api/media/${encodeURIComponent(mediaId)}` as const;
+  const media = (await apiFetch<Body>(path, { signal })).data;
+  return {
+    authors: media.contributors.filter(
+      (credit) => credit.role === "author" && credit.contributor_handle,
+    ),
+    manual: media.author_mode === "manual",
+  };
 }
 
 export async function putMediaAuthors(
   mediaId: string,
-  body: MediaAuthorsPutBody,
-): Promise<MediaAuthors> {
-  const response = await apiFetch<Envelope<unknown>>(
-    `/api/media/${encode(mediaId)}/authors` as ApiPath,
-    { method: "PUT", body: JSON.stringify(body) },
-  );
-  return decodeMediaAuthors(response.data);
+  body: MediaAuthorsBody,
+): Promise<void> {
+  type Body = ApiJson<"/media/{media_id}/authors", "put">;
+  const path = `/api/media/${encodeURIComponent(mediaId)}/authors` as const;
+  await apiFetch<Body>(path, { method: "PUT", body: JSON.stringify(body) });
 }
