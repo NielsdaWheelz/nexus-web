@@ -6,7 +6,6 @@ import { apiFetch, type ApiPath } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import type { CollectionRowView } from "@/lib/collections/types";
-import { mediaSummaryFromWire } from "@/lib/media/mediaSummary";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 
 export type SuggestionItem = Schema<"SuggestionItemOut">;
@@ -31,7 +30,7 @@ export function suggestionTargetId(target: SuggestionTarget): string {
 export function presentSuggestionItem({ target }: SuggestionItem): CollectionRowView {
   const actionSubject = { ref: assumeCanonicalResourceRef(target.ref) };
   if (target.kind === "Media") {
-    return presentMedia(mediaSummaryFromWire(target.mediaSummary), {
+    return presentMedia(target.mediaSummary, {
       id: target.ref,
       primary: {
         kind: "link",

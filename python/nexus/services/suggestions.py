@@ -19,7 +19,6 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql, visible_podcast_ids_cte_sql
-from nexus.schemas.presence import absent
 from nexus.schemas.suggestions import (
     MediaSuggestionTargetOut,
     PodcastSuggestionTargetOut,
@@ -424,7 +423,6 @@ def _hydrate(db: Session, viewer_id: UUID, picked: list[_Candidate]) -> list[Sug
     media = media_service.hydrate_compact_media_targets(
         db, viewer_id=viewer_id, media_ids=media_ids
     )
-    consumption = projection.consumption_for_media(db, viewer_id=viewer_id, media_ids=media_ids)
     podcasts = hydrate_compact_podcast_targets(
         db, viewer_id=viewer_id, podcast_ids=[c.id for c in picked if c.scheme == "podcast"]
     )
@@ -440,7 +438,6 @@ def _hydrate(db: Session, viewer_id: UUID, picked: list[_Candidate]) -> list[Sug
                         image_url=target.image_url,
                         href=target.href,
                     ),
-                    consumption=consumption[c.id],
                 )
             )
         else:
@@ -454,7 +451,6 @@ def _hydrate(db: Session, viewer_id: UUID, picked: list[_Candidate]) -> list[Sug
                         image_url=podcast.image_url,
                         href=podcast.href,
                     ),
-                    consumption=absent(),
                 )
             )
     return items

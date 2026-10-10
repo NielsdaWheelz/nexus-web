@@ -16,7 +16,13 @@ from nexus.responses import Data, ok, success_response
 from nexus.schemas.contributors import MediaAuthorsPutRequest
 from nexus.schemas.library import LibraryEntryRemovalOut, LibraryPlacementOptionOut
 from nexus.schemas.media import MediaLibrariesRequest, MediaOut
+from nexus.schemas.media_summary import (
+    MediaSummaryResolutionOut,
+    ResolvedMediaSummariesOut,
+    ResolveMediaSummariesIn,
+)
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentAccepted, MetadataEnrichmentRequest
+from nexus.schemas.presence import absent, present
 from nexus.services import contributors as contributors_service
 from nexus.services import library_entries, media_source_ingest, metadata_dispatch
 from nexus.services import media as media_service
@@ -25,6 +31,29 @@ from nexus.services import media_deletion as media_deletion_service
 router = APIRouter(tags=["media"])
 
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
+
+
+@router.post("/media/summaries/resolve")
+def resolve_media_summaries(
+    body: ResolveMediaSummariesIn, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[ResolvedMediaSummariesOut]:
+    summaries = {
+        media.id: media.summary
+        for media in media_service.list_collection_media_for_viewer_by_ids(
+            db, viewer_id=viewer.user_id, media_ids=body.media_ids
+        )
+    }
+    return Data(
+        data=ResolvedMediaSummariesOut(
+            items=[
+                MediaSummaryResolutionOut(
+                    media_id=media_id,
+                    summary=present(summaries[media_id]) if media_id in summaries else absent(),
+                )
+                for media_id in body.media_ids
+            ]
+        )
+    )
 
 
 @router.get("/media")

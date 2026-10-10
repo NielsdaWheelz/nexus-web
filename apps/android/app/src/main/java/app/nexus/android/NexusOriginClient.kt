@@ -139,11 +139,10 @@ internal class NexusOriginClient(
     suspend fun player(mediaId: UUID): JSONObject =
         data(Request.Builder().url(api("media", mediaId.toString(), "player")).get())
 
-    /** The newest listening sample of an episode; 204, or 409 with `details.current` for a stale reset epoch. */
-    suspend fun putListening(mediaId: UUID, body: JSONObject) {
-        val url = api("media", mediaId.toString(), "listening-state")
-        call(Request.Builder().url(url).put(body.toString().toRequestBody(JSON)))
-    }
+    /** Accepted position and fences; a stale epoch returns the same tuple in `details.current`. */
+    suspend fun putListening(mediaId: UUID, body: JSONObject): JSONObject =
+        data(Request.Builder().url(api("media", mediaId.toString(), "listening-state"))
+            .put(body.toString().toRequestBody(JSON)))
 
     /** One batch of activity spans; 204. The BFF adds the device id. */
     suspend fun postActivity(body: JSONObject) {

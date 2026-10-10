@@ -10,8 +10,7 @@ import type { ContributorCredit } from "@/lib/contributors/types";
 import type { PodcastSyncStatus } from "@/lib/podcasts/types";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import type { PublicationDate } from "@/lib/dates/publicationDate";
-import type { MediaDuration } from "@/lib/media/mediaSummary";
+import type { Schema } from "@/lib/api/wire";
 import type { PositiveCount } from "@/lib/consumption/activityFacts";
 
 export type CollectionItemKind =
@@ -26,7 +25,7 @@ export type CollectionItemKind =
   | "settings_row";
 
 export type CollectionActivity =
-  | { readonly kind: "MediaDuration"; readonly duration: MediaDuration }
+  | { readonly kind: "RemainingTime"; readonly modality: "Read" | "Listen"; readonly minutes: number }
   | {
       readonly kind: "Unplayed";
       readonly count: PositiveCount;
@@ -50,18 +49,16 @@ export type ExceptionalStatus =
       readonly status: Extract<PodcastSyncStatus, "Failed">;
     };
 
-export interface CollectionRowView {
+interface CollectionRowBase {
   readonly id: string;
   readonly kind: CollectionItemKind;
-  /** The common stored-media layout also applies when duration is unknown. */
-  readonly mediaIdentity?: true;
   readonly primary: ResourceRowPrimary;
   readonly title: {
     readonly text: string;
     readonly segments?: readonly EmphasisSegment[];
   };
   readonly contributors: readonly ContributorCredit[];
-  readonly publicationDate: Presence<PublicationDate>;
+  readonly publicationDate: Presence<string>;
   readonly context: Presence<CollectionContext>;
   readonly activity: Presence<CollectionActivity>;
   readonly exceptionalStatus: Presence<ExceptionalStatus>;
@@ -78,3 +75,9 @@ export interface CollectionRowView {
   readonly flatActions?: readonly ActionDescriptor[];
   readonly selected: boolean;
 }
+
+export type CollectionRowView = CollectionRowBase & (
+  | { readonly mediaIdentity: "Stored"; readonly consumption: Schema<"ConsumptionOut"> }
+  | { readonly mediaIdentity: "External"; readonly consumption?: never }
+  | { readonly mediaIdentity?: never; readonly consumption?: never }
+);

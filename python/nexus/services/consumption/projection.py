@@ -1,10 +1,10 @@
 """The consumption read model other slices compose.
 
-Read state has one rule, written once in SQL: explicit override, then the podcast listening
-ladder, then reader engagement, else unread. Listings join :func:`engagement_fact_rows_sql` or
+Read state has one rule, written once in SQL: explicit override, then current listening
+position, then reader engagement, else unread. Listings join :func:`engagement_fact_rows_sql` or
 :func:`episode_state_case_sql`; Lectern items, descriptors and :func:`media_read_states` read
-the same relation. The server owns where a play starts: an episode that is finished, or whose
-stored position lies in the finished zone, starts over.
+the same relation. The server owns where a play starts: an episode with persisted
+completion starts over.
 """
 
 from __future__ import annotations
@@ -20,11 +20,12 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.schemas import consumption as wire
+from nexus.schemas.consumption_state import ConsumptionStateValue
 from nexus.schemas.media import MediaReadState
-from nexus.schemas.media_summary import MediaDurationOut
+from nexus.schemas.media_summary import MediaDurationOut, MediaSummaryOut
 from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
 from nexus.schemas.reading_time import ReadingTimeEstimateOut
-from nexus.services.consumption import lectern, listening
+from nexus.services.consumption import lectern, listening, reader_cursor
 from nexus.services.playback_source import derive_playback_source
 
 FINISHED_PROGRESSION = 0.95
@@ -44,7 +45,6 @@ def _read_state_case_sql(
     *,
     listening: str,
     override: str,
-    episode: str,
     labels: tuple[str, str, str],
     media_kind: str | None = None,
     engagement: str | None = None,
@@ -55,11 +55,7 @@ def _read_state_case_sql(
     is podcast-episode only. ``engagement`` adds the reader arm.
     """
     finished, in_progress, unread = labels
-    duration = _duration_sql(listening, episode)
     audio = f"""
-            WHEN {duration} > 0
-                 AND {listening}.position_ms::float8 / {duration} >= {FINISHED_PROGRESSION}
-                THEN '{finished}'
             WHEN COALESCE({listening}.position_ms, 0) > 0 THEN '{in_progress}'"""
     if media_kind is not None:
         audio = f"""
@@ -69,12 +65,7 @@ def _read_state_case_sql(
                 END"""
     reader = (
         f"""
-            WHEN {engagement}.media_id IS NOT NULL THEN
-                CASE
-                    WHEN {engagement}.max_total_progression >= {FINISHED_PROGRESSION}
-                        THEN '{finished}'
-                    ELSE '{in_progress}'
-                END"""
+            WHEN {engagement}.media_id IS NOT NULL THEN '{in_progress}'"""
         if engagement is not None
         else ""
     )
@@ -100,7 +91,6 @@ def engagement_fact_rows_sql(*, media_ids_param: str | None = None) -> str:
     read_state = _read_state_case_sql(
         listening="pls",
         override="co",
-        episode="pe",
         labels=("Finished", "InProgress", "Unread"),
         media_kind="m.kind",
         engagement="res",
@@ -120,9 +110,10 @@ def engagement_fact_rows_sql(*, media_ids_param: str | None = None) -> str:
             ids.media_id,
             {read_state} AS read_state,
             CASE
-                WHEN m.kind = 'podcast_episode' AND {duration_ms} > 0
-                    THEN LEAST(1.0, pls.position_ms::float8 / {duration_ms})
-                WHEN m.kind <> 'podcast_episode' THEN res.max_total_progression
+                WHEN m.kind = 'podcast_episode' AND pls.media_id IS NOT NULL
+                     AND {duration_ms} > 0
+                    THEN LEAST(1.0, GREATEST(0.0, pls.position_ms::float8 / {duration_ms}))
+                WHEN m.kind <> 'podcast_episode' THEN cursor.total_progression
                 ELSE NULL
             END AS progress_fraction,
             CASE
@@ -143,19 +134,19 @@ def engagement_fact_rows_sql(*, media_ids_param: str | None = None) -> str:
         LEFT JOIN podcast_listening_states pls
           ON pls.user_id = :viewer_id AND pls.media_id = ids.media_id
         LEFT JOIN podcast_episodes pe ON pe.media_id = ids.media_id
+        LEFT JOIN ({reader_cursor.current_position_rows_sql()}) cursor
+          ON cursor.media_id = ids.media_id
     """
 
 
-def episode_state_case_sql(*, listening_alias: str, override_alias: str, episode_alias: str) -> str:
+def episode_state_case_sql(*, listening_alias: str, override_alias: str) -> str:
     """``played`` | ``in_progress`` | ``unplayed`` for one podcast episode.
 
-    Requires the joins of :func:`episode_state_joins_sql` and an episode alias exposing
-    ``duration_seconds``.
+    Requires the joins of :func:`episode_state_joins_sql`.
     """
     return _read_state_case_sql(
         listening=listening_alias,
         override=override_alias,
-        episode=episode_alias,
         labels=("played", "in_progress", "unplayed"),
     )
 
@@ -181,7 +172,7 @@ def lectern_membership_rows_sql() -> str:
 
 def _read_states(
     db: Session, viewer_id: UUID, media_ids: list[UUID]
-) -> dict[UUID, tuple[wire.ConsumptionStateValue, float | None, bool]]:
+) -> dict[UUID, tuple[ConsumptionStateValue, float | None, bool]]:
     """``(state, progress, resettable)`` for media with any consumption row."""
     rows = db.execute(
         text(engagement_fact_rows_sql(media_ids_param="media_ids")),
@@ -189,7 +180,7 @@ def _read_states(
     )
     return {
         row.media_id: (
-            cast(wire.ConsumptionStateValue, row.read_state),
+            cast(ConsumptionStateValue, row.read_state),
             row.progress_fraction,
             row.progress_resettable,
         )
@@ -216,22 +207,6 @@ def media_read_states(
     }
 
 
-def consumption_for_media(
-    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
-) -> dict[UUID, Present[wire.ConsumptionOut]]:
-    """Wire consumption for every requested media; media with no rows are unread."""
-    states = _read_states(db, viewer_id, media_ids)
-    return {
-        media_id: present(
-            wire.ConsumptionOut(
-                state=state, progress=presence_from_nullable(progress), progress_resettable=ok
-            )
-        )
-        for media_id in media_ids
-        for state, progress, ok in [states.get(media_id, ("Unread", None, False))]
-    }
-
-
 def player_descriptors(
     db: Session, *, viewer_id: UUID, media_ids: list[UUID]
 ) -> dict[UUID, wire.PlayerDescriptor]:
@@ -243,8 +218,6 @@ def player_descriptors(
                    m.provider, m.provider_id, p.title AS podcast_title, p.image_url,
                    {duration} AS duration_ms, COALESCE(pls.reset_epoch, 0) AS reset_epoch,
                    CASE WHEN co.status = 'finished'
-                             OR ({duration} > 0 AND pls.position_ms::float8 / {duration}
-                                 >= {FINISHED_PROGRESSION})
                         THEN 0 ELSE COALESCE(pls.position_ms, 0) END AS position_ms,
                    co.revision AS override_revision,
                    COALESCE(pls.playback_speed, ps.default_playback_speed, 1.0) AS rate,
@@ -311,20 +284,14 @@ def player_descriptors(
 
 
 def lectern_snapshot(
-    db: Session, *, viewer_id: UUID, rows: list[lectern.Row]
+    db: Session,
+    *,
+    viewer_id: UUID,
+    rows: list[lectern.Row],
+    summaries: dict[UUID, MediaSummaryOut],
 ) -> wire.LecternSnapshot:
     """The viewer's visible rows, with summaries, read states and descriptors built once."""
-    from nexus.services.media import list_collection_media_for_viewer_by_ids
-
     visible = [row for row in rows if row.visible]
-    media_ids = [row.media_id for row in visible]
-    summaries = {
-        media.id: media.summary
-        for media in list_collection_media_for_viewer_by_ids(
-            db, viewer_id=viewer_id, media_ids=media_ids
-        )
-    }
-    states = consumption_for_media(db, viewer_id=viewer_id, media_ids=media_ids)
     descriptors = player_descriptors(
         db,
         viewer_id=viewer_id,
@@ -337,7 +304,6 @@ def lectern_snapshot(
                 media_summary=summaries[row.media_id],
                 href=f"/media/{row.media_id}",
                 added_at=row.added_at,
-                consumption=states[row.media_id].value,
                 activation=wire.FooterAudioActivation(descriptor=descriptors[row.media_id])
                 if row.media_id in descriptors
                 else wire.ReadableActivation()

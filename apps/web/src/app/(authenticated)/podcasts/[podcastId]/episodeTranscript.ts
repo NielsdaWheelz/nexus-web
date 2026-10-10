@@ -6,7 +6,7 @@ import {
 } from "@/lib/api/collectionPage";
 import { decodePresence } from "@/lib/api/presence";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { mediaSummaryFromWire, type MediaSummary } from "@/lib/media/mediaSummary";
+import type { MediaSummary } from "@/lib/media/mediaSummary";
 import {
   canRequestTranscript,
   shouldPollTranscriptProvisioning,
@@ -56,7 +56,7 @@ export function podcastEpisodePageFromWire(
     (body) => ({
       items: body.items.map((item) => ({
         ...item,
-        mediaSummary: mediaSummaryFromWire(item.mediaSummary),
+        mediaSummary: item.mediaSummary,
         description_text: null,
       })),
       collectionRevision: decodeCollectionRevision(body.collectionRevision),

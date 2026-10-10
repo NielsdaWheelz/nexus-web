@@ -34,6 +34,8 @@ export interface ProgressSync {
   report(locator: Locator): void;
   flush(keepalive: boolean): Promise<void>;
   revalidate(): Promise<void>;
+  prepareFence(): Promise<void>;
+  reconcileFence(): Promise<void>;
   install(snapshot: CursorSnapshot): void;
   resolve(choice: "Canonical" | "Device"): Promise<void>;
   retry(): void;
@@ -73,8 +75,8 @@ export function createProgressSync(
   port: ReaderProgressPort,
   hooks: {
     changed(): void;
-    /** Position the reader at a snapshot it adopted (newer elsewhere, or chosen). */
-    remote(snapshot: CursorSnapshot): void;
+    /** Retire prior input on observed authority; reposition only when its spot differs. */
+    remote(snapshot: CursorSnapshot, move: boolean): void;
     /** The reader is away and idle: a newer cursor may be adopted silently. */
     dormant(): boolean;
     /** The reading spot to keep when the user keeps theirs over a newer one. */
@@ -93,6 +95,10 @@ export function createProgressSync(
   let dirtySince = 0;
   let movedAt = 0;
   let timer: number | undefined;
+  let fenced = false;
+  let generation = 0;
+  // A genuine same-position input after load/unread still needs one accepted save.
+  let activitySaved = false;
 
   const publish = () => {
     state =
@@ -131,7 +137,8 @@ export function createProgressSync(
       unsaved === null ||
       inFlight !== null ||
       handoff?.kind === "Newer" ||
-      view === null
+      view === null ||
+      fenced
     )
       return;
     const due = Math.min(movedAt + SAVE_IDLE_MS, dirtySince + SAVE_MAX_WAIT_MS);
@@ -158,9 +165,14 @@ export function createProgressSync(
         failed = false;
         if (result.kind === "Stale") {
           // The locator stays unsaved: keeping my spot saves it over the newer one.
-          handoff = { kind: "Newer", snapshot: result.canonical };
+          if (result.canonical.revision > base().revision &&
+              (handoff?.kind !== "Newer" || result.canonical.revision > handoff.snapshot.revision))
+            handoff = { kind: "Newer", snapshot: result.canonical };
           return;
         }
+        if (result.kind === "Canonical" && result.snapshot.revision < base().revision) return;
+        activitySaved = true;
+        generation += 1;
         if (unsaved === locator) unsaved = null;
         if (result.kind === "Device") adopt(result.view);
         else {
@@ -190,12 +202,26 @@ export function createProgressSync(
   }
 
   async function revalidate() {
+    if (fenced) {
+      if (failed) await reconcileFence().catch((error: unknown) => console.error("reader_cursor_reconcile_failed", error));
+      return;
+    }
     if (view === null || revalidating) return;
     revalidating = true;
+    const mine = generation;
+    const candidate = unsaved;
     try {
       const next = await port.load();
+      if (mine !== generation) return;
       if (next.kind !== "Canonical") {
         adopt(next);
+      } else if (view.kind !== "Canonical" && unsaved === null &&
+                 next.snapshot.revision === base().revision && next.snapshot.state === "Positioned" &&
+                 sameLocator(next.snapshot.locator, view.device)) {
+        // An equal-position device save can be accepted without moving the cursor revision.
+        view = next;
+        handoff = null;
+        failed = false;
       } else if (next.snapshot.revision > base().revision) {
         const { snapshot } = next;
         const ours = (locator: Locator | null) =>
@@ -204,17 +230,19 @@ export function createProgressSync(
           sameLocator(snapshot.locator, locator);
         // Our own position arriving back (a failed save that committed, a device sync)
         // only advances the base; someone else's moves us only while we are away.
-        const pending = ours(unsaved);
-        const own = pending || ours(savedLocator(view));
+        const pending = candidate !== null && candidate === unsaved && ours(candidate);
+        const own = pending || (unsaved === null && ours(savedLocator(view)));
         // Judged after the load: input during it makes the reader present.
         const dormant = hooks.dormant() && unsaved === null && handoff === null;
         if (own || dormant) {
           view = next;
+          activitySaved = false;
           if (pending) {
             unsaved = null;
             failed = false;
           }
-          if (!own) hooks.remote(snapshot);
+          hooks.remote(snapshot, !own);
+          if (handoff?.kind === "Newer" && handoff.snapshot.revision <= snapshot.revision) handoff = null;
         } else handoff = { kind: "Newer", snapshot };
       }
     } catch (error) {
@@ -225,11 +253,34 @@ export function createProgressSync(
     }
   }
 
+  async function reconcileFence() {
+    const mine = ++generation;
+    try {
+      const next = await port.load();
+      if (mine !== generation) return;
+      adopt(next);
+      handoff = next.kind === "Conflict" ? handoff : null;
+      unsaved = null;
+      failed = false;
+      fenced = false;
+      activitySaved = false;
+      if (next.kind === "Canonical") hooks.remote(next.snapshot, true);
+    } catch (error) {
+      if (mine === generation) failed = true;
+      throw error;
+    } finally {
+      publish();
+    }
+  }
+
   return {
     state: () => state,
     async start(signal) {
       try {
         const loaded = await port.load(signal);
+        if (signal.aborted) return null;
+        generation += 1;
+        activitySaved = false;
         handoff = null;
         adopt(loaded);
         publish();
@@ -244,8 +295,9 @@ export function createProgressSync(
       }
     },
     report(locator) {
+      if (fenced) return;
       const current = unsaved ?? (view === null ? null : savedLocator(view));
-      if (current !== null && sameLocator(current, locator)) return;
+      if (current !== null && sameLocator(current, locator) && (unsaved !== null || activitySaved)) return;
       if (unsaved === null) dirtySince = Date.now();
       movedAt = Date.now();
       unsaved = locator;
@@ -254,21 +306,37 @@ export function createProgressSync(
       schedule();
     },
     async flush(keepalive) {
+      if (fenced) return;
       window.clearTimeout(timer);
       leaving ||= keepalive;
       await inFlight;
       if (handoff?.kind !== "Newer") await save(keepalive);
     },
     revalidate,
+    async prepareFence() {
+      fenced = true;
+      generation += 1;
+      window.clearTimeout(timer);
+      await inFlight;
+      if (handoff?.kind !== "Newer") await save(false);
+      unsaved = null;
+      failed = false;
+      publish();
+    },
+    reconcileFence,
     install(snapshot) {
+      generation += 1;
       window.clearTimeout(timer);
       view = { kind: "Canonical", snapshot };
       handoff = null;
       unsaved = null;
       failed = false;
+      fenced = false;
+      activitySaved = false;
       publish();
     },
     async resolve(choice) {
+      if (fenced) return;
       const open = handoff;
       if (open === null) return;
       if (open.kind === "Newer") {
@@ -278,7 +346,7 @@ export function createProgressSync(
           unsaved = null;
           failed = false;
           publish();
-          hooks.remote(open.snapshot);
+          hooks.remote(open.snapshot, true);
           return;
         }
         unsaved = hooks.reading() ?? unsaved;
@@ -303,7 +371,7 @@ export function createProgressSync(
           );
           if (choice === "Canonical" || unsaved === device) unsaved = null;
           failed = false;
-          if (choice === "Canonical") hooks.remote(current.canonical);
+          if (choice === "Canonical") hooks.remote(current.canonical, true);
         } catch (error) {
           console.error("reader_cursor_resolve_failed", error);
           failed = true;
@@ -318,11 +386,16 @@ export function createProgressSync(
       await inFlight;
     },
     retry() {
+      if (fenced) {
+        void reconcileFence().catch((error: unknown) => console.error("reader_cursor_reconcile_failed", error));
+        return;
+      }
       void revalidate().then(() => {
         if (failed && handoff?.kind !== "Newer") void save(false);
       });
     },
     stop() {
+      generation += 1;
       window.clearTimeout(timer);
     },
   };

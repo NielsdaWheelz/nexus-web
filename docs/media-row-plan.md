@@ -1,281 +1,386 @@
-**media rows and metadata: implementation contract**
+**media rows: implementation contract**
 
-status: implemented and locally verified in `feature/media-row-cutover`; record below
-origin: 2026-09-26 owner approval of the [council review](media-row-council.md)
-authority: this plan settles that review's choices and supersedes its verification
-proposal. no blocking product questions remain. preserve unrelated work.
+status: implemented and verified on `feature/media-row-current-progress`;
+temporary probes/setup/data removed; final `./scripts/test` passed.
+evidence: [current-main integration receipt](media-row-integration-verification.md);
+[initial historical receipt](media-row-verification.md).
+origin: 2026-10-09 owner decisions; initial source `a494f743e`; integrated onto
+`167773ac1`, then `3a42c73d2` before merge. current owners below supersede the
+initial file map.
+authority: replaces the september policy. historical implementation/proof is in
+`aada476d5` (#385), not evidence for this change. no product questions remain.
+implementation authorized 2026-10-09 in an isolated worktree; verification follows
+the temporary red/green/refactor/removal sequence below.
 
-**goal, scope, final state**
+**goal and boundary**
 
-one stored-media identity across library, lectern, author works, quick reads,
-at hand, library suggestions, episode lists, whole-media search and owned-media
-browse. retain `CollectionView → CollectionRow → ResourceRow`; converge the
-facts and presenter above them. publisher appears only in media metadata,
-including publisher-role credits currently admitted by compact media headers.
-authored document content and genuine corporate authors are not filtered.
+one identity across library, author works, lectern, quick reads, at hand, library
+suggestions, episode lists, whole-media search and owned-media browse: title,
+authors, original publication year, consumption state, remaining time.
+reuse `presentMedia → CollectionRow → ResourceRow`.
 
-retain search-match excerpts below the common identity and existing direct
-audio play/resume controls. these are the approved exceptions. podcast shows,
-external catalogue works, passage/highlight/note hits, imports and pickers keep
-their resource/occurrence contracts. no ranking, membership, sort, ingestion,
-editor, offline-storage, player, or duration-estimation redesign; no settings,
-new persistence, generic projection framework, or separate list/detail endpoint.
+include current-position progress, sticky completion, resumable unread,
+automatic filter/order refresh, consistent title-and-author local filtering,
+and stored catalogue coauthor credits. preserve occurrence ids, selection,
+search excerpts, play/resume, reorder, menus and permissions.
 
-**content contract — row designer owns selection and hierarchy**
+external works show available bibliography only; no invented viewer state/time.
+podcast shows, passages, notes, imports and pickers keep their resource contracts.
+no ingestion/research, enrichment, new pdf/video estimator, speed-adjusted time,
+ranking redesign, metadata redesign, settings, player rewrite, generic cache,
+polling/SSE framework or permanent test infrastructure.
+
+**content — bibliography and progress designers**
 
 ```text
-the title of the work                                …
-1925 · author one, author two +2 · ≈15 min left
+the title of the work                                      …
+author one, author two +2 · 1925                 42% · 5 min
 processing failed
 ```
 
-the last line exists only when `processingStatus=failed`. render failure and
-known duration independently. no publisher, hostname, added date, ordinary
-processing, suspended, unread/finished, percentage, or download decoration.
-pending/suspended items remain openable to their existing informative destination;
-download state remains inspectable through its existing menu/player controls.
+the last line appears only for processing failure, independently of other facts.
+retain existing pending/suspended destinations.
 
 | field | exact rule |
 | --- | --- |
-| title | canonical complete title; truncate visually only; native primary link |
-| date | original work publication only; preserve year/month/day precision; order never changes its meaning |
-| authors | shared `selectMediaAuthors`: explicit `author` roles, canonical credit order; two linked names then truthful `+n`; full list in metadata |
-| document time | remaining known: `≈15 min left`; only total known: `≈25 min total`; exact zero: `0 min left` |
-| audio time | `15 min left to listen` or `25 min to listen` for total only; integer minutes rounded up from canonical media time at 1×; exact zero stays zero |
-| absent facts | omit with no empty separators; never substitute edition/feed/saved dates or another contributor role |
-| menu | `more actions for {title}` accessible name; one `metadata…` action |
+| title | canonical title; preserve source spelling/case, native link and full accessible name; visual truncation only |
+| authors | existing `selectMediaAuthors`: explicit author role, credit order, credited name before canonical name; no publisher/editor/channel substitution |
+| overflow | stored media: first two linked names, truthful noninteractive `+n`, accessible `{n} more authors`; existing metadata action exposes all. external rows without metadata expose all supplied names |
+| year | original publication year only; omit if absent; never substitute edition/feed/saved dates. metadata retains full date precision |
+| state | `Unread → unread`; `InProgress` with known fraction → nearest integer percentage; unknown → `in progress`; `Finished → finished`. zero percent is valid; display rounding never determines completion |
+| time | known remainder only: `0 min`, `1 min`, `59 min`, `1 h`, `1 h 1 min`. no approximation, total substitution, modality or trailing words. finished hides time |
+| absence | omit missing authors/year/time and their separators; never invent zero or label unknown progress unread |
 
-documents use reading estimates; podcast episodes use canonical listening time
-when available. documents retain 240 words/minute, existing coarse rounding and
-current durable resume-cursor semantics. positioned pdf remainder can be unknown. finished/unread
-does not move the cursor or manufacture zero. video duration stays absent:
-there is no current canonical playback-duration source for this contract.
+good content is recognizable, correctly attributed and numerically honest.
+authors/year and state/time form two groups; narrow panes wrap the second intact
+without clipping year, state, time, failure or controls. use existing tokens,
+direction handling and author links. no progress bar, state button, hover-only
+attribution or heartbeat live announcement. accessible time may expand units
+and explain read/listen/remaining.
 
-good content is recognizable, correctly attributed and honest about uncertainty.
-preserve source spelling. use existing date formatting and design tokens. narrow
-panes wrap/reflow while retaining date, author overflow, time, failure and controls;
-full title/credits remain accessible without hover. overflow is noninteractive,
-with accessible text `{n} more authors`; the menu opens metadata. headers use
-the same author selector and their existing desktop/mobile name limits.
+one pure title-and-author field selector supplies every existing media-list
+filter, including external author works: all authors, overflow included, both
+credited/canonical names. retain NFC/case-insensitive substring matching and
+intentional extra fields. announcements and visible rows use the same predicate.
+no new search boxes or remote ranking changes. add row-year selection separately;
+`MediaInfoOverlay` still needs the existing full-date formatter.
 
-**shared facts and composition — backend owner**
+**domain — consumption owner**
 
-one strict camelCase `MediaSummaryOut`, decoded once as `MediaSummary`:
+percentage and remainder follow CURRENT saved position. remove furthest-point
+tracking from storage, readers, writers and current documentation.
+
+| fact | authoritative source |
+| --- | --- |
+| document percentage | `reader_cursor.current_position_rows_sql()`; web/epub/transcript whole-document progression; positioned pdf stays unknown |
+| document time | existing `reading_time.py`, same cursor, 240 words/minute, existing 1/5/15-minute rounding; unstarted total is also remaining; positioned pdf can have total without remainder |
+| podcast percentage/time | listening facts regardless of playable stream; listening duration before feed duration; nonpositive chosen duration is unknown; clamp known fraction to [0,1] and remainder to ≥0 |
+| podcast minutes | `ceil(max(0,durationMs-positionMs)/60000)` at canonical 1× regardless of speed; no listening row means initial time at zero position, but no observed percentage |
+| video time | absent; transcript progress creates no playback-duration source |
+
+canonical state: explicit override → started → unread.
+started means a reader-engagement row for non-podcasts (even zero/unknown progress),
+or positive listening position for podcasts; stream availability and recency do
+not substitute. summary, detail, menus, queries and lectern share this policy.
+require a listening row and positive duration before clamping its percentage;
+a null position must not become 100%.
+
+inside the existing viewer lock/transaction, a new accepted canonical-modality
+position write clears ONLY unread, then settles known progress ≥95%: document
+`Finished` override for either modality, and the existing first-completion fact
+once. apply at reader writes, heartbeats and successful preview-position
+transfer. remove read-time threshold completion. automatic audio completion
+changes the override revision; its acknowledgement supplies the new fence.
+manual finish keeps its existing command semantics.
+preview transfer requires absent listening state; an owned zero bookmark and
+its unread/reset fences cannot be replaced by delayed preview data.
+
+finished survives backward movement; the cursor still changes. mark unread
+preserves the bookmark; genuine resumed activity restores current progress.
+resuming at ≥95% finishes again. reset clears current progress/completion,
+preserving historical completion counts/dates. exact completion undo retains
+its explicit history deletion. metadata duration edits update percentage/time;
+automatic completion waits for the next accepted position write.
+
+**unread ordering — reader/player owners**
+
+`SetUnread`, `UndoFinish` and batch unread retire old writes without rewinding:
+bump reader revision, preserving locator; for podcasts advance reset epoch,
+preserving position/duration/rate/recency. main already retired the completed
+flag and write revision; do not restore them.
+create an empty/zero fence record when absent.
+
+reader base-revision validation precedes equal-locator idempotency: every stale
+write returns the existing conflict response with no side effects. matching-base
+same-locator saves count as new activity. reads, hydration, replay, rejected writes,
+offline pending data and podcast transcript saves cannot clear unread.
+read-only lifecycle capture, responsive reflow and find/inspection preserve unread;
+genuine reading input or explicit reading adoption may resume it.
+
+keep `ConsumptionResult.progressState` reset-only. replace the existing pre-reset
+registration inside the current `LecternProvider` with paired hooks:
 
 ```text
-mediaId: existing media identity
-mediaKind: existing MediaKind
-title: string
-contributors: ordered ContributorCreditOut[]
-originalPublishedDate: Presence<PublicationDate>
-processingStatus: existing MediaProcessingStatus
-duration: Presence<{modality: Read | Listen, estimate: ReadingTimeEstimateOut}>
+registerProgressFence({
+  prepare(mediaIds): Promise<void>,
+  reconcile(mediaIds): Promise<void>
+})
 ```
 
-reuse `ReadingTimeEstimateOut`: positive `totalMinutes`,
-`remainingMinutes: Presence<nonnegative integer>`. all summary keys are required;
-absence uses existing `Presence`. retain credit objects' existing wire encoding.
-no consumption flag, href, capability, occurrence id, subtitle or source label
-belongs in the summary. the frontend's sole author selector serves both the
-summary presenter and full-detail header; metadata receives all credits.
-`presentMedia(summary, occurrence)` is the sole media-to-row projection.
-occurrence carries existing row id, activation, action subject, selection and
-optional search evidence; it cannot override summary fields. the action subject
-must identify that media. reorder and play controls remain existing view inputs.
+target ids already exist on reset/unread/batch commands and undo's `unreadMediaId`.
+prepare inside the command FIFO immediately before sending: each owner handles
+only its mounted target, drains and retires old writes, then gates saving.
+after unread acknowledgement or failed settlement, reconcile from its existing
+authoritative GET. reset also prepares; success installs its returned canonical
+state without another GET, failure reconciles by GET. retain successful
+`snapshot.unreadMediaIds` presentation effects. failure uses existing
+load/persistence retry feedback; writes stay gated until authority returns.
 
-define the schema in dependency-light `schemas/media_summary.py`; move the
-existing processing-status alias there. move `ContributorCreditOut` unchanged
-to `schemas/contributor_credit.py` to avoid contributor-work/summary cycles.
-update direct imports; no duplicate definitions or re-exports.
+- hosted reader: current `documentReader/progress.ts` and its hosted port load
+  `GET /media/{id}/reader-state`, then install authority without a save.
+- browser audio: current `browserEngine` pauses/drains, then adopts authoritative
+  `GET /media/{id}/player` position and both fences. next play resumes.
+- android audio: current native service performs the same drain/adoption through
+  its bridge; reject adoption if the active media/session changed.
+- separate offline reader: no local unread commands. next existing sync discovers
+  the remote fence: equal pending data at a newer revision retires, differing data uses its existing
+  canonical/device conflict choice. pending alone cannot resume. no new offline
+  opcode, storage migration or forced-refresh operation.
+  matching-base equal-position activity uses the existing canonical save; its
+  acknowledgement refreshes consumption even when cursor revision is unchanged.
 
-compose summaries alongside existing `CollectionMedia` /
-`list_collection_media_for_viewer_by_ids` in `services/media.py`. reuse its
-visibility/credit facts and batch reading estimates. audio duration facts belong
-to `consumption/projection.py`, sharing its existing listening-duration-before-feed
-precedence and current position; do not hydrate player chapters just for minutes.
-nonpositive chosen audio duration means absent; no listening record means position
-zero. positive duration uses `ceil(durationMs/60000)` total and
-`ceil(max(0,durationMs-positionMs)/60000)` remaining. retain raw playback facts.
-retire frontend row-time calculations; keep operational action/player facts in
-their existing owners.
+listening acknowledgements, stale-write details and reset snapshots use the same
+required tuple: `{positionMs, resetEpoch, consumptionOverrideRevision:
+Presence<nonnegative int32>}`. PUT changes from 204 to `Data<ListeningPositionOut>`;
+GET/player already carries both fences. assemble acknowledgements inside the
+existing viewer-locked transaction. do not revive the deleted listening GET.
 
-collection owners select eligible ids, then hydrate one batch without changing
-order, limits, cursors or author relationships. use their existing snapshot
-mechanism; queue reads use the existing repeatable-read pattern, command results
-remain in their current transaction. `consumption/service.py` composes the summary
-map and passes it into projection functions, including `nextItem`; projection
-must not import `services/media.py`. search/browse complete external work first;
-local result/ownership selection and summary hydration share one repeatable-read
-phase using the existing transaction primitive. never hold it across provider calls.
+natural end retains its captured reset epoch and drains its own prior heartbeat
+before choosing that acknowledged override revision; a later unread/reset still
+supersedes it. native bridge compatibility follows main's object-name contract:
+rename `nexusAudio` to `nexusPlayback` and `nexusOffline` to `nexusDownloads`,
+with no old-object fallback. required `consumptionRevision` in both snapshots
+publishes acknowledged native listening and offline saves, including unchanged
+cursor revisions; pending alone does not advance it. no protocol
+version/hash, resume command or neutral override state.
 
-**api cutover**
+**schemas and API — backend owner**
 
-| existing boundary | change |
+all new fields required; preserve existing camelCase and
+`Presence<T> = {kind:"Absent"} | {kind:"Present",value:T}`.
+move `ConsumptionStateValue` and `ConsumptionOut` into dependency-light
+`schemas/consumption_state.py` to prevent the summary/consumption import cycle.
+
+```text
+MediaSummaryOut = {mediaId: UUID, mediaKind: MediaKind, title: string,
+                   contributors: ContributorCreditOut[],
+                   originalPublishedDate: Presence<PublicationDate>,
+                   processingStatus: MediaProcessingStatus,
+                   consumption: ConsumptionOut,
+                   duration: Presence<MediaDurationOut>}
+ConsumptionOut = {state: Unread | InProgress | Finished,
+                  progress: Presence<float in [0,1]>}
+MediaDurationOut = {modality: Read | Listen,
+                   estimate: {totalMinutes: positive int,
+                              remainingMinutes: Presence<nonnegative int>}}
+ExternalContributorWorkItemOut += contributors: ContributorCreditOut[]
+```
+
+`services/media.py:list_collection_media_for_viewer_by_ids` owns batch assembly,
+reusing visibility, credits, read states and estimates. consumption service passes
+summaries into projections; projection never imports media service. collection
+owners select ids/order, then hydrate in their existing repeatable-read phase;
+browse/search finish provider work before opening the local transaction.
+
+remove duplicate consumption from `LecternItemOut` and `MediaSuggestion`; library
+`read_state/progress_fraction/progress_resettable`; episode
+`episode_state/progress_resettable/listening_state`. use current suggestions
+hydration and remove lectern engagement loads. keep backend-only
+`CollectionMedia.progress_resettable` for reset capability and listening facts
+used by library hydration; remove its duplicate state/progress fields. detail
+fields derive from the same policy; action
+snapshots consume summary state instead of remapping another representation.
+
+summaries contain no href, occurrence id, selection, capability or player
+descriptor. occurrence adapters cannot override facts. existing capabilities
+authorize reset/play/metadata/edit; percentage never implies permission.
+retain bounded player titles and player subtitle semantics.
+
+batch external author-page credits from the local Gutenberg catalogue in
+`services/contributor_credits.py`; reuse credit construction, roles and ordering.
+integer catalogue ids remain distinct from UUIDs. `roleFacts` describes the
+viewed contributor's relationship, not all authors. no provider reads or invented
+dates/credits.
+
+| boundary | cutover |
 | --- | --- |
-| `/libraries/{id}/entries`, `/podcasts/{id}/episodes` | stored-media item requires `mediaSummary`; retain operational/membership fields separately |
-| `/lectern`, `/lectern/commands`, `/consumption/commands` | item requires summary, including nested `nextItem`; retain item id, added time, activation and operational consumption |
-| `/lectern/slate`, `/lectern/quick-reads`, `/libraries/{id}/slate` | media target requires summary; podcast target retains its own shape |
-| `/contributors/{handle}/works` | explicit media/podcast/external-work variants; media requires summary; `roleFacts` remains relationship data |
-| `/search` | whole-media hits (`media`, `episode`, `video`) require summary; preserve match evidence and activation; other hit types retain their own facts |
-| `/browse`, owned resolutions in `/browse/preview` | distinguish owned media, owned podcast, and external preview; owned-media identity comes only from summary |
-| `/media/{id}` | retain existing detail fields; add stored `edition_isbn: Presence<string>` and `duration` using the shared duration contract |
+| GET library entries/suggestions, contributor works, podcast episodes | summary consumption; external credits; remove replaced fields |
+| GET lectern/suggestions/quick-reads; POST lectern/consumption commands | summary including `nextItem`; retain receipts and occurrence ids |
+| GET browse/preview, search | owned-media summary; retain remote variants and match evidence |
+| PUT `/media/{media_id}/listening-state`; GET `/media/{media_id}/player` | acknowledged position and override/reset fences; preserve current epoch-only ownership |
+| new POST `/media/summaries/resolve` | `{mediaIds: UUID[]}`, 1–100 unique ids; response `{data:{items:[{mediaId,summary:Presence<MediaSummaryOut>}]}}` |
 
-`mediaSummary` replaces row-facing copies of title/date/credits/status/time in
-affected media variants. fields serving independent playback, citation, command,
-or acquisition contracts remain with those owners. preserve outer endpoint
-conventions, envelopes, auth, query parameters and bff paths. update initial
-server seeds, strict decoders and command-result consumers together. full media
-detail remains the source for complete metadata; no per-row detail fetch.
-preserve the separate bounded player descriptor, including its existing 300-character
-title and subtitle; `playerSession.ts` must not replace it with the full row title.
-native consumes that descriptor and listening/activity endpoints, not queue dtos.
+resolve rejects duplicate ids/invalid bounds; returns exactly one result per id
+in request order. missing/invisible both mean absent. authenticate and reuse
+visibility checks, bounded hydration and `get_repeatable_read_db`. no provider,
+activation, detail or action-snapshot hydration. existing generic BFF suffices.
 
-**metadata designer owns labels, grouping and completeness**
+type every affected route with its response model/envelope; preserve unaffected
+bytes/aliases/query parameters. follow [typed wire](local-rules/typed-wire.md):
+generated `Schema`/`ApiJson`, no same-deploy success decoder or handwritten DTO.
+make credit nullability required and update constructors. regenerate
+`apps/web/src/lib/api/wire.gen.ts` via `bun run gen:wire` in `apps/web`.
+remove replaced client/seed-loader decoders; retain needed native,
+persisted-storage, error and untouched detail/activation decoding.
 
-one surface: `metadata` title, complete media title, then these fixed groups:
+**freshness — frontend data owner**
 
-| group | content |
+one account-scoped `MediaSummaryProvider`/`useMediaSummaries` under `lib/media`,
+mounted in authenticated composition. reuse consumption revisions and query
+owners; neither action snapshots nor consume-once `resourceCache` owns row facts.
+`useMediaSummaries(seeds)` accepts loaded summaries and exposes read-only
+resolutions by media id, refresh/error state and retry for that retained set;
+consumers cannot mutate cached facts or use it to change collection membership.
+
+1. mounted consumers retain all loaded ids BEFORE filtering, using stable id sets.
+   payloads seed unseen ids only; refresh new retainers through the batch endpoint.
+   old pane snapshots cannot overwrite accepted facts/absence.
+2. keep values/tombstones until account teardown; release subscriptions on unmount.
+   invalidation marks inactive values stale but fetches only mounted retained ids;
+   remount revalidates. consumption revisions invalidate retained summaries,
+   edits invalidate targets, and return/focus/reconnect/retry refreshes them.
+3. one in-flight batch; dirty-id union drained fairly in chunks ≤100. advance each
+   id's generation at invalidation, install only matching account/generation,
+   coalesce intervening writes into follow-up. no timers or per-row requests.
+4. patch before presentation, preserving occurrence ids, pages, cursors, order,
+   evidence, focus and scroll. authoritative absence removes occurrences and
+   reconciles their collections; no seed resurrection.
+5. keep accepted content during refresh/failure. one affected-collection notice:
+   `couldn’t update items` / `try again`. retry failed ids; no skeleton flash.
+   account changes synchronously clear state and abort old work.
+
+query membership/order has a separate owner:
+
+- ordinary insensitive views patch facts only. sensitive library/episode queries
+  quietly reread their loaded prefix through existing pagination, up to its
+  committed row count; an empty view still requests page one. compare ordered
+  occurrence ids across the WHOLE prefix;
+  adopt fresh revision/cursor without dropping rows when unchanged. replace the
+  prefix only for changed identity/order/extent. a formerly complete view gaining
+  a cursor has changed extent; continue its existing exhaustive loading. same-id
+  results still update non-summary facts, including external credits.
+- accepted progress also advances collection revisions. on `E_COLLECTION_CHANGED`,
+  automatically perform that same retained-prefix reconciliation, then resume
+  pagination at the fresh boundary. never substitute an unrelated revision.
+- quick reads, at hand and bounded suggestions requery their existing local endpoints
+  on relevant invalidation, including unseen eligible candidates. retain old rows
+  while pending and install actual topology changes. suggestion refresh queues behind
+  add/refill; lectern membership/capacity changes invalidate at hand too.
+- local filters reapply to current summaries. metadata/author edits invalidate
+  affected relationships/order. no consumption-triggered remote provider searches.
+  quick reads keeps raw `0 < remaining_seconds < 600` and existing ranking;
+  at hand still excludes queued items.
+
+existing query owners guard account, exact view and operation/invalidation
+generation; discard superseded topology/append results and coalesce follow-up.
+mounted accepted collections refresh independently of which pane owns focus.
+preserve surviving row focus/scroll. if the focused row disappears, repair focus
+to its next surviving row or existing section fallback only while that surface
+still owns focus.
+
+publish accepted changes from hosted saves, browser heartbeats, commands, existing
+native activity acknowledgements and newly observed canonical offline progress.
+offline sync `Accepted` means scheduled, not committed; pending is not authoritative.
+out-of-process/worker changes without an observed completion event appear on
+return/focus/manual refresh; no worker notification redesign.
+pane-return snapshots are process-local: reload clears old shapes.
+
+**migration and hard cutover**
+
+add `0265` after the actual sole head `0264`; immutable
+baselines remain. before dropping the maximum:
+
+1. persist old effective finished non-podcasts, including video transcripts:
+   maximum ≥95%, no override → `Finished`; explicit unread wins.
+2. persist old effective finished podcasts as `Finished` overrides, using
+   listening duration before feed duration and respecting explicit unread.
+3. fence existing explicit unread as above so old writes cannot revive it.
+4. drop `reader_engagement_states.max_total_progression` and its constraint.
+   keep started/recency; delete obsolete locator arguments, wrappers, queries,
+   formatters, duplicate DTOs and current-doc claims. preserve completion history;
+   do not invent timestamps.
+
+stop writers, verify backup, coordinate backend/web/android builds, reload clients.
+rollback needs that database backup AND prior builds. no dual write, compatibility
+decoder, fallback, feature flag or fabricated downgrade. receipts reproject
+current facts without reapplying effects.
+
+**exclusive work packages and designers**
+
+backend paths below are under `python/nexus`; web paths under `apps/web/src`.
+one writer per file. a freezes contracts first; parallelize only disjoint files.
+each package receives independent review, including its content.
+
+| owner / designer | exclusive implementation boundary |
 | --- | --- |
-| publication | all credits grouped by role; publisher; `first published`; `this edition`; isbn; language; one description |
-| source | media type and full usable source url |
-| reading/listening | completion and progress with distinct labels; current playback position; total/remaining duration with modality |
-| activity | `record created`, `record updated`, `metadata enriched`, `last engaged` |
-| availability | processing; transcript state/origin/coverage; retrieval availability/reason; readable failure explanation using existing error formatting |
+| a — backend / domain-content | affected schemas; `services/media.py`, `consumption/*`, `reading_time.py`, catalogue credits, library/podcast/contributor/suggestions/search/browse/action-snapshot assemblers; routes, DB model, migration. owns state truth, units and absence |
+| b — presentation / bibliography and progress | `lib/media/mediaSummary.ts`, pure filter selector, contributor formatting, collection types/presenters, current suggestions presenter, `CollectionRow`, formatting/CSS. owns copy, credit overflow, narrow layout and accessibility |
+| c — list integration / refresh-content | new summary provider, authenticated mount, list panes/wrappers, client contracts including current `lib/lectern/contract.ts`, `paneResourceLoaders`, generated wire, `useLibraryEntries`/suggestion/episode reconciliation. owns retained feedback, counts and occurrence preservation |
+| d — progress coordination / interaction-content | `LecternProvider`, projection revisions, hosted reader port and `documentReader/progress.ts`, current offline sync; `browserEngine`, `nativeEngine`, `playerRuntime`; android listening writer, reader bridge and `NexusPlaybackService`. owns fencing, resumption and bridge identity |
+| e — proof/closure / adversarial content reviewer | temporary probes/fixtures, evidence, current module/architecture docs, this plan, tickets/register; no production edits |
 
-authors and the two publication dates display `unknown` when absent. omit absent
-optional fields and empty groups. preserve all credited names in order within
-roles. `updated_at` is record modification, not authored revision; `created_at`
-is not a viewer's save date. no invented completion/acquisition dates, raw ids,
-capability dump, new provenance collection, or duplicated description formats.
-provider scheduling and membership/queue-added dates remain in their existing
-owners; this change adds no new history aggregation. cost: metadata covers
-available media facts, not every fact attached to related resources.
+b defines row inputs; c integrates without surface-specific formatting.
+c alone edits shared HTTP contract files, including retained decoder changes
+requested by d; d owns the current player/native bridge files. designers create long,
+multi-author, missing-data and RTL examples within the schemas, and reject
+misleading/inaccessible output before visual approval.
 
-add server capability `MediaMetadata` for every visible stored-media resource,
-including failed/pending media; canonical action id `ResourceAction.Media.Metadata`,
-label `metadata…`, navigate group. existing visibility authorizes the read;
-author-edit permission is irrelevant. use `resourceOverlaysController`, one
-self-loading `MediaInfoOverlay`, existing `Dialog` / `MobileSheet`, and existing
-`GET /media/{id}`. remove the pane-local action/state. forward the actual existing
-`ActionSelectDetail.triggerEl` through action dispatch; never discover the opener
-from `document.activeElement` after the menu disappears. use the existing focus
-return primitive and invoking pane chrome if that trigger is disconnected.
+**red → green → refactor → remove**
 
-fetch on opening; render `loading metadata…`, `couldn’t load metadata`, `try again`
-for the corresponding read states. cancellation/latest-request ownership prevents
-an old item's response replacing the current item. no mutation lease, optimistic
-write, background polling or separate metadata cache. retain recovery commands
-in the canonical menu rather than duplicate them in metadata.
+temporary real integration/live/e2e probes are authorized for IMPLEMENTATION.
+durable migration, cross-pane consistency and write-order failures justify them.
+use authenticated browser → BFF → API → database, task-owned fixtures; no mocked
+application responses, auth bypass, test-only production hooks or permanent
+test dependencies/CI suite.
 
-**non-overlapping packages and adversarial gates**
-
-one writer per file. a freezes wire contracts first; b/c consume them independently;
-d integrates; e reviews every handoff. each feature's named designer owns its copy
-and rejects content that violates the tables above.
-
-| owner / designer | exclusive ownership; paths relative to repository |
+| temporary journey | acceptance and adversarial case |
 | --- | --- |
-| a: backend / domain-content | `python/nexus/schemas/{media_summary,contributor_credit,media,contributors,consumption,resonance,library,podcast,search,browse,resource_action_snapshots}.py`; `services/media.py`, `consumption/{service,projection}.py`, `library_entry_listing.py`, `contributors.py`, `resonance/service.py`, `podcasts/episodes.py`, `search/{service,projection}.py`, `browse/{service,nexus}.py`, `resource_items/action_snapshots.py`; `api/routes/lectern.py` read dependency; necessary direct import/serialization callers |
-| b: shared row / row-content | `apps/web/src/lib/media/mediaSummary.ts` (new); `lib/contributors/formatting.ts`; `lib/collections/{types,readState,presenters/*}`; `lib/resonance/presentSlateItem.ts`; `components/collections/{CollectionRow,collectionRowFormatting}` and row css; required `ResourceRow` geometry |
-| c: metadata / metadata-content-accessibility | `components/media/MediaInfoOverlay.*`; `lib/media/mediaDetail.ts`; `lib/resources/resourceOverlaysController.tsx`; `lib/actions/resourceAction{Snapshot,Menu,Runtime,s}.ts(x)`; required `ActionSelectDetail` forwarding |
-| d: surface integration / interaction-content | affected route bodies and list wrappers; `MediaPaneBody.tsx`, `mediaFormatting.ts`; library/lectern/contributor/resonance/search/browse/podcast client contracts, loaders and first-paint adapters; `LecternProvider.tsx`, `lib/consumption/projectionRevision.ts`, `lib/player/{playerSession.ts,androidPlayerRuntime.tsx}` |
-| e: proof and closure / independent designer-reviewer | temporary probes and task-owned data; module docs, this plan, tickets/register; no production edits |
+| rows/filtering | multi-author short article across every eligible surface; episode across its surfaces; exact title/year/state/time/credits; hidden coauthor matches with correct count; unimported catalogue work with three stored authors exposes all names, matches coauthor/count, omits unknown year/state/time; no per-row detail fetch |
+| progress/commands | 80%→20% lowers percentage, raises time; 96%→20% stays finished; unread preserves bookmark, genuine resume restores progress, reset starts over, history survives; delayed equal/different cursor, heartbeat, natural-end and offline pending cannot undo unread/reset |
+| audio/absence | missing listening row never fabricates 100%; unknown/nonpositive/overrun duration, 1× despite speed, streamless episode, sticky preview transfer ≥95%; natural end still advances after unread/resume |
+| freshness/topology | two loaded pages and multiple open/restored panes converge; unchanged topology preserves pages/focus; unseen entrants appear, including from empty views; continuation recovers quietly; removed-row focus repairs; old response/account switch/deletion cannot resurrect facts; no provider search on heartbeat |
+| content/cutover | unknown original with known edition/feed year, editor-only credit, pdf total-only, video, known zero, long/RTL/narrow pane and 390px viewport; full metadata dates, keyboard focus, play/reorder; migration preserves finished/unread/history and drops maximum |
 
-gates: a rejects cycles, duplicate facts and new per-row summary/detail loads; b/c reject fabricated
-values, inaccessible content and inconsistent copy; d rejects eligibility/order
-changes and stale visible data; e rejects green results obtained through mocks,
-ineligible targets or weakened assertions. each rejection returns to its owner
-before dependent work proceeds. no separate row presenter or policy by surface.
-cross-package changes go through the named file owner; no concurrent edits.
+compare at hand sequentially across queue transitions; never change eligibility
+to make fixtures pass. exercise actual Android adoption and offline canonical
+convergence; browser viewport proof is not device proof.
 
-**hard cut and acceptance**
+independent gates: contracts/invariants → intended baseline red (not setup failure)
+→ implementation/green → integrated behavior and migration review → refactor and
+duplicate-path removal → affected probes plus `./scripts/test` → delete probes,
+setup, task data and test-only dependencies → final `./scripts/test` and residue
+review. reject weakened assertions and mock-only green.
 
-delete publisher-subtitle media hydration, source-host/added-date row overrides,
-parallel media presentation/time paths, pane-local metadata ownership, replaced
-wire fields, unused props/imports/css. retain non-media presenters and player
-subtitle semantics. coordinated backend/web rollout and client reload; rollback
-the coordinated build. receipts already reproject current items from stored
-outcomes/ids, so no receipt migration, compatibility decoder, alias, fallback,
-feature flag or dual implementation.
+retain terse revision/command/result/capture receipts and limits, not executable
+tests. inserted fixtures prove behavior, not ingestion. update
+`docs/modules/{library,media-metadata,reader-implementation,player,consumption-activity}.md`
+and `docs/architecture.md`. close row-contract, freshness, author-filter,
+missing-listening and state-divergence tickets only after proof; reconcile stale
+september council tickets against source. unresolved items remain in
+`docs/tickets` and the issue register. [testing standards](local-rules/testing-standards.md)
+owns the permanent static gate.
 
-use existing invalidation/reconciliation for accepted cursor/content/author/state
-changes. fix the relevant library refresh defect
-where it affects current row/menu/metadata or eligibility; do not reload ordinary
-paginated lists on every audio heartbeat or introduce another consumption store.
-
-the owner's explicit request authorizes temporary executable live tests;
-`./scripts/test` remains the sole committed static/ci gate. use real browser,
-bff, api and database with authenticated task-owned data; no mocked application
-responses, auth bypass, production test hooks, new permanent dependencies or ci
-suite. distinguish persisted fixture setup from ingestion proof.
-
-| temporary case | acceptance |
-| --- | --- |
-| identity | same article across every eligible article surface; separate episode across eligible episode surfaces: title, original date, author order/overflow and time agree; no publisher/source/added-date leakage; no per-row summary/detail requests |
-| truthful facts | partial/unknown original date with known edition; authorless publisher credit; total-only positioned pdf; cursor backward/zero; manual finish/unread/reset cannot fabricate position or duration |
-| status/modality | real processing failure stays legible beside time; pending/suspended opens informative content; episode original versus feed date; zero/nonpositive duration and position beyond duration; play/resume and auto-advance preserve the bounded descriptor, including a long title |
-| metadata/accessibility | row and pane show identical complete facts; keyboard/touch, narrow width, long text, loading/error/retry, exact focus return; delayed a response cannot replace b |
-| freshness/identity | accepted edits/cursor/state changes refresh relevant projections; queue reorder preserves item ids/order/selection; heartbeat preserves loaded library pages; non-media and search evidence survive |
-| replay | replay identical pre-cutover placement bytes/id after implementation: no duplicate effect or lost subsequent order; refreshed summary passes the new strict decoder |
-
-at hand excludes queued items; compare sequentially across queue transitions.
-quick reads permits queued unfinished documents but requires raw
-`0 < remaining_seconds < 600`; its endpoint accepts no parameters. never change
-ranking or add selectors to force a fixture into results.
-
-workflow: write probes → observe intended baseline failures → implement → green
-→ refactor → rerun affected probes and static gate → delete probes, temporary
-setup and task-owned data → final static gate. retain concise commands, revision,
-observations and captures as evidence; no executable test residue. browser/mobile
-viewport proof is distinct from physical-device proof. visually review narrow
-collection rows with duration and failure.
-
-update current media-metadata/library/player/reader module contracts. resolve the
-four media-row council findings; record fixes in the commit/pr and update the
-issue register. unresolved findings get their own ticket.
-
-accepted costs: provenance and completion require inspection; author overflow
-trades full attribution at a glance for density; unknown values disappear; audio
-time describes media time rather than speed-adjusted elapsed time; metadata does
-not aggregate unrelated histories; all affected transport consumers cut over
-together. these are explicit limits, not permission to substitute or invent facts.
-
-**local verification record — 2026-09-26**
-
-base `cfa27d6ce`; isolated branch `feature/media-row-cutover`. temporary api,
-renderer, metadata, browser and database probes failed against the old contract,
-passed after the cutover, and were deleted. the old api rejected the new library
-probe at `mediaSummary`; the new api passed library, episode, lectern and command,
-slate, contributor, detail, search, owned browse and action-snapshot reads. the
-same pre-cutover placement bytes and mutation id replayed to one existing item
-and order with a freshly projected summary. cursor 0.4→0.2, finish/unread,
-author edit, audio zero/overrun, pdf total-only, bounded player title/subtitle,
-queue reorder/id restoration, and at hand→queued→at hand identity passed against
-the task database or authenticated api; rollback probes left no mutations.
-
-authenticated chromium through the real bff showed matching identity across
-library, lectern, quick reads, author, episode list, whole-media search and owned
-browse. pending and suspended destinations explained their state. failure and
-time remained legible at 390px without horizontal overflow. metadata from row
-and pane included complete credits, publisher, both publication dates, isbn,
-source and activity; loading/error/retry, focus return, stale-response rejection,
-and manual finish/unread completion passed. at hand menu state followed queue
-membership. real same-origin audio played, paused, resumed and ended. text search
-returned 8 hits, 7 whole-media summaries; media evidence showed no publisher,
-credit dump or repeated title. a clean signed-in browser loaded library, lectern
-and search with zero per-item media-detail requests. narrow captures:
-[library](evidence/media-rows/library-mobile.png),
-[failure](evidence/media-rows/episode-failure-mobile.png),
-[metadata](evidence/media-rows/metadata-mobile.png),
-[search](evidence/media-rows/search-mobile.png).
-
-fixtures were inserted directly, so this does not prove ingestion. browser
-viewport and local audio proof do not establish physical-device or production
-behavior. title/publisher-only search matches can have no inline excerpt; the
-matching fields remain searchable and inspectable through metadata.
-these runtime observations were made on `d73d9ffd1`. the unchanged patch was
-rebased onto `fdfb911ea`; `git range-diff` found only context changes. the
-rebased tree passed `./scripts/test`: format, lint, pyright (0 errors),
-typescript, offline and extension builds, css tokens, and migration graph head
-`0242`. `git diff --check` passed. the live stack was not replayed after the
-rebase.
+accepted costs: author overflow requires inspection; unknown facts disappear;
+coarse minutes and rounded percentages remain estimates; duration-only changes
+complete on the next accepted write; stale reader retries can require conflict
+resolution even when the canonical bookmark did not move; truthful topology can
+move rows; sensitive views reread their loaded
+prefix and summary refresh adds bounded reads, including some unaffected items;
+inactive open panes also issue bounded refresh reads; an owned zero bookmark wins
+over preview transfer; eligible libraries run existing sortable bookkeeping from
+their first loaded page to preserve list geometry, with movement disabled until
+complete; session memory grows with seen identities; unobserved
+worker changes await
+lifecycle/manual refresh; native same-position resumption requires a real
+idempotent save rather than a read-only equality check; deployment requires coordinated native builds and
+database rollback; deleted probes provide no continuing regression suite.

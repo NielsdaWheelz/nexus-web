@@ -3,6 +3,7 @@
 status: implemented; verification recorded in [quick-reads-verification.md](quick-reads-verification.md)
 origin: 2026-09-21 owner decisions and adversarial backend/frontend review
 implementation baseline: `2b4a6ace67`; branch `feat/quick-reads`
+current row, progress and freshness policy: [media rows](media-row-plan.md).
 
 ## goal and scope
 
@@ -38,8 +39,8 @@ other kinds, unavailable text and nonpositive counts have no estimate.
 | positioned pdf | unknown; its page-local position is not whole-document progression |
 
 - `total_seconds = word_count / 4.0`; compute raw seconds as SQL `float8` once
-  in the shared projection. estimate from the current durable cursor, never
-  `max_total_progression`. moving backward increases remaining time.
+  in the shared projection. estimate from the current durable cursor.
+  moving backward increases remaining time.
 - calculate independently of consumption state. finished status does not invent
   zero remaining; quick reads separately excludes canonically finished media.
 - raw zero is valid. quick eligibility is strictly **`0 < remaining_seconds < 600`**.
@@ -47,11 +48,11 @@ other kinds, unavailable text and nonpositive counts have no estimate.
   determine this predicate.
 - retain current half-up 1/5/15-minute display rounding. positive durations display
   at least one minute; exact zero displays zero. never use display values as sort
-  keys. an eligible estimate just below ten minutes may display "≈10 min".
-- reading rows show known remaining time, without a percentage. retain percentage
-  when time is unknown. unread rows with only total time label it "total".
-  `SetUnread` preserves the cursor: unread does not imply a full-duration estimate.
-  audio formatting and canonical consumption progress/completion remain unchanged.
+  keys. an eligible estimate just below ten minutes may display `10 min`.
+- rows show unread/current percentage/finished and known remaining time independently.
+  unknown remainder is omitted; finished hides time. `SetUnread` preserves the
+  cursor, advances writer fences and resumes on the next accepted canonical write.
+  current-position completion at ≥95% persists until unread/reset.
 
 ## owners and composition
 
@@ -168,7 +169,7 @@ paths are relative to `python/nexus/` or `apps/web/src/`. file ownership is excl
 
 | track | exclusive files / deliverable | adversarial gate |
 | --- | --- | --- |
-| a: duration and library backend | python `services/{reading_time,media_document_metrics,media,capabilities,pdf_readiness,library_entry_listing,keyset_cursor}.py`, `services/consumption/reader_cursor.py`, `schemas/{reading_time,library}.py`; lifecycle revision fixes only if needed | no high-water estimate, duplicated formula/readiness, unknown→zero coercion, or display-minute sort; cursor round-trip preserves order |
+| a: duration and library backend | python `services/{reading_time,media_document_metrics,media,capabilities,pdf_readiness,library_entry_listing,keyset_cursor}.py`, `services/consumption/reader_cursor.py`, `schemas/{reading_time,library}.py`; lifecycle revision fixes only if needed | current-position estimate; no duplicated formula/readiness, unknown→zero coercion, or display-minute sort; cursor round-trip preserves order |
 | b: resonance and transport backend | python `services/resonance/`, `schemas/{resonance,resource_graph}.py`, `api/routes/{lectern,media}.py` | eligibility precedes every cap; five limit; no queue gate, new relevance policy, reason payload, or retired related endpoint |
 | c: shared frontend contracts and rows | web `lib/{media/readingTime,libraries/readingTime,libraries/entryListItem,lectern/contract,resonance/contract,resonance/presentSlateItem,consumption/activityFacts}.ts`, `lib/collections/`, `components/collections/{CollectionRow,collectionRowFormatting,ConnectionRail}*`, `lib/resonance/useRelatedMedia.ts` | new shape only; zero remains representable; no relationship display; retained metadata and resource actions still work |
 | d: feature composition and library controls | web `components/collections/QuickReadsSection.tsx`, `lib/resonance/client.ts`, `lib/libraries/libraryView.ts`, `lib/consumption/projectionRevision.ts`, `lib/reader/useReaderProgress.ts`, `lib/lectern/LecternProvider.tsx`, `app/(authenticated)/{lectern/LecternPaneBody,libraries/[id]/LibraryPaneBody}.tsx` | separate read lifecycle using the existing keyed `useResource` contract; no added selection controls; no client sort; reading progress invalidates library facts and remaining order |
@@ -210,13 +211,13 @@ no text-body scans, per-item queries, persistent caches or new test harness.
 - reuse of existing relevance can yield fewer than five despite other short works.
 - fixed 240-wpm and position-proportional text length remain approximate; positioned
   pdfs stay unknown. no calibration or page-uniform duration guess.
-- duration-bearing reading rows lose percentage display to avoid mixing two
-  different progress meanings. completion/high-water history stays intact.
+- coarse time and rounded current-position percentage remain estimates;
+  completion history stays intact.
 - independent reads add a request and initial loading interval; they avoid coupling
   quick reads to at hand's mutation lifecycle. overlapping results are allowed.
 - one additional counter in the existing consumption snapshot distinguishes cursor
   changes from audio heartbeats. duration changes refresh every library view;
-  reconciliation retains its existing first-page replacement behavior. ordinary
+  reconciliation now retains the full loaded prefix when topology survives. ordinary
   unfiltered views do not newly reset pagination on audio heartbeats.
 - deleting inline related discovery also removes its transient similarity endpoint;
   stored human/ai connections and resonance ranking remain.

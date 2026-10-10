@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import { publishConsumptionProjectionChange } from "@/lib/consumption/projectionRevision";
 import type { Reader, ReaderEntry } from "@/lib/documentReader/DocumentReader";
 import type { TextRange } from "@/lib/documentReader/DocumentReader";
 import {
@@ -51,7 +52,7 @@ export function hostedProgress(mediaId: string): ReaderProgressPort {
     async load(signal) {
       const { data } = await apiFetch<
         ApiJson<"/media/{media_id}/reader-state", "get">
-      >(path, { signal });
+      >(path, { signal, cache: "no-store" });
       return { kind: "Canonical", snapshot: data };
     },
     async save(locator, base) {
@@ -63,6 +64,7 @@ export function hostedProgress(mediaId: string): ReaderProgressPort {
           body: JSON.stringify({ locator, base_revision: base.revision }),
           keepalive: base.keepalive,
         });
+        publishConsumptionProjectionChange();
         return { kind: "Canonical", snapshot: data };
       } catch (error) {
         if (!isApiError(error) || error.code !== "E_READER_STATE_CONFLICT")

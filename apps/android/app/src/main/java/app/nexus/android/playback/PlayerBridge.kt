@@ -17,7 +17,7 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.ExecutionException
 
 /**
- * `window.nexusAudio` on the hosted origin: the web's json request frames go to
+ * `window.nexusPlayback` on the hosted origin: the web's json request frames go to
  * the playback service as one custom command, its replies come back with the
  * request's id, and its snapshot pushes reach the document that said hello. The
  * object name is the compatibility identity; frames are trusted and parsed by
@@ -28,7 +28,7 @@ internal class PlayerBridge(
     private val webView: WebView,
     private val controller: () -> MediaController?,
 ) {
-    private val framing = OwnedOriginWebMessage(webView, "nexusAudio", BuildConfig.NEXUS_BASE_URL, ::onMessage)
+    private val framing = OwnedOriginWebMessage(webView, "nexusPlayback", BuildConfig.NEXUS_BASE_URL, ::onMessage)
     private var subscriber: JavaScriptReplyProxy? = null
     private var hello: String? = null // the document's hello frame, re-sent to a restarted service
     private var latest: String? = null

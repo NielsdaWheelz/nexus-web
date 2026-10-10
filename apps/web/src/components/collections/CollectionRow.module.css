@@ -56,14 +56,33 @@
   gap: var(--space-2);
 }
 
-.duration {
-  font-variant-numeric: tabular-nums;
-}
-
-:global([data-media-identity="true"]) .supportLine {
-  display: block;
+.mediaSupportLine {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
   overflow-wrap: anywhere;
   white-space: normal;
+}
+
+.bibliography {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.year,
+.readingFacts {
+  white-space: nowrap;
+}
+
+.readingFacts {
+  display: inline-flex;
+  flex: none;
+  margin-inline-start: auto;
+  font-variant-numeric: tabular-nums;
 }
 
 :global([data-media-identity="true"]) .supportItem,

@@ -70,6 +70,7 @@ internal class OfflineStore private constructor(private val filesDir: File) {
     private val leases = HashMap<UUID, Int>()
     private var active: Transfer? = null
     private var lastProgressNotice = 0L
+    private var consumptionRevision = 0L
     private var policyValue = Policy.UnmeteredOnly
 
     @Volatile var account: UUID? = null
@@ -107,6 +108,7 @@ internal class OfflineStore private constructor(private val filesDir: File) {
         JSONObject()
             .put("policy", policyValue.name)
             .put("authRequired", authRequired)
+            .put("consumptionRevision", consumptionRevision)
             .put("items", JSONArray(items.values.map { view(it) }))
     }
 
@@ -389,7 +391,7 @@ internal class OfflineStore private constructor(private val filesDir: File) {
      * A refresh (`sent == null`) never moves the baseline under an open copy: its reader
      * started from that revision, so its next save must CAS against it (I10).
      */
-    fun synced(mediaId: UUID, sent: JSONObject?, snapshot: JSONObject) {
+    fun synced(mediaId: UUID, sent: JSONObject?, snapshot: JSONObject, accepted: Boolean = false) {
         synchronized(lock) {
             val item = items[mediaId]?.takeIf { it.state == "Ready" } ?: return
             if (sent == null) {
@@ -402,6 +404,7 @@ internal class OfflineStore private constructor(private val filesDir: File) {
             } else {
                 item.position = "Pending"
             }
+            if (accepted || item.baseline.toString() != snapshot.toString()) consumptionRevision += 1
             item.baseline = snapshot
             persist()
         }
@@ -456,6 +459,7 @@ internal class OfflineStore private constructor(private val filesDir: File) {
         leases.clear()
         active = null
         account = null
+        consumptionRevision = 0
         if (!root.exists()) return
         val trash = File(filesDir, "offline-trash-${System.nanoTime()}")
         if (root.renameTo(trash)) deleteInBackground(trash) else root.deleteRecursively()

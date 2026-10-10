@@ -16,6 +16,7 @@ from nexus.responses import Data
 from nexus.schemas.consumption import (
     ActivityRecordIn,
     ListeningIn,
+    ListeningPositionOut,
     PlayerDescriptor,
     PreviewPositionIn,
 )
@@ -33,12 +34,11 @@ def get_player(
     return Data(data=consumption_service.get_player(db, viewer.user_id, media_id))
 
 
-@router.put("/media/{media_id}/listening-state", status_code=204)
+@router.put("/media/{media_id}/listening-state")
 def put_listening_state(
     media_id: UUID, body: ListeningIn, viewer: Annotated[Viewer, Depends(get_viewer)]
-) -> Response:
-    consumption_service.record_listening(viewer.user_id, media_id, body)
-    return Response(status_code=204)
+) -> Data[ListeningPositionOut]:
+    return Data(data=consumption_service.record_listening(viewer.user_id, media_id, body))
 
 
 @router.post("/media/{media_id}/preview-position", status_code=204)

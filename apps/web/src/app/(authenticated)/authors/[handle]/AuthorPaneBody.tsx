@@ -53,6 +53,9 @@ import {
   type DecodedAuthorWorksView,
 } from "@/lib/contributors/workView";
 import { presentContributorWork } from "@/lib/collections/presenters/presentContributorWork";
+import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
+import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
+import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import {
   paneResourceLoaders,
@@ -193,6 +196,10 @@ export default function AuthorPaneBody() {
   const completedAuthorRevalidationVersionRef = useRef<number | null>(null);
   const [chainEpoch, setChainEpoch] = useState(0);
   const [data, setData] = useState<CommittedAuthorWorks | null>(initialRestored);
+  const summaries = useMediaSummaries(data?.works.flatMap((work) =>
+    work.kind === "Media" ? [work.mediaSummary] : []) ?? []);
+  const initialQueryRevision = useRef(summaries.queryRevision).current;
+  const adoptedQueryRevisionRef = useRef(initialQueryRevision);
   if (
     committedSnapshotRef.current === null &&
     initialRestored !== null &&
@@ -206,7 +213,7 @@ export default function AuthorPaneBody() {
   // Set by a refresh so the already-committed view refetches once under a new
   // request identity; cleared by the commit that answers it. A view change needs
   // no flag — the requested and committed identities differ on their own.
-  const refreshPendingRef = useRef(false);
+  const refreshPendingRef = useRef(initialRestored !== null);
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
   const setView = useCallback(
     (next: AuthorWorksView) => {
@@ -239,13 +246,15 @@ export default function AuthorPaneBody() {
     view !== null &&
     !viewInvalid &&
     (data === null
-      ? !(view.kind === "Canonical" && allowSeedAdoptionRef.current)
-      : requestedViewKey !== committedViewKey || refreshPendingRef.current);
+      ? !(view.kind === "Canonical" && allowSeedAdoptionRef.current &&
+          summaries.queryRevision === initialQueryRevision)
+      : requestedViewKey !== committedViewKey || refreshPendingRef.current ||
+          adoptedQueryRevisionRef.current !== summaries.queryRevision);
   const firstPageRequestKey =
     requestsFirstPage && requestedViewKey !== null
-      ? `${requestedViewKey}:collection:${firstPageVersion}`
+      ? `${requestedViewKey}:collection:${firstPageVersion}:facts:${summaries.queryRevision}`
       : null;
-  const firstPage = useResource<{ page: CollectionPage<ContributorWorkItem>; metadataRevision: number }>({
+  const firstPage = useResource<{ page: CollectionPage<ContributorWorkItem>; metadataRevision: number; queryRevision: number }>({
     cacheKey: firstPageRequestKey,
     load: async (signal) => {
       const metadataRevision = metadataCollectionSnapshot();
@@ -253,8 +262,25 @@ export default function AuthorPaneBody() {
         // justify-defect: a non-null request key is built from this exact view.
         throw new Error("Author works request lost its view identity");
       }
-      const page = await fetchContributorWorks(handle, { view, limit: AUTHOR_WORKS_LIMIT, signal });
-      return { page, metadataRevision };
+      const retainedCount = data !== null && requestedViewKey === committedViewKey ? data.works.length : 0;
+      for (;;) {
+        try {
+          let page = await fetchContributorWorks(handle, {
+            view, limit: retainedCount === 0 ? AUTHOR_WORKS_LIMIT : Math.min(AUTHOR_WORKS_LIMIT, retainedCount), signal,
+          });
+          const items = [...page.items];
+          while (items.length < retainedCount && page.nextCursor.kind === "Present") {
+            page = await fetchContributorWorks(handle, {
+              view, limit: Math.min(AUTHOR_WORKS_LIMIT, retainedCount - items.length),
+              cursor: page.nextCursor.value, collectionRevision: page.collectionRevision, signal,
+            });
+            items.push(...page.items);
+          }
+          return { page: { ...page, items }, metadataRevision, queryRevision: summaries.queryRevision };
+        } catch (error) {
+          if (signal.aborted || !isApiError(error) || error.code !== "E_COLLECTION_CHANGED") throw error;
+        }
+      }
     },
   });
 
@@ -262,9 +288,10 @@ export default function AuthorPaneBody() {
   // current request identity, so a superseded view can never install its rows.
   useEffect(() => {
     const detail = data?.detail ?? seedDetail;
-    if (firstPage.status === "ready" && firstPage.data.metadataRevision === metadataRevision && view !== null && detail !== null) {
+    if (firstPage.status === "ready" && firstPage.data.metadataRevision === metadataRevision && firstPage.data.queryRevision === summaries.queryRevision && view !== null && detail !== null) {
       allowSeedAdoptionRef.current = false;
       refreshPendingRef.current = false;
+      adoptedQueryRevisionRef.current = firstPage.data.queryRevision;
       const committed: CommittedAuthorWorks = {
         detail,
         view,
@@ -286,7 +313,7 @@ export default function AuthorPaneBody() {
     if (firstPage.status === "error") {
       if (isInvalidViewError(firstPage.error)) {
         setViewInvalid(true);
-      } else {
+      } else if (data === null) {
         try {
           setError(authorLoadErrorMessage(firstPage.error));
         } catch (caughtDefect) {
@@ -301,9 +328,10 @@ export default function AuthorPaneBody() {
     }
   }, [
     revalidation,
-    data?.detail,
+    data,
     firstPage,
     firstPageVersion,
+    summaries.queryRevision,
     metadataRevision,
     seedDetail,
     view,
@@ -318,7 +346,8 @@ export default function AuthorPaneBody() {
     if (seed.status === "ready") {
       if (!allowSeedAdoptionRef.current || metadataRevision !== 0) return;
       allowSeedAdoptionRef.current = false;
-      if (view === null || view.kind !== "Canonical") return;
+      if (view === null || view.kind !== "Canonical" ||
+        summaries.queryRevision !== initialQueryRevision) return;
       const committed: CommittedAuthorWorks = { ...seed.data, view, metadataRevision: 0 };
       committedSnapshotRef.current = committed;
       setData(committed);
@@ -333,13 +362,13 @@ export default function AuthorPaneBody() {
         setDefect({ error: caughtDefect });
       }
     }
-  }, [seed, view, metadataRevision]);
+  }, [seed, view, metadataRevision, summaries.queryRevision, initialQueryRevision]);
 
   useLayoutEffect(() => {
     committedSnapshotRef.current = requestsFirstPage ? null : data;
     const completedVersion = completedAuthorRevalidationVersionRef.current;
     if (
-      data === null ||
+      data === null || requestsFirstPage ||
       completedVersion === null ||
       !revalidation.isPending(completedVersion)
     ) {
@@ -438,6 +467,7 @@ export default function AuthorPaneBody() {
       invalidView,
       firstPageVersion,
       chainEpoch,
+      summaries.queryRevision,
     ]),
     cursor: data?.nextCursor ?? NO_CURSOR,
     collectionRevision: data?.collectionRevision ?? ZERO_REVISION,
@@ -458,18 +488,32 @@ export default function AuthorPaneBody() {
     commitPage: commitWorksPage,
     refresh: refreshWorks,
   });
+  const handledCollectionChangeRef = useRef<unknown>(null);
+  useEffect(() => {
+    if (requestsFirstPage || exhaustion.kind !== "RefreshRequired" ||
+      exhaustion.reason !== "CollectionChanged" || handledCollectionChangeRef.current === exhaustion.error) return;
+    handledCollectionChangeRef.current = exhaustion.error;
+    refreshWorks();
+  }, [requestsFirstPage, exhaustion, refreshWorks]);
 
-  const workCount = data?.works.length ?? 0;
+  const worksRefreshError = firstPage.status === "error" ? firstPage.error :
+    exhaustion.kind === "ResumeFailed" || exhaustion.kind === "RefreshRequired" ? exhaustion.error : null;
+  const works = useMemo(() => data?.works.flatMap<ContributorWorkItem>((work) => {
+    if (work.kind !== "Media") return [work];
+    const mediaSummary = summaries.resolve(work.mediaSummary);
+    return mediaSummary.kind === "Absent" ? [] : [{ ...work, mediaSummary: mediaSummary.value }];
+  }) ?? [], [data?.works, summaries]);
+  const workCount = works.length;
   const workRows = useMemo(
-    () => data?.works.map(presentContributorWork) ?? [],
-    [data?.works],
+    () => works.map(presentContributorWork),
+    [works],
   );
   const getFilterStatus = useCallback(
     (query: string) => {
       const visibleCount =
-        data?.works.filter((work) =>
-          matchesPaneFilterQuery(query, [work.kind === "Media" ? work.mediaSummary.title : work.title]),
-        ).length ?? 0;
+        workRows.filter((row) =>
+          matchesPaneFilterQuery(query, mediaListFilterFields({ title: row.title.text, contributors: row.contributors })),
+        ).length;
       const unit = { singular: "work", plural: "works" };
       if (data !== null && requestsFirstPage) {
         return {
@@ -477,7 +521,7 @@ export default function AuthorPaneBody() {
           visibleCount,
           loadedCount: workCount,
           unit,
-          cause: error === null ? "Updating" as const : "Failed" as const,
+          cause: firstPage.status === "error" ? "Failed" as const : "Updating" as const,
         };
       }
       if (
@@ -501,7 +545,7 @@ export default function AuthorPaneBody() {
             unit,
           };
     },
-    [data, error, exhaustion.kind, requestsFirstPage, workCount],
+    [data, error, exhaustion.kind, firstPage.status, requestsFirstPage, workCount, workRows],
   );
   const {
     query: filterQuery,
@@ -593,7 +637,7 @@ export default function AuthorPaneBody() {
   const filteredWorkRows = useMemo(
     () =>
       workRows.filter((row) =>
-        matchesPaneFilterQuery(filterQuery, [row.title.text]),
+        matchesPaneFilterQuery(filterQuery, mediaListFilterFields({ title: row.title.text, contributors: row.contributors })),
       ),
     [filterQuery, workRows],
   );
@@ -749,9 +793,15 @@ export default function AuthorPaneBody() {
               collectionBusy={exhaustion.kind === "Draining"}
               surface={false}
               notice={
-                error && data ? (
-                  <FeedbackNotice content={error} announcement="Assertive" />
-                ) : undefined
+                <MediaSummaryNotice
+                  error={worksRefreshError ?? summaries.error}
+                  retry={() => {
+                    if (summaries.error !== null) summaries.retry();
+                    if (firstPage.status === "error") firstPage.retry();
+                    if (exhaustion.kind === "ResumeFailed") exhaustion.retry();
+                    if (exhaustion.kind === "RefreshRequired") exhaustion.refresh();
+                  }}
+                />
               }
               empty={
                 filterQuery.trim() ? (
@@ -776,7 +826,8 @@ export default function AuthorPaneBody() {
                   <p className={styles.empty}>No works yet.</p>
                 )
               }
-              footer={<CollectionExhaustionNotice state={exhaustion} />}
+              footer={!requestsFirstPage && worksRefreshError === null
+                ? <CollectionExhaustionNotice state={exhaustion} /> : undefined}
             />
           </section>
 

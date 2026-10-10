@@ -2,6 +2,9 @@
 
 import { Play } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
+import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
+import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
+import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
 import CollectionView from "@/components/collections/CollectionView";
 import QuickReadsSection from "@/components/collections/QuickReadsSection";
 import SuggestionsSection, {
@@ -63,8 +66,8 @@ function filterFields(item: LecternItem): string[] {
       ? item.activation.descriptor.subtitle
       : null;
   return subtitle?.kind === "Present"
-    ? [item.mediaSummary.title, subtitle.value]
-    : [item.mediaSummary.title];
+    ? [...mediaListFilterFields(item.mediaSummary), subtitle.value]
+    : [...mediaListFilterFields(item.mediaSummary)];
 }
 
 /** Modeled failures become notices; anything else is a defect for the error boundary. */
@@ -105,10 +108,15 @@ export default function LecternPaneBody() {
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const paneId = usePaneRuntime()?.paneId ?? "lectern";
   const isPaneActive = usePaneIsActive();
-  const items = useMemo(
+  const loadedItems = useMemo(
     () => (resource.status === "ready" ? resource.data.items : []),
     [resource],
   );
+  const summaries = useMediaSummaries(loadedItems.map((item) => item.mediaSummary));
+  const items = useMemo(() => loadedItems.flatMap((item) => {
+    const mediaSummary = summaries.resolve(item.mediaSummary);
+    return mediaSummary.kind === "Absent" ? [] : [{ ...item, mediaSummary: mediaSummary.value }];
+  }), [loadedItems, summaries]);
   const status =
     resource.status === "ready" || resource.status === "error"
       ? resource.status
@@ -253,7 +261,7 @@ export default function LecternPaneBody() {
     visible.flatMap((item) => {
       const activation = item.activation;
       if (activation.kind !== "FooterAudio") return [];
-      const verb = playbackVerb(item.consumption);
+      const verb = playbackVerb(item.mediaSummary.consumption);
       return [
         [
           item.itemId,
@@ -305,6 +313,7 @@ export default function LecternPaneBody() {
             rows={visible.map(presentLecternItem)}
             status={status}
             ariaLabel="On the lectern"
+            notice={<MediaSummaryNotice error={summaries.error} retry={summaries.retry} />}
             error={
               resource.status === "error" ? (
                 <FeedbackNotice

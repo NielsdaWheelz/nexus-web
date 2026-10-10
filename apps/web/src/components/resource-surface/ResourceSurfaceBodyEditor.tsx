@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useCallback, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { ChevronRight, Link2, Plus } from "lucide-react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
@@ -219,7 +219,12 @@ function RowActions({ row, label, text, outline, enabled, report, onSelectBlock 
   report: (error: unknown) => void; onSelectBlock: () => void;
 }) {
   const model = useResourceActionMenuModel({ ref: assumeCanonicalResourceRef(row.target.item.ref) });
-  const { onOpenChange } = useMobileChromeActionMenuLock();
+  const { onOpenChange: lockOpenChange } = useMobileChromeActionMenuLock();
+  const refresh = model.refresh;
+  const onOpenChange = useCallback((open: boolean) => {
+    lockOpenChange(open);
+    if (open) refresh();
+  }, [lockOpenChange, refresh]);
   const run = (work: Promise<void>) => { void work.catch(report); };
   const siblings = outline.rows.filter((candidate) => candidate.endpointRef === row.endpointRef && candidate.path.linkPath.slice(0, -1).join() === row.path.linkPath.slice(0, -1).join());
   const index = siblings.findIndex((candidate) => candidate.occurrenceId === row.occurrenceId);

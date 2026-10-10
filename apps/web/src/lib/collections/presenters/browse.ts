@@ -2,7 +2,6 @@ import { absent, present } from "@/lib/api/presence";
 import type { Presence } from "@/lib/api/presence";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { decodePublicationDate, type PublicationDate } from "@/lib/dates/publicationDate";
-import { mediaSummaryFromWire } from "@/lib/media/mediaSummary";
 import { decodeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import {
   browsePreviewHref,
@@ -11,6 +10,7 @@ import {
   type BrowseSource,
   type PreviewEpisodeItem,
 } from "@/lib/browse/contract";
+import { selectMediaAuthors } from "@/lib/contributors/formatting";
 import type { CollectionRowView } from "@/lib/collections/types";
 
 export function browseSourceLabel(source: BrowseSource): string {
@@ -73,7 +73,7 @@ export function presentBrowseCandidate(
   candidate: BrowseCandidate,
 ): CollectionRowView {
   if (candidate.resolution.kind === "InNexusMedia") {
-    return presentMedia(mediaSummaryFromWire(candidate.resolution.mediaSummary), {
+    return presentMedia(candidate.resolution.mediaSummary, {
       id: candidateId(candidate),
       primary: {
         kind: "link",
@@ -101,7 +101,7 @@ export function presentBrowseCandidate(
       paneLabelHint: candidate.title,
     },
     title: { text: candidate.title },
-    contributors: candidate.contributors,
+    contributors: candidate.kind === "Podcast" ? candidate.contributors : selectMediaAuthors(candidate.contributors),
     publicationDate: publicationDate(candidate.publishedAt),
     context: present({ kind: "Text", text: context }),
     activity: absent(),
@@ -126,7 +126,7 @@ export function presentPreviewEpisode(
       paneLabelHint: episode.title,
     },
     title: { text: episode.title },
-    contributors: episode.contributors,
+    contributors: selectMediaAuthors(episode.contributors),
     publicationDate: publicationDate(episode.publishedAt),
     context: present({
       kind: "Text",

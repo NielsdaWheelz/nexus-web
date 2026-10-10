@@ -9,6 +9,7 @@ import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { GlobalPlayerProvider } from "@/lib/player/playerRuntime";
 import { connectOffline } from "@/lib/offline/bridge";
 import { ImportsProvider } from "@/lib/imports/ImportsProvider";
+import { MediaSummaryProvider } from "@/lib/media/MediaSummaryProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { ReaderProvider, type ReaderProfile } from "@/lib/reader/ReaderContext";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
@@ -134,6 +135,7 @@ function AuthenticatedWorkspace({
               {/* One Lectern owner wraps the workspace leaves and player
                   runtime: LecternProvider -> GlobalPlayerProvider -> workspace
                   + the shell-owned player surfaces. */}
+              <MediaSummaryProvider key={accountId}>
               <LecternProvider>
                 <LibraryPlacementControllerProvider>
                   <ShareControllerProvider>
@@ -169,6 +171,7 @@ function AuthenticatedWorkspace({
                   </ShareControllerProvider>
                 </LibraryPlacementControllerProvider>
               </LecternProvider>
+              </MediaSummaryProvider>
             </MobileChromeProvider>
           </MobileViewportProvider>
         </WorkspaceStoreProvider>

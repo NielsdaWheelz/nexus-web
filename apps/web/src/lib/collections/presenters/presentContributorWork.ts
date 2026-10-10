@@ -2,6 +2,7 @@ import { absent, present } from "@/lib/api/presence";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import type { CollectionRowView } from "@/lib/collections/types";
 import type { ContributorWorkItem } from "@/lib/contributors/types";
+import { selectMediaAuthors } from "@/lib/contributors/formatting";
 import {
   contributorRoleLabel,
   normalizeContributorRoleToken,
@@ -15,6 +16,23 @@ export function presentContributorWork(work: ContributorWorkItem): CollectionRow
       actionSubject: work.actionSubject,
       selected: false,
     });
+  }
+
+  if (work.kind === "ExternalWork") {
+    return {
+      id: work.href,
+      kind: "contributor_work",
+      mediaIdentity: "External",
+      primary: { kind: "link", href: work.href, paneLabelHint: work.title },
+      title: { text: work.title },
+      contributors: selectMediaAuthors(work.contributors),
+      publicationDate: work.date,
+      context: absent(),
+      activity: absent(),
+      exceptionalStatus: absent(),
+      actionSubject: null,
+      selected: false,
+    };
   }
 
   const roleContext = [

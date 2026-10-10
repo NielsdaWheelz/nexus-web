@@ -279,16 +279,17 @@ quotable web articles, epubs and pdfs with positive canonical word counts.
 raw total seconds are `word_count / 4.0` (240 words/minute). missing or empty
 cursors have the full duration remaining. positioned web/epub cursors use their
 current whole-document progression; a missing progression or positioned pdf has
-unknown remaining time. consumption state and its high-water progress do not
-alter this calculation. moving backward increases remaining time; marking
-unread preserves the cursor.
+unknown remaining time. percentage and remainder use the same current cursor;
+moving backward lowers percentage and increases remaining time. completion is
+sticky until unread/reset; marking unread preserves the cursor.
 
-`schemas/reading_time.py` and `lib/media/readingTime.ts` own the estimate
-contract. each stored-media entry requires `mediaSummary`, whose `duration`
+`schemas/reading_time.py` owns the estimate contract, exposed through generated
+wire types on the web. each stored-media entry requires `mediaSummary`, whose `duration`
 contains modality and a presence-wrapped estimate. present estimates have
 positive total minutes and a presence-wrapped nonnegative remainder. document
-display uses half-up 1/5/15-minute rounding, retaining exact zero. nested
-`media` continues to own operational consumption state and progress.
+display uses half-up 1/5/15-minute rounding, retaining exact zero. `mediaSummary`
+owns the displayed consumption state and percentage; nested `media` retains
+operational capabilities.
 
 `sort=remaining&direction=asc|desc` orders the full entry query by missing value
 last, raw remaining seconds in the requested direction, title, then existing
@@ -297,8 +298,10 @@ filtered, and never changes authored positions. cursor keys use finite
 `FloatOrNull` values and retain exact view/plan binding. cursor and content
 changes invalidate continuation through the existing collection revision.
 
-rows show original publication, author credits, and known remaining or total
-minutes. absent facts disappear; finished/unread never manufactures zero.
+rows show title, author credits, original publication year, state/current
+percentage, and known remaining minutes at canonical 1×. finished hides time;
+absent facts disappear. the first two authors link; overflow opens through the
+existing metadata action. every local filter includes all author credits.
 publisher, edition date, and source appear only in metadata. `presentMedia`
 owns this identity across stored-media collection occurrences.
 
@@ -359,19 +362,20 @@ items / show finished.
   reacts when its id is affected or the scope is `Unknown`. the existing
   consumption store also owns `rowRevision`, advanced by accepted commands,
   durable reader-cursor saves, and reading-activity installs. an acknowledged
-  teardown save still publishes after its reader unmounts. every active view
-  reconciles that revision; restored views compare it on return. audio
-  heartbeats advance only the broad consumption revision, so ordinary views
-  retain loaded pagination while In progress, Unfinished, and Remaining time
-  views reconcile. there is no second store or client-side duration calculation.
+  teardown save still publishes after its reader unmounts. the account-scoped
+  `MediaSummaryProvider` patches retained facts without changing occurrence
+  order, pagination or focus. mounted In progress, Unfinished, and Remaining
+  time views independently reconcile the whole retained prefix, including
+  inactive and empty panes; restored views revalidate on return. ordinary fact
+  updates preserve list geometry. duration calculation remains server-owned.
 - While requested and committed views differ, prior rows and row navigation
   remain available; continuation, reorder, and entry mutations do not. Reorder
   exists only for a complete, editable, non-default
   `Canonical + All items (all) + All types` view.
 - Failure retains and labels the prior committed collection. Network/5xx
-  exhaustion offers **Retry**; an invalid cursor or changed revision offers
-  **Refresh list**, which requests the first page of the same view without
-  clearing committed rows.
+  exhaustion offers **Retry**. `E_COLLECTION_CHANGED` quietly reconciles the
+  retained prefix and resumes continuation with its fresh boundary. an invalid
+  cursor offers **Refresh list** without clearing committed rows.
 - pane return captures only a ready snapshot whose committed view equals the
   URL view, and restores library plus page as one coherent value. refresh
   completion follows layout publication of that committed return snapshot;

@@ -267,9 +267,7 @@ def list_subscriptions(
                         pe.podcast_id,
                         pe.published_at,
                         {
-                    projection.episode_state_case_sql(
-                        listening_alias="pls", override_alias="co", episode_alias="pe"
-                    )
+                    projection.episode_state_case_sql(listening_alias="pls", override_alias="co")
                 } AS episode_state
                     FROM podcast_episodes pe
                     JOIN visible_media vm ON vm.media_id = pe.media_id

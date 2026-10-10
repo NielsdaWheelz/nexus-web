@@ -229,7 +229,7 @@ class LibraryDestinationOut(BaseModel):
 class LibraryEntryPodcastOut(_Camel):
     id: UUID
     title: str
-    contributors: list[ContributorCreditOut] = Field(default_factory=list)
+    contributors: list[ContributorCreditOut]
     unplayed_count: int = Field(ge=0, default=0)
     published_date: Presence[datetime]
 
@@ -255,10 +255,7 @@ class LibraryEntryMediaOut(_Snake):
     created_at: datetime
     author_mode: Literal["automatic", "manual"]
     canonical_source_url: str | None
-    read_state: Literal["unread", "in_progress", "finished"]
-    progress_fraction: float | None = Field(default=None, ge=0, le=1)
-    progress_resettable: bool
-    last_engaged_at: datetime | None = None
+    last_engaged_at: datetime | None
     capabilities: LibraryEntryMediaCapabilitiesOut
 
 

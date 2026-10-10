@@ -7,7 +7,6 @@ import {
 } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
 import type { ExhaustionState } from "@/lib/api/useExhaustivePagination";
 import { presentMedia } from "@/lib/collections/presenters/media";
@@ -41,6 +40,8 @@ interface PodcastEpisodeListProps {
   markAllAsPlayedBusy: boolean;
   collectionBusy: boolean;
   exhaustion: ExhaustionState;
+  notice?: ReactNode;
+  footer?: ReactNode;
   onMarkAllAsPlayed: () => void;
   onToggleShowNotes: (mediaId: string) => void;
 }
@@ -57,6 +58,8 @@ export default function PodcastEpisodeList({
   markAllAsPlayedBusy,
   collectionBusy,
   exhaustion,
+  notice,
+  footer,
   onMarkAllAsPlayed,
   onToggleShowNotes,
 }: PodcastEpisodeListProps) {
@@ -196,7 +199,8 @@ export default function PodcastEpisodeList({
         rows={rows}
         status="ready"
         collectionBusy={collectionBusy}
-        footer={<CollectionExhaustionNotice state={exhaustion} />}
+        notice={notice}
+        footer={footer}
         ariaLabel="Episodes"
         rowPanels={rowPanels}
         rowControls={episodeViewControls}

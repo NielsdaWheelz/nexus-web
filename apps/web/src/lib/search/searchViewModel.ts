@@ -8,7 +8,6 @@ import {
 } from "@/lib/dates/publicationDate";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
-import { mediaSummaryFromWire } from "@/lib/media/mediaSummary";
 import type { SearchResultRowViewModel, SearchType } from "./types";
 
 type SearchResult = ApiJson<"/search", "get">["results"][number];
@@ -239,7 +238,7 @@ function adaptSearchResultRow(result: SearchResult): SearchResultRowViewModel {
       // justify-defect: the summary and result tag must name the same media and kind.
       throw new Error("Search media identity is inconsistent");
     }
-    const mediaSummary = mediaSummaryFromWire(summary);
+    const mediaSummary = summary;
     return { ...base, type: result.type, mediaSummary };
   }
   const primaryText = buildPrimaryText(result);

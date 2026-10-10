@@ -36,7 +36,8 @@ internal class ListeningRecorder(
     private val origin: NexusOriginClient,
     private val outbox: ActivityOutbox,
     private val sample: () -> Sample,
-    private val onAdopt: (positionMs: Long) -> Unit,
+    private val onAdopt: (position: JSONObject) -> Unit,
+    private val onAccepted: () -> Unit,
     private val onSynced: (Boolean) -> Unit,
     private val onSettled: (mediaId: UUID, next: JSONObject?) -> Unit,
 ) {
@@ -45,12 +46,14 @@ internal class ListeningRecorder(
     private class Episode(val mediaId: UUID, var resetEpoch: Long, var overrideRevision: Long?) {
         var rate: Double? = null // set by the listener this session; absent keeps the stored rate
         var span: Span? = null // open while playing
+        var fenced = false
+        var active = false
     }
 
     private class Span(val startElapsed: Long, val startPositionMs: Long)
 
     /** A listening PUT or a natural-end settle, sent in order, one at a time. */
-    private class Write(val mediaId: UUID, val body: JSONObject, val settle: Boolean)
+    private class Write(val accountId: UUID, val mediaId: UUID, val body: JSONObject, val settle: Boolean)
 
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val wallOffsetMs = System.currentTimeMillis() - SystemClock.elapsedRealtime()
@@ -93,7 +96,7 @@ internal class ListeningRecorder(
     fun pinRate(rate: Double) {
         val ep = episode ?: return
         ep.rate = rate
-        write(ep)
+        if (ep.active && !ep.fenced) write(ep)
     }
 
     /** Whether this device holds a listening sample of the episode that the server may not have. */
@@ -103,6 +106,7 @@ internal class ListeningRecorder(
     }
 
     fun resetEpoch(): Long? = episode?.resetEpoch
+    fun fenced(): Boolean = episode?.fenced == true
 
     /** A resume in place under the server's descriptor: its override revision is the end's fence. */
     fun refresh(overrideRevision: Long?) {
@@ -110,18 +114,35 @@ internal class ListeningRecorder(
     }
 
     /** A reset elsewhere: later writes carry the new epoch, queued ones are stale. */
-    fun adopt(resetEpoch: Long) {
+    fun adopt(position: JSONObject) {
         val ep = episode ?: return
-        ep.resetEpoch = resetEpoch
+        ep.resetEpoch = position.getLong("resetEpoch")
+        ep.overrideRevision = position.getJSONObject("consumptionOverrideRevision").opt("value")?.let { (it as Number).toLong() }
+        ep.active = false
+        ep.fenced = false
         lane.removeAll { !it.settle && it.mediaId == ep.mediaId }
+    }
+
+    /** The service pauses first, then drains and retires every old write of this episode. */
+    suspend fun fence() {
+        val ep = episode ?: return
+        ep.fenced = true
+        tick?.cancel()
+        closeSpan(ep)
+        sending?.join()
+        lane.removeAll { it.mediaId == ep.mediaId }
+        ep.active = false
     }
 
     fun playing(on: Boolean) {
         val ep = episode ?: return
+        if (ep.fenced) return
         tick?.cancel()
         closeSpan(ep)
         if (on) {
+            ep.active = true
             ep.span = openSpan()
+            write(ep)
             tick = scope.launch {
                 while (true) {
                     delay(TICK_MS)
@@ -130,13 +151,15 @@ internal class ListeningRecorder(
                     write(ep)
                 }
             }
-        } else {
+        } else if (ep.active) {
             write(ep)
         }
     }
 
     fun seeked(fromMs: Long) {
         val ep = episode ?: return
+        if (ep.fenced) return
+        ep.active = true
         val playing = ep.span != null
         closeSpan(ep, fromMs)
         if (playing) ep.span = openSpan()
@@ -154,7 +177,8 @@ internal class ListeningRecorder(
             .put("mediaId", ep.mediaId.toString())
             .put("terminalListening", listening(ep))
             .put("expectedConsumptionOverrideRevision", presence(ep.overrideRevision))
-        lane.addLast(Write(ep.mediaId, body, settle = true))
+        val accountId = account ?: return
+        lane.addLast(Write(accountId, ep.mediaId, body, settle = true))
         send()
     }
 
@@ -184,9 +208,10 @@ internal class ListeningRecorder(
     }
 
     private fun write(ep: Episode) {
+        val accountId = account ?: return
         // newest wins: a queued sample of the same episode is replaced, never reordered past a settle
         if (lane.lastOrNull()?.let { !it.settle && it.mediaId == ep.mediaId } == true) lane.removeLast()
-        lane.addLast(Write(ep.mediaId, listening(ep), settle = false))
+        lane.addLast(Write(accountId, ep.mediaId, listening(ep), settle = false))
         send()
     }
 
@@ -208,12 +233,29 @@ internal class ListeningRecorder(
 
     /** True when the write is done with (delivered or refused), false to keep it queued and retry. */
     private suspend fun deliver(write: Write): Boolean {
+        if (account != write.accountId) return true
         try {
             if (!write.settle) {
-                origin.putListening(write.mediaId, write.body)
+                val position = origin.putListening(write.mediaId, write.body)
+                if (account != write.accountId) return true
+                val epoch = position.getLong("resetEpoch")
+                val override = position.getJSONObject("consumptionOverrideRevision")
+                episode?.takeIf { it.mediaId == write.mediaId && it.resetEpoch == epoch }?.overrideRevision =
+                    override.opt("value")?.let { (it as Number).toLong() }
+                // Its own preceding heartbeat may have just completed it. The end retains
+                // its captured epoch, so unread/reset still supersede the queued event.
+                for (queued in lane) {
+                    if (queued.settle && queued.mediaId == write.mediaId &&
+                        queued.body.getJSONObject("terminalListening").getLong("expectedResetEpoch") == epoch) {
+                        queued.body.put("expectedConsumptionOverrideRevision", override)
+                    }
+                }
+                onAccepted()
                 return true
             }
             val next = origin.consumptionCommand(write.body).getJSONObject("nextItem").optJSONObject("value")
+            if (account != write.accountId) return true
+            onAccepted()
             onSettled(write.mediaId, next?.getJSONObject("activation")?.optJSONObject("descriptor"))
             return true
         } catch (error: NexusOriginError) {
@@ -222,9 +264,11 @@ internal class ListeningRecorder(
             val ep = episode
             if (error.status == 409 && current != null && !write.settle && ep?.mediaId == write.mediaId) {
                 // a reset elsewhere: adopt the server's epoch and position
-                ep.resetEpoch = current.getLong("resetEpoch")
+                val fenced = ep.fenced
+                adopt(current)
+                ep.fenced = fenced
                 lane.removeAll { it !== write && !it.settle && it.mediaId == write.mediaId }
-                onAdopt(current.getLong("positionMs"))
+                onAdopt(current)
             } else {
                 Log.w(TAG, "dropped a refused ${if (write.settle) "settle" else "listening write"}", error)
             }

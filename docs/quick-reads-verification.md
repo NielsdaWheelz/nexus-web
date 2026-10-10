@@ -3,6 +3,8 @@
 date: 2026-09-21
 branch: `feat/quick-reads`; baseline: `2b4a6ace67`
 contract: [quick reads](quick-reads.md)
+historical receipt: predates migration `0253`; current progress, row copy and
+freshness are verified separately by [media rows](media-row-verification.md).
 
 final gate: `./scripts/test` passed after all application edits: formatting/lint,
 python and typescript checks, packaged offline-reader build, css checks and the

@@ -139,30 +139,19 @@ function MediaPane({ id }: { readonly id: string }) {
     readableRef.current = readable;
   }, [readable, reader]);
   const doc = useReaderState(reader, (s) => (s.document.status === "ready" ? s.document.doc : null));
-  const finished = useReaderState(
-    reader,
-    (s) =>
-      s.progress?.kind === "Ready" &&
-      s.progress.view.kind === "Canonical" &&
-      s.progress.view.snapshot.state === "Positioned" &&
-      s.progress.view.snapshot.locator.kind !== "pdf" &&
-      s.progress.view.snapshot.locator.locations.total_progression === 1,
-  );
-  useEffect(() => {
-    if (finished) lectern.revalidate();
-  }, [finished, lectern]);
   // A lectern progress reset: this reader's unsaved progress settles first, then
   // the reset cursor installs.
   useEffect(() => {
     const offInstall = lectern.onCanonicalInstall((event) => {
       if (event.kind === "progressState" && event.state.mediaId === id) reader.install(event.state.readerCursor);
     });
-    const offDrain = lectern.registerBeforeProgressReset((mediaId) =>
-      mediaId === id ? reader.drainForReset() : Promise.resolve(),
-    );
+    const offFence = lectern.registerProgressFence({
+      prepare: (mediaIds) => mediaIds.includes(parseMediaId(id)) ? reader.prepareProgressFence() : Promise.resolve(),
+      reconcile: (mediaIds) => mediaIds.includes(parseMediaId(id)) ? reader.reconcileProgressFence() : Promise.resolve(),
+    });
     return () => {
       offInstall();
-      offDrain();
+      offFence();
     };
   }, [id, lectern, reader]);
 
@@ -419,7 +408,7 @@ function MediaPane({ id }: { readonly id: string }) {
   const next = (() => {
     const items = lectern.resource.status === "ready" ? lectern.resource.data.items : [];
     const index = items.findIndex((item) => item.mediaSummary.mediaId === id);
-    if (index < 0 || items[index].consumption.state !== "Finished") return null;
+    if (index < 0 || items[index].mediaSummary.consumption.state !== "Finished") return null;
     return items.slice(index + 1).find((item) => item.activation.kind === "Readable") ?? null;
   })();
   // Done finishes this media (with or without a lectern row) and names the next readable item.

@@ -2,7 +2,8 @@
 
 The reset epoch is the only fence: a write names the epoch it was taken under, last writer wins
 within an epoch and a reset wins across epochs. No row reads as epoch 0. Positions never exceed
-the known duration. Every write composes inside the caller's viewer-locked transaction.
+a positive known duration; a nonpositive duration is unknown. Every write composes
+inside the caller's viewer-locked transaction.
 """
 
 from __future__ import annotations
@@ -59,7 +60,9 @@ def write(
         text(f"""
             UPDATE podcast_listening_states
             SET duration_ms = COALESCE(:duration_ms, duration_ms),
-                position_ms = LEAST(:position_ms, COALESCE(:duration_ms, duration_ms)),
+                position_ms = CASE WHEN COALESCE(:duration_ms, duration_ms) > 0
+                    THEN LEAST(:position_ms, COALESCE(:duration_ms, duration_ms))
+                    ELSE :position_ms END,
                 playback_speed = COALESCE(:rate, playback_speed),
                 updated_at = now(),
                 last_engaged_at = now()
@@ -73,7 +76,9 @@ def write(
             text(f"""
                 INSERT INTO podcast_listening_states (user_id, media_id, position_ms,
                     duration_ms, playback_speed, last_engaged_at)
-                VALUES (:viewer_id, :media_id, LEAST(:position_ms, :duration_ms), :duration_ms,
+                VALUES (:viewer_id, :media_id,
+                    CASE WHEN :duration_ms > 0 THEN LEAST(:position_ms, :duration_ms)
+                         ELSE :position_ms END, :duration_ms,
                     :rate, now())
                 ON CONFLICT (user_id, media_id) DO NOTHING
                 RETURNING {_COLUMNS}
@@ -86,7 +91,7 @@ def write(
 def install_preview(
     db: Session, *, viewer_id: UUID, media_id: UUID, position_ms: int, duration_ms: int | None
 ) -> bool:
-    """Install a preview's position when the viewer has no progress; whether it did."""
+    """Install only when no listening row exists; an owned zero bookmark wins."""
     if position_ms == 0:
         return False
     return (
@@ -95,19 +100,26 @@ def install_preview(
                 INSERT INTO podcast_listening_states (user_id, media_id, position_ms,
                     duration_ms, last_engaged_at)
                 VALUES (:viewer_id, :media_id, :position_ms, :duration_ms, now())
-                ON CONFLICT (user_id, media_id) DO UPDATE
-                SET position_ms = EXCLUDED.position_ms,
-                    duration_ms = COALESCE(EXCLUDED.duration_ms,
-                        podcast_listening_states.duration_ms),
-                    updated_at = now(),
-                    last_engaged_at = now()
-                WHERE podcast_listening_states.position_ms = 0
+                ON CONFLICT (user_id, media_id) DO NOTHING
                 RETURNING 1
             """),
             {"viewer_id": viewer_id, "media_id": media_id}
             | {"position_ms": position_ms, "duration_ms": duration_ms},
         ).one_or_none()
         is not None
+    )
+
+
+def fence(db: Session, *, viewer_id: UUID, media_id: UUID) -> None:
+    """Retire earlier samples without moving position or changing recency."""
+    db.execute(
+        text("""
+            INSERT INTO podcast_listening_states (user_id, media_id, reset_epoch)
+            VALUES (:viewer_id, :media_id, 1)
+            ON CONFLICT (user_id, media_id) DO UPDATE
+            SET reset_epoch = podcast_listening_states.reset_epoch + 1, updated_at = now()
+        """),
+        {"viewer_id": viewer_id, "media_id": media_id},
     )
 
 

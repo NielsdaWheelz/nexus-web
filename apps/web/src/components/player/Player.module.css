@@ -200,6 +200,7 @@
   padding: var(--space-3) var(--space-4);
   background: var(--surface-1);
   border-top: var(--stroke-hairline) solid var(--edge);
+  padding-bottom: calc(var(--space-3) + var(--viewport-safe-bottom));
 }
 
 /* mobile */

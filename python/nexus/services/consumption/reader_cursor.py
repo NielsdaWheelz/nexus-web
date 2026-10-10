@@ -1,9 +1,9 @@
 """The reader cursor, one ``reader_media_state`` row per viewer and media.
 
 No row reads as Empty at revision 0; a null locator is a revisioned Empty
-tombstone. Every write advances the revision, admits a positioned locator
-against its own source fragment first, and composes inside the caller's
-transaction.
+tombstone. Changed writes advance the revision; accepted equal saves keep it. Each
+save admits a positioned locator against its own source fragment first, and composes
+inside the caller's transaction.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ def current_position_rows_sql() -> str:
     return """
         SELECT media_id,
                locator IS NOT NULL AS positioned,
-               CASE WHEN locator->>'kind' IN ('web', 'epub')
+               CASE WHEN locator->>'kind' IN ('web', 'epub', 'transcript')
                     THEN (locator->'locations'->>'total_progression')::float8
                     ELSE NULL::float8
                END AS total_progression
@@ -85,23 +85,36 @@ def load_snapshot(
 def put_in_txn(
     db: Session, *, viewer_id: UUID, media_id: UUID, media_kind: str, write: CursorWrite
 ) -> ReaderCursorPositioned:
-    """Compare-and-set on ``base_revision``; re-saving the identical locator succeeds unchanged."""
+    """Validate the base revision before accepting even an identical locator."""
     _check_kind(media_kind, write.locator)
     if isinstance(write.locator, EpubReaderResumeState):
         _admit_epub(db, media_id, write.locator)
     elif isinstance(write.locator, WebReaderResumeState):
         _admit_web(db, media_id, write.locator)
     current = load_snapshot(db, viewer_id=viewer_id, media_id=media_id, media_kind=media_kind)
-    if isinstance(current, ReaderCursorPositioned) and current.locator == write.locator:
-        return current
     if write.base_revision != current.revision:
         raise ConflictError(
             ApiErrorCode.E_READER_STATE_CONFLICT,
             "Reader cursor was updated elsewhere",
             details={"current": current.model_dump(mode="json")},
         )
+    if isinstance(current, ReaderCursorPositioned) and current.locator == write.locator:
+        return current
     revision = _write(db, viewer_id, media_id, write.locator.model_dump(mode="json"))
     return ReaderCursorPositioned(revision=revision, locator=write.locator)
+
+
+def fence_in_txn(db: Session, *, viewer_id: UUID, media_id: UUID) -> None:
+    """Retire earlier saves without moving the bookmark."""
+    db.execute(
+        text("""
+            INSERT INTO reader_media_state (user_id, media_id, locator, revision)
+            VALUES (:viewer_id, :media_id, NULL, 1)
+            ON CONFLICT (user_id, media_id) DO UPDATE
+            SET revision = reader_media_state.revision + 1, updated_at = now()
+        """),
+        {"viewer_id": viewer_id, "media_id": media_id},
+    )
 
 
 def reset_in_txn(db: Session, *, viewer_id: UUID, media_id: UUID) -> ReaderCursorEmpty:

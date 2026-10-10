@@ -21,6 +21,7 @@ from nexus.auth.permissions import (
 from nexus.db.models import Media, MediaKind, TranscriptCoverage, TranscriptState
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.consumption import PlayerDescriptor
+from nexus.schemas.consumption_state import ConsumptionOut, ConsumptionStateValue
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.media import (
     ListeningStateOut,
@@ -68,6 +69,11 @@ from nexus.text import escape_like
 
 _LIST_LIMIT_MAX = 200
 _TERMINAL_PROCESSING_STATUSES = ("ready_for_reading", "failed", "suspended")
+_CONSUMPTION_STATE: dict[MediaReadState, ConsumptionStateValue] = {
+    "unread": "Unread",
+    "in_progress": "InProgress",
+    "finished": "Finished",
+}
 
 _LATEST_SOURCE_ATTEMPT_SQL = """(
     SELECT jsonb_build_object(
@@ -303,8 +309,6 @@ class CollectionMedia:
     transcript_coverage: str | None
     listening_state: ListeningStateOut | None
     author_mode: Literal["automatic", "manual"]
-    read_state: MediaReadState
-    progress_fraction: float | None
     progress_resettable: bool
     audio_playable: bool
     has_original_file: bool
@@ -548,6 +552,10 @@ def list_collection_media_for_viewer_by_ids(
                     processing_status=cast(
                         "MediaProcessingStatus", _status_to_str(row["processing_status"])
                     ),
+                    consumption=ConsumptionOut(
+                        state=_CONSUMPTION_STATE[read_states[media_id].state],
+                        progress=presence_from_nullable(read_states[media_id].progress_fraction),
+                    ),
                     duration=_summary_duration(row, kind_value, reading_times),
                 ),
                 canonical_source_url=cast(str | None, row["canonical_source_url"]),
@@ -556,8 +564,6 @@ def list_collection_media_for_viewer_by_ids(
                 transcript_coverage=transcript_coverage,
                 listening_state=_listening_state(row),
                 author_mode="manual" if bool(row["authors_manually_managed"]) else "automatic",
-                read_state=read_states[media_id].state,
-                progress_fraction=read_states[media_id].progress_fraction,
                 progress_resettable=read_states[media_id].progress_resettable,
                 audio_playable=playback_source is not None and bool(playback_source.stream_url),
                 has_original_file=bool(row["has_file"]),

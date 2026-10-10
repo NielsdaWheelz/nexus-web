@@ -196,10 +196,10 @@ function MediaInfo({ media, metadata, disconnected, refreshing, refreshError, on
           ? `${Math.floor(media.listening_state.position_ms / 60000)}:${String(Math.floor(media.listening_state.position_ms / 1000) % 60).padStart(2, "0")}`
           : null),
         fact("total duration", duration
-          ? `${duration.estimate.totalMinutes.value} min to ${duration.modality === "Read" ? "read" : "listen"}`
+          ? `${duration.estimate.totalMinutes} min to ${duration.modality === "Read" ? "read" : "listen"}`
           : null),
         fact("remaining duration", duration?.estimate.remainingMinutes.kind === "Present"
-          ? `${duration.estimate.remainingMinutes.value.value} min left to ${duration.modality === "Read" ? "read" : "listen"}`
+          ? `${duration.estimate.remainingMinutes.value} min left to ${duration.modality === "Read" ? "read" : "listen"}`
           : null),
       ])}
       {group("activity", [

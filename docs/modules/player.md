@@ -7,8 +7,8 @@ them.
 
 - **Lectern** — the viewer's ordered list of intentions: place, remove, order.
 - **Consumption state** — where the viewer stands with a media: an explicit
-  override (`finished` / `unread`), else the podcast listening ladder (≥ 95 %
-  of the duration is finished, > 0 in progress), else reader engagement, else
+  override (`finished` / `unread`), else positive podcast listening position
+  means in progress, else reader engagement, else
   unread; plus the first-completion fact and the listening position under its
   reset epoch.
 - **Audio session** — what one device is playing, owned by exactly one engine
@@ -36,8 +36,9 @@ downloads are adjacent, not player state ([offline](offline.md)).
    `resource_mutations`).
 3. Listening writes are fenced by `reset_epoch` alone: last writer wins within
    an epoch, a reset wins across epochs. `ResetProgress` bumps the epoch.
-4. A natural end settles only if the override revision captured at load is
-   unchanged.
+4. A natural end retains its captured reset epoch and drains its own heartbeat
+   before using the acknowledged override revision. Later unread/reset commands
+   supersede it.
 5. One audio owner per device: the Android shell plays natively (or shows
    "Update Nexus for Android"), everything else plays in the browser.
 6. Raw device ids never leave the BFF; only sealed `ncd1.` handles do.
@@ -59,13 +60,13 @@ downloads are adjacent, not player state ([offline](offline.md)).
 - `listening.py` — sole DML owner of `podcast_listening_states` (position,
   duration, nullable episode rate, reset epoch, `last_engaged_at`). A write is
   `UPDATE … WHERE reset_epoch = :epoch`, else an insert when the epoch is 0;
-  positions are clamped to the duration; an absent rate or duration keeps the
+  positions are clamped only to positive duration; an absent rate or duration keeps the
   stored one. `install_preview` writes only when there is no progress.
 - `projection.py` — the read model other slices compose: the one read-state
   ladder in SQL (`engagement_fact_rows_sql`, `episode_state_*_sql`), read
   states, recency and anchors, `player_descriptors` and `lectern_snapshot`.
-  A descriptor's `positionMs` is 0 when the episode is finished by override or
-  its stored position is in the finished zone; `playbackRate` is the episode
+  A descriptor's `positionMs` is 0 when the episode is finished by override;
+  `playbackRate` is the episode
   rate ?? the subscription default ?? 1; `podcastId` is present iff the viewer
   subscribes.
 - `service.py` — the public facade: `get_lectern`, `get_player`, the Lectern and
@@ -86,7 +87,7 @@ POST /lectern/commands              PlaceItems | RemoveItem | SetOrder
 POST /consumption/commands          EnsureMediaFinished | Done | SetUnread | ResetProgress
                                     | UndoFinish | SettleNaturalEnd
 GET  /media/{id}/player             -> PlayerDescriptor (404 when not playable)
-PUT  /media/{id}/listening-state    {positionMs, durationMs, episodePlaybackRate, expectedResetEpoch} -> 204
+PUT  /media/{id}/listening-state    {positionMs, durationMs, episodePlaybackRate, expectedResetEpoch} -> Data[ListeningPositionOut]
 POST /media/{id}/preview-position   {positionMs, durationMs} -> 204
 POST /consumption/activity          {mediaRef, deviceClass, batch} -> 204 (the BFF adds deviceId)
 GET  /lectern/suggestions, /lectern/quick-reads   (suggestions)
@@ -96,9 +97,13 @@ GET  /lectern/suggestions, /lectern/quick-reads   (suggestions)
 `api/routes/playback.py` owns the player read, the listening write, the preview
 hand-off and activity capture (registered before the `media` router).
 
-A stale-epoch listening write answers 409 `E_STALE_LISTENING_REVISION` with
-`error.details.current = {positionMs, resetEpoch}`; the writer adopts it with no
-read. A consumption command answers `ConsumptionResult {outcome: Done |
+A listening write answers 200 with the accepted
+`{positionMs, resetEpoch, consumptionOverrideRevision}` tuple. An accepted
+position clears unread and, with known progress at least 95%, writes sticky
+finished under the same viewer lock. A stale epoch answers 409
+`E_STALE_LISTENING_REVISION` with that tuple in `error.details.current`; the
+writer adopts it with no read. A consumption command answers
+`ConsumptionResult {outcome: Done |
 Superseded | Gone, lectern, nextItem, finishId, progressState,
 libraryEntriesCollectionRevision}`; `finishId` (the command's own
 `clientMutationId`) is present after EnsureMediaFinished and Done. `nextItem` is present only for `Done` (the
@@ -117,14 +122,15 @@ changes state only; the row stays where it is.
 
 ## Frontend owners
 
-`AuthenticatedShell` mounts `LecternProvider` above `GlobalPlayerProvider`,
-which wraps the workspace and `GlobalPlayerSurfaces`.
+`AuthenticatedShell` mounts `MediaSummaryProvider` above `LecternProvider` and
+`GlobalPlayerProvider`, which wraps the workspace and `GlobalPlayerSurfaces`.
 
 - `lib/lectern/contract.ts` — branded ids and the wire projected once into
   domain values. `LecternProvider.tsx` — the snapshot resource and every
   Lectern/consumption command on one promise chain (installs never
   interleave), refetch-then-rethrow on failure, the `progressState` event after
-  ResetProgress, and pre-reset hooks readers use to drain. `useCompletionUndo.ts`
+  ResetProgress, and paired progress-fence hooks that drain/gate then reconcile
+  mounted owners around unread, reset and undo. `useCompletionUndo.ts`
   — the ten-second "Marked as finished" HUD. `view.ts` — the url-only sort.
 - `app/(authenticated)/lectern/LecternPaneBody.tsx` — **On the lectern** (play
   rows, sort, filter, drag reorder in Custom view), Quick reads, At hand.
@@ -155,7 +161,7 @@ which wraps the workspace and `GlobalPlayerSurfaces`.
   outgoing episode after taking its last sample, and its late writes send that. The episode rate
   is sent only after the listener sets one; until then the stored value stands.
 - `lib/player/nativeEngine.ts` — the Android engine, a thin client of
-  `window.nexusAudio` (below); a reply missing for 5 s shows "Player
+  `window.nexusPlayback` (below); a reply missing for 5 s shows "Player
   unavailable" until the next frame arrives.
 - `components/player/` — the desktop bar, the mobile mini bar and sheet, and
   `PlayerPanel` (speed, remember for this podcast, pause shortening on Android,
@@ -163,18 +169,34 @@ which wraps the workspace and `GlobalPlayerSurfaces`.
 
 ## The Android bridge
 
-`window.nexusAudio` carries trusted json frames in the grammar of
-`window.nexusOffline`: `{id, op, ...args}` → `{id, ok: true, snapshot?}` |
+`window.nexusPlayback` carries trusted json frames in the grammar of
+`window.nexusDownloads`: `{id, op, ...args}` → `{id, ok: true, snapshot?}` |
 `{id, ok: false, error}`, and pushed `{snapshot}` on every change and each
 second while playing. Ops: `hello{accountId}`, `load{descriptor}`,
 `preview{descriptor}`, `play{key, descriptor?}` (the page's descriptor, for
 an unanswered resume), `pause{key}`, `seek{key, positionMs}`,
-`skip{key, deltaMs}`, `rate{key, value}`, `adopt{key, positionMs, resetEpoch}`,
+`skip{key, deltaMs}`, `rate{key, value}`, `adopt{key, position}`,
+`fence{key}`, `reconcile{key}`,
 `volume{value}`, `shortenPauses{on}` (device default),
 `sessionShortenPauses{key, on|null}` (this session's override), `dismiss{}`.
 The object's name is the compatibility identity: an incompatible change renames
 it, and an app without it renders "Update Nexus for Android". There is no
 protocol version or hash.
+
+`position` is the accepted `{positionMs, resetEpoch,
+consumptionOverrideRevision}` tuple above.
+
+Every snapshot requires `consumptionRevision`. It advances after an acknowledged
+listening write so hosted list summaries refresh from accepted facts. Pending
+samples do not advance it. Backend, web and Android ship together for this cutover.
+
+unread/reset preparation drains the loaded episode's recorder before sending the
+command. a preparation timeout refuses that unsent command through existing
+transport feedback. reconciliation drains again before reading authority, even
+after a timed-out preparation; a failed read retains the workspace and saving
+gate. retry reads only, and separate play/seek resumes activity after adoption.
+an adoption timeout after a committed command retains local feedback rather than
+reporting that command as refused.
 
 The native service owns ExoPlayer and the media session (notification and lock
 screen), listening writes, activity spans in a durable outbox, and natural ends:

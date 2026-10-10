@@ -5,28 +5,21 @@ import {
   decodeCollectionRevision,
   type CollectionPage,
 } from "@/lib/api/collectionPage";
-import type { PositiveCount, ProgressFraction } from "@/lib/consumption/activityFacts";
+import type { PositiveCount } from "@/lib/consumption/activityFacts";
 import { decodePublicationDate, type PublicationDate } from "@/lib/dates/publicationDate";
-import { mediaSummaryFromWire, type MediaSummary } from "@/lib/media/mediaSummary";
+import type { MediaSummary } from "@/lib/media/mediaSummary";
 import type { PodcastSyncStatus } from "@/lib/podcasts/types";
-import { readingTimeEstimateFromWire, type ReadingTimeEstimatePresence } from "@/lib/media/readingTime";
 
 export type LibraryMediaListValue = Omit<
   Schema<"LibraryEntryMediaOut">,
   | "created_at"
   | "author_mode"
   | "canonical_source_url"
-  | "read_state"
-  | "progress_fraction"
-  | "progress_resettable"
   | "last_engaged_at"
 > & {
   createdAt: string;
   authorMode: Schema<"LibraryEntryMediaOut">["author_mode"];
   canonicalSourceUrl: string | null;
-  readState: Schema<"LibraryEntryMediaOut">["read_state"];
-  progressFraction: Presence<ProgressFraction>;
-  progressResettable: boolean;
   lastEngagedAt: string | null;
 };
 
@@ -46,18 +39,15 @@ export type LibraryMediaListItem = Omit<
 > & { media: LibraryMediaListValue; mediaSummary: MediaSummary };
 export type LibraryPodcastListItem = Omit<
   Schema<"LibraryPodcastListItemOut">,
-  "podcast" | "readingTimeEstimate"
-> & {
-  podcast: LibraryPodcastListValue;
-  readingTimeEstimate: ReadingTimeEstimatePresence;
-};
+  "podcast"
+> & { podcast: LibraryPodcastListValue };
 export type LibraryEntryListItem = LibraryMediaListItem | LibraryPodcastListItem;
 
 export function libraryEntryListItemFromWire(
   entry: Schema<"LibraryMediaListItemOut"> | Schema<"LibraryPodcastListItemOut">,
 ): LibraryEntryListItem {
   if (entry.kind === "media") {
-    const mediaSummary = mediaSummaryFromWire(entry.mediaSummary);
+    const mediaSummary = entry.mediaSummary;
     if (entry.media.id !== mediaSummary.mediaId) {
       throw new TypeError("Library media entry identity mismatch");
     }
@@ -69,11 +59,6 @@ export function libraryEntryListItemFromWire(
         createdAt: entry.media.created_at,
         authorMode: entry.media.author_mode,
         canonicalSourceUrl: entry.media.canonical_source_url,
-        readState: entry.media.read_state,
-        progressFraction: entry.media.progress_fraction === null
-          ? absent()
-          : present({ value: entry.media.progress_fraction }),
-        progressResettable: entry.media.progress_resettable,
         lastEngagedAt: entry.media.last_engaged_at,
         capabilities: entry.media.capabilities,
       },
@@ -98,9 +83,6 @@ export function libraryEntryListItemFromWire(
         ? present(entry.subscription.value.syncStatus)
         : absent(),
     },
-    readingTimeEstimate: entry.readingTimeEstimate.kind === "Present"
-      ? present(readingTimeEstimateFromWire(entry.readingTimeEstimate.value))
-      : absent(),
   };
 }
 

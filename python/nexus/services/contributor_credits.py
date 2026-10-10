@@ -363,6 +363,29 @@ def _credit_out(row: Any) -> ContributorCreditOut:
     )
 
 
+def load_contributor_credits_for_catalogue(
+    db: Session, ebook_ids: list[int]
+) -> dict[int, list[ContributorCreditOut]]:
+    """Current ordered catalogue credits; catalogue ids are not media UUIDs."""
+    if not ebook_ids:
+        return {}
+    rows = db.execute(
+        text("""
+            SELECT cc.project_gutenberg_catalog_ebook_id, c.handle, c.display_name,
+                   cc.credited_name, cc.role, cc.raw_role, cc.ordinal
+            FROM contributor_credits cc
+            JOIN contributors c ON c.id = cc.contributor_id
+            WHERE cc.project_gutenberg_catalog_ebook_id = ANY(:ebook_ids)
+            ORDER BY cc.project_gutenberg_catalog_ebook_id ASC, cc.ordinal ASC
+        """),
+        {"ebook_ids": ebook_ids},
+    ).fetchall()
+    result: dict[int, list[ContributorCreditOut]] = {}
+    for row in rows:
+        result.setdefault(int(row[0]), []).append(_credit_out(row))
+    return result
+
+
 def current_gutenberg_author_names(db: Session, ebook_ids: list[int]) -> dict[int, tuple[str, ...]]:
     """Ordered current author credited names per Gutenberg ebook, for sync change detection."""
     if not ebook_ids:

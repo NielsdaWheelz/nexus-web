@@ -48,6 +48,7 @@ import { useLibraryPlacementController } from "@/lib/libraries/placementControll
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
@@ -119,14 +120,9 @@ export interface ResourceActionMenuModel {
   readonly descriptors: readonly ActionDescriptor[];
   readonly triggerDisabled: boolean;
   readonly triggerDisabledReason?: string;
+  /** Refresh a media subject when its menu opens. */
+  readonly refresh: () => void;
 }
-const LOADING_MODEL: ResourceActionMenuModel = {
-  status: "Loading",
-  descriptors: [],
-  triggerDisabled: true,
-  triggerDisabledReason: "Actions are still loading.",
-};
-
 export function ResourceActionRuntimeProvider({
   children,
 }: {
@@ -494,11 +490,18 @@ export function useOptionalResourceActionMenuModel(
     getBusyKeys,
     getBusyKeys,
   );
+  const refresh = useCallback(() => {
+    if (!runtime || !cache || ref === undefined) return;
+    if (parseResourceRef(ref)?.scheme !== "media") return;
+    void cache.reconcile({ kind: "Subjects", refs: [ref] }).catch(runtime.raiseDefect);
+  }, [cache, ref, runtime]);
   return useMemo<ResourceActionMenuModel | null>(() => {
     if (!target) return null;
     if (!runtime || !environment || !cache)
       throw new Error("ResourceActionRuntimeProvider is missing");
-    if (!entry || entry.status === "Loading") return LOADING_MODEL;
+    if (!entry || entry.status === "Loading")
+      return { status: "Loading", descriptors: [], triggerDisabled: true,
+        triggerDisabledReason: "Actions are still loading.", refresh };
     const snapshot =
       entry.status === "Error" ? entry.lastGoodSnapshot : entry.snapshot;
     const retry: ActionDescriptor = {
@@ -516,7 +519,7 @@ export function useOptionalResourceActionMenuModel(
       },
     };
     if (!snapshot)
-      return { status: "Error", descriptors: [retry], triggerDisabled: false };
+      return { status: "Error", descriptors: [retry], triggerDisabled: false, refresh };
     const busyIds = new Set<ResourceActionId>();
     for (const key of busyKeys) {
       const prefix = `${target.ref}|`;
@@ -531,7 +534,9 @@ export function useOptionalResourceActionMenuModel(
       forceBlockedReason:
         entry.status === "Error"
           ? "Refresh actions before trying this command again."
-          : undefined,
+          : entry.status === "Reconciling"
+            ? "Actions are refreshing."
+            : undefined,
     });
     if (entry.status === "Error")
       return {
@@ -541,16 +546,18 @@ export function useOptionalResourceActionMenuModel(
           { ...retry, separatorBefore: descriptors.length > 0 || undefined },
         ],
         triggerDisabled: false,
+        refresh,
       };
     return {
       status: "Ready",
       descriptors,
       triggerDisabled: descriptors.length === 0,
+      refresh,
       ...(descriptors.length === 0
         ? { triggerDisabledReason: "No actions are available." }
         : {}),
     };
-  }, [busyKeys, cache, entry, environment, runtime, target]);
+  }, [busyKeys, cache, entry, environment, refresh, runtime, target]);
 }
 
 export function useResourceActionMenuModel(

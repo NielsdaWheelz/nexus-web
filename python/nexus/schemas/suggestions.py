@@ -1,11 +1,10 @@
-"""Suggestion wire shapes. A media target always carries consumption; a
-podcast target never does (the builders guarantee it)."""
+"""Suggestion targets; viewer consumption belongs to the media summary."""
 
 from typing import Annotated, Literal
 
 from pydantic import ConfigDict, Field
 
-from nexus.schemas.consumption import CamelOut, ConsumptionOut
+from nexus.schemas.consumption import CamelOut
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.presence import Presence
 
@@ -35,7 +34,6 @@ class SuggestionItemOut(CamelOut):
     target: Annotated[
         MediaSuggestionTargetOut | PodcastSuggestionTargetOut, Field(discriminator="kind")
     ]
-    consumption: Presence[ConsumptionOut]
 
 
 class SuggestionsOut(CamelOut):

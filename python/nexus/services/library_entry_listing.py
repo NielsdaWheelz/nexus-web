@@ -193,9 +193,7 @@ def _podcast_rows(db: Session, *, viewer_id: UUID, podcast_ids: list[UUID]) -> d
                     pe.podcast_id,
                     COUNT(*) FILTER (
                         WHERE {
-                projection.episode_state_case_sql(
-                    listening_alias="pls", override_alias="co", episode_alias="pe"
-                )
+                projection.episode_state_case_sql(listening_alias="pls", override_alias="co")
             } = 'unplayed'
                     ) AS unplayed_count
                 FROM podcast_episodes pe
@@ -304,9 +302,6 @@ def _hydrate_entry_rows(
                         created_at=media.created_at,
                         author_mode=media.author_mode,
                         canonical_source_url=media.canonical_source_url,
-                        read_state=media.read_state,
-                        progress_fraction=media.progress_fraction,
-                        progress_resettable=media.progress_resettable,
                         last_engaged_at=last_engaged_at.get(media.id),
                         capabilities=LibraryEntryMediaCapabilitiesOut(
                             can_quote=media.capabilities.can_quote,

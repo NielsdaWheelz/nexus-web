@@ -114,16 +114,6 @@ if _BATCHED_VISIBILITY_SCHEMES | _RESIDUAL_VISIBILITY_SCHEMES != frozenset(RESOU
     # so a newly added scheme cannot silently skip its visibility read.
     raise AssertionError("visibility scheme partition must cover every ResourceScheme")
 
-# CollectionMedia.read_state is the lowercase MediaReadState vocabulary; the
-# Consumption capability mirrors the frontend's PascalCase states. The episode
-# read model is byte-identical to this one (finished<->played,
-# in_progress<->in_progress, unread<->unplayed), so EpisodeConsumption derives
-# from the same read_state with no extra query.
-_CONSUMPTION_STATE_BY_READ_STATE: dict[str, Literal["Unread", "InProgress", "Finished"]] = {
-    "unread": "Unread",
-    "in_progress": "InProgress",
-    "finished": "Finished",
-}
 _TranscriptActionState = Literal[
     "NotRequested",
     "Queued",
@@ -598,14 +588,14 @@ def _extend_media(
         capabilities.append(
             EpisodeConsumptionResourceActionCapabilityOut(
                 availability=_available(),
-                state="Played" if media.read_state == "finished" else "Unplayed",
+                state="Played" if media.summary.consumption.state == "Finished" else "Unplayed",
             )
         )
     else:
         capabilities.append(
             ConsumptionResourceActionCapabilityOut(
                 availability=_available(),
-                state=_CONSUMPTION_STATE_BY_READ_STATE[media.read_state],
+                state=media.summary.consumption.state,
             )
         )
 

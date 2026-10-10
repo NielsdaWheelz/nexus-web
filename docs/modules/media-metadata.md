@@ -21,6 +21,9 @@ not establish work type. preserve year/month/day precision through
 `schemas/publication_dates.py`; never infer publication from file or acquisition
 times. lists, search, author chronology and recency use the original date without
 an edition fallback. source edition observations retain their own ingestion rules.
+row formatting and retained-summary freshness belong to the
+[library presentation contract](library.md); the metadata overlay keeps full dates
+and all credits.
 
 generated json has exactly eight required nullable fields: title, contributors,
 original date, edition date, edition isbn, publisher, language and description.
@@ -109,8 +112,7 @@ metadata-owned.
 `GET /media/{id}` owns the generated `Data[MediaOut]` contract, including required
 nullable fields and nested player aliases. it keeps the existing default
 response serialization. the pane loader and metadata overlay share one
-media-detail ingress: typed wire facts retain their values, duration minutes
-become their existing domain wrappers, and media identity/date/player identity
+media-detail ingress: typed wire facts retain their values, and media identity/date/player identity
 receive local brands. requested-media identity stays checked. chapter
 presentation remains owned by that ingress as described in the
 [reader module](reader-implementation.md).

@@ -266,6 +266,7 @@ export default function GlobalPlayerSurfaces() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   const miniRef = useRef<HTMLElement>(null);
+  const unavailableRef = useRef<HTMLElement>(null);
   const rateRef = useRef<HTMLButtonElement>(null);
   const openerRef = useRef<HTMLButtonElement>(null);
   const loaded = state.kind === "Loaded" ? state : null;
@@ -304,6 +305,10 @@ export default function GlobalPlayerSurfaces() {
     if (miniHidden || miniRef.current === null) return;
     return mobileViewport.registerBottomSurface("Player", miniRef.current);
   }, [miniHidden, mobileViewport]);
+  useLayoutEffect(() => {
+    if (!isMobile || state.kind !== "Unavailable" || unavailableRef.current === null) return;
+    return mobileViewport.registerBottomSurface("Player", unavailableRef.current);
+  }, [isMobile, state.kind, mobileViewport]);
 
   const live = (
     <span
@@ -319,6 +324,7 @@ export default function GlobalPlayerSurfaces() {
     const update = state.reason === "UpdateRequired";
     return (
       <section
+        ref={unavailableRef}
         className={styles.unavailable}
         role="region"
         aria-label="Media player"

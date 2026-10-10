@@ -77,7 +77,7 @@ export default function ResourceRow({
         </div>
       ) : null}
       {primaryControl ? (
-        <div className={styles.primaryControl}>{primaryControl}</div>
+        <div className={styles.primaryControl} data-row-primary-control="">{primaryControl}</div>
       ) : null}
       {actions ? <div className={styles.actions}>{actions}</div> : null}
       {expanded ? <div className={styles.expanded}>{expanded}</div> : null}

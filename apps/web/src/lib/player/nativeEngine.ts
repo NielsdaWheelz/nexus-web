@@ -2,9 +2,9 @@
 
 /**
  * The Android shell's audio engine: a thin client of the native service behind
- * `window.nexusAudio`, which owns playback, listening writes, activity and natural ends.
+ * `window.nexusPlayback`, which owns playback, listening writes, activity and natural ends.
  *
- * Frames are trusted json in the grammar of `window.nexusOffline`: both ends ship in one release
+ * Frames are trusted json in the grammar of `window.nexusDownloads`: both ends ship in one release
  * train, and the object's name is the compatibility identity (its absence means an older app).
  *   request {id, op, ...args} -> reply {id, ok: true, snapshot?} | {id, ok: false, error}
  *   push    {snapshot} on every change and each second while playing
@@ -16,6 +16,8 @@ import {
   type Engine,
   type EngineState,
 } from "@/lib/player/playerRuntime";
+import { publishConsumptionProjectionChange } from "@/lib/consumption/projectionRevision";
+import { ApiError } from "@/lib/api/client";
 
 interface Port {
   postMessage(frame: string): void;
@@ -30,7 +32,7 @@ type Frame =
 const port =
   typeof window === "undefined"
     ? undefined
-    : (window as Window & { nexusAudio?: Port }).nexusAudio;
+    : (window as Window & { nexusPlayback?: Port }).nexusPlayback;
 
 export const nativePlayerAvailable = port !== undefined;
 
@@ -43,7 +45,7 @@ export function createNativeEngine(
   accountId: string,
   onResponding: (responding: boolean) => void,
 ): Engine {
-  if (port === undefined) throw new Error("window.nexusAudio is unavailable");
+  if (port === undefined) throw new Error("window.nexusPlayback is unavailable");
   const listeners = new Set<() => void>();
   const pending = new Map<
     number,
@@ -59,6 +61,8 @@ export function createNativeEngine(
   };
 
   const publish = (snapshot: EngineState) => {
+    if (snapshot.consumptionRevision !== state.consumptionRevision)
+      publishConsumptionProjectionChange();
     // Keep the source's identity across position pushes, so session readers do not re-render.
     const same =
       JSON.stringify(snapshot.source) === JSON.stringify(state.source);
@@ -139,9 +143,34 @@ export function createNativeEngine(
     setVolume: (value) => send("volume", { value }),
     setShortenPauses: (on) => keyed("sessionShortenPauses", { on }),
     setShortenPausesDefault: (on) => send("shortenPauses", { on }),
-    adopt(mediaId, positionMs, resetEpoch) {
-      if (key() === mediaId)
-        send("adopt", { key: mediaId, positionMs, resetEpoch });
+    async prepareProgressFence(mediaId) {
+      if (key() !== mediaId) return;
+      try {
+        await call("fence", { key: mediaId }, LOAD_TIMEOUT_MS);
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== "NotResponding") throw error;
+        throw new ApiError(0, "E_NATIVE_PLAYER_NOT_RESPONDING",
+          "The native player is not responding. Reload the app and try again.");
+      }
+    },
+    async reconcileProgressFence(mediaId) {
+      if (key() !== mediaId) return;
+      try {
+        await call("reconcile", { key: mediaId }, LOAD_TIMEOUT_MS);
+      } catch (error) {
+        if (!(error instanceof Error) ||
+            (error.message !== "Unavailable" && error.message !== "NotResponding")) throw error;
+        // justify-ignore-error: the service's retry snapshot or onResponding(false) owns the outage; saving stays fenced until authority returns.
+      }
+    },
+    async adopt(mediaId, position) {
+      if (key() !== mediaId) return;
+      try {
+        await call("adopt", { key: mediaId, position });
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== "NotResponding") throw error;
+        // justify-ignore-error: reset already committed; onResponding(false) owns the missing native acknowledgement.
+      }
     },
     dismiss: () => call("dismiss", {}, LOAD_TIMEOUT_MS).catch(() => undefined),
     close() {

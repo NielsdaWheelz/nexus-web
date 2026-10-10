@@ -49,10 +49,10 @@ import {
 
 const REVALIDATE_MIN_INTERVAL_MS = 60_000;
 
-type ProgressListener = (event: {
-  kind: "progressState";
-  state: MediaProgressState;
-}) => void;
+type CanonicalInstallEvent =
+  | { kind: "progressState"; state: MediaProgressState }
+  | { kind: "snapshot"; snapshot: LecternSnapshot; unreadMediaIds: readonly MediaId[] };
+type ProgressListener = (event: CanonicalInstallEvent) => void | Promise<void>;
 
 export interface LecternCapability {
   readonly resource: AsyncResource<LecternSnapshot>;
@@ -82,10 +82,10 @@ export interface LecternCapability {
   revalidate(): void;
   getCanonicalSnapshot(): LecternSnapshot | undefined;
   onCanonicalInstall(listener: ProgressListener): () => void;
-  /** Awaited before ResetProgress runs, so readers drain their old writes first. */
-  registerBeforeProgressReset(
-    hook: (mediaId: MediaId) => Promise<void>,
-  ): () => void;
+  registerProgressFence(hook: {
+    prepare(mediaIds: readonly MediaId[]): Promise<void>;
+    reconcile(mediaIds: readonly MediaId[]): Promise<void>;
+  }): () => void;
 }
 
 const LecternContext = createContext<LecternCapability | null>(null);
@@ -154,7 +154,7 @@ export function LecternProvider({ children }: { children: ReactNode }) {
   const snapshot = useRef<LecternSnapshot | undefined>(undefined);
   const installedAt = useRef(0);
   const listeners = useRef(new Set<ProgressListener>());
-  const resetHooks = useRef(new Set<(mediaId: MediaId) => Promise<void>>());
+  const fenceHooks = useRef(new Set<Parameters<LecternCapability["registerProgressFence"]>[0]>());
 
   const install = useCallback((next: LecternSnapshot) => {
     snapshot.current = next;
@@ -182,17 +182,34 @@ export function LecternProvider({ children }: { children: ReactNode }) {
   );
 
   const run = useCallback(
-    <T extends { lectern: LecternSnapshot }>(
+    <T extends LecternResult | ConsumptionResult>(
       send: () => Promise<T>,
+      fenceIds: readonly MediaId[] = [],
+      unreadIds: readonly MediaId[] = [],
     ): Promise<T> => {
       setInFlight((count) => count + 1);
       return serial(async () => {
+        const hooks = fenceIds.length ? [...fenceHooks.current] : [];
+        let acknowledged = false;
         try {
+          const preparations = await Promise.allSettled(hooks.map((hook) => hook.prepare(fenceIds)));
+          const refused = preparations.find((result) => result.status === "rejected");
+          if (refused?.status === "rejected") throw refused.reason;
           const result = await send();
+          acknowledged = true;
           install(result.lectern);
           publishConsumptionProjectionChange({ rowChanged: true });
+          const event: CanonicalInstallEvent = { kind: "snapshot", snapshot: result.lectern, unreadMediaIds: unreadIds };
+          await Promise.all([...listeners.current].map((listener) => listener(event)));
+          if ("progressState" in result && result.progressState.kind === "Present") {
+            const state = result.progressState.value;
+            await Promise.all([...listeners.current].map((listener) => listener({ kind: "progressState", state })));
+          } else {
+            await Promise.all(hooks.map((hook) => hook.reconcile(fenceIds)));
+          }
           return result;
         } catch (error) {
+          if (!acknowledged) await Promise.allSettled(hooks.map((hook) => hook.reconcile(fenceIds)));
           if (!isApiError(error) || error.status !== 401) {
             try {
               install(await getLectern("no-store"));
@@ -208,15 +225,8 @@ export function LecternProvider({ children }: { children: ReactNode }) {
   );
 
   const consumption = useCallback(
-    (body: object) =>
-      run(() => postConsumption(body)).then((result) => {
-        if (result.progressState.kind === "Present") {
-          const state = result.progressState.value;
-          for (const listener of listeners.current)
-            listener({ kind: "progressState", state });
-        }
-        return result;
-      }),
+    (body: object, fenceIds: readonly MediaId[] = [], unreadIds: readonly MediaId[] = []) =>
+      run(() => postConsumption(body), fenceIds, unreadIds),
     [run],
   );
 
@@ -288,12 +298,9 @@ export function LecternProvider({ children }: { children: ReactNode }) {
       ensureMediaFinished: (mediaId) =>
         consumption({ kind: "EnsureMediaFinished", mediaId }),
       done: (mediaId) => consumption({ kind: "Done", mediaId }),
-      setUnread: (mediaId) => consumption({ kind: "SetUnread", mediaId }),
-      resetProgress: async (mediaId) => {
-        await Promise.all([...resetHooks.current].map((hook) => hook(mediaId)));
-        return consumption({ kind: "ResetProgress", mediaId });
-      },
-      undoFinish: (input) => consumption({ kind: "UndoFinish", ...input }),
+      setUnread: (mediaId) => consumption({ kind: "SetUnread", mediaId }, [mediaId], [mediaId]),
+      resetProgress: (mediaId) => consumption({ kind: "ResetProgress", mediaId }, [mediaId]),
+      undoFinish: (input) => consumption({ kind: "UndoFinish", ...input }, [input.mediaId]),
       settleNaturalEnd: (input) =>
         consumption({ kind: "SettleNaturalEnd", ...input }),
       revalidate: () => void refetch("no-store"),
@@ -302,9 +309,9 @@ export function LecternProvider({ children }: { children: ReactNode }) {
         listeners.current.add(listener);
         return () => listeners.current.delete(listener);
       },
-      registerBeforeProgressReset: (hook) => {
-        resetHooks.current.add(hook);
-        return () => resetHooks.current.delete(hook);
+      registerProgressFence: (hook) => {
+        fenceHooks.current.add(hook);
+        return () => fenceHooks.current.delete(hook);
       },
     }),
     [consumption, inFlight, refetch, resource, run],
