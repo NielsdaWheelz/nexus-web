@@ -67,6 +67,7 @@ services:
       - ${NEXUS_CONFIG_FILE:?set a captured content-addressed config}
     environment:
       NEXUS_CODEX_NATIVE_SOCKET: /tmp/codex-daemon-10001/app-server.sock
+      MEMORY_CLIENT_CONFIG_PATH: /run/secrets/nexus-memory-client.json
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,6 +82,12 @@ services:
       default: {}
     volumes:
       - nexus_codex_run:/tmp/codex-daemon-10001:ro
+      - type: bind
+        source: ${NEXUS_MEMORY_CLIENT_CONFIG_FILE:?publish the private memory declaration}
+        target: /run/secrets/nexus-memory-client.json
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
       test:
         [
@@ -118,6 +125,7 @@ services:
       DATABASE_STATEMENT_TIMEOUT_MS: "300000"
       DATABASE_IDLE_IN_TX_TIMEOUT_MS: "0"
       NEXUS_CODEX_NATIVE_SOCKET: /tmp/codex-daemon-10001/app-server.sock
+      MEMORY_CLIENT_CONFIG_PATH: /run/secrets/nexus-memory-client.json
     depends_on:
       postgres:
         condition: service_healthy
@@ -129,6 +137,12 @@ services:
         condition: service_started
     volumes:
       - nexus_codex_run:/tmp/codex-daemon-10001
+      - type: bind
+        source: ${NEXUS_MEMORY_CLIENT_CONFIG_FILE:?publish the private memory declaration}
+        target: /run/secrets/nexus-memory-client.json
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
       test: ["CMD", "python", "-S", "-m", "apps.worker.health", "--lane", "interactive"]
       interval: 5s

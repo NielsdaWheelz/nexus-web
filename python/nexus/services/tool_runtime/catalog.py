@@ -32,6 +32,8 @@ from provider_runtime.tool_adapter import ToolPublication, lower_tools
 from pydantic import ValidationError
 
 from nexus.config import Settings
+from nexus.schemas.presence import Presence
+from nexus.services.memory_client import MemoryClientConfig
 from nexus.services.tool_runtime.declarations import NEXUS_TOOL_DECLARATIONS
 from nexus.services.tool_runtime.plans import TOOL_PLAN_DEFINITIONS, ToolPlanDefinition
 from nexus.services.tool_runtime.snapshots import (
@@ -57,6 +59,7 @@ class FrozenToolOperation:
 class ComposedToolRuntime:
     catalog: ToolCatalog
     operations: Mapping[str, FrozenToolOperation]
+    memory_config: Presence[MemoryClientConfig]
 
 
 def required_tool_operation(
@@ -97,11 +100,15 @@ _WEB_SEARCH_POLICY_INPUTS: Final[Mapping[str, object]] = MappingProxyType(
 
 
 def compose_tool_runtime(
-    web_search_provider: WebSearchProvider | None, *, embedding_available: bool
+    web_search_provider: WebSearchProvider | None,
+    *,
+    embedding_available: bool,
+    memory_config: Presence[MemoryClientConfig],
 ) -> ComposedToolRuntime:
     """Compose the one process-owned runtime."""
 
     from nexus.services.tool_runtime.bindings import nexus_tool_bindings
+    from nexus.services.tool_runtime.memory import memory_family
 
     portable = ToolCatalog.compose((web_family(),))
     search_source = (
@@ -136,6 +143,7 @@ def compose_tool_runtime(
                 declarations=tuple(entry.spec for entry in NEXUS_TOOL_DECLARATIONS),
                 bindings=nexus_bindings,
             ),
+            memory_family(memory_config),
         )
     )
     operations: dict[str, FrozenToolOperation] = {}
@@ -153,7 +161,9 @@ def compose_tool_runtime(
         ):
             raise ValueError("frozen tool grant order differs from its authority definition")
         operations[definition.plan_id] = operation
-    return ComposedToolRuntime(catalog=catalog, operations=MappingProxyType(operations))
+    return ComposedToolRuntime(
+        catalog=catalog, operations=MappingProxyType(operations), memory_config=memory_config
+    )
 
 
 def compose_configured_web_search_provider(

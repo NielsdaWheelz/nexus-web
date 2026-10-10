@@ -861,6 +861,7 @@ def _freeze_admission(
         spec = generation_service.freeze_chat_from_pair(
             catalog_definition_revision=catalog_definition_revision,
             pair=pair,
+            owner_user_id=run.owner_user_id,
             scope=FrozenToolScope(
                 admitted_refs=tuple(
                     sorted(

@@ -27,6 +27,7 @@ services:
       - WORKER_LANE=interactive
       - DATABASE_STATEMENT_TIMEOUT_MS=300000
       - NEXUS_CODEX_NATIVE_SOCKET=/tmp/codex-daemon-10001/app-server.sock
+      - MEMORY_CLIENT_CONFIG_PATH=/run/secrets/nexus-memory-client.json
     depends_on:
       postgres:
         condition: service_healthy
@@ -37,6 +38,12 @@ services:
     volumes:
       - ${NEXUS_LOCAL_RUNTIME_IDENTITY_FILE:?generate a local runtime identity}:/app/local-runtime-identity.json:ro
       - nexus_codex_run:/tmp/codex-daemon-10001
+      - type: bind
+        source: ${NEXUS_MEMORY_CLIENT_CONFIG_FILE:-../deploy/env/memory-client.json.example}
+        target: /run/secrets/nexus-memory-client.json
+        read_only: true
+        bind:
+          create_host_path: false
     # Optional resource bounds for worker stability
     deploy:
       resources:

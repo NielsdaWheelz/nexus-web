@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 from collections.abc import Mapping
@@ -686,7 +687,11 @@ class ToolPositionRecorder:
                 row.completed_at = func.now()
                 self.db.flush()
                 record = _position_record(row, generation_seq=self.authority.generation_seq)
-                if record.effect_identity is not None:
+                if (
+                    record.effect_identity is not None
+                    and record.canonical_tool_id != "memory.save_note"
+                ):
+                    # Shared notes have canonical tool receipts, without Nexus resource undo.
                     from nexus.services.generation_effects import (
                         persist_generation_effect_receipt_in_current_transaction,
                     )
@@ -916,7 +921,8 @@ class GenerationToolExecutor:
         tool_id: ToolId,
         arguments: Mapping[str, object],
     ) -> ModelToolExecutionResult:
-        raw = ParsedJson(dict(arguments))
+        arguments = json.loads(canonical_json_bytes(dict(arguments)))
+        raw = ParsedJson(arguments)
         record = await self.authority.prepare_position(
             transport_kind=transport_kind,
             model_turn_seq=model_turn_seq,

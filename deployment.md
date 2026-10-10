@@ -97,6 +97,21 @@ run that was never re-run.
 Compose, the Caddyfile and the boot-guard unit come from
 the checkout, which preflight has already pinned to `origin/main == source-sha`.
 
+the universal-memory source repository is private; its installed python source
+is included in these public images, as explicitly approved by the owner. keep
+the public digest-access proof. repository privacy limits source acquisition,
+not distribution of packaged runtime code.
+
+provision the GitHub Actions secret `UNIVERSAL_MEMORY_READ_TOKEN` with contents
+read access to `NielsdaWheelz/universal-memory` only. ci passes it to the bounded
+git credential helper for the dependency-install step. both backend build
+layers receive it through the required BuildKit secret
+`universal_memory_read_token`; it never becomes a build argument, persistent git
+configuration, cached credential or runtime environment. missing build access
+fails before fetching. local builds may pass the same secret through BuildKit;
+ordinary local uv installs use authenticated git. provisioning this secret and
+running ci or publishing images are separate operator actions.
+
 ## Explicit config publication
 
 ```bash
@@ -113,6 +128,14 @@ may hold them.
 
 Nothing restarts. The next release picks up whatever the pointers name. See
 `deploy/env/README.md`.
+
+for owner-chat shared memory, pass the central private nexus `client.json` as
+`NEXUS_MEMORY_CLIENT_CONFIG` to that publisher. it validates and publishes a
+content-addressed private json file before capturing its path in the application
+env. omission publishes the closed absent declaration. only the api and
+interactive worker receive the read-only mount; the configured viewer and
+complete processor chain still govern every send, rerun and regenerate. this
+publication neither admits native capture lanes nor captures nexus chats.
 
 ## Release
 

@@ -12,6 +12,9 @@
 !docker/
 !docker/Dockerfile.backend
 
+!scripts/
+!scripts/with-memory-git
+
 !migrations/
 !migrations/**
 

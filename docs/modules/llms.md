@@ -34,6 +34,7 @@ Primary owners:
 - `provider_generation_*`: ProviderRuntime adapter and continuation loop;
 - `llm_execution.py` and `llm_ledger.py`: parent/child/tool lifecycle and replay;
 - `tool_authority.py` and `tool_runtime/`: frozen provider-function/native-callback authority, domain handlers, and effect positions;
+- `memory_client.py`: the private owner-chat client of Jarvis shared memory;
 - `apps/codex_agent/`: isolated subscription-backed Codex host.
 
 queue ownership is documented in [jobs.md](jobs.md).
@@ -104,6 +105,51 @@ Untrusted tool arguments or output cannot widen the frozen plan, principal,
 scope, limits, or effect authority. There is no tool-shaped text parser,
 provider-native Web search, alternate executor, or transport fallback.
 
+## owner chat shared memory
+
+one optional backend-only client, `nexus-owner`, connects to Jarvis's private
+streamable-http MCP endpoint. its private deployment JSON names one authenticated
+viewer UUID, its bearer, independent read connection and note admission, and the
+explicitly authorized model processor labels. `MEMORY_CLIENT_CONFIG_PATH` names
+that file; omission denies access. the file uses Nexus's closed owned-absence
+encoding: `{kind:"Absent"}` or `{kind:"Present",value:{client,owner_user_id,
+mcp_url,bearer,connect,admit,processors}}`. dev-server renders it from the same stopped
+sharing declaration that Jarvis validates. no credential enters the browser,
+model arguments, prompt, chat history or ordinary logs.
+
+only that viewer's send, rerun and regenerate operations may select the memory
+chat plan. the complete selected frozen processor chain must be declared. a
+connected client gets the five memory reads; admitted notes add the optional
+text-only save tool. other viewers and background operations keep their original
+grants. handlers recheck the principal, chat operation and processor chain through
+the existing tool-position authority, for both provider functions and native
+callbacks.
+
+the backend supplies the existing `ToolPositionRecord.id` as the save submission
+UUID and the host-known conversation UUID as a caller-reported association.
+Jarvis stamps the configured owner/client into the tagged Nexus note producer.
+identical retries return the original receipt; conflicting reuse fails. Nexus
+notes remain agent-authored, with supporting provenance, rather than fabricating
+a native machine/account or archive conversation. no Nexus conversation is
+automatically captured. no metadata, dossier or automated helper gains memory.
+
+the standalone universal-memory library owns the shared input/result schemas,
+tool declarations and note append contract. Nexus owns its private client,
+chat admission and durable tool positions; Jarvis owns corpus admission and
+server authentication. this adopts
+[Jarvis adr 0067](https://github.com/NielsdaWheelz/jarvis/blob/feature/universal-memory/docs/decisions/0067-nexus-owner-chat-memory.md).
+temporary synthetic real-stack checks qualify both tool transports and denied
+principals/processors. private credential installation and production activation
+remain separate.
+
+the library's git repository is private. the owner approved distributing its
+installed python source in nexus's existing public backend images; anonymous
+digest access remains required. ci and image builders use the contents-read-only
+`UNIVERSAL_MEMORY_READ_TOKEN` secret only while fetching that exact repository.
+the process-scoped git helper never persists credentials or embeds them in urls,
+build arguments, caches or runtime images. ordinary local dependency installs
+use authenticated git.
+
 ## Backend composition
 
 codex personal attaches to one dedicated stock 0.160.0 app-server through its
@@ -120,6 +166,12 @@ completed commentary persists before bounded chat progress delivery. only the
 original sealed native final supplies product terminal output. control/fence/cleanup
 facts cannot become native seals or replace original failure/usage. invalid callback
 arguments remain raw rejected evidence, without handler entry.
+decoded nul (`U+0000`) in callback arguments, keys or model-turn evidence is the
+approved exception: postgres jsonb cannot preserve it. reject it before sql or
+tool entry with a content-free defect, leave the chat incomplete and retain no
+sanitized replacement or ordinary rejected-call receipt. recovery cannot infer
+a completed call from that absence. worker logs retain only the error class and
+closed code, without argument text, sql diagnostics or exception chains.
 
 Provider API execution uses `ProviderRuntime` with the selected configured
 credential. Each independently accepted provider call is a child model turn.

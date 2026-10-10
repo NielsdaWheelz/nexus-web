@@ -68,6 +68,7 @@ jobs:
           build-args: SOURCE_SHA=${{ github.sha }}
           provenance: mode=max
           sbom: true
+          secrets: universal_memory_read_token=${{ secrets.UNIVERSAL_MEMORY_READ_TOKEN }}
 
       - name: build and push worker
         id: worker
@@ -81,6 +82,7 @@ jobs:
           build-args: SOURCE_SHA=${{ github.sha }}
           provenance: mode=max
           sbom: true
+          secrets: universal_memory_read_token=${{ secrets.UNIVERSAL_MEMORY_READ_TOKEN }}
 
       - name: write the candidate manifest
         shell: bash

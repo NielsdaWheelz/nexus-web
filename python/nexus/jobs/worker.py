@@ -297,16 +297,16 @@ class JobWorker:
             if not completed:
                 self._warn("worker_job_complete_rejected_lost_ownership", job)
         except Exception as exc:
-            logger.exception(
+            error_code = _derive_error_code(exc)
+            logger.error(
                 "worker_job_failed",
                 worker_id=self.worker_id,
                 job_id=str(job.id),
                 kind=job.kind,
-                error=str(exc),
+                error_type=type(exc).__name__,
+                error_code=error_code,
             )
-            self._fail_attempt(
-                definition, job, context, error_code=_derive_error_code(exc), message=str(exc)
-            )
+            self._fail_attempt(definition, job, context, error_code=error_code, message=str(exc))
         finally:
             drain()
 
