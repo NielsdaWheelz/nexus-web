@@ -1,6 +1,6 @@
 """Episode transcripts: admit one request or a whole selection, and run one attempt.
 
-Admission precedence for an episode: a readable transcript only asks for semantic repair;
+Admission precedence for an episode: a readable transcript only re-requests a stale index;
 one in flight writes nothing; otherwise the episode's one job row is reset and a source
 attempt is enqueued. The run prefers the publisher's rss sidecar, else Deepgram. Failure
 raises to the source-attempt owner, which publishes it (transcription_failure.py).
@@ -22,6 +22,7 @@ from nexus.schemas import podcast as wire
 from nexus.schemas.media import TranscriptCoverage, TranscriptRequestOut, TranscriptState
 from nexus.schemas.media import TranscriptRequestReason as RequestReason
 from nexus.schemas.media_summary import MediaProcessingStatus
+from nexus.services.content_indexing import request_stale_media_content_reindex
 from nexus.services.rss_transcript_fetch import fetch_rss_transcript
 from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
 from nexus.services.transcript_segments import normalize_transcript_segments
@@ -30,7 +31,6 @@ from nexus.services.transcripts.request_reason import (
     TranscriptRequestReason,
     require_transcript_request_reason,
 )
-from nexus.services.transcripts.semantic import request_transcript_semantic_repair
 from nexus.services.transcripts.state import (
     TranscriptOrigin,
     ensure_media_transcript_state_row,
@@ -131,23 +131,21 @@ def _admit(
             FROM media m
             LEFT JOIN podcast_transcription_jobs j ON j.media_id = m.id
             LEFT JOIN media_transcript_states s ON s.media_id = m.id
-            WHERE m.id = :id FOR UPDATE OF m
+            WHERE m.id = :id FOR NO KEY UPDATE OF m
         """),
         {"id": media_id},
     ).one()
     now = datetime.now(UTC)
     readable = row.transcript_state in ("ready", "partial")
     if readable and row.transcript_coverage in ("partial", "full"):
-        repair = request_transcript_semantic_repair(
-            db, media_id=media_id, request_reason=reason, now=now
-        )
+        queued = request_stale_media_content_reindex(db, media_id=media_id, reason="reconciliation")
         return _out(
             media_id,
             "ready_for_reading",
-            repair.transcript_state,
-            repair.transcript_coverage,
+            row.transcript_state,
+            row.transcript_coverage,
             reason,
-            queued=repair.outcome == "queued",
+            queued=queued,
         )
     if row.transcript_state in ("queued", "running") or row.status in ("pending", "running"):
         state = row.transcript_state or "queued"
@@ -168,7 +166,6 @@ def _set_state(db: Session, media_id: UUID, state: str, reason: str) -> None:
         media_id=media_id,
         transcript_state=state,
         transcript_coverage="none",
-        semantic_status="none",
         last_request_reason=reason,
         last_error_code=None,
         now=datetime.now(UTC),

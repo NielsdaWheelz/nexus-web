@@ -25,17 +25,14 @@ from sqlalchemy.orm import Session, sessionmaker
 from nexus.db.models import Media, OracleCorpusSource, OraclePassageAnchor, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.services import library_entries, library_governance
-from nexus.services.content_indexing import request_media_content_reindex
+from nexus.services.content_indexing import request_stale_media_content_reindex
+from nexus.services.embeddings import EMBEDDING_PROVIDER, embedding_model
 from nexus.services.media_source_ingest import (
     accept_system_url_source,
     repair_source_for_system_media,
 )
 from nexus.services.oracle.synthesis import Candidate
 from nexus.services.search.semantic import Embedding, nearest_chunks
-from nexus.services.semantic_chunks import (
-    current_transcript_embedding_model,
-    current_transcript_embedding_provider,
-)
 
 SYSTEM_KEY = "oracle_corpus"
 TOKEN = re.compile(r"[a-z]{3,}")
@@ -390,28 +387,13 @@ def _repair(db: Session, *, work: Work, media_id: UUID, owner: UUID) -> Counter[
             reason="oracle_corpus_seed",
         )
         return Counter(repaired=1)
-    index = db.execute(
-        text(
-            "SELECT status, active_embedding_provider, active_embedding_model"
-            " FROM content_index_states WHERE owner_kind = 'media' AND owner_id = :media_id"
-        ),
-        {"media_id": media_id},
-    ).first()
-    active = _active_model()
-    if index is None or (
-        index[0] not in ("pending", "indexing")
-        and tuple(index) != ("ready", active["provider"], active["model"])
-    ):
-        request_media_content_reindex(db, media_id=media_id, reason="oracle_corpus_seed")
+    if request_stale_media_content_reindex(db, media_id=media_id, reason="oracle_corpus_seed"):
         return Counter(reindexed=1)
     return Counter()
 
 
 def _active_model() -> dict[str, str]:
-    return {
-        "provider": current_transcript_embedding_provider(),
-        "model": current_transcript_embedding_model(),
-    }
+    return {"provider": EMBEDDING_PROVIDER, "model": embedding_model()}
 
 
 def main(argv: list[str] | None = None) -> int:

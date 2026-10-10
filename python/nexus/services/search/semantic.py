@@ -10,13 +10,13 @@ from provider_runtime.errors import NonGenerationCallFailed
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.services.semantic_chunks import (
-    build_text_embedding,
-    to_pgvector_literal,
-    transcript_embedding_dimensions,
-    transcript_embedding_provider_for_model,
+from nexus.services.embeddings import (
+    EMBEDDING_DIMENSIONS,
+    EMBEDDING_PROVIDER,
+    embed_texts,
+    embedding_model,
+    pgvector_literal,
 )
 
 logger = get_logger(__name__)
@@ -27,22 +27,17 @@ type Embedding = tuple[str, list[float]]  # (model, vector)
 def embed_text(q: str) -> Embedding | None:
     """One provider call that never touches a session; the caller holds no transaction.
 
-    An expected provider failure degrades to lexical search with one warning; a vector of
-    the wrong dimensions is a provider defect.
+    An expected provider failure degrades to lexical search with one warning; a malformed
+    vector is a provider defect (``embed_texts`` refuses it).
     """
     try:
-        model, vector = build_text_embedding(q)
+        return embedding_model(), embed_texts([q])[0]
     except NonGenerationCallFailed as exc:
         logger.warning(
             "search_semantic_embedding_unavailable_lexical_fallback",
             error=type(exc.failure).__name__,
         )
         return None
-    if len(vector) != transcript_embedding_dimensions():
-        raise ApiError(
-            ApiErrorCode.E_APP_SEARCH_FAILED, "Embedding provider returned an invalid response."
-        )
-    return model, vector
 
 
 def nearest_chunks(
@@ -56,7 +51,7 @@ def nearest_chunks(
     broad scope while a narrow one filters first and sorts exactly.
     """
     model, vector = embedding
-    query_vector = f"CAST(:embedding AS vector({transcript_embedding_dimensions()}))"
+    query_vector = f"CAST(:embedding AS vector({EMBEDDING_DIMENSIONS}))"
     db.execute(text("SET LOCAL ivfflat.probes = 10"))
     rows = db.execute(
         text(f"""SELECT ce.chunk_id, 1 - (ce.embedding_vector <=> {query_vector})
@@ -72,8 +67,8 @@ def nearest_chunks(
             LIMIT :limit"""),
         {
             **params,
-            "embedding": to_pgvector_literal(vector),
-            "provider": transcript_embedding_provider_for_model(model),
+            "embedding": pgvector_literal(vector),
+            "provider": EMBEDDING_PROVIDER,
             "model": model,
             "limit": limit,
         },

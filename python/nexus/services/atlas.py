@@ -18,11 +18,8 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.session import get_session_factory
 from nexus.schemas.atlas import AtlasEdgeOut, AtlasOut, ConstellationOut, StarOut
+from nexus.services.embeddings import EMBEDDING_PROVIDER, embedding_model
 from nexus.services.library_entries import library_media_ids_cte_sql
-from nexus.services.semantic_chunks import (
-    current_transcript_embedding_model,
-    current_transcript_embedding_provider,
-)
 
 _PERSONAL = library_media_ids_cte_sql()  # binds :viewer_id and :library_id (their Default)
 
@@ -109,8 +106,8 @@ def project_all(db: Session) -> int:
             """
         ),
         {
-            "provider": current_transcript_embedding_provider(),
-            "model": current_transcript_embedding_model(),
+            "provider": EMBEDDING_PROVIDER,
+            "model": embedding_model(),
         },
     ).all()
     # pgvector's avg() reaches python as its text literal, "[a,b,...]".

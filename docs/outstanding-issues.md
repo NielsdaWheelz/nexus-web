@@ -318,11 +318,9 @@ unexpected timeouts. See
 - [open] 2026-09-26 processing review · missing images currently abort four epub imports: [ticket](tickets/epub-missing-images-abort-readable-books.md).
 - [open] 2026-09-26 processing review · two stored keats publications need heading normalization before reindex: [ticket](tickets/old-web-publications-lack-index-heading-normalization.md).
 - [open] 2026-09-26 processing review · historical gutenberg epub retry retains the wrong source adapter: [ticket](tickets/gutenberg-failed-import-retains-obsolete-web-adapter.md).
-- [open] 2026-09-26 processing review · two historical note indexes still need owned recovery: [ticket](tickets/historical-note-index-failures-need-owned-recovery.md).
-- [deferred] ingest reconciliation · 2026-10-03 source recheck · nonterminal semantic jobs can monopolize oldest-25 discovery; prior source/index paths are fixed, runtime NOT_RUN: [ticket](tickets/ingest-reconciler-dead-rows-can-starve-new-work.md).
+- [open] 2026-09-26 processing review · two historical note indexes still need owned recovery; 0273 re-admits them, watch them after the release: [ticket](tickets/historical-note-index-failures-need-owned-recovery.md).
 - [open] 2026-09-26 processing review · transient storage errors are treated as permanent source loss: [ticket](tickets/storage-outage-is-misclassified-as-lost-source.md).
 - [open] 2026-09-26 processing review · superseded oracle sources retain three unfiled failed media rows: [ticket](tickets/superseded-oracle-seeds-retain-unfiled-failed-media.md).
-- [open] 2026-09-26 processing plan · publication lock upgrades can obstruct concurrent index settlement: [ticket](tickets/publication-lock-upgrade-can-block-index-settlement.md).
 - [open] 2026-09-26 processing plan · epub reprocessing can replace fragment identities beneath reader state: [ticket](tickets/epub-reprocessing-can-replace-reader-fragment-identity.md).
 - [open] 2026-09-25 notes writing release preflight · census unsafe stored link hrefs on target data: [ticket](tickets/notes-writing-target-unsafe-links-census.md).
 - [open] 2026-09-25 notes writing release preflight · census missing canonical body and links versions on target data: [ticket](tickets/notes-writing-target-missing-body-versions.md).
@@ -343,6 +341,10 @@ unexpected timeouts. See
 - [open] resonance / performance · 2026-10-04 synapse reauthor · p3 · the slate edge lane owner-normalizes the whole graph per read: [ticket](tickets/resonance-edge-lane-scans-whole-graph.md).
 - [open] resonance / synapse / performance · 2026-10-04 synapse reauthor · p2 · the new slate and exclusion sql has no production-shape plan yet: [ticket](tickets/synapse-slate-query-plans-unmeasured.md).
 - [open] resonance / semantic index · 2026-10-04 synapse reauthor · p3 · Similar is calibrated to one embedding model; a model change silently empties it: [ticket](tickets/similar-lane-model-calibration.md).
+- [open] resource sharing / transcripts · 2026-10-10 content index reauthor · the podcast share gate requires `last_request_reason = 'rss_feed'`, which nothing writes, so no episode is shareable: [ticket](tickets/podcast-share-gate-reads-a-reason-nothing-writes.md).
+- [open] transcripts / wire · 2026-10-10 content index reauthor · `TranscriptRequestReason` is declared twice (the wire's lacks `rss_feed`): [ticket](tickets/transcript-request-reason-vocabulary-duplicated.md).
+- [open] url acquisition · 2026-10-10 content index reauthor harness · re-adding an ingested url answers `created` with a new media id that is superseded and then 404s: [ticket](tickets/readding-a-url-answers-created-for-a-media-that-is-deleted.md).
+- [open] web media pane · 2026-10-10 content index reauthor harness · an open media pane keeps showing a suspended index after its search repair publishes, until reopened: [ticket](tickets/media-pane-retrieval-status-stale-after-search-repair.md).
 - [deferred] synapse / resonance · 2026-10-04 synapse reauthor · owner decisions: trigger policy, manual scan for media and highlights, the Similar work vector, quick reads and Lectern members: [ticket](tickets/synapse-owner-questions.md).
 - [open] resource graph / connections · 2026-10-10 graph reauthor · p2 · owner rollup re-enumerates every owned child on every connections page: [ticket](tickets/connections-owner-rollup-enumerates-children.md).
 - [open] resource graph / assistant writes · 2026-10-10 graph reauthor · p3 · each assistant connection row queries its provenance separately: [ticket](tickets/assistant-edge-provenance-per-row.md).

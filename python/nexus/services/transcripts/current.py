@@ -1,9 +1,15 @@
-"""The single owner of current transcript artifact publication."""
+"""The single owner of a media's current transcript artifacts.
+
+Replacing a transcript replaces its segments and fragments, sets the transcript state,
+and retracts the media's content index at once (its passages cite the old text). The
+transaction that makes the new transcript readable requests the next index revision:
+``write_current_transcript`` here, or the source attempt's success for
+``publish_source_transcript``.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
@@ -12,21 +18,14 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.services.content_indexing import IndexOwner, deactivate_content_index
-from nexus.services.media_processing_state import mark_ready_for_reading_by_id
-from nexus.services.transcript_segments import (
-    TranscriptSegmentInput,
-    insert_transcript_fragments,
+from nexus.services.content_indexing import (
+    request_media_content_reindex,
+    retract_media_content_index,
 )
+from nexus.services.media_processing_state import mark_ready_for_reading_by_id
+from nexus.services.transcript_segments import TranscriptSegmentInput, insert_transcript_fragments
 from nexus.services.transcripts.request_reason import TranscriptRequestReason
-from nexus.services.transcripts.semantic import enqueue_transcript_semantic_job
 from nexus.services.transcripts.state import TranscriptOrigin, set_media_transcript_state
-
-
-@dataclass(frozen=True)
-class CurrentTranscriptWriteResult:
-    segment_count: int
-    semantic_status: Literal["pending"]
 
 
 def write_current_transcript(
@@ -38,9 +37,9 @@ def write_current_transcript(
     transcript_segments: Sequence[TranscriptSegmentInput],
     transcript_origin: TranscriptOrigin,
     now: datetime,
-) -> CurrentTranscriptWriteResult:
-    """Publish a non-source transcript, enqueue semantic work, make it readable."""
-    result = _publish(
+) -> None:
+    """Publish a transcript outside a source attempt, make the media readable, index it."""
+    publish_source_transcript(
         db,
         media_id=media_id,
         request_reason=request_reason,
@@ -49,9 +48,8 @@ def write_current_transcript(
         transcript_origin=transcript_origin,
         now=now,
     )
-    enqueue_transcript_semantic_job(db, media_id=media_id, request_reason=request_reason)
     mark_ready_for_reading_by_id(db, media_id=media_id, now=now)
-    return result
+    request_media_content_reindex(db, media_id=media_id, reason="source_success")
 
 
 def publish_source_transcript(
@@ -63,64 +61,30 @@ def publish_source_transcript(
     transcript_segments: Sequence[TranscriptSegmentInput],
     transcript_origin: TranscriptOrigin,
     now: datetime,
-) -> CurrentTranscriptWriteResult:
-    """Publish source artifacts without crossing the source-success boundary."""
-    return _publish(
-        db,
-        media_id=media_id,
-        request_reason=request_reason,
-        transcript_coverage=transcript_coverage,
-        transcript_segments=transcript_segments,
-        transcript_origin=transcript_origin,
-        now=now,
-    )
-
-
-def _publish(
-    db: Session,
-    *,
-    media_id: UUID,
-    request_reason: TranscriptRequestReason,
-    transcript_coverage: Literal["partial", "full"],
-    transcript_segments: Sequence[TranscriptSegmentInput],
-    transcript_origin: TranscriptOrigin,
-    now: datetime,
-) -> CurrentTranscriptWriteResult:
+) -> None:
     """Replace the transcript rows in the caller's transaction.
 
-    The media row is the publication boundary and is locked before the transcript
-    advisory lock. Highlights are authored user data and are never deleted here:
-    their selectors re-resolve against the new fragments.
+    The media row is the publication boundary (``FOR NO KEY UPDATE``, the media lock mode
+    every index and source writer takes). Highlights are authored user data and are
+    never deleted here: their selectors re-resolve against the new fragments.
     """
+    params = {"media_id": media_id}
     if (
-        db.scalar(
-            text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"), {"media_id": media_id}
-        )
+        db.scalar(text("SELECT id FROM media WHERE id = :media_id FOR NO KEY UPDATE"), params)
         is None
     ):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    db.execute(
-        text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
-        {"lock_key": f"transcript-current:{media_id}"},
-    )
-    db.execute(
-        text("DELETE FROM podcast_transcript_segments WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    )
-    db.execute(text("DELETE FROM fragments WHERE media_id = :media_id"), {"media_id": media_id})
+    db.execute(text("DELETE FROM podcast_transcript_segments WHERE media_id = :media_id"), params)
+    db.execute(text("DELETE FROM fragments WHERE media_id = :media_id"), params)
     insert_transcript_fragments(db, media_id, transcript_segments, now=now)
     if transcript_segments:
         db.execute(
             text(
                 """
-                INSERT INTO podcast_transcript_segments (
-                    media_id, segment_idx, canonical_text,
-                    t_start_ms, t_end_ms, speaker_label, created_at
-                )
-                VALUES (
-                    :media_id, :segment_idx, :canonical_text,
-                    :t_start_ms, :t_end_ms, :speaker_label, :created_at
-                )
+                INSERT INTO podcast_transcript_segments (media_id, segment_idx, canonical_text,
+                    t_start_ms, t_end_ms, speaker_label, created_at)
+                VALUES (:media_id, :segment_idx, :canonical_text, :t_start_ms, :t_end_ms,
+                    :speaker_label, :created_at)
                 """
             ),
             [
@@ -136,20 +100,14 @@ def _publish(
                 for segment_idx, segment in enumerate(transcript_segments)
             ],
         )
-    deactivate_content_index(
-        db, owner=IndexOwner("media", media_id), reason="transcript_replacement"
-    )
+    retract_media_content_index(db, media_id=media_id)
     set_media_transcript_state(
         db,
         media_id=media_id,
         transcript_state="partial" if transcript_coverage == "partial" else "ready",
         transcript_coverage=transcript_coverage,
-        semantic_status="pending",
         last_request_reason=request_reason,
         last_error_code=None,
         transcript_origin=transcript_origin,
         now=now,
-    )
-    return CurrentTranscriptWriteResult(
-        segment_count=len(transcript_segments), semantic_status="pending"
     )

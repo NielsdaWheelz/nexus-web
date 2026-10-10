@@ -68,23 +68,22 @@ def apply_dead_letter_projection(
 
 
 def _project_note_content_index(db: Session, job: JobRow) -> None:
-    """Mark the note's content index failed once reindex retries are exhausted."""
+    """Mark the note's index failed while it still waits on a rebuild.
+
+    A note job publishes only the current body, and every later edit marks the index
+    ``pending``, so a ``ready`` or ``no_text`` index is current: a dead job (one killed
+    after its own publish, or an older one whose lease expired after a newer job
+    published) leaves it alone.
+    """
     reason = (
         f"{ApiErrorCode.E_INTERNAL.value}: {job.last_error or 'Note reindex exhausted retries.'}"
     )
     db.execute(
         text(
             """
-            INSERT INTO content_index_states (
-                owner_kind, owner_id, status, status_reason, updated_at, created_at
-            )
-            VALUES ('note_block', :owner_id, 'failed', :status_reason, :now, :now)
-            ON CONFLICT (owner_kind, owner_id) DO UPDATE
-            SET status = 'failed',
-                status_reason = EXCLUDED.status_reason,
-                active_embedding_provider = NULL,
-                active_embedding_model = NULL,
-                updated_at = EXCLUDED.updated_at
+            UPDATE content_index_states
+            SET status = 'failed', status_reason = :status_reason, updated_at = :now
+            WHERE owner_kind = 'note_block' AND owner_id = :owner_id AND status = 'pending'
             """
         ),
         {

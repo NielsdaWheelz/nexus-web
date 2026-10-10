@@ -865,7 +865,6 @@ def _media_capabilities(row: RowMapping, media: MediaOut) -> Capabilities:
                 revision=int(row["index_revision"]),
                 dead_job_id=row["index_job_id"] if row["index_job_status"] == "dead" else None,
                 is_creator=is_creator,
-                is_operator=False,
             )
         )
     )

@@ -400,7 +400,7 @@ still missing a row at generation `1`; run it before exposing a reading-capable
 APK ([`deployment.md`](../deployment.md)). Offline copies and device
 availability are not server rows.
 
-**Retrieval index** — `content_blocks`, `evidence_spans`, `content_chunks`,
+**Retrieval index** — `evidence_spans`, `content_chunks`,
 `content_embeddings` (pgvector, 256 dims),
 `content_index_states(owner_kind, owner_id)`, `media_transcript_states`.
 The index is owner-polymorphic: media-owned content and note-owned bodies share
@@ -686,13 +686,14 @@ The periodic storage orphan sweep receives only its claimed job context and
 reloads the fenced continuation payload from that row; the registry does not
 thread a duplicate raw mapping into the task.
 
-Task catalog (each is a thin handler in `tasks/` that wraps a service):
+Task catalog (each is a thin handler in `tasks/` that wraps a service; the two
+reindex kinds are handled by their services, `content_indexing.run_media_reindex_job`
+and `note_indexing.run_note_reindex_job`):
 `ingest_media_source`, `enrich_metadata`, `chat_run`,
 `oracle_reading_generate`, `dossier_build`,
 `media_content_reindex_job`, `media_unit_build`, `note_reindex_job`,
 `podcast_sync_subscription_job`,
-`podcast_backfill_subscription`,
-`podcast_reindex_semantic_job`, `podcast_refresh_due_job` (periodic),
+`podcast_backfill_subscription`, `podcast_refresh_due_job` (periodic),
 `reconcile_stale_ingest_media_job` (periodic),
 `sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`
 (periodic), `purge_expired_auth_handoff_codes` (periodic), `connection_discovery_scan`,
@@ -816,7 +817,7 @@ Other identity surfaces:
   state is per-turn tmpfs and deleted after close. The Codex host receives no
   generation API key. API/worker processes receive only the provider keys named
   by `GENERATION_API_PROVIDERS`; `services/generation/provider.py` projects that
-  exact configured set into ProviderRuntime, and `services/semantic_chunks.py`
+  exact configured set into ProviderRuntime, and `services/embeddings.py`
   keeps the OpenAI embedding key in its separate narrow credential. See
   [modules/llms.md](modules/llms.md).
 
@@ -862,13 +863,23 @@ activation is a defect. The browser projects that generated wire union once into
 its row contract. Durable resource reopening and visibility belong to
 `services/resource_graph/resolve.py`, independently of this browser projection.
 
-- **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
-  media flows `fragment → content_blocks → chunks → embeddings`; note bodies
-  flow `note_block → content_blocks → chunks → embeddings` through
-  `services/note_indexing.py`. The current index state is tracked in
-  `content_index_states(owner_kind, owner_id)` with the active embedding
-  provider/model; rebuilds replace current blocks, chunks, spans, and embeddings
-  for the owner.
+- **Indexing** (`services/content_indexing.py`, `content_chunking.py`,
+  `embeddings.py`, `note_indexing.py`): `fragment | page | transcript segment |
+  note body → blocks → chunks → embeddings`. `content_chunking` is pure: blocks
+  in, chunks of at most 420 tokens with their locators and float32 embeddings
+  out (64 per provider request). Every media owner (web article, epub, pdf,
+  podcast episode or video through its transcript) is indexed by one job kind,
+  `media_content_reindex_job`, under a monotonic `revision` in
+  `content_index_states`: only `request_media_content_reindex` creates jobs, each
+  for a fresh revision, and a job publishes only while its revision is current
+  and it holds its claim, replacing the owner's spans, chunks and embeddings in
+  one transaction. A transcript replacement retracts the index at once
+  (`retract_media_content_index`, which raises the revision). Note bodies are
+  rebuilt by `note_reindex_job`, which embeds with no transaction open and
+  publishes only if the body is unchanged. `embeddings.py` owns the embedding
+  identity (`EMBEDDING_PROVIDER`, `embedding_model()`, `EMBEDDING_DIMENSIONS`)
+  every reader filters on; readers trust rows only while the owner's state is
+  `ready` on that identity.
 - **Retrieval** is hybrid — and hybrid is an _invariant_, not a per-request toggle:
   a vector ANN arm (cosine over pgvector, joined on the _active_ embedding config)
   **UNION** a lexical FTS arm, reranked by a weighted score (lexical hit + semantic
@@ -1598,12 +1609,12 @@ revision. `media_fact_revisions.bump_all_media_fact_collections` owns the exact
 `AuthorWorks | LibraryEntries | PodcastEpisodes` family set. The failure owner
 imports no provider adapter.
 `services/transcripts/state.py` is the sole persistence owner for
-`media_transcript_states`; `current.py` owns artifact publication, while
-`semantic.py` owns every semantic-job payload plus lock-and-job-inventory repair
-admission. Readable-transcript repair never bumps collection revisions because
-`semantic_status` is not a collection-row fact, and treats a live
-pending/running/retryable semantic job as idempotent instead of dispatching
-duplicate work. Database enqueue defects propagate and roll back;
+`media_transcript_states`; `current.py` owns artifact publication and retracts the
+media's content index in the same transaction. The transcript's index is the
+media's index (`content_indexing`): re-requesting a readable transcript asks for a
+new revision only when the index is missing, on another embedding model, or its
+current job is dead (`request_stale_media_content_reindex`), never beside a live
+job, and bumps no collection revision. Database enqueue defects propagate and roll back;
 there is no transcript `enqueue_failed` runtime or persisted audit outcome.
 Canonical YouTube Video caption import lives in `_import_youtube_captions`. It
 crosses the provider boundary with no database transaction open, reauthorizes
@@ -2228,7 +2239,7 @@ The things most likely to bite you, distilled:
 | Reader/highlights backend                                         | `python/nexus/services/{reader_profile,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote}.py`                                                                        |
 | Chat / conversations                                              | `python/nexus/services/chat/`, `python/nexus/api/routes/chat.py`, `python/nexus/schemas/conversation.py`                                                                                              |
 | Oracle                                                            | `python/nexus/services/oracle/` (`corpus.py`, `corpus.json`, `synthesis.py`, `readings.py`), `python/nexus/services/atlas.py`                                                                          |
-| Search / retrieval / indexing / resource target/openable search   | `python/nexus/services/search/` (`sources`, `semantic`, `scope`, `project`, `service`, `pickers`), `python/nexus/services/{content_indexing,semantic_chunks}.py`, `services/chat/retrievals.py`   |
+| Search / retrieval / indexing / resource target/openable search   | `python/nexus/services/search/` (`sources`, `semantic`, `scope`, `project`, `service`, `pickers`), `python/nexus/services/{content_indexing,content_chunking,embeddings,note_indexing}.py`, `services/chat/retrievals.py` |
 | Resource graph (edges, refs, citations, connections, links) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `links`, `connections`, `context`, `citations`, `reader_targets`, `cleanup`)                                                     |
 | Universal Dossiers / Media Intelligence                           | `python/nexus/services/dossier/`, `python/nexus/services/media_intelligence.py`, `python/nexus/api/routes/dossiers.py`                                                                               |
 | Agent tools                                                       | `python/nexus/services/agent_tools/`                                                                                                                                                                   |

@@ -65,7 +65,6 @@ def source_outcome_to_job_result(outcome: SourceRunOutcome) -> dict[str, object]
     if isinstance(outcome.metadata_enrichment, Present):
         result["metadata_enrichment"] = outcome.metadata_enrichment.value
     if isinstance(outcome.transcript_request_reason, Present):
-        result["transcript_semantic_intent"] = True
         result["transcript_request_reason"] = outcome.transcript_request_reason.value
     if isinstance(outcome.pdf_has_text, Present):
         result["has_text"] = outcome.pdf_has_text.value

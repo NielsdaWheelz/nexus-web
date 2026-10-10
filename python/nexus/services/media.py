@@ -403,7 +403,6 @@ def _row_recovery(
                     else UUID(str(row["dead_reindex_job_id"]))
                 ),
                 is_creator=is_creator,
-                is_operator=False,
             )
         )
     return source, search

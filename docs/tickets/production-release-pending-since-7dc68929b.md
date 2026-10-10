@@ -249,3 +249,50 @@ uncatalogued stored code, so either against an unmigrated database fails on thos
 web and api ship together (the repair route's response is now typed; its bytes are
 unchanged). production at `0241` also crosses `0252`, which leaves the quota code only in
 `media_transcript_states`. dry run: `campaign-artifacts/2026-10-09/imports/migration-dry-run.txt`.
+
+the content index reauthor adds `0273` (one media reindex job), after the imports
+`0272`. it deletes every `podcast_reindex_semantic_job` row (transcripts are now
+indexed by `media_content_reindex_job`) and turns each readable transcript whose
+semantic status was pending or failed into a `pending` index state, drops
+`content_blocks` (write-only since 0251) and `media_transcript_states.semantic_status`
+with its two indexes, drops `uq_note_reindex_job_inflight`, and enqueues one
+`backfill` `note_reindex_job` per pending or failed note index without a live job.
+it is irreversible: its downgrade raises. drain both worker lanes before migrating
+(the old worker writes `content_blocks` and claims the retired kind), migrate with
+the api stopped (the old api writes `semantic_status`), start the new worker after;
+api and worker ship together, web and android are unchanged (ingest job results
+drop the unread `transcript_semantic_intent` key). after release the
+reconciler re-admits the transcript backlog (25 per 600 s tick; those transcripts
+are out of search until reindexed) and each re-admitted note costs one embedding
+pass. preflight, read-only:
+
+```sql
+SELECT status, count(*) FROM background_jobs
+WHERE kind = 'podcast_reindex_semantic_job' GROUP BY status;     -- all deleted; dead rows grew per tick (D2)
+SELECT count(*) FROM media_transcript_states mts
+WHERE semantic_status IN ('pending', 'failed') AND transcript_state IN ('ready', 'partial')
+  AND transcript_coverage IN ('partial', 'full')
+  AND EXISTS (SELECT 1 FROM podcast_transcript_segments s WHERE s.media_id = mts.media_id);
+                                                                 -- the reconciler backlog after release
+SELECT count(*) FROM media_transcript_states mts JOIN media m ON m.id = mts.media_id
+WHERE mts.semantic_status IN ('pending', 'failed') AND mts.transcript_state IN ('ready', 'partial')
+  AND mts.transcript_coverage IN ('partial', 'full')
+  AND EXISTS (SELECT 1 FROM podcast_transcript_segments s WHERE s.media_id = mts.media_id)
+  AND m.processing_status <> 'ready_for_reading';               -- must be 0
+SELECT count(*) FROM content_blocks;                             -- rows lost (no reader)
+SELECT status, count(*) FROM content_index_states
+WHERE owner_kind = 'note_block' GROUP BY status;                 -- pending + failed = notes re-admitted
+SELECT payload->>'media_id', payload->>'revision', count(*) FROM background_jobs
+WHERE kind = 'media_content_reindex_job' GROUP BY 1, 2 HAVING count(*) > 1;  -- must be empty
+```
+
+the backlog query on unreadable media must return 0: the reconciler and the job
+index only `ready_for_reading` media (main's semantic job checked the transcript
+alone), so such a transcript would stay out of search until its media's processing
+next succeeds, and each transcript request meanwhile mints a revision that ends
+superseded. inspect any it counts before releasing.
+
+the last query must return no rows: the new reconciler admission assumes one
+job per index revision (imports already asserts it when it reads a media's
+import). a duplicate is an old reconciler leftover; supersede the older row
+(`status = 'succeeded'`, result `{"status":"superseded"}`) before releasing.
