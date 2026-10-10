@@ -42,6 +42,26 @@ fail canonical range checks. valid server facts are conserved. the separate
 [nonmedia date contract gap](../tickets/author-nonmedia-work-dates-have-no-producer.md)
 remains open: current podcast/catalog work dates are always null.
 
+## works view
+
+`GET /contributors/{handle}/works` owns four views; `lib/contributors/workView.ts`
+is the strict url codec and `Sort by` inventory.
+
+| query, excluding pagination | order |
+| --- | --- |
+| no `sort` or `direction` (canonical) | original publication, oldest first |
+| `sort=published&direction=desc` | original publication, newest first |
+| `sort=title&direction=asc` / `desc` | title a–z / z–a |
+
+redundant `published+asc`, partial pairs, duplicate keys and unknown values
+are `E_INVALID_REQUEST`; the pane shows invalid-view reset and never commits
+seed rows. the date is media `original_published_date`; podcast and
+catalogue-only works are undated. publication orders sort by
+`(date_missing asc, date, title, href)`, so undated works stay last in both
+directions and partial dates keep their precision; sql applies visibility,
+order and keyset pagination to the whole relation. only `AuthorWorks:v3`
+cursors decode; older ones are `E_INVALID_CURSOR`.
+
 ## qualification
 
 tested source `0e8bcbb8fee1addf302260942986e334ba566d8b`, tree

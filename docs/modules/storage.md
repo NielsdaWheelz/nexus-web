@@ -35,7 +35,7 @@ Next Image local pattern; they are public files, not storage objects.
 
 ## Media Teardown & Lifecycle
 
-Full contract: `docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §3.1.
+Full contract: `docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §3.1 at `ebd648197`.
 
 Canonical member removal never deletes the final lifetime reference: it returns
 `409 E_MEDIA_LAST_REFERENCE`. Whole-resource deletion of document media

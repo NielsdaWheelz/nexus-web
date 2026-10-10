@@ -14,7 +14,7 @@ was stamped or aliased into the new graph.
 
 private artifacts: `/private/tmp/nexus-metadata-release-uy48cjy2/`.
 the table names exact files and sha256 prefixes; full hashes remain in the
-private artifacts. see [verification](../metadata-enrichment-verification.md)
+private artifacts. see `docs/metadata-enrichment-verification.md` at `407fcc735`
 for scope and limits.
 
 | preparation proof | artifact | sha256 prefix |
@@ -58,9 +58,9 @@ bytes, and explicit migration-loss approval remain required. follow
 | 0252 | deletes billing, stripe state and the transcription minute ledger (#404) | no | [billing-0252-release-steps](billing-0252-release-steps.md) |
 | 0253 | activation receipt keys; explicit oracle passage nulls | yes | one copied original nested receipt rewrites in a separate rollback-only transaction; late malformed receipt refuses atomically |
 | 0254 | drops atlas computation timestamps | no | [atlas-0254-production-timestamp-loss](atlas-0254-production-timestamp-loss.md) |
-| 0255 | qualified native adapter; original principal/history preservation, shell credentials removed | no | [metadata verification](../metadata-enrichment-verification.md) |
-| 0256 | metadata hard cutover; unresolved journals block | no | [metadata plan](../metadata-enrichment-plan.md#9-hard-cutover-and-verification) |
-| 0257 | independent completed-write receipts and archival audit | no | [metadata verification](../metadata-enrichment-verification.md#release-preparation) |
+| 0255 | qualified native adapter; original principal/history preservation, shell credentials removed | no | `docs/metadata-enrichment-verification.md` at `407fcc735` |
+| 0256 | metadata hard cutover; unresolved journals block | no | `docs/metadata-enrichment-plan.md` §9 at `407fcc735` |
+| 0257 | independent completed-write receipts and archival audit | no | `docs/metadata-enrichment-verification.md` §release preparation at `407fcc735` |
 
 the earlier activation-owner preflight records the `0253` receipt-key and oracle nullable-key
 migration, with paired snake API/web output. production has 24 exact camel
@@ -122,4 +122,14 @@ into consumption overrides and remove unused listening/queue columns) and adds
 retired discovery and exact old read-tool grants, then take a verified backup.
 local `0263→0264` preservation/rollback and real native discovery passed;
 no production migration or deployment occurred. see
-[connections verification](../connections-verification.md).
+`docs/connections-verification.md` at `407fcc735`.
+
+#538 adds `0265` (persist effective finished/unread states, then drop
+`reader_engagement_states.max_total_progression`). it is irreversible: its
+downgrade raises; rollback is the verified pre-cutover backup plus the prior
+builds. stop writers and take that backup first. #538 also renames the android
+bridges to `nexusPlayback` and `nexusDownloads` with no compatibility path, so
+backend, web and android ship together, in the
+[offline cutover](offline-cutover-release-steps.md) order: old app online once,
+deploy, new apk. see `docs/media-row-plan.md` (migration and hard cutover) at
+`407fcc735`.

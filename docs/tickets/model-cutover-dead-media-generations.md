@@ -21,7 +21,7 @@ eight affected saved lewis units still have null first-publication dates;
 
 prerequisites: final drained census, verified R2 archive and actual restore,
 reviewed exact IDs and separately authorized aligned release under
-[plan section 9](../metadata-enrichment-plan.md#9-hard-cutover-and-verification).
+`docs/metadata-enrichment-plan.md` §9 at `407fcc735`.
 after archival retirement, create ordinary NEW metadata jobs for selected saved
 items; never redispatch an uncertain original or rewrite dates unconditionally.
 

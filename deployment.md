@@ -416,26 +416,6 @@ settings change.
 Retain verified R2 archives according to an explicit operator retention
 decision. Garbage collection is not part of the release.
 
-### orphaned host state
-
-The attempt/resume protocol is gone. These paths are no longer read or written
-and can be deleted by hand at any time:
-
-```
-/var/lib/nexus/releases/attempts/
-/var/lib/nexus/releases/records/
-/var/lib/nexus/releases/oracle-attempts/
-/var/lib/nexus/releases/oracle-repairs/
-/var/lib/nexus/releases/caddy-activation-backups/
-/var/lib/nexus/releases/caddy-activation.json
-/var/lib/nexus/releases/codex-capacity/
-/var/lib/nexus/releases/forward-fix
-/opt/nexus/releases/            # the per-SHA immutable bundles
-/var/backups/nexus/*.dump       # pre-R2 local dumps
-```
-
-`/var/lib/nexus/releases/current` stays. Everything else above is residue.
-
 ## Owned files
 
 | Concern | Owner |

@@ -46,7 +46,7 @@ highlights can be listed and opened according to the canonical permissions
 path.
 
 A fresh reader selection becomes a durable Highlight only as a side effect of
-a confirmed **Link** (see [Universal Link authoring](../cutovers/universal-link-authoring-hard-cutover.md)):
+a confirmed **Link** (see [connections](connections.md)):
 the Link service creates the Highlight, canonicalizes the endpoints, and
 creates or reuses the Link in one transaction, so cancelling the Link dialog
 writes nothing. An existing Highlight is reused as a Link source or target and
@@ -210,7 +210,7 @@ success or failure so the selection can retry.
 
 The canonical passage/document scope and typed highlight association contract
 is
-[`reader-evidence-scope-associations-hard-cutover.md`](../cutovers/reader-evidence-scope-associations-hard-cutover.md).
+`docs/cutovers/reader-evidence-scope-associations-hard-cutover.md` at `ebd648197`.
 
 ## Quote-To-Chat
 

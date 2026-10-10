@@ -62,13 +62,13 @@ instead of a browser type error. the writer can complete a restored frozen first
 without an annotation adapter; recovery admission stays with its existing owner.
 structure and numeric representation stay. the later neutral-link cutover,
 admission and stopped-writer migration belong to
-[connections](connections.md) and [its plan](../connections-plan.md).
+[connections](connections.md).
 
 ## historical qualification
 
 these receipts describe the output-boundary change before the connections
 cutover. stance routes and hidden annotation facts below are retired.
-[current verification](../connections-verification.md) owns the new behavior.
+[connections](connections.md) owns the new behavior.
 
 pre-integration qualification used temporary isolated postgres/api/browser probes.
 

@@ -10,7 +10,7 @@ the implemented cohort is nexus api/worker/host `d6b06991c`, repaired web
 the subsequent integration with main `dc9838cf6` and `47d8143cf` changes the final source;
 no live journey on that merged tree has been observed.
 the nonsecret current evidence and exact
-limits are in [the verification receipt](../codex-shell-cutover-verification.md).
+limits are in the verification receipt, `docs/codex-shell-cutover-verification.md` at `407fcc735`.
 `./scripts/test` is static only.
 
 all 15 codex browser/native model-effort cells passed on `d6b06991c` before

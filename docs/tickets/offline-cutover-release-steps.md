@@ -33,8 +33,9 @@ do not install the new apk before step 2.
   step 3.
 - new downloads are impossible: the spec, package-token and account-binding
   routes are all 404.
-- still working: downloaded episodes play (the player protocol is unchanged)
-  and old copies open in the old shelf offline.
+- the player is unavailable: the old apk exposes `nexusPlayer`, the new web
+  wants `nexusPlayback` (#534, #538) and shows *Update Nexus for Android*.
+- still working: old copies open in the old shelf offline.
 
 **new apk against old web+api** (if step 3 runs before step 2):
 - the old web finds no `nexusOfflineReading`: *Sign Out* reads "temporarily

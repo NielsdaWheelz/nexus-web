@@ -1,7 +1,6 @@
 // The Author works view: the closed sort type, a strict total
 // URLSearchParams <-> AuthorWorksView codec, the API query, and the exact
-// `Sort by` inventory. See
-// docs/collection-controls-plan.md.
+// `Sort by` inventory. See docs/modules/contributors.md (works view).
 
 import { assertNever } from "@/lib/assertNever";
 

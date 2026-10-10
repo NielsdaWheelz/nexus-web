@@ -1711,8 +1711,9 @@ at ≥95% persists sticky completion. unread/reset fences older writes; genuine
 accepted resumption clears unread. `MediaSummaryProvider` refreshes retained
 facts in bounded account-scoped batches; query owners reconcile real topology
 changes. unknown facts disappear and finished hides time. catalogue rows expose
-stored author credits without invented viewer facts. the contract and receipts
-are in [media-row-plan.md](media-row-plan.md).
+stored author credits without invented viewer facts. the contract is in
+[library](modules/library.md) (rows, estimates, refresh) and
+[player](modules/player.md) (progress fences).
 
 ### 8.9 Consumption Activity & Stats
 

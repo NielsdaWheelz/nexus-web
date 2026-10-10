@@ -8,7 +8,7 @@ tracking: [github #486](https://github.com/NielsdaWheelz/nexus-web/issues/486)
 
 problem: saved epubs may retain historical misclassified or split contributor
 observations. the parser and guarded repair are implemented and locally qualified;
-production repair remains unperformed. [verification](../metadata-enrichment-verification.md)
+production repair remains unperformed. verification (`docs/metadata-enrichment-verification.md` at `407fcc735`)
 records historical unchanged owner checks for epub2/3 roles, identity,
 manual/mixed-source protection, refusal and guarded preview/apply. no new
 implementation is required by this ticket.

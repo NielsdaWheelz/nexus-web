@@ -41,7 +41,7 @@ in-flight counter.
 
 The interactive lane dispatches in-process. The background lane instead runs every
 handler in a fresh bounded child through `jobs/process_executor.py`
-(`docs/cutovers/document-import-reliability-hard-cutover.md` §7): the supervisor keeps
+(`docs/cutovers/document-import-reliability-hard-cutover.md` §7 at `ebd648197`): the supervisor keeps
 the claim, heartbeat, Heavy-capacity lease, wall timeout, and terminal transition, and
 never imports a parser, provider, or storage client.
 For a `SourceAttemptMedia` resource terminal it preserves the queue/lease fence,
@@ -128,7 +128,7 @@ terminal `dead` transition — that transition fires exactly once and has no
 redrive, so the repair cannot be split across a process or transaction boundary.
 The module imports only SQLAlchemy and `nexus.errors` at module scope, which is
 what keeps the background supervisor free of parser, provider, and storage graphs
-(`docs/cutovers/document-import-reliability-hard-cutover.md` §4.2.1). The three
+(`docs/cutovers/document-import-reliability-hard-cutover.md` §4.2.1 at `ebd648197`). The three
 background-lane projections are pure SQL in that module; the three interactive-lane
 projections keep their existing owners and are imported inside their own branch,
 which the background lane never reaches.

@@ -6,7 +6,7 @@ status: open, blocked on [the production release](production-release-pending-sin
 
 on 2026-09-28 a read-only production check found production at `7dc68929b` with alembic `0241`.
 
-- the operator commands `normalize-web`, `correct-source-type` and `reprocess-source` (`python/nexus/ops/processing_recovery.py`) exist only on main. they came in with `fdfb911ea` on 2026-09-26, and production does not run that code. `docs/processing-recovery-execution.md` says "production release and exact-item repair not run".
+- the operator commands `normalize-web`, `correct-source-type` and `reprocess-source` (`python/nexus/ops/processing_recovery.py`) exist only on main. they came in with `fdfb911ea` on 2026-09-26, and production does not run that code. `docs/processing-recovery-execution.md` at `407fcc735` says "production release and exact-item repair not run".
 - no `operator_*` rows exist in `resource_mutations`, so no repair has run.
 - the three items:
 
