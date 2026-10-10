@@ -261,7 +261,9 @@ The attempt (`run_podcast_transcription_now`) publishes a valid publisher
 sidecar (`Publisher`) if it yields segments, else marks the job running and runs
 Deepgram in the episode's language (its primary subtag; `en` when unknown),
 publishing `Generated`. Transcript chunks flow into the shared `content_chunks`
-index through `podcast_reindex_semantic_job`. `media_transcript_states.transcript_origin`
+index through `media_content_reindex_job`, the media's one index job: publishing a
+transcript retracts the old index, and the attempt's success (or, for YouTube
+captions, `write_current_transcript`) requests the next revision. `media_transcript_states.transcript_origin`
 records `Publisher`, `Imported`, or `Generated` while the transcript is
 Ready/Partial.
 

@@ -47,7 +47,6 @@ def publish_podcast_transcription_failure(
         media_id=failure.media_id,
         transcript_state="unavailable" if unavailable else "failed_provider",
         transcript_coverage="none",
-        semantic_status="none",
         last_error_code=failure.error_code,
         now=failure.now,
     )

@@ -141,7 +141,10 @@ Five kinds declare a projection:
   cancellation was already requested, so the worker can publish the ordinary
   cancelled fold.
 - `NoteContentIndex` (`note_reindex_job`) marks the note's content index `failed`
-  so a stranded reindex is observable instead of stuck `pending`.
+  so a stranded reindex is observable instead of stuck `pending`. after every
+  note edit at least one unclaimed `note_reindex_job` waits: `enqueue_note_reindex`
+  checks under the note's queue-row locks (there is no unique index), so a waiting
+  job may sit beside a running one.
 - `MediaTeardownIntent` (`media_teardown`) voids only the exact still-current
   teardown intent so a newer lifecycle cannot be overwritten.
 - `PodcastBackfill` (`podcast_backfill_subscription`) stamps the backfill Failed

@@ -116,7 +116,6 @@ from nexus.services.transcripts.request_reason import (
     TranscriptRequestReason,
     require_transcript_request_reason,
 )
-from nexus.services.transcripts.semantic import enqueue_transcript_semantic_job
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 from nexus.services.x_identity import classify_x_url, is_x_url
 from nexus.services.youtube_identity import (
@@ -2175,17 +2174,11 @@ def _publish_terminal_attempt(
                 error_message="PDF text is unavailable; OCR is required.",
             )
         bump_all_media_fact_collections(db)
-        if isinstance(outcome.transcript_request_reason, Present):
-            enqueue_transcript_semantic_job(
-                db,
-                media_id=terminal_media_id,
-                request_reason=outcome.transcript_request_reason.value,
-            )
         if media.kind in {
             MediaKind.web_article.value,
             MediaKind.epub.value,
             MediaKind.pdf.value,
-        }:
+        } or isinstance(outcome.transcript_request_reason, Present):
             from nexus.services.content_indexing import request_media_content_reindex
 
             for reindex_media_id in (terminal_media_id, *outcome.additional_reindex_media_ids):

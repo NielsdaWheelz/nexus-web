@@ -173,7 +173,6 @@ def publish_source_attempt_failure(db: Session, failure: SourceAttemptFailure) -
             media_id=failure.media_id,
             transcript_state="unavailable",
             transcript_coverage="none",
-            semantic_status="failed",
             last_request_reason=None,
             last_error_code=failure.error_code,
             now=failure.now,

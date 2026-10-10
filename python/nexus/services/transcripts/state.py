@@ -1,4 +1,4 @@
-"""The single persistence owner for a Media's current transcript state."""
+"""The single persistence owner of a media's transcript state (not its index state)."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ def set_media_transcript_state(
     media_id: UUID,
     transcript_state: str,
     transcript_coverage: str,
-    semantic_status: str | None = None,
     last_request_reason: str | None = None,
     last_error_code: str | None = None,
     transcript_origin: TranscriptOrigin | None = None,
@@ -29,14 +28,12 @@ def set_media_transcript_state(
         text(
             """
             INSERT INTO media_transcript_states (
-                media_id, transcript_state, transcript_coverage, semantic_status,
-                last_request_reason, last_error_code, transcript_origin,
-                created_at, updated_at
+                media_id, transcript_state, transcript_coverage, last_request_reason,
+                last_error_code, transcript_origin, created_at, updated_at
             )
             VALUES (
-                :media_id, :transcript_state, :transcript_coverage,
-                COALESCE(:semantic_status, 'none'),
-                :last_request_reason, :last_error_code,
+                :media_id, :transcript_state, :transcript_coverage, :last_request_reason,
+                :last_error_code,
                 CASE
                     WHEN :transcript_state IN ('ready', 'partial')
                     THEN CAST(:transcript_origin AS text)
@@ -47,9 +44,6 @@ def set_media_transcript_state(
             ON CONFLICT (media_id) DO UPDATE
             SET transcript_state = EXCLUDED.transcript_state,
                 transcript_coverage = EXCLUDED.transcript_coverage,
-                semantic_status = COALESCE(
-                    :semantic_status, media_transcript_states.semantic_status
-                ),
                 last_request_reason = COALESCE(
                     EXCLUDED.last_request_reason, media_transcript_states.last_request_reason
                 ),
@@ -66,7 +60,6 @@ def set_media_transcript_state(
             "media_id": media_id,
             "transcript_state": transcript_state,
             "transcript_coverage": transcript_coverage,
-            "semantic_status": semantic_status,
             "last_request_reason": last_request_reason,
             "last_error_code": last_error_code,
             "transcript_origin": transcript_origin,
@@ -87,10 +80,10 @@ def ensure_media_transcript_state_row(
         text(
             """
             INSERT INTO media_transcript_states (
-                media_id, transcript_state, transcript_coverage, semantic_status,
-                last_request_reason, last_error_code, created_at, updated_at
+                media_id, transcript_state, transcript_coverage, last_request_reason,
+                last_error_code, created_at, updated_at
             )
-            VALUES (:media_id, 'not_requested', 'none', 'none', :last_request_reason, NULL, :now, :now)
+            VALUES (:media_id, 'not_requested', 'none', :last_request_reason, NULL, :now, :now)
             ON CONFLICT (media_id) DO NOTHING
             """
         ),

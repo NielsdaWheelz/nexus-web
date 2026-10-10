@@ -104,7 +104,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         ),
         "media_content_reindex_job": JobDefinition(
             kind="media_content_reindex_job",
-            handler_path="nexus.tasks.media_content_reindex:media_content_reindex_job",
+            handler_path="nexus.services.content_indexing:run_media_reindex_job",
             resource_class="Heavy",
             max_attempts=3,
             retry_delays_seconds=(60, 300),
@@ -163,18 +163,9 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             dead_letter_projection="PodcastBackfill",
             never_prune_dead=True,
         ),
-        "podcast_reindex_semantic_job": JobDefinition(
-            kind="podcast_reindex_semantic_job",
-            handler_path="nexus.jobs.registry:_run_podcast_reindex_semantic",
-            resource_class="Light",
-            max_attempts=3,
-            retry_delays_seconds=(60, 300),
-            lease_seconds=300,
-            never_prune_dead=True,
-        ),
         "note_reindex_job": JobDefinition(
             kind="note_reindex_job",
-            handler_path="nexus.jobs.registry:_run_note_reindex",
+            handler_path="nexus.services.note_indexing:run_note_reindex_job",
             resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
@@ -380,55 +371,6 @@ def _run_podcast_backfill_subscription(*, payload: Payload, context: Context) ->
 
     with get_session_factory()() as db:
         return backfill.run_step(db, dict(payload))
-
-
-def _run_podcast_reindex_semantic(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.services.transcripts.request_reason import require_transcript_request_reason
-    from nexus.tasks.podcast_reindex_semantic import podcast_reindex_semantic_job
-
-    return podcast_reindex_semantic_job(
-        media_id=str(payload["media_id"]),
-        request_reason=require_transcript_request_reason(payload.get("request_reason")),
-        context=context,
-    )
-
-
-def _run_note_reindex(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.db.models import NoteBlock
-    from nexus.db.session import get_session_factory
-    from nexus.logging import get_logger
-    from nexus.services import connection_discovery
-    from nexus.services.note_indexing import rebuild_note_content_index
-    from nexus.services.resource_graph.refs import ResourceRef
-
-    block_id = UUID(str(payload["note_block_id"]))
-    reason = str(payload["reason"])
-    with get_session_factory()() as db:
-        try:
-            index_result = rebuild_note_content_index(db, note_block_id=block_id, reason=reason)
-            block = db.get(NoteBlock, block_id)
-            if block is not None:
-                connection_discovery.queue_connection_discovery_scan(
-                    db,
-                    user_id=block.user_id,
-                    ref=ResourceRef(scheme="note_block", id=block_id),
-                    reason="note_reindex",
-                )
-            db.commit()
-        except Exception:
-            db.rollback()
-            get_logger(__name__).exception(
-                "note_reindex_task_failed",
-                note_block_id=str(block_id),
-                reason=reason,
-                job_id=str(context.job_id),
-            )
-            raise
-    return {
-        "owner": {"kind": index_result.owner.kind, "id": str(index_result.owner.id)},
-        "status": index_result.status,
-        "chunk_count": index_result.chunk_count,
-    }
 
 
 def _run_podcast_refresh_due(*, payload: Payload, context: Context) -> JobResult:

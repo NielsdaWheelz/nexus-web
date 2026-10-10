@@ -32,7 +32,8 @@ by provenance.
   the embed artifact, and applies metadata (title overwritten when non-blank;
   description and publisher filled only when empty; edition date when it parses).
 - `content_indexing.py` + `media_content_reindex_job`: durable, revision-fenced
-  retrieval indexing after readable source artifacts commit.
+  retrieval indexing after readable source artifacts commit; one block per
+  canonical line, chunked and embedded by `content_chunking.py`.
 - `node/ingest/ingest.mjs`: a readability filter over bytes python already
   fetched (protocol 2, below); `article_extraction.mjs` owns readable-document
   selection (the extension bundles it). Mozilla

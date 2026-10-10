@@ -5,7 +5,7 @@ status: open · origin: 2026-10-04 synapse reauthor (spec D9 residual, branch cl
 `python/nexus/services/suggestions.py` pins `_EMBEDDING =
 ("openai", "openai_text_embedding_3_small_256_v1", 256)` and
 `_MIN_SIMILARITY = 0.80`, a human-reviewed calibration for that model. the
-rewrite binds the identity in sql (`semantic_chunks.media_neighbor_rows_sql`
+rewrite binds the identity in sql (`suggestions._media_neighbor_rows_sql`
 anchor state), so other models no longer consume the neighbour limit, but a
 configured change of `TRANSCRIPT_EMBEDDING_MODEL_OPENAI` or its dimensions
 still yields no Similar evidence at all, silently.
