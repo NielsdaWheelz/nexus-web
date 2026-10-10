@@ -1,7 +1,4 @@
-import {
-  getFirstSearchParamValue,
-  parseAuthReturnTarget,
-} from "@/lib/auth/redirects";
+import { firstParam, parseReturnTarget } from "@/lib/auth/urls";
 import SessionRecovery from "./SessionRecovery";
 
 export const dynamic = "force-dynamic";
@@ -11,10 +8,6 @@ export default async function SessionRecoveryPage({
 }: {
   searchParams: Promise<{ next?: string | string[] }>;
 }) {
-  const params = await searchParams;
-  const nextPath = parseAuthReturnTarget(
-    getFirstSearchParamValue(params.next),
-  );
-
+  const nextPath = parseReturnTarget(firstParam((await searchParams).next));
   return <SessionRecovery nextPath={nextPath} />;
 }

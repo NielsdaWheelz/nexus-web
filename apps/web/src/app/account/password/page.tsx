@@ -1,10 +1,7 @@
 import type { Metadata } from "next";
 import AuthSurface from "@/components/auth/AuthSurface";
-import { verifySession } from "@/lib/auth/dal";
-import {
-  getFirstSearchParamValue,
-  parseAuthReturnTarget,
-} from "@/lib/auth/redirects";
+import { verifySession } from "@/lib/auth/session";
+import { firstParam, parseReturnTarget } from "@/lib/auth/urls";
 import PasswordUpdateForm from "./PasswordUpdateForm";
 
 export const metadata: Metadata = {
@@ -22,15 +19,15 @@ export default async function AccountPasswordPage({
 }) {
   await verifySession();
   const params = await searchParams;
-  const nextPath = parseAuthReturnTarget(getFirstSearchParamValue(params.next));
-  const saved = getFirstSearchParamValue(params.saved) === "1";
-
   return (
     <AuthSurface
       title="Set or replace password"
       description="Use this password to sign in with your Nexus account email."
     >
-      <PasswordUpdateForm nextPath={nextPath} saved={saved} />
+      <PasswordUpdateForm
+        nextPath={parseReturnTarget(firstParam(params.next))}
+        saved={firstParam(params.saved) === "1"}
+      />
     </AuthSurface>
   );
 }

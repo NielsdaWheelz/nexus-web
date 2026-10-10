@@ -117,9 +117,10 @@ is `deploy/hetzner/deploy.sh <source-sha> [--model-cutover-snapshot <reviewed-js
 - `R2_BACKUP_*` is operator-only; application storage credentials cannot read
   or write the private database backup bucket.
 - `NEXUS_INTERNAL_SECRET` is identical in Vercel and VPS config.
-- Browser auth/extension redirect origins and Server Action admission patterns
-  are frontend-only. Direct Vercel custom-domain hosting leaves
-  `SERVER_ACTION_ALLOWED_ORIGINS` empty.
+- The app has one public origin, `APP_PUBLIC_URL`: auth redirects and Origin
+  checks use it, and sessions exist only on it. Server Actions admit same-host
+  posts only (Next.js's own check). The extension's one redirect origin,
+  `NEXUS_EXTENSION_REDIRECT_ORIGINS`, is frontend-only.
 - `SUPABASE_MANAGEMENT_ACCESS_TOKEN` is operator-only. It is never application
   config.
 - `SUPABASE_AUTH_ADMIN_KEY` is local development bootstrap state. It is never

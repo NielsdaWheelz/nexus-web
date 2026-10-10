@@ -1,55 +1,24 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import {
-  authFormFailure,
-  readSameOriginAuthForm,
-} from "@/lib/auth/form-response";
-import { parsePasswordSignInForm } from "@/lib/auth/form-fields";
-import { signInWithPasswordFlow } from "@/lib/auth/password-flow";
-import {
-  buildAuthReturnTargetUrl,
-  parseAuthReturnTarget,
-} from "@/lib/auth/redirects";
-import { createSessionEstablishmentClient } from "@/lib/supabase/route-handler";
+import { formFailure, readAuthForm } from "@/lib/auth/form";
+import { finish, redirectTo } from "@/lib/auth/session";
+import { parseReturnTarget } from "@/lib/auth/urls";
+import { signInWithPassword } from "@/lib/supabase/auth";
 
 export const runtime = "nodejs";
 
+// 303 to the return target with the new session; else {kind} for the form.
 export async function POST(request: Request): Promise<NextResponse> {
-  const requestForm = await readSameOriginAuthForm(request);
-  if (requestForm.kind === "Rejected") {
-    return requestForm.response;
-  }
-
-  const form = parsePasswordSignInForm(requestForm.formData);
-  if (!form || !form.email.trim() || !form.password) {
-    return authFormFailure({
-      body: { kind: "InvalidRequest" },
-      status: 400,
-    });
-  }
-
-  const target = parseAuthReturnTarget(form.next);
-  const auth = await createSessionEstablishmentClient();
-  const outcome = await signInWithPasswordFlow({
-    supabase: auth.supabase,
-    email: form.email,
-    password: form.password,
+  const form = await readAuthForm(request, ["email", "password"], ["next"]);
+  if (form instanceof NextResponse) return form;
+  const { outcome, writes } = await signInWithPassword(
+    (await cookies()).getAll(),
+    form.email,
+    form.password,
+  );
+  if (outcome !== "SignedIn") return formFailure(outcome);
+  return finish(redirectTo(parseReturnTarget(form.next), 303), {
+    kind: "Write",
+    writes,
   });
-
-  switch (outcome.kind) {
-    case "SignedIn": {
-      return auth.applyCookies(
-        NextResponse.redirect(buildAuthReturnTargetUrl(requestForm.origin, target), {
-          status: 303,
-        }),
-      );
-    }
-    case "InvalidCredentials":
-      return authFormFailure({ body: outcome, status: 401 });
-    case "RateLimited":
-      return authFormFailure({ body: outcome, status: 429 });
-    case "ServiceUnavailable":
-      return authFormFailure({ body: outcome, status: 503 });
-  }
-
-  outcome satisfies never;
 }

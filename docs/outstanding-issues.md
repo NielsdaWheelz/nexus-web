@@ -29,6 +29,9 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+- [open] release / web auth · 2026-10-10 auth reauthor · before promoting set one `NEXUS_EXTENSION_REDIRECT_ORIGINS` and check hosted `jwt_expiry` > 120 s; after, forbid the three retired origin vars: [ticket](tickets/auth-reauthor-release-steps.md).
+- [open] android / auth · 2026-10-10 auth reauthor · p3 · identity linking cannot complete inside the android shell (spec D1): [ticket](tickets/android-identity-linking-cannot-complete-in-shell.md).
+- [open] web auth / headers · 2026-10-10 auth harness · p3 · next replaces middleware's `Vary: Cookie` on auth documents; harmless while they are private, no-store: [ticket](tickets/auth-documents-lose-vary-cookie.md).
 - [open] contributors / editor · 2026-10-10 authors reauthor · p3 · the editor's name key lowercases instead of casefolding, so "Straße"/"STRASSE" pass its duplicate-create guard: [ticket](tickets/contributor-name-key-casefold-gap.md).
 - [open] libraries / wire · 2026-10-10 authors reauthor · p3 · `LibraryEntryMediaOut.author_mode` reaches the web and nothing reads it: [ticket](tickets/library-entry-author-mode-unread.md).
 - [open] podcasts, browse / reauthoring · 2026-10-10 podcasts/browse rewrite · 4,163 formatted lines against a 3,000 cap; no behaviour cut for budget: [ticket](tickets/podcasts-reauthor-over-line-budget.md).
@@ -306,9 +309,7 @@ unexpected timeouts. See
 
 - [deferred] 2026-09-23 firefox v1 · the signed unlisted build needs AMO credentials and the production origins: [ticket](tickets/extension-firefox-distribution-consent-is-undeclared.md).
 - [open] 2026-09-23 firefox v1 track a · remove the browser-capture conversion command after its production run: [ticket](tickets/remove-browser-capture-conversion-command.md).
-- [open] 2026-09-21 auth audit · response cookie ownership is split between route clients and refresh: [ticket](tickets/auth-response-cookie-ownership-is-split.md).
-- [open] 2026-09-21 auth audit · default android debug origin disagrees with bff csrf configuration: [ticket](tickets/android-debug-origin-disagrees-with-bff-csrf-origin.md).
-- [open] 2026-09-21 auth audit · sdk fetch deadlines do not cover body reads or refresh retry/backoff: [ticket](tickets/supabase-operation-deadline-ends-at-response-headers.md).
+- [open] 2026-09-21 auth audit · android emulator origin: source now has one origin per process (set `APP_PUBLIC_URL` to the emulator's); emulator acceptance not run: [ticket](tickets/android-debug-origin-disagrees-with-bff-csrf-origin.md).
 - [open] 2026-09-25 local qualification · credential values appeared in an internal tool transcript; rotate outside the transcript's trust boundary: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
 
 - [open] 2026-09-26 processing review · 24 diagnosed imports still need individual owned recovery: [ticket](tickets/processing-backlog-needs-owned-recovery.md).

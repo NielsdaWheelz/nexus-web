@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import "@/lib/documentReader/documentReader.module.css";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { verifySession } from "@/lib/auth/dal";
+import { verifySession } from "@/lib/auth/session";
 import { loadRenderEnvironment } from "@/lib/renderEnvironment/server";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { loadWorkspaceBootstrap } from "@/lib/workspace/bootstrap.server";

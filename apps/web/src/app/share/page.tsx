@@ -1,9 +1,9 @@
 import { cookies, headers } from "next/headers";
 import { isAndroidShellUserAgent } from "@/lib/androidShell";
-import { readSupabaseSessionCookie } from "@/lib/auth/session-cookie";
 import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
 import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
 import { loadRenderEnvironment } from "@/lib/renderEnvironment/server";
+import { readSession } from "@/lib/supabase/cookie";
 import ShareCapture from "./ShareCapture";
 import styles from "./share.module.css";
 
@@ -19,7 +19,7 @@ export default async function SharePage({
 }) {
   const sharedText = (await searchParams).text ?? "";
   const isEmptyShare = sharedText.trim().length === 0;
-  const session = readSupabaseSessionCookie((await cookies()).getAll());
+  const session = readSession((await cookies()).getAll());
   const isShell = isAndroidShellUserAgent(
     (await headers()).get("user-agent") ?? "",
   );

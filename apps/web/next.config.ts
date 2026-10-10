@@ -31,12 +31,10 @@ const nextConfig: NextConfig = {
     // ordinary build path viable on the bounded-memory self-hosted environment
     // without weakening type checks or changing runtime behavior.
     webpackMemoryOptimizations: true,
-    // Enable server actions for form handling
+    // Server actions admit same-host posts only (next's Origin/Host check), on
+    // any host; sessions exist only on APP_PUBLIC_URL.
     serverActions: {
       bodySizeLimit: "1mb",
-      ...(env.serverActionAllowedOrigins.length > 0
-        ? { allowedOrigins: [...env.serverActionAllowedOrigins] }
-        : {}),
     },
   },
 

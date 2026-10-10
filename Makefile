@@ -11,7 +11,6 @@ export
 
 SUPABASE_DB_PORT ?= 54322
 SUPABASE_URL ?= http://127.0.0.1:54321
-AUTH_ALLOWED_REDIRECT_ORIGINS ?= http://localhost:3000,http://127.0.0.1:3000,http://10.0.2.2:3000,http://localhost:3001,http://127.0.0.1:3001
 STREAM_BASE_URL ?= http://localhost:$(API_PORT)
 STREAM_CORS_ORIGINS ?= http://localhost:$(WEB_PORT),http://localhost:3000,http://localhost:3001
 
@@ -159,7 +158,7 @@ web:
 		NEXUS_ENV=$${NEXUS_ENV:-local} \
 		NEXT_PUBLIC_SUPABASE_URL=$${NEXT_PUBLIC_SUPABASE_URL:-$(SUPABASE_URL)} \
 		NEXT_PUBLIC_SUPABASE_ANON_KEY=$${NEXT_PUBLIC_SUPABASE_ANON_KEY:-$(SUPABASE_ANON_KEY)} \
-		AUTH_ALLOWED_REDIRECT_ORIGINS=$${AUTH_ALLOWED_REDIRECT_ORIGINS:-$(AUTH_ALLOWED_REDIRECT_ORIGINS)} \
+		APP_PUBLIC_URL=$${APP_PUBLIC_URL:-http://localhost:$(WEB_PORT)} \
 		bun run dev
 
 worker-interactive: local-runtime-identity

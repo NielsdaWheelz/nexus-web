@@ -26,10 +26,6 @@ import Input from "@/components/ui/Input";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import {
-  DISPLAY_NAME_CHANGE_FAILURE_MESSAGE,
-  EMAIL_CHANGE_CONFIRMATION_SENT_MESSAGE,
-} from "@/lib/auth/messages";
-import {
   settingsAccountResource,
   type NoResourceParams,
 } from "@/lib/api/resource";
@@ -243,7 +239,7 @@ function accountErrorMessage(
     operation === "Load"
       ? "Account settings couldn’t be loaded"
       : operation === "DisplayName"
-        ? DISPLAY_NAME_CHANGE_FAILURE_MESSAGE
+        ? "We couldn't update your display name. Please try again."
         : "Calendar time zone couldn’t be updated";
   switch (error.code) {
     case "E_NETWORK":
@@ -405,7 +401,7 @@ export default function SettingsAccountPaneBody() {
         setEmailFeedback({
           content: {
             tone: "Info",
-            title: EMAIL_CHANGE_CONFIRMATION_SENT_MESSAGE,
+            title: "Check your new email to confirm the change.",
           },
           announcement: "Polite",
         });

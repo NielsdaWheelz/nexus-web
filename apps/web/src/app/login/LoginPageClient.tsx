@@ -1,10 +1,12 @@
 "use client";
-
+// google first, then email and password, then the other provider. in the
+// android shell the provider controls are deep links the native owner handles
+// (native google, custom-tab github).
 import { Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
-import AuthSurface from "@/components/auth/AuthSurface";
+import { useRef, useState, type ReactNode } from "react";
 import authStyles from "@/components/auth/AuthForms.module.css";
+import AuthSurface from "@/components/auth/AuthSurface";
 import {
   FeedbackNotice,
   FieldFeedback,
@@ -13,32 +15,56 @@ import {
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import { decodePasswordSignInOutcome } from "@/lib/auth/form-outcomes";
-import { type OAuthProvider } from "@/lib/auth/identities";
+import { useAuthForm, WRONG_ADDRESS } from "@/lib/auth/useAuthForm";
 import {
-  AUTH_CALLBACK_CANCELLED_MESSAGE,
-  AUTH_CALLBACK_FAILURE_MESSAGE,
-  OAUTH_START_FAILURE_MESSAGE,
-  SESSION_ENDED_MESSAGE,
-} from "@/lib/auth/messages";
-import type { PasswordSignInOutcome } from "@/lib/auth/password-flow";
-import {
-  buildAuthNativeGoogleDeepLink,
-  buildAuthReturnTargetUrl,
-  buildAuthStartDeepLink,
-  isDefaultAuthReturnTarget,
-  type AuthReturnTarget,
-} from "@/lib/auth/redirects";
+  DEFAULT_RETURN_TARGET,
+  nativeGoogleDeepLink,
+  oauthPath,
+  PROVIDER_NAMES,
+  startDeepLink,
+  type LoginError,
+  type OAuthProvider,
+  type ReturnTarget,
+} from "@/lib/auth/urls";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 
-interface LoginPageClientProps {
-  initialFeedbackMessage?: string | null;
-  nextPath: AuthReturnTarget;
-  isShell: boolean;
-}
+type Feedback = {
+  content: FeedbackContent;
+  announcement: FeedbackAnnouncement;
+};
 
-const EMAIL_ERROR_ID = "password-sign-in-email-error";
-const PASSWORD_ERROR_ID = "password-sign-in-password-error";
+const INITIAL: Record<LoginError | "session_ended", Feedback> = {
+  oauth_start_failed: {
+    content: {
+      tone: "Danger",
+      title: "We couldn't start sign in.",
+      message: "Please try again.",
+    },
+    announcement: "Assertive",
+  },
+  sign_in_failed: {
+    content: {
+      tone: "Danger",
+      title: "We couldn't complete sign in.",
+      message: "Please try again.",
+    },
+    announcement: "Assertive",
+  },
+  session_ended: {
+    content: {
+      tone: "Info",
+      title: "Your session ended.",
+      message: "Please sign in again.",
+    },
+    announcement: "Polite",
+  },
+};
+
+const UNAVAILABLE: FeedbackContent = {
+  tone: "Danger",
+  title: "Sign in is temporarily unavailable.",
+  message: "Try again in a moment.",
+};
 
 function GitHubMark() {
   return (
@@ -84,38 +110,27 @@ function GoogleMark() {
   );
 }
 
-// A provider start is a navigation, not a form submission: /auth/oauth answers
-// with a redirect to the Supabase origin, and chromium holds a form submission's
-// whole redirect chain to the csp's form-action 'self', so a form is refused.
-// In the browser the anchor starts OAuth server-side at /auth/oauth; in the
-// Android shell it hands the same fixed provider/return-target intent to the
-// native owner. role="button" keeps the control's accessible role.
+// a provider start is a navigation, not a form submission: /auth/oauth answers
+// with a redirect to the provider's origin, and chromium holds a form
+// submission's whole redirect chain to the csp's form-action 'self'. in the
+// android shell the same intent goes to the native owner as a deep link.
+// role="button" keeps the control's accessible role.
 function ProviderLink({
   provider,
   nextPath,
-  label,
-  mark,
   isShell,
   disabled,
 }: {
   provider: OAuthProvider;
-  nextPath: AuthReturnTarget;
-  label: string;
-  mark: ReactNode;
+  nextPath: ReturnTarget;
   isShell: boolean;
   disabled: boolean;
 }) {
-  let href: string;
-  if (isShell) {
-    href =
-      provider === "google"
-        ? buildAuthNativeGoogleDeepLink(nextPath)
-        : buildAuthStartDeepLink(provider, "signin", nextPath);
-  } else {
-    const query = new URLSearchParams({ provider });
-    if (!isDefaultAuthReturnTarget(nextPath)) query.set("next", nextPath);
-    href = `/auth/oauth?${query}`;
-  }
+  const href = !isShell
+    ? oauthPath(provider, nextPath)
+    : provider === "google"
+      ? nativeGoogleDeepLink(nextPath)
+      : startDeepLink(provider, nextPath);
   return (
     <Button
       asChild
@@ -130,202 +145,113 @@ function ProviderLink({
         tabIndex={disabled ? -1 : undefined}
         onClick={disabled ? (event) => event.preventDefault() : undefined}
       >
-        {mark}
-        {label}
+        {provider === "google" ? <GoogleMark /> : <GitHubMark />}
+        {`Continue with ${PROVIDER_NAMES[provider]}`}
       </a>
     </Button>
   );
 }
 
-function initialLoginFeedback(message: string | null | undefined): {
-  content: FeedbackContent;
-  announcement: FeedbackAnnouncement;
-} | null {
-  switch (message) {
-    case undefined:
-    case null:
-    case AUTH_CALLBACK_CANCELLED_MESSAGE:
-      return null;
-    case OAUTH_START_FAILURE_MESSAGE:
-      return {
-        content: {
-          tone: "Danger",
-          title: "We couldn't start sign in.",
-          message: "Please try again.",
-        },
-        announcement: "Assertive",
-      };
-    case AUTH_CALLBACK_FAILURE_MESSAGE:
-      return {
-        content: {
-          tone: "Danger",
-          title: "We couldn't complete sign in.",
-          message: "Please try again.",
-        },
-        announcement: "Assertive",
-      };
-    case SESSION_ENDED_MESSAGE:
-      return {
-        content: {
-          tone: "Info",
-          title: "Your session ended.",
-          message: "Please sign in again.",
-        },
-        announcement: "Polite",
-      };
-    default:
-      // justify-defect: /login receives only server-sanitized transport
-      // messages. A widened value means the page/client feedback contract drifted.
-      throw new Error("Unexpected public login feedback message");
-  }
-}
-
-function passwordSignInErrorMessage(
-  outcome: PasswordSignInOutcome,
-): FeedbackContent | null {
-  switch (outcome.kind) {
-    case "SignedIn":
-      return null;
-    case "InvalidCredentials":
-      return { tone: "Danger", title: "Email or password is incorrect." };
-    case "RateLimited":
-      return {
-        tone: "Danger",
-        title: "Too many sign-in attempts.",
-        message: "Wait a few minutes, then try again.",
-      };
-    case "ServiceUnavailable":
-      return {
-        tone: "Danger",
-        title: "Sign in is temporarily unavailable.",
-        message: "Try again in a moment.",
-      };
-  }
-  outcome satisfies never;
+function Disclosure({
+  label,
+  className,
+  pending,
+  children,
+}: {
+  label: string;
+  className: string;
+  pending: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <details className={authStyles.method}>
+      <summary
+        className={`${authStyles.disclosure} ${className}${
+          pending ? ` ${authStyles.disclosureDisabled}` : ""
+        }`}
+        role="button"
+        aria-disabled={pending || undefined}
+        tabIndex={pending ? -1 : undefined}
+        onClick={pending ? (event) => event.preventDefault() : undefined}
+      >
+        {label}
+      </summary>
+      {children}
+    </details>
+  );
 }
 
 export default function LoginPageClient({
-  initialFeedbackMessage = null,
+  feedback: initial,
   nextPath,
   isShell,
-}: LoginPageClientProps) {
+}: {
+  feedback: LoginError | "session_ended" | null;
+  nextPath: ReturnTarget;
+  isShell: boolean;
+}) {
   const connectivity = useConnectivity();
   const [revealed, setRevealed] = useState(false);
   const [emailError, setEmailError] = useState<FeedbackContent | null>(null);
   const [passwordError, setPasswordError] = useState<FeedbackContent | null>(
     null,
   );
-  const [feedback, setFeedback] = useState<{
-    content: FeedbackContent;
-    announcement: FeedbackAnnouncement;
-  } | null>(() => initialLoginFeedback(initialFeedbackMessage));
-  const [pending, setPending] = useState(false);
-  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const pendingRef = useRef(false);
+  const [feedback, setFeedback] = useState<Feedback | null>(
+    initial ? INITIAL[initial] : null,
+  );
+  const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
 
-  function finishFailure(content: FeedbackContent) {
-    setFeedback({ content, announcement: "Assertive" });
-    if (passwordRef.current) {
-      passwordRef.current.value = "";
+  // every failure clears the password and returns focus to it.
+  const { pending, submit } = useAuthForm<
+    "InvalidCredentials" | "RateLimited" | "ServiceUnavailable"
+  >((kind) => {
+    let content: FeedbackContent;
+    if (kind === "InvalidCredentials") {
+      content = { tone: "Danger", title: "Email or password is incorrect." };
+    } else if (kind === "RateLimited") {
+      content = {
+        tone: "Danger",
+        title: "Too many sign-in attempts.",
+        message: "Wait a few minutes, then try again.",
+      };
+    } else if (kind === "Unreachable" && connectivity === "Offline") {
+      content = {
+        tone: "Danger",
+        title: "You’re offline.",
+        message: "Reconnect to sign in.",
+      };
+    } else if (kind === "ServiceUnavailable" || kind === "Unreachable") {
+      content = UNAVAILABLE;
+    } else if (kind === "Forbidden") {
+      content = WRONG_ADDRESS;
+    } else {
+      throw new Error(`Unexpected sign-in outcome ${kind}`);
     }
+    setFeedback({ content, announcement: "Assertive" });
+    if (passwordRef.current) passwordRef.current.value = "";
     setRevealed(false);
     passwordRef.current?.focus();
-  }
+  });
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (pendingRef.current) return;
-
-    const emailControl = event.currentTarget.elements.namedItem("email");
-    if (!(emailControl instanceof HTMLInputElement)) {
-      setDefect({ error: new Error("Sign-in email control is missing") });
-      return;
-    }
-    const passwordControl = event.currentTarget.elements.namedItem("password");
-    if (!(passwordControl instanceof HTMLInputElement)) {
-      setDefect({ error: new Error("Sign-in password control is missing") });
-      return;
-    }
-    const emailValue = emailControl.value;
-    const passwordValue = passwordControl.value;
-    const nextEmailError = !emailValue.trim()
-      ? { tone: "Danger" as const, title: "Enter your email address." }
-      : emailControl.validity.typeMismatch
-        ? { tone: "Danger" as const, title: "Enter a valid email address." }
+  function validate(): boolean {
+    const email = emailRef.current;
+    const password = passwordRef.current;
+    if (!email || !password) throw new Error("Sign-in controls are missing");
+    const nextEmailError: FeedbackContent | null = !email.value.trim()
+      ? { tone: "Danger", title: "Enter your email address." }
+      : email.validity.typeMismatch
+        ? { tone: "Danger", title: "Enter a valid email address." }
         : null;
-    const nextPasswordError = passwordValue
+    const nextPasswordError: FeedbackContent | null = password.value
       ? null
-      : { tone: "Danger" as const, title: "Enter your password." };
+      : { tone: "Danger", title: "Enter your password." };
     setEmailError(nextEmailError);
     setPasswordError(nextPasswordError);
-    if (nextEmailError || nextPasswordError) {
-      (nextEmailError ? emailControl : passwordRef.current)?.focus();
-      return;
-    }
-
-    const body = new FormData(event.currentTarget);
-    let navigationHandedOff = false;
-    pendingRef.current = true;
-    setPending(true);
-    try {
-      let response: Response;
-      try {
-        // A successful sign-in answers 303 to the return target. The browser
-        // must navigate there itself: following the redirect inside fetch
-        // would run the target's own redirects (the extension's identity
-        // callback among them) as opaque cross-origin fetches and lose them.
-        response = await fetch(event.currentTarget.action, {
-          method: "POST",
-          body,
-          credentials: "same-origin",
-          redirect: "manual",
-          headers: { Accept: "application/json" },
-        });
-      } catch (error) {
-        if (error instanceof TypeError) {
-          finishFailure(
-            connectivity === "Offline"
-              ? {
-                  tone: "Danger",
-                  title: "You’re offline.",
-                  message: "Reconnect to sign in.",
-                }
-              : {
-                  tone: "Danger",
-                  title: "Sign in is temporarily unavailable.",
-                  message: "Try again in a moment.",
-                },
-          );
-          return;
-        }
-        throw error;
-      }
-      if (response.type === "opaqueredirect") {
-        window.location.assign(
-          buildAuthReturnTargetUrl(window.location.origin, nextPath),
-        );
-        navigationHandedOff = true;
-        return;
-      }
-      const rawOutcome: unknown = await response.json();
-      const outcome = decodePasswordSignInOutcome(rawOutcome);
-      const content = passwordSignInErrorMessage(outcome);
-      if (content === null) {
-        throw new Error("Sign-in success response did not redirect");
-      }
-      finishFailure(content);
-    } catch (error) {
-      setDefect({ error });
-    } finally {
-      if (!navigationHandedOff) {
-        pendingRef.current = false;
-        setPending(false);
-      }
-    }
+    if (nextEmailError) email.focus();
+    else if (nextPasswordError) password.focus();
+    return !nextEmailError && !nextPasswordError;
   }
-
-  if (defect) throw defect.error;
 
   return (
     <AuthSurface
@@ -352,25 +278,15 @@ export default function LoginPageClient({
         <ProviderLink
           provider="google"
           nextPath={nextPath}
-          label="Continue with Google"
-          mark={<GoogleMark />}
           isShell={isShell}
           disabled={pending}
         />
 
-        <details className={authStyles.method}>
-          <summary
-            className={`${authStyles.disclosure} ${authStyles.passwordDisclosure}${
-              pending ? ` ${authStyles.disclosureDisabled}` : ""
-            }`}
-            role="button"
-            aria-disabled={pending || undefined}
-            tabIndex={pending ? -1 : undefined}
-            onClick={pending ? (event) => event.preventDefault() : undefined}
-          >
-            Use email and password
-          </summary>
-
+        <Disclosure
+          label="Use email and password"
+          className={authStyles.passwordDisclosure}
+          pending={pending}
+        >
           <form
             aria-label="Sign in with email and password"
             aria-busy={pending}
@@ -378,14 +294,15 @@ export default function LoginPageClient({
             method="post"
             action="/auth/password/sign-in"
             noValidate
-            onSubmit={(event) => void submit(event)}
+            onSubmit={(event) => void submit(event, nextPath, { validate })}
           >
-            {isDefaultAuthReturnTarget(nextPath) ? null : (
+            {nextPath === DEFAULT_RETURN_TARGET ? null : (
               <input type="hidden" name="next" value={nextPath} />
             )}
             <label className={authStyles.field}>
               <span className={authStyles.label}>Email</span>
               <Input
+                ref={emailRef}
                 name="email"
                 type="email"
                 size="lg"
@@ -395,14 +312,17 @@ export default function LoginPageClient({
                 spellCheck={false}
                 required
                 onChange={() => setEmailError(null)}
-                aria-invalid={emailError === null ? undefined : true}
+                aria-invalid={emailError ? true : undefined}
                 aria-describedby={
-                  emailError === null ? undefined : EMAIL_ERROR_ID
+                  emailError ? "password-sign-in-email-error" : undefined
                 }
               />
               {emailError ? (
                 <div role="alert">
-                  <FieldFeedback id={EMAIL_ERROR_ID} content={emailError} />
+                  <FieldFeedback
+                    id="password-sign-in-email-error"
+                    content={emailError}
+                  />
                 </div>
               ) : null}
             </label>
@@ -425,9 +345,11 @@ export default function LoginPageClient({
                   autoComplete="current-password"
                   required
                   onChange={() => setPasswordError(null)}
-                  aria-invalid={passwordError === null ? undefined : true}
+                  aria-invalid={passwordError ? true : undefined}
                   aria-describedby={
-                    passwordError === null ? undefined : PASSWORD_ERROR_ID
+                    passwordError
+                      ? "password-sign-in-password-error"
+                      : undefined
                   }
                 />
                 <Button
@@ -450,7 +372,7 @@ export default function LoginPageClient({
               {passwordError ? (
                 <div role="alert">
                   <FieldFeedback
-                    id={PASSWORD_ERROR_ID}
+                    id="password-sign-in-password-error"
                     content={passwordError}
                   />
                 </div>
@@ -464,31 +386,22 @@ export default function LoginPageClient({
               {pending ? "Signing in…" : "Sign in"}
             </Button>
           </form>
-        </details>
+        </Disclosure>
 
-        <details className={authStyles.method}>
-          <summary
-            className={`${authStyles.disclosure} ${authStyles.otherDisclosure}${
-              pending ? ` ${authStyles.disclosureDisabled}` : ""
-            }`}
-            role="button"
-            aria-disabled={pending || undefined}
-            tabIndex={pending ? -1 : undefined}
-            onClick={pending ? (event) => event.preventDefault() : undefined}
-          >
-            Other ways to sign in
-          </summary>
+        <Disclosure
+          label="Other ways to sign in"
+          className={authStyles.otherDisclosure}
+          pending={pending}
+        >
           <div className={authStyles.methodBody}>
             <ProviderLink
               provider="github"
               nextPath={nextPath}
-              label="Continue with GitHub"
-              mark={<GitHubMark />}
               isShell={isShell}
               disabled={pending}
             />
           </div>
-        </details>
+        </Disclosure>
 
         <nav className={authStyles.footer} aria-label="Login links">
           {isShell ? null : <Link href="/android">Android</Link>}

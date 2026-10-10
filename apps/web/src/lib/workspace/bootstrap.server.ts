@@ -7,7 +7,7 @@ import { serverResourceFetcher } from "@/lib/api/resourceTransport.server";
 import { callFastAPI } from "@/lib/api/server";
 import type { ApiJson } from "@/lib/api/wire";
 import { readDeviceId } from "@/lib/auth/deviceCookie";
-import { REQUEST_PATH_HEADER } from "@/lib/auth/requestPath";
+import { REQUEST_PATH_HEADER } from "@/lib/auth/urls";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";

@@ -10,26 +10,23 @@ be an `ApiError`, its status must equal `401`, and its code must equal
 `E_UNAUTHENTICATED`. a plain object, another status, or another code is not
 recognized. `apiFetch` decodes failed structured responses into that class;
 the session bff emits this exact status/code when the session has ended or is
-absent (`lib/api/proxy.ts:143-146,182-190`).
+absent (`lib/api/proxy.ts` `proxySession`, on `lib/auth/session.ts` `liveSession`).
 
 `lib/auth/UnauthenticatedApiBoundary.tsx:handleUnauthenticatedApiError` owns
 the one browser-runtime redirect latch. for an unrecognized error it returns
 false, including after a redirect has started. for a recognized error it:
 
 1. returns true immediately if this runtime already started login navigation;
-2. otherwise invokes `redirectToLoginForCurrentLocation`;
-3. sets the latch and returns true only if that invocation started navigation;
-4. returns false if no navigation can start. it never resets the latch or
-   retries a started navigation inside the same runtime.
+2. otherwise, in a non-browser invocation or at a current `/login` location,
+   returns false without navigation or changing the latch;
+3. otherwise calls `window.location.assign` with the same-origin login path,
+   sets the latch and returns true. it never resets the latch or retries a
+   started navigation inside the same runtime.
 
-`lib/auth/client-return-target.ts` owns browser navigation. before a redirect
-has started, a non-browser invocation or a current `/login` location returns
-false without navigation or changing the latch. otherwise it calls
-`window.location.assign` with a same-origin login url. the return target is
-the current pathname plus query, without the hash, validated by
-`parseAuthReturnTarget` in `lib/auth/redirects.ts`. unsafe or auth destinations
-resolve to `/lectern`; that default omits `next`. an assign failure propagates
-and leaves the latch unset.
+the return target is the current pathname plus query, without the hash,
+validated by `parseReturnTarget` in `lib/auth/urls.ts`. unsafe or auth
+destinations resolve to `/lectern`; that default omits `next`. an assign
+failure propagates and leaves the latch unset.
 
 the authenticated shell mounts one `UnauthenticatedApiBoundary`
 (`app/(authenticated)/AuthenticatedShell.tsx:69-84`). its context provides the

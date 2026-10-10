@@ -1,8 +1,9 @@
 "use client";
-
+// at least 15 characters (the provider's own minimum). an answer that never
+// arrived asks for the same password again.
 import { Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
-import { useRef, useState, type FormEvent } from "react";
+import { useRef, useState } from "react";
 import authStyles from "@/components/auth/AuthForms.module.css";
 import {
   FeedbackNotice,
@@ -11,175 +12,71 @@ import {
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import { decodePasswordUpdateOutcome } from "@/lib/auth/form-outcomes";
-import type { PasswordUpdateOutcome } from "@/lib/auth/password-flow";
+import { useAuthForm, WRONG_ADDRESS } from "@/lib/auth/useAuthForm";
 import {
-  buildLoginUrl,
-  isDefaultAuthReturnTarget,
-  type AuthReturnTarget,
-} from "@/lib/auth/redirects";
-import { SESSION_ENDED_MESSAGE } from "@/lib/auth/messages";
+  DEFAULT_RETURN_TARGET,
+  loginPath,
+  savedPasswordPath,
+  type ReturnTarget,
+} from "@/lib/auth/urls";
 
-const PASSWORD_HELP_ID = "password-update-help";
-const PASSWORD_ERROR_ID = "password-update-error";
-
-type PasswordUpdatePresentation =
-  | { kind: "RedirectExpected" }
-  | { kind: "FieldError"; content: FeedbackContent }
-  | { kind: "PageError"; content: FeedbackContent };
-
-function passwordUpdateErrorMessage(
-  outcome: PasswordUpdateOutcome,
-): PasswordUpdatePresentation {
-  switch (outcome.kind) {
-    case "Saved":
-    case "SessionEnded":
-      return { kind: "RedirectExpected" };
-    case "PolicyRejected":
-      return {
-        kind: "FieldError",
-        content: {
-          tone: "Danger",
-          title: "Password must be at least 15 characters.",
-        },
-      };
-    case "RateLimited":
-      return {
-        kind: "PageError",
-        content: {
-          tone: "Danger",
-          title: "Too many attempts.",
-          message: "Wait a few minutes, then try again.",
-        },
-      };
-    case "ServiceUnavailable":
-      return {
-        kind: "PageError",
-        content: {
-          tone: "Danger",
-          title: "We couldn’t confirm whether your password was saved.",
-          message: "Enter the same password and save again.",
-        },
-      };
-  }
-  outcome satisfies never;
-}
+const TOO_SHORT: FeedbackContent = {
+  tone: "Danger",
+  title: "Password must be at least 15 characters.",
+};
+const UNCONFIRMED: FeedbackContent = {
+  tone: "Danger",
+  title: "We couldn’t confirm whether your password was saved.",
+  message: "Enter the same password and save again.",
+};
 
 export default function PasswordUpdateForm({
   nextPath,
   saved,
 }: {
-  nextPath: AuthReturnTarget;
+  nextPath: ReturnTarget;
   saved: boolean;
 }) {
   const [revealed, setRevealed] = useState(false);
   const [fieldError, setFieldError] = useState<FeedbackContent | null>(null);
   const [pageError, setPageError] = useState<FeedbackContent | null>(null);
-  const [pending, setPending] = useState(false);
-  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const pendingRef = useRef(false);
   const passwordRef = useRef<HTMLInputElement>(null);
 
-  function finishFailure(
-    presentation: Exclude<
-      PasswordUpdatePresentation,
-      {
-        kind: "RedirectExpected";
-      }
-    >,
-  ) {
-    if (passwordRef.current) {
-      passwordRef.current.value = "";
-    }
+  function fail(field: FeedbackContent | null, page: FeedbackContent | null) {
+    if (passwordRef.current) passwordRef.current.value = "";
     setRevealed(false);
-    if (presentation.kind === "FieldError") {
-      setFieldError(presentation.content);
-      setPageError(null);
-    } else {
-      setFieldError(null);
-      setPageError(presentation.content);
-    }
+    setFieldError(field);
+    setPageError(page);
     passwordRef.current?.focus();
   }
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (pendingRef.current) return;
-
-    const passwordControl = event.currentTarget.elements.namedItem("password");
-    if (!(passwordControl instanceof HTMLInputElement)) {
-      setDefect({ error: new Error("Password-update control is missing") });
-      return;
-    }
-    const passwordValue = passwordControl.value;
-    if (passwordValue.length < 15) {
-      finishFailure({
-        kind: "FieldError",
-        content: {
-          tone: "Danger",
-          title: "Password must be at least 15 characters.",
-        },
+  const { pending, submit } = useAuthForm<
+    "PolicyRejected" | "SessionEnded" | "RateLimited" | "ServiceUnavailable"
+  >((kind) => {
+    // an ended session was cleared with feedback /login renders.
+    if (kind === "SessionEnded") window.location.replace(loginPath(nextPath));
+    else if (kind === "PolicyRejected") fail(TOO_SHORT, null);
+    else if (kind === "RateLimited") {
+      fail(null, {
+        tone: "Danger",
+        title: "Too many attempts.",
+        message: "Wait a few minutes, then try again.",
       });
-      return;
-    }
+    } else if (kind === "ServiceUnavailable" || kind === "Unreachable") {
+      fail(null, UNCONFIRMED);
+    } else if (kind === "Forbidden") fail(null, WRONG_ADDRESS);
+    else throw new Error(`Unexpected password-update outcome ${kind}`);
+  });
 
-    const body = new FormData(event.currentTarget);
-    pendingRef.current = true;
-    setPending(true);
+  function validate(): boolean {
+    if ((passwordRef.current?.value.length ?? 0) < 15) {
+      fail(TOO_SHORT, null);
+      return false;
+    }
     setFieldError(null);
     setPageError(null);
-    try {
-      let response: Response;
-      try {
-        response = await fetch(event.currentTarget.action, {
-          method: "POST",
-          body,
-          credentials: "same-origin",
-          redirect: "follow",
-          headers: { Accept: "application/json" },
-        });
-      } catch (error) {
-        if (error instanceof TypeError) {
-          finishFailure({
-            kind: "PageError",
-            content: {
-              tone: "Danger",
-              title: "We couldn’t confirm whether your password was saved.",
-              message: "Enter the same password and save again.",
-            },
-          });
-          return;
-        }
-        throw error;
-      }
-      if (response.redirected) {
-        window.location.assign(response.url);
-        return;
-      }
-      const rawOutcome: unknown = await response.json();
-      const outcome = decodePasswordUpdateOutcome(rawOutcome);
-      if (outcome.kind === "SessionEnded") {
-        window.location.replace(
-          buildLoginUrl(window.location.origin, nextPath, {
-            errorDescription: SESSION_ENDED_MESSAGE,
-          }).toString(),
-        );
-        return;
-      }
-      const presentation = passwordUpdateErrorMessage(outcome);
-      if (presentation.kind === "RedirectExpected") {
-        throw new Error("Password-update terminal response did not redirect");
-      }
-      finishFailure(presentation);
-    } catch (error) {
-      setDefect({ error });
-    } finally {
-      pendingRef.current = false;
-      setPending(false);
-    }
+    return true;
   }
-
-  if (defect) throw defect.error;
 
   if (saved) {
     return (
@@ -210,9 +107,11 @@ export default function PasswordUpdateForm({
         action="/auth/password/update"
         aria-busy={pending}
         noValidate
-        onSubmit={(event) => void submit(event)}
+        onSubmit={(event) =>
+          void submit(event, savedPasswordPath(nextPath), { validate })
+        }
       >
-        {isDefaultAuthReturnTarget(nextPath) ? null : (
+        {nextPath === DEFAULT_RETURN_TARGET ? null : (
           <input type="hidden" name="next" value={nextPath} />
         )}
         <div className={authStyles.field}>
@@ -234,11 +133,11 @@ export default function PasswordUpdateForm({
               minLength={15}
               required
               onChange={() => setFieldError(null)}
-              aria-invalid={fieldError === null ? undefined : true}
+              aria-invalid={fieldError ? true : undefined}
               aria-describedby={
-                fieldError === null
-                  ? PASSWORD_HELP_ID
-                  : `${PASSWORD_HELP_ID} ${PASSWORD_ERROR_ID}`
+                fieldError
+                  ? "password-update-help password-update-error"
+                  : "password-update-help"
               }
             />
             <Button
@@ -249,7 +148,7 @@ export default function PasswordUpdateForm({
               type="button"
               aria-label={revealed ? "Hide password" : "Show password"}
               aria-controls="password-update-password"
-              onClick={() => setRevealed((current) => !current)}
+              onClick={() => setRevealed((value) => !value)}
             >
               {revealed ? (
                 <EyeOff size={18} aria-hidden="true" />
@@ -258,12 +157,12 @@ export default function PasswordUpdateForm({
               )}
             </Button>
           </span>
-          <p id={PASSWORD_HELP_ID} className={authStyles.help}>
+          <p id="password-update-help" className={authStyles.help}>
             Use at least 15 characters.
           </p>
           {fieldError ? (
             <div role="alert">
-              <FieldFeedback id={PASSWORD_ERROR_ID} content={fieldError} />
+              <FieldFeedback id="password-update-error" content={fieldError} />
             </div>
           ) : null}
         </div>

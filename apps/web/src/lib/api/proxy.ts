@@ -1,17 +1,10 @@
 import { NextResponse } from "next/server";
 import { getEnv } from "@/lib/env";
 import { createRandomId } from "@/lib/createRandomId";
-import {
-  parseCookieHeader,
-  readSupabaseSessionCookie,
-} from "@/lib/auth/session-cookie";
-import {
-  AuthDependencyError,
-  finalizeSessionResponse,
-  type SessionEffect,
-} from "@/lib/auth/session-response";
+import { ended, finish, isSameOrigin, liveSession, type Effect } from "@/lib/auth/session";
 import { isAbortError } from "@/lib/errors";
-import { PUBLIC_API_CONTENT_SECURITY_POLICY } from "@/lib/security/csp";
+import { PUBLIC_API_CSP } from "@/lib/security/csp";
+import { AuthUnavailable } from "@/lib/supabase/auth";
 
 const REQUEST_HEADERS = [
   "content-type", "accept", "range", "if-none-match", "if-modified-since",
@@ -28,7 +21,7 @@ const SHARE_SECURITY_HEADERS = {
   "X-Robots-Tag": "noindex, nofollow",
   "X-Content-Type-Options": "nosniff",
   "Cross-Origin-Resource-Policy": "same-origin",
-  "Content-Security-Policy": PUBLIC_API_CONTENT_SECURITY_POLICY,
+  "Content-Security-Policy": PUBLIC_API_CSP,
 };
 
 function requestId(value: string | null): string {
@@ -134,85 +127,40 @@ async function proxySession(
     throw new Error("Path must not contain query string. Query params are extracted from request URL.");
   }
   const id = requestId(request.headers.get("x-request-id"));
-  const fail = (
-    status: number,
-    code: string,
-    message: string,
-    effect: SessionEffect = { kind: "Preserve" },
-  ) => finalizeSessionResponse(proxyError(id, status, code, message), effect);
-  const endSession = (cookieNames: readonly string[]) =>
-    fail(401, "E_UNAUTHENTICATED", "Authentication required", {
-      kind: "Clear", cookieNames, feedback: true,
-    });
+  const fail = (status: number, code: string, message: string, effect?: Effect) =>
+    finish(proxyError(id, status, code, message), effect);
+  const unauthenticated = (effect?: Effect) =>
+    fail(401, "E_UNAUTHENTICATED", "Authentication required", effect);
 
   if (
     ["POST", "PUT", "PATCH", "DELETE"].includes(request.method) &&
-    request.headers.get("origin") !== getEnv().appPublicOrigin
+    !isSameOrigin(request)
   ) {
     return fail(403, "E_FORBIDDEN", "Cross-origin request rejected");
   }
-  const session = readSupabaseSessionCookie(parseCookieHeader(request.headers.get("cookie")));
-  let accessToken: string;
-  let effect: SessionEffect = { kind: "Preserve" };
-  switch (session.state) {
-    case "active":
-      accessToken = session.accessToken;
-      break;
-    case "refreshable": {
-      const { refreshSession } = await import("@/lib/auth/refresh");
-      let refreshed;
-      try {
-        refreshed = await refreshSession();
-      } catch (error) {
-        return error instanceof AuthDependencyError
-          ? fail(503, "E_AUTH_UNAVAILABLE", "Authentication service unavailable")
-          : fail(500, "E_INTERNAL", "Session resolution failed");
-      }
-      if (refreshed.kind === "SessionEnded") {
-        return endSession([...new Set([...session.cookieNames, ...refreshed.cookieNames])]);
-      }
-      const rotated = readSupabaseSessionCookie(refreshed.cookiesToSet);
-      if (rotated.state !== "active") {
-        return fail(500, "E_INTERNAL", "Session resolution failed");
-      }
-      accessToken = rotated.accessToken;
-      effect = { kind: "Rotate", cookiesToSet: refreshed.cookiesToSet };
-      break;
-    }
-    case "ended":
-      return endSession(session.cookieNames);
-    case "anonymous":
-      switch (session.reason) {
-        case "missing":
-          return fail(401, "E_UNAUTHENTICATED", "Authentication required");
-        case "malformed":
-        case "non_bearer":
-          return endSession(session.cookieNames);
-        case "bad_config":
-          return fail(500, "E_INTERNAL", "Session configuration is invalid");
-      }
-      session satisfies never;
-      // justify-defect: every parsed cookie reason is handled above.
-      throw new Error("unreachable session reason");
+  // the bff owns its response: a refreshable session is refreshed inline.
+  let live;
+  try {
+    live = await liveSession();
+  } catch (error) {
+    if (!(error instanceof AuthUnavailable)) throw error;
+    return fail(503, "E_AUTH_UNAVAILABLE", "Authentication service unavailable");
   }
+  if (live.kind === "Anonymous") return unauthenticated();
+  if (live.kind === "Ended") return unauthenticated(ended(live.cookieNames));
 
   const headers = pickHeaders(request.headers, REQUEST_HEADERS, true);
-  headers.set("authorization", `Bearer ${accessToken}`);
+  headers.set("authorization", `Bearer ${live.accessToken}`);
   if (lane === "MediaAsset") headers.set("accept-encoding", "identity");
   const responseHeaderNames = lane === "MediaAsset"
     ? [...RESPONSE_HEADERS, "content-length"] : RESPONSE_HEADERS;
   const response = await forward({ request, path, id, headers, responseHeaderNames });
-  if (response.status === 401) {
-    return endSession([...new Set([
-      ...session.cookieNames,
-      ...(effect.kind === "Rotate" ? effect.cookiesToSet.map(({ name }) => name) : []),
-    ])]);
-  }
+  if (response.status === 401) return unauthenticated(ended(live.cookieNames));
   response.headers.append(
     "server-timing", `nexus_bff;dur=${(performance.now() - startedAt).toFixed(2)}`,
   );
   // The response owner publishes a refreshed session even on transport failure.
-  return finalizeSessionResponse(response, effect);
+  return finish(response, { kind: "Write", writes: live.writes });
 }
 
 export async function proxyToFastAPI(

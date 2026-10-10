@@ -1,78 +1,50 @@
-import { mintHandoffCode } from "@/lib/auth/mint-handoff-code";
-import { finalizeSessionResponse } from "@/lib/auth/session-response";
-import { createSessionEstablishmentClient } from "@/lib/supabase/route-handler";
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { mintHandoffCode } from "@/lib/auth/internal";
+import { abandoned, finish } from "@/lib/auth/session";
+import { signInWithGoogleIdToken } from "@/lib/supabase/auth";
+import { isRecord } from "@/lib/validation";
 
 export const runtime = "nodejs";
 
-// Native Android Credential Manager produces a Google ID token; this route
-// exchanges it for a Supabase session and mints a single-use handoff code so
-// the WebView can pick up the session via /auth/handoff.
+// android credential manager's google id token -> a provider session -> a
+// handoff code the webview consumes at /auth/handoff. the native http client
+// keeps no session.
 export async function POST(request: Request): Promise<NextResponse> {
-  let auth: Awaited<ReturnType<typeof createSessionEstablishmentClient>> | undefined;
-  const finish = (response: NextResponse): NextResponse =>
-    auth
-      ? auth.applyCookies(response)
-      : finalizeSessionResponse(response, { kind: "Preserve" });
-
+  const fail = (error: string, status: number) =>
+    NextResponse.json({ error }, { status });
+  let body: unknown;
   try {
-    const body = await request.json();
-    const idToken = body?.idToken;
-    const nonce = body?.nonce;
-    const hc = body?.hc;
-    if (
-      typeof idToken !== "string" ||
-      !idToken ||
-      typeof nonce !== "string" ||
-      !nonce ||
-      typeof hc !== "string" ||
-      !hc
-    ) {
-      return finish(NextResponse.json({ error: "invalid_request" }, { status: 400 }));
-    }
-
-    auth = await createSessionEstablishmentClient();
-    const { supabase } = auth;
-    const { data, error } = await supabase.auth.signInWithIdToken({
-      provider: "google",
-      token: idToken,
-      nonce,
-    });
-
-    if (error || !data.session) {
-      return finish(NextResponse.json(
-        { error: "google_signin_failed" },
-        { status: 401 }
-      ));
-    }
-
-    try {
-      const mintResult = await mintHandoffCode({
-        accessToken: data.session.access_token,
-        refreshToken: data.session.refresh_token,
-        challenge: hc,
-      });
-      if ("error" in mintResult) {
-        // justify-ignore-error: expected mint failures share one public reply.
-        return auth.clearSession(
-          NextResponse.json({ error: "handoff_mint_failed" }, { status: 502 }),
-        );
-      }
-
-      return finish(
-        NextResponse.json({ data: { code: mintResult.code } }, { status: 200 }),
-      );
-    } catch {
-      // justify-defect: any failure after establishment must publish cleanup
-      // with the existing internal-error response, including non-Error throws.
-      return auth.clearSession(
-        NextResponse.json({ error: "internal_error" }, { status: 500 }),
-      );
-    }
+    body = await request.json();
   } catch (error) {
-    if (!(error instanceof Error)) {
-      throw error;
-    }
-    return finish(NextResponse.json({ error: "internal_error" }, { status: 500 }));
+    if (!(error instanceof SyntaxError)) throw error;
+    return finish(fail("invalid_request", 400));
+  }
+  const field = (key: string) =>
+    isRecord(body) && typeof body[key] === "string" && body[key]
+      ? body[key]
+      : null;
+  const idToken = field("idToken");
+  const nonce = field("nonce");
+  const challenge = field("hc");
+  if (!idToken || !nonce || !challenge) {
+    return finish(fail("invalid_request", 400));
+  }
+
+  const presented = (await cookies()).getAll();
+  const { tokens, writes } = await signInWithGoogleIdToken(
+    presented,
+    idToken,
+    nonce,
+  );
+  const cleared = abandoned(presented, writes);
+  if (!tokens) return finish(fail("google_signin_failed", 401), cleared);
+  try {
+    const code = await mintHandoffCode(tokens, challenge);
+    if (!code) return finish(fail("handoff_mint_failed", 502), cleared);
+    return finish(NextResponse.json({ data: { code } }), cleared);
+  } catch (error) {
+    console.error("auth_native_google_defect", error);
+    return finish(fail("internal_error", 500), cleared);
   }
 }

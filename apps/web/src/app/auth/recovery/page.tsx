@@ -1,23 +1,20 @@
 import type { Metadata } from "next";
 import EmailActionLanding from "@/components/auth/EmailActionLanding";
-import { parseEmailConfirmationToken } from "@/lib/auth/email-confirmation";
+import { firstParam } from "@/lib/auth/urls";
 
 export const metadata: Metadata = {
   title: "Reset your password · Nexus",
   robots: { index: false, follow: false },
 };
 
+// inert: the token is spent only by the landing's POST.
 export default async function RecoveryPage({
   searchParams,
 }: {
   searchParams: Promise<{ token_hash?: string | string[] }>;
 }) {
-  const params = await searchParams;
-  const token = parseEmailConfirmationToken({ tokenHash: params.token_hash });
+  const tokenHash = firstParam((await searchParams).token_hash)?.trim();
   return (
-    <EmailActionLanding
-      purpose="recovery"
-      tokenHash={token.kind === "Valid" ? token.tokenHash : null}
-    />
+    <EmailActionLanding purpose="recovery" tokenHash={tokenHash || null} />
   );
 }
