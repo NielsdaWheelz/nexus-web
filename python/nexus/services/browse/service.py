@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
-from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.schemas.browse import (
     BrowseKind,
     BrowsePage,
@@ -35,6 +35,8 @@ from nexus.schemas.presence import presence_from_nullable as maybe
 from nexus.services.browse import brave, gutenberg, podcast_index, youtube
 from nexus.services.browse.targets import (
     BraveWebArticleTarget,
+    BrowseProviderFailure,
+    BrowseTargetNotFound,
     DiscoveryTarget,
     PodcastIndexEpisodeTarget,
     PodcastIndexPodcastTarget,
@@ -42,12 +44,11 @@ from nexus.services.browse.targets import (
     ResolvedEpisode,
     ResolvedPodcast,
     YouTubeVideoTarget,
+    provider_api_error,
     unseal_target,
 )
 from nexus.services.media import list_collection_media_for_viewer_by_ids
-from nexus.services.podcasts.episode_identity import (
-    select_visible_episode_media_id_by_podcast_index_ref,
-)
+from nexus.services.podcasts.ingest import select_visible_episode_media_id_by_podcast_index_ref
 from nexus.services.podcasts.subscriptions_query import active_subscription_rows_sql
 from nexus.services.sealed_handles import DiscoveryTargetHandle
 from nexus.services.search.query import decode_cursor, encode_cursor, is_offset
@@ -177,12 +178,18 @@ def preview_browse(db: Session, viewer_id: UUID, query: BrowsePreviewQuery) -> B
 
 
 def resolve_podcast_discovery_target(handle: str) -> ResolvedPodcast | ResolvedEpisode:
-    """The provider podcast or episode a sealed handle names (podcast acquisition)."""
-    match unseal_target(handle):
-        case PodcastIndexPodcastTarget(podcast_ref=podcast):
-            return podcast_index.resolve_podcast(podcast)
-        case PodcastIndexEpisodeTarget(podcast_ref=podcast, episode_ref=episode):
-            return podcast_index.resolve_episode(podcast, episode)
+    """The provider podcast or episode a sealed handle names (podcast acquisition); a
+    vanished target is 404 and a failing provider its browse code, as for Preview."""
+    try:
+        match unseal_target(handle):
+            case PodcastIndexPodcastTarget(podcast_ref=podcast):
+                return podcast_index.resolve_podcast(podcast)
+            case PodcastIndexEpisodeTarget(podcast_ref=podcast, episode_ref=episode):
+                return podcast_index.resolve_episode(podcast, episode)
+    except BrowseTargetNotFound as exc:
+        raise ApiError(ApiErrorCode.E_NOT_FOUND, "No longer available") from exc
+    except BrowseProviderFailure as exc:
+        raise provider_api_error(exc) from exc
     raise InvalidRequestError(
         ApiErrorCode.E_INVALID_DISCOVERY_TARGET, "Discovery target is not a Podcast or Episode"
     )

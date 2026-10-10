@@ -1,249 +1,157 @@
-"""Podcast subscription, refresh and episode routes."""
+"""Podcast routes: follow, list, detail, episodes, settings, refresh, backlog retry."""
 
-from typing import Annotated
+from collections.abc import Mapping
+from typing import Annotated, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Request
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
+from nexus.schemas import podcast as wire
 from nexus.schemas.collection_page import CollectionPage, parse_collection_query
-from nexus.schemas.podcast import (
-    PodcastBackfillRetryOut,
-    PodcastDetailOut,
-    PodcastEpisodeFromDiscoveryOut,
-    PodcastEpisodeFromDiscoveryRequest,
-    PodcastEpisodeListItemOut,
-    PodcastEpisodeMarkPlayedOut,
-    PodcastEpisodeSelection,
-    PodcastRefreshAcceptedOut,
-    PodcastRefreshManualScope,
-    PodcastSubscribeOut,
-    PodcastSubscribeRequest,
-    PodcastSubscriptionListItemOut,
-    PodcastSubscriptionSettingsOut,
-    PodcastSubscriptionSettingsPatchRequest,
-    PodcastSubscriptionStatusOut,
-    PodcastUnsubscribeOut,
-)
-from nexus.services.podcasts import episode_acquisition as podcast_episode_acquisition_service
-from nexus.services.podcasts import episodes as podcast_episodes_service
-from nexus.services.podcasts import refresh as podcast_refresh_service
-from nexus.services.podcasts import subscriptions as podcast_subscription_service
-from nexus.services.podcasts import subscriptions_query as podcast_subscriptions_query_service
+from nexus.services.podcasts import episode_acquisition, episodes, subscriptions, sync
+from nexus.services.podcasts import subscriptions_query as queries
 
 router = APIRouter(tags=["podcasts"])
+ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 
-IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=120)]
 
-
-def _require_option(value: str, allowed: set[str], message: str) -> str:
+def _option[T: str](
+    parameters: Mapping[str, str], name: str, default: T, allowed: tuple[T, ...]
+) -> T:
+    """The one query-option validator; services trust their Literal arguments."""
+    value = parameters.get(name, default)
     if value not in allowed:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, message)
-    return value
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, f"Invalid podcast {name}")
+    return cast(T, value)
 
 
 @router.post("/podcasts/subscriptions")
 def subscribe_to_podcast(
-    body: PodcastSubscribeRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-    idempotency_key: IdempotencyKey,
-) -> Data[PodcastSubscribeOut]:
-    """Subscribe the viewer and enqueue the first sync and history backfill."""
-    return Data(
-        data=podcast_subscription_service.subscribe_to_podcast(
-            db, viewer.user_id, body, idempotency_key=idempotency_key
-        )
-    )
+    body: wire.PodcastSubscribeRequest, viewer: ViewerDep, db: DbSession
+) -> Data[wire.PodcastSubscribeOut]:
+    return Data(data=subscriptions.subscribe(db, viewer.user_id, body))
 
 
 @router.post("/podcast-episodes/from-discovery")
 def acquire_podcast_episode(
-    body: PodcastEpisodeFromDiscoveryRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-    idempotency_key: IdempotencyKey,
-) -> Data[PodcastEpisodeFromDiscoveryOut]:
-    """Acquire one discovered episode without subscribing to its show."""
-    return Data(
-        data=podcast_episode_acquisition_service.acquire_episode_from_discovery(
-            db, viewer_id=viewer.user_id, body=body, idempotency_key=idempotency_key
-        ),
-    )
+    body: wire.PodcastEpisodeFromDiscoveryRequest, viewer: ViewerDep, db: DbSession
+) -> Data[wire.PodcastEpisodeFromDiscoveryOut]:
+    return Data(data=episode_acquisition.acquire_episode(db, viewer.user_id, body))
 
 
 @router.get("/podcasts/subscriptions")
 def list_subscriptions(
-    request: Request,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: RepeatableReadDbSession,
-) -> Data[CollectionPage[PodcastSubscriptionListItemOut]]:
-    """List the viewer's followed shows."""
-    parsed = parse_collection_query(
-        request.query_params.multi_items(),
-        domain_keys=frozenset({"sort", "filter", "library_id"}),
+    request: Request, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[CollectionPage[wire.PodcastSubscriptionListItemOut]]:
+    query = parse_collection_query(
+        request.query_params.multi_items(), domain_keys=frozenset({"sort", "filter", "library_id"})
     )
-    sort = _require_option(
-        parsed.parameters.get("sort", "recent_episode"),
-        {"recent_episode", "unplayed_count", "alpha"},
-        "Invalid podcast subscriptions sort option",
-    )
-    filter_value = _require_option(
-        parsed.parameters.get("filter", "all"),
-        {"all", "has_new", "not_in_library"},
-        "Invalid podcast subscriptions filter option",
-    )
-    library_value = parsed.parameters.get("library_id")
+    library = query.parameters.get("library_id")
     try:
-        library_id = UUID(library_value) if library_value is not None else None
+        library_id = None if library is None else UUID(library)
     except ValueError as exc:
         raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, "Invalid podcast library scope"
+            ApiErrorCode.E_INVALID_REQUEST, "Invalid podcast library"
         ) from exc
-    page = podcast_subscriptions_query_service.list_subscriptions(
-        db,
-        viewer.user_id,
-        limit=parsed.limit,
-        cursor=parsed.cursor,
-        collection_revision=parsed.collection_revision,
-        sort=sort,  # type: ignore[arg-type]
-        filter=filter_value,  # type: ignore[arg-type]
-        library_id=library_id,
+    return Data(
+        data=queries.list_subscriptions(
+            db,
+            viewer.user_id,
+            limit=query.limit,
+            cursor=query.cursor,
+            revision=query.collection_revision,
+            sort=_option(
+                query.parameters,
+                "sort",
+                "recent_episode",
+                ("recent_episode", "unplayed_count", "alpha"),
+            ),
+            filter=_option(query.parameters, "filter", "all", ("all", "has_new", "not_in_library")),
+            library_id=library_id,
+        )
     )
-    return Data(data=page)
 
 
 @router.get("/podcasts/subscriptions/{podcast_id}")
 def get_subscription_status(
-    podcast_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Data[PodcastSubscriptionStatusOut]:
-    """Read viewer-visible sync status for one podcast subscription."""
-    return Data(
-        data=podcast_subscription_service.get_subscription_status(db, viewer.user_id, podcast_id)
-    )
+    podcast_id: UUID, viewer: ViewerDep, db: DbSession
+) -> Data[wire.PodcastSubscriptionStatusOut]:
+    return Data(data=subscriptions.get_status(db, viewer.user_id, podcast_id))
 
 
 @router.post("/podcasts/subscriptions/{podcast_id}/backfill/retry")
 def retry_subscription_backfill(
-    podcast_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-    idempotency_key: IdempotencyKey,
-) -> Data[PodcastBackfillRetryOut]:
-    """Restart only a persistently failed historical backfill."""
-    return Data(
-        data=podcast_subscription_service.retry_subscription_backfill(
-            db, viewer.user_id, podcast_id, idempotency_key=idempotency_key
-        )
-    )
+    podcast_id: UUID, viewer: ViewerDep, db: DbSession
+) -> Data[wire.PodcastBackfillRetryOut]:
+    return Data(data=subscriptions.retry_backfill(db, viewer.user_id, podcast_id))
 
 
 @router.patch("/podcasts/subscriptions/{podcast_id}/settings")
 def patch_subscription_settings(
     podcast_id: UUID,
-    body: PodcastSubscriptionSettingsPatchRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
+    body: wire.PodcastSubscriptionSettingsPatchRequest,
+    viewer: ViewerDep,
     db: DbSession,
-) -> Data[PodcastSubscriptionSettingsOut]:
-    """Patch per-subscription playback settings for the authenticated viewer."""
-    return Data(
-        data=podcast_subscription_service.update_subscription_settings_for_viewer(
-            db, viewer.user_id, podcast_id, body
-        )
-    )
-
-
-@router.post("/podcasts/refresh", status_code=202)
-def refresh_podcasts(
-    body: PodcastRefreshManualScope,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Data[PodcastRefreshAcceptedOut]:
-    """Enqueue one sync per in-scope subscription; the panes observe the rows."""
-    requested_count = podcast_refresh_service.enqueue_manual_refresh(
-        db, viewer_id=viewer.user_id, scope=body
-    )
-    return Data(data=PodcastRefreshAcceptedOut(requested_count=requested_count))
+) -> Data[wire.PodcastSubscriptionStatusOut]:
+    return Data(data=subscriptions.patch_settings(db, viewer.user_id, podcast_id, body))
 
 
 @router.delete("/podcasts/subscriptions/{podcast_id}")
 def unsubscribe_from_podcast(
-    podcast_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-    idempotency_key: IdempotencyKey,
-) -> Data[PodcastUnsubscribeOut]:
-    """Unsubscribe the viewer and remove the placements they own."""
-    return Data(
-        data=podcast_subscription_service.unsubscribe_from_podcast(
-            db, viewer.user_id, podcast_id, idempotency_key=idempotency_key
-        ),
-    )
+    podcast_id: UUID, viewer: ViewerDep, db: DbSession
+) -> Data[wire.PodcastUnsubscribeOut]:
+    return Data(data=subscriptions.unsubscribe(db, viewer.user_id, podcast_id))
+
+
+@router.post("/podcasts/refresh", status_code=202)
+def refresh_podcasts(
+    body: wire.PodcastRefreshManualScope, viewer: ViewerDep, db: DbSession
+) -> Data[wire.PodcastRefreshAcceptedOut]:
+    count = sync.refresh(db, viewer.user_id, body)
+    return Data(data=wire.PodcastRefreshAcceptedOut(requested_count=count))
 
 
 @router.get("/podcasts/{podcast_id}")
 def get_podcast_detail(
-    podcast_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Data[PodcastDetailOut]:
-    """Get podcast detail, even if the viewer is not actively subscribed."""
-    return Data(
-        data=podcast_subscriptions_query_service.get_podcast_detail_for_viewer(
-            db, viewer.user_id, podcast_id
-        )
-    )
+    podcast_id: UUID, viewer: ViewerDep, db: DbSession
+) -> Data[wire.PodcastDetailOut]:
+    return Data(data=queries.get_podcast_detail(db, viewer.user_id, podcast_id))
 
 
 @router.get("/podcasts/{podcast_id}/episodes")
 def list_podcast_episodes(
-    podcast_id: UUID,
-    request: Request,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: RepeatableReadDbSession,
-) -> Data[CollectionPage[PodcastEpisodeListItemOut]]:
-    """List viewer-visible episodes for one podcast."""
-    parsed = parse_collection_query(
+    podcast_id: UUID, request: Request, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[CollectionPage[wire.PodcastEpisodeListItemOut]]:
+    query = parse_collection_query(
         request.query_params.multi_items(), domain_keys=frozenset({"state", "sort"})
     )
-    state = _require_option(
-        parsed.parameters.get("state", "all"),
-        {"all", "unplayed", "in_progress", "played"},
-        "Invalid podcast episode state",
+    return Data(
+        data=episodes.list_episodes(
+            db,
+            viewer.user_id,
+            podcast_id,
+            limit=query.limit,
+            cursor=query.cursor,
+            revision=query.collection_revision,
+            state=_option(
+                query.parameters, "state", "all", ("all", "unplayed", "in_progress", "played")
+            ),
+            sort=_option(
+                query.parameters,
+                "sort",
+                "newest",
+                ("newest", "oldest", "duration_asc", "duration_desc"),
+            ),
+        )
     )
-    sort = _require_option(
-        parsed.parameters.get("sort", "newest"),
-        {"newest", "oldest", "duration_asc", "duration_desc"},
-        "Invalid podcast episode sort option",
-    )
-    page = podcast_episodes_service.list_podcast_episodes_for_viewer(
-        db,
-        viewer.user_id,
-        podcast_id,
-        limit=parsed.limit,
-        cursor=parsed.cursor,
-        collection_revision=parsed.collection_revision,
-        state=state,  # type: ignore[arg-type]
-        sort=sort,  # type: ignore[arg-type]
-    )
-    return Data(data=page)
 
 
 @router.post("/podcasts/{podcast_id}/episodes/mark-played")
 def mark_podcast_episode_selection_played(
-    podcast_id: UUID,
-    body: PodcastEpisodeSelection,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Data[PodcastEpisodeMarkPlayedOut]:
-    """Mark every episode in the named state finished."""
-    return Data(
-        data=podcast_episodes_service.mark_episode_selection_played(
-            db, viewer_id=viewer.user_id, podcast_id=podcast_id, selection=body
-        ),
-    )
+    podcast_id: UUID, body: wire.PodcastEpisodeSelection, viewer: ViewerDep, db: DbSession
+) -> Data[wire.PodcastEpisodeMarkPlayedOut]:
+    return Data(data=episodes.mark_played(db, viewer.user_id, podcast_id, body.state))

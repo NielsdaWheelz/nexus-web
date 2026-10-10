@@ -1,4 +1,4 @@
-"""Request and response models for podcast subscriptions, episodes and transcripts."""
+"""Podcast wire: subscriptions, episodes, refresh and episode transcript batches."""
 
 from datetime import datetime
 from typing import Annotated, Literal
@@ -7,35 +7,21 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
-from nexus.db.models import MediaKind, TranscriptState
-from nexus.schemas.collection_page import CollectionRevision
+from nexus.db.models import TranscriptState
 from nexus.schemas.consumption import PauseShorteningMode, PlaybackRate
 from nexus.schemas.contributor_credit import ContributorCreditOut
-from nexus.schemas.contributors import ContributorCreditIn
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.presence import Presence, absent
-from nexus.services.podcasts.types import PodcastSyncStatus
 from nexus.services.sealed_handles import DiscoveryTargetHandle
 
-# The web decoders assert exact key sets, so each model's casing is load-bearing.
+# The web reads exact key sets, so each model's casing is load-bearing.
 _CAMEL = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
 _SNAKE = ConfigDict(extra="forbid")
+_SNAKE_OUT = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
-PodcastBackfillState = Literal["Pending", "Running", "Complete", "SourceLimited", "Failed"]
-
-
-class PodcastSourceFacts(BaseModel):
-    """Trusted provider facts after Podcast discovery resolution."""
-
-    provider_podcast_id: str = Field(min_length=1)
-    title: str = Field(min_length=1)
-    contributors: list[ContributorCreditIn] = Field(default_factory=list)
-    feed_url: str = Field(min_length=1)
-    website_url: str | None = None
-    image_url: str | None = None
-    description: str | None = None
-
-    model_config = _SNAKE
+# Sync and backfill share one lifecycle vocabulary.
+type PodcastSyncStatus = Literal["Pending", "Running", "Complete", "SourceLimited", "Failed"]
+EpisodeState = Literal["all", "unplayed", "in_progress", "played"]
 
 
 class PodcastDiscoveryCommitTarget(BaseModel):
@@ -52,12 +38,6 @@ class PodcastCanonicalCommitTarget(BaseModel):
     model_config = _CAMEL
 
 
-PodcastCommitTarget = Annotated[
-    PodcastDiscoveryCommitTarget | PodcastCanonicalCommitTarget,
-    Field(discriminator="kind"),
-]
-
-
 class PodcastReplacementConfirmation(BaseModel):
     conflict_fingerprint: str = Field(min_length=64, max_length=64)
 
@@ -65,7 +45,9 @@ class PodcastReplacementConfirmation(BaseModel):
 
 
 class PodcastSubscribeRequest(BaseModel):
-    target: PodcastCommitTarget
+    target: Annotated[
+        PodcastDiscoveryCommitTarget | PodcastCanonicalCommitTarget, Field(discriminator="kind")
+    ]
     named_library_ids: list[UUID] = Field(default_factory=list)
     replacement_confirmation: Presence[PodcastReplacementConfirmation]
 
@@ -81,7 +63,7 @@ class PodcastEpisodeFromDiscoveryRequest(BaseModel):
 
 class PodcastBackfillOut(BaseModel):
     id: UUID
-    state: PodcastBackfillState
+    state: PodcastSyncStatus
     processed_count: int = Field(ge=0)
     added_count: int = Field(ge=0)
 
@@ -103,21 +85,12 @@ class PodcastDestinationOutcomeOut(BaseModel):
     model_config = _CAMEL
 
 
-class PodcastSubscribeDestinationOutcomeOut(BaseModel):
-    library_id: UUID
-    outcome: Literal["Added", "AlreadyPresent"]
-
-    model_config = _CAMEL
-
-
 class PodcastSubscribeOut(BaseModel):
     href: str = Field(min_length=1)
     podcast_id: UUID
     outcome: Literal["Subscribed", "AlreadySubscribed", "DestinationsAdded"]
-    destinations: list[PodcastSubscribeDestinationOutcomeOut]
+    destinations: list[PodcastDestinationOutcomeOut]
     backfill: PodcastBackfillOut
-    collection_revision: CollectionRevision
-    library_entries_collection_revision: CollectionRevision
 
     model_config = _CAMEL
 
@@ -126,7 +99,6 @@ class PodcastEpisodeFromDiscoveryOut(BaseModel):
     href: str = Field(min_length=1)
     media_id: UUID
     destination_outcomes: list[PodcastDestinationOutcomeOut]
-    collection_revision: CollectionRevision
 
     model_config = _CAMEL
 
@@ -134,14 +106,13 @@ class PodcastEpisodeFromDiscoveryOut(BaseModel):
 class PodcastSubscriptionSettingsPatchRequest(BaseModel):
     default_playback_speed: Presence[PlaybackRate] = Field(default_factory=absent)
     pause_shortening_mode: Presence[PauseShorteningMode] = Field(default_factory=absent)
-    auto_queue: bool | None = None
+    # A factory, not a default: an absent field means "unchanged", never false.
+    auto_queue: bool = Field(default_factory=lambda: False)
 
     @model_validator(mode="after")
-    def validate_patch_semantics(self) -> "PodcastSubscriptionSettingsPatchRequest":
+    def require_a_field(self) -> "PodcastSubscriptionSettingsPatchRequest":
         if not self.model_fields_set:
             raise ValueError("At least one settings field is required")
-        if "auto_queue" in self.model_fields_set and self.auto_queue is None:
-            raise ValueError("auto_queue must be a boolean")
         return self
 
     model_config = _SNAKE
@@ -166,21 +137,8 @@ class PodcastSubscriptionStatusOut(BaseModel):
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
-class PodcastSubscriptionSettingsOut(PodcastSubscriptionStatusOut):
-    collection_revision: CollectionRevision = Field(alias="collectionRevision")
-    library_entries_collection_revision: CollectionRevision = Field(
-        alias="libraryEntriesCollectionRevision"
-    )
-
-    model_config = ConfigDict(
-        populate_by_name=True,
-        extra="forbid",
-        json_schema_serialization_defaults_required=True,
-    )
-
-
 class PodcastSubscriptionLifecycleSnapshotOut(BaseModel):
-    """One viewer-owned subscription's live sync and initial-backfill state."""
+    """One viewer-owned subscription's live sync and backfill state (an SSE frame)."""
 
     podcast_id: UUID
     sync_status: PodcastSyncStatus
@@ -211,8 +169,6 @@ class PodcastDetailOut(BaseModel):
 
 
 class PodcastSubscriptionListItemOut(BaseModel):
-    """Compact row projection for the followed-Podcasts collection."""
-
     podcast_id: UUID
     title: str
     contributors: list[ContributorCreditOut] = Field(default_factory=list)
@@ -223,33 +179,20 @@ class PodcastSubscriptionListItemOut(BaseModel):
     auto_queue: bool
     sync_status: PodcastSyncStatus
 
-    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
+    model_config = _SNAKE_OUT
 
 
 class PodcastEpisodeListItemOut(BaseModel):
-    """Compact row projection for one podcast episode."""
-
     id: UUID
     media_summary: MediaSummaryOut = Field(alias="mediaSummary")
     transcript_state: TranscriptState
     has_show_notes: bool
 
-    @model_validator(mode="after")
-    def validate_episode_identity(self) -> "PodcastEpisodeListItemOut":
-        if (
-            self.id != self.media_summary.media_id
-            or self.media_summary.media_kind != MediaKind.podcast_episode
-        ):
-            raise ValueError("Podcast episode list media identity mismatch")
-        return self
-
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
 class PodcastEpisodeSelection(BaseModel):
-    """Membership-defining episode state shared by list-wide commands."""
-
-    state: Literal["all", "unplayed", "in_progress", "played"]
+    state: EpisodeState
 
     model_config = _SNAKE
 
@@ -257,7 +200,6 @@ class PodcastEpisodeSelection(BaseModel):
 class PodcastEpisodeMarkPlayedOut(BaseModel):
     matched_count: int = Field(ge=0)
     changed_count: int = Field(ge=0)
-    collection_revision: CollectionRevision
 
     model_config = _CAMEL
 
@@ -288,43 +230,17 @@ class PodcastEpisodeQueryTranscriptRequest(BaseModel):
 class PodcastEpisodeQueryTranscriptRequestOut(BaseModel):
     matched_count: int = Field(ge=0)
     queued_count: int = Field(ge=0)
-    collection_revision: CollectionRevision
 
     model_config = _CAMEL
 
 
-class PodcastUnsubscribedOut(BaseModel):
-    outcome: Literal["Unsubscribed"] = "Unsubscribed"
+class PodcastUnsubscribeOut(BaseModel):
+    outcome: Literal["Unsubscribed", "AlreadyUnsubscribed"]
     podcast_id: UUID
-    removed_placement_count: int = Field(ge=0)
-    retained_shared_count: int = Field(ge=0)
-    collection_revision: CollectionRevision = Field(alias="collectionRevision")
-    library_entries_collection_revision: CollectionRevision = Field(
-        alias="libraryEntriesCollectionRevision"
-    )
+    removed_placement_count: int = Field(default=0, ge=0)
+    retained_shared_count: int = Field(default=0, ge=0)
 
-    model_config = ConfigDict(
-        populate_by_name=True, extra="forbid", json_schema_serialization_defaults_required=True
-    )
-
-
-class PodcastAlreadyUnsubscribedOut(BaseModel):
-    outcome: Literal["AlreadyUnsubscribed"] = "AlreadyUnsubscribed"
-    podcast_id: UUID
-    collection_revision: CollectionRevision = Field(alias="collectionRevision")
-    library_entries_collection_revision: CollectionRevision = Field(
-        alias="libraryEntriesCollectionRevision"
-    )
-
-    model_config = ConfigDict(
-        populate_by_name=True, extra="forbid", json_schema_serialization_defaults_required=True
-    )
-
-
-PodcastUnsubscribeOut = Annotated[
-    PodcastUnsubscribedOut | PodcastAlreadyUnsubscribedOut,
-    Field(discriminator="outcome"),
-]
+    model_config = _SNAKE_OUT
 
 
 class PodcastRefreshPodcastScope(BaseModel):

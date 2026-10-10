@@ -23,7 +23,6 @@ from nexus.jobs.queue import (
     JobResourceClass,
     JobResult,
 )
-from nexus.services.podcasts.types import PODCAST_SYNC_JOB_LEASE_SECONDS
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -98,6 +97,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=3,
             retry_delays_seconds=(60, 300),
             lease_seconds=300,
+            dead_letter_projection="SourceAttempt",
             resource_failure_projection="SourceAttemptMedia",
             history_projection="SourceAttempt",
             never_prune_dead=True,
@@ -150,7 +150,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
-            lease_seconds=PODCAST_SYNC_JOB_LEASE_SECONDS,
+            lease_seconds=900,
             dead_letter_projection="PodcastSubscriptionSync",
         ),
         "podcast_backfill_subscription": JobDefinition(
@@ -160,7 +160,6 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=900,
-            failed_result_statuses=("failed",),
             dead_letter_projection="PodcastBackfill",
             never_prune_dead=True,
         ),
@@ -368,30 +367,19 @@ def _run_dossier_build(*, payload: Payload, context: Context) -> JobResult:
 
 
 def _run_podcast_sync_subscription(*, payload: Payload, context: Context) -> JobResult:
-    from dataclasses import asdict
-
     from nexus.db.session import get_session_factory
-    from nexus.logging import get_logger
-    from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
+    from nexus.services.podcasts import sync
 
     with get_session_factory()() as db:
-        result = asdict(run_podcast_subscription_sync_now(db, payload=payload, context=context))
-    get_logger(__name__).info(
-        "podcast_sync_task_completed",
-        job_id=str(context.job_id),
-        attempt_no=context.attempt_no,
-        subscription_id=str(payload.get("subscription_id")),
-        result=result,
-    )
-    return result
+        return sync.run(db, dict(payload))
 
 
 def _run_podcast_backfill_subscription(*, payload: Payload, context: Context) -> JobResult:
     from nexus.db.session import get_session_factory
-    from nexus.services.podcasts.backfill import run_backfill_step
+    from nexus.services.podcasts import backfill
 
     with get_session_factory()() as db:
-        return run_backfill_step(db, payload=payload, context=context)
+        return backfill.run_step(db, dict(payload))
 
 
 def _run_podcast_reindex_semantic(*, payload: Payload, context: Context) -> JobResult:
@@ -445,14 +433,11 @@ def _run_note_reindex(*, payload: Payload, context: Context) -> JobResult:
 
 def _run_podcast_refresh_due(*, payload: Payload, context: Context) -> JobResult:
     from nexus.db.session import get_session_factory
-    from nexus.services.podcasts.refresh import admit_due_subscriptions
+    from nexus.services.podcasts import sync
 
     with get_session_factory()() as db:
-        return {
-            "subscription_count": admit_due_subscriptions(
-                db, limit=get_settings().podcast_refresh_due_limit
-            )
-        }
+        limit = get_settings().podcast_refresh_due_limit
+        return {"subscription_count": sync.admit_due(db, limit=limit)}
 
 
 def _run_reconcile_stale_ingest_media(*, payload: Payload, context: Context) -> JobResult:

@@ -11,9 +11,9 @@ from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption import PauseShorteningMode, PlaybackRate
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaSummaryOut
+from nexus.schemas.podcast import PodcastSyncStatus
 from nexus.schemas.presence import Presence
 from nexus.schemas.reading_time import ReadingTimeEstimateOut
-from nexus.services.podcasts.types import PodcastSyncStatus
 from nexus.services.sealed_handles import LibraryInvitationHandle, UserHandle
 
 LibraryRole = Literal["admin", "member"]

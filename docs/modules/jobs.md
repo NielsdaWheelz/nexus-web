@@ -144,12 +144,16 @@ Five kinds declare a projection:
   so a stranded reindex is observable instead of stuck `pending`.
 - `MediaTeardownIntent` (`media_teardown`) voids only the exact still-current
   teardown intent so a newer lifecycle cannot be overwritten.
-- `PodcastBackfill` (`podcast_backfill_subscription`) stamps the current backfill
-  fence Failed only when the dead job still names its exact backfill ID, step, and
-  cursor digest; dead rows remain operator-visible.
-- `PodcastSubscriptionSync` (`podcast_sync_subscription_job`) exact-matches
-  subscription epoch, generation, job, and attempt before marking the subscription
-  Failed.
+- `PodcastBackfill` (`podcast_backfill_subscription`) stamps the backfill Failed
+  only while it is non-terminal and still at the step the dead job names (backfill
+  id and step); dead rows remain operator-visible.
+- `PodcastSubscriptionSync` (`podcast_sync_subscription_job`) settles a still-live
+  (Pending or Running) subscription sync Failed with `E_PODCAST_SYNC_RETRY_EXHAUSTED`,
+  so the due sweep re-admits it.
+- `SourceAttempt` (`ingest_media_source`) settles a still-running podcast
+  transcript attempt as its terminal failure (`failed_provider`), so a later
+  transcript request can admit a new attempt; other source types keep their dead
+  job for the source repair offer.
 
 every other kind declares `"None"`; its owner records the failure on its domain
 row or in its retained job outcome.
@@ -232,45 +236,46 @@ later.
 
 ## Podcast Live Sync And Backfill
 
-`podcast_sync_subscription_job` is the current-window live path. subscribe,
-scheduled due admission, and manual refresh use one generation-admission
-primitive and the same per-subscription job. Its payload names subscription
-epoch, viewer, Podcast, and generation; the handler also requires the exact
-queue job/attempt lease. it fetches provider/RSS facts outside the database
-transaction, then commits lease-fenced ingest, auto-queue, subscription state
-and collection revisions together. modeled failures are terminal domain results;
-unexpected defects
-use ordinary queue retries, and exhausted retries invoke the exact dead-letter
-finalizer.
+`podcast_sync_subscription_job` is the current-window live path (payload
+`{subscription_id}`, no dedupe key, lease 900 s). The subscription row is its
+state: subscribe inserts it Pending with one job, and manual refresh and the due
+sweep flip only terminal rows to Pending and enqueue one job per flipped row
+under the row lock, joining live ones. The queue's single claim runs it; there is
+no epoch, generation or attempt fence. The handler claims the row, fetches
+provider/RSS facts outside any transaction, then commits ingest, auto-queue and
+the settled status in one transaction that locks the row while it is still
+Running (an overlapping stale run finds it settled and writes nothing). Provider
+and feed failures settle Failed with backoff; unexpected defects use ordinary
+queue retries, and exhausted retries invoke the dead-letter finalizer above.
+Results: `{status, inserted, skipped}` or `{status: Failed, error_code}` or
+`{status: Stale}`.
 
 `podcast_refresh_due_job` is a 15-minute background schedule that admits a
 bounded oldest-due set. it is not a maintenance-only operation.
 
 manual `POST /podcasts/refresh` returns 202 `{data:{requestedCount}}` after
-queue/subscription admission commits. the count is selected subscriptions,
-including active-generation joins, rather than newly created jobs or completed
-syncs. Podcast scope requires the viewer's subscription; Library requires
-membership and selects its placed shows, with Default selecting all the viewer's
-subscriptions. an empty valid scope returns zero. admission joins/promotes an
-active generation or opens one Pending generation with one deduped job.
-there is no refresh-run ledger or per-request progress/completion protocol.
-the browser [refresh owner](panes-tabs.md#refresh) requests admission and reloads
-its own view; existing subscription lifecycle streams observe later sync/backfill
-settlement independently.
+admission commits. the count is selected subscriptions, including ones already
+syncing, rather than newly created jobs or completed syncs. Podcast scope
+requires the viewer's subscription; Library requires membership and selects its
+placed shows, with Default selecting all the viewer's subscriptions. an empty
+valid scope returns zero. there is no refresh-run ledger or per-request
+progress/completion protocol. the browser [refresh owner](panes-tabs.md#refresh)
+requests admission and reloads its own view; existing subscription lifecycle
+streams observe later sync/backfill settlement independently.
 
 `podcast_backfill_subscription` is a separate durable history traversal seeded
-once by Subscribe. Each payload carries `backfillId` and `expectedStepNo`. The
-handler fetches outside the DB transaction, renews the exact queue claim, locks
-and revalidates the backfill/subscription fence, commits one bounded metadata
-batch, advances counters/cursor, and enqueues at most one successor in that
-transaction. Stale claims, removed subscriptions, and already-applied steps
-terminate without writes. Future steps fail closed. Exhausted retries use the
-dead-letter finalizer above; the explicit idempotent Retry command replaces only a current Failed
-backfill and starts one new step-zero chain.
+once by Subscribe. Each payload carries `backfillId` and `expectedStepNo`
+(deduped per step). The handler fetches its page outside the DB transaction,
+then locks the backfill row at the expected, non-terminal step, commits one
+bounded batch, advances counters/cursor, and enqueues at most one successor in
+that transaction. Removed subscriptions and already-applied steps terminate
+without writes (`Stale`). A page that cannot be fetched or parsed raises, so
+exhausted retries reach the dead-letter finalizer above; the idempotent Retry
+command replaces only a Failed backfill and starts one new step-zero chain.
 
 Live and backlog failure are independent. Both persist episode identities,
 metadata, chapters, playback URLs, and RSS transcript references only; neither
-downloads enclosures, queues historical episodes, or materializes transcripts.
+downloads enclosures or materializes transcripts.
 
 ## SERIALIZABLE retries (`db/retries.py`)
 

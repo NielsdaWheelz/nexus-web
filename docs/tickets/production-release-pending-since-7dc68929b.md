@@ -160,3 +160,28 @@ tables. it is irreversible: its downgrade raises; rollback is the pre-release ba
 plus the prior builds, so stop writers and take that backup first (0268 and 0269 run
 in the same window). web and api ship together (chat contract "3"). after the
 release, remove `GENERATION_CONTINUATION_ENCRYPTION_KEY` from the live env.
+
+the podcasts python reauthor adds `0270` (podcast sync without epochs). it drops
+`podcast_subscriptions.sync_generation`, `sync_job_id` and `sync_job_attempt_no`,
+starts the watermark of every subscription with auto-queue on and no watermark at
+migration time (their back catalogue is never queued) and adds the CHECK
+`NOT auto_queue OR auto_queue_watermark_at IS NOT NULL`, makes a subscription's
+backfill and an episode's identity aliases cascade with their parent, and deletes the
+`podcast:control` replay rows. it is irreversible: its downgrade raises. drain the
+old worker before migrating (it reads the dropped columns) and start the new one
+after; queued sync jobs survive (their payload is a superset of the new one). web,
+api and worker ship together; never the web first (the new web sends no
+`Idempotency-Key`, which the old api requires). preflight, read-only:
+
+```sql
+SELECT count(*) FILTER (WHERE auto_queue AND auto_queue_watermark_at IS NULL) AS d1_rows,
+       count(*) FILTER (WHERE sync_status IN ('Pending', 'Running')) AS live_syncs
+FROM podcast_subscriptions;
+SELECT count(*) FROM resource_mutations WHERE mutation_scope = 'podcast:control';
+SELECT count(*) FROM podcast_subscription_backfills b
+WHERE NOT EXISTS (SELECT 1 FROM podcast_subscriptions s WHERE s.id = b.subscription_id);  -- must be 0
+```
+
+expect a few backfills to read Failed after release: a history page that fails to
+fetch or parse now fails the backfill (it used to end history silently); "Retry
+backlog" is the remedy ([ticket](backfills-completed-by-silent-page-failures.md)).

@@ -13,7 +13,14 @@ Retry. The echo and that recovery exist only for these routes (design T1, Q1).
 
 impact: a 409 re-reads the whole loaded prefix in chunks of 200 instead of
 continuing; listening writes make that routine (ticket
-`listening-writes-bump-podcast-collection-families`).
+`listening-writes-bump-podcast-collection-families`). The podcast slice's own
+churn is gone (2026-10-10 python reauthor: ingest moves only the show's
+audience, only when it inserted or changed an episode; sync status, settings and
+backfill progress move nothing); what remains is consumption's listening bumps,
+media-fact writers (ticket `media-fact-writers-bump-every-viewer`) and the
+coupling with the authors slice, which now shares `useServerList` (A2). The
+volatile sorts (unplayed count, latest episode) are why the python reauthor kept
+the revision guard.
 
 fix: move both lists to `parse_manual_page_query` (`collection_page.py:111`)
 with keyset cursors that need no revision; then delete the continuation revision

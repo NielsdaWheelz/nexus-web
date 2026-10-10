@@ -384,7 +384,8 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
             commit={async (acquisition) => {
               const result = await subscribeToPodcast({
                 target: { kind: "Canonical", podcastId },
-                ...acquisition,
+                namedLibraryIds: acquisition.namedLibraryIds,
+                replacementConfirmation: acquisition.replacementConfirmation,
               });
               return { href: result.href };
             }}

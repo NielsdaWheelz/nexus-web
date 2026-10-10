@@ -68,11 +68,7 @@ from nexus.services.media import (
     MediaRecoveryOffer,
     list_collection_media_for_viewer_by_ids,
 )
-from nexus.services.podcasts.subscriptions_query import (
-    existing_podcast_ids,
-    failed_backfill_podcast_ids,
-    subscribed_podcast_ids,
-)
+from nexus.services.podcasts.subscriptions_query import podcast_states
 from nexus.services.resource_graph.refs import RESOURCE_SCHEMES, ResourceRef, ResourceScheme
 from nexus.services.resource_graph.resolve import resolve_refs, visible_ids
 from nexus.services.resource_items.capabilities import ResourceItemCapability, capability_for_scheme
@@ -325,6 +321,7 @@ class _ResolvedFacts:
             for revision_id, subject_ref in artifact_revision_subjects.items()
             if candidate_visible(subject_ref)
         }
+        podcasts = podcast_states(db, viewer_id=viewer_id, podcast_ids=ids("podcast"))
         return cls(
             media=media,
             player_descriptors=projection.player_descriptors(
@@ -334,13 +331,11 @@ class _ResolvedFacts:
                 db, viewer_id=viewer_id, media_ids=media_ids
             ),
             library=library,
-            existing_podcast_ids=existing_podcast_ids(db, podcast_ids=ids("podcast")),
-            subscribed_podcast_ids=subscribed_podcast_ids(
-                db, viewer_id=viewer_id, podcast_ids=ids("podcast")
-            ),
-            failed_backfill_podcast_ids=failed_backfill_podcast_ids(
-                db, viewer_id=viewer_id, podcast_ids=ids("podcast")
-            ),
+            existing_podcast_ids=set(podcasts),
+            subscribed_podcast_ids={key for key, state in podcasts.items() if state.subscribed},
+            failed_backfill_podcast_ids={
+                key for key, state in podcasts.items() if state.backfill_failed
+            },
             owned_conversation_ids=conversations.owned_conversation_ids(
                 db, viewer_id=viewer_id, conversation_ids=ids("conversation")
             ),

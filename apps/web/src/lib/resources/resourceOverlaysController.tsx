@@ -507,7 +507,6 @@ function SubscribeOverlay({
                 target: { kind: "Canonical", podcastId },
                 namedLibraryIds: command.namedLibraryIds,
                 replacementConfirmation: command.replacementConfirmation,
-                idempotencyKey: command.idempotencyKey,
               });
               return { href: result.href };
             } catch (error) {

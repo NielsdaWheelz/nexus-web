@@ -241,7 +241,6 @@ export default function BrowsePreviewPaneBody() {
           target: { kind: "Discovery", target: preview.target },
           namedLibraryIds,
           replacementConfirmation: command.replacementConfirmation,
-          idempotencyKey,
         });
         return { href: result.href };
       }
@@ -249,7 +248,6 @@ export default function BrowsePreviewPaneBody() {
         const { href, mediaId } = await addEpisodeFromDiscovery({
           target: preview.target,
           namedLibraryIds,
-          idempotencyKey,
         });
         return { href, mediaId };
       }

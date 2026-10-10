@@ -45,7 +45,6 @@ export function podcastErrorMessage(
     case "E_CONFLICT":
     case "E_SELECTION_CHANGED":
     case "E_COLLECTION_CHANGED":
-    case "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH":
       return content("It changed meanwhile. Review it, then retry.");
     case "E_INVALID_REQUEST":
       return content("This view or request isn’t valid.");

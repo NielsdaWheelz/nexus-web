@@ -14,6 +14,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter
 
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.schemas.contributor_credit import ContributorCreditOut
+from nexus.schemas.presence import presence_from_nullable as maybe
 from nexus.services.contributor_taxonomy import ContributorRole
 from nexus.services.sealed_handles import (
     DiscoveryTargetHandle,
@@ -39,6 +40,23 @@ class BrowseProviderFailure(Exception):
 
 class BrowseTargetNotFound(Exception):
     """A once-valid external target no longer exists at its provider."""
+
+
+_FAILURE_CODES = {
+    BrowseFailureKind.Unavailable: ApiErrorCode.E_BROWSE_PROVIDER_UNAVAILABLE,
+    BrowseFailureKind.RateLimited: ApiErrorCode.E_BROWSE_PROVIDER_RATE_LIMITED,
+    BrowseFailureKind.QuotaExhausted: ApiErrorCode.E_BROWSE_PROVIDER_QUOTA_EXHAUSTED,
+}
+
+
+def provider_api_error(exc: BrowseProviderFailure) -> ApiError:
+    """Details are ``{kind}``, plus ``retryAt`` or ``resetAt`` as a Presence for the limits."""
+    details: dict[str, object] = {"kind": exc.kind.value}
+    if exc.kind is BrowseFailureKind.RateLimited:
+        details["retryAt"] = maybe(exc.retry_at).model_dump(mode="json")
+    if exc.kind is BrowseFailureKind.QuotaExhausted:
+        details["resetAt"] = maybe(exc.reset_at).model_dump(mode="json")
+    return ApiError(_FAILURE_CODES[exc.kind], "Browse provider request failed", details=details)
 
 
 def is_plain(value: str) -> bool:

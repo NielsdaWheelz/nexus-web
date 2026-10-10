@@ -1512,10 +1512,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Forecast Podcast Transcripts
-         * @description Forecast one server-resolved Podcast episode-query transcript request.
-         */
+        /** Forecast Podcast Transcripts */
         post: operations["forecast_podcast_transcripts_media_transcript_forecasts_post"];
         delete?: never;
         options?: never;
@@ -1532,10 +1529,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Request Podcast Transcript Batch
-         * @description Admit one fingerprinted Podcast episode-query transcript request.
-         */
+        /** Request Podcast Transcript Batch */
         post: operations["request_podcast_transcript_batch_media_transcript_request_batch_post"];
         delete?: never;
         options?: never;
@@ -1990,7 +1984,7 @@ export interface paths {
         put?: never;
         /**
          * Request Media Transcript
-         * @description Admit an explicit transcript request for supported Media; 202 iff it enqueued work.
+         * @description 202 when it enqueued work, else 200.
          */
         post: operations["request_media_transcript_media__media_id__transcript_request_post"];
         delete?: never;
@@ -2236,10 +2230,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Acquire Podcast Episode
-         * @description Acquire one discovered episode without subscribing to its show.
-         */
+        /** Acquire Podcast Episode */
         post: operations["acquire_podcast_episode_podcast_episodes_from_discovery_post"];
         delete?: never;
         options?: never;
@@ -2256,10 +2247,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Refresh Podcasts
-         * @description Enqueue one sync per in-scope subscription; the panes observe the rows.
-         */
+        /** Refresh Podcasts */
         post: operations["refresh_podcasts_podcasts_refresh_post"];
         delete?: never;
         options?: never;
@@ -2274,16 +2262,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * List Subscriptions
-         * @description List the viewer's followed shows.
-         */
+        /** List Subscriptions */
         get: operations["list_subscriptions_podcasts_subscriptions_get"];
         put?: never;
-        /**
-         * Subscribe To Podcast
-         * @description Subscribe the viewer and enqueue the first sync and history backfill.
-         */
+        /** Subscribe To Podcast */
         post: operations["subscribe_to_podcast_podcasts_subscriptions_post"];
         delete?: never;
         options?: never;
@@ -2298,17 +2280,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Get Subscription Status
-         * @description Read viewer-visible sync status for one podcast subscription.
-         */
+        /** Get Subscription Status */
         get: operations["get_subscription_status_podcasts_subscriptions__podcast_id__get"];
         put?: never;
         post?: never;
-        /**
-         * Unsubscribe From Podcast
-         * @description Unsubscribe the viewer and remove the placements they own.
-         */
+        /** Unsubscribe From Podcast */
         delete: operations["unsubscribe_from_podcast_podcasts_subscriptions__podcast_id__delete"];
         options?: never;
         head?: never;
@@ -2324,10 +2300,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Retry Subscription Backfill
-         * @description Restart only a persistently failed historical backfill.
-         */
+        /** Retry Subscription Backfill */
         post: operations["retry_subscription_backfill_podcasts_subscriptions__podcast_id__backfill_retry_post"];
         delete?: never;
         options?: never;
@@ -2348,10 +2321,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /**
-         * Patch Subscription Settings
-         * @description Patch per-subscription playback settings for the authenticated viewer.
-         */
+        /** Patch Subscription Settings */
         patch: operations["patch_subscription_settings_podcasts_subscriptions__podcast_id__settings_patch"];
         trace?: never;
     };
@@ -2362,10 +2332,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Get Podcast Detail
-         * @description Get podcast detail, even if the viewer is not actively subscribed.
-         */
+        /** Get Podcast Detail */
         get: operations["get_podcast_detail_podcasts__podcast_id__get"];
         put?: never;
         post?: never;
@@ -2382,10 +2349,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * List Podcast Episodes
-         * @description List viewer-visible episodes for one podcast.
-         */
+        /** List Podcast Episodes */
         get: operations["list_podcast_episodes_podcasts__podcast_id__episodes_get"];
         put?: never;
         post?: never;
@@ -2404,10 +2368,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Mark Podcast Episode Selection Played
-         * @description Mark every episode in the named state finished.
-         */
+        /** Mark Podcast Episode Selection Played */
         post: operations["mark_podcast_episode_selection_played_podcasts__podcast_id__episodes_mark_played_post"];
         delete?: never;
         options?: never;
@@ -4955,11 +4916,6 @@ export interface components {
             /** Data */
             data: components["schemas"]["LearnDossierOpenedOut"] | components["schemas"]["LearnDossierBuildAcceptedOut"];
         };
-        /** Data[Annotated[Union[PodcastUnsubscribedOut, PodcastAlreadyUnsubscribedOut], FieldInfo(annotation=NoneType, required=True, discriminator='outcome')]] */
-        Data_Annotated_Union_PodcastUnsubscribedOut__PodcastAlreadyUnsubscribedOut___FieldInfo_annotation_NoneType__required_True__discriminator__outcome____: {
-            /** Data */
-            data: components["schemas"]["PodcastUnsubscribedOut"] | components["schemas"]["PodcastAlreadyUnsubscribedOut"];
-        };
         /** Data[Annotated[Union[ReaderTargetTextOut, ReaderTargetPdfOut, ReaderTargetTimeOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         Data_Annotated_Union_ReaderTargetTextOut__ReaderTargetPdfOut__ReaderTargetTimeOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Data */
@@ -5239,13 +5195,13 @@ export interface components {
         Data_PodcastSubscribeOut_: {
             data: components["schemas"]["PodcastSubscribeOut"];
         };
-        /** Data[PodcastSubscriptionSettingsOut] */
-        Data_PodcastSubscriptionSettingsOut_: {
-            data: components["schemas"]["PodcastSubscriptionSettingsOut"];
-        };
         /** Data[PodcastSubscriptionStatusOut] */
         Data_PodcastSubscriptionStatusOut_: {
             data: components["schemas"]["PodcastSubscriptionStatusOut"];
+        };
+        /** Data[PodcastUnsubscribeOut] */
+        Data_PodcastUnsubscribeOut_: {
+            data: components["schemas"]["PodcastUnsubscribeOut"];
         };
         /** Data[Presence[Annotated[nexus.schemas.passage_anchors.NotePassageTarget | nexus.schemas.passage_anchors.FragmentPassageTarget | nexus.schemas.passage_anchors.TimePassageTarget | nexus.schemas.passage_anchors.PdfPassageTarget, FieldInfo(annotation=NoneType, required=True, discriminator='kind')]]] */
         Data_Presence_Annotated_PdfPassageTarget__FieldInfo_annotation_NoneType__required_True__discriminator__kind_____: {
@@ -9177,23 +9133,6 @@ export interface components {
             /** Title */
             title: string;
         };
-        /** PodcastAlreadyUnsubscribedOut */
-        PodcastAlreadyUnsubscribedOut: {
-            /** Collectionrevision */
-            collectionRevision: number;
-            /** Libraryentriescollectionrevision */
-            libraryEntriesCollectionRevision: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            outcome: "AlreadyUnsubscribed";
-            /**
-             * Podcast Id
-             * Format: uuid
-             */
-            podcast_id: string;
-        };
         /** PodcastBackfillOut */
         PodcastBackfillOut: {
             /** Addedcount */
@@ -9205,11 +9144,7 @@ export interface components {
             id: string;
             /** Processedcount */
             processedCount: number;
-            /**
-             * State
-             * @enum {string}
-             */
-            state: "Pending" | "Running" | "Complete" | "SourceLimited" | "Failed";
+            state: components["schemas"]["PodcastSyncStatus"];
         };
         /** PodcastBackfillRetryOut */
         PodcastBackfillRetryOut: {
@@ -9323,8 +9258,6 @@ export interface components {
         };
         /** PodcastEpisodeFromDiscoveryOut */
         PodcastEpisodeFromDiscoveryOut: {
-            /** Collectionrevision */
-            collectionRevision: number;
             /** Destinationoutcomes */
             destinationOutcomes: components["schemas"]["PodcastDestinationOutcomeOut"][];
             /** Href */
@@ -9342,10 +9275,7 @@ export interface components {
             /** Target */
             target: string;
         };
-        /**
-         * PodcastEpisodeListItemOut
-         * @description Compact row projection for one podcast episode.
-         */
+        /** PodcastEpisodeListItemOut */
         PodcastEpisodeListItemOut: {
             /** Has Show Notes */
             has_show_notes: boolean;
@@ -9361,8 +9291,6 @@ export interface components {
         PodcastEpisodeMarkPlayedOut: {
             /** Changedcount */
             changedCount: number;
-            /** Collectionrevision */
-            collectionRevision: number;
             /** Matchedcount */
             matchedCount: number;
         };
@@ -9381,8 +9309,6 @@ export interface components {
         };
         /** PodcastEpisodeQueryTranscriptRequestOut */
         PodcastEpisodeQueryTranscriptRequestOut: {
-            /** Collectionrevision */
-            collectionRevision: number;
             /** Matchedcount */
             matchedCount: number;
             /** Queuedcount */
@@ -9407,10 +9333,7 @@ export interface components {
             reason: "search" | "highlight" | "quote";
             selection: components["schemas"]["PodcastEpisodeSelection"];
         };
-        /**
-         * PodcastEpisodeSelection
-         * @description Membership-defining episode state shared by list-wide commands.
-         */
+        /** PodcastEpisodeSelection */
         PodcastEpisodeSelection: {
             /**
              * State
@@ -9621,30 +9544,13 @@ export interface components {
              */
             type: "podcast";
         };
-        /** PodcastSubscribeDestinationOutcomeOut */
-        PodcastSubscribeDestinationOutcomeOut: {
-            /**
-             * Libraryid
-             * Format: uuid
-             */
-            libraryId: string;
-            /**
-             * Outcome
-             * @enum {string}
-             */
-            outcome: "Added" | "AlreadyPresent";
-        };
         /** PodcastSubscribeOut */
         PodcastSubscribeOut: {
             backfill: components["schemas"]["PodcastBackfillOut"];
-            /** Collectionrevision */
-            collectionRevision: number;
             /** Destinations */
-            destinations: components["schemas"]["PodcastSubscribeDestinationOutcomeOut"][];
+            destinations: components["schemas"]["PodcastDestinationOutcomeOut"][];
             /** Href */
             href: string;
-            /** Libraryentriescollectionrevision */
-            libraryEntriesCollectionRevision: number;
             /**
              * Outcome
              * @enum {string}
@@ -9666,7 +9572,7 @@ export interface components {
         };
         /**
          * PodcastSubscriptionLifecycleSnapshotOut
-         * @description One viewer-owned subscription's live sync and initial-backfill state.
+         * @description One viewer-owned subscription's live sync and backfill state (an SSE frame).
          */
         PodcastSubscriptionLifecycleSnapshotOut: {
             backfill: components["schemas"]["PodcastBackfillOut"];
@@ -9677,10 +9583,7 @@ export interface components {
             podcastId: string;
             syncStatus: components["schemas"]["PodcastSyncStatus"];
         };
-        /**
-         * PodcastSubscriptionListItemOut
-         * @description Compact row projection for the followed-Podcasts collection.
-         */
+        /** PodcastSubscriptionListItemOut */
         PodcastSubscriptionListItemOut: {
             /** Auto Queue */
             auto_queue: boolean;
@@ -9715,53 +9618,10 @@ export interface components {
              */
             state: "Subscribed" | "Unsubscribed";
         };
-        /** PodcastSubscriptionSettingsOut */
-        PodcastSubscriptionSettingsOut: {
-            /**
-             * Auto Queue
-             * @default false
-             */
-            auto_queue: boolean;
-            backfill: components["schemas"]["PodcastBackfillOut"];
-            /** Collectionrevision */
-            collectionRevision: number;
-            default_playback_speed: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Output"];
-            /** Last Checked At */
-            last_checked_at: string | null;
-            /** Libraryentriescollectionrevision */
-            libraryEntriesCollectionRevision: number;
-            pause_shortening_mode: components["schemas"]["Presence_Literal__Off____Natural___-Output"];
-            /**
-             * Podcast Id
-             * Format: uuid
-             */
-            podcast_id: string;
-            /** Sync Attempts */
-            sync_attempts: number;
-            /** Sync Completed At */
-            sync_completed_at: string | null;
-            /** Sync Error Code */
-            sync_error_code: string | null;
-            /** Sync Error Message */
-            sync_error_message: string | null;
-            /** Sync Started At */
-            sync_started_at: string | null;
-            sync_status: components["schemas"]["PodcastSyncStatus"];
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-            /**
-             * User Id
-             * Format: uuid
-             */
-            user_id: string;
-        };
         /** PodcastSubscriptionSettingsPatchRequest */
         PodcastSubscriptionSettingsPatchRequest: {
             /** Auto Queue */
-            auto_queue?: boolean | null;
+            auto_queue?: boolean;
             default_playback_speed?: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Input"];
             pause_shortening_mode?: components["schemas"]["Presence_Literal__Off____Natural___-Input"];
         };
@@ -9822,25 +9682,27 @@ export interface components {
         };
         /** @enum {string} */
         PodcastSyncStatus: "Pending" | "Running" | "Complete" | "SourceLimited" | "Failed";
-        /** PodcastUnsubscribedOut */
-        PodcastUnsubscribedOut: {
-            /** Collectionrevision */
-            collectionRevision: number;
-            /** Libraryentriescollectionrevision */
-            libraryEntriesCollectionRevision: number;
+        /** PodcastUnsubscribeOut */
+        PodcastUnsubscribeOut: {
             /**
-             * @description discriminator enum property added by openapi-typescript
+             * Outcome
              * @enum {string}
              */
-            outcome: "Unsubscribed";
+            outcome: "Unsubscribed" | "AlreadyUnsubscribed";
             /**
              * Podcast Id
              * Format: uuid
              */
             podcast_id: string;
-            /** Removed Placement Count */
+            /**
+             * Removed Placement Count
+             * @default 0
+             */
             removed_placement_count: number;
-            /** Retained Shared Count */
+            /**
+             * Retained Shared Count
+             * @default 0
+             */
             retained_shared_count: number;
         };
         Presence_ActivitySessionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ActivitySessionOut_"];
@@ -19444,9 +19306,7 @@ export interface operations {
     acquire_podcast_episode_podcast_episodes_from_discovery_post: {
         parameters: {
             query?: never;
-            header: {
-                "Idempotency-Key": string;
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -19532,9 +19392,7 @@ export interface operations {
     subscribe_to_podcast_podcasts_subscriptions_post: {
         parameters: {
             query?: never;
-            header: {
-                "Idempotency-Key": string;
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -19598,9 +19456,7 @@ export interface operations {
     unsubscribe_from_podcast_podcasts_subscriptions__podcast_id__delete: {
         parameters: {
             query?: never;
-            header: {
-                "Idempotency-Key": string;
-            };
+            header?: never;
             path: {
                 podcast_id: string;
             };
@@ -19614,7 +19470,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_Annotated_Union_PodcastUnsubscribedOut__PodcastAlreadyUnsubscribedOut___FieldInfo_annotation_NoneType__required_True__discriminator__outcome____"];
+                    "application/json": components["schemas"]["Data_PodcastUnsubscribeOut_"];
                 };
             };
             /** @description Validation Error */
@@ -19631,9 +19487,7 @@ export interface operations {
     retry_subscription_backfill_podcasts_subscriptions__podcast_id__backfill_retry_post: {
         parameters: {
             query?: never;
-            header: {
-                "Idempotency-Key": string;
-            };
+            header?: never;
             path: {
                 podcast_id: string;
             };
@@ -19682,7 +19536,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_PodcastSubscriptionSettingsOut_"];
+                    "application/json": components["schemas"]["Data_PodcastSubscriptionStatusOut_"];
                 };
             };
             /** @description Validation Error */
