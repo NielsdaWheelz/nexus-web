@@ -13,8 +13,7 @@ block the event loop. The framing and tail envelope live in ``_sse``.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -36,10 +35,11 @@ from nexus.api.routes._sse import (
 from nexus.db.session import get_repeatable_read_db, get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.schemas.execution import EXECUTION_ADVISORY_EVENT_TYPE, ChatRunExecutionOut
+from nexus.schemas.execution import EXECUTION_ADVISORY_EVENT_TYPE
 from nexus.services import chat_runs as chat_runs_service
 from nexus.services import media as media_service
-from nexus.services import metadata_operations, run_kit
+from nexus.services import metadata_operations
+from nexus.services.chat_run_event_store import CHAT_RUN_EVENTS_CHANNEL, read_run_events
 from nexus.services.chat_run_execution import chat_run_execution
 from nexus.services.dossier import engine as dossier_engine
 from nexus.services.oracle import readings as oracle_readings
@@ -49,76 +49,6 @@ router = APIRouter(tags=["streaming"])
 logger = get_logger(__name__)
 
 _SSE_HEADERS = {"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"}
-
-
-@dataclass(frozen=True)
-class CursorStreamKind:
-    """Binds a durable-run kind to its ownership assert and after-cursor read.
-
-    ``assert_viewer`` runs before listener setup and again in the same fresh
-    session immediately before every replay/tail ``read_after``. This prevents a
-    terminal event from crossing the stream after ownership or visibility is
-    revoked. Both callbacks receive ``viewer_id`` even when the underlying event
-    read is viewer-less.
-    """
-
-    run_kind: run_kit.RunStreamKind
-    assert_viewer: Callable[[Session, UUID, UUID], None]
-    read_after: Callable[[Session, UUID, UUID, int], tuple[Sequence[Any], bool]]
-    read_advisory: Callable[[Session, UUID, UUID], ChatRunExecutionOut | None] | None = None
-
-
-_CHAT_RUN_KIND = CursorStreamKind(
-    run_kind=run_kit.RunStreamKind.ChatRun,
-    assert_viewer=lambda db, viewer_id, run_id: chat_runs_service.assert_chat_run_owner(
-        db, viewer_id=viewer_id, run_id=run_id
-    ),
-    read_after=lambda db, viewer_id, run_id, after: run_kit.get_run_events(
-        db, run_kit.RunStreamKind.ChatRun, run_id, after
-    ),
-    read_advisory=lambda db, viewer_id, run_id: chat_run_execution(db, run_id=run_id),
-)
-
-
-async def make_cursor_stream_response(
-    kind: CursorStreamKind, *, request: Request, entity_id: UUID, viewer_id: UUID, after: int
-) -> StreamingResponse:
-    """Threadpool ownership assert + open listener + append-cursor tail, one envelope."""
-
-    def assert_viewer() -> None:
-        with get_session_factory()() as db:
-            kind.assert_viewer(db, viewer_id, entity_id)
-
-    def read_after(after: int) -> tuple[Sequence[Any], bool]:
-        with get_session_factory()() as db:
-            get_repeatable_read_db(db)
-            kind.assert_viewer(db, viewer_id, entity_id)
-            return kind.read_after(db, viewer_id, entity_id, after)
-
-    def read_advisory() -> tuple[str, dict[str, Any]] | None:
-        if kind.read_advisory is None:
-            return None
-        with get_session_factory()() as db:
-            get_repeatable_read_db(db)
-            kind.assert_viewer(db, viewer_id, entity_id)
-            advisory = kind.read_advisory(db, viewer_id, entity_id)
-            if advisory is None:
-                return None
-            return EXECUTION_ADVISORY_EVENT_TYPE, advisory.model_dump(mode="json")
-
-    await run_in_threadpool(assert_viewer)
-    listener = await open_sse_listener(run_kit.notify_channel(kind.run_kind), str(entity_id))
-    return StreamingResponse(
-        tail_cursor_stream(
-            request=request,
-            listener=listener,
-            after=after,
-            read_after=read_after,
-            read_advisory=read_advisory if kind.read_advisory is not None else None,
-        ),
-        media_type="text/event-stream; charset=utf-8",
-        headers=_SSE_HEADERS,
-    )
 
 
 @router.get(
@@ -148,8 +78,44 @@ async def stream_chat_run_events(
         cursor=cursor,
         cursor_source="after" if after is not None else "last_event_id" if cursor else "none",
     )
-    return await make_cursor_stream_response(
-        _CHAT_RUN_KIND, request=request, entity_id=run_id, viewer_id=viewer_id, after=cursor
+
+    # The ownership assert runs before listener setup and again in the same fresh
+    # session before every replay/tail read, so a terminal event never crosses
+    # the stream after ownership or visibility is revoked.
+    def assert_viewer(db: Session) -> None:
+        chat_runs_service.assert_chat_run_owner(db, viewer_id=viewer_id, run_id=run_id)
+
+    def read_after(after: int) -> tuple[Sequence[Any], bool]:
+        with get_session_factory()() as db:
+            get_repeatable_read_db(db)
+            assert_viewer(db)
+            return read_run_events(db, run_id, after)
+
+    def read_advisory() -> tuple[str, dict[str, Any]] | None:
+        with get_session_factory()() as db:
+            get_repeatable_read_db(db)
+            assert_viewer(db)
+            advisory = chat_run_execution(db, run_id=run_id)
+            if advisory is None:
+                return None
+            return EXECUTION_ADVISORY_EVENT_TYPE, advisory.model_dump(mode="json")
+
+    def assert_viewer_once() -> None:
+        with get_session_factory()() as db:
+            assert_viewer(db)
+
+    await run_in_threadpool(assert_viewer_once)
+    listener = await open_sse_listener(CHAT_RUN_EVENTS_CHANNEL, str(run_id))
+    return StreamingResponse(
+        tail_cursor_stream(
+            request=request,
+            listener=listener,
+            after=cursor,
+            read_after=read_after,
+            read_advisory=read_advisory,
+        ),
+        media_type="text/event-stream; charset=utf-8",
+        headers=_SSE_HEADERS,
     )
 
 

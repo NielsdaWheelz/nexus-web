@@ -12,13 +12,12 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Final, Literal
+from typing import Any, Final
 
 from llm_tools import (
     WEB_READ_SPEC,
     WEB_SEARCH_SPEC,
     CapabilityProfile,
-    HostTable,
     Native,
     ProfileId,
     RunLimits,
@@ -33,8 +32,6 @@ from universal_memory.tools import MEMORY_READ_IDS, MEMORY_READ_SPECS, MEMORY_SA
 
 from nexus.services.tool_runtime.declarations import NEXUS_TOOL_DECLARATIONS
 from nexus.services.tool_runtime.plan_revisions import TOOL_PLAN_AUTHORITY_REVISIONS
-
-type ToolExposureName = Literal["HostTable", "Native"]
 
 _NEXUS_READ_TOOL_IDS: Final[tuple[ToolId, ...]] = tuple(
     ToolId(value)
@@ -114,14 +111,6 @@ class ToolPlanDefinition:
         )
 
 
-def _exposure_name(plan: ToolPlan) -> ToolExposureName:
-    if isinstance(plan.exposure, Native):
-        return "Native"
-    if isinstance(plan.exposure, HostTable):
-        return "HostTable"
-    raise ValueError("Nexus tool plan has an unsupported exposure")
-
-
 def _definition_json(
     *,
     plan_id: str,
@@ -142,7 +131,8 @@ def _definition_json(
             }
         )
     return {
-        "exposure": _exposure_name(plan),
+        # every plan is Native; the literal stays in the hashed authority revision.
+        "exposure": "Native",
         "grants": grants,
         "max_live_writes": max_live_writes,
         "plan_id": plan_id,
@@ -151,33 +141,8 @@ def _definition_json(
     }
 
 
-def _definition(
-    plan_id: str,
-    profile_id: str,
-    tool_ids: tuple[ToolId, ...],
-    run_limits: RunLimits,
-    *,
-    exposure: ToolExposureName,
-    max_live_writes: int | None = None,
-) -> ToolPlanDefinition:
-    profile = CapabilityProfile(
-        id=ProfileId(profile_id),
-        grants=tuple(ToolGrant(id=tool_id, limits=None) for tool_id in tool_ids),
-        run_limits=run_limits,
-    )
-    plan = ToolPlan(
-        profile=profile.id,
-        exposure={"Native": Native, "HostTable": HostTable}[exposure](),
-    )
-    return ToolPlanDefinition(
-        plan_id=plan_id,
-        profile=profile,
-        plan=plan,
-        max_live_writes=max_live_writes,
-    )
-
-
-_NATIVE_RUN_LIMITS: Final[RunLimits] = RunLimits(
+# one call in flight, otherwise unlimited: no plan carries an elapsed budget.
+_RUN_LIMITS: Final[RunLimits] = RunLimits(
     max_calls=None,
     max_external_attempts=None,
     max_input_bytes=None,
@@ -186,12 +151,32 @@ _NATIVE_RUN_LIMITS: Final[RunLimits] = RunLimits(
     max_elapsed_seconds=None,
 )
 
+
+def _definition(
+    plan_id: str,
+    profile_id: str,
+    tool_ids: tuple[ToolId, ...],
+    *,
+    max_live_writes: int | None = None,
+) -> ToolPlanDefinition:
+    profile = CapabilityProfile(
+        id=ProfileId(profile_id),
+        grants=tuple(ToolGrant(id=tool_id, limits=None) for tool_id in tool_ids),
+        run_limits=_RUN_LIMITS,
+    )
+    plan = ToolPlan(profile=profile.id, exposure=Native())
+    return ToolPlanDefinition(
+        plan_id=plan_id,
+        profile=profile,
+        plan=plan,
+        max_live_writes=max_live_writes,
+    )
+
+
 CHAT_READ_ADDITIVE_WRITE_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
     "ChatReadAdditiveWrite",
     "chat_read_additive_write",
     (WEB_SEARCH_SPEC.id, WEB_READ_SPEC.id, *_NEXUS_READ_TOOL_IDS, *_NEXUS_ADDITIVE_WRITE_TOOL_IDS),
-    _NATIVE_RUN_LIMITS,
-    exposure="Native",
     max_live_writes=8,
 )
 CHAT_MEMORY_READ_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
@@ -204,8 +189,6 @@ CHAT_MEMORY_READ_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
         *_NEXUS_ADDITIVE_WRITE_TOOL_IDS,
         *MEMORY_READ_IDS,
     ),
-    _NATIVE_RUN_LIMITS,
-    exposure="Native",
     max_live_writes=8,
 )
 CHAT_MEMORY_READ_SAVE_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
@@ -219,8 +202,6 @@ CHAT_MEMORY_READ_SAVE_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
         *MEMORY_READ_IDS,
         MEMORY_SAVE_NOTE_SPEC.id,
     ),
-    _NATIVE_RUN_LIMITS,
-    exposure="Native",
     max_live_writes=8,
 )
 METADATA_RESEARCH_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
@@ -232,15 +213,11 @@ METADATA_RESEARCH_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
         WEB_SEARCH_SPEC.id,
         WEB_READ_SPEC.id,
     ),
-    _NATIVE_RUN_LIMITS,
-    exposure="Native",
 )
 NO_MODEL_TOOLS_DEFINITION: Final[ToolPlanDefinition] = _definition(
     "NoModelTools",
     "no_model_tools",
     (),
-    _NATIVE_RUN_LIMITS,
-    exposure="Native",
 )
 
 TOOL_PLAN_DEFINITIONS: Final[tuple[ToolPlanDefinition, ...]] = (

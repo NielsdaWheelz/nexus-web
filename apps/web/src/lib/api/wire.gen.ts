@@ -3332,7 +3332,6 @@ export interface components {
             created_at: string;
             /** Integrity Notices */
             integrity_notices: components["schemas"]["TrustIntegrityNoticeOut"][];
-            prompt: components["schemas"]["TrustPromptAssemblyOut"] | null;
             run: components["schemas"]["TrustRunOut"] | null;
             /**
              * Schema Version
@@ -13951,25 +13950,6 @@ export interface components {
             code: string;
             /** Message */
             message: string;
-        };
-        /** TrustPromptAssemblyOut */
-        TrustPromptAssemblyOut: {
-            /** Dropped Items */
-            dropped_items: {
-                [key: string]: unknown;
-            }[];
-            /** Estimated Input Tokens */
-            estimated_input_tokens: number;
-            /** Included Context Refs */
-            included_context_refs: {
-                [key: string]: unknown;
-            }[];
-            /** Included Message Ids */
-            included_message_ids: string[];
-            /** Input Budget Tokens */
-            input_budget_tokens: number;
-            /** Reserved Output Tokens */
-            reserved_output_tokens: number;
         };
         /** TrustRetrievalOut */
         TrustRetrievalOut: {

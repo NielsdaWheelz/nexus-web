@@ -1,10 +1,10 @@
-"""Chat context assembly: prompt blocks, lane budget, intent, and its ledger."""
+"""Chat context assembly: prompt blocks, lane budget, and the generation intent."""
 
 from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from math import ceil
 from typing import Any, Literal, cast
 from uuid import UUID
@@ -73,30 +73,11 @@ class ContextBudgetError(ValueError):
 
 
 @dataclass(frozen=True)
-class PromptBudget:
-    reserved_output_tokens: int
-    input_budget_tokens: int
-
-
-@dataclass(frozen=True)
 class PromptBlock:
     id: str
     role: PromptRole
-    lane: BudgetLane
     text: str
     estimated_tokens: int
-    source_refs: tuple[Mapping[str, object], ...]
-
-    def manifest_entry(self, *, ordinal: int, included: bool) -> dict[str, object]:
-        return {
-            "id": self.id,
-            "role": self.role,
-            "lane": self.lane,
-            "ordinal": ordinal,
-            "included": included,
-            "estimated_tokens": self.estimated_tokens,
-            "source_refs": [dict(ref) for ref in self.source_refs],
-        }
 
 
 @dataclass(frozen=True)
@@ -106,14 +87,6 @@ class BudgetItem:
     blocks: tuple[PromptBlock, ...]
     mandatory: bool
     priority: int = 0
-    metadata: Mapping[str, object] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class BudgetSelection:
-    budget: PromptBudget
-    included_keys: frozenset[str]
-    dropped: tuple[Mapping[str, object], ...]
 
 
 def estimate_tokens(text_value: str) -> int:
@@ -129,17 +102,13 @@ def make_prompt_block(
     *,
     block_id: str,
     role: PromptRole,
-    lane: BudgetLane,
     text: str,
-    source_refs: Sequence[Mapping[str, object]] = (),
 ) -> PromptBlock:
     return PromptBlock(
         id=block_id,
         role=role,
-        lane=lane,
         text=text,
         estimated_tokens=estimate_tokens(text),
-        source_refs=tuple(dict(ref) for ref in source_refs),
     )
 
 
@@ -147,23 +116,22 @@ def estimate_block_tokens(blocks: Sequence[PromptBlock]) -> int:
     return sum(block.estimated_tokens for block in blocks)
 
 
-def build_prompt_budget(*, max_context_tokens: int, max_output_tokens: int) -> PromptBudget:
-    """Compute the model input budget after the requested output allowance."""
+def build_input_budget(*, max_context_tokens: int, max_output_tokens: int) -> int:
+    """Compute the model input token budget after the requested output allowance."""
 
-    reserved_output_tokens = max(0, max_output_tokens)
-    input_budget_tokens = max_context_tokens - reserved_output_tokens
+    input_budget_tokens = max_context_tokens - max(0, max_output_tokens)
     if input_budget_tokens <= 0:
         raise ContextBudgetError(
             "Model context window is exhausted by the requested output allowance"
         )
-    return PromptBudget(
-        reserved_output_tokens=reserved_output_tokens,
-        input_budget_tokens=input_budget_tokens,
-    )
+    return input_budget_tokens
 
 
-def allocate_budget(items: Sequence[BudgetItem], budget: PromptBudget) -> BudgetSelection:
-    """Admit mandatory blocks first, then history by priority, until the budget ends."""
+def allocate_budget(items: Sequence[BudgetItem], input_budget_tokens: int) -> frozenset[str]:
+    """Admit mandatory blocks first, then history by priority, until the budget ends.
+
+    Returns the included item keys.
+    """
 
     items_by_lane: dict[BudgetLane, list[BudgetItem]] = defaultdict(list)
     for item in items:
@@ -175,8 +143,7 @@ def allocate_budget(items: Sequence[BudgetItem], budget: PromptBudget) -> Budget
             ordered.extend(sorted(lane_items, key=lambda item: item.priority, reverse=True))
 
     included: set[str] = set()
-    dropped: list[Mapping[str, object]] = []
-    remaining = budget.input_budget_tokens
+    remaining = input_budget_tokens
     for item in ordered:
         if not item.blocks:
             continue
@@ -187,24 +154,7 @@ def allocate_budget(items: Sequence[BudgetItem], budget: PromptBudget) -> Budget
             continue
         if item.mandatory:
             raise ContextBudgetError("Mandatory prompt context cannot fit the model input budget")
-        dropped.append(
-            {
-                "key": item.key,
-                "lane": item.lane,
-                "reason": "budget_exceeded",
-                "estimated_tokens": item_tokens,
-                "blocks": [
-                    block.manifest_entry(ordinal=index, included=False)
-                    for index, block in enumerate(item.blocks)
-                ],
-                "metadata": dict(item.metadata),
-            }
-        )
-    return BudgetSelection(
-        budget=budget,
-        included_keys=frozenset(included),
-        dropped=tuple(dropped),
-    )
+    return frozenset(included)
 
 
 @dataclass(frozen=True)
@@ -318,25 +268,11 @@ class HistoryUnit:
 
     key: str
     blocks: tuple[PromptBlock, ...]
-    message_ids: tuple[UUID, ...]
-    first_seq: int
-    last_seq: int
-
-
-@dataclass(frozen=True)
-class AssemblyLedger:
-    reserved_output_tokens: int
-    input_budget_tokens: int
-    estimated_input_tokens: int
-    included_message_ids: tuple[UUID, ...]
-    included_context_refs: tuple[Mapping[str, object], ...]
-    dropped_items: tuple[Mapping[str, object], ...]
 
 
 @dataclass(frozen=True)
 class ContextAssembly:
     generate_intent: GenerationIntent
-    ledger: AssemblyLedger
     # Citable attached <resources>, in dense ordinal order (n = index + 1), so n
     # is rendered only for resources whose retrieval row can materialize.
     attached_citations: tuple[RetrievalCitation, ...]
@@ -374,10 +310,9 @@ def assemble_chat_context(
     system_block = make_prompt_block(
         block_id="system",
         role="system",
-        lane="system",
         text=render_system_prompt_block(),
     )
-    mandatory_blocks: list[tuple[str, PromptBlock, Mapping[str, object]]] = []
+    mandatory_blocks: list[tuple[str, PromptBlock]] = []
 
     current_snapshot = (
         decode_reader_selection_snapshot(user_message.reader_selection_snapshot)
@@ -392,18 +327,14 @@ def assemble_chat_context(
         # Highlight is excluded (via subject_uri) from generic resource
         # rendering so the canonical quote text appears exactly once.
         subject_uri = ResourceRef(scheme="highlight", id=current_snapshot.key.highlight_id).uri
-        subject_source_ref = {"role": "subject", "resource_uri": subject_uri}
         mandatory_blocks.append(
             (
                 "subject",
                 make_prompt_block(
                     block_id=f"subject:{subject_uri}",
                     role="system",
-                    lane="attached_context",
                     text=render_subject_metadata_block(current_snapshot),
-                    source_refs=[subject_source_ref],
                 ),
-                subject_source_ref,
             )
         )
         mandatory_blocks.append(
@@ -412,61 +343,42 @@ def assemble_chat_context(
                 make_prompt_block(
                     block_id="reader_selection",
                     role="system",
-                    lane="attached_context",
                     text=render_reader_selection_prompt_block(current_snapshot),
-                    source_refs=[
-                        {"type": "media", "id": str(current_snapshot.key.media_id)},
-                        {"type": "highlight", "id": str(current_snapshot.key.highlight_id)},
-                    ],
                 ),
-                {"hint": "reader_selection"},
             )
         )
     else:
-        subject_block, subject_metadata, subject_uri = _build_subject_block(
+        subject_block, subject_uri = _build_subject_block(
             db,
             turn_context,
             viewer_id=run.owner_user_id,
             conversation_id=conversation.id,
         )
         if subject_block is not None:
-            mandatory_blocks.append(("subject", subject_block, subject_metadata))
+            mandatory_blocks.append(("subject", subject_block))
 
     if user_message.branch_anchor_kind == "assistant_selection":
-        branch_anchor_ref = {
-            "type": "assistant_selection_branch_anchor",
-            "message_id": str(user_message.branch_anchor.get("message_id") or ""),
-            "user_message_id": str(user_message.id),
-            "parent_message_id": str(user_message.parent_message_id),
-        }
         mandatory_blocks.append(
             (
                 "branch_anchor",
                 make_prompt_block(
                     block_id=f"branch_anchor:{user_message.id}",
                     role="system",
-                    lane="attached_context",
                     text=_render_branch_anchor_block(user_message.branch_anchor),
-                    source_refs=[branch_anchor_ref],
                 ),
-                branch_anchor_ref,
             )
         )
 
-    resources_block, resources_metadata, attached_citations, resource_revision_refs = (
-        _build_resources_block(
-            db,
-            conversation_id=conversation.id,
-            viewer_id=run.owner_user_id,
-            subject_uri=subject_uri,
-        )
+    resources_block, attached_citations = _build_resources_block(
+        db,
+        conversation_id=conversation.id,
+        viewer_id=run.owner_user_id,
+        subject_uri=subject_uri,
     )
     current_user_block = make_prompt_block(
         block_id=f"current_user:{user_message.id}",
         role="user",
-        lane="current_user",
         text=user_message.content,
-        source_refs=[{"type": "message", "id": str(user_message.id)}],
     )
 
     budget_items: list[BudgetItem] = [
@@ -478,14 +390,8 @@ def assemble_chat_context(
             mandatory=True,
         ),
         *(
-            BudgetItem(
-                key=key,
-                lane="attached_context",
-                blocks=(block,),
-                mandatory=True,
-                metadata=metadata,
-            )
-            for key, block, metadata in mandatory_blocks
+            BudgetItem(key=key, lane="attached_context", blocks=(block,), mandatory=True)
+            for key, block in mandatory_blocks
         ),
     ]
     if resources_block is not None:
@@ -495,7 +401,6 @@ def assemble_chat_context(
                 lane="attached_context",
                 blocks=(resources_block,),
                 mandatory=True,
-                metadata=resources_metadata,
             )
         )
     history_count = len(history_units)
@@ -507,20 +412,14 @@ def assemble_chat_context(
                 blocks=unit.blocks,
                 mandatory=False,
                 priority=history_count - index,
-                metadata={
-                    "message_ids": [str(message_id) for message_id in unit.message_ids],
-                    "first_seq": unit.first_seq,
-                    "last_seq": unit.last_seq,
-                },
             )
         )
 
-    budget = build_prompt_budget(
+    input_budget_tokens = build_input_budget(
         max_context_tokens=max_context_tokens,
         max_output_tokens=max_output_tokens,
     )
-    selection = allocate_budget(budget_items, budget)
-    included_keys = selection.included_keys
+    included_keys = allocate_budget(budget_items, input_budget_tokens)
     included_history = [unit for unit in history_units if unit.key in included_keys]
 
     turns: list[PromptTurn] = [
@@ -528,7 +427,7 @@ def assemble_chat_context(
             role="system",
             blocks=(
                 system_block,
-                *(block for key, block, _ in mandatory_blocks if key in included_keys),
+                *(block for key, block in mandatory_blocks if key in included_keys),
                 *(
                     (resources_block,)
                     if resources_block is not None and "resources" in included_keys
@@ -546,31 +445,14 @@ def assemble_chat_context(
     plan = PromptPlan(turns=tuple(turns))
 
     estimated_input_tokens = estimate_block_tokens(plan.blocks()) + len(plan.turns) * 4
-    if estimated_input_tokens > budget.input_budget_tokens:
+    if estimated_input_tokens > input_budget_tokens:
         raise ContextBudgetError("Assembled prompt exceeds the model input budget")
     total_chars = sum(len(block.text) for block in plan.blocks())
     if total_chars > MAX_PROMPT_CHARS:
         raise ContextBudgetError(f"Prompt size {total_chars} exceeds max {MAX_PROMPT_CHARS}")
 
-    included_context_refs = [
-        metadata for key, _block, metadata in mandatory_blocks if key in included_keys
-    ]
-    # Resources are their own BudgetItem; stamp the consumed revision of each
-    # included resource into the ledger.
-    if "resources" in included_keys:
-        included_context_refs.extend(resource_revision_refs)
     return ContextAssembly(
         generate_intent=_generation_intent_from_plan(plan),
-        ledger=AssemblyLedger(
-            reserved_output_tokens=budget.reserved_output_tokens,
-            input_budget_tokens=budget.input_budget_tokens,
-            estimated_input_tokens=estimated_input_tokens,
-            included_message_ids=tuple(
-                message_id for unit in included_history for message_id in unit.message_ids
-            ),
-            included_context_refs=tuple(included_context_refs),
-            dropped_items=selection.dropped,
-        ),
         attached_citations=attached_citations,
     )
 
@@ -604,28 +486,16 @@ def chat_prompt_payload_ref(*, run_id: UUID, intent: GenerationIntent) -> Immuta
 _INSERT_ASSEMBLY = text(
     """
     INSERT INTO chat_prompt_assemblies (
-        chat_run_id, conversation_id, assistant_message_id, generation_intent,
-        reserved_output_tokens, input_budget_tokens, estimated_input_tokens,
-        included_message_ids, included_context_refs, dropped_items
+        chat_run_id, conversation_id, assistant_message_id, generation_intent
     )
-    VALUES (
-        :chat_run_id, :conversation_id, :assistant_message_id, :generation_intent,
-        :reserved_output_tokens, :input_budget_tokens, :estimated_input_tokens,
-        :included_message_ids, :included_context_refs, :dropped_items
-    )
+    VALUES (:chat_run_id, :conversation_id, :assistant_message_id, :generation_intent)
     """
-).bindparams(
-    bindparam("included_message_ids", type_=JSONB),
-    bindparam("included_context_refs", type_=JSONB),
-    bindparam("dropped_items", type_=JSONB),
-    bindparam("generation_intent", type_=JSONB),
-)
+).bindparams(bindparam("generation_intent", type_=JSONB))
 
 
 def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssembly) -> None:
-    """Write the run's immutable prompt ledger."""
+    """Write the run's immutable generation intent."""
 
-    ledger = assembly.ledger
     db.execute(
         _INSERT_ASSEMBLY,
         {
@@ -633,12 +503,6 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
             "conversation_id": run.conversation_id,
             "assistant_message_id": run.assistant_message_id,
             "generation_intent": assembly.generate_intent.model_dump(mode="json"),
-            "reserved_output_tokens": ledger.reserved_output_tokens,
-            "input_budget_tokens": ledger.input_budget_tokens,
-            "estimated_input_tokens": ledger.estimated_input_tokens,
-            "included_message_ids": [str(value) for value in ledger.included_message_ids],
-            "included_context_refs": [dict(value) for value in ledger.included_context_refs],
-            "dropped_items": [dict(value) for value in ledger.dropped_items],
         },
     )
 
@@ -649,9 +513,9 @@ def _build_subject_block(
     *,
     viewer_id: UUID,
     conversation_id: UUID,
-) -> tuple[PromptBlock | None, Mapping[str, object], str | None]:
+) -> tuple[PromptBlock | None, str | None]:
     if turn_context is None or turn_context.subject_id is None:
-        return None, {}, None
+        return None, None
     if turn_context.subject_scheme is None:
         raise AssertionError("chat turn context has a subject id with no scheme")
     subject = ResourceRef(
@@ -674,26 +538,12 @@ def _build_subject_block(
     if resource.missing:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
 
-    metadata: dict[str, object] = {"role": "subject", "resource_uri": resource.uri}
-    if turn_context.requested_subject_id is not None:
-        requested = ResourceRef(
-            scheme=cast(ResourceScheme, turn_context.requested_subject_scheme),
-            id=turn_context.requested_subject_id,
-        )
-        metadata["requested_resource_uri"] = requested.uri
-    if turn_context.subject_context_edge_id is not None:
-        metadata["context_edge_id"] = str(turn_context.subject_context_edge_id)
-    if resource.resolved_revision_ref is not None:
-        metadata["revision_uri"] = resource.resolved_revision_ref
     return (
         make_prompt_block(
             block_id=f"subject:{resource.uri}",
             role="system",
-            lane="attached_context",
             text=_render_resource(resource, tag="subject"),
-            source_refs=[metadata],
         ),
-        metadata,
         resource.uri,
     )
 
@@ -704,18 +554,11 @@ def _build_resources_block(
     conversation_id: UUID,
     viewer_id: UUID,
     subject_uri: str | None,
-) -> tuple[
-    PromptBlock | None,
-    Mapping[str, object],
-    tuple[RetrievalCitation, ...],
-    tuple[Mapping[str, object], ...],
-]:
+) -> tuple[PromptBlock | None, tuple[RetrievalCitation, ...]]:
     refs = list_context_refs(db, viewer_id=viewer_id, conversation_id=conversation_id)
     if not refs:
-        return None, {}, (), ()
+        return None, ()
     citations: list[RetrievalCitation] = []
-    revision_refs: list[Mapping[str, object]] = []
-    source_refs: list[Mapping[str, object]] = []
     lines = ["<resources>"]
     for ctx in refs:
         citation = _materialize_attached_citation(db, ctx.resolved, viewer_id=viewer_id)
@@ -732,30 +575,14 @@ def _build_resources_block(
                     citation=citation,
                 )
             )
-        source_refs.append(
-            {"type": "context_ref", "id": str(ctx.edge_id), "resource_uri": ctx.target.uri}
-        )
-        if ctx.resolved.resolved_revision_ref is not None:
-            revision_refs.append(
-                {
-                    "type": "context_ref_resolved_revision",
-                    "id": str(ctx.edge_id),
-                    "resource_uri": ctx.target.uri,
-                    "revision_uri": ctx.resolved.resolved_revision_ref,
-                }
-            )
     lines.append("</resources>")
     return (
         make_prompt_block(
             block_id=f"resources:{conversation_id}",
             role="system",
-            lane="attached_context",
             text="\n".join(lines),
-            source_refs=source_refs,
         ),
-        {"resource_count": len(refs), "resource_uris": [ctx.target.uri for ctx in refs]},
         tuple(citations),
-        tuple(revision_refs),
     )
 
 
@@ -903,15 +730,10 @@ def _load_recent_history_units(
                     make_prompt_block(
                         block_id=f"history:{member[0]}",
                         role=cast(PromptRole, member[2]),
-                        lane="recent_history",
                         text=_history_content(member),
-                        source_refs=[{"type": "message", "id": str(member[0])}],
                     )
                     for member in members
                 ),
-                message_ids=tuple(member[0] for member in members),
-                first_seq=row[1],
-                last_seq=members[-1][1],
             )
         )
         index += len(members)

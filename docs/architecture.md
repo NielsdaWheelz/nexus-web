@@ -1267,10 +1267,9 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
   `GET /chat-runs/{id}` snapshots.
 - **Context assembly** (`context_assembler.py`): a
   context-admitted, lane-ordered plan (system → scope → attached context → retrieved
-  evidence → web evidence → history → current user). The prompt ledger stores
-  the frozen generation intent, budget token counts, the included message ids and
-  context refs, and the dropped blocks' text-free manifests, but no prompt hashes
-  or remote cache key. Attached references render as numbered `<resources>`;
+  evidence → web evidence → history → current user). The prompt ledger
+  (`chat_prompt_assemblies`) stores only the frozen generation intent: no budget
+  counts, inclusion manifests, prompt hashes or remote cache key. Attached references render as numbered `<resources>`;
   the transient `<reader_selection>` (a highlight the user is asking about) is
   bind-only and never numbered.
 - **Durable recovery**: the claimed job stores a strict step journal in its
@@ -2207,9 +2206,8 @@ The things most likely to bite you, distilled:
    `message_retrievals` (which is telemetry pointing back via `cited_edge_id`); the
    attached-reference citation regression came from breaking this density.
 10. **Assistant trust trails are read models, not new truth.** They are assembled
-    when assistant messages are read from chat runs, prompt assemblies, tool calls,
-    retrieval ledgers, citation edges, and context-ref-added events. Message
-    documents remain text-only.
+    when assistant messages are read from chat runs, tool calls, retrieval ledgers,
+    citation edges, and context-ref-added events. Message documents remain text-only.
 11. **`background_jobs` is raw SQL**, invisible in `models.py`. Most ingest tasks'
     `{"status":"failed"}` returns mark the _queue_ row succeeded; recovery is the
     reconciler + manual retry.

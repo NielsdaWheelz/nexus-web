@@ -79,27 +79,6 @@ class ChatToolExecutionProjection:
         if self.initial_citation_ordinal < 1:
             raise ValueError("Chat citation ordinal must be positive")
 
-    @classmethod
-    def from_run(cls, db: Session, *, run_id: UUID) -> ChatToolExecutionProjection:
-        run = lock_chat_run_for_update(db, run_id)
-        if run is None:
-            raise ToolAuthorityRefused("Chat run is absent")
-        value = db.scalar(
-            text(
-                """
-                SELECT COALESCE(MAX(retrieval.citation_candidate_ordinal), 0) + 1
-                FROM message_retrievals AS retrieval
-                JOIN message_tool_calls AS tool_call ON tool_call.id = retrieval.tool_call_id
-                WHERE tool_call.assistant_message_id = :assistant_message_id
-                  AND tool_call.tool_call_index = 0
-                """
-            ),
-            {"assistant_message_id": run.assistant_message_id},
-        )
-        if type(value) is not int or value < 1:
-            raise ToolAuthorityRefused("Chat attached citation cursor is invalid")
-        return cls(run_id=run_id, initial_citation_ordinal=value)
-
     @property
     def scope_label(self) -> str:
         return "conversation_context"

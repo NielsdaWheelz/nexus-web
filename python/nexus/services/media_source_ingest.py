@@ -81,7 +81,6 @@ from nexus.services.contributor_writes import MediaTarget
 from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
 from nexus.services.import_history import append_processing_event
 from nexus.services.media_deletion import (
-    delete_document_storage_objects,
     delete_duplicate_document_media,
 )
 from nexus.services.media_fact_revisions import bump_all_media_fact_collections
@@ -2011,14 +2010,13 @@ def _run_fenced_attempt(
             session_factory, media_id=media_id, attempt_id=attempt_id, exc=exc, fence=fence
         )
 
-    superseded_storage_paths: list[str] = []
     terminal_media_id = media_id
     if (
         isinstance(outcome.superseded_by_media_id, Present)
         and outcome.superseded_by_media_id.value != media_id
     ):
         winner_media_id = outcome.superseded_by_media_id.value
-        superseded_storage_paths = run_source_publication_phase(
+        run_source_publication_phase(
             session_factory=session_factory,
             label="publish_source_media_supersession",
             fence=fence,
@@ -2079,7 +2077,6 @@ def _run_fenced_attempt(
                 post_success_db.commit()
         finally:
             post_success_db.close()
-    delete_document_storage_objects(superseded_storage_paths)
     return source_outcome_to_job_result(outcome)
 
 
@@ -2281,7 +2278,7 @@ def _supersede_source_media(
     attempt: MediaSourceAttempt,
     loser_media_id: UUID,
     winner_media_id: UUID,
-) -> list[str]:
+) -> None:
     """Transfer the loser's membership and edges to the winner, then delete it."""
     if source_attempt_storage_paths(attempt.source_payload):
         # Otherwise the loser's R2 objects die while the payload still names them.
@@ -2314,7 +2311,7 @@ def _supersede_source_media(
         library_entries.assign_libraries_for_media_in_current_transaction(
             db, attempt.created_by_user_id, winner_media_id, target_library_ids
         )
-    return delete_duplicate_document_media(
+    delete_duplicate_document_media(
         db, loser_media_id=loser_media_id, winner_media_id=winner_media_id
     )
 

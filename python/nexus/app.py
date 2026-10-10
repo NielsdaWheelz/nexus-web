@@ -38,7 +38,6 @@ Outbound client lifecycle:
 
 import re
 from contextlib import asynccontextmanager
-from urllib.parse import urlparse
 from uuid import UUID
 
 import httpx
@@ -280,54 +279,8 @@ def create_app() -> FastAPI:
     # Must be added AFTER auth middleware (runs before it in the stack)
     cors_origins = settings.stream_cors_origin_list
     if cors_origins:
-        app_url = urlparse(settings.app_public_url)
-        stream_url = urlparse(settings.effective_stream_base_url)
-        if (
-            app_url.scheme,
-            app_url.hostname,
-            app_url.port,
-        ) != (
-            stream_url.scheme,
-            stream_url.hostname,
-            stream_url.port,
-        ) and not any(
-            (parsed.scheme, parsed.hostname, parsed.port)
-            == (app_url.scheme, app_url.hostname, app_url.port)
-            for parsed in (urlparse(o) for o in cors_origins)
-        ):
-            if settings.nexus_env in (Environment.STAGING, Environment.PROD):
-                raise RuntimeError(
-                    f"STREAM_CORS_ORIGINS is missing APP_PUBLIC_URL origin "
-                    f"{settings.app_public_url!r}; current list: {cors_origins!r}"
-                )
-            logger.warning(
-                "stream_cors_middleware_missing_app_public_url_origin",
-                app_public_url=settings.app_public_url,
-                stream_cors_origins=cors_origins,
-            )
         app.add_middleware(StreamCORSMiddleware, allowed_origins=cors_origins)
         logger.info("stream_cors_middleware_enabled", origins=cors_origins)
-    else:
-        app_url = urlparse(settings.app_public_url)
-        stream_url = urlparse(settings.effective_stream_base_url)
-        if (
-            app_url.scheme,
-            app_url.hostname,
-            app_url.port,
-        ) != (
-            stream_url.scheme,
-            stream_url.hostname,
-            stream_url.port,
-        ):
-            if settings.nexus_env in (Environment.STAGING, Environment.PROD):
-                raise RuntimeError(
-                    "STREAM_CORS_ORIGINS is required when STREAM_BASE_URL is cross-origin"
-                )
-            logger.warning(
-                "stream_cors_middleware_disabled_for_cross_origin_stream",
-                app_public_url=settings.app_public_url,
-                stream_base_url=settings.effective_stream_base_url,
-            )
 
     # Reader-state and reader-profile responses are never cacheable: the
     # cursor is revalidated event-driven and the profile is per-user private

@@ -66,10 +66,9 @@ from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_graph.schemas import CitationInput, CitationSnapshot
 from nexus.services.search.chunks import retrieve_content_chunk_candidates
 from nexus.services.search.service import build_query_embedding
-from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
+from nexus.tasks.llm_task import run_llm_task
 
 _STEP = "synthesis"
-_TASK = LlmTaskSpec(label="oracle_reading")
 _PASSAGES = TypeAdapter(list[OracleStoredPassage])
 
 
@@ -247,7 +246,7 @@ def _columns(reading: OracleReading) -> dict[str, Any]:
 
 def run_reading_job(*, reading_id: UUID, context: JobExecutionContext) -> dict[str, object]:
     return run_llm_task(
-        _TASK,
+        "oracle_reading",
         lambda db, runtime: _run(db, reading_id=reading_id, context=context, runtime=runtime),
     )
 

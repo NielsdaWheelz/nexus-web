@@ -307,30 +307,6 @@ class Settings(BaseSettings):
     max_epub_archive_parse_time_ms: int = Field(
         default=30_000, alias="MAX_EPUB_ARCHIVE_PARSE_TIME_MS", ge=1, le=30_000
     )
-    max_latex_source_archive_entries: int = Field(
-        default=10_000,
-        alias="MAX_LATEX_SOURCE_ARCHIVE_ENTRIES",
-        ge=1,
-        le=10_000,
-    )
-    max_latex_source_archive_total_uncompressed_bytes: int = Field(
-        default=536_870_912,
-        alias="MAX_LATEX_SOURCE_ARCHIVE_TOTAL_UNCOMPRESSED_BYTES",
-        ge=1,
-        le=536_870_912,
-    )  # 512 MB
-    max_latex_source_archive_single_entry_uncompressed_bytes: int = Field(
-        default=134_217_728,
-        alias="MAX_LATEX_SOURCE_ARCHIVE_SINGLE_ENTRY_UNCOMPRESSED_BYTES",
-        ge=1,
-        le=134_217_728,
-    )  # 128 MB
-    max_latex_source_archive_compression_ratio: int = Field(
-        default=100,
-        alias="MAX_LATEX_SOURCE_ARCHIVE_COMPRESSION_RATIO",
-        ge=1,
-        le=100,
-    )
 
     # OpenAI's unqualified key remains embedding-only. Generation credentials
     # are route-specific so no provider secret can cross into the Codex host.
@@ -450,6 +426,7 @@ class Settings(BaseSettings):
         self._validate_database_origin()
         self._validate_deployed_ingest_reconcile()
         self._validate_deployed_storage()
+        self._validate_deployed_stream_cors()
         self._validate_storage_lifecycle()
         self._validate_transcript_embedding_dimensions()
         self._validate_email_credentials()
@@ -524,6 +501,24 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "R2_S3_API_ORIGIN must be the Cloudflare R2 S3 API origin for staging/prod."
+            )
+
+    def _validate_deployed_stream_cors(self) -> None:
+        """A cross-origin stream must admit the browser app's origin."""
+        if self.nexus_env not in (Environment.STAGING, Environment.PROD):
+            return
+        app_url = urlparse(self.app_public_url)
+        app_origin = (app_url.scheme, app_url.hostname, app_url.port)
+        stream_url = urlparse(self.effective_stream_base_url)
+        if (stream_url.scheme, stream_url.hostname, stream_url.port) == app_origin:
+            return
+        if not any(
+            (parsed.scheme, parsed.hostname, parsed.port) == app_origin
+            for parsed in map(urlparse, self.stream_cors_origin_list)
+        ):
+            raise ValueError(
+                "STREAM_CORS_ORIGINS must include the APP_PUBLIC_URL origin "
+                f"{self.app_public_url!r} when STREAM_BASE_URL is cross-origin"
             )
 
     def _validate_storage_lifecycle(self) -> None:

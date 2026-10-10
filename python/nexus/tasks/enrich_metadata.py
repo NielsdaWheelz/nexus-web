@@ -104,12 +104,11 @@ from nexus.services.reader_publication import (
     lock_publication_generation,
     read_publication_generation,
 )
-from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
+from nexus.tasks.llm_task import run_llm_task
 
 logger = get_logger(__name__)
 
 _LEASE_SECONDS = 300
-_TASK = LlmTaskSpec(label="metadata_generation")
 type _TerminalReason = Literal["source_changed", "media_not_found", "not_ready"]
 type _JobResult = dict[str, object] | TerminalJobFailure
 
@@ -324,7 +323,7 @@ def _enrich_metadata(
         )
 
     try:
-        run_llm_task(_TASK, execute)
+        run_llm_task("metadata_generation", execute)
     except _PreDispatchTerminal as exc:
         if request_fingerprint is None:
             return _queue_only_failure(_domain_reason(exc.reason))

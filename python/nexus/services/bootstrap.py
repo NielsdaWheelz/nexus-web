@@ -7,7 +7,6 @@ import logging
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.db.retries import retry_serializable
@@ -22,21 +21,15 @@ DEFAULT_LIBRARY_NAME = "My Library"
 def ensure_user_and_default_library(db: Session, user_id: UUID, email: str | None = None) -> UUID:
     """Ensure user exists, default library exists, and owner membership exists.
 
-    This function is race-safe and idempotent. Concurrent callers converge
-    through SERIALIZABLE retry or unique-constraint recovery.
+    This function is race-safe and idempotent: concurrent first logins converge
+    through the SERIALIZABLE retry, whose unique-constraint allowlist names the
+    user, default-library and membership keys.
     """
-    for attempt in range(3):
-        try:
-            return retry_serializable(
-                db,
-                "default_library_bootstrap",
-                lambda: _ensure_user_and_default_library_once(db, user_id, email),
-            )
-        except IntegrityError:
-            db.rollback()
-            if attempt == 2:
-                raise
-    raise AssertionError("default library bootstrap retry loop exhausted")
+    return retry_serializable(
+        db,
+        "default_library_bootstrap",
+        lambda: _ensure_user_and_default_library_once(db, user_id, email),
+    )
 
 
 def _ensure_user_and_default_library_once(db: Session, user_id: UUID, email: str | None) -> UUID:

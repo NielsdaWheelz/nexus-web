@@ -12,7 +12,7 @@ generation harness composes with the worker. It does not restate the queue
 internals.
 
 Backend owners: `python/nexus/jobs/` (`queue.py`, `worker.py`, `registry.py`),
-the thin task wrappers under `python/nexus/tasks/`, and
+the task handlers under `python/nexus/tasks/`, and
 `python/nexus/db/retries.py`. The LLM task envelope (`run_llm_task`) is owned by
 [llms.md](llms.md); deploy-time allowlist operations live in
 [deployment.md](../../deployment.md).
@@ -71,9 +71,10 @@ too, and the job is deliberately not settled, because the worker no longer owns 
 The registry is the source of truth mapping job kind → handler + policy. Each
 kind is a frozen `JobDefinition`:
 
-- `handler_path` — a thin `jobs/registry.py` adapter that hands the job's owned
-  values to a `tasks/` wrapper. Simple carrier fields are parsed at this raw
-  payload boundary; checkpoint-bearing tasks own their structured payload.
+- `handler_path` — either a `tasks/` handler that already takes
+  `(payload, context)` and owns its structured payload, or a `_run_*` adapter in
+  `jobs/registry.py` that parses simple carrier fields at this raw payload
+  boundary and calls the owning service (or task) directly.
 - `max_attempts`, `retry_delays_seconds`, `lease_seconds` — the per-kind retry
   and lease policy.
 - `periodic_interval_seconds` — set only for scheduler-driven background or

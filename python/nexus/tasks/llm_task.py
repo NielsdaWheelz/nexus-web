@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
@@ -19,16 +18,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-class LlmTaskSpec:
-    """Identity of one worker-owned generation envelope."""
-
-    label: str
-
-
-def run_llm_task[R](
-    spec: LlmTaskSpec, handler: Callable[[Session, ExecutionRuntime], Awaitable[R]]
-) -> R:
+def run_llm_task[R](label: str, handler: Callable[[Session, ExecutionRuntime], Awaitable[R]]) -> R:
     """Run one async generation task with one session and one owned event loop."""
 
     db = get_session_factory()()
@@ -71,7 +61,7 @@ def run_llm_task[R](
     # justify-ignore-error: unexpected defects remain owned by the durable
     # queue retry and dead-letter policy after this boundary records them.
     except Exception:
-        logger.exception(f"{spec.label}_failed_unexpected")
+        logger.exception(f"{label}_failed_unexpected")
         raise
     finally:
         loop.close()

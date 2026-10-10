@@ -31,7 +31,7 @@ from nexus.services.resource_graph.schemas import (
     EdgeKind,
     EdgeOrigin,
     UnlinkMutation,
-    is_neutral_link_shape,
+    is_neutral_link,
     snapshot_from_jsonb,
 )
 from nexus.services.resource_items.capabilities import expand_owned_child_refs
@@ -125,7 +125,7 @@ def _hydrate_connections(
     for row in rows:
         source_ref = ResourceRef(scheme=cast("ResourceScheme", row.source_scheme), id=row.source_id)
         target_ref = ResourceRef(scheme=cast("ResourceScheme", row.target_scheme), id=row.target_id)
-        neutral = _is_neutral_link_row(row)
+        neutral = is_neutral_link(row)
         incoming = (
             (target_ref.scheme, target_ref.id) in matched
             and (source_ref.scheme, source_ref.id) not in matched
@@ -149,8 +149,6 @@ def _hydrate_connections(
                 snapshot=snapshot_from_jsonb(row.snapshot) if row.snapshot is not None else None,
                 source_order_key=row.source_order_key,
                 ordinal=row.ordinal,
-                source_ref=source_ref,
-                target_ref=target_ref,
                 source=endpoints[source_ref.uri],
                 target=endpoints[target_ref.uri],
                 other=endpoints[source_ref.uri if incoming else target_ref.uri],
@@ -177,7 +175,7 @@ def _hydrate_connections(
 
 
 def _connection_mutation(row: ResourceEdge) -> ConnectionMutation | None:
-    if _is_neutral_link_row(row):
+    if is_neutral_link(row):
         return UnlinkMutation()
     if row.origin == "discovery":
         return DismissDiscoveryMutation()
@@ -303,16 +301,6 @@ def _hydrate_endpoints(
     }
 
 
-def _is_neutral_link_row(row: ResourceEdge) -> bool:
-    return is_neutral_link_shape(
-        origin=row.origin,
-        kind=row.kind,
-        ordinal=row.ordinal,
-        snapshot=row.snapshot,
-        source_order_key=row.source_order_key,
-    )
-
-
 def _link_notes_for_rows(
     db: Session, *, viewer_id: UUID, rows: list[ResourceEdge]
 ) -> dict[UUID, ConnectionLinkNote]:
@@ -320,7 +308,7 @@ def _link_notes_for_rows(
     pairs = {
         row.id: frozenset({(row.source_scheme, row.source_id), (row.target_scheme, row.target_id)})
         for row in rows
-        if _is_neutral_link_row(row)
+        if is_neutral_link(row)
     }
     if not pairs:
         return {}

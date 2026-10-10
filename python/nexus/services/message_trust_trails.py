@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_conversation_ids_cte_sql
 from nexus.db.models import (
-    ChatPromptAssembly,
     ChatRun,
     ChatRunEvent,
     Conversation,
@@ -26,7 +25,6 @@ from nexus.schemas.conversation import (
     ChatRunContextRefAddedEventPayload,
     TrustCitationOut,
     TrustContextRefAddedOut,
-    TrustPromptAssemblyOut,
     TrustRetrievalOut,
     TrustRunOut,
     TrustToolCallOut,
@@ -149,14 +147,6 @@ def build_assistant_trust_trails(
                 )
             )
 
-    prompt_by_message = {
-        row.assistant_message_id: row
-        for row in db.scalars(
-            select(ChatPromptAssembly).where(
-                ChatPromptAssembly.assistant_message_id.in_(message_ids)
-            )
-        )
-    }
     tool_calls = list(
         db.scalars(
             select(MessageToolCall)
@@ -252,7 +242,6 @@ def build_assistant_trust_trails(
     trails: dict[UUID, AssistantTrustTrailOut] = {}
     for message in messages:
         run = runs_by_message.get(message.id)
-        prompt = prompt_by_message.get(message.id)
         citation_by_ordinal = citation_outs_by_message.get(message.id, {})
         trust_citations: list[TrustCitationOut] = []
         for edge in citation_edges_by_message.get(message.id, []):
@@ -295,18 +284,6 @@ def build_assistant_trust_trails(
                     completed_at=run.completed_at,
                 )
                 if run is not None
-                else None
-            ),
-            prompt=(
-                TrustPromptAssemblyOut(
-                    reserved_output_tokens=prompt.reserved_output_tokens,
-                    input_budget_tokens=prompt.input_budget_tokens,
-                    estimated_input_tokens=prompt.estimated_input_tokens,
-                    included_message_ids=prompt.included_message_ids,
-                    included_context_refs=cast(list[dict[str, Any]], prompt.included_context_refs),
-                    dropped_items=cast(list[dict[str, Any]], prompt.dropped_items),
-                )
-                if prompt is not None
                 else None
             ),
             tool_calls=tools_by_message.get(message.id, []),

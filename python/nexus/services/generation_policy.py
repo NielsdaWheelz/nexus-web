@@ -45,21 +45,6 @@ class RequestBudget:
 
 
 @dataclass(frozen=True, slots=True)
-class NoHostToolPlan:
-    kind: Literal["NoHostToolPlan"] = "NoHostToolPlan"
-
-
-@dataclass(frozen=True, slots=True)
-class ExactHostToolPlan:
-    plan_id: str
-    authority_revision: str
-    kind: Literal["ExactHostToolPlan"] = "ExactHostToolPlan"
-
-
-type HostToolPlan = NoHostToolPlan | ExactHostToolPlan
-
-
-@dataclass(frozen=True, slots=True)
 class NoModelTools:
     kind: Literal["NoModelTools"] = "NoModelTools"
 
@@ -83,7 +68,6 @@ class OperationWorkflowSpec:
     bounds: GenerationBounds
     request_budget: RequestBudget
     output_contract: OutputContract
-    host_tool_plan: HostToolPlan
     model_tool_policy: ModelToolPolicy
 
 
@@ -108,7 +92,6 @@ class GenerationPolicy:
     background_operations: Mapping[BackgroundOperationKey, BackgroundOperationPolicy]
 
 
-_NO_HOST = NoHostToolPlan()
 _NO_TOOLS = NoModelTools()
 _SYNTHESIS_STREAM = GenerationStreamBounds(
     max_frames=1_024,
@@ -185,7 +168,6 @@ def _workflow(
     bounds: GenerationBounds,
     request_budget: RequestBudget,
     output_contract: OutputContract,
-    host_tool_plan: HostToolPlan = _NO_HOST,
     model_tool_policy: ModelToolPolicy = _NO_TOOLS,
 ) -> OperationWorkflowSpec:
     facts = {
@@ -193,7 +175,6 @@ def _workflow(
         "bounds": _canonical_value(bounds),
         "request_budget": _canonical_value(request_budget),
         "output_contract": output_contract,
-        "host_tool_plan": _canonical_value(host_tool_plan),
         "model_tool_policy": _canonical_value(model_tool_policy),
     }
     digest = hashlib.sha256(b"nexus.operation-workflow.v2\0" + _canonical(facts)).hexdigest()
@@ -203,29 +184,25 @@ def _workflow(
         bounds=bounds,
         request_budget=request_budget,
         output_contract=output_contract,
-        host_tool_plan=host_tool_plan,
         model_tool_policy=model_tool_policy,
     )
 
 
 # operation, model, reasoning, turn timeout s, input KiB, context tokens,
-# output tokens, host-tool plan. every background operation
-# is strict JSON over Codex Personal.
-_BACKGROUND_ROWS: tuple[
-    tuple[BackgroundOperationKey, str, str, int, int, int, int, HostToolPlan], ...
-] = (
-    ("metadata_enrichment", "luna", "xhigh", 300, 32, 64_000, 8_000, _NO_HOST),
-    ("media_summary", "luna", "low", 120, 256, 128_000, 16_000, _NO_HOST),
-    ("connection_discovery", "luna", "low", 120, 256, 128_000, 16_000, _NO_HOST),
-    ("oracle", "sol", "medium", 180, 256, 128_000, 16_000, _NO_HOST),
-    ("dossier_page", "luna", "low", 120, 1024, 400_000, 32_000, _NO_HOST),
-    ("dossier_note", "luna", "low", 120, 1024, 400_000, 32_000, _NO_HOST),
-    ("dossier_media", "sol", "medium", 180, 1024, 400_000, 32_000, _NO_HOST),
-    ("dossier_conversation", "sol", "medium", 180, 1024, 400_000, 32_000, _NO_HOST),
-    ("dossier_library", "sol", "high", 300, 1024, 400_000, 32_000, _NO_HOST),
-    ("dossier_podcast", "sol", "high", 300, 1024, 400_000, 32_000, _NO_HOST),
-    ("dossier_contributor", "sol", "high", 300, 1024, 400_000, 32_000, _NO_HOST),
-    ("dossier_idea", "sol", "high", 300, 1024, 400_000, 32_000, _NO_HOST),
+# output tokens. every background operation is strict JSON over Codex Personal.
+_BACKGROUND_ROWS: tuple[tuple[BackgroundOperationKey, str, str, int, int, int, int], ...] = (
+    ("metadata_enrichment", "luna", "xhigh", 300, 32, 64_000, 8_000),
+    ("media_summary", "luna", "low", 120, 256, 128_000, 16_000),
+    ("connection_discovery", "luna", "low", 120, 256, 128_000, 16_000),
+    ("oracle", "sol", "medium", 180, 256, 128_000, 16_000),
+    ("dossier_page", "luna", "low", 120, 1024, 400_000, 32_000),
+    ("dossier_note", "luna", "low", 120, 1024, 400_000, 32_000),
+    ("dossier_media", "sol", "medium", 180, 1024, 400_000, 32_000),
+    ("dossier_conversation", "sol", "medium", 180, 1024, 400_000, 32_000),
+    ("dossier_library", "sol", "high", 300, 1024, 400_000, 32_000),
+    ("dossier_podcast", "sol", "high", 300, 1024, 400_000, 32_000),
+    ("dossier_contributor", "sol", "high", 300, 1024, 400_000, 32_000),
+    ("dossier_idea", "sol", "high", 300, 1024, 400_000, 32_000),
 )
 _BACKGROUND_OPERATIONS: dict[BackgroundOperationKey, BackgroundOperationPolicy] = {
     operation: BackgroundOperationPolicy(
@@ -237,7 +214,6 @@ _BACKGROUND_OPERATIONS: dict[BackgroundOperationKey, BackgroundOperationPolicy] 
                 max_context_tokens=context_tokens, max_output_tokens=output_tokens
             ),
             output_contract="StrictJson",
-            host_tool_plan=host_plan,
             model_tool_policy=(
                 ExactModelTools(
                     "MetadataResearch",
@@ -258,7 +234,6 @@ _BACKGROUND_OPERATIONS: dict[BackgroundOperationKey, BackgroundOperationPolicy] 
         input_kib,
         context_tokens,
         output_tokens,
-        host_plan,
     ) in _BACKGROUND_ROWS
 }
 
