@@ -1,121 +1,73 @@
+/** Browse result rows: candidates and podcast-preview episodes. */
+
 import { absent, present } from "@/lib/api/presence";
-import type { Presence } from "@/lib/api/presence";
-import { presentMedia } from "@/lib/collections/presenters/media";
-import { decodePublicationDate, type PublicationDate } from "@/lib/dates/publicationDate";
-import { decodeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import {
   browsePreviewHref,
   type BrowseCandidate,
-  type BrowseKind,
-  type BrowseSource,
-  type PreviewEpisodeItem,
-} from "@/lib/browse/contract";
-import { selectMediaAuthors } from "@/lib/contributors/formatting";
+  type PreviewEpisode,
+} from "@/lib/browse/api";
+import { BROWSE_SOURCE_LABELS } from "@/lib/browse/query";
+import { presentMedia } from "@/lib/collections/presenters/media";
 import type { CollectionRowView } from "@/lib/collections/types";
+import { selectMediaAuthors } from "@/lib/contributors/formatting";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 
-export function browseSourceLabel(source: BrowseSource): string {
-  switch (source) {
-    case "Nexus":
-      return "Nexus";
-    case "ProjectGutenberg":
-      return "Project Gutenberg";
-    case "Brave":
-      return "Brave";
-    case "YouTube":
-      return "YouTube";
-    case "PodcastIndex":
-      return "Podcast Index";
-  }
-}
-
-export function browseKindLabel(kind: BrowseKind): string {
-  switch (kind) {
-    case "Pdf":
-      return "PDF";
-    case "Epub":
-      return "EPUB";
-    case "WebArticle":
-      return "Web Article";
-    case "Video":
-      return "Video";
-    case "Podcast":
-      return "Podcast";
-  }
-}
-
-function candidateHref(candidate: BrowseCandidate): string {
-  switch (candidate.resolution.kind) {
-    case "InNexusMedia":
-    case "InNexusPodcast":
-      return candidate.resolution.href;
-    case "Preview":
-      return browsePreviewHref(candidate.resolution.target);
-  }
-}
-
-function candidateId(candidate: BrowseCandidate): string {
-  switch (candidate.resolution.kind) {
-    case "InNexusMedia":
-    case "InNexusPodcast":
-      return `${candidate.source}:owned:${candidate.resolution.href}`;
-    case "Preview":
-      return `${candidate.source}:preview:${candidate.resolution.target}`;
-  }
-}
-
-function publicationDate(value: Presence<string>): Presence<PublicationDate> {
-  return value.kind === "Present"
-    ? present(decodePublicationDate(value.value, "Browse.publishedAt.value"))
-    : absent();
-}
-
+/** An InNexusMedia candidate carries its resolved media summary. */
 export function presentBrowseCandidate(
   candidate: BrowseCandidate,
 ): CollectionRowView {
-  if (candidate.resolution.kind === "InNexusMedia") {
-    return presentMedia(candidate.resolution.mediaSummary, {
-      id: candidateId(candidate),
+  const { resolution } = candidate;
+  if (resolution.kind === "InNexusMedia") {
+    return presentMedia(resolution.mediaSummary, {
+      id: `${candidate.source}:owned:${resolution.href}`,
       primary: {
         kind: "link",
-        href: candidate.resolution.href,
+        href: resolution.href,
         viewTransition: "media-reader",
       },
-      actionSubject: decodeResourceActionSubject({ ref: candidate.resolution.actionSubjectRef }),
+      actionSubject: {
+        ref: assumeCanonicalResourceRef(resolution.actionSubjectRef),
+      },
       selected: false,
     });
   }
   if (candidate.kind === "OwnedMedia") {
-    throw new Error("Owned browse media missing media summary");
+    // justify-defect: the schema gives every owned candidate InNexusMedia.
+    throw new Error("Owned browse candidate without a media resolution");
   }
-  const source = browseSourceLabel(candidate.source);
-  const context =
-    candidate.resolution.kind === "InNexusPodcast"
-      ? `${source} · In Nexus`
-      : source;
+  const source = BROWSE_SOURCE_LABELS[candidate.source];
+  const preview = resolution.kind === "Preview";
   return {
-    id: candidateId(candidate),
+    id: preview
+      ? `${candidate.source}:preview:${resolution.target}`
+      : `${candidate.source}:owned:${resolution.href}`,
     kind: "search_result",
     primary: {
       kind: "link",
-      href: candidateHref(candidate),
+      href: preview ? browsePreviewHref(resolution.target) : resolution.href,
       paneLabelHint: candidate.title,
     },
     title: { text: candidate.title },
-    contributors: candidate.kind === "Podcast" ? candidate.contributors : selectMediaAuthors(candidate.contributors),
-    publicationDate: publicationDate(candidate.publishedAt),
-    context: present({ kind: "Text", text: context }),
+    contributors:
+      candidate.kind === "Podcast"
+        ? candidate.contributors
+        : selectMediaAuthors(candidate.contributors),
+    publicationDate: candidate.publishedAt,
+    context: present({
+      kind: "Text",
+      text: preview ? source : `${source} · In Nexus`,
+    }),
     activity: absent(),
     exceptionalStatus: absent(),
-    actionSubject:
-      candidate.resolution.kind === "InNexusPodcast"
-        ? decodeResourceActionSubject({ ref: candidate.resolution.actionSubjectRef })
-        : null,
+    actionSubject: preview
+      ? null
+      : { ref: assumeCanonicalResourceRef(resolution.actionSubjectRef) },
     selected: false,
   };
 }
 
 export function presentPreviewEpisode(
-  episode: PreviewEpisodeItem,
+  episode: PreviewEpisode,
 ): CollectionRowView {
   return {
     id: `PodcastIndex:episode:${episode.target}`,
@@ -127,7 +79,7 @@ export function presentPreviewEpisode(
     },
     title: { text: episode.title },
     contributors: selectMediaAuthors(episode.contributors),
-    publicationDate: publicationDate(episode.publishedAt),
+    publicationDate: episode.publishedAt,
     context: present({
       kind: "Text",
       text: `Podcast Index · ${episode.kindFacts.podcastTitle}`,

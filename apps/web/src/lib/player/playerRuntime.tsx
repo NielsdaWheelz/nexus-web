@@ -26,10 +26,6 @@ import {
 import { apiFetch, decodeApiPayload } from "@/lib/api/client";
 import { absent, present, type Presence } from "@/lib/api/presence";
 import type { ApiJson } from "@/lib/api/wire";
-import type {
-  DiscoveryTargetHandle,
-  PreviewAudioDescriptor,
-} from "@/lib/browse/contract";
 import {
   playerDescriptorFromWire,
   type ChapterOut,
@@ -44,13 +40,29 @@ import {
   createNativeEngine,
   nativePlayerAvailable,
 } from "@/lib/player/nativeEngine";
-import { savePodcastSubscriptionSettings } from "@/lib/podcasts/subscriptionSettings";
+import type { MediaImageProxySrc } from "@/lib/media/imageProxy";
+import { savePodcastSubscriptionSettings } from "@/lib/podcasts/api";
 import {
   useAndroidShell,
   useViewportState,
 } from "@/lib/renderEnvironment/provider";
 import { isInteractiveTarget } from "@/lib/ui/interactiveTarget";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
+
+/**
+ * Browse preview audio. It carries no media identity because a preview never
+ * acquires; its json fields are the Android bridge's frozen wire.
+ */
+export interface PreviewAudioDescriptor {
+  readonly target: string;
+  readonly previewHref: string;
+  readonly title: string;
+  readonly source: string;
+  readonly sourceHref: string;
+  readonly audioUrl: string;
+  readonly imageUrl: Presence<MediaImageProxySrc>;
+  readonly durationMs: Presence<number>;
+}
 
 export type PlayerSource =
   | { readonly kind: "Episode"; readonly descriptor: PlayerDescriptor }
@@ -149,7 +161,7 @@ export interface PreviewAudioPosition {
 export interface PlayerCommands {
   playAudio(descriptor: PlayerDescriptor): void;
   playPreviewAudio(descriptor: PreviewAudioDescriptor): void;
-  stopPreviewAudio(target: DiscoveryTargetHandle): PreviewAudioPosition | null;
+  stopPreviewAudio(target: string): PreviewAudioPosition | null;
   resume(): void;
   pause(): void;
   seekTo(positionMs: number): void;
@@ -404,7 +416,7 @@ export function GlobalPlayerProvider({
         const now = playing();
         if (now?.podcastId.kind !== "Present") return;
         await savePodcastSubscriptionSettings(now.podcastId.value, {
-          defaultPlaybackSpeed: present(current().rate),
+          default_playback_speed: present(current().rate),
         });
       },
       setVolume: (volume) => live()?.setVolume(volume),

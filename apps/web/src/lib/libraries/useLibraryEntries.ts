@@ -7,7 +7,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
 import {
   type ApiError,
@@ -25,7 +24,6 @@ import {
   type CollectionRevision,
 } from "@/lib/api/collectionPage";
 import type { Presence } from "@/lib/api/presence";
-import { present } from "@/lib/api/presence";
 import { requestWithRetry } from "@/lib/api/retryPolicy";
 import { libraryEntriesResource, libraryResource } from "@/lib/api/resource";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
@@ -53,12 +51,7 @@ import {
   useConsumptionProjectionRevision,
   type ConsumptionProjectionChange,
 } from "@/lib/consumption/projectionRevision";
-import {
-  confirmedLibraryEntriesRevision,
-  subscribePodcastSubscriptionSettingsInstalls,
-} from "@/lib/podcasts/subscriptionSettings";
 import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
-import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import type { LibraryOut } from "./contract";
 import { libraryEntryPageFromWire, type LibraryEntryListItem } from "./entryListItem";
 import {
@@ -112,12 +105,6 @@ export function useLibraryEntries({ id, active }: {
   readonly active: boolean;
 }) {
   const router = usePaneRouter();
-  const { accountId } = useAuthenticatedAccount();
-  const confirmedRevision = useSyncExternalStore(
-    subscribePodcastSubscriptionSettingsInstalls,
-    useCallback(() => confirmedLibraryEntriesRevision(accountId), [accountId]),
-    () => ZERO_REVISION,
-  );
   const metadata = useMetadataCollectionRevision();
   const placement = useLibraryPlacementRevision();
   const consumption = useConsumptionProjectionRevision();
@@ -144,9 +131,7 @@ export function useLibraryEntries({ id, active }: {
   const captureRef = useRef<Snapshot | null>(null);
   const capture = useCallback(() => captureRef.current, []);
   const restored = usePaneVisitData(VISIT_DATA, capture);
-  const initial = useRef(restored !== null &&
-    restored.entries.collectionRevision >= confirmedRevision
-    ? restored : null).current;
+  const initial = useRef(restored).current;
   const [snapshot, setSnapshot] = useState<Snapshot | null>(initial);
   const [unavailableId, setUnavailableId] = useState<string | null>(null);
   const [request, setRequest] = useState<Replacement | null>(null);
@@ -179,10 +164,9 @@ export function useLibraryEntries({ id, active }: {
   const committedKey = snapshot?.library.id === id ? keyOf(snapshot.entries.view) : null;
   const seedClaimable = adoptSeed.current &&
     (view.kind === "Invalid" || isInitialLibraryView(view.view)) &&
-    metadata === 0 && placement.revision === 0 && consumption.revision === 0 && queryRevision === 0 &&
-    (bootstrap.status !== "ready" || bootstrap.data.collectionRevision >= confirmedRevision);
+    metadata === 0 && placement.revision === 0 && consumption.revision === 0 && queryRevision === 0;
   const ready = snapshot !== null && requestedKey !== null && requestedKey === committedKey &&
-    request?.reason !== "View" && snapshot.entries.collectionRevision >= confirmedRevision;
+    request?.reason !== "View";
   const latest = useRef({ id, snapshot, request, library, requestedKey, ready });
   latest.current = { id, snapshot, request, library, requestedKey, ready };
   const invalidateCapture = useCallback(() => {
@@ -243,8 +227,7 @@ export function useLibraryEntries({ id, active }: {
     if (bootstrap.status !== "ready" || !adoptSeed.current) return;
     adoptSeed.current = false;
     if ((view.kind === "Invalid" || isInitialLibraryView(view.view)) &&
-      metadata === 0 && placement.revision === 0 && consumption.revision === 0 && queryRevision === 0 &&
-      bootstrap.data.collectionRevision >= confirmedLibraryEntriesRevision(accountId)) {
+      metadata === 0 && placement.revision === 0 && consumption.revision === 0 && queryRevision === 0) {
       setSnapshot({
         library: bootstrap.data.library, entries: {
           view: view.kind === "Valid" ? view.view : CANONICAL_LIBRARY_VIEW,
@@ -255,17 +238,17 @@ export function useLibraryEntries({ id, active }: {
         }
       });
     }
-  }, [bootstrap, router, view, metadata, placement.revision, consumption.revision, confirmedRevision, accountId, queryRevision]);
+  }, [bootstrap, router, view, metadata, placement.revision, consumption.revision, queryRevision]);
   useEffect(() => {
     if (view.kind === "Invalid" || unavailableId === id || seedClaimable) return;
     const needsPage = snapshot === null
       ? !isInitialLibraryView(view.view) || !adoptSeed.current || metadata !== 0 || placement.revision !== 0 || consumption.revision !== 0 || queryRevision !== 0
-      : requestedKey !== committedKey || snapshot.entries.collectionRevision < confirmedLibraryEntriesRevision(accountId);
+      : requestedKey !== committedKey;
     if (needsPage && !(request?.reason === "View" && request.id === id && keyOf(request.view) === requestedKey)) {
       begin("View", view.view);
     }
   }, [id, view, snapshot, requestedKey, committedKey, request, metadata,
-    placement.revision, consumption.revision, begin, keyOf, unavailableId, seedClaimable, confirmedRevision, accountId, queryRevision]);
+    placement.revision, consumption.revision, begin, keyOf, unavailableId, seedClaimable, queryRevision]);
   useEffect(() => {
     if (request === null || request.error || request.page) return;
     const current = request;
@@ -318,10 +301,6 @@ export function useLibraryEntries({ id, active }: {
   }, [request, settlement]);
   useEffect(() => {
     if (!request?.page || request.serial !== serial.current || request.id !== id || keyOf(request.view) !== requestedKey || library === null) return;
-    if (request.page.collectionRevision < confirmedLibraryEntriesRevision(accountId)) {
-      begin(request.reason, request.view, request.recovery);
-      return;
-    }
     if (stale(request.facts, request.view)) {
       begin(request.reason, request.view, request.recovery);
       return;
@@ -341,7 +320,7 @@ export function useLibraryEntries({ id, active }: {
     if (settlement.isPending(request.serial)) completedRefresh.current = request.serial;
     setRequest(null);
     setChain(value => value + 1);
-  }, [request, id, library, keyOf, requestedKey, committedKey, stale, begin, settlement, accountId, factsNow]);
+  }, [request, id, library, keyOf, requestedKey, committedKey, stale, begin, settlement, factsNow]);
   // a stale captured reconciliation starts its followup before refresh settlement.
   // beginning that request supersedes the waiter rather than announcing stale completion.
   useEffect(() => {
@@ -352,9 +331,8 @@ export function useLibraryEntries({ id, active }: {
     }
   }, [metadata, placement.revision, consumption, queryRevision, ready, snapshot, request, stale, begin]);
   useLayoutEffect(() => {
-    captureRef.current = ready && request === null && snapshot !== null &&
-      snapshot.entries.collectionRevision >= confirmedLibraryEntriesRevision(accountId) ? snapshot : null;
-  }, [ready, request, snapshot, accountId]);
+    captureRef.current = ready && request === null && snapshot !== null ? snapshot : null;
+  }, [ready, request, snapshot]);
   useEffect(() => {
     if (completedRefresh.current !== null && request === null && captureRef.current !== null) {
       settlement.resolve(completedRefresh.current);
@@ -377,8 +355,7 @@ export function useLibraryEntries({ id, active }: {
       return Promise.reject(signal.reason ?? new DOMException("Library refresh was aborted.", "AbortError"));
     }
     const current = latest.current;
-    if (current.snapshot === null || !current.ready ||
-      current.snapshot.entries.collectionRevision < confirmedLibraryEntriesRevision(accountId)) {
+    if (current.snapshot === null || !current.ready) {
       return Promise.reject(new Error("Library refresh lost its exact committed view"));
     }
     const token = begin("Reconcile", current.snapshot.entries.view);
@@ -391,32 +368,7 @@ export function useLibraryEntries({ id, active }: {
         captureRef.current = latest.current.snapshot;
       }
     });
-  }, [begin, settlement, accountId]);
-  useEffect(() => subscribePodcastSubscriptionSettingsInstalls(install => {
-    if (install.kind !== "Settings") return;
-    const settings = install.settings;
-    if (settings.user_id !== accountId) return;
-    const current = latest.current.snapshot;
-    if (settings.libraryEntriesCollectionRevision < confirmedLibraryEntriesRevision(accountId) ||
-      (current !== null && settings.libraryEntriesCollectionRevision < current.entries.collectionRevision)) return;
-    invalidateCapture();
-    if (current === null) return;
-    const entries = current.entries.entries.map(entry =>
-      entry.kind === "podcast" && entry.podcast.id === settings.podcast_id && entry.subscription.kind === "Present" ? {
-        ...entry,
-        podcast: { ...entry.podcast, syncStatus: present(settings.sync_status) },
-        subscription: present({
-          ...entry.subscription.value,
-          defaultPlaybackSpeed: settings.default_playback_speed,
-          pauseShorteningMode: settings.pause_shortening_mode,
-          autoQueue: settings.auto_queue,
-          syncStatus: settings.sync_status,
-        }),
-      } : entry);
-    const next = { ...current, entries: { ...current.entries, entries, collectionRevision: settings.libraryEntriesCollectionRevision } };
-    latest.current.snapshot = next;
-    setSnapshot(next);
-  }), [accountId, invalidateCapture]);
+  }, [begin, settlement]);
   const loadPage = useCallback(async (cursor: CollectionCursor, collectionRevision: CollectionRevision, signal: AbortSignal) => {
     const current = latest.current.snapshot;
     if (current === null) throw new Error("Library continuation lost its committed view");
@@ -433,7 +385,6 @@ export function useLibraryEntries({ id, active }: {
   const commitPage = useCallback((page: CollectionPage<LibraryEntryListItem>) => {
     const current = latest.current.snapshot;
     if (current === null) throw new Error("Library continuation lost its committed view");
-    if (page.collectionRevision < confirmedLibraryEntriesRevision(accountId)) return current.entries.entries.length;
     if (current.entries.collectionRevision !== page.collectionRevision) throw new Error("Library continuation revision mismatch");
     const entries = [...current.entries.entries];
     const ids = new Set(entries.map(targetId));
@@ -447,7 +398,7 @@ export function useLibraryEntries({ id, active }: {
     captureRef.current = next;
     setSnapshot(next);
     return entries.length;
-  }, [accountId]);
+  }, []);
   const exhaustion = useExhaustivePagination({
     active: active && ready && snapshot !== null && request === null,
     chainKey: `${id}:${requestedKey ?? "invalid"}:${committedKey ?? "uncommitted"}:${snapshot?.entries.collectionRevision ?? ZERO_REVISION}:${chain}`,
@@ -467,8 +418,7 @@ export function useLibraryEntries({ id, active }: {
   const reorder = useCallback(async (entries: readonly LibraryEntryListItem[]) => {
     const current = latest.current;
     const saved = current.snapshot;
-    if (!current.ready || saved === null ||
-      saved.entries.collectionRevision < confirmedLibraryEntriesRevision(accountId) || saved.library.role !== "admin" ||
+    if (!current.ready || saved === null || saved.library.role !== "admin" ||
       !saved.library.canEditEntries || saved.library.isDefault ||
       saved.entries.view.order.kind !== "Canonical" ||
       saved.entries.view.projection.kind !== "AllItems" ||
@@ -515,7 +465,7 @@ export function useLibraryEntries({ id, active }: {
     } finally {
       if (mounted.current && generation === reorderGeneration.current) setReorderBusy(false);
     }
-  }, [id, exhaustion.kind, clearVisitData, begin, accountId]);
+  }, [id, exhaustion.kind, clearVisitData, begin]);
   const setView = useCallback((next: LibraryEntryView) => {
     setUrlView({ kind: "Valid", view: next });
     const current = latest.current.snapshot;

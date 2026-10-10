@@ -3,8 +3,6 @@ export const PLAYBACK_RATE_MAX = 3;
 export const PLAYBACK_RATE_STEP = 0.05;
 export const PLAYBACK_RATE_PRESETS = [0.75, 1, 1.25, 1.5, 2] as const;
 
-export type PauseShorteningMode = "Off" | "Natural";
-
 // Rates are compared and stepped in whole hundredths, so 0.05 steps never drift.
 const hundredths = (rate: number) => Math.round(rate * 100);
 const clamp = (h: number) =>

@@ -388,12 +388,8 @@ items / show finished.
   reduced motion performs the same commit without animation.
 - the route bootstrap seeds only `Canonical + All items (all)` at zero process
   placement, consumption and metadata revisions.
-- the existing podcast settings publisher retains a private per-viewer confirmed
-  library-entry revision before notifying listeners. native external-store
-  subscription observes that floor; bootstrap, restored and page admission cannot
-  overwrite it. a delayed acknowledgement below the current snapshot or floor
-  cannot regress newer settings. matching present subscriptions install nested
-  settings and derived sync status; absent subscriptions remain absent.
+- podcast settings saves reach the pane through its own facts and visits;
+  there is no settings install publisher or confirmed library-entry floor.
 - modeled recovery notices remain; unexpected request rejection reaches the
   existing defect boundary. rejected reorder transport retains ordering
   uncertainty: a failed acknowledgement does not prove server rollback.

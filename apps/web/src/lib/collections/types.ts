@@ -7,7 +7,6 @@ import type { ResourceRowPrimary } from "@/components/ui/ResourceActivation";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { Presence } from "@/lib/api/presence";
 import type { ContributorCredit } from "@/lib/contributors/types";
-import type { PodcastSyncStatus } from "@/lib/podcasts/types";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { Schema } from "@/lib/api/wire";
@@ -32,7 +31,7 @@ export type CollectionActivity =
     }
   | {
       readonly kind: "PodcastSync";
-      readonly status: Extract<PodcastSyncStatus, "Pending" | "Running">;
+      readonly status: Extract<Schema<"PodcastSyncStatus">, "Pending" | "Running">;
     };
 
 export type CollectionContext =
@@ -46,7 +45,7 @@ export type ExceptionalStatus =
     }
   | {
       readonly kind: "PodcastSync";
-      readonly status: Extract<PodcastSyncStatus, "Failed">;
+      readonly status: Extract<Schema<"PodcastSyncStatus">, "Failed">;
     };
 
 interface CollectionRowBase {

@@ -1,82 +1,46 @@
-/** Pure semantic projection for one followed-podcast row. */
+/** One followed-podcast row, shared by the podcasts and library panes. */
 
 import { absent, present, type Presence } from "@/lib/api/presence";
-import { canonicalResourceRef } from "@/lib/sharing/targets";
-import type {
-  CollectionActivity,
-  CollectionRowView,
-  ExceptionalStatus,
-} from "@/lib/collections/types";
+import type { Schema } from "@/lib/api/wire";
+import type { CollectionRowView } from "@/lib/collections/types";
 import type { PositiveCount } from "@/lib/consumption/activityFacts";
 import type { ContributorCredit } from "@/lib/contributors/types";
-import type { PodcastSyncStatus } from "@/lib/podcasts/types";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 
 export interface PodcastPresenterItem {
-  id: string;
-  title: string;
-  contributors: ContributorCredit[];
-  unplayedCount: Presence<PositiveCount>;
-  syncStatus: Presence<PodcastSyncStatus>;
-  publicationDate: Presence<string>;
-}
-
-function exceptionalStatus(
-  syncStatus: Presence<PodcastSyncStatus>,
-): Presence<ExceptionalStatus> {
-  if (syncStatus.kind === "Absent") {
-    return absent();
-  }
-  switch (syncStatus.value) {
-    case "Failed":
-      return present({ kind: "PodcastSync", status: "Failed" });
-    case "Pending":
-    case "Running":
-    case "Complete":
-    case "SourceLimited":
-      return absent();
-  }
-}
-
-function activity(
-  syncStatus: Presence<PodcastSyncStatus>,
-  unplayedCount: Presence<PositiveCount>,
-): Presence<CollectionActivity> {
-  if (syncStatus.kind === "Present") {
-    switch (syncStatus.value) {
-      case "Pending":
-      case "Running":
-        return present({
-          kind: "PodcastSync",
-          status: syncStatus.value,
-        });
-      case "Complete":
-      case "SourceLimited":
-      case "Failed":
-        break;
-    }
-  }
-  return unplayedCount.kind === "Present"
-    ? present({ kind: "Unplayed", count: unplayedCount.value })
-    : absent();
+  readonly id: string;
+  readonly title: string;
+  readonly contributors: readonly ContributorCredit[];
+  readonly unplayedCount: Presence<PositiveCount>;
+  readonly syncStatus: Presence<Schema<"PodcastSyncStatus">>;
+  readonly publicationDate: Presence<string>;
 }
 
 export function presentPodcast(item: PodcastPresenterItem): CollectionRowView {
-  const href = `/podcasts/${item.id}`;
-
+  const sync =
+    item.syncStatus.kind === "Present" ? item.syncStatus.value : null;
   return {
     id: item.id,
     kind: "podcast",
     primary: {
       kind: "link",
-      href,
+      href: `/podcasts/${item.id}`,
       paneLabelHint: item.title,
     },
     title: { text: item.title },
     contributors: item.contributors,
     publicationDate: item.publicationDate,
     context: absent(),
-    activity: activity(item.syncStatus, item.unplayedCount),
-    exceptionalStatus: exceptionalStatus(item.syncStatus),
+    activity:
+      sync === "Pending" || sync === "Running"
+        ? present({ kind: "PodcastSync", status: sync })
+        : item.unplayedCount.kind === "Present"
+          ? present({ kind: "Unplayed", count: item.unplayedCount.value })
+          : absent(),
+    exceptionalStatus:
+      sync === "Failed"
+        ? present({ kind: "PodcastSync", status: "Failed" })
+        : absent(),
     actionSubject: {
       ref: canonicalResourceRef({ scheme: "podcast", id: item.id }),
     },

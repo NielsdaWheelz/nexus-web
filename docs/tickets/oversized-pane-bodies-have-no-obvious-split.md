@@ -51,3 +51,9 @@ the initially proposed multi-thousand-line deletion. independent source review
 and controlled four-format browser comparison admit this narrower consolidation;
 unexecuted navigation/editing branches remain source-qualified. the static gate
 passed. broader reader reauthoring and other pane concept audits remain open.
+
+2026-10-10 remeasurement (podcasts/browse rewrite, branch
+`cleanup/podcasts-browse-reauthor`): `PodcastDetailPaneBody` is resolved — 1,735
+formatted lines became a 530-line pane over two cohesive owners with explicit
+contracts (`lib/podcasts/paneState.ts` server state, `PodcastEpisodeList` rows
+and episode-wide commands). the media host, library and stats remain.

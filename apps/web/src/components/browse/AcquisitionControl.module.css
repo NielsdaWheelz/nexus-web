@@ -21,7 +21,8 @@
   justify-content: center;
   gap: 0.15rem;
   border: 0;
-  border-inline-start: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-inline-start: 1px solid
+    color-mix(in srgb, currentColor 22%, transparent);
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
   background: var(--accent);
   color: var(--ink-on-accent);

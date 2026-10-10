@@ -1,1585 +1,530 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from "react";
+// One show: its head (detail and library count), then its episodes, which
+// always reload after the head (a terminal subscription has committed its
+// episodes). While the subscription is live and the pane active, its
+// lifecycle stream refetches the head on every change.
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { apiFetch, isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
-import type { ApiJson } from "@/lib/api/wire";
+import AcquisitionControl from "@/components/browse/AcquisitionControl";
+import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
+import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
+import PodcastOverview from "@/components/podcasts/PodcastOverview";
+import PodcastViewBar, {
+  podcastViewHref,
+} from "@/components/podcasts/PodcastViewBar";
+import Button from "@/components/ui/Button";
+import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
+import PaneSection from "@/components/ui/PaneSection";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
+import { presenceValueOr } from "@/lib/api/presence";
+import { useConsumptionProjectionRevision } from "@/lib/consumption/projectionRevision";
+import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
+import { listLibraryPlacements } from "@/lib/libraries/libraryPlacement";
 import {
-  type CollectionCursor,
-  type CollectionPage,
-  type CollectionRevision,
-} from "@/lib/api/collectionPage";
-import { presenceValueOr, type Presence } from "@/lib/api/presence";
-import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
-import { useResource } from "@/lib/api/useResource";
+  useMediaQueryRevision,
+  useMediaSummaries,
+} from "@/lib/media/MediaSummaryProvider";
+import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
+import { shouldPollTranscriptProvisioning } from "@/lib/media/transcriptView";
 import {
   usePaneIsActive,
   usePaneParam,
+  usePaneRouter,
+  usePaneSearchParams,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
-import {
-  definePaneVisitDataKey,
-  useClearAllPaneVisitData,
-  usePaneReturnReady,
-  usePaneVisitData,
-} from "@/lib/workspace/paneReturnMemento";
-import {
-  CANONICAL_PODCAST_EPISODE_VIEW,
-  EPISODE_SORTS,
-  EPISODE_STATE_FILTERS,
-  decodePodcastEpisodeView,
-  encodePodcastEpisodeView,
-  episodeSortLabel,
-  episodeStateFilterLabel,
-  podcastEpisodeViewQuery,
-  type DecodedPodcastEpisodeView,
-  type EpisodeSort,
-  type EpisodeStateFilter,
-} from "@/lib/podcasts/episodeView";
-import { formatPlaybackRate } from "@/lib/player/playbackRate";
-import { pluralize } from "@/lib/text/pluralize";
-import { useStringIdSet } from "@/lib/useStringIdSet";
-import PodcastOverview from "@/components/podcasts/PodcastOverview";
-import AcquisitionControl from "@/components/browse/AcquisitionControl";
-import PodcastEpisodeList from "./PodcastEpisodeList";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
-import PaneSection from "@/components/ui/PaneSection";
-import {
-  FeedbackNotice,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import Button from "@/components/ui/Button";
-import AppliedFilters from "@/components/ui/AppliedFilters";
-import SelectField from "@/components/ui/SelectField";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
-import CollectionFilterEditor from "@/components/workspace/CollectionFilterEditor";
-import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
-import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
-import {
-  retryPodcastSubscriptionBackfill,
-  type PodcastBackfillRecord,
-  type PodcastDetailResponse,
-} from "../podcastSubscriptions";
-import { subscribeToPodcast } from "@/lib/podcasts/acquisition";
-import {
-  listLibraryPlacements,
-  type LibraryPlacementOption,
-} from "@/lib/libraries/libraryPlacement";
-import { useEpisodeTranscriptController } from "./useEpisodeTranscriptController";
-import { subscribePodcastSubscriptionSettingsInstalls } from "@/lib/podcasts/subscriptionSettings";
-import {
-  EPISODE_WIDE_COMMAND_LABELS,
-  podcastEpisodePageFromWire,
-  type PodcastEpisodeMedia,
-} from "./episodeTranscript";
-import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
-import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
-import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
-import { useConsumptionProjectionRevision } from "@/lib/consumption/projectionRevision";
-import styles from "./page.module.css";
-import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
-import { isAbortError } from "@/lib/errors";
-import { useRevalidationSettlement } from "@/lib/panes/useRevalidationSettlement";
+import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import {
-  podcastRefreshRequestAnnouncement,
-  requestPodcastRefresh,
-} from "@/lib/podcasts/refresh";
+  getPodcastDetail,
+  listEpisodes,
+  observeSubscription,
+  retryPodcastSubscriptionBackfill,
+  subscribeToPodcast,
+  usePodcastRevision,
+  type EpisodeState,
+  type PodcastDetail,
+  type PodcastEpisodeRow,
+  type PodcastLifecycle,
+  type PodcastSubscription,
+} from "@/lib/podcasts/api";
 import {
-  isPodcastSubscriptionLifecycleProtocolError,
-  isPodcastSubscriptionLifecycleTerminal,
-  observePodcastSubscriptionLifecycle,
-  podcastSubscriptionLifecycleFingerprint,
-  type PodcastSubscriptionLifecycleSnapshot,
-} from "@/lib/podcasts/subscriptionLifecycle";
+  listRowStatus,
+  podcastErrorMessage,
+  podcastRefresh,
+  useCommand,
+  useServerList,
+  useServerValue,
+  type ListData,
+  type Visit,
+} from "@/lib/podcasts/paneState";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
+import { pluralize } from "@/lib/text/pluralize";
+import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import {
-  notifyPodcastActionIntentOwnerReady,
-  usePodcastActionIntentOwner,
-  type PodcastActionIntent,
-} from "@/lib/podcasts/actionIntent";
-import type { PaneRefreshExecute } from "@/lib/panes/panePublications";
+  definePaneVisitDataKey,
+  usePaneReturnReady,
+} from "@/lib/workspace/paneReturnMemento";
+import PodcastEpisodeList from "./PodcastEpisodeList";
+import styles from "./page.module.css";
 
-const EPISODES_PAGE_SIZE = 100;
-
-type PodcastDetailOperation =
-  | "Load"
-  | "Backfill"
-  | "LoadNotes"
-  | "MarkAllPlayed"
-  | "PaneRefresh"
-  | "SubscriptionLifecycle";
-
-function podcastDetailErrorTitle(operation: PodcastDetailOperation): string {
-  switch (operation) {
-    case "Load":
-      return "Podcast details couldn’t be loaded";
-    case "Backfill":
-      return "Podcast backlog retry wasn’t started";
-    case "LoadNotes":
-      return "Episode notes couldn’t be loaded";
-    case "MarkAllPlayed":
-      return "Episodes weren’t marked as played";
-    case "PaneRefresh":
-      return "Podcast wasn’t refreshed";
-    case "SubscriptionLifecycle":
-      return "Podcast updates couldn’t be observed";
-  }
+interface Head {
+  readonly detail: PodcastDetail;
+  readonly libraryCount: number;
 }
 
-/** Finite product-copy adapter for podcast-detail endpoint failures. */
-function podcastDetailErrorMessage(
-  error: unknown,
-  operation: PodcastDetailOperation,
-): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  const requestId = error.requestId;
-  const title = podcastDetailErrorTitle(operation);
-  switch (error.code) {
-    case "E_NETWORK":
-      return { tone: "Danger", title, message: "Check your connection and retry.", requestId };
-    case "E_UPSTREAM":
-    case "E_UPSTREAM_TIMEOUT":
-      return {
-        tone: "Danger",
-        title,
-        message: "The server took too long to respond. Retry the action.",
-        requestId,
-      };
-    case "E_RATE_LIMITED":
-      return { tone: "Danger", title, message: "Wait a moment, then retry.", requestId };
-    case "E_MEDIA_NOT_FOUND":
-    case "E_PODCAST_NOT_FOUND":
-    case "E_NOT_FOUND":
-      return {
-        tone: "Danger",
-        title,
-        message: "This podcast or episode is no longer available. Refresh the pane.",
-        requestId,
-      };
-    case "E_MEDIA_NOT_READY":
-      return {
-        tone: "Danger",
-        title,
-        message: "This episode is still preparing. Wait for it to settle, then retry.",
-        requestId,
-      };
-    case "E_FORBIDDEN":
-      return {
-        tone: "Danger",
-        title,
-        message: "This account can’t make that change.",
-        requestId,
-      };
-    case "E_CONFLICT":
-    case "E_READER_STATE_CONFLICT":
-    case "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH":
-      return {
-        tone: "Danger",
-        title,
-        message: "The episode changed. Refresh the pane, then retry.",
-        requestId,
-      };
-    case "E_INVALID_REQUEST":
-      return {
-        tone: "Danger",
-        title,
-        message: "The requested change is no longer valid. Refresh the pane and retry.",
-        requestId,
-      };
-    default:
-      throw error;
-  }
-}
-
-interface PodcastDetailLoadResult {
-  readonly factsRevision: string;
-  detail: PodcastDetailResponse;
-  episodes: CollectionPage<PodcastEpisodeMedia>;
-  podcastLibraries: LibraryPlacementOption[];
-}
-
-interface PodcastDetailSnapshot {
-  readonly detail: PodcastDetailResponse;
-  readonly episodes: readonly PodcastEpisodeMedia[];
-  readonly queryIdentity: string;
-  readonly collectionRevision: CollectionRevision;
-  readonly nextCursor: Presence<CollectionCursor>;
-  readonly podcastLibraries: readonly LibraryPlacementOption[];
-}
-
-const PODCAST_DETAIL_VISIT_DATA = definePaneVisitDataKey<PodcastDetailSnapshot>(
+const HEAD = definePaneVisitDataKey<Visit<Head>>("PodcastDetail.Head");
+const EPISODES = definePaneVisitDataKey<Visit<ListData<PodcastEpisodeRow>>>(
   "PodcastDetail.Episodes",
 );
-const EMPTY_PODCAST_EPISODES: PodcastEpisodeMedia[] = [];
-const EMPTY_PODCAST_LIBRARIES: LibraryPlacementOption[] = [];
+const STATES: readonly {
+  readonly value: EpisodeState;
+  readonly label: string;
+}[] = [
+  { value: "all", label: "All episodes" },
+  { value: "unplayed", label: "Unplayed" },
+  { value: "in_progress", label: "In progress" },
+  { value: "played", label: "Played" },
+];
+const SORTS = [
+  { value: "newest", label: "Newest released" },
+  { value: "oldest", label: "Oldest released" },
+  { value: "duration_asc", label: "Shortest duration" },
+  { value: "duration_desc", label: "Longest duration" },
+];
+const TERMINAL = new Set(["Complete", "SourceLimited", "Failed"]);
+const BACKLOG = "Podcast backlog retry wasn’t started";
 
-function formatBackfillFact(backfill: PodcastBackfillRecord): string {
+const UPDATES: Readonly<Record<PodcastSubscription["sync_status"], string>> = {
+  Pending: "Episode updates pending",
+  Running: "Checking for new episodes",
+  Complete: "Episode updates current",
+  SourceLimited: "Episode updates source-limited",
+  Failed: "Episode updates failed",
+};
+
+function backfillFact({
+  state,
+  processedCount,
+  addedCount,
+}: PodcastSubscription["backfill"]) {
   const label =
-    backfill.state === "Running"
+    state === "Running"
       ? "Backfilling"
-      : backfill.state === "SourceLimited"
+      : state === "SourceLimited"
         ? "Backfill source limited"
-        : `Backfill ${backfill.state.toLowerCase()}`;
-  return `${label} · ${backfill.processedCount} processed · ${backfill.addedCount} added`;
+        : `Backfill ${state.toLowerCase()}`;
+  return `${label} · ${processedCount} processed · ${addedCount} added`;
 }
 
-function formatEpisodeUpdateStatus(
-  status: NonNullable<PodcastDetailResponse["subscription"]>["sync_status"],
-): string {
-  switch (status) {
-    case "Pending":
-      return "Episode updates pending";
-    case "Running":
-      return "Checking for new episodes";
-    case "Complete":
-      return "Episode updates current";
-    case "SourceLimited":
-      return "Episode updates source-limited";
-    case "Failed":
-      return "Episode updates failed";
-  }
+function subscriptionFacts(subscription: PodcastSubscription) {
+  const speed = presenceValueOr(subscription.default_playback_speed, 1);
+  const queue = subscription.auto_queue ? "on" : "off";
+  return [
+    UPDATES[subscription.sync_status],
+    backfillFact(subscription.backfill),
+    `${formatPlaybackRate(speed)} default speed · Auto-queue ${queue}`,
+  ];
 }
+
+const sameLifecycle = (
+  subscription: PodcastSubscription | null,
+  snapshot: PodcastLifecycle,
+) =>
+  subscription !== null &&
+  subscription.sync_status === snapshot.syncStatus &&
+  (["id", "state", "processedCount", "addedCount"] as const).every(
+    (field) => subscription.backfill[field] === snapshot.backfill[field],
+  );
 
 export default function PodcastDetailPaneBody() {
   const podcastId = usePaneParam("podcastId");
-  const isPaneActive = usePaneIsActive();
-  const committedSnapshotRef = useRef<PodcastDetailSnapshot | null>(null);
-  const refreshFallbackSnapshotRef =
-    useRef<PodcastDetailSnapshot | null>(null);
-  const reconciliationPendingRef = useRef(false);
-  const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
-  const restored = usePaneVisitData(
-    PODCAST_DETAIL_VISIT_DATA,
-    captureCommitted,
-  );
-  const [controller, setController] = useState<PodcastDetailSnapshot | null>(
-    restored,
-  );
-  const controllerRef = useRef<PodcastDetailSnapshot | null>(restored);
-  const [chainEpoch, setChainEpoch] = useState(0);
-  const clearAllVisitData = useClearAllPaneVisitData();
-  const detail = controller?.detail ?? null;
-  const loadedEpisodes = useMemo(
-    () =>
-      controller === null ? EMPTY_PODCAST_EPISODES : [...controller.episodes],
-    [controller],
-  );
-  const summaries = useMediaSummaries(loadedEpisodes.map((episode) => episode.mediaSummary));
-  const episodes = useMemo(() => loadedEpisodes.flatMap((episode) => {
-    const mediaSummary = summaries.resolve(episode.mediaSummary);
-    return mediaSummary.kind === "Absent" ? [] : [{ ...episode, mediaSummary: mediaSummary.value }];
-  }), [loadedEpisodes, summaries]);
+  if (podcastId === null) {
+    // justify-defect: the podcastDetail route always binds its podcastId.
+    throw new Error("Podcast detail pane without a podcastId");
+  }
+  return <PodcastDetailPane key={podcastId} podcastId={podcastId} />;
+}
+
+function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
+  const router = usePaneRouter();
+  const params = usePaneSearchParams();
+  const active = usePaneIsActive();
+  const state = params.get("state") ?? "all";
+  const sort = params.get("sort") ?? "newest";
+  const revision = usePodcastRevision();
+  const mediaRevision = useMediaQueryRevision();
   const consumption = useConsumptionProjectionRevision();
-  const podcastLibraries = useMemo(
-    () =>
-      controller === null
-        ? EMPTY_PODCAST_LIBRARIES
-        : [...controller.podcastLibraries],
-    [controller],
-  );
-  const setDetail: Dispatch<SetStateAction<PodcastDetailResponse | null>> =
-    useCallback((update) => {
-      setController((current) => {
-        if (current === null) return current;
-        const detail =
-          typeof update === "function" ? update(current.detail) : update;
-        return detail === null ? current : { ...current, detail };
-      });
-    }, []);
-  const setEpisodes: Dispatch<SetStateAction<PodcastEpisodeMedia[]>> =
-    useCallback((update) => {
-      setController((current) => {
-        if (current === null) return current;
-        const previous = [...current.episodes];
-        const episodes =
-          typeof update === "function" ? update(previous) : update;
-        return { ...current, episodes };
-      });
-    }, []);
-  // The pane URL owns the episode view through a strict, total codec; `view` is
-  // null only when the URL is Invalid, which is a terminal, user-recoverable
-  // state that requests nothing.
-  const episodeViewCodec = useMemo(
-    () => ({
-      basePath: `/podcasts/${podcastId ?? ""}`,
-      decode: decodePodcastEpisodeView,
-      encode: (decoded: DecodedPodcastEpisodeView, current: URLSearchParams) =>
-        encodePodcastEpisodeView(
-          decoded.kind === "Valid"
-            ? decoded.view
-            : CANONICAL_PODCAST_EPISODE_VIEW,
-          current,
-        ),
-      replaceOptions: {
-        viewTransition: { kind: "collection-reflow" } as const,
-      },
-    }),
-    [podcastId],
-  );
-  const { state: decodedView, setState: setDecodedView } =
-    usePaneUrlState(episodeViewCodec);
-  const view = decodedView.kind === "Valid" ? decodedView.view : null;
-  // The request identity is the podcast plus the exact API query the view names.
-  const episodeQueryIdentity =
-    view === null
-      ? null
-      : [podcastId, podcastEpisodeViewQuery(view).toString()].join("\u0000");
-  const factsRevision = [summaries.queryRevision,
-    view !== null && view.state !== "all" ? consumption.revision : null].join(":");
-  const adoptedFactsRevisionRef = useRef<string | null>(null);
-  const factsPending = adoptedFactsRevisionRef.current !== factsRevision;
-  const [markAllAsPlayedBusy, setMarkAllAsPlayedBusy] = useState(false);
-  const expandedShowNotesMediaIds = useStringIdSet();
-  const [loading, setLoading] = useState(restored === null);
-  const [suppressInitialLoad, setSuppressInitialLoad] = useState(
-    restored !== null,
-  );
-  const [error, setError] = useState<FeedbackContent | null>(null);
-  const [refreshError, setRefreshError] = useState<ApiError | null>(null);
-  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
-  const [lifecycleObservationFailure, setLifecycleObservationFailure] =
-    useState<{ readonly error: unknown; readonly identity: string } | null>(
-      null,
-    );
-  const pendingLifecycleObservationLossRef = useRef<unknown | null>(null);
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-  const captureDetailError = useCallback(
-    (detailError: unknown, operation: PodcastDetailOperation) => {
-      try {
-        setError(podcastDetailErrorMessage(detailError, operation));
-      } catch (defect) {
-        setAsyncDefect({ error: defect });
-      }
+  const head = useServerValue<Head>({
+    key: podcastId,
+    stale: `${revision}:${mediaRevision}`,
+    visit: HEAD,
+    load: async (signal) => {
+      const [detail, placements] = await Promise.all([
+        getPodcastDetail(podcastId, signal),
+        listLibraryPlacements({ kind: "Podcast", id: podcastId }, { signal }),
+      ]);
+      const placed = placements.filter((row) => row.relation.kind !== "Absent");
+      return { detail, libraryCount: placed.length };
     },
-    [],
+  });
+  const ready = head.status === "ready" ? head : null;
+  const query = new URLSearchParams({ state, sort }).toString();
+  const episodes = useServerList<PodcastEpisodeRow>({
+    key: ready === null ? null : `${podcastId}?${query}`,
+    stale: `${ready?.generation}:${state === "all" ? 0 : consumption.revision}`,
+    pageSize: 100,
+    visit: EPISODES,
+    fetchPage: (page, signal) =>
+      listEpisodes(podcastId, new URLSearchParams(`${query}&${page}`), signal),
+  });
+  const loaded = episodes.status === "ready" ? episodes.items : null;
+  const summaries = useMediaSummaries(
+    (loaded ?? []).map((episode) => episode.mediaSummary),
   );
-  const [reloadNonce, setReloadNonce] = useState(0);
-  const reloadNonceRef = useRef(0);
-  const revalidation = useRevalidationSettlement();
-  const revalidationSourceKeyRef = useRef<string | null>(null);
-  const completedPodcastDetailRevalidationNonceRef =
-    useRef<number | null>(null);
-  const [backfillRetryBusy, setBackfillRetryBusy] = useState(false);
-  useEffect(
+  const resolved = useMemo(
     () =>
-      subscribePodcastSubscriptionSettingsInstalls((install) => {
-        if (install.kind !== "Settings") return;
-        const response = install.settings;
-        if (response.podcast_id !== podcastId) return;
-        setDetail((prev) =>
-          prev && prev.subscription
-            ? {
-                ...prev,
-                subscription: {
-                  ...prev.subscription,
-                  default_playback_speed: response.default_playback_speed,
-                  pause_shortening_mode: response.pause_shortening_mode,
-                  auto_queue: response.auto_queue,
-                  updated_at: response.updated_at,
-                },
-              }
-            : prev,
-        );
-        clearAllVisitData();
+      (loaded ?? []).flatMap((episode) => {
+        const summary = summaries.resolve(episode.mediaSummary);
+        return summary.kind === "Absent"
+          ? []
+          : [{ ...episode, mediaSummary: summary.value }];
       }),
-    [clearAllVisitData, podcastId, setDetail],
+    [loaded, summaries],
   );
 
-  useSetPaneLabel(detail?.podcast.title ?? (loading ? null : "Podcast"));
-
-  const { clear: clearExpandedShowNotesMediaIds } = expandedShowNotesMediaIds;
-  const podcastDetailCacheKey =
-    episodeQueryIdentity !== null && (!suppressInitialLoad || factsPending)
-      ? ["podcast-detail", episodeQueryIdentity, reloadNonce, factsRevision].join(":")
-      : null;
-  const rejectPendingPodcastDetailRevalidation = useCallback((refreshError: unknown) => {
-    completedPodcastDetailRevalidationNonceRef.current = null;
-    revalidation.reject(refreshError);
-  }, [revalidation]);
-  // Abandons the committed chain so the next first page is adopted afresh. A
-  // view change needs only this: the view is already part of the request
-  // identity.
-  const resetEpisodeChain = useCallback(() => {
-    rejectPendingPodcastDetailRevalidation(
-      new DOMException("Podcast refresh was superseded.", "AbortError"),
-    );
-    if (committedSnapshotRef.current !== null) {
-      refreshFallbackSnapshotRef.current = committedSnapshotRef.current;
-    }
-    reconciliationPendingRef.current = true;
-    committedSnapshotRef.current = null;
-    clearAllVisitData();
-    setRefreshError(null);
-    setSuppressInitialLoad(false);
-  }, [clearAllVisitData, rejectPendingPodcastDetailRevalidation]);
-  // A reload keeps the view, so only a fresh nonce makes the request identity
-  // differ from the one already loaded.
-  const reload = useCallback(() => {
-    resetEpisodeChain();
-    const nonce = reloadNonceRef.current + 1;
-    reloadNonceRef.current = nonce;
-    setReloadNonce(nonce);
-  }, [resetEpisodeChain]);
-  const revalidatePodcastDetail = useCallback(
-    (signal: AbortSignal): Promise<void> => {
-      if (signal.aborted) {
-        return Promise.reject(
-          signal.reason ??
-            new DOMException("Podcast refresh was aborted.", "AbortError"),
-        );
-      }
-      reload();
-      const nonce = reloadNonceRef.current;
-      const sourceKey = episodeQueryIdentity;
-      revalidationSourceKeyRef.current = sourceKey;
-      return revalidation.wait({
-        requestId: nonce,
-        signal,
-        onAbort: () => {
-          completedPodcastDetailRevalidationNonceRef.current = null;
-          reconciliationPendingRef.current = false;
-          setSuppressInitialLoad(true);
-          committedSnapshotRef.current = refreshFallbackSnapshotRef.current;
-          refreshFallbackSnapshotRef.current = null;
-          setLoading(false);
-        },
-      });
-    },
-    [episodeQueryIdentity, reload, revalidation],
-  );
-  useEffect(
-    () => () => {
-      rejectPendingPodcastDetailRevalidation(
-        new DOMException("Podcast refresh source was replaced.", "AbortError"),
-      );
-    },
-    [
-      episodeQueryIdentity,
-      podcastId,
-      rejectPendingPodcastDetailRevalidation,
-    ],
-  );
-  const previousEpisodeQueryIdentityRef = useRef(episodeQueryIdentity);
-  useLayoutEffect(() => {
-    if (previousEpisodeQueryIdentityRef.current === episodeQueryIdentity) {
-      return;
-    }
-    previousEpisodeQueryIdentityRef.current = episodeQueryIdentity;
-    resetEpisodeChain();
-  }, [episodeQueryIdentity, resetEpisodeChain]);
-
-  const transcript = useEpisodeTranscriptController({
-    podcastId: podcastId ?? "",
-    // No episode commits while the view is Invalid, so the batch transcript
-    // command this selection describes is unreachable there.
-    selection: { state: (view ?? CANONICAL_PODCAST_EPISODE_VIEW).state },
-    episodes,
-    setEpisodes,
-    setError,
-    reload,
-    onMutationCommitted: clearAllVisitData,
-  });
-
-  const fetchPodcastDetail = useCallback(
-    async (signal?: AbortSignal): Promise<PodcastDetailLoadResult> => {
-      try {
-        if (!podcastId || view === null) {
-          throw new Error("Podcast episodes require an addressable view");
-        }
-        const episodeParams = podcastEpisodeViewQuery(view);
-        const retainedCount = controllerRef.current?.queryIdentity === episodeQueryIdentity
-          ? controllerRef.current.episodes.length : 0;
-        episodeParams.set("limit", String(retainedCount === 0 ? EPISODES_PAGE_SIZE : Math.min(EPISODES_PAGE_SIZE, retainedCount)));
-
-        const fetchOptions = signal ? { signal } : undefined;
-        // Detail is the lifecycle fence: a terminal subscription guarantees its
-        // initial ingest/backfill writes committed before this read. Episodes
-        // must start after that fence, otherwise parallel reads can combine a
-        // pre-terminal empty page with terminal detail and suppress observation.
-        const detailResp = await apiFetch<ApiJson<"/podcasts/{podcast_id}", "get">>(
-          `/api/podcasts/${podcastId}`,
-          fetchOptions,
-        );
-        if (signal?.aborted) {
-          throw signal.reason ?? new DOMException("Aborted", "AbortError");
-        }
-        const decodedDetail = detailResp.data;
-        const [episodesResp, podcastLibraries] = await Promise.all([
-          apiFetch<ApiJson<"/podcasts/{podcast_id}/episodes", "get">>(
-            `/api/podcasts/${podcastId}/episodes?${episodeParams}`,
-            fetchOptions,
-          ),
-          decodedDetail.subscription
-            ? listLibraryPlacements(
-                { kind: "Podcast", id: podcastId },
-                { signal },
-              )
-            : Promise.resolve([]),
-        ]);
-        if (signal?.aborted) {
-          throw signal.reason ?? new DOMException("Aborted", "AbortError");
-        }
-        let episodePage = podcastEpisodePageFromWire(episodesResp.data);
-        for (;;) {
-          try {
-            const items = [...episodePage.items];
-            while (items.length < retainedCount && episodePage.nextCursor.kind === "Present") {
-              const continuation = new URLSearchParams(episodeParams);
-              continuation.set("cursor", episodePage.nextCursor.value);
-              continuation.set("collection_revision", String(episodePage.collectionRevision));
-              continuation.set("limit", String(Math.min(EPISODES_PAGE_SIZE, retainedCount - items.length)));
-              episodePage = podcastEpisodePageFromWire((await apiFetch<ApiJson<"/podcasts/{podcast_id}/episodes", "get">>(
-                `/api/podcasts/${podcastId}/episodes?${continuation}`, fetchOptions,
-              )).data);
-              items.push(...episodePage.items);
-            }
-            return { factsRevision, detail: decodedDetail, episodes: { ...episodePage, items }, podcastLibraries };
-          } catch (error) {
-            if (signal?.aborted || !isApiError(error) || error.code !== "E_COLLECTION_CHANGED") throw error;
-            episodePage = podcastEpisodePageFromWire((await apiFetch<ApiJson<"/podcasts/{podcast_id}/episodes", "get">>(
-              `/api/podcasts/${podcastId}/episodes?${episodeParams}`, fetchOptions,
-            )).data);
-          }
-        }
-      } catch (loadError) {
-        const observationLoss = pendingLifecycleObservationLossRef.current;
-        if (
-          observationLoss !== null &&
-          (!isApiError(loadError) || isSameSystemApiDefect(loadError))
-        ) {
-          pendingLifecycleObservationLossRef.current = null;
-          throw new AggregateError(
-            [observationLoss, loadError],
-            "Podcast subscription observation and canonical reconciliation both failed",
-          );
-        }
-        throw loadError;
-      }
-    },
-    [podcastId, view, episodeQueryIdentity, factsRevision],
-  );
-
-  const applyPodcastDetailLoad = useCallback(
-    (result: PodcastDetailLoadResult) => {
-      if (episodeQueryIdentity === null || result.factsRevision !== factsRevision) return;
-      reconciliationPendingRef.current = false;
-      adoptedFactsRevisionRef.current = result.factsRevision;
-      const previous = controllerRef.current;
-      const sameTopology = previous !== null && previous.queryIdentity === episodeQueryIdentity &&
-        previous.episodes.length === result.episodes.items.length &&
-        previous.episodes.every((episode, index) => episode.id === result.episodes.items[index].id) &&
-        previous.nextCursor.kind === result.episodes.nextCursor.kind;
-      const priorById = new Map(previous?.episodes.map((episode) => [episode.id, episode]) ?? []);
-      const snapshot: PodcastDetailSnapshot = {
-        detail: result.detail,
-        episodes: result.episodes.items.map((episode) => ({ ...episode,
-          description_text: priorById.get(episode.id)?.description_text ?? episode.description_text })),
-        queryIdentity: episodeQueryIdentity,
-        collectionRevision: result.episodes.collectionRevision,
-        nextCursor: result.episodes.nextCursor,
-        podcastLibraries: result.podcastLibraries,
-      };
-      controllerRef.current = snapshot;
-      committedSnapshotRef.current = snapshot;
-      refreshFallbackSnapshotRef.current = null;
-      setController(snapshot);
-      setChainEpoch((epoch) => epoch + 1);
-      if (!sameTopology) clearExpandedShowNotesMediaIds();
-    },
-    [clearExpandedShowNotesMediaIds, episodeQueryIdentity, factsRevision],
-  );
-
-  const podcastDetailResource = useResource<PodcastDetailLoadResult>({
-    cacheKey: podcastDetailCacheKey,
-    load: fetchPodcastDetail,
-  });
-
+  const subscription = ready?.data.detail.subscription ?? null;
+  const terminal =
+    subscription === null ||
+    (TERMINAL.has(subscription.sync_status) &&
+      TERMINAL.has(subscription.backfill.state));
+  const backfillId = subscription?.backfill.id ?? null;
+  const subscriptionRef = useRef(subscription);
+  subscriptionRef.current = subscription;
+  const [lost, setLost] = useState<{
+    readonly backfillId: string;
+    readonly error: Error;
+  } | null>(null);
+  const refetchHead = head.refetch;
   useEffect(() => {
-    if (!podcastId || view === null) {
-      setLoading(false);
-      setError(null);
-      setRefreshError(null);
-      return;
-    }
-
-    if (podcastDetailResource.status === "loading") {
-      setLoading(true);
-      setRefreshError(null);
-      if (controllerRef.current === null) setError(null);
-      return;
-    }
-
-    if (podcastDetailResource.status === "ready") {
-      const initial = controllerRef.current === null;
-      applyPodcastDetailLoad(podcastDetailResource.data);
-      if (initial) setError(null);
-      setRefreshError(null);
-      setLoading(false);
-
-      if (
-        revalidation.isPending(reloadNonce) &&
-        revalidationSourceKeyRef.current === episodeQueryIdentity
-      ) {
-        completedPodcastDetailRevalidationNonceRef.current = reloadNonce;
-      }
-      return;
-    }
-
-    if (podcastDetailResource.status === "error") {
-      reconciliationPendingRef.current = false;
-      setSuppressInitialLoad(true);
-      committedSnapshotRef.current = refreshFallbackSnapshotRef.current;
-      refreshFallbackSnapshotRef.current = null;
-
-      if (controllerRef.current === null) captureDetailError(podcastDetailResource.error, "Load");
-      else setRefreshError(podcastDetailResource.error);
-      setLoading(false);
-      if (revalidation.isPending(reloadNonce)) {
-        rejectPendingPodcastDetailRevalidation(podcastDetailResource.error);
-      }
-    }
-  }, [
-    revalidation,
-    applyPodcastDetailLoad,
-    captureDetailError,
-    episodeQueryIdentity,
-    podcastDetailResource,
-    podcastId,
-    rejectPendingPodcastDetailRevalidation,
-    reloadNonce,
-    view,
-  ]);
-
-  useLayoutEffect(() => {
-    controllerRef.current = controller;
-    committedSnapshotRef.current = reconciliationPendingRef.current
-      || factsPending ? null
-      : controller;
-    const completedNonce = completedPodcastDetailRevalidationNonceRef.current;
-    if (
-      controller === null ||
-      completedNonce === null ||
-      !revalidation.isPending(completedNonce) ||
-      revalidationSourceKeyRef.current !== episodeQueryIdentity ||
-      controller.queryIdentity !== episodeQueryIdentity ||
-      reconciliationPendingRef.current || factsPending
-    ) {
-      return;
-    }
-    completedPodcastDetailRevalidationNonceRef.current = null;
-    revalidation.resolve(completedNonce);
-  }, [revalidation, controller, episodeQueryIdentity, factsPending]);
-
-  const subscriptionLifecycleSnapshot = useMemo<PodcastSubscriptionLifecycleSnapshot | null>(
-    () =>
-      podcastId && detail?.subscription
-        ? {
-            podcastId,
-            syncStatus: detail.subscription.sync_status,
-            backfill: {
-              id: detail.subscription.backfill.id,
-              state: detail.subscription.backfill.state,
-              processedCount: detail.subscription.backfill.processedCount,
-              addedCount: detail.subscription.backfill.addedCount,
-            },
-          }
-        : null,
-    [detail?.subscription, podcastId],
-  );
-  const subscriptionLifecycleFingerprint =
-    subscriptionLifecycleSnapshot === null
-      ? null
-      : podcastSubscriptionLifecycleFingerprint(
-          subscriptionLifecycleSnapshot,
-        );
-  const subscriptionLifecycleTerminal =
-    subscriptionLifecycleSnapshot === null ||
-    isPodcastSubscriptionLifecycleTerminal(subscriptionLifecycleSnapshot);
-  const subscriptionLifecycleIdentity =
-    subscriptionLifecycleSnapshot?.backfill.id ?? null;
-  const subscriptionLifecycleFingerprintRef = useRef<string | null>(null);
-  const subscriptionLifecycleSnapshotRef =
-    useRef<PodcastSubscriptionLifecycleSnapshot | null>(null);
-  useLayoutEffect(() => {
-    subscriptionLifecycleFingerprintRef.current =
-      subscriptionLifecycleFingerprint;
-    subscriptionLifecycleSnapshotRef.current = subscriptionLifecycleSnapshot;
-  }, [subscriptionLifecycleFingerprint, subscriptionLifecycleSnapshot]);
-  useEffect(() => {
-    if (lifecycleObservationFailure === null) return;
-    const installed = subscriptionLifecycleSnapshotRef.current;
-    if (
-      mountedRef.current &&
-      installed?.backfill.id === lifecycleObservationFailure.identity
-    ) {
-      captureDetailError(
-        lifecycleObservationFailure.error,
-        "SubscriptionLifecycle",
-      );
-    }
-    setLifecycleObservationFailure(null);
-  }, [captureDetailError, lifecycleObservationFailure]);
-
-  useEffect(() => {
-    if (
-      !isPaneActive ||
-      !podcastId ||
-      subscriptionLifecycleIdentity === null ||
-      subscriptionLifecycleTerminal
-    ) {
-      return;
-    }
-
+    if (!active || terminal || backfillId === null) return;
     const controller = new AbortController();
-    let desiredFingerprint = subscriptionLifecycleFingerprintRef.current;
-    let deliveredGeneration = 0;
-    let reconciledGeneration = 0;
-    let forceReconcile = false;
-    let observationLoss: unknown = null;
-    let draining = false;
-
-    const reportLifecycleError = (lifecycleError: unknown) => {
-      if (isAbortError(lifecycleError) || !mountedRef.current) return;
-      const installed = subscriptionLifecycleSnapshotRef.current;
-      if (installed?.backfill.id !== subscriptionLifecycleIdentity) return;
-      setLifecycleObservationFailure({
-        error: lifecycleError,
-        identity: subscriptionLifecycleIdentity,
-      });
-    };
-    const needsDrain = () =>
-      forceReconcile ||
-      (deliveredGeneration > reconciledGeneration &&
-        desiredFingerprint !== subscriptionLifecycleFingerprintRef.current);
-    const drain = () => {
-      if (draining || controller.signal.aborted || !needsDrain()) return;
-      draining = true;
-      void (async () => {
-        let failed = false;
-        try {
-          while (!controller.signal.aborted && needsDrain()) {
-            const reconcilesObservationLoss = forceReconcile;
-            const lostObservation = observationLoss;
-            const observedGeneration = deliveredGeneration;
-            forceReconcile = false;
-            observationLoss = null;
-            try {
-              await revalidatePodcastDetail(controller.signal);
-            } catch (revalidationError) {
-              if (isAbortError(revalidationError)) {
-                if (
-                  pendingLifecycleObservationLossRef.current ===
-                  lostObservation
-                ) {
-                  pendingLifecycleObservationLossRef.current = null;
-                }
-                if (!controller.signal.aborted && reconcilesObservationLoss) {
-                  reportLifecycleError(lostObservation);
-                }
-                return;
-              }
-              if (reconcilesObservationLoss) {
-                if (
-                  pendingLifecycleObservationLossRef.current ===
-                  lostObservation
-                ) {
-                  pendingLifecycleObservationLossRef.current = null;
-                }
-                throw new AggregateError(
-                  [lostObservation, revalidationError],
-                  "Podcast subscription observation and canonical reconciliation both failed",
-                );
-              }
-              throw revalidationError;
-            }
-            if (
-              pendingLifecycleObservationLossRef.current === lostObservation
-            ) {
-              pendingLifecycleObservationLossRef.current = null;
-            }
-            reconciledGeneration = observedGeneration;
-            if (
-              desiredFingerprint ===
-              subscriptionLifecycleFingerprintRef.current
-            ) {
-              reconciledGeneration = deliveredGeneration;
-            }
-            if (reconcilesObservationLoss) {
-              const installed = subscriptionLifecycleSnapshotRef.current;
-              if (
-                isApiError(lostObservation) &&
-                lostObservation.code === "E_NOT_FOUND" &&
-                (installed === null ||
-                  installed.backfill.id !== subscriptionLifecycleIdentity)
-              ) {
-                // justify-ignore-error: canonical detail proved the prior
-                // subscription was removed or replaced after its lifecycle
-                // route reported it gone; that installed state owns the outcome.
-                continue;
-              }
-              reportLifecycleError(lostObservation);
-            }
-          }
-        } catch (lifecycleError) {
-          failed = true;
-          reportLifecycleError(lifecycleError);
-        } finally {
-          draining = false;
-          if (
-            !controller.signal.aborted &&
-            !failed &&
-            needsDrain()
-          ) {
-            drain();
-          }
-        }
-      })();
-    };
-
-    const stop = observePodcastSubscriptionLifecycle(podcastId, {
-      signal: controller.signal,
-      onSnapshot: (snapshot) => {
-        const nextFingerprint =
-          podcastSubscriptionLifecycleFingerprint(snapshot);
-        deliveredGeneration += 1;
-        desiredFingerprint = nextFingerprint;
-        drain();
+    observeSubscription(
+      podcastId,
+      controller.signal,
+      (snapshot) => {
+        setLost(null);
+        if (!sameLifecycle(subscriptionRef.current, snapshot)) refetchHead();
       },
-      onError: (lifecycleError) => {
-        if (isPodcastSubscriptionLifecycleProtocolError(lifecycleError)) {
-          reportLifecycleError(lifecycleError);
-          return;
-        }
-        pendingLifecycleObservationLossRef.current = lifecycleError;
-        observationLoss = lifecycleError;
-        forceReconcile = true;
-        drain();
+      (error) => {
+        setLost({ backfillId, error });
+        refetchHead();
       },
-    });
+    );
+    return () => controller.abort();
+  }, [active, backfillId, podcastId, refetchHead, terminal]);
+  // A lost stream matters only while that same subscription is still live.
+  const lostNotice =
+    lost !== null && lost.backfillId === backfillId && !terminal
+      ? podcastErrorMessage(lost.error, "Podcast updates couldn’t be observed")
+      : null;
 
-    return () => {
-      controller.abort();
-      stop();
-    };
-  }, [
-    isPaneActive,
-    podcastId,
-    revalidatePodcastDetail,
-    subscriptionLifecycleIdentity,
-    subscriptionLifecycleTerminal,
-  ]);
-
-  usePaneReturnReady(
-    (!loading && controller !== null) || error !== null || view === null,
-  );
-
-  const loadEpisodePage = useCallback(
-    async (
-      cursor: CollectionCursor,
-      revision: CollectionRevision,
-      signal: AbortSignal,
-    ) => {
-      if (!podcastId || view === null) {
-        throw new Error("Podcast episodes require an addressable view");
-      }
-      const episodeParams = podcastEpisodeViewQuery(view);
-      episodeParams.set("limit", String(EPISODES_PAGE_SIZE));
-      episodeParams.set("cursor", cursor);
-      episodeParams.set("collection_revision", String(revision));
-      const response = await apiFetch<ApiJson<"/podcasts/{podcast_id}/episodes", "get">>(
-        `/api/podcasts/${podcastId}/episodes?${episodeParams}`,
-        { signal },
-      );
-      return podcastEpisodePageFromWire(response.data);
-    },
-    [podcastId, view],
-  );
-  const commitEpisodePage = useCallback(
-    (page: CollectionPage<PodcastEpisodeMedia>) => {
-      const current = controllerRef.current;
-      if (
-        current === null ||
-        page.collectionRevision !== current.collectionRevision
-      ) {
-        throw new Error("Podcast episode continuation revision mismatch");
-      }
-      const seen = new Set(current.episodes.map((episode) => episode.id));
-      const nextEpisodes = [...current.episodes];
-      for (const episode of page.items) {
-        if (seen.has(episode.id)) continue;
-        seen.add(episode.id);
-        nextEpisodes.push(episode);
-      }
-      const next: PodcastDetailSnapshot = {
-        ...current,
-        episodes: nextEpisodes,
-        nextCursor: page.nextCursor,
-      };
-      controllerRef.current = next;
-      setController(next);
-      return nextEpisodes.length;
-    },
-    [],
-  );
-  const episodeExhaustion = useExhaustivePagination({
-    active:
-      isPaneActive &&
-      controller !== null &&
-      controller.queryIdentity === episodeQueryIdentity &&
-      !reconciliationPendingRef.current && !factsPending,
-    chainKey: [episodeQueryIdentity, reloadNonce, chainEpoch, factsRevision].join(":"),
-    cursor: controller?.nextCursor ?? { kind: "Absent" },
-    collectionRevision:
-      controller?.collectionRevision ?? (0 as CollectionRevision),
-    itemCount: episodes.length,
-    loadPage: loadEpisodePage,
-    commitPage: commitEpisodePage,
-    refresh: reload,
-  });
-  const handledCollectionChangeRef = useRef<unknown>(null);
-  useEffect(() => {
-    if (loading || factsPending || controller === null || reconciliationPendingRef.current ||
-      episodeExhaustion.kind !== "RefreshRequired" || episodeExhaustion.reason !== "CollectionChanged" ||
-      handledCollectionChangeRef.current === episodeExhaustion.error) return;
-    handledCollectionChangeRef.current = episodeExhaustion.error;
-    reload();
-  }, [episodeExhaustion, loading, factsPending, controller, reload]);
-  const sortSelectRef = useRef<HTMLSelectElement | null>(null);
-  const filtersTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const episodeFilterNodes = useMemo(
-    () =>
-      view === null ? undefined : (
-        <>
-          <SelectField
-            layout="Stacked"
-            label="Playback"
-            value={view.state}
-            onChange={(event) =>
-              setDecodedView({
-                kind: "Valid",
-                view: { ...view, state: event.target.value as EpisodeStateFilter },
-              })
-            }
-          >
-            {EPISODE_STATE_FILTERS.map((state) => (
-              <option key={state} value={state}>
-                {episodeStateFilterLabel(state)}
-              </option>
-            ))}
-          </SelectField>
-        </>
+  // justify-polling: transcript provisioning has no push stream here; the
+  // queued or running episodes end the schedule.
+  useIntervalPoll({
+    enabled:
+      active &&
+      (loaded ?? []).some((episode) =>
+        shouldPollTranscriptProvisioning(episode.transcript_state),
       ),
-    [setDecodedView, view],
-  );
-  const getEpisodeRowStatus = useCallback(
-    (query: string) => {
-      const visibleCount = episodes.filter((episode) =>
-        matchesPaneFilterQuery(query, mediaListFilterFields(episode.mediaSummary)),
-      ).length;
-      if (
-        controller !== null &&
-        (loading || refreshError !== null || controller.queryIdentity !== episodeQueryIdentity)
-      ) {
-        return {
-          kind: "Retained" as const,
-          visibleCount,
-          loadedCount: episodes.length,
-          unit: { singular: "episode", plural: "episodes" },
-          cause: refreshError === null ? "Updating" as const : "Failed" as const,
-        };
-      }
-      if (
-        (controller === null && error !== null) ||
-        episodeExhaustion.kind === "ResumeFailed" ||
-        episodeExhaustion.kind === "RefreshRequired"
-      ) {
-        return {
-          kind: "Failed" as const,
-          visibleCount,
-          loadedCount: episodes.length,
-          unit: { singular: "episode", plural: "episodes" },
-        };
-      }
-      return episodeExhaustion.kind === "Complete"
-        ? {
-            kind: "Complete" as const,
-            visibleCount,
-            totalCount: episodes.length,
-            unit: { singular: "episode", plural: "episodes" },
-          }
-        : {
-            kind: "Partial" as const,
-            visibleCount,
-            loadedCount: episodes.length,
-            unit: { singular: "episode", plural: "episodes" },
-          };
-    },
-    [controller, episodeExhaustion.kind, episodeQueryIdentity, episodes, error, loading, refreshError],
-  );
-  const {
-    query: filterQuery,
-    onQueryChange,
-    clearQuery,
-    rowStatus,
-  } = usePaneFilterRows({
-    sourceKey: `PodcastDetail.Episodes:${podcastId ?? ""}`,
-    getRowStatus: getEpisodeRowStatus,
+    pollIntervalMs: 3000,
+    onPoll: episodes.refetch,
   });
-  const resetToCanonicalView = useCallback(() => {
-    clearQuery();
-    setDecodedView({ kind: "Valid", view: CANONICAL_PODCAST_EPISODE_VIEW });
-  }, [clearQuery, setDecodedView]);
-  const clearDomainFilters = useCallback(() => {
-    if (view === null) return;
-    setDecodedView({ kind: "Valid", view: { ...view, state: "all" } });
-  }, [setDecodedView, view]);
+
+  const command = useCommand();
+  const complete = episodes.status === "ready" && episodes.complete;
+  const getRowStatus = useCallback(
+    (text: string) => {
+      const visible = resolved.filter((episode) =>
+        matchesPaneFilterQuery(
+          text,
+          mediaListFilterFields(episode.mediaSummary),
+        ),
+      );
+      return listRowStatus(
+        episodes.status,
+        complete,
+        resolved.length,
+        visible.length,
+        "episode",
+      );
+    },
+    [complete, episodes.status, resolved],
+  );
+  const filterRows = usePaneFilterRows({
+    sourceKey: `PodcastDetail.Episodes:${podcastId}`,
+    getRowStatus,
+  });
+  const replaceView = useCallback(
+    (changes: Readonly<Record<string, string | null>>) =>
+      router.replace(
+        podcastViewHref(`/podcasts/${podcastId}`, params, changes),
+        {
+          viewTransition: { kind: "collection-reflow" },
+        },
+      ),
+    [params, podcastId, router],
+  );
   const { inputRef, focusInput } = usePaneCollectionInput();
   const collection = useMemo(
-    () =>
-      view === null
-        ? undefined
-        : {
-            label: "Filter podcast episodes",
-            content: (
-              <PaneCollectionBar
-                inputRef={inputRef}
-                inputLabel="Filter podcast episodes"
-                placeholder="Filter episodes"
-                query={filterQuery}
-                onQueryChange={onQueryChange}
-                onClearQuery={clearQuery}
-                rowStatus={rowStatus}
-                filters={
-                  <>
-                    <SelectField
-                      layout="Inline"
-                      label="Sort episodes"
-                      size="sm"
-                      ref={sortSelectRef}
-                      value={view.sort}
-                      onChange={(event) =>
-                        setDecodedView({
-                          kind: "Valid",
-                          view: { ...view, sort: event.target.value as EpisodeSort },
-                        })
-                      }
-                    >
-                      {EPISODE_SORTS.map((sort) => (
-                        <option key={sort} value={sort}>{episodeSortLabel(sort)}</option>
-                      ))}
-                    </SelectField>
-                    <CollectionFilterEditor
-                      activeCount={view.state === "all" ? 0 : 1}
-                      triggerRef={filtersTriggerRef}
-                      onClearFilters={clearDomainFilters}
-                      onResetView={view.state !== "all" || view.sort !== "newest" || filterQuery.trim() ? resetToCanonicalView : undefined}
-                    >
-                      {episodeFilterNodes}
-                    </CollectionFilterEditor>
-                  </>
-                }
-                appliedFilters={
-                  <AppliedFilters
-                    chips={view.state === "all" ? [] : [{ id: "state", label: episodeStateFilterLabel(view.state) }]}
-                    returnFocusTo={filtersTriggerRef}
-                    onRemove={clearDomainFilters}
-                  />
-                }
-              />
-            ),
-            focusInput,
-          },
-    [
-      clearDomainFilters,
-      clearQuery,
-      episodeFilterNodes,
-      filterQuery,
-      focusInput,
-      inputRef,
-      onQueryChange,
-      resetToCanonicalView,
-      rowStatus,
-      setDecodedView,
-      view,
-    ],
-  );
-  const visibleEpisodes = useMemo(
-    () =>
-      episodes.filter((episode) =>
-        matchesPaneFilterQuery(filterQuery, mediaListFilterFields(episode.mediaSummary)),
+    () => ({
+      label: "Filter podcast episodes",
+      content: (
+        <PodcastViewBar
+          inputRef={inputRef}
+          inputLabel="Filter podcast episodes"
+          placeholder="Filter episodes"
+          filterRows={filterRows}
+          sort={{
+            param: "sort",
+            label: "Sort episodes",
+            value: sort,
+            defaultValue: "newest",
+            options: SORTS,
+          }}
+          filters={[
+            {
+              param: "state",
+              label: "Playback",
+              value: state,
+              defaultValue: "all",
+              options: STATES,
+            },
+          ]}
+          onChange={replaceView}
+        />
       ),
-    [episodes, filterQuery],
+      focusInput,
+    }),
+    [filterRows, focusInput, inputRef, replaceView, sort, state],
   );
-
-  // Unsubscribe and Settings are canonical resource actions now: the pane
-  // publishes its actionSubject and the app runtime dispatches Unsubscribe
-  // (client + snapshot reconcile) and PodcastSettings (app-level overlay).
-
-  const retryBackfill = useCallback(async () => {
-    if (
-      !podcastId ||
-      detail?.subscription?.backfill.state !== "Failed" ||
-      backfillRetryBusy
-    ) {
-      return;
-    }
-    setBackfillRetryBusy(true);
-    setError(null);
-    try {
-      const result = await retryPodcastSubscriptionBackfill(podcastId);
-      if (result.podcastId !== podcastId) {
-        throw new TypeError("Podcast backfill Retry changed identity");
-      }
-      setDetail((current) =>
-        current?.subscription
-          ? {
-              ...current,
-              subscription: {
-                ...current.subscription,
-                backfill: result.backfill,
-              },
-            }
-          : current,
-      );
-      clearAllVisitData();
-      setError(null);
-    } catch (caught) {
-      if (handleUnauthenticatedApiError(caught)) return;
-      captureDetailError(caught, "Backfill");
-    } finally {
-      setBackfillRetryBusy(false);
-    }
-  }, [
-    backfillRetryBusy,
-    captureDetailError,
-    clearAllVisitData,
-    detail?.subscription?.backfill.state,
-    podcastId,
-    setDetail,
-  ]);
-
-  const toggleEpisodeShowNotesExpansion = useCallback(
-    (mediaId: string) => {
-      if (expandedShowNotesMediaIds.has(mediaId)) {
-        expandedShowNotesMediaIds.remove(mediaId);
-        return;
-      }
-      const episode = episodes.find((candidate) => candidate.id === mediaId);
-      if (!episode?.has_show_notes) return;
-      if (episode.description_text?.trim()) {
-        expandedShowNotesMediaIds.add(mediaId);
-        return;
-      }
-      void apiFetch<{ data: { description_text: string | null } }>(
-        `/api/media/${mediaId}`,
-      )
-        .then((response) => {
-          setEpisodes((current) =>
-            current.map((candidate) =>
-              candidate.id === mediaId
-                ? {
-                    ...candidate,
-                    description_text: response.data.description_text,
-                  }
-                : candidate,
-            ),
-          );
-          expandedShowNotesMediaIds.add(mediaId);
-        })
-        .catch((loadError) => {
-          if (handleUnauthenticatedApiError(loadError)) return;
-          captureDetailError(loadError, "LoadNotes");
-        });
-    },
-    [captureDetailError, episodes, expandedShowNotesMediaIds, setEpisodes],
+  const execute = useMemo(
+    () => podcastRefresh({ kind: "Podcast", podcastId }),
+    [podcastId],
   );
-
-  const handleMarkAllAsPlayed = useCallback(async () => {
-    if (
-      episodes.length === 0 ||
-      !podcastId ||
-      view === null ||
-      filterQuery.trim() ||
-      view.state === "played"
-    ) {
-      return;
-    }
-    if (
-      !window.confirm(`${EPISODE_WIDE_COMMAND_LABELS[view.state].markPlayed}?`)
-    ) {
-      return;
-    }
-    setMarkAllAsPlayedBusy(true);
-    setError(null);
-    try {
-      await apiFetch<ApiJson<"/podcasts/{podcast_id}/episodes/mark-played", "post">>(
-        `/api/podcasts/${podcastId}/episodes/mark-played`,
-        {
-          method: "POST",
-          body: JSON.stringify({ state: view.state }),
-        },
-      );
-      reload();
-    } catch (markError) {
-      if (handleUnauthenticatedApiError(markError)) return;
-      captureDetailError(markError, "MarkAllPlayed");
-    } finally {
-      setMarkAllAsPlayedBusy(false);
-    }
-  }, [
-    captureDetailError,
-    filterQuery,
-    episodes,
-    podcastId,
-    reload,
-    view,
-  ]);
-
-  const executeRefresh = useCallback<PaneRefreshExecute>(
-    async ({ signal }) => {
-      if (!podcastId) {
-        return {
-          kind: "Failed",
-          announcement: "Podcast failed to refresh",
-        };
-      }
-      try {
-        const requestedCount = await requestPodcastRefresh(
-          { kind: "Podcast", podcastId },
-          signal,
-        );
-        await revalidatePodcastDetail(signal);
-        return {
-          kind: "Complete",
-          announcement: podcastRefreshRequestAnnouncement(requestedCount),
-        };
-      } catch (refreshError: unknown) {
-        if (isAbortError(refreshError)) throw refreshError;
-        if (!handleUnauthenticatedApiError(refreshError)) {
-          try {
-            podcastDetailErrorMessage(refreshError, "PaneRefresh");
-          } catch (defect) {
-            setAsyncDefect({ error: defect });
-          }
-        }
-        return {
-          kind: "Failed",
-          announcement: "Podcast failed to refresh",
-        };
-      }
-    },
-    [podcastId, revalidatePodcastDetail],
-  );
-  const activeSubscription = detail?.subscription ?? null;
-  const refreshIntentRef = useRef<PodcastActionIntent | null>(null);
-  const reportMountedRefreshError = useCallback(
-    (refreshError: unknown) => {
-      if (isAbortError(refreshError)) return;
-      if (handleUnauthenticatedApiError(refreshError)) return;
-      captureDetailError(refreshError, "PaneRefresh");
-    },
-    [captureDetailError],
-  );
-  const acceptPodcastActionIntent = useCallback(
-    (intent: PodcastActionIntent) => {
-      if (
-        !podcastId ||
-        !detail ||
-        !activeSubscription ||
-        refreshIntentRef.current !== null
-      ) {
-        return false;
-      }
-      refreshIntentRef.current = intent;
-      void (async () => {
-        let refreshCommitted = false;
-        try {
-          await requestPodcastRefresh(
-            { kind: "Podcast", podcastId },
-            new AbortController().signal,
-          );
-          // The subscription refresh request is durably admitted.
-          // Settle the global invocation before projecting the mounted pane so
-          // a local revalidation failure cannot turn a committed refresh into
-          // an aborted action.
-          refreshCommitted = true;
-          await intent.onCommitted();
-          try {
-            await revalidatePodcastDetail(new AbortController().signal);
-          } catch (refreshError) {
-            if (isAbortError(refreshError) || handleUnauthenticatedApiError(refreshError)) return;
-            // The request owner already exposes ordinary read failure in its retained collection.
-            if (!isApiError(refreshError) || isSameSystemApiDefect(refreshError)) {
-              setAsyncDefect({ error: refreshError });
-            }
-          }
-        } catch (refreshError) {
-          if (!refreshCommitted) {
-            intent.onAborted();
-            reportMountedRefreshError(refreshError);
-          } else {
-            setAsyncDefect({ error: refreshError });
-          }
-        } finally {
-          if (refreshIntentRef.current === intent) {
-            refreshIntentRef.current = null;
-          }
-          // A second action may have queued while this one was running.
-          notifyPodcastActionIntentOwnerReady(intent.ref);
-        }
-      })();
-      return true;
-    },
-    [
-      activeSubscription,
-      detail,
-      podcastId,
-      reportMountedRefreshError,
-      revalidatePodcastDetail,
-    ],
-  );
-  usePodcastActionIntentOwner(
-    podcastId && detail
-      ? canonicalResourceRef({ scheme: "podcast", id: podcastId })
-      : null,
-    acceptPodcastActionIntent,
-  );
-
-  const connectionsBody = useMemo(
+  const connections = useMemo(
     () => (
-      <ConnectionsSurface
-        resourceRef={{ scheme: "podcast", id: podcastId ?? "" }}
-      />
+      <ConnectionsSurface resourceRef={{ scheme: "podcast", id: podcastId }} />
     ),
     [podcastId],
   );
   const { companionAction } = useResourceInspector({
     scheme: "podcast",
     handle: podcastId,
-    bodies: { linkedItems: connectionsBody },
+    bodies: { linkedItems: connections },
   });
   usePanePrimaryChrome({
     companionAction: companionAction ?? undefined,
-    // Refresh pulls new episodes for a subscription, so an unsubscribed
-    // Podcast has nothing to refresh. Subscription is a fact of the detail
-    // response: until that lands the answer is unknown, not negative, and a
-    // just-acquired Podcast would otherwise grow the header menu mid-read.
-    refresh: !podcastId
-      ? undefined
-      : activeSubscription
+    // Only a subscription refreshes; until the head loads that is unknown.
+    refresh:
+      subscription !== null
         ? {
             kind: "Refreshable",
-            sourceKey: `Podcast.Detail:${episodeQueryIdentity}`,
-            execute: executeRefresh,
+            sourceKey: `Podcast.Detail:${podcastId}`,
+            execute,
           }
-        : detail === null && error === null
+        : head.status === "loading"
           ? { kind: "Resolving" }
           : undefined,
-    // The pane's canonical identity is its route key, not a fact of any read it
-    // is still waiting on. Publishing it late leaves the menu with no subject,
-    // so it renders no resource suffix and no loading row either: the surface
-    // looks settled while it is not. The snapshot owns missing state.
-    actionSubject: podcastId
-      ? { ref: canonicalResourceRef({ scheme: "podcast", id: podcastId }) }
-      : undefined,
+    actionSubject: {
+      ref: canonicalResourceRef({ scheme: "podcast", id: podcastId }),
+    },
     header: {
       kind: "Section",
-      meta:
-        view === null
-          ? { kind: "None" }
-          : loading || episodeExhaustion.kind !== "Complete"
-            ? { kind: "Pending" }
-            : {
-                kind: "Count",
-                value: episodeExhaustion.itemCount,
-                unit: "episode",
-              },
+      meta: complete
+        ? { kind: "Count", value: loaded?.length ?? 0, unit: "episode" }
+        : episodes.status === "loading" && head.status !== "failed"
+          ? { kind: "Pending" }
+          : { kind: "None" },
     },
     collection,
   });
+  const podcast = ready?.data.detail.podcast;
+  useSetPaneLabel(
+    podcast?.title ?? (head.status === "loading" ? null : "Podcast"),
+  );
+  usePaneReturnReady(
+    head.status === "failed" ||
+      (ready !== null && episodes.status !== "loading"),
+  );
 
-  if (asyncDefect !== null) throw asyncDefect.error;
-
-  const podcastLibraryCount = podcastLibraries.filter(
-    (placement) => placement.relation.kind !== "Absent",
-  ).length;
-  const episodeRefreshError = refreshError ??
-    (episodeExhaustion.kind === "ResumeFailed" || episodeExhaustion.kind === "RefreshRequired"
-      ? episodeExhaustion.error : null);
-  const episodePaneContent =
-    view === null ? (
-      <FeedbackNotice
-        content={{ tone: "Danger", title: "Invalid episodes view" }}
-        announcement="Assertive"
-        actions={[{ label: "Reset view", onClick: () => {
-          resetToCanonicalView();
-          requestAnimationFrame(() => sortSelectRef.current?.focus({ preventScroll: true }));
-        } }]}
-      />
-    ) : (
-        <PodcastEpisodeList
-          episodes={visibleEpisodes}
-          filterQuery={filterQuery}
-          loading={loading}
-          error={error}
-          episodeStateFilter={view.state}
-          transcript={transcript}
-          expandedShowNotesMediaIds={expandedShowNotesMediaIds}
-          matchingEpisodeCount={episodes.length}
-          markAllAsPlayedBusy={markAllAsPlayedBusy}
-          collectionBusy={episodeExhaustion.kind === "Draining"}
-          exhaustion={episodeExhaustion}
-          notice={<MediaSummaryNotice
-            error={episodeRefreshError ?? summaries.error}
-            retry={() => {
-              if (summaries.error !== null) summaries.retry();
-              if (refreshError !== null) reload();
-              if (episodeExhaustion.kind === "ResumeFailed") episodeExhaustion.retry();
-              if (episodeExhaustion.kind === "RefreshRequired") episodeExhaustion.refresh();
-            }}
-          />}
-          footer={!loading && !factsPending && episodeRefreshError === null
-            ? <CollectionExhaustionNotice state={episodeExhaustion} /> : undefined}
-          onMarkAllAsPlayed={() => void handleMarkAllAsPlayed()}
-          onToggleShowNotes={toggleEpisodeShowNotesExpansion}
-        />
-    );
-
-  if (!podcastId) {
-    return (
-      <>
-        <FeedbackNotice
-          content={{ tone: "Danger", title: "Podcast id is missing." }}
-          announcement="Assertive"
-        />
-      </>
-    );
-  }
-
+  const text = filterRows.query.trim();
+  const known = STATES.find((option) => option.value === state)?.value;
+  const visible = resolved.filter((episode) =>
+    matchesPaneFilterQuery(text, mediaListFilterFields(episode.mediaSummary)),
+  );
   return (
-    <>
-      <div className={styles.primaryScroll}>
-        <div className={styles.headerActions}>
-          <Link href="/podcasts" className={styles.navLink}>
-            Podcasts
-          </Link>
-          <div className={styles.headerButtons}>
-            {detail ? (
-              <AcquisitionControl
-                kind="Subscribe"
-                subscribed={activeSubscription !== null}
-                commit={async (command) => {
-                  const result = await subscribeToPodcast({
-                    target: { kind: "Canonical", podcastId },
-                    namedLibraryIds: command.namedLibraryIds,
-                    replacementConfirmation: command.replacementConfirmation,
-                    idempotencyKey: command.idempotencyKey,
-                  });
-                  return { href: result.href };
-                }}
-                onCommitted={() => {
-                  clearAllVisitData();
-                  reload();
-                }}
-              />
-            ) : null}
-          </div>
-        </div>
-        <PaneSection>
-          {loading && detail === null && (
-            <PaneLoadingState label="Loading podcast…" announcement="Polite" />
-          )}
-          {error && (
-            <FeedbackNotice content={error} announcement="Assertive" />
-          )}
-          {detail && (
-            <PodcastOverview
-              title={detail.podcast.title}
-              image={
-                detail.podcast.image_url
-                  ? { kind: "Remote", url: detail.podcast.image_url }
-                  : { kind: "Absent" }
-              }
-              contributors={detail.podcast.contributors}
-              description={detail.podcast.description}
-              facts={[
-                activeSubscription ? "Subscribed" : "Not subscribed",
-                `In ${pluralize(podcastLibraryCount, "library", "libraries")}`,
-                ...(activeSubscription
-                  ? [
-                      formatEpisodeUpdateStatus(activeSubscription.sync_status),
-                      formatBackfillFact(activeSubscription.backfill),
-                      `${formatPlaybackRate(
-                        presenceValueOr(
-                          activeSubscription.default_playback_speed,
-                          1,
-                        ),
-                      )} default speed · Auto-queue ${
-                        activeSubscription.auto_queue ? "on" : "off"
-                      }`,
-                    ]
-                  : []),
-              ]}
-              links={[
-                ...(detail.podcast.feed_url
-                  ? [{ label: "RSS feed", href: detail.podcast.feed_url }]
-                  : []),
-                ...(detail.podcast.website_url
-                  ? [{ label: "Website", href: detail.podcast.website_url }]
-                  : []),
-              ]}
-              note={
-                activeSubscription
-                  ? "Subscription is active. Manage playback defaults, episode updates, and library membership from this header."
-                  : "Subscribe to save playback defaults and add this show to your libraries."
-              }
-              error={
-                activeSubscription?.sync_error_code
-                  ? `${activeSubscription.sync_error_code}${
-                      activeSubscription.sync_error_message
-                        ? `: ${activeSubscription.sync_error_message}`
-                        : ""
-                    }`
-                  : undefined
-              }
-            />
-          )}
-          {activeSubscription?.backfill.state === "Failed" ? (
-            <div className={styles.headerButtons}>
-              <Button
-                size="sm"
-                variant="secondary"
-                loading={backfillRetryBusy}
-                onClick={() => void retryBackfill()}
-              >
-                Retry backlog
-              </Button>
-            </div>
-          ) : null}
-        </PaneSection>
-        <PaneSection>{episodePaneContent}</PaneSection>
+    <div className={styles.page}>
+      <div className={styles.bar}>
+        <Link href="/podcasts" className={styles.navLink}>
+          Podcasts
+        </Link>
+        {ready ? (
+          <AcquisitionControl
+            kind="Subscribe"
+            subscribed={subscription !== null}
+            commit={async (acquisition) => {
+              const result = await subscribeToPodcast({
+                target: { kind: "Canonical", podcastId },
+                ...acquisition,
+              });
+              return { href: result.href };
+            }}
+            onCommitted={() => undefined}
+          />
+        ) : null}
       </div>
-    </>
+      <PaneSection>
+        {head.status === "loading" ? (
+          <PaneLoadingState label="Loading podcast…" announcement="Polite" />
+        ) : null}
+        {head.status !== "loading" && head.error ? (
+          <FeedbackNotice
+            content={podcastErrorMessage(
+              head.error,
+              "Podcast details couldn’t be loaded",
+            )}
+            announcement="Assertive"
+            actions={[{ label: "Retry", onClick: head.refetch }]}
+          />
+        ) : null}
+        {ready && podcast ? (
+          <PodcastOverview
+            title={podcast.title}
+            image={
+              podcast.image_url
+                ? { kind: "Remote", url: podcast.image_url }
+                : { kind: "Absent" }
+            }
+            contributors={podcast.contributors}
+            description={podcast.description}
+            facts={[
+              subscription ? "Subscribed" : "Not subscribed",
+              `In ${pluralize(ready.data.libraryCount, "library", "libraries")}`,
+              ...(subscription ? subscriptionFacts(subscription) : []),
+            ]}
+            links={[
+              { label: "RSS feed", href: podcast.feed_url },
+              ...(podcast.website_url
+                ? [{ label: "Website", href: podcast.website_url }]
+                : []),
+            ]}
+            note={
+              subscription
+                ? "Subscription is active. Manage playback defaults, episode updates, and library membership from this header."
+                : "Subscribe to save playback defaults and add this show to your libraries."
+            }
+            error={
+              subscription?.sync_error_code
+                ? [
+                    subscription.sync_error_code,
+                    subscription.sync_error_message,
+                  ]
+                    .filter(Boolean)
+                    .join(": ")
+                : undefined
+            }
+          />
+        ) : null}
+        {lostNotice ? (
+          <FeedbackNotice content={lostNotice} announcement="Polite" />
+        ) : null}
+        {subscription?.backfill.state === "Failed" ? (
+          <div>
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={command.running === BACKLOG}
+              disabled={command.running !== null}
+              onClick={() =>
+                command.run(BACKLOG, () =>
+                  retryPodcastSubscriptionBackfill(podcastId),
+                )
+              }
+            >
+              Retry backlog
+            </Button>
+          </div>
+        ) : null}
+      </PaneSection>
+      <PaneSection>
+        {episodes.status === "failed" ? (
+          <FeedbackNotice
+            content={podcastErrorMessage(
+              episodes.error,
+              "Episodes couldn’t be loaded",
+            )}
+            announcement="Assertive"
+            actions={[
+              episodes.error.code === "E_INVALID_REQUEST"
+                ? {
+                    label: "Reset view",
+                    onClick: () => replaceView({ state: null, sort: null }),
+                  }
+                : { label: "Retry", onClick: episodes.retry },
+            ]}
+          />
+        ) : known === undefined || ready === null ? null : (
+          <PodcastEpisodeList
+            podcastId={podcastId}
+            state={known}
+            episodes={visible}
+            filter={text}
+            complete={complete}
+            loading={episodes.status === "loading"}
+            command={command}
+            notice={
+              <>
+                {command.failure ? (
+                  <FeedbackNotice
+                    content={command.failure}
+                    announcement="Assertive"
+                  />
+                ) : null}
+                {episodes.status === "ready" && episodes.error ? (
+                  <FeedbackNotice
+                    content={podcastErrorMessage(
+                      episodes.error,
+                      "Episodes couldn’t be refreshed",
+                    )}
+                    announcement="Polite"
+                    actions={[{ label: "Retry", onClick: episodes.retry }]}
+                  />
+                ) : null}
+                <MediaSummaryNotice
+                  error={summaries.error}
+                  retry={summaries.retry}
+                />
+              </>
+            }
+            footer={
+              episodes.status === "ready" && !episodes.complete ? (
+                <LoadMoreFooter
+                  hasMore
+                  loading={episodes.loadingMore}
+                  onLoadMore={episodes.loadMore}
+                />
+              ) : undefined
+            }
+          />
+        )}
+      </PaneSection>
+    </div>
   );
 }

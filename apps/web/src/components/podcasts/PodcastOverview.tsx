@@ -4,11 +4,7 @@ import type { ContributorCredit } from "@/lib/contributors/types";
 import type { MediaImageProxySrc } from "@/lib/media/imageProxy";
 import styles from "./PodcastOverview.module.css";
 
-interface PodcastOverviewLink {
-  readonly label: string;
-  readonly href: string;
-}
-
+/** A show's artwork, byline, summary, fact badges and outbound links. */
 export default function PodcastOverview({
   title,
   image,
@@ -27,39 +23,26 @@ export default function PodcastOverview({
   readonly contributors: readonly ContributorCredit[];
   readonly description: string | null;
   readonly facts: readonly string[];
-  readonly links: readonly PodcastOverviewLink[];
+  readonly links: readonly { readonly label: string; readonly href: string }[];
   readonly note?: string;
   readonly error?: string;
 }) {
+  const artwork = { alt: "", width: 88, height: 88, className: styles.artwork };
+  const initials = title
+    .split(/\s+/u)
+    .slice(0, 2)
+    .map((word) => word.charAt(0).toUpperCase())
+    .join("");
   return (
     <div className={styles.root}>
       <div className={styles.header}>
         {image.kind === "Remote" ? (
-          <MediaImage
-            kind="proxied"
-            remoteUrl={image.url}
-            alt=""
-            width={88}
-            height={88}
-            className={styles.artwork}
-          />
+          <MediaImage kind="proxied" remoteUrl={image.url} {...artwork} />
         ) : image.kind === "Proxied" ? (
-          <MediaImage
-            kind="proxy-src"
-            src={image.url}
-            alt=""
-            width={88}
-            height={88}
-            className={styles.artwork}
-          />
+          <MediaImage kind="proxy-src" src={image.url} {...artwork} />
         ) : (
           <span className={styles.fallback} aria-hidden="true">
-            {title
-              .split(/\s+/u)
-              .filter(Boolean)
-              .slice(0, 2)
-              .map((part) => part[0]?.toUpperCase() ?? "")
-              .join("") || "P"}
+            {initials || "P"}
           </span>
         )}
         <div className={styles.copy}>
@@ -78,7 +61,7 @@ export default function PodcastOverview({
         ))}
         {links.map((link) => (
           <a
-            key={`${link.label}:${link.href}`}
+            key={link.label}
             href={link.href}
             target="_blank"
             rel="noopener noreferrer"
