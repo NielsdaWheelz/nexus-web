@@ -1,29 +1,25 @@
-"""Podcast episode listing, selection resolution and mark-played."""
+"""Reads over one show's episodes: the list, the "all ⟨state⟩" selection, mark played.
 
-from __future__ import annotations
+A selection is resolved on the server from the viewer's visible episodes in a listening
+state; commands act on it, never on rows a client happened to render.
+"""
 
 from hashlib import sha256
 from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import TranscriptState
 from nexus.db.session import transaction
-from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.schemas.collection_page import CollectionCursor, CollectionPage, CollectionRevision
-from nexus.schemas.podcast import (
-    PodcastEpisodeListItemOut,
-    PodcastEpisodeMarkPlayedOut,
-    PodcastEpisodeSelection,
-)
+from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.schemas import podcast as wire
+from nexus.schemas.collection_page import CollectionCursor, CollectionPage
 from nexus.schemas.presence import absent, present
 from nexus.services import media as media_service
 from nexus.services.collection_keyset import (
-    Direction,
     SortKey,
     after_values,
     expected_kinds,
@@ -37,271 +33,154 @@ from nexus.services.collection_revisions import (
     require_collection_revision,
 )
 from nexus.services.consumption import projection
-from nexus.services.consumption import service as consumption_service
-from nexus.services.keyset_cursor import (
-    KeysetValueKind,
-    decode_keyset_cursor,
-    encode_keyset_cursor,
-)
+from nexus.services.consumption import service as consumption
+from nexus.services.keyset_cursor import KeysetValueKind, decode_keyset_cursor, encode_keyset_cursor
 
-PodcastEpisodeState = Literal["all", "unplayed", "in_progress", "played"]
-PodcastEpisodeSort = Literal["newest", "oldest", "duration_asc", "duration_desc"]
-PODCAST_EPISODE_STATES = frozenset({"all", "unplayed", "in_progress", "played"})
-PODCAST_EPISODE_SORT_OPTIONS = frozenset({"newest", "oldest", "duration_asc", "duration_desc"})
-_TRANSCRIPT_ELIGIBLE_SQL = """
-    AND COALESCE(mts.transcript_state, 'not_requested')
-        IN ('not_requested', 'failed_provider')
-"""
+EpisodeSort = Literal["newest", "oldest", "duration_asc", "duration_desc"]
+_FAMILY = CollectionFamily.PodcastEpisodes
+_TRANSCRIBABLE = (
+    "COALESCE(mts.transcript_state, 'not_requested') IN ('not_requested', 'failed_provider')"
+)
 
 
 def episode_publication_rows_sql() -> str:
-    """Policy-neutral exact episode-publication facts.
+    """``media_id, podcast_id, published_at``; the composing query owns visibility."""
+    return "SELECT pe.media_id, pe.podcast_id, pe.published_at FROM podcast_episodes pe"
 
-    Columns: ``media_id``, ``podcast_id`` and nullable exact ``published_at``.
-    Visibility and subscription policy belong to the composing query.
+
+def _episodes_sql(columns: str = "", where: str = "") -> str:
+    """The viewer's visible episodes of ``:podcast_id`` in listening state ``:state``."""
+    state = projection.episode_state_case_sql(listening_alias="pls", override_alias="co")
+    joins = projection.episode_state_joins_sql(
+        user_param=":viewer_id",
+        media_expr="pe.media_id",
+        listening_alias="pls",
+        override_alias="co",
+    )
+    return f"""
+        WITH visible_media AS ({visible_media_ids_cte_sql()}),
+        e AS (
+            SELECT pe.media_id, {state} AS episode_state {columns}
+            FROM podcast_episodes pe
+            JOIN visible_media vm ON vm.media_id = pe.media_id
+            LEFT JOIN media_transcript_states mts ON mts.media_id = pe.media_id
+            {joins}
+            WHERE pe.podcast_id = :podcast_id {where}
+        )
+        SELECT * FROM e WHERE (CAST(:state AS text) = 'all' OR e.episode_state = :state)
     """
-    return """
-        SELECT
-            pe.media_id,
-            pe.podcast_id,
-            pe.published_at
-        FROM podcast_episodes pe
-    """
 
 
-def resolve_episode_selection_ids(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    podcast_id: UUID,
-    selection: PodcastEpisodeSelection,
-    transcript_eligible_only: bool = False,
+def selection_ids(
+    db: Session, viewer_id: UUID, podcast_id: UUID, state: str, *, transcribable: bool = False
 ) -> list[UUID]:
-    """Resolve one state-scoped membership relation for episode-wide commands."""
-    return [
-        UUID(str(media_id))
-        for media_id in db.execute(
-            text(
-                f"""
-                WITH visible_media AS ({visible_media_ids_cte_sql()}),
-                selected AS (
-                    SELECT
-                        pe.media_id,
-                        {
-                    projection.episode_state_case_sql(listening_alias="pls", override_alias="co")
-                } AS episode_state
-                    FROM podcast_episodes pe
-                    JOIN visible_media vm ON vm.media_id = pe.media_id
-                    LEFT JOIN media_transcript_states mts ON mts.media_id = pe.media_id
-                    {
-                    projection.episode_state_joins_sql(
-                        user_param=":viewer_id",
-                        media_expr="pe.media_id",
-                        listening_alias="pls",
-                        override_alias="co",
-                    )
-                }
-                    WHERE pe.podcast_id = :podcast_id
-                      {_TRANSCRIPT_ELIGIBLE_SQL if transcript_eligible_only else ""}
-                )
-                SELECT media_id
-                FROM selected
-                WHERE ({"TRUE" if selection.state == "all" else "episode_state = :episode_state"})
-                ORDER BY media_id ASC
-                """
-            ),
-            {
-                "viewer_id": viewer_id,
-                "podcast_id": podcast_id,
-                "episode_state": selection.state,
-            },
-        ).scalars()
-    ]
+    """The selection's media ids, ordered by id."""
+    sql = _episodes_sql(where=f"AND {_TRANSCRIBABLE}" if transcribable else "")
+    params = {"viewer_id": viewer_id, "podcast_id": podcast_id, "state": state}
+    return list(db.scalars(text(f"SELECT media_id FROM ({sql}) s ORDER BY media_id"), params))
 
 
-def episode_selection_fingerprint(media_ids: list[UUID]) -> str:
+def selection_fingerprint(media_ids: list[UUID]) -> str:
     canonical = "\n".join(sorted(str(media_id) for media_id in media_ids))
     return sha256(f"nexus:podcast-episode-selection:v1\n{canonical}".encode()).hexdigest()
 
 
-def mark_episode_selection_played(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    podcast_id: UUID,
-    selection: PodcastEpisodeSelection,
-) -> PodcastEpisodeMarkPlayedOut:
+def mark_played(
+    db: Session, viewer_id: UUID, podcast_id: UUID, state: str
+) -> wire.PodcastEpisodeMarkPlayedOut:
     with transaction(db):
-        media_ids = resolve_episode_selection_ids(
-            db, viewer_id=viewer_id, podcast_id=podcast_id, selection=selection
-        )
-        changed_count = consumption_service.set_podcast_episode_states_in_txn(
+        media_ids = selection_ids(db, viewer_id, podcast_id, state)
+        changed = consumption.set_podcast_episode_states_in_txn(
             db, viewer_id=viewer_id, media_ids=media_ids, state="Finished"
         )
-        return PodcastEpisodeMarkPlayedOut(
-            matched_count=len(media_ids),
-            changed_count=changed_count,
-            collection_revision=read_collection_revision(
-                db, viewer_id=viewer_id, family=CollectionFamily.PodcastEpisodes
-            ),
-        )
+        return wire.PodcastEpisodeMarkPlayedOut(matched_count=len(media_ids), changed_count=changed)
 
 
-def list_podcast_episodes_for_viewer(
-    db: Session,
-    viewer_id: UUID,
-    podcast_id: UUID,
-    *,
-    limit: int,
-    cursor: CollectionCursor | None,
-    collection_revision: CollectionRevision | None,
-    state: PodcastEpisodeState,
-    sort: PodcastEpisodeSort,
-) -> CollectionPage[PodcastEpisodeListItemOut]:
-    if state not in PODCAST_EPISODE_STATES:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid podcast episode state")
-    if sort not in PODCAST_EPISODE_SORT_OPTIONS:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, "Invalid podcast episode sort option"
-        )
-    if (
-        db.execute(
-            text("SELECT 1 FROM podcasts WHERE id = :podcast_id"), {"podcast_id": podcast_id}
-        ).fetchone()
-        is None
-    ):
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
-
-    query_identity: dict[str, object] = {
-        "viewerId": str(viewer_id),
-        "podcastId": str(podcast_id),
-        "state": state,
-        "sort": sort,
-    }
-    plan = _episode_plan(sort)
-    revision = (
-        read_collection_revision(db, viewer_id=viewer_id, family=CollectionFamily.PodcastEpisodes)
-        if collection_revision is None
-        else require_collection_revision(
-            db,
-            viewer_id=viewer_id,
-            family=CollectionFamily.PodcastEpisodes,
-            expected=collection_revision,
-        )
-    )
-    params: dict[str, object] = {
-        "viewer_id": viewer_id,
-        "podcast_id": podcast_id,
-        "page_limit": limit + 1,
-        "episode_state": state,
-    }
-    keyset_sql = ""
-    if cursor is not None:
-        keyset_sql = keyset_clause(plan, alias="er")
-        params.update(
-            keyset_params(
-                plan,
-                decode_keyset_cursor(
-                    cursor,
-                    family=CollectionFamily.PodcastEpisodes.value,
-                    query=query_identity,
-                    expected_kinds=expected_kinds(plan),
-                ),
-            )
-        )
-
-    page_rows = (
-        db.execute(
-            text(
-                f"""
-                WITH visible_media AS ({visible_media_ids_cte_sql()}),
-                episode_rows AS (
-                    SELECT
-                        pe.media_id,
-                        pe.published_at,
-                        pe.duration_seconds,
-                        COALESCE(pe.duration_seconds, 0) AS duration_sort,
-                        CASE WHEN pe.published_at IS NULL THEN 1 ELSE 0 END AS published_missing,
-                        CASE WHEN pe.duration_seconds IS NULL THEN 1 ELSE 0 END AS duration_missing,
-                        (NULLIF(BTRIM(pe.description_text), '') IS NOT NULL) AS has_show_notes,
-                        {
-                    projection.episode_state_case_sql(listening_alias="pls", override_alias="co")
-                } AS episode_state
-                    FROM podcast_episodes pe
-                    JOIN visible_media vm ON vm.media_id = pe.media_id
-                    {
-                    projection.episode_state_joins_sql(
-                        user_param=":viewer_id",
-                        media_expr="pe.media_id",
-                        listening_alias="pls",
-                        override_alias="co",
-                    )
-                }
-                    WHERE pe.podcast_id = :podcast_id
-                )
-                SELECT er.*
-                FROM episode_rows er
-                WHERE ({"TRUE" if state == "all" else "episode_state = :episode_state"})
-                {keyset_sql}
-                ORDER BY {order_by_sql(plan, alias="er")}
-                LIMIT :page_limit
-                """
-            ),
-            params,
-        )
-        .mappings()
-        .all()
-    )
-    has_next = len(page_rows) > limit
-    page_rows = page_rows[:limit]
-    row_by_media_id: dict[UUID, RowMapping] = {UUID(str(row["media_id"])): row for row in page_rows}
-    if not row_by_media_id:
-        return CollectionPage(items=[], collectionRevision=revision, nextCursor=absent())
-
-    episodes = media_service.list_collection_media_for_viewer_by_ids(
-        db, viewer_id=viewer_id, media_ids=list(row_by_media_id)
-    )
-    return CollectionPage(
-        items=[
-            PodcastEpisodeListItemOut(
-                id=episode.id,
-                mediaSummary=episode.summary,
-                transcript_state=TranscriptState(
-                    episode.transcript_state
-                    if episode.transcript_state is not None
-                    else "not_requested"
-                ),
-                has_show_notes=bool(row_by_media_id[episode.id]["has_show_notes"]),
-            )
-            for episode in episodes
-        ],
-        collectionRevision=revision,
-        nextCursor=(
-            present(
-                encode_keyset_cursor(
-                    family=CollectionFamily.PodcastEpisodes.value,
-                    query=query_identity,
-                    after=after_values(plan, page_rows[-1]),
-                )
-            )
-            if has_next
-            else absent()
-        ),
-    )
-
-
-def _episode_plan(sort: PodcastEpisodeSort) -> list[SortKey]:
-    """The one total order behind this listing's ORDER BY, predicate and cursor."""
-    published_direction: Direction = "asc" if sort == "oldest" else "desc"
+def _plan(sort: EpisodeSort) -> list[SortKey]:
+    """The one total order behind the listing's ORDER BY, predicate and cursor."""
+    direction = "asc" if sort == "oldest" else "desc"
     published = [
         SortKey("published_missing", "asc", KeysetValueKind.Int),
-        SortKey("published_at", published_direction, KeysetValueKind.DateTimeOrNull),
-        SortKey("media_id", published_direction, KeysetValueKind.Uuid),
+        SortKey("published_at", direction, KeysetValueKind.DateTimeOrNull),
+        SortKey("media_id", direction, KeysetValueKind.Uuid),
     ]
-    if sort in {"newest", "oldest"}:
+    if sort in ("newest", "oldest"):
         return published
     return [
         SortKey("duration_missing", "asc", KeysetValueKind.Int),
         SortKey("duration_sort", "asc" if sort == "duration_asc" else "desc", KeysetValueKind.Int),
         *published,
     ]
+
+
+def list_episodes(
+    db: Session,
+    viewer_id: UUID,
+    podcast_id: UUID,
+    *,
+    limit: int,
+    cursor: CollectionCursor | None,
+    revision: int | None,
+    state: str,
+    sort: EpisodeSort,
+) -> CollectionPage[wire.PodcastEpisodeListItemOut]:
+    if db.scalar(text("SELECT 1 FROM podcasts WHERE id = :id"), {"id": podcast_id}) is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
+    current = (
+        read_collection_revision(db, viewer_id=viewer_id, family=_FAMILY)
+        if revision is None
+        else require_collection_revision(db, viewer_id=viewer_id, family=_FAMILY, expected=revision)
+    )
+    plan = _plan(sort)
+    identity = {
+        "viewerId": str(viewer_id),
+        "podcastId": str(podcast_id),
+        "state": state,
+        "sort": sort,
+    }
+    params = {"viewer_id": viewer_id, "podcast_id": podcast_id, "state": state, "limit": limit + 1}
+    keyset = ""
+    if cursor is not None:
+        after = decode_keyset_cursor(
+            cursor, family=_FAMILY.value, query=identity, expected_kinds=expected_kinds(plan)
+        )
+        params.update(keyset_params(plan, after))
+        keyset = keyset_clause(plan, alias="r")
+    columns = """, pe.published_at, COALESCE(pe.duration_seconds, 0) AS duration_sort,
+        (pe.published_at IS NULL)::int AS published_missing,
+        (pe.duration_seconds IS NULL)::int AS duration_missing,
+        NULLIF(BTRIM(pe.description_text), '') IS NOT NULL AS has_show_notes"""
+    rows = (
+        db.execute(
+            text(f"""
+                SELECT * FROM ({_episodes_sql(columns)}) r WHERE TRUE {keyset}
+                ORDER BY {order_by_sql(plan, alias="r")} LIMIT :limit
+            """),
+            params,
+        )
+        .mappings()
+        .all()
+    )
+    page = {row["media_id"]: row for row in rows[:limit]}
+    media = media_service.list_collection_media_for_viewer_by_ids(
+        db, viewer_id=viewer_id, media_ids=list(page)
+    )
+    return CollectionPage(
+        items=[
+            wire.PodcastEpisodeListItemOut(
+                id=episode.id,
+                mediaSummary=episode.summary,
+                transcript_state=TranscriptState(episode.transcript_state or "not_requested"),
+                has_show_notes=page[episode.id]["has_show_notes"],
+            )
+            for episode in media
+        ],
+        collectionRevision=current,
+        nextCursor=present(
+            encode_keyset_cursor(
+                family=_FAMILY.value, query=identity, after=after_values(plan, rows[limit - 1])
+            )
+        )
+        if len(rows) > limit
+        else absent(),
+    )

@@ -111,13 +111,11 @@ export async function subscribeToPodcast(input: {
   readonly replacementConfirmation: Presence<{
     readonly conflictFingerprint: string;
   }>;
-  readonly idempotencyKey: string;
 }): Promise<ApiJson<"/podcasts/subscriptions", "post">["data"]> {
   const { target, namedLibraryIds, replacementConfirmation } = input;
   type Body = ApiJson<"/podcasts/subscriptions", "post">;
   const response = await apiFetch<Body>("/api/podcasts/subscriptions", {
     method: "POST",
-    headers: { "Idempotency-Key": input.idempotencyKey },
     body: JSON.stringify({ target, namedLibraryIds, replacementConfirmation }),
   });
   const named = [...input.namedLibraryIds];
@@ -129,7 +127,6 @@ export async function subscribeToPodcast(input: {
 export async function addEpisodeFromDiscovery(input: {
   readonly target: string;
   readonly namedLibraryIds: readonly string[];
-  readonly idempotencyKey: string;
 }): Promise<ApiJson<"/podcast-episodes/from-discovery", "post">["data"]> {
   const { target, namedLibraryIds } = input;
   type Body = ApiJson<"/podcast-episodes/from-discovery", "post">;
@@ -137,7 +134,6 @@ export async function addEpisodeFromDiscovery(input: {
     "/api/podcast-episodes/from-discovery",
     {
       method: "POST",
-      headers: { "Idempotency-Key": input.idempotencyKey },
       body: JSON.stringify({ target, namedLibraryIds }),
     },
   );
@@ -148,7 +144,6 @@ export async function addEpisodeFromDiscovery(input: {
 export async function unsubscribeFromPodcast(podcastId: string): Promise<void> {
   await apiFetch(`/api/podcasts/subscriptions/${podcastId}`, {
     method: "DELETE",
-    headers: { "Idempotency-Key": crypto.randomUUID() },
   });
   publishLibraryPlacementChange("Unknown");
   bump();
@@ -159,7 +154,6 @@ export async function retryPodcastSubscriptionBackfill(
 ): Promise<void> {
   await apiFetch(`/api/podcasts/subscriptions/${podcastId}/backfill/retry`, {
     method: "POST",
-    headers: { "Idempotency-Key": crypto.randomUUID() },
   });
   bump();
 }

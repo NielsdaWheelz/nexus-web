@@ -50,6 +50,7 @@ from nexus.services.collection_revisions import (
     ENTRY_VISIBILITY_FAMILIES,
     CollectionFamily,
     bump_all_collection_families,
+    bump_collection_families,
     read_collection_revision,
 )
 from nexus.services.consumption import projection
@@ -803,8 +804,8 @@ def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) 
         db, governance.default_library_id_for_user(db, user_id), media_target(media_id)
     )
     clear_user_media_deletion(db, user_id, media_id)
-    if inserted:
-        _bump_entry_visibility_revisions(db)
+    if inserted:  # a default library has one member
+        bump_collection_families(db, viewer_ids=(user_id,), families=ENTRY_VISIBILITY_FAMILIES)
     return inserted
 
 
@@ -893,23 +894,6 @@ def assign_libraries_for_media_in_current_transaction(
         db, viewer_id, media_id, targets, parent_podcast_id=parent_podcast_id
     )
     _bump_entry_visibility_revisions(db)
-
-
-def ensure_subscription_episode_default_in_current_transaction(
-    db: Session, subscription_user_id: UUID, subscription_podcast_id: UUID, media_id: UUID
-) -> bool:
-    """Ensure one acquired episode is in All; named placement is not closure."""
-    db.execute(
-        text("SELECT id FROM podcasts WHERE id = :podcast_id FOR UPDATE"),
-        {"podcast_id": subscription_podcast_id},
-    ).first()
-    lock_media_rows_in_order(db, [media_id])
-    default_library_id = governance.default_library_id_for_user(db, subscription_user_id)
-    _raise_if_media_teardown_pending(db, media_id)
-    governance.lock_library_rows_in_order(db, [default_library_id])
-    inserted = ensure_media_in_default_library(db, subscription_user_id, media_id)
-    _bump_entry_visibility_revisions(db)
-    return inserted
 
 
 # ---------------------------------------------------------------------------

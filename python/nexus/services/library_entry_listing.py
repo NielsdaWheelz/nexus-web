@@ -49,7 +49,6 @@ from nexus.services.contributor_credits import (
 )
 from nexus.services.keyset_cursor import KeysetValueKind
 from nexus.services.library_entries import library_media_ids_cte_sql
-from nexus.services.podcasts.playback_preferences import pause_shortening_mode_from_nullable
 from nexus.services.reading_time import reading_time_rows_sql
 
 type EntrySort = Literal["canonical", "title", "creator", "published", "added", "remaining"]
@@ -328,7 +327,7 @@ def _hydrate_entry_rows(
                     default_playback_speed=presence_from_nullable(
                         None if speed is None else float(speed)
                     ),
-                    pause_shortening_mode=pause_shortening_mode_from_nullable(
+                    pause_shortening_mode=presence_from_nullable(
                         podcast_row["sub_pause_shortening_mode"]
                     ),
                     auto_queue=bool(podcast_row["sub_auto_queue"]),

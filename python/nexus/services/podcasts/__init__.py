@@ -1,1 +1,1 @@
-"""Podcast service package split by owning subdomain."""
+"""Podcasts: shows, subscriptions, sync and backfill, episodes and their transcripts."""

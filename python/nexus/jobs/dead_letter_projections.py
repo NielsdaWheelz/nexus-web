@@ -31,6 +31,7 @@ type DeadLetterProjection = Literal[
     "ChatRun",
     "Generation",
     "PodcastSubscriptionSync",
+    "SourceAttempt",
 ]
 """Closed set of repairs a dead-lettered job kind may declare."""
 
@@ -59,9 +60,11 @@ def apply_dead_letter_projection(
         # Its domain row stays as is; a rerun of the operation starts from scratch.
         interrupt_job_generations(db, job_id=job.id, detail="its job died")
     elif projection == "PodcastSubscriptionSync":
-        from nexus.services.podcasts.sync import dead_letter_podcast_subscription_sync
+        from nexus.services.podcasts import sync
 
-        dead_letter_podcast_subscription_sync(db, job)
+        sync.dead_letter(db, job)
+    elif projection == "SourceAttempt":
+        _project_source_attempt(db, job)
 
 
 def _project_note_content_index(db: Session, job: JobRow) -> None:
@@ -115,30 +118,58 @@ def _project_media_teardown_intent(db: Session, job: JobRow) -> None:
 
 
 def _project_podcast_backfill(db: Session, job: JobRow) -> None:
-    """Stamp Failed only while the dead job still names the current live fence."""
-    classification = str(job.error_code or ApiErrorCode.E_INTERNAL.value)[
-        :_BACKFILL_ERROR_CODE_MAX_LENGTH
-    ]
-    detail = f"Podcast backfill exhausted retries; job={job.id}; classification={classification}"
+    """Fail the backfill the dead step still names; "Retry backlog" reseeds it."""
+    code = str(job.error_code or ApiErrorCode.E_INTERNAL.value)[:_BACKFILL_ERROR_CODE_MAX_LENGTH]
+    detail = f"Podcast backfill exhausted retries; job={job.id}; classification={code}"
     db.execute(
-        text(
-            """
+        text("""
             UPDATE podcast_subscription_backfills
-            SET failed_at = now(),
-                error_code = :error_code,
-                error_detail = :error_detail,
-                updated_at = now()
-            WHERE id = :backfill_id
-              AND step_no = :expected_step_no
-              AND completed_at IS NULL
-              AND source_limited_at IS NULL
-              AND failed_at IS NULL
-            """
-        ),
+            SET failed_at = now(), error_code = :code, error_detail = :detail, updated_at = now()
+            WHERE id = :id AND step_no = :step_no AND completed_at IS NULL
+              AND source_limited_at IS NULL AND failed_at IS NULL
+        """),
         {
-            "backfill_id": UUID(str(job.payload["backfillId"])),
-            "expected_step_no": int(job.payload["expectedStepNo"]),
-            "error_code": classification,
-            "error_detail": detail[:_BACKFILL_ERROR_DETAIL_MAX_LENGTH],
+            "id": UUID(str(job.payload["backfillId"])),
+            "step_no": int(job.payload["expectedStepNo"]),
+            "code": code,
+            "detail": detail[:_BACKFILL_ERROR_DETAIL_MAX_LENGTH],
         },
+    )
+
+
+def _project_source_attempt(db: Session, job: JobRow) -> None:
+    """Settle a still-running podcast transcript attempt whose job died, as its terminal
+    failure (the transcript reads failed_provider), so a later request admits a new one.
+    Other source types keep their dead job for the source repair offer."""
+    from nexus.schemas.import_history import queue_failure_code
+    from nexus.schemas.presence import presence_from_nullable
+    from nexus.services.source_attempt_failures import (
+        SourceAttemptFailure,
+        publish_source_attempt_failure,
+    )
+
+    attempt_id = UUID(str(job.payload["attempt_id"]))
+    media_id = UUID(str(job.payload["media_id"]))
+    live = db.scalar(
+        text("""
+            SELECT 1 FROM media_source_attempts
+            WHERE id = :attempt_id AND media_id = :media_id
+              AND source_type = 'podcast_episode_transcript'
+              AND status IN ('accepted', 'queued', 'running')
+        """),
+        {"attempt_id": attempt_id, "media_id": media_id},
+    )
+    if live is None:
+        return
+    publish_source_attempt_failure(
+        db,
+        SourceAttemptFailure(
+            media_id=media_id,
+            attempt_id=attempt_id,
+            failure_stage="transcribe",
+            error_code=queue_failure_code(job.error_code or ApiErrorCode.E_INTERNAL.value),
+            error_message=job.last_error or "Transcription exhausted its retries",
+            now=datetime.now(UTC),
+            execution_id=presence_from_nullable(job.execution_id),
+        ),
     )

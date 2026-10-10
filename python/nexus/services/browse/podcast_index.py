@@ -36,8 +36,8 @@ from nexus.services.browse.targets import (
     seal_target,
     single_credit,
 )
-from nexus.services.podcasts.identity import validate_and_normalize_feed_url
 from nexus.services.podcasts.provider import PodcastIndexClient, get_podcast_index_client
+from nexus.services.podcasts.shows import validate_and_normalize_feed_url
 from nexus.services.sealed_handles import DiscoveryTargetHandle
 from nexus.services.search.query import decode_cursor, encode_cursor
 
@@ -130,7 +130,8 @@ def _shown(podcast: ResolvedPodcast) -> dict[str, Any]:
 def search(q: str, *, limit: int) -> list[PodcastCandidate]:
     """Podcasts matching ``q``; a malformed feed is skipped."""
     items = []
-    for feed in _call(lambda client: client.browse_search_payload(q, limit)).get("feeds") or []:
+    params = {"q": q, "max": max(1, min(limit, 100))}
+    for feed in _call(lambda client: client.get("/search/byterm", params)).get("feeds") or []:
         try:
             podcast = _podcast(feed)
         except _MALFORMED:
@@ -147,7 +148,10 @@ def search(q: str, *, limit: int) -> list[PodcastCandidate]:
 
 
 def resolve_podcast(podcast_ref: str) -> ResolvedPodcast:
-    feed = _call(lambda client: client.browse_podcast_payload(podcast_ref), lookup=True).get("feed")
+    payload = _call(
+        lambda client: client.get("/podcasts/byfeedid", {"id": podcast_ref}), lookup=True
+    )
+    feed = payload.get("feed")
     podcast = _strict(lambda: _podcast(feed), "podcast") if isinstance(feed, dict) else None
     if podcast is None or podcast.podcast_ref != podcast_ref:
         raise BrowseTargetNotFound
@@ -156,7 +160,7 @@ def resolve_podcast(podcast_ref: str) -> ResolvedPodcast:
 
 def resolve_episode(podcast_ref: str, episode_ref: str) -> ResolvedEpisode:
     podcast = resolve_podcast(podcast_ref)
-    payload = _call(lambda client: client.browse_episode_payload(episode_ref), lookup=True)
+    payload = _call(lambda client: client.get("/episodes/byid", {"id": episode_ref}), lookup=True)
     item = payload.get("episode")
     episode = (
         _strict(lambda: _episode(item, podcast), "episode") if isinstance(item, dict) else None
@@ -194,9 +198,10 @@ def preview_podcast(
         after = (published, episode)
     podcast = resolve_podcast(target.podcast_ref)
     before = None if after is None else after[0] + 1
-    page = _call(
-        lambda c: c.browse_episode_page_payload(podcast.podcast_ref, 100, before), lookup=True
-    )
+    params: dict[str, Any] = {"id": podcast.podcast_ref, "max": 100}
+    if before is not None:
+        params["before"] = before
+    page = _call(lambda client: client.get("/episodes/byfeedid", params), lookup=True)
     episodes = []
     for item in page.get("items") or []:
         try:

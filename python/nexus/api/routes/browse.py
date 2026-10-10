@@ -1,7 +1,7 @@
 """``GET /browse`` and ``GET /browse/preview``; provider failures map onto their error codes."""
 
 import unicodedata
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
 
@@ -18,13 +18,12 @@ from nexus.schemas.browse import (
     BrowseSort,
     BrowseSource,
 )
-from nexus.schemas.presence import presence_from_nullable as maybe
 from nexus.services.browse.service import preview_browse, search_browse
 from nexus.services.browse.targets import (
-    BrowseFailureKind,
     BrowseProviderFailure,
     BrowseTargetNotFound,
     is_plain,
+    provider_api_error,
 )
 
 
@@ -44,11 +43,6 @@ _SOURCES = {
     BrowseKind.Video: {BrowseSource.Nexus, BrowseSource.YouTube},
     BrowseKind.Podcast: {BrowseSource.PodcastIndex},
 }
-_FAILURE_CODES = {
-    BrowseFailureKind.Unavailable: ApiErrorCode.E_BROWSE_PROVIDER_UNAVAILABLE,
-    BrowseFailureKind.RateLimited: ApiErrorCode.E_BROWSE_PROVIDER_RATE_LIMITED,
-    BrowseFailureKind.QuotaExhausted: ApiErrorCode.E_BROWSE_PROVIDER_QUOTA_EXHAUSTED,
-}
 
 
 @router.get("/browse")
@@ -66,7 +60,7 @@ async def browse_content(
     try:
         page = await search_browse(db, viewer.user_id, params, provider)
     except BrowseProviderFailure as exc:
-        raise _provider_error(exc) from exc
+        raise provider_api_error(exc) from exc
     return Data(data=page)
 
 
@@ -79,14 +73,4 @@ def browse_preview(
     except BrowseTargetNotFound as exc:
         raise ApiError(ApiErrorCode.E_NOT_FOUND, "No longer available") from exc
     except BrowseProviderFailure as exc:
-        raise _provider_error(exc) from exc
-
-
-def _provider_error(exc: BrowseProviderFailure) -> ApiError:
-    """Details are ``{kind}``, plus ``retryAt`` or ``resetAt`` as a Presence for the limits."""
-    details: dict[str, Any] = {"kind": exc.kind.value}
-    if exc.kind is BrowseFailureKind.RateLimited:
-        details["retryAt"] = maybe(exc.retry_at).model_dump(mode="json")
-    if exc.kind is BrowseFailureKind.QuotaExhausted:
-        details["resetAt"] = maybe(exc.reset_at).model_dump(mode="json")
-    return ApiError(_FAILURE_CODES[exc.kind], "Browse provider request failed", details=details)
+        raise provider_api_error(exc) from exc

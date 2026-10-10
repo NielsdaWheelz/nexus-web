@@ -7,8 +7,9 @@ bumped by `_bump` (`:590-592`) on every podcast listening write, which the
 browser sends every 15 s while audio plays (`apps/web/src/lib/player/browserEngine.ts:58`).
 That moves `PodcastEpisodes` and `PodcastSubscriptions` for the viewer, so any
 podcast list continuation issued more than ~15 s after its first page answers
-409 `E_COLLECTION_CHANGED`. Episode ingest and backfill bump the same families
-(`services/podcasts/ingest.py:193`).
+409 `E_COLLECTION_CHANGED`. Episode ingest and backfill bump the same families,
+but since the 2026-10-10 python reauthor only for the show's audience and only
+when an episode was inserted or changed (`services/podcasts/ingest.py`).
 
 impact: while anything plays, Load more on a podcast list always costs a 409
 and a prefix reload (`useServerList`, design T3). bounded, but wasted reads.
