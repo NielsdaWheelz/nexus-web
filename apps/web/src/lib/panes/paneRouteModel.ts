@@ -23,7 +23,6 @@ import {
   UserRound,
   type LucideIcon,
 } from "lucide-react";
-import { RESERVED_CONTRIBUTOR_HANDLE_SEGMENTS } from "@/lib/contributors/handle";
 import type { DestinationId } from "@/lib/navigation/destinations";
 import type { WorkspaceSecondaryGroupId } from "@/lib/panes/paneSecondaryModel";
 import {
@@ -285,15 +284,9 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
     const params = matchPattern(pattern, segments);
     if (!params) continue;
     const locator = locatorFor(id, params);
-    // Reserved collection segments are not handles, and a reading id must be
-    // a resource ref, so retired literal paths stay unsupported.
-    if (
-      (id === "author" &&
-        RESERVED_CONTRIBUTOR_HANDLE_SEGMENTS.has(params.handle!)) ||
-      (id === "oracleReading" && !locator)
-    ) {
-      continue;
-    }
+    // A reading id must be a resource ref, so retired literal paths stay
+    // unsupported.
+    if (id === "oracleReading" && !locator) continue;
     const routeKey = `${id}:${pathname}${search}`;
     const resourceKey = paneResourceLocatorKey(locator);
     return { ...traits, id, pathname, params, routeKey, locator, resourceKey };

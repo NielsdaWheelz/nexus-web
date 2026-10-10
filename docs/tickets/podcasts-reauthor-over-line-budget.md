@@ -16,7 +16,7 @@ defect that stops navigation, no episode list beside a failed head) and the
 unpacking of template literals that had hidden nested calls on one line.
 Formatted lines, budget in parentheses:
 
-`lib/podcasts/api.ts` 242 (190), `lib/podcasts/paneState.ts` 449 (200),
+`lib/podcasts/api.ts` 242 (190), `lib/podcasts/paneState.ts` 449 (200; on 2026-10-10 the authors reauthor moved its generic server-state hooks to `lib/api/serverState.ts`, counted in neither slice),
 `lib/browse/api.ts` 45 (55), `lib/browse/query.ts` 113 (100),
 `presenters/browse.ts` 92 (90), `presenters/podcast.ts` 49 (60),
 `BrowsePaneBody.tsx` 591 (300), `browse.module.css` 115 (75),

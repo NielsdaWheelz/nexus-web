@@ -29,6 +29,9 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+- [open] workspace / pane return · 2026-10-10 authors reauthor · p3 · a quick Back restores the raw offset because the scrollport's anchor search starts at the collection bar: [ticket](tickets/pane-return-anchor-searches-the-collection-bar.md).
+- [open] contributors / editor · 2026-10-10 authors reauthor · p3 · the editor's name key lowercases instead of casefolding, so "Straße"/"STRASSE" pass its duplicate-create guard: [ticket](tickets/contributor-name-key-casefold-gap.md).
+- [open] libraries / wire · 2026-10-10 authors reauthor · p3 · `LibraryEntryMediaOut.author_mode` reaches the web and nothing reads it: [ticket](tickets/library-entry-author-mode-unread.md).
 - [open] podcasts, browse / reauthoring · 2026-10-10 podcasts/browse rewrite · 4,163 formatted lines against a 3,000 cap; no behaviour cut for budget: [ticket](tickets/podcasts-reauthor-over-line-budget.md).
 - [open] podcasts / collection pages · 2026-10-10 podcasts/browse rewrite · p3 · podcast lists page with a viewer revision the web must echo and restart on 409; move them to keyset continuations: [ticket](tickets/podcast-lists-need-keyset-continuations.md).
 - [open] consumption / collection revisions · 2026-10-10 podcasts/browse rewrite · p3 · every podcast listening write moves the podcast list families, so Load more while playing always meets 409: [ticket](tickets/listening-writes-bump-podcast-collection-families.md).
@@ -350,7 +353,6 @@ unexpected timeouts. See
 - [deferred] consumption / schema · 2026-09-28 consumption-stats reauthoring · four consumption state timestamps are written by nothing and read by nothing; drop them one release later: [ticket](tickets/drop-write-only-consumption-timestamps.md).
 - [open] consumption / stats contracts · 2026-09-28 reauthoring, qualified 2026-10-03 · unproduced `Week` remains; retain read `recordedActiveMs` pending precision/conservation proof: [ticket](tickets/consumption-stats-over-its-line-target.md).
 - [open] consumption / stats pane · 2026-09-28 consumption-stats reauthoring · p3 · timeline modalities all paint `CanvasText` in forced colors: [ticket](tickets/stats-timeline-modalities-merge-in-forced-colors.md).
-- author non-media work dates have no producer: [ticket](tickets/author-nonmedia-work-dates-have-no-producer.md).
 
 
 - [open] inbound share / account policy candidate · 2026-10-02 producer review · valid dependency failures reach the defect owner; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/share-account-transient-failures-escape-inline-feedback.md).

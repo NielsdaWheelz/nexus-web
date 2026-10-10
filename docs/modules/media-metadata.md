@@ -150,8 +150,11 @@ uses the existing composed reload; pdf metadata does not reopen its viewer.
 this costs one small navigation read per successful text-reader enrichment.
 
 the metadata overlay remains available for readable, pending and failed media.
-it separates reading status from research, preserves existing facts during
-reread, and shows safe outcomes/model activity without prompts or tracebacks.
+it reads the media through the shared server-state hook (`useServerValue`, keyed
+by media id, refetched on each new enrichment stamp), so reopening it shows the
+last values at once while it rereads. it separates reading status from research,
+preserves existing facts during reread, and shows safe outcomes/model activity
+without prompts or tracebacks.
 live-disconnected and detail-reread failures have distinct reconnect/reread
 actions. neither action starts new research.
 

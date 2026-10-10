@@ -1,6 +1,6 @@
 import type { PaneUrlStateCodec } from "@/lib/api/usePaneUrlState";
 import type { ActivityModality } from "@/lib/consumption/activityContract";
-import { tryParseContributorHandle } from "@/lib/contributors/handle";
+import { isContributorHandle } from "@/lib/contributors/credits";
 import { formatLocalDateInTimeZone, isLocalDate, shiftLocalDate } from "@/lib/localDate";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 
@@ -43,13 +43,12 @@ export const statsUrlCodec: PaneUrlStateCodec<StatsUrlState> = {
       return { view: "year", period: "year", anchor: `${year}-01-01`, year, filters: {} };
     }
     const modality = get("modality");
-    const contributor = tryParseContributorHandle(get("contributor"));
     const filters: StatsUrlState["filters"] = {};
     if (["Reading", "Listening", "Viewing"].includes(modality)) {
       filters.modality = modality as ActivityModality;
     }
     if (parseResourceRef(get("media"))?.scheme === "media") filters.media = get("media");
-    if (contributor) filters.contributor = contributor;
+    if (isContributorHandle(get("contributor"))) filters.contributor = get("contributor");
     if (/^ncd1\.[A-Za-z0-9_-]{22}$/.test(get("device"))) filters.device = get("device");
     return {
       view: "stats",

@@ -4,7 +4,7 @@ import { absent, present, type Presence } from "@/lib/api/presence";
 import type { Schema } from "@/lib/api/wire";
 import type { CollectionRowView } from "@/lib/collections/types";
 import type { PositiveCount } from "@/lib/consumption/activityFacts";
-import type { ContributorCredit } from "@/lib/contributors/types";
+import type { ContributorCredit } from "@/lib/contributors/credits";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 
 export interface PodcastPresenterItem {

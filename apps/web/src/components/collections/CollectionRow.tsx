@@ -6,7 +6,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import ContributorCreditList from "@/components/contributors/ContributorCreditList";
+import { ContributorCreditList } from "@/components/contributors/ContributorCredits";
 import type { SortableActivatorProps } from "@/components/sortable/SortableList";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
 import Pill from "@/components/ui/Pill";

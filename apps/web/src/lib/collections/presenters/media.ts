@@ -1,7 +1,7 @@
 import { absent, present } from "@/lib/api/presence";
 import type { ResourceRowPrimary } from "@/components/ui/ResourceActivation";
 import type { CollectionRowView } from "@/lib/collections/types";
-import { selectMediaAuthors } from "@/lib/contributors/formatting";
+import { selectMediaAuthors } from "@/lib/contributors/credits";
 import type { MediaSummary } from "@/lib/media/mediaSummary";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { canonicalResourceRef } from "@/lib/sharing/targets";

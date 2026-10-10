@@ -4,9 +4,6 @@
 // mutable ui state (filters, search, editor scope) or streamed are absent.
 import type { ApiJson } from "@/lib/api/wire";
 import {
-  AUTHOR_WORKS_LIMIT,
-  contributorResource,
-  contributorWorksResource,
   conversationsInitialResource,
   librariesResource,
   libraryEntriesResource,
@@ -24,14 +21,6 @@ import {
   conversationIndexPage,
   type ConversationListItem,
 } from "@/lib/chat/conversationIndex";
-import {
-  contributorDetailFromWire,
-  contributorWorksPageFromWire,
-} from "@/lib/contributors/api";
-import type {
-  ContributorDetail,
-  ContributorWorkItem,
-} from "@/lib/contributors/types";
 import {
   librariesPageFromWire,
   libraryOutForId,
@@ -55,10 +44,6 @@ export interface PaneResourceLoader {
 interface CollectionSeed {
   collectionRevision: CollectionRevision;
   nextCursor: Presence<CollectionCursor>;
-}
-export interface AuthorPaneSeed extends CollectionSeed {
-  detail: ContributorDetail;
-  works: readonly ContributorWorkItem[];
 }
 export interface ConversationsPaneSeed extends CollectionSeed {
   conversations: readonly ConversationListItem[];
@@ -130,28 +115,6 @@ export const paneResourceLoaders: Partial<
   media: {
     cacheKey: ({ id }) => mediaResource.cacheKey({ id }),
     load: (request, { id }) => loadMediaPane(request, { id }),
-  },
-  author: {
-    cacheKey: ({ handle }) => contributorResource.cacheKey({ handle }),
-    load: async (request, { handle }): Promise<AuthorPaneSeed> => {
-      const [detail, works] = await Promise.all([
-        request<
-          { handle: string },
-          ApiJson<"/contributors/{contributor_handle}", "get">
-        >(contributorResource, { handle }),
-        request<
-          { handle: string; limit: number },
-          ApiJson<"/contributors/{contributor_handle}/works", "get">
-        >(contributorWorksResource, { handle, limit: AUTHOR_WORKS_LIMIT }),
-      ]);
-      const page = contributorWorksPageFromWire(works.data);
-      return {
-        detail: contributorDetailFromWire(detail.data),
-        works: page.items,
-        collectionRevision: page.collectionRevision,
-        nextCursor: page.nextCursor,
-      };
-    },
   },
   notes: {
     cacheKey: () => notePagesResource.cacheKey({}),

@@ -18,6 +18,9 @@ and verified backup; identify the creator/viewer and target saved items; retain
 bounded, checksum-verifiable originals. review the production preview before apply.
 
 fix: follow [the source repair contract](../modules/epub.md#contributor-observations-and-saved-repair).
+the repair code lives in `python/nexus/services/epub_contributor_repair.py`
+(moved verbatim from `services/contributors.py` by the 2026-10-10 authors
+reauthor; the authors harness probe P10 proves its preview still runs).
 `python/scripts/repair_epub_contributors.py --viewer-id <uuid> [--media-id <uuid>]`
 previews. add `--apply` only after the reviewed preview and separate authorization.
 use the existing source/credit fences and contributor owner; no research job or

@@ -2,7 +2,7 @@
 // input honoring quotes; a token matching a closed operator set with a valid value
 // becomes a filter chip, anything else stays free text. No throw, async, or network.
 
-import { CONTRIBUTOR_ROLES } from "@/lib/contributors/vocab";
+import { CONTRIBUTOR_ROLES } from "@/lib/contributors/credits";
 import {
   normalizeFormat,
   normalizeKind,

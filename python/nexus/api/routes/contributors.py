@@ -1,4 +1,4 @@
-"""Contributor routes: parse the handle at ingress, call one facade function, envelope."""
+"""Contributor routes: parse the handle first, then the view, then call the facade."""
 
 from typing import Annotated
 
@@ -15,35 +15,35 @@ from nexus.schemas.contributors import (
     ContributorSearchPageOut,
     ContributorWorkItemOut,
 )
-from nexus.services import contributors as contributors_service
-from nexus.services.contributor_taxonomy import ContributorHandle, parse_contributor_handle
+from nexus.services import contributors
+from nexus.services.contributor_taxonomy import ContributorHandle, try_parse_contributor_handle
 
 router = APIRouter(prefix="/contributors", tags=["contributors"])
 
 
-def _require_nonblank(value: str) -> str:
+def _nonblank(value: str) -> str:
     if not value.strip():
         raise ValueError("Query must not be blank")
     return value
 
 
-def _parse_handle(contributor_handle: str) -> ContributorHandle:
-    """A grammar violation or a reserved segment 404s without revealing anything."""
-    try:
-        return parse_contributor_handle(contributor_handle)
-    except ValueError:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor not found") from None
+def _handle(value: str) -> ContributorHandle:
+    """A malformed handle is a 404, indistinguishable from an unknown one."""
+    handle = try_parse_contributor_handle(value)
+    if handle is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor not found")
+    return handle
 
 
 @router.get("")
 def search_contributors(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-    q: Annotated[str, Query(min_length=1, max_length=200), AfterValidator(_require_nonblank)],
+    q: Annotated[str, Query(min_length=1, max_length=200), AfterValidator(_nonblank)],
     cursor: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=50),
 ) -> Data[ContributorSearchPageOut]:
-    page = contributors_service.search_contributors(
+    page = contributors.search_contributors(
         db, viewer_id=viewer.user_id, q=q, cursor=cursor, limit=limit
     )
     return Data(data=page)
@@ -51,12 +51,10 @@ def search_contributors(
 
 @router.get("/{contributor_handle}")
 def get_contributor(
-    contributor_handle: str,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
+    contributor_handle: str, viewer: Annotated[Viewer, Depends(get_viewer)], db: DbSession
 ) -> Data[ContributorDetailOut]:
-    detail = contributors_service.get_contributor_detail(
-        db, viewer_id=viewer.user_id, contributor_handle=_parse_handle(contributor_handle)
+    detail = contributors.get_contributor_detail(
+        db, viewer_id=viewer.user_id, contributor_handle=_handle(contributor_handle)
     )
     return Data(data=detail)
 
@@ -68,13 +66,12 @@ def list_contributor_works(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: RepeatableReadDbSession,
 ) -> Data[CollectionPage[ContributorWorkItemOut]]:
-    plan, query = contributors_service.parse_contributor_works_query(
-        request.query_params.multi_items()
-    )
-    page = contributors_service.list_contributor_works(
+    handle = _handle(contributor_handle)
+    plan, query = contributors.parse_contributor_works_query(request.query_params.multi_items())
+    page = contributors.list_contributor_works(
         db,
         viewer_id=viewer.user_id,
-        contributor_handle=_parse_handle(contributor_handle),
+        contributor_handle=handle,
         plan=plan,
         cursor=query.cursor,
         collection_revision=query.collection_revision,

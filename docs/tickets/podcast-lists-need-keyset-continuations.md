@@ -6,7 +6,7 @@ status: open · origin: 2026-10-10 podcasts/browse web rewrite (branch `cleanup/
 collection pages: a continuation must carry `cursor` together with
 `collection_revision` (`python/nexus/schemas/collection_page.py:91-93`), and the
 server answers 409 `E_COLLECTION_CHANGED` once the viewer's family has moved.
-`useServerList` (`apps/web/src/lib/podcasts/paneState.ts`) therefore keeps
+`useServerList` (`apps/web/src/lib/api/serverState.ts`, shared with the author pane since 2026-10-10) therefore keeps
 `(cursor, revision)` as one opaque continuation, and on 409 reloads the asked-for
 prefix once (one page longer for a Load more) before showing the error with
 Retry. The echo and that recovery exist only for these routes (design T1, Q1).

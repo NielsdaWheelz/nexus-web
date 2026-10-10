@@ -98,7 +98,8 @@ in one role leaves the entire role unobserved, rather than publishing an incompl
 first twenty. ordinary source job results retain these observation issues.
 
 `python/scripts/repair_epub_contributors.py --viewer-id <uuid> [--media-id <uuid>]`
-previews source-only repair; `--apply` applies it. the command reads bounded,
+previews source-only repair (`services/epub_contributor_repair.py`); `--apply`
+applies it. the command reads bounded,
 checksum-verified retained originals outside the database transaction. apply
 locks media, rechecks source identity and affected credits, and uses the existing
 contributor owner. only uniquely matched historical `epub_opf` observations move;

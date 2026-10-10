@@ -1,15 +1,27 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
-import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import type { ApiJson } from "@/lib/api/wire";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+// The read-only metadata overlay ("metadata…"): publication facts with linked,
+// role-grouped credits, the live metadata-research status, source, reading or
+// listening, activity and availability. It rereads the media whenever a new
+// successful enrichment stamp arrives; a failed reread keeps the old values.
+
+import type { ReactNode } from "react";
 import { formatCollectionPublicationDate } from "@/components/collections/collectionRowFormatting";
-import Dialog from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
+import Dialog from "@/components/ui/Dialog";
 import MobileSheet from "@/components/ui/MobileSheet";
-import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/formatting";
-import { mediaDetailFromResponse, type MediaDetail } from "@/lib/media/mediaDetail";
+import { apiFetch, type ApiPath } from "@/lib/api/client";
+import { useServerValue, type Visit } from "@/lib/api/serverState";
+import type { ApiJson } from "@/lib/api/wire";
+import {
+  groupContributorCredits,
+  selectMediaAuthors,
+} from "@/lib/contributors/credits";
+import {
+  mediaDetailFromResponse,
+  type MediaDetail,
+} from "@/lib/media/mediaDetail";
+import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
 import {
   METADATA_FAILURE_COPY,
   METADATA_FIELD_LABELS,
@@ -19,24 +31,12 @@ import {
   useMediaMetadataOperations,
   type MetadataEnrichmentView,
 } from "@/lib/media/mediaMetadataOperations";
-import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
+import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import styles from "./MediaInfoOverlay.module.css";
 
-interface Props {
-  readonly open: boolean;
-  readonly mediaId: string;
-  readonly returnFocusTo: ReturnFocusTarget;
-  readonly returnFocusFallback: ReturnFocusTarget;
-  readonly onClose: () => void;
-}
-
-type LoadState =
-  | { readonly kind: "Loading"; readonly mediaId: string }
-  | { readonly kind: "Error"; readonly mediaId: string }
-  | { readonly kind: "Defect"; readonly mediaId: string; readonly error: unknown }
-  | { readonly kind: "Ready"; readonly mediaId: string; readonly media: MediaDetail };
+const VISIT = definePaneVisitDataKey<Visit<MediaDetail>>("MediaInfo.Detail");
 
 function fact(label: string, value: ReactNode): ReactNode {
   if (value === null || value === undefined || value === "") return null;
@@ -69,7 +69,9 @@ function instant(value: string | null): ReactNode {
   ) : null;
 }
 
-function publicationDate(value: MediaDetail["original_published_date"]): ReactNode {
+function publicationDate(
+  value: MediaDetail["original_published_date"],
+): ReactNode {
   if (value.kind === "Absent") return "unknown";
   return (
     <time dateTime={value.value}>
@@ -78,7 +80,14 @@ function publicationDate(value: MediaDetail["original_published_date"]): ReactNo
   );
 }
 
-function MediaInfo({ media, metadata, disconnected, refreshing, refreshError, onReread }: {
+function MediaInfo({
+  media,
+  metadata,
+  disconnected,
+  refreshing,
+  refreshError,
+  onReread,
+}: {
   readonly media: MediaDetail;
   readonly metadata: MetadataEnrichmentView;
   readonly disconnected: boolean;
@@ -88,8 +97,10 @@ function MediaInfo({ media, metadata, disconnected, refreshing, refreshError, on
 }) {
   const authors = selectMediaAuthors(media.contributors);
   const credits = groupContributorCredits(media.contributors);
-  const publisherAlreadyCredited = credits.some((group) =>
-    group.role === "publisher" && group.credits.some((credit) => credit.label === media.publisher),
+  const publisherAlreadyCredited = credits.some(
+    (group) =>
+      group.role === "publisher" &&
+      group.credits.some((credit) => credit.label === media.publisher),
   );
   const sourceFailure = mediaErrorMessage({
     kind: "Source",
@@ -102,105 +113,213 @@ function MediaInfo({ media, metadata, disconnected, refreshing, refreshError, on
     kind: "Retrieval",
     retrievalStatus: media.retrieval_status,
   });
-  const duration = media.duration.kind === "Present" ? media.duration.value : null;
-  const requestedUrl = media.requested_url.kind === "Present" ? media.requested_url.value : null;
-  const canonicalUrl = media.canonical_url.kind === "Present" ? media.canonical_url.value : null;
-  const operation = metadata.operation.kind === "Present" ? metadata.operation.value : null;
+  const duration =
+    media.duration.kind === "Present" ? media.duration.value : null;
+  const requestedUrl =
+    media.requested_url.kind === "Present" ? media.requested_url.value : null;
+  const canonicalUrl =
+    media.canonical_url.kind === "Present" ? media.canonical_url.value : null;
+  const operation =
+    metadata.operation.kind === "Present" ? metadata.operation.value : null;
   const outcome = operation?.status === "completed" ? operation.outcome : null;
-  const originalUnresolved = operation?.status === "no_findings"
-    || outcome?.unresolved_fields.includes("original_published_date");
-  const completedAt = operation?.status === "completed" ? operation.outcome.completed_at
-    : operation?.status === "no_findings" || operation?.status === "failed" ? operation.completed_at : null;
+  const originalUnresolved =
+    operation?.status === "no_findings" ||
+    outcome?.unresolved_fields.includes("original_published_date");
+  const completedAt =
+    operation?.status === "completed"
+      ? operation.outcome.completed_at
+      : operation?.status === "no_findings" || operation?.status === "failed"
+        ? operation.completed_at
+        : null;
   return (
     <div className={styles.content} aria-busy={refreshing || undefined}>
-      <div className={styles.resourceTitle} dir="auto">{media.title}</div>
+      <div className={styles.resourceTitle} dir="auto">
+        {media.title}
+      </div>
       {refreshError ? (
         <div className={styles.refreshNotice}>
           <p role="alert">metadata updated; couldn’t load current values</p>
-          <Button variant="secondary" onClick={onReread}>reload metadata</Button>
+          <Button variant="secondary" onClick={onReread}>
+            reload metadata
+          </Button>
         </div>
       ) : null}
       {group("publication", [
         authors.length === 0 ? fact("authors", "unknown") : null,
         ...credits.map((role) =>
-          fact(role.label, role.credits.map((credit, index) => (
-            <span key={`${credit.label}-${index}`}>
-              {index > 0 ? ", " : null}
-              {credit.href ? (
-                <a href={credit.href} dir="auto">{credit.label}</a>
-              ) : (
-                <span dir="auto">{credit.label}</span>
-              )}
-            </span>
-          ))),
+          fact(
+            role.label,
+            role.credits.map((credit, index) => (
+              <span key={`${credit.label}-${index}`}>
+                {index > 0 ? ", " : null}
+                {credit.href ? (
+                  <a href={credit.href} dir="auto">
+                    {credit.label}
+                  </a>
+                ) : (
+                  <span dir="auto">{credit.label}</span>
+                )}
+              </span>
+            )),
+          ),
         ),
         fact("publisher", publisherAlreadyCredited ? null : media.publisher),
         fact("first published", publicationDate(media.original_published_date)),
         fact("this edition", publicationDate(media.edition_published_date)),
-        fact("isbn", media.edition_isbn.kind === "Present" ? media.edition_isbn.value : null),
+        fact(
+          "isbn",
+          media.edition_isbn.kind === "Present"
+            ? media.edition_isbn.value
+            : null,
+        ),
         fact("language", media.language),
         fact("description", media.description),
       ])}
       {group("metadata research", [
-        fact("status", <span aria-live="polite" aria-atomic="true">
-          {operation ? metadataOperationSummary(operation) : "no current metadata operation"}
-        </span>),
-        fact("first publication", originalUnresolved ? (
-          media.original_published_date.kind === "Absent" ? "first publication remains unknown"
-            : `first publication unverified; kept ${formatCollectionPublicationDate(media.original_published_date.value)}`
-        ) : null),
-        fact("unresolved fields", outcome && outcome.unresolved_fields.length > 0
-          ? outcome.unresolved_fields.map((field) => METADATA_FIELD_LABELS[field]).join(", ") : null),
-        fact("authors", outcome?.retained_manual_authors ? "kept manually set authors" : null),
-        fact("explanation", operation?.status === "failed" ? METADATA_FAILURE_COPY[operation.code] : null),
-        fact("re-enrichment", metadata.retry.status === "blocked"
-          ? METADATA_RETRY_BLOCKED_COPY[metadata.retry.reason] : "available"),
+        fact(
+          "status",
+          <span aria-live="polite" aria-atomic="true">
+            {operation
+              ? metadataOperationSummary(operation)
+              : "no current metadata operation"}
+          </span>,
+        ),
+        fact(
+          "first publication",
+          originalUnresolved
+            ? media.original_published_date.kind === "Absent"
+              ? "first publication remains unknown"
+              : `first publication unverified; kept ${formatCollectionPublicationDate(media.original_published_date.value)}`
+            : null,
+        ),
+        fact(
+          "unresolved fields",
+          outcome && outcome.unresolved_fields.length > 0
+            ? outcome.unresolved_fields
+                .map((field) => METADATA_FIELD_LABELS[field])
+                .join(", ")
+            : null,
+        ),
+        fact(
+          "authors",
+          outcome?.retained_manual_authors ? "kept manually set authors" : null,
+        ),
+        fact(
+          "explanation",
+          operation?.status === "failed"
+            ? METADATA_FAILURE_COPY[operation.code]
+            : null,
+        ),
+        fact(
+          "re-enrichment",
+          metadata.retry.status === "blocked"
+            ? METADATA_RETRY_BLOCKED_COPY[metadata.retry.reason]
+            : "available",
+        ),
         fact("requested", operation ? instant(operation.created_at) : null),
-        fact("started", operation?.started_at.kind === "Present" ? instant(operation.started_at.value) : null),
+        fact(
+          "started",
+          operation?.started_at.kind === "Present"
+            ? instant(operation.started_at.value)
+            : null,
+        ),
         fact("finished", instant(completedAt)),
-        fact("next retry", operation?.status === "waiting" && operation.until.kind === "Present"
-          ? instant(operation.until.value) : null),
+        fact(
+          "next retry",
+          operation?.status === "waiting" && operation.until.kind === "Present"
+            ? instant(operation.until.value)
+            : null,
+        ),
         fact("operation id", operation?.job_id),
-        fact("model", operation?.selection.kind === "Present"
-          ? `${operation.selection.value.provider} / ${operation.selection.value.model} / ${operation.selection.value.reasoning}` : null),
-        fact("live status", disconnected ? (
-          <div className={styles.refreshNotice}>
-            <span>live status disconnected</span>
-            <Button variant="secondary" onClick={() => reconnectMetadataOperations(media.id)}>reconnect</Button>
-          </div>
-        ) : null),
+        fact(
+          "model",
+          operation?.selection.kind === "Present"
+            ? `${operation.selection.value.provider} / ${operation.selection.value.model} / ${operation.selection.value.reasoning}`
+            : null,
+        ),
+        fact(
+          "live status",
+          disconnected ? (
+            <div className={styles.refreshNotice}>
+              <span>live status disconnected</span>
+              <Button
+                variant="secondary"
+                onClick={() => reconnectMetadataOperations(media.id)}
+              >
+                reconnect
+              </Button>
+            </div>
+          ) : null,
+        ),
       ])}
       {group("source", [
         fact("media type", media.kind.replaceAll("_", " ")),
-        fact("provider", media.provider.kind === "Present" ? media.provider.value : "not recorded"),
-        fact("provider id", media.provider_id.kind === "Present" ? media.provider_id.value : null),
-        fact("source url", media.canonical_source_url ? (
-          <a href={media.canonical_source_url} dir="auto">
-            {media.canonical_source_url}
-          </a>
-        ) : null),
-        fact(requestedUrl === canonicalUrl ? "requested and canonical url" : "requested url",
-          requestedUrl !== null && requestedUrl !== media.canonical_source_url ? (
-            <a href={requestedUrl} dir="auto">{requestedUrl}</a>
-          ) : null),
-        fact("canonical url", canonicalUrl !== null && canonicalUrl !== media.canonical_source_url
-          && canonicalUrl !== requestedUrl ? (
-            <a href={canonicalUrl} dir="auto">{canonicalUrl}</a>
-          ) : null),
+        fact(
+          "provider",
+          media.provider.kind === "Present"
+            ? media.provider.value
+            : "not recorded",
+        ),
+        fact(
+          "provider id",
+          media.provider_id.kind === "Present" ? media.provider_id.value : null,
+        ),
+        fact(
+          "source url",
+          media.canonical_source_url ? (
+            <a href={media.canonical_source_url} dir="auto">
+              {media.canonical_source_url}
+            </a>
+          ) : null,
+        ),
+        fact(
+          requestedUrl === canonicalUrl
+            ? "requested and canonical url"
+            : "requested url",
+          requestedUrl !== null &&
+            requestedUrl !== media.canonical_source_url ? (
+            <a href={requestedUrl} dir="auto">
+              {requestedUrl}
+            </a>
+          ) : null,
+        ),
+        fact(
+          "canonical url",
+          canonicalUrl !== null &&
+            canonicalUrl !== media.canonical_source_url &&
+            canonicalUrl !== requestedUrl ? (
+            <a href={canonicalUrl} dir="auto">
+              {canonicalUrl}
+            </a>
+          ) : null,
+        ),
       ])}
       {group("reading/listening", [
         fact("completion", media.read_state?.replaceAll("_", " ")),
-        fact("reading progress", media.progress_fraction === null
-          ? null : `${Math.round(media.progress_fraction * 100)}%`),
-        fact("current playback position", media.listening_state
-          ? `${Math.floor(media.listening_state.position_ms / 60000)}:${String(Math.floor(media.listening_state.position_ms / 1000) % 60).padStart(2, "0")}`
-          : null),
-        fact("total duration", duration
-          ? `${duration.estimate.totalMinutes} min to ${duration.modality === "Read" ? "read" : "listen"}`
-          : null),
-        fact("remaining duration", duration?.estimate.remainingMinutes.kind === "Present"
-          ? `${duration.estimate.remainingMinutes.value} min left to ${duration.modality === "Read" ? "read" : "listen"}`
-          : null),
+        fact(
+          "reading progress",
+          media.progress_fraction === null
+            ? null
+            : `${Math.round(media.progress_fraction * 100)}%`,
+        ),
+        fact(
+          "current playback position",
+          media.listening_state
+            ? `${Math.floor(media.listening_state.position_ms / 60000)}:${String(Math.floor(media.listening_state.position_ms / 1000) % 60).padStart(2, "0")}`
+            : null,
+        ),
+        fact(
+          "total duration",
+          duration
+            ? `${duration.estimate.totalMinutes} min to ${duration.modality === "Read" ? "read" : "listen"}`
+            : null,
+        ),
+        fact(
+          "remaining duration",
+          duration?.estimate.remainingMinutes.kind === "Present"
+            ? `${duration.estimate.remainingMinutes.value} min left to ${duration.modality === "Read" ? "read" : "listen"}`
+            : null,
+        ),
       ])}
       {group("activity", [
         fact("record created", instant(media.created_at)),
@@ -211,13 +330,21 @@ function MediaInfo({ media, metadata, disconnected, refreshing, refreshError, on
       {group("availability", [
         fact("processing", media.processing_status.replaceAll("_", " ")),
         fact("transcript state", media.transcript_state?.replaceAll("_", " ")),
-        fact("transcript origin", media.transcript_origin.kind === "Present"
-          ? media.transcript_origin.value : null),
+        fact(
+          "transcript origin",
+          media.transcript_origin.kind === "Present"
+            ? media.transcript_origin.value
+            : null,
+        ),
         fact("transcript coverage", media.transcript_coverage),
         fact("retrieval availability", media.retrieval_status),
         fact("retrieval reason", media.retrieval_status_reason),
-        fact("processing failure", sourceFailure
-          ? `${sourceFailure.title} ${sourceFailure.explanation}` : null),
+        fact(
+          "processing failure",
+          sourceFailure
+            ? `${sourceFailure.title} ${sourceFailure.explanation}`
+            : null,
+        ),
         fact("retrieval explanation", retrievalFailure?.explanation),
       ])}
     </div>
@@ -230,79 +357,49 @@ export default function MediaInfoOverlay({
   returnFocusTo,
   returnFocusFallback,
   onClose,
-}: Props) {
+}: {
+  readonly open: boolean;
+  readonly mediaId: string;
+  readonly returnFocusTo: ReturnFocusTarget;
+  readonly returnFocusFallback: ReturnFocusTarget;
+  readonly onClose: () => void;
+}) {
   const isMobile = useIsMobileViewport();
-  const [state, setState] = useState<LoadState>({ kind: "Loading", mediaId });
-  const [request, setRequest] = useState(0);
-  const [refreshing, setRefreshing] = useState(false);
-  const [refreshError, setRefreshError] = useState(false);
   const observation = useMediaMetadataOperations(open ? mediaId : null);
-  const publicationStamp = observation.view?.last_enriched_at.kind === "Present"
-    ? observation.view.last_enriched_at.value : null;
-  useEffect(() => {
-    if (!open) return;
-    const controller = new AbortController();
-    setState((previous) => previous.kind === "Ready" && previous.mediaId === mediaId
-      ? previous : { kind: "Loading", mediaId });
-    setRefreshing(true);
-    setRefreshError(false);
-    void apiFetch<ApiJson<"/media/{media_id}", "get">>(`/api/media/${encodeURIComponent(mediaId)}`, {
-      signal: controller.signal,
-    })
-      .then((raw) => {
-        if (controller.signal.aborted) return;
-        try {
-          setState({
-            kind: "Ready",
-            mediaId,
-            media: mediaDetailFromResponse(raw, mediaId),
-          });
-        } catch (error) {
-          setState({ kind: "Defect", mediaId, error });
-        }
-        setRefreshing(false);
-      })
-      .catch((error) => {
-        if (!controller.signal.aborted && !handleUnauthenticatedApiError(error)) {
-          setRefreshing(false);
-          if (!isApiError(error) || isSameSystemApiDefect(error)) {
-            setState({ kind: "Defect", mediaId, error });
-            return;
-          }
-          setRefreshError(true);
-          setState((previous) => previous.kind === "Ready" && previous.mediaId === mediaId
-            ? previous : { kind: "Error", mediaId });
-        }
-      });
-    return () => controller.abort();
-  }, [open, mediaId, request, publicationStamp]);
-  const visible = state.mediaId === mediaId ? state : { kind: "Loading" as const };
-  if (visible.kind === "Defect") throw visible.error;
-  const content = visible.kind === "Loading" ? (
-    <p role="status">loading metadata…</p>
-  ) : visible.kind === "Error" ? (
-    <div>
-      <p role="alert">couldn’t load metadata</p>
-      <Button
-        variant="secondary"
-        onClick={() => {
-          setState({ kind: "Loading", mediaId });
-          setRequest((current) => current + 1);
-        }}
-      >
-        try again
-      </Button>
-    </div>
-  ) : (
-    <MediaInfo
-      media={visible.media}
-      metadata={observation.view ?? visible.media.metadata_enrichment}
-      disconnected={observation.disconnected}
-      refreshing={refreshing}
-      refreshError={refreshError}
-      onReread={() => setRequest((current) => current + 1)}
-    />
-  );
+  const stamp = observation.view?.last_enriched_at;
+  const media = useServerValue({
+    key: open ? mediaId : null,
+    stale: stamp?.kind === "Present" ? stamp.value : "",
+    visit: VISIT,
+    load: async (signal) =>
+      mediaDetailFromResponse(
+        await apiFetch<ApiJson<"/media/{media_id}", "get">>(
+          `/api/media/${encodeURIComponent(mediaId)}` as ApiPath,
+          { signal },
+        ),
+        mediaId,
+      ),
+  });
+  const content =
+    media.status === "loading" ? (
+      <p role="status">loading metadata…</p>
+    ) : media.status === "failed" ? (
+      <div className={styles.refreshNotice}>
+        <p role="alert">couldn’t load metadata</p>
+        <Button variant="secondary" onClick={media.refetch}>
+          try again
+        </Button>
+      </div>
+    ) : (
+      <MediaInfo
+        media={media.data}
+        metadata={observation.view ?? media.data.metadata_enrichment}
+        disconnected={observation.disconnected}
+        refreshing={media.refreshing}
+        refreshError={media.error !== null}
+        onReread={media.refetch}
+      />
+    );
   return isMobile ? (
     <MobileSheet
       active={open}

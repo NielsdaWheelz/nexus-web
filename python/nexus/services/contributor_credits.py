@@ -1,12 +1,13 @@
-"""The contributor-credit read owner: composable SQL builders and batch loaders.
+"""Contributor-credit reads that other modules compose: SQL fragments and batch loaders.
 
-Every builder that scopes visibility binds ``:viewer_id`` and composes the CTEs owned
-by ``auth/permissions``; credit DML lives in ``contributor_writes``.
+A fragment that scopes visibility binds ``:viewer_id`` and composes the CTEs owned by
+``auth/permissions``; one without a visibility rule says so and needs a visible outer
+relation. Credit DML lives in ``contributor_writes``.
 """
 
 from __future__ import annotations
 
-from typing import Any, Literal, cast
+from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import text
@@ -16,11 +17,13 @@ from nexus.auth.permissions import visible_content_credit_rows_sql, visible_medi
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.services.contributor_taxonomy import ContributorRole
 
+_Owner = Literal["media_id", "podcast_id"]
+
 
 def current_media_contributor_rows_sql() -> str:
     """``(media_id, handle, display_name, role)``, direct plus parent-podcast credits.
 
-    No visibility rule: the consumer must join an already viewer-visible media relation.
+    No visibility rule: the consumer joins an already viewer-visible media relation.
     """
     return """
         SELECT DISTINCT targets.media_id, c.handle, c.display_name, targets.role
@@ -49,58 +52,10 @@ def visible_author_credit_rows_sql() -> str:
     """
 
 
-def distinct_visible_works_sql() -> str:
-    """One row per ``(contributor_id, visible target)`` — the works relation.
-
-    Columns: ``contributor_id``; the mutually exclusive ``media_id`` / ``podcast_id`` /
-    ``project_gutenberg_catalog_ebook_id``; ``href`` (the route, also the unique
-    tiebreaker); ``title``; ``content_kind``; ``date_key`` (media's original
-    publication date as partial ISO text; NULL for podcasts and catalogue-only
-    works); ``role_facts`` (jsonb by credit ordinal).
-    """
-    return f"""
-        SELECT
-            vcc.contributor_id,
-            vcc.media_id,
-            vcc.podcast_id,
-            vcc.project_gutenberg_catalog_ebook_id,
-            CASE
-                WHEN vcc.media_id IS NOT NULL THEN '/media/' || vcc.media_id::text
-                WHEN vcc.podcast_id IS NOT NULL THEN '/podcasts/' || vcc.podcast_id::text
-                ELSE 'https://www.gutenberg.org/ebooks/'
-                    || vcc.project_gutenberg_catalog_ebook_id::text
-            END AS href,
-            COALESCE(m.title, p.title, pg.title, '') AS title,
-            CASE
-                WHEN vcc.media_id IS NOT NULL THEN m.kind
-                WHEN vcc.podcast_id IS NOT NULL THEN 'podcast'
-                ELSE 'project_gutenberg_ebook'
-            END AS content_kind,
-            m.original_published_date AS date_key,
-            jsonb_agg(
-                jsonb_build_object(
-                    'credited_name', vcc.credited_name,
-                    'role', vcc.role,
-                    'raw_role', vcc.raw_role
-                )
-                ORDER BY vcc.ordinal ASC
-            ) AS role_facts
-        FROM ({visible_content_credit_rows_sql()}) vcc
-        LEFT JOIN media m ON m.id = vcc.media_id
-        LEFT JOIN podcasts p ON p.id = vcc.podcast_id
-        LEFT JOIN project_gutenberg_catalog pg
-            ON pg.ebook_id = vcc.project_gutenberg_catalog_ebook_id
-        GROUP BY
-            vcc.contributor_id, vcc.media_id, vcc.podcast_id,
-            vcc.project_gutenberg_catalog_ebook_id,
-            m.title, m.kind, m.original_published_date, p.title, pg.title
-    """
-
-
 def contributor_fts_text_sql() -> str:
-    """``(contributor_id, search_text)``: display name, every alias, visible credited names.
+    """``(contributor_id, search_text)``: display name, aliases, visible credited names.
 
-    Exact keys deliberately never enter the search blob.
+    Exact keys never enter the search text.
     """
     return f"""
         SELECT
@@ -123,11 +78,11 @@ def contributor_fts_text_sql() -> str:
     """
 
 
-def contributor_credits_rollup_cte_sql(owner_column: Literal["media_id", "podcast_id"]) -> str:
-    """Per-owner ``(owner_id, contributor_credits jsonb, contributor_search_text)``.
+def contributor_credits_rollup_cte_sql(owner_column: _Owner) -> str:
+    """Per owner ``(owner_id, contributor_credits jsonb, contributor_search_text)``.
 
-    ``owner_column`` is a fixed internal SQL literal, never user input.
-    The search text composes credited name, display name and aliases, never external keys.
+    ``owner_column`` is a fixed internal literal. The search text joins credited name,
+    display name and aliases, never external keys.
     """
     return f"""
         SELECT
@@ -145,12 +100,7 @@ def contributor_credits_rollup_cte_sql(owner_column: Literal["media_id", "podcas
                 ORDER BY cc.ordinal ASC, cc.created_at ASC, cc.id ASC
             ) AS contributor_credits,
             string_agg(
-                concat_ws(
-                    ' ',
-                    cc.credited_name,
-                    c.display_name,
-                    COALESCE(alias_text.aliases, '')
-                ),
+                concat_ws(' ', cc.credited_name, c.display_name, COALESCE(alias_text.aliases, '')),
                 ' '
             ) AS contributor_search_text
         FROM contributor_credits cc
@@ -165,10 +115,10 @@ def contributor_credits_rollup_cte_sql(owner_column: Literal["media_id", "podcas
     """
 
 
-def primary_creator_rows_sql(owner_column: Literal["media_id", "podcast_id"]) -> str:
+def primary_creator_rows_sql(owner_column: _Owner) -> str:
     """``(owner_id, primary_name)``: the lowest-ordinal credit's display name, any role.
 
-    No viewer scope; the composing query must already scope owners to visible content.
+    No visibility rule: the composing query scopes owners to visible content.
     """
     return f"""
         SELECT DISTINCT ON (cc.{owner_column})
@@ -182,13 +132,13 @@ def primary_creator_rows_sql(owner_column: Literal["media_id", "podcast_id"]) ->
 
 
 def credit_target_filter_exists_sql(
-    owner_column: Literal["media_id", "podcast_id"],
+    owner_column: _Owner,
     owner_id_expr: str,
     *,
     filter_contributor_ids: bool,
     filter_roles: bool,
 ) -> str:
-    """``AND EXISTS (…)``: the outer target row has a matching credit, or ``''``.
+    """``AND EXISTS (…)`` when the outer target row has a matching credit, else ``''``.
 
     Binds ``:contributor_ids`` and/or ``:roles`` only when the matching flag is set.
     """
@@ -201,20 +151,16 @@ def credit_target_filter_exists_sql(
         clauses.append("cc_filter.role = ANY(:roles)")
     return f"""
             AND EXISTS (
-                SELECT 1
-                FROM contributor_credits cc_filter
-                WHERE {" AND ".join(clauses)}
+                SELECT 1 FROM contributor_credits cc_filter WHERE {" AND ".join(clauses)}
             )
         """
 
 
 def media_author_names_agg_sql() -> str:
-    """Aggregate expression: comma-joined distinct author credited names ``AS authors``."""
+    """Aggregate: comma-joined distinct author credited names ``AS authors``."""
     return (
-        "COALESCE("
-        "NULLIF(string_agg(DISTINCT cc.credited_name, ', ' ORDER BY cc.credited_name), ''),"
-        " ''"
-        ") AS authors"
+        "COALESCE(NULLIF(string_agg(DISTINCT cc.credited_name, ', ' ORDER BY cc.credited_name),"
+        " ''), '') AS authors"
     )
 
 
@@ -224,32 +170,23 @@ def media_author_credits_join_sql() -> str:
 
 
 def load_visible_contributor_media_ids(
-    db: Session,
-    *,
-    contributor_id: UUID,
-    viewer_id: UUID,
+    db: Session, *, contributor_id: UUID, viewer_id: UUID
 ) -> list[UUID]:
-    """Visible Media works credited directly or through a Podcast, newest first.
+    """Visible media credited directly or through their podcast, newest first.
 
-    Gutenberg catalog-only credits have no Media identity and are absent.
+    Catalogue-only credits have no media identity and are absent.
     """
     rows = db.execute(
         text(
             f"""
             WITH visible_media AS ({visible_media_ids_cte_sql()}),
             credited_media AS (
-                SELECT cc.media_id
-                FROM contributor_credits cc
-                WHERE cc.contributor_id = :contributor_id
-                  AND cc.media_id IS NOT NULL
-
+                SELECT cc.media_id FROM contributor_credits cc
+                WHERE cc.contributor_id = :contributor_id AND cc.media_id IS NOT NULL
                 UNION
-
-                SELECT pe.media_id
-                FROM contributor_credits cc
+                SELECT pe.media_id FROM contributor_credits cc
                 JOIN podcast_episodes pe ON pe.podcast_id = cc.podcast_id
-                WHERE cc.contributor_id = :contributor_id
-                  AND cc.podcast_id IS NOT NULL
+                WHERE cc.contributor_id = :contributor_id AND cc.podcast_id IS NOT NULL
             )
             SELECT DISTINCT cm.media_id, m.original_published_date, m.title
             FROM credited_media cm
@@ -260,7 +197,7 @@ def load_visible_contributor_media_ids(
         ),
         {"viewer_id": viewer_id, "contributor_id": contributor_id},
     )
-    return [UUID(str(row[0])) for row in rows]
+    return [row[0] for row in rows]
 
 
 def load_current_source_author_bylines(db: Session, *, media_id: UUID) -> list[str]:
@@ -271,8 +208,7 @@ def load_current_source_author_bylines(db: Session, *, media_id: UUID) -> list[s
             WITH current_source AS (
                 SELECT source_type
                 FROM media_source_attempts
-                WHERE media_id = :media_id
-                  AND status = 'succeeded'
+                WHERE media_id = :media_id AND status = 'succeeded'
                 ORDER BY attempt_no DESC, id DESC
                 LIMIT 1
             )
@@ -282,8 +218,7 @@ def load_current_source_author_bylines(db: Session, *, media_id: UUID) -> list[s
             WHERE cc.media_id = :media_id
               AND cc.role = 'author'
               AND (
-                (source.source_type = 'generic_web_url'
-                 AND cc.source = 'web_article_byline')
+                (source.source_type = 'generic_web_url' AND cc.source = 'web_article_byline')
                 OR (source.source_type = 'browser_article_capture'
                     AND cc.source = 'web_article_capture')
                 OR (source.source_type IN ('x_author_thread', 'x_post')
@@ -294,8 +229,7 @@ def load_current_source_author_bylines(db: Session, *, media_id: UUID) -> list[s
                     'browser_pdf_capture') AND cc.source = 'pdf_metadata')
                 OR (source.source_type IN ('remote_epub_url', 'uploaded_epub_file',
                     'browser_epub_capture') AND cc.source = 'epub_opf')
-                OR (source.source_type = 'podcast_episode_transcript'
-                    AND cc.source = 'rss')
+                OR (source.source_type = 'podcast_episode_transcript' AND cc.source = 'rss')
               )
             ORDER BY cc.ordinal ASC
             LIMIT 33
@@ -303,37 +237,50 @@ def load_current_source_author_bylines(db: Session, *, media_id: UUID) -> list[s
         ),
         {"media_id": media_id},
     ).scalars()
-    return [str(value).strip() for value in rows if str(value).strip()]
+    return [name.strip() for name in rows if name.strip()]
 
 
 def load_contributor_credits_for_media(
     db: Session, media_ids: list[UUID]
 ) -> dict[UUID, list[ContributorCreditOut]]:
-    """Ordered credits per media id, as embedded DTOs."""
-    return _load_credits(db, "media_id", media_ids)
+    """Ordered credits per media id; every requested id has an entry."""
+    return {media_id: [] for media_id in media_ids} | _credits(db, "media_id", media_ids)
 
 
 def load_contributor_credits_for_podcasts(
     db: Session, podcast_ids: list[UUID]
 ) -> dict[UUID, list[ContributorCreditOut]]:
-    """Ordered credits per podcast id, as embedded DTOs."""
-    return _load_credits(db, "podcast_id", podcast_ids)
+    """Ordered credits per podcast id; every requested id has an entry."""
+    return {podcast_id: [] for podcast_id in podcast_ids} | _credits(db, "podcast_id", podcast_ids)
 
 
-def _load_credits(
-    db: Session,
-    owner_column: Literal["media_id", "podcast_id"],
-    owner_ids: list[UUID],
-) -> dict[UUID, list[ContributorCreditOut]]:
-    credits_by_owner: dict[UUID, list[ContributorCreditOut]] = {
-        owner_id: [] for owner_id in owner_ids
+def load_contributor_credits_for_catalogue(
+    db: Session, ebook_ids: list[int]
+) -> dict[int, list[ContributorCreditOut]]:
+    """Ordered credits per catalogue ebook that has any."""
+    return _credits(db, "project_gutenberg_catalog_ebook_id", ebook_ids)
+
+
+def current_gutenberg_author_names(db: Session, ebook_ids: list[int]) -> dict[int, tuple[str, ...]]:
+    """Ordered author credited names per catalogue ebook, for sync change detection."""
+    credits = _credits(db, "project_gutenberg_catalog_ebook_id", ebook_ids)
+    return {
+        ebook_id: tuple(c.credited_name for c in rows if c.role == "author")
+        for ebook_id, rows in credits.items()
     }
+
+
+def _credits[K: (UUID, int)](
+    db: Session, owner_column: str, owner_ids: list[K]
+) -> dict[K, list[ContributorCreditOut]]:
+    """``owner_column`` is a fixed internal literal."""
+    result: dict[K, list[ContributorCreditOut]] = {}
     if not owner_ids:
-        return credits_by_owner
+        return result
     rows = db.execute(
         text(
             f"""
-            SELECT cc.{owner_column}, c.handle, c.display_name,
+            SELECT cc.{owner_column} AS owner, c.handle, c.display_name,
                    cc.credited_name, cc.role, cc.raw_role, cc.ordinal
             FROM contributor_credits cc
             JOIN contributors c ON c.id = cc.contributor_id
@@ -342,64 +289,17 @@ def _load_credits(
             """
         ),
         {"owner_ids": owner_ids},
-    ).fetchall()
+    ).mappings()
     for row in rows:
-        credits_by_owner.setdefault(UUID(str(row[0])), []).append(_credit_out(row))
-    return credits_by_owner
-
-
-def _credit_out(row: Any) -> ContributorCreditOut:
-    return ContributorCreditOut(
-        contributor_handle=row[1],
-        contributor_display_name=row[2],
-        href=f"/authors/{row[1]}",
-        credited_name=row[3],
-        role=cast(ContributorRole, row[4]),
-        raw_role=row[5],
-        ordinal=int(row[6]),
-    )
-
-
-def load_contributor_credits_for_catalogue(
-    db: Session, ebook_ids: list[int]
-) -> dict[int, list[ContributorCreditOut]]:
-    """Current ordered catalogue credits; catalogue ids are not media UUIDs."""
-    if not ebook_ids:
-        return {}
-    rows = db.execute(
-        text("""
-            SELECT cc.project_gutenberg_catalog_ebook_id, c.handle, c.display_name,
-                   cc.credited_name, cc.role, cc.raw_role, cc.ordinal
-            FROM contributor_credits cc
-            JOIN contributors c ON c.id = cc.contributor_id
-            WHERE cc.project_gutenberg_catalog_ebook_id = ANY(:ebook_ids)
-            ORDER BY cc.project_gutenberg_catalog_ebook_id ASC, cc.ordinal ASC
-        """),
-        {"ebook_ids": ebook_ids},
-    ).fetchall()
-    result: dict[int, list[ContributorCreditOut]] = {}
-    for row in rows:
-        result.setdefault(int(row[0]), []).append(_credit_out(row))
+        result.setdefault(row["owner"], []).append(
+            ContributorCreditOut(
+                contributor_handle=row["handle"],
+                contributor_display_name=row["display_name"],
+                href=f"/authors/{row['handle']}",
+                credited_name=row["credited_name"],
+                role=cast(ContributorRole, row["role"]),
+                raw_role=row["raw_role"],
+                ordinal=row["ordinal"],
+            )
+        )
     return result
-
-
-def current_gutenberg_author_names(db: Session, ebook_ids: list[int]) -> dict[int, tuple[str, ...]]:
-    """Ordered current author credited names per Gutenberg ebook, for sync change detection."""
-    if not ebook_ids:
-        return {}
-    names_by_ebook: dict[int, list[str]] = {}
-    rows = db.execute(
-        text(
-            """
-            SELECT project_gutenberg_catalog_ebook_id, credited_name
-            FROM contributor_credits
-            WHERE project_gutenberg_catalog_ebook_id = ANY(:ebook_ids)
-              AND role = 'author'
-            ORDER BY project_gutenberg_catalog_ebook_id ASC, ordinal ASC
-            """
-        ),
-        {"ebook_ids": ebook_ids},
-    ).fetchall()
-    for ebook_id, credited_name in rows:
-        names_by_ebook.setdefault(int(ebook_id), []).append(str(credited_name))
-    return {ebook_id: tuple(names) for ebook_id, names in names_by_ebook.items()}

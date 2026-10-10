@@ -1,63 +1,81 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// The search pane's author filter: type to find an author, click to add its
+// handle to `authors=`; applied chips read display names from a label cache.
+
+import { useCallback, useEffect, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import { fetchContributorDetail } from "@/lib/contributors/api";
-import type { ContributorSearchItem } from "@/lib/contributors/types";
-import { useContributorSearch } from "@/lib/contributors/useContributorSearch";
-import { useStringIdSet } from "@/lib/useStringIdSet";
+import { requestWithRetry } from "@/lib/api/retryPolicy";
+import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
+import {
+  getContributor,
+  searchContributors,
+  type ContributorSearchItem,
+} from "@/lib/contributors/api";
 
-/** One label cache for the selected-author editor and applied chips. */
-export function useContributorFilterLabels(selectedHandles: string[]) {
-  const [labels, setLabels] = useState<Record<string, string>>({});
-  const requested = useStringIdSet();
-  const mountedRef = useRef(true);
-
+/**
+ * Display names for applied handles: remembered on add, else fetched with
+ * retry. A failed fetch is forgotten, so the next change to the handles
+ * retries it; until then the chip shows the handle.
+ */
+export function useContributorFilterLabels(handles: readonly string[]) {
+  const [labels, setLabels] = useState<Readonly<Record<string, string>>>({});
+  const known = useRef(labels);
+  known.current = labels;
+  const key = handles.join(" ");
   useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    for (const handle of selectedHandles) {
-      if (labels[handle] || requested.has(handle)) continue;
-      requested.add(handle);
-      void fetchContributorDetail(handle)
-        .then((detail) => {
-          if (!mountedRef.current) return;
-          setLabels((current) =>
-            current[handle] ? current : { ...current, [handle]: detail.displayName },
-          );
-        })
-        .catch(() => {});
+    const controller = new AbortController();
+    for (const handle of new Set(key ? key.split(" ") : [])) {
+      if (known.current[handle] !== undefined) continue;
+      requestWithRetry(
+        (signal) => getContributor(handle, signal),
+        controller.signal,
+      ).then(
+        (detail) =>
+          setLabels((current) => ({
+            ...current,
+            [handle]: detail.displayName,
+          })),
+        () => {},
+      );
     }
-  }, [selectedHandles, labels, requested]);
-
+    return () => controller.abort();
+  }, [key]);
   const remember = useCallback((item: ContributorSearchItem) => {
     setLabels((current) => ({ ...current, [item.handle]: item.displayName }));
   }, []);
   return { labels, remember };
 }
 
-interface ContributorFilterProps {
-  selectedHandles: string[];
-  onAdd: (item: ContributorSearchItem) => void;
-}
-
-export default function ContributorFilter({ selectedHandles, onAdd }: ContributorFilterProps) {
+export default function ContributorFilter({
+  selectedHandles,
+  onAdd,
+}: {
+  readonly selectedHandles: readonly string[];
+  readonly onAdd: (item: ContributorSearchItem) => void;
+}) {
   const [query, setQuery] = useState("");
-  const search = useContributorSearch(query);
-  const suggestions = useMemo<ContributorSearchItem[]>(() => {
-    if (search.status !== "ready") return [];
-    const selected = new Set(selectedHandles);
-    return search.items.filter((item) => !selected.has(item.handle));
-  }, [search, selectedHandles]);
-
+  const q = query.trim();
+  const search = useDebouncedFetch(
+    q || null,
+    (signal) => searchContributors(q, signal),
+    { debounceMs: 180 },
+  );
+  const suggestions =
+    search.dataIdentity === q
+      ? (search.data?.contributors ?? []).filter(
+          (item) => !selectedHandles.includes(item.handle),
+        )
+      : [];
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "var(--space-2)",
+      }}
+    >
       <label>
         <span>Authors</span>
         <Input
@@ -68,13 +86,14 @@ export default function ContributorFilter({ selectedHandles, onAdd }: Contributo
           onChange={(event) => setQuery(event.target.value)}
         />
       </label>
-
-      {search.status === "error" ? (
-        <p role="alert" style={{ color: "var(--ink-muted)", fontSize: "var(--text-sm)" }}>
-          Couldn&rsquo;t load authors.
+      {search.error !== null && search.errorIdentity === q ? (
+        <p
+          role="alert"
+          style={{ color: "var(--ink-muted)", fontSize: "var(--text-sm)" }}
+        >
+          Couldn’t load authors.
         </p>
       ) : null}
-
       {suggestions.length > 0 ? (
         <div
           style={{
@@ -89,11 +108,11 @@ export default function ContributorFilter({ selectedHandles, onAdd }: Contributo
               key={item.handle}
               variant="secondary"
               size="sm"
+              style={{ justifyContent: "flex-start" }}
               onClick={() => {
                 onAdd(item);
                 setQuery("");
               }}
-              style={{ justifyContent: "flex-start" }}
             >
               {item.displayName}
             </Button>
