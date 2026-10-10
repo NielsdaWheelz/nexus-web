@@ -47,7 +47,7 @@ export const NEXUS_COMMANDS: Record<
     keywords: ["add", "import", "url", "file"],
     target: (argument) => ({
       kind: "OpenAdd",
-      seed: { kind: "Content", initialFocus: "Url", initialDestinations: [], ...(argument ? { initialUrlDraft: argument } : {}) },
+      seed: { kind: "Content", initialDestinations: [], ...(argument ? { initialUrlDraft: argument } : {}) },
     }),
   },
 };

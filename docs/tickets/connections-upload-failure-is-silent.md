@@ -5,7 +5,7 @@ status: open Â· origin: 2026-10-10 graph slice harness (coordinator review R5) Â
 on Connections, attaching a file whose presigned PUT fails gave no notice for about
 120 s in the graph slice harness. `components/connections/ConnectionsSurface.tsx`
 `attachFiles` awaits `uploadIngestFile` and only publishes a notice when it throws;
-`lib/media/ingestionClient.ts` `putAndConfirm` waits up to
+`lib/imports/ingest.ts` `putAndConfirm` waits up to
 `DIRECT_UPLOAD_PUT_TIMEOUT_MS` (240 s, capped by the capability's expiry) for a hung
 PUT before it reports the transport failure. the surface shows no progress or
 pending state meanwhile (`attaching` only blocks a second drop).

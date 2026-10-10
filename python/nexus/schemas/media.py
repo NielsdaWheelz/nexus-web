@@ -485,6 +485,11 @@ class SearchRepairAdmission(_Strict):
     job_id: UUID
 
 
+MediaRepairAdmission = Annotated[
+    SourceRepairAdmission | SearchRepairAdmission, Field(discriminator="kind")
+]
+
+
 TranscriptRequestReason = Literal[
     "episode_open", "search", "highlight", "quote", "background_warming", "operator_requeue"
 ]

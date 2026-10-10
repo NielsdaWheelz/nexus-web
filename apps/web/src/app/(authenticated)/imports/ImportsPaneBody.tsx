@@ -1,67 +1,85 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ImportInspector from "@/components/imports/ImportInspector";
-import ImportsWorkspace from "@/components/imports/ImportsWorkspace";
+import ImportsList from "@/components/imports/ImportsList";
 import { companionAction } from "@/components/resource-inspector/companionAction";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
-import { absent, present } from "@/lib/api/presence";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
-import type { ImportRef } from "@/lib/imports/importRef";
-import type { HistoryEntry } from "@/lib/imports/importsClient";
+import type { ImportItem, ImportsView } from "@/lib/imports/api";
+import { loadFailure } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import {
-  decodeImportsUrlState,
-  encodeImportsUrlState,
-} from "@/lib/imports/importsUrlState";
+  decodeImportsUrl,
+  encodeImportsUrl,
+  firstView,
+  selectView,
+  type ImportsUrlState,
+} from "@/lib/imports/query";
+import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import {
   normalizePaneSecondaryPublication,
   type PaneSecondaryPublication,
 } from "@/lib/panes/panePublications";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
-import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 
-const IMPORTS_URL_STATE_CODEC = {
-  decode: decodeImportsUrlState,
-  encode: encodeImportsUrlState,
+const CODEC = {
+  decode: decodeImportsUrl,
+  encode: (state: ImportsUrlState) => encodeImportsUrl(state),
   basePath: "/imports",
 };
 
 /**
- * The Imports pane: the URL owns which view and which import the reader is
- * looking at, the workspace renders that view, and the selected import is
- * published as this pane's one secondary surface so desktop gets the resizable
- * inspector and mobile the sheet with Back (contract D8). The workspace owns
- * the pane's only Refresh control, so the header publishes none.
+ * The Imports pane (docs/modules/imports.md): the url owns the view, the
+ * filters and the selection; the counts choose the first view once; the
+ * selected import is the pane's one secondary surface (desktop: resizable
+ * inspector, mobile: sheet with Back), toggled from the header companion.
  */
 export default function ImportsPaneBody() {
-  const { state, setState } = usePaneUrlState(IMPORTS_URL_STATE_CODEC);
-  const { loadState, setPaneOpen } = useImports();
-  const paneRuntime = usePaneRuntime();
+  const { state, setState } = usePaneUrlState(CODEC);
+  const { summary, setPaneOpen, refresh } = useImports();
+  const { displayTimeZone } = useRenderEnvironment();
+  const runtime = usePaneRuntime();
+  const today = useCallback(
+    () => formatLocalDateInTimeZone(new Date(), displayTimeZone),
+    [displayTimeZone],
+  );
 
-  // This route restores shell scroll, so it owes the memento one readiness
-  // token, and the memento may only be spent once the list is as tall as it is
-  // going to get: the workspace reports its page read, and a first summary read
-  // that failed leaves no list to wait for.
-  const [listSettled, setListSettled] = useState(false);
-  usePaneReturnReady(listSettled || loadState.kind === "Failed");
-
-  // The provider polls a closed pane only inside its bounded window; an open
-  // pane is the live one (contract D10).
+  // An open pane is the live one; a closed pane polls only in its window.
   useEffect(() => {
     setPaneOpen(true);
     return () => setPaneOpen(false);
   }, [setPaneOpen]);
 
-  const selectedRef = state.selected.kind === "Present" ? state.selected.value : null;
-  // Why a filtered History row matched is a fact of the list, not of the detail
-  // read, so the workspace reports the listed row's matched event — including
-  // when a view or filter change leaves the selection without one.
-  const [matchedEvent, setMatchedEvent] = useState<HistoryEntry | null>(null);
+  // The counts choose a view once and the url records it once; a later count
+  // never moves the reader, and the url write may not have landed yet.
+  const chosen = useRef<ImportsView | null>(null);
+  chosen.current ??= firstView(
+    summary.status === "ready" ? summary.data : null,
+  );
+  const view = state.view ?? chosen.current;
+  const written = useRef(false);
+  useEffect(() => {
+    if (state.view !== undefined || view === null || written.current) return;
+    written.current = true;
+    setState(selectView(state, view, today()));
+  }, [setState, state, today, view]);
+
+  const selected = state.selected ?? null;
+  // Why the selected import matched is a fact of the listed row, which the
+  // detail read cannot know; the list reports it for the current query.
+  const [matched, setMatched] = useState<ImportItem["matched_event"]>({
+    kind: "Absent",
+  });
   const publication = useMemo<PaneSecondaryPublication | null>(
     () =>
-      selectedRef === null
+      selected === null
         ? null
         : normalizePaneSecondaryPublication({
             groupId: "imports-inspector",
@@ -69,78 +87,93 @@ export default function ImportsPaneBody() {
               {
                 id: "import-detail",
                 body: (
-                  <ImportInspector
-                    importRef={selectedRef}
-                    matchedEvent={matchedEvent}
-                  />
+                  <ImportInspector importRef={selected} matched={matched} />
                 ),
               },
             ],
             defaultSurfaceId: "import-detail",
           }),
-    [matchedEvent, selectedRef],
+    [matched, selected],
   );
-  const requestSecondarySurface = usePaneSecondary(publication);
-
-  // A newly selected import opens its inspector; a reader who then dismisses
-  // the inspector keeps the selection and reopens it from the header.
+  const requestSurface = usePaneSecondary(publication);
+  // A newly selected import opens its inspector; a dismissed inspector keeps
+  // the selection and reopens from the header.
   useEffect(() => {
-    if (selectedRef === null) return;
-    requestSecondarySurface("import-detail");
-  }, [requestSecondarySurface, selectedRef]);
+    if (selected !== null) requestSurface("import-detail");
+  }, [requestSurface, selected]);
 
-  const paneId = paneRuntime?.paneId ?? null;
-  const inspectorVisible =
-    paneRuntime?.secondaryPane?.groupId === "imports-inspector" &&
-    paneRuntime.secondaryPane.visibility === "visible";
-  const closeSecondaryPane = paneRuntime?.closeSecondaryPane;
-  const onOpenInspector = useCallback(
-    (trigger: HTMLButtonElement | null) => {
-      requestSecondarySurface("import-detail", { returnFocusTo: trigger });
-    },
-    [requestSecondarySurface],
-  );
-  const onCloseInspector = useCallback(() => {
-    closeSecondaryPane?.();
-  }, [closeSecondaryPane]);
+  const paneId = runtime?.paneId ?? null;
+  const expanded =
+    runtime?.secondaryPane?.groupId === "imports-inspector" &&
+    runtime.secondaryPane.visibility === "visible";
+  const closeSecondaryPane = runtime?.closeSecondaryPane;
   const companion = useMemo(
     () =>
       publication === null || paneId === null
         ? null
         : companionAction({
-            expanded: inspectorVisible,
+            expanded,
             regionId: paneSecondaryRegionId(paneId, "imports-inspector"),
-            onOpen: onOpenInspector,
-            onClose: onCloseInspector,
+            onOpen: (trigger) =>
+              requestSurface("import-detail", { returnFocusTo: trigger }),
+            onClose: () => closeSecondaryPane?.(),
           }),
-    [
-      inspectorVisible,
-      onCloseInspector,
-      onOpenInspector,
-      paneId,
-      publication,
-    ],
+    [closeSecondaryPane, expanded, paneId, publication, requestSurface],
   );
   const onSelect = useCallback(
-    (ref: ImportRef | null) => {
-      setState({
-        ...state,
-        selected: ref === null ? absent() : present(ref),
-      });
-      if (ref !== null) requestSecondarySurface("import-detail");
+    (ref: string | null) => {
+      setState({ ...state, selected: ref ?? undefined });
+      if (ref !== null) requestSurface("import-detail");
     },
-    [requestSecondarySurface, setState, state],
+    [requestSurface, setState, state],
   );
 
+  // This route restores shell scroll once its list is as tall as it will get.
+  const [listSettled, setListSettled] = useState(false);
+  usePaneReturnReady(view === null ? summary.status === "failed" : listSettled);
+
+  if (view === null) {
+    return <Unresolved companion={companion} refresh={refresh} />;
+  }
   return (
-    <ImportsWorkspace
+    <ImportsList
+      view={view}
       state={state}
-      onStateChange={setState}
-      selectedRef={selectedRef}
+      setState={setState}
+      today={today}
+      companion={companion}
+      onMatched={setMatched}
       onSelect={onSelect}
-      onMatchedEvent={setMatchedEvent}
-      onListSettled={setListSettled}
-      companionAction={companion}
+      onSettled={setListSettled}
     />
+  );
+}
+
+/**
+ * Before the counts choose a view there is no view to publish controls for:
+ * the pane loads, or says the summary failed and keeps the inspector toggle.
+ */
+function Unresolved({
+  companion,
+  refresh,
+}: {
+  readonly companion: ReturnType<typeof companionAction> | null;
+  readonly refresh: () => void;
+}) {
+  const { summary } = useImports();
+  usePanePrimaryChrome(
+    useMemo(
+      () => (companion === null ? null : { companionAction: companion }),
+      [companion],
+    ),
+  );
+  return summary.status === "failed" ? (
+    <FeedbackNotice
+      content={loadFailure(summary.error)}
+      announcement="Assertive"
+      actions={[{ label: "Try again", onClick: refresh }]}
+    />
+  ) : (
+    <PaneLoadingState label="Loading imports" announcement="Polite" />
   );
 }

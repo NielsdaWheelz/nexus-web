@@ -447,7 +447,7 @@ export function useNexusController() {
     pending: find.pending,
     announcement,
     dialogLabel: page.kind === "Add" ? "Add content" : "Nexus",
-    focusKey: page.kind === "Add" ? `${addSession.state.sessionId}:${addSession.state.initialFocus}` : page.kind,
+    focusKey: page.kind === "Add" ? addSession.state.sessionId : page.kind,
     openShortcut: labelFor("Nexus.Open") ?? "",
     handoff,
     addSession,
@@ -506,7 +506,7 @@ export function useNexusController() {
     suppressReturnFocus: () => suppressReturnFocus.current,
     initialFocus(container: HTMLElement): HTMLElement | null {
       if (page.kind === "Add") {
-        return resolveAddPanelInitialFocus(container, viewport.isMobile, { initialFocus: addSession.state.initialFocus });
+        return resolveAddPanelInitialFocus(container, viewport.isMobile);
       }
       return container.querySelector<HTMLElement>(
         page.kind === "CreateLibrary"

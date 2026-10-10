@@ -201,7 +201,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
           onClick={() =>
             requestNexusOpen({
               kind: "Add",
-              seed: { kind: "Content", initialFocus: "Url", initialDestinations: [] },
+              seed: { kind: "Content", initialDestinations: [] },
             })
           }
         >

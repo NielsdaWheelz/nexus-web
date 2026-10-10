@@ -1,13 +1,11 @@
 // The independently released extension decodes these upload-session envelopes.
 // Keep its wire validation separate from the same-deploy browser's generated
-// API types. This module depends only on validation and verification vocabulary.
+// API types. This module depends only on validation, and owns the upload
+// vocabularies it speaks: the closed set of terminal verification rejections
+// and the closed transport-failure union the browser reports and history
+// replays. Both decoders narrow to these unions, so a server that adds a
+// variant fails the strict decode instead of rendering the wrong reason.
 
-import {
-  UPLOAD_VERIFICATION_CODES,
-  decodeUploadTransportFailure,
-  type UploadTransportFailure,
-  type UploadVerificationCode,
-} from "@/lib/media/uploadVerification";
 import {
   expectBoolean,
   expectExactRecord,
@@ -18,6 +16,41 @@ import {
   expectRecord,
   expectString,
 } from "@/lib/validation";
+
+export const UPLOAD_VERIFICATION_CODES = [
+  "E_SOURCE_INTEGRITY",
+  "E_INVALID_FILE_TYPE",
+  "E_FILE_TOO_LARGE",
+  "E_CAPTURE_TOO_LARGE",
+] as const;
+
+type UploadVerificationCode = (typeof UPLOAD_VERIFICATION_CODES)[number];
+
+/** The `UploadTransportFailure` union of `python/nexus/schemas/upload_failures.py`. */
+export type UploadTransportFailure =
+  | { readonly kind: "Network" | "Timeout" | "Aborted" }
+  | { readonly kind: "HttpRejected"; readonly status: number };
+
+function decodeUploadTransportFailure(
+  raw: unknown,
+  name: string,
+): UploadTransportFailure {
+  const kind = expectOneOf(
+    expectRecord(raw, name).kind,
+    ["Network", "Timeout", "Aborted", "HttpRejected"] as const,
+    `${name}.kind`,
+  );
+  if (kind === "HttpRejected") {
+    const failure = expectExactRecord(raw, ["kind", "status"], name);
+    const status = expectNonnegativeInteger(failure.status, `${name}.status`);
+    if (status < 100 || status > 599) {
+      throw new TypeError(`${name}.status must be an HTTP status`);
+    }
+    return { kind, status };
+  }
+  expectExactRecord(raw, ["kind"], name);
+  return { kind };
+}
 
 const UPLOAD_IDEMPOTENCY_OUTCOMES = ["Created", "Reused"] as const;
 

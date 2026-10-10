@@ -1,13 +1,13 @@
 # add content
 
-status: current contract; verification baseline `f2167baf3`.
-scope: add panel/session and same-deploy browser decoding. existing backend
-storage, publication and recovery behavior stays owned by its current services.
+status: current contract; reauthored with imports (cleanup/imports-reauthor).
+scope: add panel/session and acquisition (`lib/imports/ingest.ts`). existing
+backend storage, publication and recovery behavior stays owned by its services.
 
 ## behavior
 
-one browser-local session starts from url/file focus, url draft and destination
-libraries. desktop focuses the requested source control; mobile the heading.
+one browser-local session starts from an optional url draft and destination
+libraries. desktop focuses the Links box; mobile the heading.
 review extracts distinct valid http/https links in source order. intake accepts
 nonempty pdfs through 100 mib and epubs through 50 mib; invalid files stay visible.
 all rows count toward twenty; overflow stages nothing. staging clears its input
@@ -24,8 +24,9 @@ idle implies no submitting row. known feedback and request ids stay visible;
 auth recovery runs first and defects reach the existing boundary unchanged.
 editor create-and-add handles known creation failures there; auth/abort escape
 without becoming defects. library creation reuses its allocated id after response
-loss. browser ingestion's public functions, errors/outcomes and accepted-result
-shape remain fixed for notes, connections, browse, capture, imports and actions.
+loss. acquisition returns one `AcceptedIngest {kind, mediaId, duplicate,
+processing}` to add, notes, connections, browse and capture; each surface's
+outcome copy sits beside the failure catalog in `lib/imports/copy.ts`.
 
 stop/discard/reset/unmount fence all old reads and writes. stop returns unsent
 submissions to draft, started urls to unresolved and started files to imports.
@@ -62,14 +63,25 @@ the exact delete still succeeds (`services/library_entries.py:578-580,761-782`).
 ## ownership and qualification
 
 `useAddContentSession` owns one immutable snapshot shared with its synchronous
-ref; item/placement variants own progress. the panel renders that contract through
-existing ui/library primitives. generated native types own success shapes;
-preserve bytes, envelopes, fields, aliases and statuses. the independent
-extension alone retains `uploadSessionContract` decoding. browser ingestion owns
-signed-put expiry/deadline, failure reporting and confirmation; its raw storage
-fetch, without nexus credentials, owns credential separation.
+ref; item/placement variants own progress; one placement read and one read-failure
+classification serve refresh, bulk eligibility and the row editor. the panel
+renders that contract through existing ui/library primitives, and one
+`AddDismissalDialog` asks the leave question for the panel and its defect
+boundary. generated native types own success shapes. the independent extension
+owns its `uploadSessionContract` decoding and the upload verification/transport
+vocabularies it speaks. `lib/imports/ingest.ts` owns the upload-session
+protocol: a capability whose window closed in its own signing round trip is
+re-signed once by replaying the key; the PUT runs under min(240 s, capability
+expiry) (`DIRECT_UPLOAD_PUT_TIMEOUT_MS`, pinned by `python/nexus/config.py`);
+a timeout, a caller abort, a network failure and a non-2xx are each reported to
+`…/transport-failure`; confirmation publishes. its raw storage fetch, without
+nexus credentials, owns credential separation.
 
-real task-owned auth/bff/api/postgres/storage passed twenty old/new public api
+live qualification: the imports harness (`campaign-artifacts/2026-10-09/imports/
+harness`, journeys A1–A21, S1–S2, C1) drives links, files, every upload transport
+arm (403, dropped bytes, network, the 240 s deadline, stop), lost acknowledgements,
+restage, placement uncertainty/refusal/unavailability and the defect boundary.
+earlier baseline (`f2167baf3`): real task-owned auth/bff/api/postgres/storage passed twenty old/new public api
 cases, six exact serializer comparisons, five moved extension decoder variants
 and final url create/replay/provider reuse checks. mounted ui passed mixed
 url/pdf, lost file publication/defect recovery, two-account last-readable delete,

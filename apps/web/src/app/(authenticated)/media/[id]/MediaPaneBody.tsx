@@ -35,7 +35,6 @@ import type { FindSource } from "@/lib/find/find";
 import { useFind } from "@/lib/find/useFind";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { parseMediaId } from "@/lib/lectern/contract";
-import { canReadMediaDocument } from "@/lib/media/documentReadiness";
 import { mediaDetailFromResponse, type MediaDetail } from "@/lib/media/mediaDetail";
 import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
 import { useMediaMetadataOperations } from "@/lib/media/mediaMetadataOperations";
@@ -109,7 +108,7 @@ function MediaPane({ id }: { readonly id: string }) {
     if (snapshot) setMedia((current) => current && { ...current, ...snapshot });
   }, [snapshot]);
   const transcript = media?.kind === "podcast_episode" || media?.kind === "video";
-  const readable = media !== null && canReadMediaDocument(media);
+  const readable = media?.capabilities?.can_read === true;
 
   // ---- the reader ----
   const { entry, arrival, apparatusKey } = useReaderEntry(id);

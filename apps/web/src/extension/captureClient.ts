@@ -14,8 +14,8 @@ import {
   type PublishedUpload,
   type UploadCapability,
   type UploadResponse,
+  type UploadTransportFailure,
 } from "@/extension/uploadSessionContract";
-import type { UploadTransportFailure } from "@/lib/media/uploadVerification";
 import { expectPositiveInteger, expectRecord, isRecord } from "@/lib/validation";
 import {
   CaptureFailureError,

@@ -228,3 +228,18 @@ keys `ON DELETE CASCADE` with two supporting indexes, and drops
 touches no rows there. it is irreversible: its downgrade raises; rollback is the
 pre-release backup plus the prior builds. it runs in the same window as 0268 to
 0270, writers stopped; web and api ship together (chat contract "4").
+
+the imports reauthor adds `0272` (retire historical import failure codes, data only), after the chat `0271`.
+it rewrites `E_BILLING_REQUIRED`, `E_LLM_BAD_REQUEST` and `E_PODCAST_QUOTA_EXCEEDED`
+to `E_INGEST_FAILED` in `media.last_error_code` (all rows), `media_source_attempts.error_code`,
+`media_processing_events.failure_code` and its SourceHistoryBaseline `payload->'outcome'->'failure_code'`,
+`media_upload_events.failure_code`, and `background_jobs.error_code` for the jobs imports
+reads (a source attempt's `job_id`, or `media_content_reindex_job`); other queue rows,
+`media_transcript_states.last_error_code` and verification codes stay. it is irreversible:
+its downgrade raises; the pre-release backup holds the original codes. `media_notify`
+fires once per rewritten media row (writers are stopped; it runs in the same window as 0268 to 0271). migrate before the web and api
+start: the new web has no copy for the retired codes and the new api asserts on an
+uncatalogued stored code, so either against an unmigrated database fails on those rows.
+web and api ship together (the repair route's response is now typed; its bytes are
+unchanged). production at `0241` also crosses `0252`, which leaves the quota code only in
+`media_transcript_states`. dry run: `campaign-artifacts/2026-10-09/imports/migration-dry-run.txt`.

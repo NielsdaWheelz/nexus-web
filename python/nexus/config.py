@@ -31,7 +31,7 @@ from nexus.job_topology import MAINTENANCE_JOB_KINDS
 
 TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
 # Cross-runtime upload safety contract. Keep this equal to
-# `DIRECT_UPLOAD_PUT_TIMEOUT_MS` in `apps/web/src/lib/media/ingestionClient.ts`.
+# `DIRECT_UPLOAD_PUT_TIMEOUT_MS` in `apps/web/src/lib/imports/ingest.ts`.
 DIRECT_UPLOAD_PUT_TIMEOUT_SECONDS = 240
 # The one background-worker memory limit. It is deployment shape, not per-environment
 # configuration, so it is a constant here and `mem_limit: 448m` in

@@ -36,8 +36,11 @@ import {
   decodeLibraryDestinationSelection,
   type LibraryDestinationSelection,
 } from "@/lib/libraries/destinationContract";
-import type { PublishedUpload, UploadResponse } from "@/extension/uploadSessionContract";
-import { UPLOAD_VERIFICATION_CODES } from "@/lib/media/uploadVerification";
+import {
+  UPLOAD_VERIFICATION_CODES,
+  type PublishedUpload,
+  type UploadResponse,
+} from "@/extension/uploadSessionContract";
 import {
   expectArray,
   expectExactRecord,

@@ -14,7 +14,7 @@ import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHand
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
-import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
+import { captureErrorFeedback } from "@/lib/imports/copy";
 import { emptyNoteBody } from "@/lib/notes/prosemirror/schema";
 import { useNoteEditorSession } from "@/lib/notes/useNoteEditorSession";
 import { getWritingSession, WritingStorageError, WritingUnknownOutcomeError, type BodyAdapter, type OperationCallbacks, type PendingBodyIdentity, type RecoveryCandidate } from "@/lib/notes/writingSession";
@@ -499,7 +499,7 @@ function AnnotationBody({
             return;
           }
           try {
-            setAttachmentFeedback({ content: mediaCaptureErrorMessage(error, "AddAttachment"), announcement: "Assertive" });
+            setAttachmentFeedback({ content: captureErrorFeedback(error, "AddAttachment"), announcement: "Assertive" });
           } catch (caughtDefect) { setDefect({ error: caughtDefect }); }
         }}
       />

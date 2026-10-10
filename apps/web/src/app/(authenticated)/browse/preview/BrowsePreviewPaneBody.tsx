@@ -35,7 +35,7 @@ import {
 import { BROWSE_SOURCE_LABELS } from "@/lib/browse/query";
 import { presentPreviewEpisode } from "@/lib/collections/presenters/browse";
 import type { MediaImageProxySrc } from "@/lib/media/imageProxy";
-import { addMediaFromUrl } from "@/lib/media/ingestionClient";
+import { addMediaFromUrl } from "@/lib/imports/ingest";
 import {
   usePaneRouter,
   usePaneSearchParams,

@@ -15,10 +15,7 @@ import { createRandomId } from "@/lib/createRandomId";
 import { extractUrls } from "@/lib/extractUrls";
 import { createLibrary } from "@/lib/libraries/client";
 import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
-import {
-  captureSourceUrl,
-  isSourceUrlCaptureDefect,
-} from "@/lib/media/sourceUrlCapture";
+import { captureSourceUrl } from "@/lib/imports/ingest";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import { captureDailyPageNote } from "@/lib/notes/api";
 import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
@@ -32,7 +29,6 @@ type CaptureResult =
       ok: true;
       status: string;
       path: string;
-      mediaId?: string;
     }
   | {
       label: string;
@@ -195,10 +191,6 @@ export default function ShareCapture({
                   message: "Open Nexus, sign in, then share again.",
                 },
               });
-              return;
-            }
-            if (isSourceUrlCaptureDefect(outcome.error)) {
-              defects.push(outcome.error);
               return;
             }
             defects.push(outcome.error);
