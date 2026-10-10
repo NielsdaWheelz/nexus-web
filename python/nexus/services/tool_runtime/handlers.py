@@ -249,8 +249,13 @@ async def _run_search(
 
     from nexus.services.resource_items.capabilities import resource_can_be_app_search_scope
     from nexus.services.retrieval_citation import citation_from_search_result
-    from nexus.services.search.query import SearchQuery, SearchScope, build_search_query, hash_query
-    from nexus.services.search.scope import scope_from_uri
+    from nexus.services.search.query import (
+        SearchQuery,
+        SearchScope,
+        build_search_query,
+        hash_query,
+        scope_from_uri,
+    )
     from nexus.services.search.service import search_scopes_async
 
     recorder = _nexus_recorder(context)
@@ -399,8 +404,7 @@ async def _run_document_search(
     context: ExecutionContext,
 ) -> HandlerSuccess[tool_declarations.DocumentSearchSuccess]:
     from nexus.services.retrieval_citation import citation_from_search_result
-    from nexus.services.search.query import SearchQuery, build_search_query
-    from nexus.services.search.scope import scope_from_uri
+    from nexus.services.search.query import SearchQuery, build_search_query, scope_from_uri
     from nexus.services.search.service import search_scopes_async
 
     recorder = _nexus_recorder(context)

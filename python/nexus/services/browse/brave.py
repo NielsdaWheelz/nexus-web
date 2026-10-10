@@ -1,9 +1,7 @@
-"""Read-only Brave Browse and safe public-article Preview adapter."""
+"""Brave web search for Browse, and a safe public-article Preview."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 from urllib.parse import urljoin, urlsplit
 
 from llm_tools import (
@@ -15,181 +13,116 @@ from llm_tools import (
 )
 from lxml import html
 
-from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.browse import (
-    BrowseCandidate,
-    BrowseSource,
     PreviewResolution,
     WebArticleCandidate,
     WebArticleFacts,
+    WebArticlePreview,
+    WebArticlePreviewFacts,
 )
-from nexus.schemas.contributor_credit import ContributorCreditOut
-from nexus.schemas.presence import absent, present
-from nexus.services.browse.models import (
+from nexus.schemas.presence import absent
+from nexus.schemas.presence import presence_from_nullable as maybe
+from nexus.services.browse.targets import (
+    BraveWebArticleTarget,
+    BrowseFailureKind,
     BrowseProviderFailure,
-    BrowseQuery,
-    BrowseSectionFailureKind,
     BrowseTargetNotFound,
-    brave_target,
-    provider_instant,
+    instant,
     proxied_image,
+    public_url,
+    retry_at,
     seal_target,
     single_credit,
 )
 from nexus.services.net.safe_fetch import SafeFetchNotFound, safe_get
-from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
-
-_MAX_PREVIEW_BYTES = 2 * 1024 * 1024
-
-
-@dataclass(frozen=True, slots=True)
-class BraveArticle:
-    canonical_url: str
-    source_href: str
-    title: str
-    description: str | None
-    published_at: datetime | None
-    image_href: str | None
-    contributors: list[ContributorCreditOut]
-    site_name: str
+from nexus.services.sealed_handles import DiscoveryTargetHandle
 
 
 async def search(
-    provider: WebSearchProvider | None,
-    *,
-    query: BrowseQuery,
-) -> tuple[list[BrowseCandidate], str | None]:
+    provider: WebSearchProvider | None, q: str, *, limit: int
+) -> list[WebArticleCandidate]:
+    """One page of public web articles; a malformed provider item is skipped."""
     if provider is None:
-        raise RuntimeError("Brave Browse provider is not configured")
-    if query.cursor is not None:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor")
+        raise BrowseProviderFailure(BrowseFailureKind.Unavailable)
     try:
         result = await provider.search(
-            WebSearchRequest(
-                query=query.query,
-                result_type=WebSearchResultType.MIXED,
-                limit=query.limit,
-            )
+            WebSearchRequest(query=q, result_type=WebSearchResultType.MIXED, limit=limit)
         )
     except WebSearchError as exc:
         if exc.code is WebSearchErrorCode.RATE_LIMITED:
             raise BrowseProviderFailure(
-                BrowseSectionFailureKind.RateLimited,
-                retry_at=_retry_at(exc.retry_after),
+                BrowseFailureKind.RateLimited, retry_at=retry_at(exc.retry_after)
             ) from exc
-        if exc.code in {
-            WebSearchErrorCode.TIMEOUT,
-            WebSearchErrorCode.PROVIDER_DOWN,
-        }:
-            raise BrowseProviderFailure(BrowseSectionFailureKind.Unavailable) from exc
+        if exc.code in (WebSearchErrorCode.TIMEOUT, WebSearchErrorCode.PROVIDER_DOWN):
+            raise BrowseProviderFailure(BrowseFailureKind.Unavailable) from exc
         raise RuntimeError(f"Brave Browse provider defect: {exc.code.value}") from exc
-    return [_candidate(item) for item in result.results], None
-
-
-def _retry_at(retry_after_seconds: float | None) -> datetime | None:
-    """Project the provider's Retry-After delta into an absolute reset Instant.
-
-    The Brave provider already parses the `Retry-After` header into
-    `WebSearchError.retry_after` (delta-seconds); we only turn that delta into
-    the wall-clock Instant the RateLimited failure carries. Absent when the
-    provider supplied no honorable value.
-    """
-    if retry_after_seconds is None:
-        return None
-    return datetime.now(UTC) + timedelta(seconds=retry_after_seconds)
-
-
-def preview(canonical_url: str) -> BraveArticle:
-    try:
-        fetched = safe_get(
-            canonical_url,
-            max_bytes=_MAX_PREVIEW_BYTES,
-            timeout_s=15.0,
+    items = []
+    for hit in result.results:
+        url = public_url(hit.url)
+        try:
+            published = None if hit.published_at is None else instant(hit.published_at)
+        except ValueError:
+            continue
+        if url is None or not hit.title.strip():
+            continue
+        items.append(
+            WebArticleCandidate(
+                resolution=PreviewResolution(
+                    target=seal_target(BraveWebArticleTarget(canonicalUrl=url))
+                ),
+                title=hit.title,
+                contributors=[],
+                description=maybe(hit.snippet or None),
+                published_at=maybe(published),
+                image=absent(),
+                kind_facts=WebArticleFacts(
+                    site_name=maybe(hit.source_name or urlsplit(url).hostname or "")
+                ),
+            )
         )
+    return items
+
+
+def preview(target: BraveWebArticleTarget, handle: DiscoveryTargetHandle) -> WebArticlePreview:
+    """The article's own title, byline, description, date and image, fetched safely."""
+    try:
+        fetched = safe_get(target.canonical_url, max_bytes=2 * 1024 * 1024, timeout_s=15.0)
     except SafeFetchNotFound as exc:
         raise BrowseTargetNotFound from exc
-    if fetched.content_type not in {"text/html", "application/xhtml+xml"}:
-        raise RuntimeError("Brave Web Article target returned non-HTML content")
+    source_href = public_url(fetched.final_url)
+    if fetched.content_type not in {"text/html", "application/xhtml+xml"} or source_href is None:
+        raise RuntimeError("Brave Web Article target is not a public HTML page")
     try:
         document = html.document_fromstring(fetched.content)
     except (TypeError, ValueError) as exc:
         raise RuntimeError("Brave Web Article target returned malformed HTML") from exc
-    source_href = _canonical_public_url(fetched.final_url)
-    title = _first_text(document.xpath("//title/text()"))
-    if title is None:
-        title = _meta(document, "property", "og:title")
+    title = _first(document.xpath("//title/text()")) or _meta(document, "property", "og:title")
     if title is None:
         raise RuntimeError("Brave Web Article target has no title")
+    published = _meta(document, "property", "article:published_time")
+    image = _meta(document, "property", "og:image")
     description = _meta(document, "name", "description") or _meta(
-        document,
-        "property",
-        "og:description",
+        document, "property", "og:description"
     )
-    author = _meta(document, "name", "author")
-    published_time = _meta(document, "property", "article:published_time")
-    image_href = _meta(document, "property", "og:image")
-    if image_href is not None:
-        try:
-            image_href = _canonical_public_url(urljoin(source_href, image_href))
-        except (InvalidRequestError, ValueError):
-            image_href = None
-    return BraveArticle(
-        canonical_url=canonical_url,
-        source_href=source_href,
+    return WebArticlePreview(
+        target=handle,
         title=title,
-        description=description,
-        published_at=(
-            None if published_time is None else provider_instant(published_time, provider="Brave")
-        ),
-        image_href=proxied_image(image_href),
-        contributors=single_credit(author, "author"),
-        site_name=urlsplit(source_href).hostname or "",
-    )
-
-
-def _candidate(citation) -> WebArticleCandidate:
-    canonical_url = _canonical_public_url(citation.url)
-    if not citation.title.strip():
-        raise RuntimeError("Brave Browse result has no title")
-    target = seal_target(brave_target(canonical_url))
-    return WebArticleCandidate(
-        source=BrowseSource.Brave,
-        resolution=PreviewResolution(target=target),
-        title=citation.title,
-        contributors=[],
-        description=absent() if not citation.snippet else present(citation.snippet),
-        published_at=(
-            absent()
-            if citation.published_at is None
-            else present(provider_instant(citation.published_at, provider="Brave"))
-        ),
-        image=absent(),
-        kind_facts=WebArticleFacts(
-            site_name=present(citation.source_name or urlsplit(canonical_url).hostname or "")
+        contributors=single_credit(_meta(document, "name", "author"), "author"),
+        description=maybe(description),
+        published_at=maybe(None if published is None else instant(published)),
+        image=maybe(proxied_image(image and public_url(urljoin(source_href, image)))),
+        source_href=source_href,
+        resolution=PreviewResolution(target=handle),
+        kind_facts=WebArticlePreviewFacts(
+            canonical_url=target.canonical_url, site_name=maybe(urlsplit(source_href).hostname)
         ),
     )
 
 
-def _canonical_public_url(value: str) -> str:
-    try:
-        validate_requested_url(value)
-    except (InvalidRequestError, ValueError) as exc:
-        raise RuntimeError("Brave returned an invalid public URL") from exc
-    return normalize_url_for_display(value)
-
-
-def _first_text(values: list[object]) -> str | None:
-    for value in values:
-        normalized = " ".join(str(value).split())
-        if normalized:
-            return normalized
-    return None
+def _first(values: list[object]) -> str | None:
+    return next((" ".join(str(v).split()) for v in values if " ".join(str(v).split())), None)
 
 
 def _meta(document, attribute: str, value: str) -> str | None:
-    return _first_text(
-        document.xpath(
-            f"//meta[translate(@{attribute}, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', "
-            f"'abcdefghijklmnopqrstuvwxyz')='{value}']/@content"
-        )
-    )
+    lower = "translate(@{0}, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')"
+    return _first(document.xpath(f"//meta[{lower.format(attribute)}='{value}']/@content"))

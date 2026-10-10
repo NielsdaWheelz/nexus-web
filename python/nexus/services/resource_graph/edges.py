@@ -161,7 +161,7 @@ def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
         input = replace(input, source=a, target=b)
     _validate_edge_input(db, viewer_id=viewer_id, edge=input)
     if is_neutral_link(input):
-        existing = _existing_link_pair(db, viewer_id=viewer_id, a=input.source, b=input.target)
+        existing = existing_link_pair(db, viewer_id=viewer_id, a=input.source, b=input.target)
         if existing is not None:
             return _edge_out(existing)
     elif input.ordinal is None:
@@ -330,7 +330,7 @@ def create_link(
     """Create or reuse one shared pair; canonical direction has no product meaning."""
     input = EdgeCreate(source=source, target=target, kind="context", origin="user")
     _validate_edge_input(db, viewer_id=viewer_id, edge=input)
-    existing = _existing_link_pair(db, viewer_id=viewer_id, a=source, b=target)
+    existing = existing_link_pair(db, viewer_id=viewer_id, a=source, b=target)
     if existing is not None:
         return EdgeWrite(edge=_edge_out(existing), created=False)
     edge = create_edge(
@@ -515,7 +515,7 @@ def _validate_edge_input(db: Session, *, viewer_id: UUID, edge: EdgeCreate) -> N
         assert_ref_visible(db, viewer_id=viewer_id, ref=edge.source)
 
 
-def _existing_link_pair(
+def existing_link_pair(
     db: Session, *, viewer_id: UUID, a: ResourceRef, b: ResourceRef
 ) -> ResourceEdge | None:
     return db.execute(

@@ -29,7 +29,7 @@ from nexus.schemas.retrieval import (
     retrieval_result_ref_json,
 )
 from nexus.schemas.search import SearchResultMediaOut, SearchResultOut, SearchResultWebOut
-from nexus.services.search.projection import build_source_label
+from nexus.services.search.project import build_source_label
 
 STRICT_LOCATOR_RESULT_TYPES = frozenset(
     {

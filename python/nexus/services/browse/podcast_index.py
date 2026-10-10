@@ -1,388 +1,265 @@
-"""Podcast Index Browse and non-mutating Preview adapter."""
+"""Podcast Index: podcast search for Browse, target resolution, and non-mutating Previews."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 from urllib.parse import urlsplit
-from uuid import UUID
-
-import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.schemas.browse import (
-    BrowseCandidate,
-    BrowseSource,
+    EpisodePreview,
     EpisodePreviewFacts,
     PodcastCandidate,
     PodcastFacts,
+    PodcastPreview,
     PodcastPreviewEpisode,
+    PodcastPreviewEpisodePage,
+    PodcastPreviewFacts,
     PreviewResolution,
 )
-from nexus.schemas.presence import absent, present
-from nexus.services.browse.cursor import (
-    decode_preview_episodes_cursor,
-    encode_preview_episodes_cursor,
-)
-from nexus.services.browse.models import (
+from nexus.schemas.presence import absent
+from nexus.schemas.presence import presence_from_nullable as maybe
+from nexus.services.browse.targets import (
+    BrowseFailureKind,
     BrowseProviderFailure,
-    BrowseQuery,
-    BrowseSectionFailureKind,
     BrowseTargetNotFound,
+    PodcastIndexEpisodeTarget,
+    PodcastIndexPodcastTarget,
     ResolvedEpisode,
     ResolvedPodcast,
-    episode_target,
-    podcast_target,
+    classify,
     proxied_image,
-    retry_at_from_header,
+    public_url,
     seal_target,
     single_credit,
 )
 from nexus.services.podcasts.identity import validate_and_normalize_feed_url
-from nexus.services.podcasts.provider import get_podcast_index_client
+from nexus.services.podcasts.provider import PodcastIndexClient, get_podcast_index_client
 from nexus.services.sealed_handles import DiscoveryTargetHandle
-from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
+from nexus.services.search.query import decode_cursor, encode_cursor
 
-_PROVIDER = ConfigDict(extra="ignore", strict=True)
-
-
-class _Feed(BaseModel):
-    id: int | str | None = None
-    title: str
-    url: str
-    author: str | None = None
-    link: str | None = None
-    image: str | None = None
-    artwork: str | None = None
-    description: str | None = None
-
-    model_config = _PROVIDER
+# What a malformed provider item raises (a non-public feed url is an InvalidRequestError).
+_MALFORMED = (KeyError, TypeError, ValueError, AttributeError, InvalidRequestError)
+type _Fetch = Callable[[PodcastIndexClient], dict[str, Any]]
 
 
-class _SearchPayload(BaseModel):
-    feeds: list[_Feed]
-
-    model_config = _PROVIDER
-
-
-class _PodcastPayload(BaseModel):
-    feed: _Feed
-
-    model_config = _PROVIDER
-
-
-class _Episode(BaseModel):
-    id: int | str | None = None
-    feed_id: int | str | None = Field(default=None, alias="feedId")
-    title: str
-    description: str | None = None
-    enclosure_url: str | None = Field(default=None, alias="enclosureUrl")
-    guid: str | None = None
-    date_published: int | None = Field(default=None, alias="datePublished")
-    duration: int | None = None
-
-    model_config = _PROVIDER
-
-
-class _EpisodePagePayload(BaseModel):
-    items: list[_Episode]
-
-    model_config = _PROVIDER
-
-
-class _EpisodePayload(BaseModel):
-    episode: _Episode
-
-    model_config = _PROVIDER
-
-
-def search(
-    *,
-    viewer_id: UUID,
-    query: BrowseQuery,
-) -> tuple[list[BrowseCandidate], str | None]:
-    if query.cursor is not None:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor")
-    client = _client()
-    payload = _provider_call(lambda: client.browse_search_payload(query.query, query.limit))
+def _call(fetch: _Fetch, *, lookup: bool = False) -> dict[str, Any]:
+    settings = get_settings()
+    if not settings.podcast_index_api_key or not settings.podcast_index_api_secret:
+        raise BrowseProviderFailure(BrowseFailureKind.Unavailable)
     try:
-        response = _SearchPayload.model_validate(payload)
-    except ValidationError as exc:
-        raise RuntimeError("Podcast Index search response schema drift") from exc
-    return [
-        _candidate(_podcast(feed))
-        for feed in response.feeds
-        if feed.id is not None and str(feed.id).strip()
-    ], None
+        return fetch(get_podcast_index_client())
+    except ApiError as exc:
+        raise classify(exc, provider="Podcast Index", target_lookup=lookup) from exc
+
+
+def _text(value: object) -> str | None:
+    return value.strip() or None if isinstance(value, str) else None
+
+
+def _ref(value: object) -> str:
+    ref = str(value) if isinstance(value, int | str) and not isinstance(value, bool) else ""
+    if not ref.strip() or ref != ref.strip() or len(ref) > 512:
+        raise ValueError("invalid Podcast Index ref")
+    return ref
+
+
+def _podcast(feed: dict[str, Any]) -> ResolvedPodcast:
+    if not feed["title"].strip():
+        raise ValueError("blank podcast title")
+    return ResolvedPodcast(
+        podcast_ref=_ref(feed["id"]),
+        title=feed["title"].strip(),
+        author=_text(feed.get("author")),
+        feed_url=validate_and_normalize_feed_url(feed["url"]),
+        website_url=public_url(feed.get("link")),
+        image_url=public_url(feed.get("image") or feed.get("artwork")),
+        description=_text(feed.get("description")),
+    )
+
+
+def _episode(item: dict[str, Any], podcast: ResolvedPodcast) -> ResolvedEpisode | None:
+    """The episode, or None when it has no public https audio or names another podcast."""
+    audio = public_url(item.get("enclosureUrl"))
+    feed = item.get("feedId")
+    if audio is None or urlsplit(audio).scheme != "https":
+        return None
+    if feed is not None and _ref(feed) != podcast.podcast_ref:
+        return None
+    if not item["title"].strip():
+        raise ValueError("blank episode title")
+    stamp = item.get("datePublished")
+    duration = item.get("duration")
+    return ResolvedEpisode(
+        podcast_ref=podcast.podcast_ref,
+        episode_ref=_ref(item["id"]),
+        title=item["title"].strip(),
+        description=_text(item.get("description")),
+        audio_url=audio,
+        guid=_text(item.get("guid")),
+        published_at=datetime.fromtimestamp(stamp, UTC)
+        if type(stamp) is int and stamp > 0
+        else None,
+        duration_seconds=duration if type(duration) is int and duration > 0 else None,
+        podcast=podcast,
+    )
+
+
+def _strict[T](parse: Callable[[], T], what: str) -> T:
+    """A single looked-up target must parse; its malformation is a provider defect."""
+    try:
+        return parse()
+    except _MALFORMED as exc:
+        raise RuntimeError(f"Podcast Index {what} response schema drift") from exc
+
+
+def _shown(podcast: ResolvedPodcast) -> dict[str, Any]:
+    """The facts a podcast candidate and its Preview both show."""
+    return {
+        "title": podcast.title,
+        "contributors": single_credit(podcast.author, "author"),
+        "description": maybe(podcast.description),
+        "published_at": absent(),
+        "image": maybe(proxied_image(podcast.image_url)),
+    }
+
+
+def search(q: str, *, limit: int) -> list[PodcastCandidate]:
+    """Podcasts matching ``q``; a malformed feed is skipped."""
+    items = []
+    for feed in _call(lambda client: client.browse_search_payload(q, limit)).get("feeds") or []:
+        try:
+            podcast = _podcast(feed)
+        except _MALFORMED:
+            continue
+        target = seal_target(PodcastIndexPodcastTarget(podcastRef=podcast.podcast_ref))
+        items.append(
+            PodcastCandidate(
+                resolution=PreviewResolution(target=target),
+                kind_facts=PodcastFacts(podcast_ref=podcast.podcast_ref),
+                **_shown(podcast),
+            )
+        )
+    return items
 
 
 def resolve_podcast(podcast_ref: str) -> ResolvedPodcast:
-    client = _client()
-    payload = _provider_call(
-        lambda: client.browse_podcast_payload(podcast_ref),
-        target_lookup=True,
-    )
-    try:
-        response = _PodcastPayload.model_validate(payload)
-    except ValidationError as exc:
-        if payload.get("feed") is None:
-            raise BrowseTargetNotFound from exc
-        raise RuntimeError("Podcast Index Podcast response schema drift") from exc
-    podcast = _podcast(response.feed)
-    if podcast.podcast_ref != podcast_ref:
+    feed = _call(lambda client: client.browse_podcast_payload(podcast_ref), lookup=True).get("feed")
+    podcast = _strict(lambda: _podcast(feed), "podcast") if isinstance(feed, dict) else None
+    if podcast is None or podcast.podcast_ref != podcast_ref:
         raise BrowseTargetNotFound
     return podcast
 
 
-def resolve_episode(
-    *,
-    podcast_ref: str,
-    episode_ref: str,
-) -> ResolvedEpisode:
+def resolve_episode(podcast_ref: str, episode_ref: str) -> ResolvedEpisode:
     podcast = resolve_podcast(podcast_ref)
-    client = _client()
-    payload = _provider_call(
-        lambda: client.browse_episode_payload(episode_ref),
-        target_lookup=True,
+    payload = _call(lambda client: client.browse_episode_payload(episode_ref), lookup=True)
+    item = payload.get("episode")
+    episode = (
+        _strict(lambda: _episode(item, podcast), "episode") if isinstance(item, dict) else None
     )
-    try:
-        response = _EpisodePayload.model_validate(payload)
-    except ValidationError as exc:
-        if payload.get("episode") is None:
-            raise BrowseTargetNotFound from exc
-        raise RuntimeError("Podcast Index Episode response schema drift") from exc
-    episode = _episode(
-        response.episode,
-        expected_podcast_ref=podcast_ref,
-        podcast=podcast,
-    )
-    if episode is None:
-        raise BrowseTargetNotFound
-    if episode.episode_ref != episode_ref:
+    if episode is None or episode.episode_ref != episode_ref:
         raise BrowseTargetNotFound
     return episode
 
 
-def episode_page(
-    *,
-    viewer_id: UUID,
-    target: DiscoveryTargetHandle,
-    podcast: ResolvedPodcast,
-    limit: int,
-    cursor: str | None,
-) -> tuple[list[PodcastPreviewEpisode], str | None]:
-    after: tuple[int, str] | None = None
-    if cursor is not None:
-        after = decode_preview_episodes_cursor(
-            cursor,
-            viewer_id=viewer_id,
-            target=target,
-        )
-    client = _client()
-    payload = _provider_call(
-        lambda: client.browse_episode_page_payload(
-            podcast.podcast_ref,
-            100,
-            None if after is None else after[0] + 1,
-        ),
-        target_lookup=True,
-    )
-    try:
-        response = _EpisodePagePayload.model_validate(payload)
-    except ValidationError as exc:
-        raise RuntimeError("Podcast Index episode-page response schema drift") from exc
-    episodes = [
-        episode
-        for item in response.items
-        if item.id is not None
-        and str(item.id).strip()
-        and item.enclosure_url is not None
-        and item.enclosure_url.strip()
-        and (
-            episode := _episode(
-                item,
-                expected_podcast_ref=podcast.podcast_ref,
-                podcast=podcast,
-            )
-        )
-        is not None
-    ]
-    episodes.sort(key=_episode_key, reverse=True)
-    if after is not None:
-        episodes = [episode for episode in episodes if _episode_key(episode) < after]
-    selected = episodes[: limit + 1]
-    items = [_episode_item(episode) for episode in selected[:limit]]
-    next_cursor = None
-    if len(selected) > limit:
-        final = selected[limit - 1]
-        published, episode_ref = _episode_key(final)
-        next_cursor = encode_preview_episodes_cursor(
-            viewer_id=viewer_id,
-            target=target,
-            before_published=published,
-            before_episode_ref=episode_ref,
-        )
-    return items, next_cursor
-
-
-def _client():
-    settings = get_settings()
-    if not settings.podcast_index_api_key or not settings.podcast_index_api_secret:
-        raise BrowseProviderFailure(BrowseSectionFailureKind.Unavailable)
-    return get_podcast_index_client()
-
-
-def _provider_call(call, *, target_lookup: bool = False):
-    try:
-        return call()
-    except ApiError as exc:
-        cause = exc.__cause__
-        if isinstance(cause, httpx.HTTPStatusError):
-            response = cause.response
-            if target_lookup and response.status_code in {404, 410}:
-                raise BrowseTargetNotFound from exc
-            if response.status_code == 429:
-                raise BrowseProviderFailure(
-                    BrowseSectionFailureKind.RateLimited,
-                    retry_at=retry_at_from_header(response.headers.get("retry-after")),
-                ) from exc
-            if response.status_code in {408, 500, 502, 503, 504}:
-                raise BrowseProviderFailure(BrowseSectionFailureKind.Unavailable) from exc
-            raise RuntimeError(
-                f"Podcast Index returned unexpected HTTP {response.status_code}"
-            ) from exc
-        if isinstance(cause, (httpx.TimeoutException, httpx.NetworkError)):
-            raise BrowseProviderFailure(BrowseSectionFailureKind.Unavailable) from exc
-        raise RuntimeError("Podcast Index returned an invalid response") from exc
-
-
-def _podcast(feed: _Feed) -> ResolvedPodcast:
-    if feed.id is None:
-        raise RuntimeError("Podcast Index returned no stable Podcast ref")
-    podcast_ref = _provider_ref(feed.id)
-    try:
-        feed_url = validate_and_normalize_feed_url(feed.url)
-    except InvalidRequestError as exc:
-        raise RuntimeError("Podcast Index returned an invalid feed URL") from exc
-    return ResolvedPodcast(
-        podcast_ref=podcast_ref,
-        title=_nonblank(feed.title, "Podcast title"),
-        author=_optional_text(feed.author),
-        feed_url=feed_url,
-        website_url=_optional_public_url(feed.link),
-        image_url=_optional_public_url(feed.image or feed.artwork),
-        description=_optional_text(feed.description),
-    )
-
-
-def _episode(
-    episode: _Episode,
-    *,
-    expected_podcast_ref: str,
-    podcast: ResolvedPodcast,
-) -> ResolvedEpisode | None:
-    if episode.id is None:
-        raise RuntimeError("Podcast Index returned no stable Episode ref")
-    if episode.feed_id is not None and _provider_ref(episode.feed_id) != expected_podcast_ref:
-        raise BrowseTargetNotFound
-    audio_url = _optional_public_url(episode.enclosure_url)
-    if audio_url is None or urlsplit(audio_url).scheme != "https":
-        return None
-    published_at = (
-        None
-        if episode.date_published is None or episode.date_published <= 0
-        else datetime.fromtimestamp(episode.date_published, UTC)
-    )
-    duration = episode.duration
-    if duration is not None and duration <= 0:
-        duration = None
-    return ResolvedEpisode(
-        podcast_ref=expected_podcast_ref,
-        episode_ref=_provider_ref(episode.id),
-        title=_nonblank(episode.title, "Episode title"),
-        description=_optional_text(episode.description),
-        audio_url=audio_url,
-        guid=_optional_text(episode.guid),
-        published_at=published_at,
-        duration_seconds=duration,
-        podcast=podcast,
-    )
-
-
-def _candidate(podcast: ResolvedPodcast) -> PodcastCandidate:
-    target = seal_target(podcast_target(podcast.podcast_ref))
-    return PodcastCandidate(
-        source=BrowseSource.PodcastIndex,
-        resolution=PreviewResolution(target=target),
-        title=podcast.title,
-        contributors=single_credit(podcast.author, "author"),
-        description=(absent() if podcast.description is None else present(podcast.description)),
-        published_at=absent(),
-        image=(absent() if (image := proxied_image(podcast.image_url)) is None else present(image)),
-        kind_facts=PodcastFacts(podcast_ref=podcast.podcast_ref),
-    )
-
-
-def _episode_item(episode: ResolvedEpisode) -> PodcastPreviewEpisode:
-    target = seal_target(episode_target(episode.podcast_ref, episode.episode_ref))
-    return PodcastPreviewEpisode(
-        target=target,
-        title=episode.title,
-        contributors=single_credit(episode.podcast.author, "author"),
-        description=(absent() if episode.description is None else present(episode.description)),
-        published_at=(absent() if episode.published_at is None else present(episode.published_at)),
-        image=(
-            absent()
-            if (image := proxied_image(episode.podcast.image_url)) is None
-            else present(image)
-        ),
-        kind_facts=EpisodePreviewFacts(
-            podcast_ref=episode.podcast_ref,
-            episode_ref=episode.episode_ref,
-            podcast_title=episode.podcast.title,
-            audio_href=episode.audio_url,
-            duration_seconds=(
-                absent() if episode.duration_seconds is None else present(episode.duration_seconds)
-            ),
-        ),
-    )
-
-
-def _episode_key(episode: ResolvedEpisode) -> tuple[int, str]:
+def _key(episode: ResolvedEpisode) -> tuple[int, str]:
     published = 0 if episode.published_at is None else int(episode.published_at.timestamp())
     return published, episode.episode_ref
 
 
-def _provider_ref(value: int | str) -> str:
-    if isinstance(value, bool):
-        raise RuntimeError("Podcast Index returned an invalid provider ref")
-    ref = str(value)
-    if not ref or ref != ref.strip() or len(ref) > 512:
-        raise RuntimeError("Podcast Index returned an invalid provider ref")
-    return ref
+def preview_podcast(
+    target: PodcastIndexPodcastTarget,
+    handle: DiscoveryTargetHandle,
+    *,
+    limit: int,
+    cursor: str | None,
+) -> PodcastPreview:
+    """The podcast with one page of its episodes, newest first, keyset-paged by the cursor
+    ``{target, published, episode}``; a malformed episode is skipped."""
+    after = None
+    if cursor is not None:
+        position = decode_cursor(cursor)
+        published = position.get("published")
+        episode = position.get("episode")
+        if (
+            position.get("target") != handle
+            or type(published) is not int
+            or type(episode) is not str
+        ):
+            raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor")
+        after = (published, episode)
+    podcast = resolve_podcast(target.podcast_ref)
+    before = None if after is None else after[0] + 1
+    page = _call(
+        lambda c: c.browse_episode_page_payload(podcast.podcast_ref, 100, before), lookup=True
+    )
+    episodes = []
+    for item in page.get("items") or []:
+        try:
+            episode = _episode(item, podcast)
+        except _MALFORMED:
+            continue
+        if episode is not None and (after is None or _key(episode) < after):
+            episodes.append(episode)
+    episodes = sorted(episodes, key=_key, reverse=True)[: limit + 1]
+    last = _key(episodes[limit - 1]) if len(episodes) > limit else None
+    position = (
+        None if last is None else {"target": handle, "published": last[0], "episode": last[1]}
+    )
+    return PodcastPreview(
+        target=handle,
+        source_href=podcast.website_url or podcast.feed_url,
+        resolution=PreviewResolution(target=handle),
+        kind_facts=PodcastPreviewFacts(
+            podcast_ref=podcast.podcast_ref,
+            feed_href=podcast.feed_url,
+            website_href=maybe(podcast.website_url),
+        ),
+        episodes=PodcastPreviewEpisodePage(
+            items=[_episode_item(episode) for episode in episodes[:limit]],
+            next_cursor=maybe(None if position is None else encode_cursor(position)),
+        ),
+        **_shown(podcast),
+    )
 
 
-def _nonblank(value: str, label: str) -> str:
-    normalized = value.strip()
-    if not normalized:
-        raise RuntimeError(f"Podcast Index returned a blank {label}")
-    return normalized
+def _episode_shown(episode: ResolvedEpisode) -> dict[str, Any]:
+    """The facts an episode row of a podcast Preview and the episode's own Preview both show."""
+    facts = EpisodePreviewFacts(
+        podcast_ref=episode.podcast_ref,
+        episode_ref=episode.episode_ref,
+        podcast_title=episode.podcast.title,
+        audio_href=episode.audio_url,
+        duration_seconds=maybe(episode.duration_seconds),
+    )
+    return {
+        "title": episode.title,
+        "contributors": single_credit(episode.podcast.author, "author"),
+        "description": maybe(episode.description),
+        "published_at": maybe(episode.published_at),
+        "image": maybe(proxied_image(episode.podcast.image_url)),
+        "kind_facts": facts,
+    }
 
 
-def _optional_text(value: str | None) -> str | None:
-    if value is None:
-        return None
-    normalized = value.strip()
-    return normalized or None
+def _episode_item(episode: ResolvedEpisode) -> PodcastPreviewEpisode:
+    target = PodcastIndexEpisodeTarget(
+        podcastRef=episode.podcast_ref, episodeRef=episode.episode_ref
+    )
+    return PodcastPreviewEpisode(target=seal_target(target), **_episode_shown(episode))
 
 
-def _optional_public_url(value: str | None) -> str | None:
-    normalized = _optional_text(value)
-    if normalized is None:
-        return None
-    try:
-        validate_requested_url(normalized)
-        return normalize_url_for_display(normalized)
-    except (InvalidRequestError, ValueError):
-        return None
+def preview_episode(
+    target: PodcastIndexEpisodeTarget, handle: DiscoveryTargetHandle
+) -> EpisodePreview:
+    episode = resolve_episode(target.podcast_ref, target.episode_ref)
+    return EpisodePreview(
+        target=handle,
+        source_href=episode.audio_url,
+        resolution=PreviewResolution(target=handle),
+        **_episode_shown(episode),
+    )

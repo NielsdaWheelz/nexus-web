@@ -1,8 +1,13 @@
-"""Browse query/Preview orchestration and viewer-relative collision resolution."""
+"""Browse: one page of one (kind, source) section, one target's Preview, and owned resolution.
+
+Provider calls finish before any database read; the reads share one snapshot. A candidate or
+Preview the viewer already owns resolves to the in-Nexus item instead of a Preview.
+"""
 
 from __future__ import annotations
 
-from typing import Literal, assert_never
+from collections.abc import Sequence
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from llm_tools import WebSearchProvider
@@ -11,34 +16,25 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
-from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.browse import (
-    BrowseCandidate,
+    BrowseKind,
     BrowsePage,
     BrowsePreview,
-    EpisodePreview,
-    EpisodePreviewFacts,
-    EpubPreview,
-    EpubPreviewFacts,
-    InNexusMediaResolution,
-    InNexusPodcastResolution,
-    PodcastPreview,
-    PodcastPreviewEpisodePage,
-    PodcastPreviewFacts,
-    PreviewResolution,
-    VideoPreview,
-    VideoPreviewFacts,
-    WebArticlePreview,
-    WebArticlePreviewFacts,
-)
-from nexus.schemas.presence import Presence, absent, present
-from nexus.services.browse import brave, gutenberg, nexus, podcast_index, youtube
-from nexus.services.browse.models import (
-    BraveWebArticleTarget,
     BrowsePreviewQuery,
     BrowseQuery,
     BrowseSource,
+    InNexusMediaResolution,
+    InNexusPodcastResolution,
+    OwnedMediaCandidate,
+    PreviewResolution,
+)
+from nexus.schemas.media_summary import MediaSummaryOut
+from nexus.schemas.presence import absent
+from nexus.schemas.presence import presence_from_nullable as maybe
+from nexus.services.browse import brave, gutenberg, podcast_index, youtube
+from nexus.services.browse.targets import (
+    BraveWebArticleTarget,
     DiscoveryTarget,
     PodcastIndexEpisodeTarget,
     PodcastIndexPodcastTarget,
@@ -46,8 +42,6 @@ from nexus.services.browse.models import (
     ResolvedEpisode,
     ResolvedPodcast,
     YouTubeVideoTarget,
-    proxied_image,
-    single_credit,
     unseal_target,
 )
 from nexus.services.media import list_collection_media_for_viewer_by_ids
@@ -56,438 +50,203 @@ from nexus.services.podcasts.episode_identity import (
 )
 from nexus.services.podcasts.subscriptions_query import active_subscription_rows_sql
 from nexus.services.sealed_handles import DiscoveryTargetHandle
+from nexus.services.search.query import decode_cursor, encode_cursor, is_offset
+from nexus.services.search.service import read_snapshot
+from nexus.services.search.sources import Retrieval, hydrate, rank
+
+_NEXUS_KINDS = {
+    BrowseKind.Pdf: "pdf",
+    BrowseKind.Epub: "epub",
+    BrowseKind.WebArticle: "web_article",
+    BrowseKind.Video: "video",
+}
+_OFFSET_SOURCES = (BrowseSource.Nexus, BrowseSource.ProjectGutenberg)
+_VISIBLE = f"SELECT m.id FROM media m JOIN ({visible_media_ids_cte_sql()}) vm ON vm.media_id = m.id"
+_OWNED_BY_URL = f"""{_VISIBLE} WHERE m.kind = :kind AND (m.requested_url = ANY(:urls)
+    OR m.canonical_url = ANY(:urls) OR m.canonical_source_url = ANY(:urls)
+    OR m.external_playback_url = ANY(:urls)) ORDER BY m.updated_at DESC, m.id DESC LIMIT 1"""
+_OWNED_VIDEO = (
+    f"{_VISIBLE} WHERE m.kind = 'video' AND m.provider = 'youtube' AND m.provider_id = :ref"
+)
+_OWNED_PODCAST = f"""SELECT p.id FROM podcasts p JOIN ({active_subscription_rows_sql()}) a
+    ON a.podcast_id = p.id WHERE p.provider = 'podcast_index' AND p.provider_podcast_id = :ref"""
 
 
 async def search_browse(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    query: BrowseQuery,
-    web_search_provider: WebSearchProvider | None,
+    db: Session, viewer_id: UUID, query: BrowseQuery, web: WebSearchProvider | None
 ) -> BrowsePage:
+    """One section page. The cursor is ``{q, kind, source, sort, at}``: ``at`` is an offset
+    (Nexus, Gutenberg) or YouTube's page token; Brave and PodcastIndex have one page."""
+    binding = query.model_dump(mode="json", exclude={"limit", "cursor"})
+    at = None
+    if query.cursor is not None:
+        position = decode_cursor(query.cursor)
+        at = position.pop("at", None)
+        offset = query.source in _OFFSET_SOURCES and is_offset(at)
+        token = query.source is BrowseSource.YouTube and isinstance(at, str)
+        if position != binding or not (offset or token):
+            raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor")
+    items: list[Any] = []
+    after: int | str | None = None
     match query.source:
-        case BrowseSource.Nexus:
-            get_repeatable_read_db(db)
-            items, next_cursor = await run_in_threadpool(
-                nexus.search,
-                db,
-                viewer_id=viewer_id,
-                query=query,
-            )
-        case BrowseSource.ProjectGutenberg:
-            get_repeatable_read_db(db)
-            items, next_cursor = await run_in_threadpool(
-                gutenberg.search,
-                db,
-                viewer_id=viewer_id,
-                query=query,
-            )
         case BrowseSource.Brave:
-            items, next_cursor = await brave.search(
-                web_search_provider,
-                query=query,
-            )
+            items = await brave.search(web, query.q, limit=query.limit)
         case BrowseSource.YouTube:
-            items, next_cursor = await run_in_threadpool(
-                youtube.search,
-                viewer_id=viewer_id,
-                query=query,
+            newest = query.sort is not None
+            token = at if isinstance(at, str) else None
+            items, after = await run_in_threadpool(
+                lambda: youtube.search(query.q, newest=newest, limit=query.limit, token=token)
             )
         case BrowseSource.PodcastIndex:
-            items, next_cursor = await run_in_threadpool(
-                podcast_index.search,
-                viewer_id=viewer_id,
-                query=query,
+            items = await run_in_threadpool(
+                lambda: podcast_index.search(query.q, limit=query.limit)
             )
-    if query.source not in (BrowseSource.Nexus, BrowseSource.ProjectGutenberg):
-        if db.in_transaction():
-            db.rollback()
-        get_repeatable_read_db(db)
-    items = await run_in_threadpool(
-        _resolve_owned,
-        db,
-        viewer_id=viewer_id,
-        candidates=items,
-    )
+
+    def read(s: Session) -> tuple[list[Any], int | str | None]:
+        if query.source in _OFFSET_SOURCES:
+            return _catalogue(s, viewer_id, query, cast(int, at or 0))
+        return _resolve_owned(s, viewer_id, items), after
+
+    items, after = await run_in_threadpool(read_snapshot, db, read)
     return BrowsePage(
-        query=query.query,
+        query=query.q,
         kind=query.kind,
         source=query.source,
-        sort=absent() if query.sort is None else present(query.sort),
+        sort=maybe(query.sort),
         items=items,
-        next_cursor=absent() if next_cursor is None else present(next_cursor),
+        next_cursor=maybe(None if after is None else encode_cursor(binding | {"at": after})),
     )
 
 
-def preview_browse(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    query: BrowsePreviewQuery,
-) -> BrowsePreview:
-    target = unseal_target(query.target)
-    if query.cursor is not None and not isinstance(target, PodcastIndexPodcastTarget):
+def _catalogue(
+    db: Session, viewer_id: UUID, query: BrowseQuery, offset: int
+) -> tuple[list[Any], int | None]:
+    """A section of Nexus-owned media or of the Gutenberg catalogue, by the search rule."""
+    family = "media" if query.source is BrowseSource.Nexus else "gutenberg"
+    kinds = (_NEXUS_KINDS[query.kind],) if family == "media" else ()
+    end = offset + query.limit
+    hits = rank(db, Retrieval(viewer_id, query.q, end + 1, content_kinds=kinds), family)
+    ids = [hit.id for hit in hits[offset:end]]
+    after = end if len(hits) > end and is_offset(end) else None
+    if family == "gutenberg":
+        return gutenberg.candidates(db, viewer_id, ids), after
+    descriptions = {row["id"]: row["text"] for row in hydrate(db, viewer_id, "media", ids, "")}
+    media = list_collection_media_for_viewer_by_ids(db, viewer_id=viewer_id, media_ids=ids)
+    return [
+        OwnedMediaCandidate(
+            resolution=_in_nexus(item.id, item.summary),
+            description=maybe(descriptions.get(item.id)),
+            image=absent(),
+        )
+        for item in media
+    ], after
+
+
+def _in_nexus(media_id: UUID, summary: MediaSummaryOut) -> InNexusMediaResolution:
+    return InNexusMediaResolution(
+        href=f"/media/{media_id}", action_subject_ref=f"media:{media_id}", media_summary=summary
+    )
+
+
+def preview_browse(db: Session, viewer_id: UUID, query: BrowsePreviewQuery) -> BrowsePreview:
+    """One target's Preview; a target the viewer already owns resolves into Nexus."""
+    unsealed = unseal_target(query.target)
+    handle = DiscoveryTargetHandle(query.target)
+    if query.cursor is not None and not isinstance(unsealed, PodcastIndexPodcastTarget):
         raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_DISCOVERY_TARGET,
-            "Invalid discovery target",
+            ApiErrorCode.E_INVALID_DISCOVERY_TARGET, "Invalid discovery target"
         )
-    match target:
-        case ProjectGutenbergEpubTarget():
-            get_repeatable_read_db(db)
-            book = gutenberg.preview(
-                db,
-                viewer_id=viewer_id,
-                ebook_ref=target.ebook_ref,
-            )
-            resolution = _preview_resolution(
-                db, viewer_id=viewer_id, handle=query.target, target=target
-            )
-            return EpubPreview(
-                target=query.target,
-                title=book.title,
-                contributors=book.contributors,
-                description=(absent() if book.description is None else present(book.description)),
-                published_at=absent(),
-                image=absent(),
-                source_href=book.landing_href,
-                resolution=resolution,
-                kind_facts=EpubPreviewFacts(
-                    ebook_ref=book.ebook_ref,
-                    import_href=book.import_href,
-                ),
-            )
+    fetched: BrowsePreview | None = None
+    match unsealed:
         case BraveWebArticleTarget():
-            article = brave.preview(target.canonical_url)
-            get_repeatable_read_db(db)
-            resolution = _preview_resolution(
-                db,
-                viewer_id=viewer_id,
-                handle=query.target,
-                target=target,
-                equivalent_urls=(article.source_href,),
-            )
-            return WebArticlePreview(
-                target=query.target,
-                title=article.title,
-                contributors=article.contributors,
-                description=(
-                    absent() if article.description is None else present(article.description)
-                ),
-                published_at=(
-                    absent() if article.published_at is None else present(article.published_at)
-                ),
-                image=(absent() if article.image_href is None else present(article.image_href)),
-                source_href=article.source_href,
-                resolution=resolution,
-                kind_facts=WebArticlePreviewFacts(
-                    canonical_url=article.canonical_url,
-                    site_name=(absent() if not article.site_name else present(article.site_name)),
-                ),
-            )
+            fetched = brave.preview(unsealed, handle)
         case YouTubeVideoTarget():
-            video = youtube.preview(target.video_ref)
-            get_repeatable_read_db(db)
-            resolution = _preview_resolution(
-                db,
-                viewer_id=viewer_id,
-                handle=query.target,
-                target=target,
-            )
-            return VideoPreview(
-                target=query.target,
-                title=video.title,
-                contributors=video.contributors,
-                description=(absent() if video.description is None else present(video.description)),
-                published_at=present(video.published_at),
-                image=(absent() if video.image_href is None else present(video.image_href)),
-                source_href=video.watch_href,
-                resolution=resolution,
-                kind_facts=VideoPreviewFacts(
-                    video_ref=video.video_ref,
-                    channel_title=(
-                        absent() if video.channel_title is None else present(video.channel_title)
-                    ),
-                    embed_href=video.embed_href,
-                ),
-            )
+            fetched = youtube.preview(unsealed, handle)
         case PodcastIndexPodcastTarget():
-            podcast = podcast_index.resolve_podcast(target.podcast_ref)
-            episode_items, next_cursor = podcast_index.episode_page(
-                viewer_id=viewer_id,
-                target=query.target,
-                podcast=podcast,
-                limit=query.limit,
-                cursor=query.cursor,
-            )
-            get_repeatable_read_db(db)
-            resolution = _preview_resolution(
-                db, viewer_id=viewer_id, handle=query.target, target=target
-            )
-            return PodcastPreview(
-                target=query.target,
-                title=podcast.title,
-                contributors=single_credit(podcast.author, "author"),
-                description=(
-                    absent() if podcast.description is None else present(podcast.description)
-                ),
-                published_at=absent(),
-                image=_podcast_image(podcast),
-                source_href=podcast.website_url or podcast.feed_url,
-                resolution=resolution,
-                kind_facts=PodcastPreviewFacts(
-                    podcast_ref=podcast.podcast_ref,
-                    feed_href=podcast.feed_url,
-                    website_href=(
-                        absent() if podcast.website_url is None else present(podcast.website_url)
-                    ),
-                ),
-                episodes=PodcastPreviewEpisodePage(
-                    items=episode_items,
-                    next_cursor=(absent() if next_cursor is None else present(next_cursor)),
-                ),
+            fetched = podcast_index.preview_podcast(
+                unsealed, handle, limit=query.limit, cursor=query.cursor
             )
         case PodcastIndexEpisodeTarget():
-            episode = podcast_index.resolve_episode(
-                podcast_ref=target.podcast_ref,
-                episode_ref=target.episode_ref,
-            )
-            get_repeatable_read_db(db)
-            resolution = _preview_resolution(
-                db, viewer_id=viewer_id, handle=query.target, target=target
-            )
-            return EpisodePreview(
-                target=query.target,
-                title=episode.title,
-                contributors=single_credit(episode.podcast.author, "author"),
-                description=(
-                    absent() if episode.description is None else present(episode.description)
-                ),
-                published_at=(
-                    absent() if episode.published_at is None else present(episode.published_at)
-                ),
-                image=_podcast_image(episode.podcast),
-                source_href=episode.audio_url,
-                resolution=resolution,
-                kind_facts=_episode_facts(episode),
-            )
+            fetched = podcast_index.preview_episode(unsealed, handle)
+
+    def read(s: Session) -> BrowsePreview:
+        found = fetched or gutenberg.preview(s, viewer_id, cast(Any, unsealed), handle)
+        return _resolve_owned(s, viewer_id, [found], found.source_href)[0]
+
+    return read_snapshot(db, read)
 
 
-def resolve_podcast_discovery_target(
-    handle: str,
-) -> ResolvedPodcast | ResolvedEpisode:
-    target = unseal_target(handle)
-    match target:
-        case PodcastIndexPodcastTarget():
-            return podcast_index.resolve_podcast(target.podcast_ref)
-        case PodcastIndexEpisodeTarget():
-            return podcast_index.resolve_episode(
-                podcast_ref=target.podcast_ref,
-                episode_ref=target.episode_ref,
-            )
-        case _:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_DISCOVERY_TARGET,
-                "Discovery target is not a Podcast or Episode",
-            )
+def resolve_podcast_discovery_target(handle: str) -> ResolvedPodcast | ResolvedEpisode:
+    """The provider podcast or episode a sealed handle names (podcast acquisition)."""
+    match unseal_target(handle):
+        case PodcastIndexPodcastTarget(podcast_ref=podcast):
+            return podcast_index.resolve_podcast(podcast)
+        case PodcastIndexEpisodeTarget(podcast_ref=podcast, episode_ref=episode):
+            return podcast_index.resolve_episode(podcast, episode)
+    raise InvalidRequestError(
+        ApiErrorCode.E_INVALID_DISCOVERY_TARGET, "Discovery target is not a Podcast or Episode"
+    )
 
 
-def _resolve_owned(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    candidates: list[BrowseCandidate],
-) -> list[BrowseCandidate]:
-    pending: list[tuple[BrowseCandidate, tuple[Literal["media", "podcast"], UUID] | None]] = []
-    for candidate in candidates:
-        owned = (
-            _owned_resolution(
-                db, viewer_id=viewer_id, target=unseal_target(candidate.resolution.target)
-            )
-            if isinstance(candidate.resolution, PreviewResolution)
-            else None
-        )
-        pending.append((candidate, owned))
+def _resolve_owned(db: Session, viewer_id: UUID, items: Sequence[Any], url: str = "") -> list[Any]:
+    """Each item, its Preview resolution swapped for an in-Nexus one when the viewer owns
+    the target (``url``: a Preview's fetched page, an equivalent article URL)."""
+    owned = {}
+    for item in items:
+        if isinstance(item.resolution, PreviewResolution):
+            found = _owned(db, viewer_id, unseal_target(item.resolution.target), url)
+            if found is not None:
+                owned[item.resolution.target] = found
+    media = [resource_id for scheme, resource_id in owned.values() if scheme == "media"]
     summaries = {
-        media.id: media.summary
-        for media in list_collection_media_for_viewer_by_ids(
-            db,
-            viewer_id=viewer_id,
-            media_ids=[
-                owned[1] for _, owned in pending if owned is not None and owned[0] == "media"
-            ],
+        item.id: item.summary
+        for item in list_collection_media_for_viewer_by_ids(
+            db, viewer_id=viewer_id, media_ids=media
         )
     }
-    resolved: list[BrowseCandidate] = []
-    for candidate, owned in pending:
-        if owned is None:
-            resolved.append(candidate)
-            continue
-        scheme, resource_id = owned
-        resolution = (
-            InNexusMediaResolution(
-                href=f"/media/{resource_id}",
-                action_subject_ref=f"media:{resource_id}",
-                media_summary=summaries[resource_id],
+    out = []
+    for item in items:
+        found = owned.get(getattr(item.resolution, "target", None))
+        if found is not None:
+            scheme, resource_id = found
+            resolution = (
+                _in_nexus(resource_id, summaries[resource_id])
+                if scheme == "media"
+                else InNexusPodcastResolution(
+                    href=f"/podcasts/{resource_id}", action_subject_ref=f"podcast:{resource_id}"
+                )
             )
-            if scheme == "media"
-            else InNexusPodcastResolution(
-                href=f"/podcasts/{resource_id}",
-                action_subject_ref=f"podcast:{resource_id}",
-            )
-        )
-        resolved.append(candidate.model_copy(update={"resolution": resolution}))
-    return resolved
+            item = item.model_copy(update={"resolution": resolution})
+        out.append(item)
+    return out
 
 
-def _preview_resolution(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    handle: DiscoveryTargetHandle,
-    target: DiscoveryTarget,
-    equivalent_urls: tuple[str, ...] = (),
-) -> InNexusMediaResolution | InNexusPodcastResolution | PreviewResolution:
-    resolution = _owned_resolution(
-        db,
-        viewer_id=viewer_id,
-        target=target,
-        equivalent_urls=equivalent_urls,
-    )
-    if resolution is None:
-        return PreviewResolution(target=handle)
-    scheme, resource_id = resolution
-    if scheme == "podcast":
-        return InNexusPodcastResolution(
-            href=f"/podcasts/{resource_id}", action_subject_ref=f"podcast:{resource_id}"
-        )
-    summaries = list_collection_media_for_viewer_by_ids(
-        db, viewer_id=viewer_id, media_ids=[resource_id]
-    )
-    return InNexusMediaResolution(
-        href=f"/media/{resource_id}",
-        action_subject_ref=f"media:{resource_id}",
-        media_summary=summaries[0].summary,
-    )
-
-
-def _owned_resolution(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    target: DiscoveryTarget,
-    equivalent_urls: tuple[str, ...] = (),
+def _owned(
+    db: Session, viewer_id: UUID, target: DiscoveryTarget, url: str
 ) -> tuple[Literal["media", "podcast"], UUID] | None:
+    """The viewer's visible media, or subscribed podcast, that is this provider item."""
+    params: dict[str, Any] = {"viewer_id": viewer_id}
     match target:
-        case ProjectGutenbergEpubTarget():
-            ebook_ref = target.ebook_ref
-            urls = (
-                f"https://www.gutenberg.org/ebooks/{ebook_ref}",
-                f"https://www.gutenberg.org/ebooks/{ebook_ref}.epub.noimages",
-            )
-            media_id = _visible_media_by_urls(
-                db,
-                viewer_id=viewer_id,
-                media_kind="epub",
-                urls=urls,
-            )
-            return None if media_id is None else ("media", UUID(str(media_id)))
-        case BraveWebArticleTarget():
-            media_id = _visible_media_by_urls(
-                db,
-                viewer_id=viewer_id,
-                media_kind="web_article",
-                urls=(target.canonical_url, *equivalent_urls),
-            )
-            return None if media_id is None else ("media", UUID(str(media_id)))
-        case YouTubeVideoTarget():
-            media_id = db.scalar(
-                text(
-                    f"""
-                    WITH visible_media AS ({visible_media_ids_cte_sql()})
-                    SELECT m.id
-                    FROM media m
-                    JOIN visible_media vm ON vm.media_id = m.id
-                    WHERE m.kind = 'video'
-                      AND m.provider = 'youtube'
-                      AND m.provider_id = :video_ref
-                    """
-                ),
-                {"viewer_id": viewer_id, "video_ref": target.video_ref},
-            )
-            return None if media_id is None else ("media", UUID(str(media_id)))
-        case PodcastIndexPodcastTarget():
-            podcast_id = db.scalar(
-                text(
-                    f"""
-                    WITH active_subscriptions AS ({active_subscription_rows_sql()})
-                    SELECT podcast.id
-                    FROM podcasts podcast
-                    JOIN active_subscriptions active
-                      ON active.podcast_id = podcast.id
-                    WHERE podcast.provider = 'podcast_index'
-                      AND podcast.provider_podcast_id = :podcast_ref
-                    """
-                ),
-                {"viewer_id": viewer_id, "podcast_ref": target.podcast_ref},
-            )
-            return None if podcast_id is None else ("podcast", UUID(str(podcast_id)))
-        case PodcastIndexEpisodeTarget():
+        case ProjectGutenbergEpubTarget(ebook_ref=ref):
+            landing = f"https://www.gutenberg.org/ebooks/{ref}"
+            sql = _OWNED_BY_URL
+            params |= {"kind": "epub", "urls": [landing, f"{landing}.epub.noimages"]}
+        case BraveWebArticleTarget(canonical_url=canonical):
+            sql = _OWNED_BY_URL
+            params |= {
+                "kind": "web_article",
+                "urls": list(dict.fromkeys([canonical, url or canonical])),
+            }
+        case YouTubeVideoTarget(video_ref=ref):
+            sql = _OWNED_VIDEO
+            params["ref"] = ref
+        case PodcastIndexPodcastTarget(podcast_ref=ref):
+            podcast_id = db.scalar(text(_OWNED_PODCAST), params | {"ref": ref})
+            return None if podcast_id is None else ("podcast", podcast_id)
+        case PodcastIndexEpisodeTarget(podcast_ref=podcast, episode_ref=episode):
             media_id = select_visible_episode_media_id_by_podcast_index_ref(
-                db,
-                viewer_id=viewer_id,
-                podcast_ref=target.podcast_ref,
-                episode_ref=target.episode_ref,
+                db, viewer_id=viewer_id, podcast_ref=podcast, episode_ref=episode
             )
-            return None if media_id is None else ("media", UUID(str(media_id)))
-        case _:
-            assert_never(target)
-
-
-def _visible_media_by_urls(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    media_kind: str,
-    urls: tuple[str, ...],
-) -> UUID | None:
-    return db.scalar(
-        text(
-            f"""
-            WITH visible_media AS ({visible_media_ids_cte_sql()})
-            SELECT m.id
-            FROM media m
-            JOIN visible_media vm ON vm.media_id = m.id
-            WHERE m.kind = :media_kind
-              AND (
-                  m.requested_url = ANY(:urls)
-                  OR m.canonical_url = ANY(:urls)
-                  OR m.canonical_source_url = ANY(:urls)
-                  OR m.external_playback_url = ANY(:urls)
-              )
-            ORDER BY m.updated_at DESC, m.id DESC
-            LIMIT 1
-            """
-        ),
-        {
-            "viewer_id": viewer_id,
-            "media_kind": media_kind,
-            "urls": list(dict.fromkeys(urls)),
-        },
-    )
-
-
-def _podcast_image(podcast: ResolvedPodcast) -> Presence[str]:
-    image = proxied_image(podcast.image_url)
-    return absent() if image is None else present(image)
-
-
-def _episode_facts(episode: ResolvedEpisode) -> EpisodePreviewFacts:
-    return EpisodePreviewFacts(
-        podcast_ref=episode.podcast_ref,
-        episode_ref=episode.episode_ref,
-        podcast_title=episode.podcast.title,
-        audio_href=episode.audio_url,
-        duration_seconds=(
-            absent() if episode.duration_seconds is None else present(episode.duration_seconds)
-        ),
-    )
+            return None if media_id is None else ("media", media_id)
+    media_id = db.scalar(text(sql), params)
+    return None if media_id is None else ("media", media_id)

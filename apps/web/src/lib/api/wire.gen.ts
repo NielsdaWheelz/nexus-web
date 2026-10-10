@@ -2776,11 +2776,7 @@ export interface paths {
         };
         /**
          * Search
-         * @description Hybrid search (full text ∪ vector ANN) across everything the viewer may see.
-         *
-         *     Returns 404 for a scope the viewer cannot read — never 403, so existence
-         *     does not leak — and 200 with no results when there is neither a usable
-         *     full-text query nor a structured filter.
+         * @description Everything the viewer may read, ranked by one rule; 404 (never 403) for unreadable scopes.
          */
         get: operations["search_search_get"];
         put?: never;
@@ -4648,8 +4644,7 @@ export interface components {
         };
         /**
          * ConversationArtifactSearchOut
-         * @description A current Conversation Dossier claim; the exact revision ref preserves
-         *     historical selection while activation opens the conversation subject.
+         * @description A Conversation Dossier claim; the revision ref keeps the exact cited text.
          */
         ConversationArtifactSearchOut: {
             /** Actionsubjectref */
@@ -12278,7 +12273,6 @@ export interface components {
         };
         /** ResourceTargetPassageOut */
         ResourceTargetPassageOut: {
-            activation: components["schemas"]["ResourceActivationOut"];
             /** Candidateref */
             candidateRef: string;
             /** Excerpt */
@@ -12311,15 +12305,8 @@ export interface components {
             cursor?: string | null;
             /** Exclude Refs */
             exclude_refs?: string[];
-            /**
-             * Limit
-             * @default 10
-             */
-            limit: number;
             /** Q */
             q: string;
-            /** Schemes */
-            schemes?: ("media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor")[] | null;
             /** Source Ref */
             source_ref?: string | null;
         };
@@ -12536,10 +12523,7 @@ export interface components {
              */
             kind: "SavedInNexus";
         };
-        /**
-         * SearchPageInfo
-         * @description Offset pagination, encoded as a base64url JSON cursor.
-         */
+        /** SearchPageInfo */
         SearchPageInfo: {
             /**
              * Has More
@@ -12569,19 +12553,13 @@ export interface components {
              */
             kind: "Search";
         };
-        /**
-         * SearchResponse
-         * @description A mixed, ordered page of typed search results.
-         */
+        /** SearchResponse */
         SearchResponse: {
             page: components["schemas"]["SearchPageInfo"];
             /** Results */
             results: (components["schemas"]["SearchResultMediaOut"] | components["schemas"]["SearchResultPodcastOut"] | components["schemas"]["SearchResultContentChunkOut"] | components["schemas"]["SearchResultFragmentOut"] | components["schemas"]["SearchResultContributorOut"] | components["schemas"]["SearchResultPageOut"] | components["schemas"]["SearchResultNoteBlockOut"] | components["schemas"]["SearchResultHighlightOut"] | components["schemas"]["SearchResultMessageOut"] | components["schemas"]["SearchResultEvidenceSpanOut"] | components["schemas"]["SearchResultReaderApparatusItemOut"] | components["schemas"]["SearchResultConversationOut"] | components["schemas"]["ConversationArtifactSearchOut"] | components["schemas"]["SearchResultWebOut"])[];
         };
-        /**
-         * SearchResultContentChunkOut
-         * @description An indexed document passage.
-         */
+        /** SearchResultContentChunkOut */
         SearchResultContentChunkOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
@@ -12625,36 +12603,26 @@ export interface components {
              */
             type: "content_chunk";
         };
-        /**
-         * SearchResultContextRefOut
-         * @description Backend-owned context reference for model retrieval and citations.
-         */
+        /** SearchResultContextRefOut */
         SearchResultContextRefOut: {
             /** Evidence Span Ids */
-            evidence_span_ids?: string[];
+            evidence_span_ids: string[];
             /** Id */
             id: string;
-            /** Locator */
-            locator?: (components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"]) | null;
             /**
              * Type
              * @enum {string}
              */
             type: "media" | "podcast" | "episode" | "video" | "content_chunk" | "fragment" | "contributor" | "page" | "note_block" | "highlight" | "message" | "evidence_span" | "conversation" | "artifact" | "web_result" | "reader_apparatus_item";
         };
-        /**
-         * SearchResultContributorIdentityOut
-         * @description Handle + display name only: no status, aliases, or external ids.
-         */
+        /** SearchResultContributorIdentityOut */
         SearchResultContributorIdentityOut: {
             /** Display Name */
             display_name: string;
-            /** Handle */
-            handle: string;
         };
         /**
          * SearchResultContributorOut
-         * @description A contributor identity hit.
+         * @description A contributor identity hit; its id is the handle.
          */
         SearchResultContributorOut: {
             /** Actionsubjectref */
@@ -12690,10 +12658,7 @@ export interface components {
              */
             type: "contributor";
         };
-        /**
-         * SearchResultConversationOut
-         * @description A visible conversation.
-         */
+        /** SearchResultConversationOut */
         SearchResultConversationOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
@@ -12776,10 +12741,7 @@ export interface components {
              */
             type: "evidence_span";
         };
-        /**
-         * SearchResultFragmentOut
-         * @description A readable source fragment.
-         */
+        /** SearchResultFragmentOut */
         SearchResultFragmentOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
@@ -12819,10 +12781,7 @@ export interface components {
              */
             type: "fragment";
         };
-        /**
-         * SearchResultHighlightOut
-         * @description A saved source highlight.
-         */
+        /** SearchResultHighlightOut */
         SearchResultHighlightOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
@@ -12897,10 +12856,7 @@ export interface components {
              */
             type: "episode" | "media" | "video";
         };
-        /**
-         * SearchResultMessageOut
-         * @description A conversation message hit.
-         */
+        /** SearchResultMessageOut */
         SearchResultMessageOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
@@ -12944,10 +12900,7 @@ export interface components {
              */
             type: "message";
         };
-        /**
-         * SearchResultNoteBlockOut
-         * @description A note-block body hit.
-         */
+        /** SearchResultNoteBlockOut */
         SearchResultNoteBlockOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
@@ -12993,10 +12946,7 @@ export interface components {
              */
             type: "note_block";
         };
-        /**
-         * SearchResultPageOut
-         * @description A note page.
-         */
+        /** SearchResultPageOut */
         SearchResultPageOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
@@ -13031,10 +12981,7 @@ export interface components {
              */
             type: "page";
         };
-        /**
-         * SearchResultPodcastOut
-         * @description A visible podcast hit.
-         */
+        /** SearchResultPodcastOut */
         SearchResultPodcastOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
@@ -13071,10 +13018,7 @@ export interface components {
              */
             type: "podcast";
         };
-        /**
-         * SearchResultReaderApparatusItemOut
-         * @description A source-authored reader apparatus row.
-         */
+        /** SearchResultReaderApparatusItemOut */
         SearchResultReaderApparatusItemOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
@@ -13114,10 +13058,7 @@ export interface components {
              */
             type: "reader_apparatus_item";
         };
-        /**
-         * SearchResultSourceOut
-         * @description Source metadata shared by media-anchored rows.
-         */
+        /** SearchResultSourceOut */
         SearchResultSourceOut: {
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
@@ -13129,14 +13070,12 @@ export interface components {
             /** Media Kind */
             media_kind: string;
             original_published_date: components["schemas"]["Presence_Annotated_str__StringConstraints__AfterValidator__"];
-            /** Summary Md */
-            summary_md: string | null;
             /** Title */
             title: string;
         };
         /**
          * SearchResultWebOut
-         * @description A persisted public-web result, shaped as chat web search returns it.
+         * @description A persisted public-web result, one per external snapshot (``id`` is the snapshot).
          */
         SearchResultWebOut: {
             /** Actionsubjectref */
@@ -13171,11 +13110,6 @@ export interface components {
             resource_ref: string;
             /** Result Ref */
             result_ref: string;
-            /**
-             * Result Type
-             * @constant
-             */
-            result_type: "web_result";
             /** Score */
             score: number;
             /** Selected */
@@ -15405,7 +15339,14 @@ export interface operations {
     };
     browse_content_browse_get: {
         parameters: {
-            query?: never;
+            query: {
+                q: string;
+                kind: components["schemas"]["BrowseKind"];
+                source: components["schemas"]["BrowseSource"];
+                limit: number;
+                sort?: components["schemas"]["BrowseSort"] | null;
+                cursor?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -15421,11 +15362,24 @@ export interface operations {
                     "application/json": components["schemas"]["Data_BrowsePage_"];
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     browse_preview_browse_preview_get: {
         parameters: {
-            query?: never;
+            query: {
+                target: string;
+                limit: number;
+                cursor?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -15439,6 +15393,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_BrowsePreview_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -20613,19 +20576,19 @@ export interface operations {
             query?: {
                 /** @description Search query string */
                 q?: string;
-                /** @description Search scope (all, media:<id>, library:<id>, conversation:<id>) */
+                /** @description all, media:<id>, library:<id> or conversation:<id> */
                 scope?: string;
-                /** @description Comma-separated user kinds (documents, notes, highlights, conversations, people, web). Omitted ⇒ all kinds; explicitly empty ⇒ no results. */
+                /** @description Comma-separated kinds; omitted means all, empty means none */
                 kinds?: string | null;
-                /** @description Comma-separated document formats (article, pdf, epub, video, episode, podcast). */
+                /** @description Comma-separated document formats */
                 formats?: string | null;
-                /** @description Comma-separated contributor handles to filter credited content. */
+                /** @description Comma-separated contributor handles */
                 authors?: string | null;
-                /** @description Comma-separated contributor credit roles to filter content. */
+                /** @description Comma-separated contributor credit roles */
                 roles?: string | null;
                 /** @description Pagination cursor */
                 cursor?: string | null;
-                /** @description Maximum results per page (default 20, max 50) */
+                /** @description Results per page */
                 limit?: number;
             };
             header?: never;

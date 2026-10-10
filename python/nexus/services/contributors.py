@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -124,6 +122,7 @@ from nexus.services.resource_mutation_replay import (
     lookup_replay,
     record_replay,
 )
+from nexus.services.search.query import decode_cursor, encode_cursor
 from nexus.text import escape_like
 
 if TYPE_CHECKING:
@@ -159,9 +158,11 @@ def search_contributors(
     }
     keyset_sql = ""
     if cursor is not None:
-        decoded = _decode_search_cursor(cursor)
+        position = decode_cursor(cursor)
+        if set(position) != {"n", "h"} or not all(isinstance(v, str) for v in position.values()):
+            raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor")
         keyset_sql = "AND (da.normalized_alias, c.handle) > (:after_key, :after_handle)"
-        params["after_key"], params["after_handle"] = decoded
+        params["after_key"], params["after_handle"] = position["n"], position["h"]
 
     rows = (
         db.execute(
@@ -214,7 +215,7 @@ def search_contributors(
     page = rows[:limit]
     next_cursor = None
     if len(rows) > limit and page:
-        next_cursor = _encode_search_cursor(page[-1]["display_key"], page[-1]["handle"])
+        next_cursor = encode_cursor({"n": page[-1]["display_key"], "h": page[-1]["handle"]})
     return ContributorSearchPageOut(
         contributors=[
             ContributorSearchItemOut(
@@ -233,24 +234,6 @@ def search_contributors(
         ],
         nextCursor=next_cursor,
     )
-
-
-def _encode_search_cursor(display_key: str, handle: str) -> str:
-    payload = json.dumps({"n": display_key, "h": handle}, separators=(",", ":"))
-    return base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii")
-
-
-def _decode_search_cursor(cursor: str) -> tuple[str, str]:
-    try:
-        decoded = json.loads(base64.urlsafe_b64decode(cursor.encode("ascii")))
-    except ValueError:
-        raise InvalidRequestError(message="Invalid cursor") from None
-    if not isinstance(decoded, dict) or set(decoded) != {"n", "h"}:
-        raise InvalidRequestError(message="Invalid cursor")
-    after_key, after_handle = decoded["n"], decoded["h"]
-    if not isinstance(after_key, str) or not isinstance(after_handle, str):
-        raise InvalidRequestError(message="Invalid cursor")
-    return after_key, after_handle
 
 
 def get_contributor_detail(

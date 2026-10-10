@@ -13,6 +13,7 @@ from pydantic import TypeAdapter
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import OracleCorpusSource, OracleReading
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
@@ -64,8 +65,7 @@ from nexus.services.resource_graph.citations import (
 )
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_graph.schemas import CitationInput, CitationSnapshot
-from nexus.services.search.chunks import retrieve_content_chunk_candidates
-from nexus.services.search.service import build_query_embedding
+from nexus.services.search.semantic import embed_text, nearest_chunks
 from nexus.tasks.llm_task import run_llm_task
 
 _STEP = "synthesis"
@@ -328,11 +328,19 @@ async def _run(
     )
 
 
+# The personal lane: the viewer's visible media and own notes, the oracle corpus excluded.
+# EXISTS over a union keeps the predicate one semi-join, so ivfflat can drive the scan.
+_PERSONAL_CHUNKS = f"""btrim(cc.chunk_text) <> '' AND cc.owner_id <> ALL(:excluded) AND EXISTS (
+    SELECT 1 FROM ({visible_media_ids_cte_sql()}) vm
+    WHERE cc.owner_kind = 'media' AND vm.media_id = cc.owner_id
+    UNION ALL SELECT 1 FROM note_blocks nb
+    WHERE cc.owner_kind = 'note_block' AND nb.id = cc.owner_id AND nb.user_id = :viewer_id)"""
+
+
 def _prepare(db: Session, *, viewer_id: UUID, question: str) -> synthesis.Snapshot | Failure:
     """Retrieve both lanes and choose the plate; a typed Failure when they cannot."""
-    embedding = build_query_embedding(
-        db, question, ["content_chunk"], transaction_active_at_entry=False
-    )
+    db.commit()  # end the job's reads: no transaction spans the embedding call
+    embedding = embed_text(question)
     if embedding is None:
         return _failure("E_APP_SEARCH_FAILED", "semantic embeddings are unavailable")
     corpus.refresh_anchors(db)
@@ -340,24 +348,34 @@ def _prepare(db: Session, *, viewer_id: UUID, question: str) -> synthesis.Snapsh
     public = corpus.rank_passages(db, question=question, query_embedding=embedding)
     if len(public) < 3:
         return _failure("E_ORACLE_CORPUS_NOT_READY", f"{len(public)} rankable corpus passages")
+    excluded = list(db.scalars(select(OracleCorpusSource.media_id)))
+    params = {"viewer_id": viewer_id, "excluded": excluded}
+    near = nearest_chunks(db, embedding, owner=_PERSONAL_CHUNKS, params=params, limit=200)
+    chunks = {
+        row.id: row
+        for row in db.execute(
+            text("""SELECT cc.id, cc.owner_id, cc.chunk_text, cc.source_kind, cc.heading_path,
+                    cc.primary_evidence_span_id, COALESCE(m.title, 'Note') AS title
+                FROM content_chunks cc
+                LEFT JOIN media m ON cc.owner_kind = 'media' AND m.id = cc.owner_id
+                WHERE cc.id = ANY(:ids)"""),
+            {"ids": [chunk_id for chunk_id, _ in near]},
+        )
+    }
     personal: list[Candidate] = []
     owners: set[UUID] = set()
-    for chunk in retrieve_content_chunk_candidates(
-        db,
-        viewer_id=viewer_id,
-        query_embedding=embedding,
-        exclude_media_ids=db.scalars(select(OracleCorpusSource.media_id)).all(),
-    ):
+    for chunk in (chunks[chunk_id] for chunk_id, _ in near):
         if chunk.owner_id in owners:
             continue
         owners.add(chunk.owner_id)
         span = chunk.primary_evidence_span_id
+        headings = [str(part) for part in chunk.heading_path or [] if str(part).strip()]
         personal.append(
             Candidate(
                 source_kind="user_media",
-                ref=f"evidence_span:{span}" if span else f"content_chunk:{chunk.content_chunk_id}",
+                ref=f"evidence_span:{span}" if span else f"content_chunk:{chunk.id}",
                 attribution=f"From your library: {chunk.title}",
-                locator=" / ".join(chunk.heading_path[-2:]) or None,
+                locator=" / ".join(headings[-2:]) or None,
                 quote=chunk.chunk_text[:1200],
                 tags=("user-library", chunk.source_kind),
             )

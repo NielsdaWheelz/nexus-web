@@ -823,43 +823,31 @@ Other identity surfaces:
 
 ### 7.6 Search, retrieval & the embedding pipeline
 
-One core `search(db, viewer, SearchQuery)` (the `services/search/` package) serves
-the in-app search page, mobile Nexus, desktop Nexus, and chat
-`nexus.search` tool (RAG). The request is a single typed `SearchQuery` value
-object parsed at the
-edge; the user-facing taxonomy is **six kinds** (Documents, Notes, Highlights,
-Conversations, People, Web) folding the internal result types, with
-operator-backed filter chips (`format:`/`author:`/`role:`/`in:`) — not the raw
-result-type grid. `services/search/service.py` owns query execution, scope and
-page orchestration. `query.py` and `scope.py` parse its inputs; `retrievers.py`
-and `chunks.py` read candidates; `results.py` owns internal ranked records and
-cross-type ranking; `projection.py` constructs the typed public result union.
-Ranking/retrieval is extracted below that public projection into one internal
-pre-projection candidate seam (`search/candidates.py`); **resource target
-search** (`services/resource_items/targets.py`, `POST
-/resource-items/targets/search`) and route-only **openable-resource search**
-(`services/resource_items/openables.py`, `POST
-/resource-items/openables/search`) are projections over the same candidate
-engine, not second search engines, and never introduce new public `SearchKind`
-or `GET /search` result types. The target service's `purpose=link` profile
-is the full hybrid retrieval and may surface passage candidates (`kind:
-"passage"`, transient `candidate_ref`); its `purpose=reference` profile is a
-one-character-capable lexical fast path (exact/prefix/substring/FTS,
-including note-body substrings) restricted to direct targets, and never calls
-`build_query_embedding`. That reference pass retrieves its twelve independently
-bounded lexical sources through one typed `UNION ALL` statement; source-local
-visibility, score, order, and limit remain inside each branch, and the candidate
-engine strictly decodes the common `result_type/id/score/payload` row contract.
-The measured high-volume note-body branch owns both its full-text GIN index and
-its `pg_trgm` substring GIN index; the latter preserves required `ILIKE`
-substring semantics without turning every Openables keystroke into a note-table
-scan.
-Both profiles apply target capability, visibility,
-canonical dedupe, and exclusions before per-source caps, and refill a sparse
-filtered page rather than under-filling it. Openable search performs one
-bounded lexical candidate pass, admits only visible direct resources with
-internal route activation, applies scheme filtering and canonical dedupe before
-its top-20 limit, and has no cursor, refill, mutation, or history write.
+One retriever (the `services/search/` package) serves the in-app search page, mobile
+and desktop Nexus, the link picker, browse's in-database sections, chat's
+`nexus.search`/document search tools and citations, dossier research, connection
+discovery and the oracle. The request is a single typed `SearchQuery` value object parsed
+at the edge; the user-facing taxonomy is **six kinds** (Documents, Notes, Highlights,
+Conversations, People, Web) folding the internal result types, with operator-backed
+filter chips (`format:`/`author:`/`role:`/`in:`) — not the raw result-type grid.
+`sources.py` holds every findable family (media, notes, highlights, passages, chats,
+people, web results, link-only metadata, the Gutenberg catalogue) as one visible SQL
+relation; `rank` scores a family by the one rule — title tier (exact > prefix >
+substring), then full-text rank, then semantic similarity, absolute in [0, 1) — and
+`hydrate` rereads chosen ids under the same visibility. `semantic.py` owns the query
+embedding and the one nearest-neighbour query (`nearest_chunks`, a bound-constant
+`ORDER BY` that ivfflat can drive). `scope.py` authorizes scopes and ORs one predicate
+per scope; `project.py` turns hydrated rows into the typed public union; `service.py`
+owns `search`, `search_scopes_async` and reopen (`get_search_result`) and the transaction
+law: embed first, then one read-only snapshot that it ends. **Resource target search**
+and route-only **openable search** (`pickers.py`, `POST /resource-items/targets/search`
+and `/openables/search`) are two modes of the same retriever, never new public
+`SearchKind`s or `GET /search` result types: targets run one bounded pass with one
+embedding, admit direct resources and uniquely-quoted passages (transient
+`candidate_ref`, anchor-key identity), exclude the source and requested refs before
+paging and page by ten; openables rank the direct families lexically from one character
+and admit up to twenty route-activatable items. The rule, families, cursors and
+trade-offs are specified in [modules/search.md](modules/search.md).
 
 Canonical `/search` results expose both the occurrence `resource_ref` and the
 owning `owner_resource_ref`. The Highlights profile retrieves saved highlights
@@ -868,14 +856,12 @@ plus only note blocks classified by a visible `resource_edges.origin =
 identity or highlight-note origin from result type or URL.
 
 `schemas/search_types.py` owns the result discriminants; `schemas/search.py`
-owns the response union. `projection.py` maps each ranked record to its exact
-occurrence ref, owner ref, action subject and activation, validates required
-locators, and emits the corresponding response model. A result without usable
+owns the response union. `project.py` maps each hydrated row to its exact
+occurrence ref, owner ref, action subject and activation, drops rows whose locator no
+longer places, and emits the corresponding response model. A result without usable
 activation is a defect. The browser projects that generated wire union once into
-its row contract; [the search result boundary](modules/search.md) specifies
-variants, representation, consumers and verification. Durable resource reopening
-and visibility belong to `services/resource_graph/resolve.py`, independently of
-this browser projection.
+its row contract. Durable resource reopening and visibility belong to
+`services/resource_graph/resolve.py`, independently of this browser projection.
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
   media flows `fragment → content_blocks → chunks → embeddings`; note bodies
@@ -1304,7 +1290,7 @@ ordinary indexed media — not an Oracle-owned text/vector store.
 (the corpus file, seeding, lazy anchor resolution, passage ranking, plates),
 `synthesis.py` (the llm contract and every reading rule) and `readings.py` (create,
 read, concordance, the generation job). One active-model query embedding feeds two
-lanes: the corpus's resolved anchors scored by `search/chunks.score_content_chunks`
+lanes: the corpus's resolved anchors scored by `search/semantic.nearest_chunks`
 (cited `oracle_passage_anchor:<id>`, quoting the curated passage) and the viewer's
 visible media and notes with the corpus excluded in SQL (cited
 `evidence_span`/`content_chunk`). Fewer than three rankable corpus passages fails
@@ -2231,7 +2217,7 @@ The things most likely to bite you, distilled:
 | Reader/highlights backend                                         | `python/nexus/services/{reader_profile,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote}.py`                                                                        |
 | Chat / conversations                                              | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |
 | Oracle                                                            | `python/nexus/services/oracle/` (`corpus.py`, `corpus.json`, `synthesis.py`, `readings.py`), `python/nexus/services/atlas.py`                                                                          |
-| Search / retrieval / indexing / resource target/openable search   | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py`, `python/nexus/services/search/candidates.py`, `python/nexus/services/resource_items/{targets,openables}.py`   |
+| Search / retrieval / indexing / resource target/openable search   | `python/nexus/services/search/` (`sources`, `semantic`, `scope`, `project`, `service`, `pickers`), `python/nexus/services/{content_indexing,semantic_chunks,retrieval_citation}.py`   |
 | Resource graph (edges, refs, citations, connections, links) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`, `user_relations`, `policy`)                                                     |
 | Universal Dossiers / Media Intelligence                           | `python/nexus/services/dossier/`, `python/nexus/services/media_intelligence.py`, `python/nexus/api/routes/dossiers.py`                                                                               |
 | Agent tools                                                       | `python/nexus/services/agent_tools/`                                                                                                                                                                   |

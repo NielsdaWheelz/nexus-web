@@ -39,7 +39,7 @@ from nexus.schemas.podcast import (
     PodcastUnsubscribeOut,
 )
 from nexus.schemas.presence import Present, nullable_from_presence, presence_from_nullable
-from nexus.services.browse.models import ResolvedPodcast
+from nexus.services.browse.targets import ResolvedPodcast
 from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_collection_families,

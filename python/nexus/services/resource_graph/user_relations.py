@@ -43,12 +43,12 @@ from nexus.services.resource_graph.schemas import (
 )
 from nexus.services.resource_items import versions
 from nexus.services.resource_items.capabilities import resource_link_mode
-from nexus.services.resource_items.targets import candidate_owner_and_quote
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
     lookup_replay,
     record_replay,
 )
+from nexus.services.search.pickers import candidate_owner_and_quote
 
 _LINK_SCOPE = "resource_graph:link"
 
