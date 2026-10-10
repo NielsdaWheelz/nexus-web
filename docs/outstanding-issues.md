@@ -341,6 +341,7 @@ unexpected timeouts. See
 - [open] jobs / registry · 2026-10-04 simplification audit · six adapters forward unchanged arguments to concrete handlers: [ticket](tickets/jobs-registry-has-pure-forwarding-adapters.md).
 
 - [open] web / navigation hydration · 2026-10-09 media-row integration · one initial library reload warned beneath AppNav/NavRail; subsequent reloads were clear, differing attribute unrecorded: [ticket](tickets/app-nav-intermittent-hydration-warning.md).
+- [open] ci / private memory build · 2026-10-10 pr #538 · main's required repository credential is absent; hosted install fails before checks despite a passing locked local gate: [ticket](tickets/private-memory-ci-build-credential-missing.md).
 - [open] web / library write uncertainty · 2026-10-04 snapshot-owner audit · reorder transport rejection restores rows without proving authoritative order: [ticket](tickets/library-reorder-acknowledgement-loss-leaves-uncertain-order.md).
 - [open] oracle / job recovery · 2026-10-04 source audit, restated by the oracle rewrite · a dead generation job leaves its reading pending forever, and a stored streaming reading has no owner; pruning deletes its journal: [ticket](tickets/oracle-dead-jobs-can-lose-publication-replay.md).
 - [open] oracle / storage · 2026-10-04 oracle rewrite · 36 plate objects under `oracle/plates/` lost their owner when plates became static assets: [ticket](tickets/oracle-plates-orphaned-r2-objects.md).

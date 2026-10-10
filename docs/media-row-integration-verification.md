@@ -105,3 +105,11 @@ the post-cleanup `./scripts/test` exited 0 on the integration sources: ruff,
 pyright, generated wire/tool contracts, css tokens, eslint, typescript and
 the sole migration head `0265`. no temporary test seam, dependency, task origin,
 old bridge object or furthest-point writer remains in production sources.
+
+hosted pr #538 ci run `38022622059` failed before checks because main's new
+`UNIVERSAL_MEMORY_READ_TOKEN` repository secret is absent. pr #537 already
+records that setup failure. the local passing gate is not a hosted success;
+[the credential prerequisite](tickets/private-memory-ci-build-credential-missing.md)
+remains recorded.
+the owner explicitly approved merging with that inherited ci setup failure on
+2026-10-10 utc. no check was bypassed or represented as passing.
