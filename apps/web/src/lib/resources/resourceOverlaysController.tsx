@@ -31,7 +31,7 @@ import {
   getMemberLibrary,
   renameMemberLibrary,
 } from "@/lib/libraries/client";
-import { subscribeToPodcast } from "@/lib/podcasts/acquisition";
+import { subscribeToPodcast } from "@/lib/podcasts/api";
 import type {
   ResourceActionMutationBoundary,
   ResourceActionMutationLease,
@@ -269,9 +269,7 @@ export function ResourceActionOverlays() {
     closeSubscribe,
   } = useResourceOverlaysContext();
   // A stable synthetic pane-visit scope so any pane-visit-coupled control inside
-  // the settings overlays has a scope to read. The Subscribe overlay mints its
-  // OWN fresh per-session scope (below) because its acquisition control stages
-  // library selections that must not leak across sessions.
+  // these overlays has a scope to read.
   const [visitId] = useState(() => crypto.randomUUID());
 
   return (
@@ -565,80 +563,70 @@ function SubscribeOverlay({
   mutation: ResourceActionMutationBoundary;
   onClose: () => void;
 }) {
-  // AcquisitionControl stages its library selection into pane-visit data, so a
-  // shared scope would leak the previous Subscribe session's staged selection
-  // into the next open. This overlay is keyed by the subscribe session, so a
-  // fresh visit id per mount scopes that staged state to one session only.
-  const [visitId] = useState(() => crypto.randomUUID());
   const leaseRef = useRef<ResourceActionMutationLease | null>(null);
   return (
-    <PaneReturnVisitScope
-      visitId={visitId}
-      routeKey="resource-action-subscribe"
-    >
-      <Dialog open onClose={onClose} title="Subscribe">
-        <div
-          style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}
-        >
-          <p>Subscribe to this podcast and choose where to file it.</p>
-          <AcquisitionControl
-            kind="Subscribe"
-            subscribed={false}
-            commit={async (command) => {
-              const lease = leaseRef.current ?? mutation.begin();
-              if (lease === null) {
-                // justify-defect: this sole overlay owns the unsubscribed
-                // podcast command, and AcquisitionControl serializes its run.
-                throw new Error("Podcast subscription action is already busy");
-              }
-              leaseRef.current = lease;
-              try {
-                const result = await subscribeToPodcast({
-                  target: { kind: "Canonical", podcastId },
-                  namedLibraryIds: command.namedLibraryIds,
-                  replacementConfirmation: command.replacementConfirmation,
-                  idempotencyKey: command.idempotencyKey,
-                });
-                return { href: result.href };
-              } catch (error) {
-                const settlementUnknown =
-                  isAbortError(error) ||
-                  (isApiError(error) && error.code === "E_NETWORK");
-                if (!settlementUnknown) {
-                  lease.abort();
-                  leaseRef.current = null;
-                }
-                throw error;
-              }
-            }}
-            onCommitted={async () => {
-              const lease = leaseRef.current;
-              if (lease === null) {
-                // justify-defect: AcquisitionControl calls onCommitted only
-                // after the wrapped domain command returned successfully.
-                throw new Error(
-                  "Podcast subscription mutation lease is missing",
-                );
-              }
-              try {
-                await lease.reconcile({ kind: "AllRetained" });
-                await lease.commit();
-                leaseRef.current = null;
-                onClose();
-              } catch (error) {
+    <Dialog open onClose={onClose} title="Subscribe">
+      <div
+        style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}
+      >
+        <p>Subscribe to this podcast and choose where to file it.</p>
+        <AcquisitionControl
+          kind="Subscribe"
+          subscribed={false}
+          commit={async (command) => {
+            const lease = leaseRef.current ?? mutation.begin();
+            if (lease === null) {
+              // justify-defect: this sole overlay owns the unsubscribed
+              // podcast command, and AcquisitionControl serializes its run.
+              throw new Error("Podcast subscription action is already busy");
+            }
+            leaseRef.current = lease;
+            try {
+              const result = await subscribeToPodcast({
+                target: { kind: "Canonical", podcastId },
+                namedLibraryIds: command.namedLibraryIds,
+                replacementConfirmation: command.replacementConfirmation,
+                idempotencyKey: command.idempotencyKey,
+              });
+              return { href: result.href };
+            } catch (error) {
+              const settlementUnknown =
+                isAbortError(error) ||
+                (isApiError(error) && error.code === "E_NETWORK");
+              if (!settlementUnknown) {
                 lease.abort();
                 leaseRef.current = null;
-                throw error;
               }
-            }}
-          />
-          <div>
-            <Button variant="ghost" size="sm" onClick={onClose}>
-              Cancel
-            </Button>
-          </div>
+              throw error;
+            }
+          }}
+          onCommitted={async () => {
+            const lease = leaseRef.current;
+            if (lease === null) {
+              // justify-defect: AcquisitionControl calls onCommitted only
+              // after the wrapped domain command returned successfully.
+              throw new Error(
+                "Podcast subscription mutation lease is missing",
+              );
+            }
+            try {
+              await lease.reconcile({ kind: "AllRetained" });
+              await lease.commit();
+              leaseRef.current = null;
+              onClose();
+            } catch (error) {
+              lease.abort();
+              leaseRef.current = null;
+              throw error;
+            }
+          }}
+        />
+        <div>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
         </div>
-      </Dialog>
-    </PaneReturnVisitScope>
+      </div>
+    </Dialog>
   );
 }

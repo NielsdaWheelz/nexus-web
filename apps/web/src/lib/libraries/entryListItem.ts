@@ -8,7 +8,6 @@ import {
 import type { PositiveCount } from "@/lib/consumption/activityFacts";
 import { decodePublicationDate, type PublicationDate } from "@/lib/dates/publicationDate";
 import type { MediaSummary } from "@/lib/media/mediaSummary";
-import type { PodcastSyncStatus } from "@/lib/podcasts/types";
 
 export type LibraryMediaListValue = Omit<
   Schema<"LibraryEntryMediaOut">,
@@ -29,7 +28,7 @@ export type LibraryPodcastListValue = Omit<
 > & {
   unplayedCount: Presence<PositiveCount>;
   publicationDate: Presence<PublicationDate>;
-  syncStatus: Presence<PodcastSyncStatus>;
+  syncStatus: Presence<Schema<"PodcastSyncStatus">>;
 };
 export type LibraryPodcastSubscriptionValue = Schema<"LibraryEntryPodcastSubscriptionOut">;
 export type LibraryEntryPlacement = Schema<"LibraryEntryPlacementOut">;

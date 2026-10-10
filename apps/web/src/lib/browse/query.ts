@@ -1,125 +1,99 @@
-import {
-  parseDiscoveryTargetHandle,
-  type DiscoveryTargetHandle,
-} from "./contract";
-import {
-  BROWSE_KINDS,
-  BROWSE_SOURCES,
-  browseSourcesForKind,
-  type BrowseQueryKind,
-  type BrowseQuerySort,
-  type BrowseQuerySource,
-} from "./plan";
+// The browse url grammar (q, kind, source, sort=Newest) and the fixed plan of
+// eight sections it fans out to. The server validates every value it receives.
+
+import type { BrowseKind, BrowseSort, BrowseSource } from "@/lib/browse/api";
 
 export interface BrowseQuery {
   readonly text: string;
-  readonly kind: BrowseQueryKind;
-  readonly source: BrowseQuerySource | null;
-  readonly sort: BrowseQuerySort;
+  readonly kind: "All" | BrowseKind;
+  readonly source: BrowseSource | null;
+  readonly sort: BrowseSort;
 }
 
-export type BrowseQueryDecode =
-  | { readonly kind: "Valid"; readonly query: BrowseQuery }
-  | { readonly kind: "Invalid" };
-
-const ALLOWED_KEYS = new Set(["q", "kind", "source", "sort"]);
-const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/u;
-
-function hasExactlyOne(
-  params: URLSearchParams,
-  name: string,
-): string | null | undefined {
-  const values = params.getAll(name);
-  if (values.length === 0) return null;
-  if (values.length !== 1) return undefined;
-  return values[0]!;
+export interface BrowseSection {
+  readonly kind: BrowseKind;
+  readonly source: BrowseSource;
+  readonly sort: BrowseSort;
 }
 
-function countCodePoints(value: string): number {
-  return Array.from(value).length;
-}
+export const BROWSE_KINDS: readonly BrowseKind[] = [
+  "Pdf",
+  "Epub",
+  "WebArticle",
+  "Video",
+  "Podcast",
+];
 
-export function decodeBrowseQuery(params: URLSearchParams): BrowseQueryDecode {
-  for (const key of params.keys()) {
-    if (!ALLOWED_KEYS.has(key)) return { kind: "Invalid" };
-  }
+export const BROWSE_KIND_LABELS: Readonly<Record<BrowseKind, string>> = {
+  Pdf: "PDF",
+  Epub: "EPUB",
+  WebArticle: "Web Article",
+  Video: "Video",
+  Podcast: "Podcast",
+};
 
-  const rawText = hasExactlyOne(params, "q");
-  const rawKind = hasExactlyOne(params, "kind");
-  const rawSource = hasExactlyOne(params, "source");
-  const rawSort = hasExactlyOne(params, "sort");
-  if (
-    rawText === undefined ||
-    rawKind === undefined ||
-    rawSource === undefined ||
-    rawSort === undefined
-  ) {
-    return { kind: "Invalid" };
-  }
+export const BROWSE_SOURCE_LABELS: Readonly<Record<BrowseSource, string>> = {
+  Nexus: "Nexus",
+  ProjectGutenberg: "Project Gutenberg",
+  Brave: "Brave",
+  YouTube: "YouTube",
+  PodcastIndex: "Podcast Index",
+};
 
-  if (
-    rawText !== null &&
-    (rawText.length === 0 ||
-      rawText !== rawText.trim() ||
-      rawText !== rawText.normalize("NFC") ||
-      countCodePoints(rawText) > 200 ||
-      CONTROL_CHARACTER.test(rawText))
-  ) {
-    return { kind: "Invalid" };
-  }
+const PLAN: readonly (readonly [BrowseKind, BrowseSource])[] = [
+  ["Pdf", "Nexus"],
+  ["Epub", "Nexus"],
+  ["Epub", "ProjectGutenberg"],
+  ["WebArticle", "Nexus"],
+  ["WebArticle", "Brave"],
+  ["Video", "Nexus"],
+  ["Video", "YouTube"],
+  ["Podcast", "PodcastIndex"],
+];
 
-  const kind: BrowseQueryKind =
-    rawKind === null
-      ? "All"
-      : BROWSE_KINDS.includes(rawKind as BrowseQueryKind) && rawKind !== "All"
-        ? (rawKind as BrowseQueryKind)
-        : "All";
-  if (rawKind !== null && kind === "All") return { kind: "Invalid" };
-
-  const source =
-    rawSource === null
-      ? null
-      : BROWSE_SOURCES.includes(rawSource as BrowseQuerySource)
-        ? (rawSource as BrowseQuerySource)
-        : undefined;
-  if (
-    source === undefined ||
-    (source !== null && !browseSourcesForKind(kind).includes(source))
-  ) {
-    return { kind: "Invalid" };
-  }
-  if (kind === "All" && source !== null) return { kind: "Invalid" };
-
-  if (
-    rawSort !== null &&
-    (kind !== "Video" || source !== "YouTube" || rawSort !== "Newest")
-  ) {
-    return { kind: "Invalid" };
-  }
-
-  return {
-    kind: "Valid",
-    query: {
-      text: rawText ?? "",
-      kind,
-      source,
-      sort: rawSort === "Newest" ? "Newest" : "Relevance",
-    },
-  };
-}
-
-export function normalizeBrowseDraft(draft: string): string {
-  return draft.trim().normalize("NFC");
-}
-
-export function isValidBrowseText(text: string): boolean {
-  return (
-    text.length > 0 &&
-    text === text.trim() &&
-    text === text.normalize("NFC") &&
-    countCodePoints(text) <= 200 &&
-    !CONTROL_CHARACTER.test(text)
+/** The planned sections a query names, in plan order. */
+export function browseSections(query: BrowseQuery): readonly BrowseSection[] {
+  return PLAN.flatMap(([kind, source]) =>
+    (query.kind === "All" || query.kind === kind) &&
+    (query.source === null || query.source === source)
+      ? [
+          {
+            kind,
+            source,
+            sort:
+              kind === "Video" && source === "YouTube"
+                ? query.sort
+                : "Relevance",
+          },
+        ]
+      : [],
   );
+}
+
+export function browseSourcesFor(
+  kind: "All" | BrowseKind,
+): readonly BrowseSource[] {
+  return PLAN.filter(([planned]) => planned === kind).map(
+    ([, source]) => source,
+  );
+}
+
+/** Null iff `kind` or `source` names no planned section. */
+export function readBrowseQuery(params: URLSearchParams): BrowseQuery | null {
+  const kind = params.get("kind") ?? "All";
+  const source = params.get("source");
+  const named = PLAN.find(
+    ([plannedKind, plannedSource]) =>
+      (kind === "All" || kind === plannedKind) &&
+      (source === null || source === plannedSource),
+  );
+  if (named === undefined) return null;
+  return {
+    text: params.get("q") ?? "",
+    kind: kind === "All" ? "All" : named[0],
+    source: source === null ? null : named[1],
+    sort: params.get("sort") === "Newest" ? "Newest" : "Relevance",
+  };
 }
 
 export function browseHref(query: BrowseQuery): string {
@@ -132,45 +106,8 @@ export function browseHref(query: BrowseQuery): string {
   return suffix ? `/browse?${suffix}` : "/browse";
 }
 
-export function withBrowseKind(
-  query: BrowseQuery,
-  kind: BrowseQueryKind,
-): BrowseQuery {
-  return { ...query, kind, source: null, sort: "Relevance" };
-}
-
-export function withBrowseSource(
-  query: BrowseQuery,
-  source: BrowseQuerySource | null,
-): BrowseQuery {
-  return { ...query, source, sort: "Relevance" };
-}
-
-export type BrowsePreviewQueryDecode =
-  | {
-      readonly kind: "Valid";
-      readonly target: DiscoveryTargetHandle;
-    }
-  | { readonly kind: "Invalid" };
-
-export function decodeBrowsePreviewQuery(
-  params: URLSearchParams,
-): BrowsePreviewQueryDecode {
-  const keys = [...params.keys()];
-  if (
-    keys.length !== 1 ||
-    keys[0] !== "target" ||
-    params.getAll("target").length !== 1
-  ) {
-    return { kind: "Invalid" };
-  }
-  try {
-    // Kept at the route-query ingress so malformed links make no provider call.
-    return {
-      kind: "Valid",
-      target: parseDiscoveryTargetHandle(params.get("target")),
-    };
-  } catch {
-    return { kind: "Invalid" };
-  }
+/** A normalised draft the server would refuse: over 200 code points or C0/C1. */
+export function browseDraftInvalid(draft: string): boolean {
+  const control = /[\u0000-\u001f\u007f-\u009f]/u;
+  return Array.from(draft).length > 200 || control.test(draft);
 }

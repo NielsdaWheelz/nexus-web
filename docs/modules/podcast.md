@@ -16,30 +16,43 @@ Backend owners live under `python/nexus/services/podcasts/*`, the media-level
 `python/nexus/services/net/*`. Terminal transcript failure lives in
 `podcasts/transcription_failure.py`, which does not import the provider adapter
 on the background supervisor path. Frontend pane composition lives under
-`apps/web/src/app/(authenticated)/podcasts/*`; reusable Podcast contracts and
-controllers live under `apps/web/src/lib/podcasts/*`, and reusable presentation
-lives under `apps/web/src/components/podcasts/*`.
+`apps/web/src/app/(authenticated)/podcasts/*`. `lib/podcasts/api.ts` owns the
+podcast http, its types and the podcast revision; `lib/podcasts/paneState.ts`
+owns the panes' server state, failure copy and command runner; reusable
+presentation lives under `apps/web/src/components/podcasts/*`.
 
-Followed-show and episode pane text filtering is local Pane Search over the
-exhaustively loaded current domain view. It matches title and contributor
-display/credited names, preserves the server-owned state/sort order, and never
-enters URL, request, cursor, snapshot, or published pane-header metadata. The
-list APIs reject
-`q`. Episode-wide Mark Played and transcript selection is state-only and
-server-resolved; while a local query is active those commands remain
+Pane server state: `useServerValue` (one resource) and `useServerList` (a
+server-ordered collection) load on their key, refetch when a `stale` token
+changes, coalesce refetches (at most one queued, never aborting the run in
+flight), show the pane visit's snapshot on return (once: a later return to the
+same key loads afresh) and throw defects at render.
+Every podcast write in `api.ts` bumps a process-local podcast revision after
+success; the index and detail panes put it in their tokens, so a change from a
+pane, a resource action, the settings overlay or the player refetches them. The
+detail head's token also carries the media query revision, and its generation
+feeds the episodes' token, so episodes are always read again after each detail
+read. On a pane return the restored episodes are re-read beside the restored
+head's first read, then once more after it. A state-filtered episode view also
+refetches on the consumption revision.
+
+Both lists load 100 rows and continue on Load more. A continuation echoes the
+issuing page's `(cursor, collection_revision)` as one opaque pair; a 409
+`E_COLLECTION_CHANGED` reloads the asked-for prefix once (one page longer for a
+Load more) and then shows the error with Retry
+([ticket](../tickets/podcast-lists-need-keyset-continuations.md)). The header
+count appears once a list is complete.
+
+Followed-show and episode text filtering is local over the loaded rows ("found
+so far" until the list is complete). It matches title and contributor names,
+preserves the server-owned order and never enters URL or request; the list APIs
+reject `q`. Episode-wide Mark Played and transcript selection is state-only and
+server-resolved; while a local query is active those commands stay
 discoverably disabled because rendered rows never define command scope.
 
-The subscription `filter`/`library_id`/`sort` and episode `state`/`sort` pane
-state is URL-owned and decoded by one strict, total codec per surface
-(`lib/podcasts/subscriptionView.ts`, `lib/podcasts/episodeView.ts`). Canonical
-values are omitted, so a fresh `/podcasts` or `/podcasts/{id}` carries no query
-and performs no replace on mount. An unknown value, an empty value, a duplicate
-key, or an explicitly written default is `Invalid`: the pane renders
-`Invalid podcasts view` / `Invalid episodes view` with `Reset view` and issues
-no request. There is no permissive decoder, no component state mirroring the
-URL, and no effect that canonicalizes the URL after the fact. The podcast HTTP
-API is unchanged — the panes still send every list parameter explicitly,
-including default values.
+The subscription `filter`/`library_id`/`sort` and episode `state`/`sort` view
+is URL-owned (defaults omitted) and sent to the API as given, defaults included;
+the server validates it. A 400 shows the failure notice with `Reset view`; a 404
+from the subscriptions list (podcasts disabled) shows the failure notice.
 
 ## Android Offline Downloads
 
@@ -78,7 +91,8 @@ declare their complete `Data` success models; web requests use generated wire
 types. the list carries only `id`, `mediaSummary`, `transcript_state` and
 `has_show_notes`. native output requires the existing transcript enum, a matching
 summary media id and `podcast_episode` kind. the web retains shared publication
-date, duration, collection cursor and revision conversions.
+date and duration conversions; it echoes each page's cursor and collection
+revision as issued, unread (`useServerList`).
 
 the list no longer sends `canonical_source_url`, `transcript_coverage`,
 `playerDescriptor`, `listening_state`, `episode_state`, `progress_resettable`,
@@ -154,11 +168,11 @@ that matter:
 
 - **Subscription-settings UI — `PodcastSubscriptionSettingsOverlay`.** The
   app-level resource overlay is the only load/draft/save/reconcile lifecycle
-  owner, and `lib/podcasts/subscriptionSettings.ts` strictly decodes the complete GET/PATCH
-  envelopes, serializes mutations, and publishes canonical installs. Podcast,
-  Podcast-detail, and Library panes subscribe directly to that install
-  publisher to refresh their local projections; they do not instantiate a
-  second modal controller or persist a hidden settings draft.
+  owner: it loads the subscription, saves one PATCH through `lib/podcasts/api.ts`
+  and reconciles the resource-action snapshot. The save (and the player's
+  remember-speed) bumps the podcast revision, so open podcast panes refetch; the
+  Library pane refetches on its own facts and visits. There is no install
+  publisher, mutation tail or confirmed library-entry revision.
 
 - **Feed-controlled fetches — `net.safe_fetch.safe_get`.** Every fetch of a feed-controlled
   URL (RSS feed pages, Podcasting 2.0 chapter JSON, transcript sidecars) goes through one
@@ -211,9 +225,11 @@ The active Podcast detail pane converges those independent workers through
 subscription and backfill publish only the subscription epoch UUID to
 `podcast_subscription_events`; the stream resolves viewer + Podcast to that
 epoch, rechecks the same owner and epoch on every fresh snapshot, and closes
-only when both live sync and backfill are terminal. The web compares the initial
-snapshot to its installed detail, serializes changed-snapshot revalidations, and
-aborts observation on pane deactivation or unmount. Replacing a subscription
+only when both live sync and backfill are terminal. The web refetches the detail
+head (coalesced) whenever a snapshot differs from the loaded detail, and aborts
+observation on pane deactivation or unmount. A lost stream refetches the head
+too; "Podcast updates couldn't be observed" shows only while that same
+subscription is still live and non-terminal. Replacing a subscription
 epoch closes the old listener without emitting the replacement and reconnects
 the direct stream against the new epoch. It does not poll or treat a globally reused episode as new ingest.
 

@@ -78,7 +78,7 @@ import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import type { PaneRefreshExecute } from "@/lib/panes/panePublications";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { isAbortError } from "@/lib/errors";
-import { podcastRefreshRequestAnnouncement, requestPodcastRefresh } from "@/lib/podcasts/refresh";
+import { podcastRefreshRequestAnnouncement, requestPodcastRefresh } from "@/lib/podcasts/api";
 import type { LibraryEntryListItem } from "@/lib/libraries/entryListItem";
 import { suggestionTargetId } from "@/lib/suggestions";
 import styles from "./LibraryPaneBody.module.css";

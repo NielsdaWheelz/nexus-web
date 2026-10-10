@@ -1,77 +1,43 @@
-.navLink {
-  color: var(--accent);
-  text-decoration: none;
-  font-weight: var(--weight-semibold);
-}
-
-.primaryScroll {
+.page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 16px;
+  gap: var(--space-4);
+  padding: var(--space-4);
 }
 
-.episodePaneContent {
+.bar,
+.actions {
   display: flex;
-  flex-direction: column;
-}
-
-.episodePaneHeaderRow {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.headerActions {
-  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
+  gap: var(--space-3);
 }
 
-.headerButtons {
+.navLink {
+  color: var(--accent);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+}
+
+.episodes {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.episodeActions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.episodeShowNotes {
-  display: inline-flex;
   flex-direction: column;
-  gap: 2px;
 }
 
-.episodeShowNotesPreview {
-  font-size: var(--text-xs);
+.actions {
+  justify-content: flex-end;
+  margin-bottom: var(--space-3);
+}
+
+.panel,
+.summary {
+  margin: 0 0 var(--space-3);
   color: var(--ink-faint);
-  white-space: pre-wrap;
-}
-
-.batchTranscriptSummary {
-  margin: 0 0 12px;
   font-size: var(--text-sm);
-  color: var(--ink-faint);
 }
 
-.reasonLabel {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  color: var(--ink-faint);
+.notes {
   font-size: var(--text-xs);
-}
-
-.transcriptStatus {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
+  white-space: pre-wrap;
 }

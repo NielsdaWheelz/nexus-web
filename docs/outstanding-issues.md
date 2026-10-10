@@ -29,6 +29,13 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+- [open] podcasts, browse / reauthoring · 2026-10-10 podcasts/browse rewrite · 4,163 formatted lines against a 3,000 cap; no behaviour cut for budget: [ticket](tickets/podcasts-reauthor-over-line-budget.md).
+- [open] podcasts / collection pages · 2026-10-10 podcasts/browse rewrite · p3 · podcast lists page with a viewer revision the web must echo and restart on 409; move them to keyset continuations: [ticket](tickets/podcast-lists-need-keyset-continuations.md).
+- [open] consumption / collection revisions · 2026-10-10 podcasts/browse rewrite · p3 · every podcast listening write moves the podcast list families, so Load more while playing always meets 409: [ticket](tickets/listening-writes-bump-podcast-collection-families.md).
+- [open] browse / preview schema · 2026-10-10 podcasts/browse rewrite · p3 · an episode preview's audio href is typed only as a string (spec D10): [ticket](tickets/browse-episode-audio-href-is-untyped.md).
+- [open] panes / filter rows · 2026-10-10 podcasts/browse rewrite · p3 · the partial row-status copy promises loading a manual Load-more list never does: [ticket](tickets/pane-filter-partial-copy-assumes-draining.md).
+- [open] podcasts / verification · 2026-10-10 podcasts/browse rewrite · p3 · "Retry backlog" has no live proof; the harness cannot reach a Failed backfill quickly: [ticket](tickets/podcast-backlog-retry-journey-unverified.md).
+- [open] browse / android player bridge · 2026-10-10 podcasts/browse rewrite · p3 · preview audio over `window.nexusPlayback` not exercised after the descriptor moved (json unchanged): [ticket](tickets/browse-preview-audio-android-unverified.md).
 - [open] generation core / frozen spec · 2026-10-09 python dead-code sweep · seven `GenerationBounds` fields are frozen into every spec but never read; removal needs a stored-spec and fingerprint rewrite: [ticket](tickets/generation-bounds-carry-unread-fields.md).
 - [open] ingest / media capabilities · 2026-10-09 python dead-code sweep · `can_refresh_source` sql hand-lists source types (omits `email_message`) and storage errors differently from the refresh admission: [ticket](tickets/source-refresh-capability-disagrees-with-admission.md).
 - [open] library filing / revision fanout · 2026-10-04 spec review · each filing locks the actor's libraries then advances four inventory families for every account, widening contention: [ticket](tickets/library-filing-invalidates-every-viewers-inventories.md).
@@ -277,7 +284,7 @@ unexpected timeouts. See
 - [open] oi-137 · api memory · 2026-09-16 utc pr #270 manual acceptance · p2 · paired readers stayed usable but reached the 320-mib cap; sustained margin remains unproved: [ticket](tickets/api-reader-search-memory-margin-remains-small.md).
 - [open] oi-139 · codex host provisioning · 2026-09-16 retained pr #203 finding · p2 · encrypted-state formatting lacks a qualified memory bound and usable-keyslot check: [ticket](tickets/codex-state-luks-format-oom.md).
 
-- [open] oi-161 · web panes · 2026-09-17 slop sweep · p3 · four pane bodies are oversized with no split that does not invent abstractions; re-measure after the dedupes land: [ticket](tickets/oversized-pane-bodies-have-no-obvious-split.md).
+- [open] oi-161 · web panes · 2026-09-17 slop sweep · p3 · pane bodies remain oversized with no split that does not invent abstractions (podcast detail resolved 2026-10-10); re-measure after the dedupes land: [ticket](tickets/oversized-pane-bodies-have-no-obvious-split.md).
 - [open] pdf passage positioning · 2026-09-17 passage cleanup · p2 · actual viewport verification is blocked by standalone renderer bootstrap: [ticket](tickets/pdf-passage-positioning-needs-browser-verification.md).
 - [open] oi-167 · pdf highlights · 2026-09-17 typecheck cleanup · p2 · write-time matching combines cached text with current publication spans: [ticket](tickets/pdf-highlight-matching-mixes-publication-snapshots.md).
 - [open] oi-171 · appearance · 2026-09-18 owner decisions · p3 · Press and Study declare no color-scheme, so native controls and UA scrollbars follow the browser default: [ticket](tickets/press-and-study-leave-native-controls-on-the-ua-scheme.md).

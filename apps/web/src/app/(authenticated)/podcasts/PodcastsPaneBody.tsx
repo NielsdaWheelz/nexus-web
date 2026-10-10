@@ -1,88 +1,52 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type SetStateAction,
-} from "react";
+// The followed shows. The url owns filter, sort and library scope and passes
+// them to the server, which validates them; the text filter stays local.
+
+import { useCallback, useMemo } from "react";
 import Link from "next/link";
 import { Compass } from "lucide-react";
-import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import {
-  type CollectionCursor,
-  type CollectionPage,
-  type CollectionRevision,
-} from "@/lib/api/collectionPage";
-import type { ApiJson } from "@/lib/api/wire";
-import type { Presence } from "@/lib/api/presence";
-import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
-import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
-import { useResource } from "@/lib/api/useResource";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import Button from "@/components/ui/Button";
-import AppliedFilters, { type AppliedFilterChip } from "@/components/ui/AppliedFilters";
-import SelectField from "@/components/ui/SelectField";
 import CollectionView from "@/components/collections/CollectionView";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
+import PodcastViewBar, {
+  podcastViewHref,
+} from "@/components/podcasts/PodcastViewBar";
+import Button from "@/components/ui/Button";
+import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
-import CollectionFilterEditor from "@/components/workspace/CollectionFilterEditor";
 import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
+import { absent, present } from "@/lib/api/presence";
+import { useResource } from "@/lib/api/useResource";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
-import {
-  FeedbackNotice,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
-import {
-  podcastSubscriptionPageFromWire,
-  type PodcastSubscriptionListItem,
-} from "./podcastSubscriptions";
-import { subscribePodcastSubscriptionSettingsInstalls } from "@/lib/podcasts/subscriptionSettings";
-import {
-  listMemberLibraries,
-  type MemberLibrary,
-} from "@/lib/libraries/client";
+import { listMemberLibraries } from "@/lib/libraries/client";
+import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
+import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
-import { usePaneIsActive } from "@/lib/panes/paneRuntime";
+import {
+  listSubscriptions,
+  usePodcastRevision,
+  type PodcastSubscriptionRow,
+} from "@/lib/podcasts/api";
+import {
+  listRowStatus,
+  podcastErrorMessage,
+  podcastRefresh,
+  useServerList,
+  type ListData,
+  type Visit,
+} from "@/lib/podcasts/paneState";
+import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
 import {
   definePaneVisitDataKey,
-  useClearAllPaneVisitData,
   usePaneReturnReady,
-  usePaneVisitData,
 } from "@/lib/workspace/paneReturnMemento";
-import { isAbortError } from "@/lib/errors";
-import { useRevalidationSettlement } from "@/lib/panes/useRevalidationSettlement";
-import {
-  CANONICAL_PODCAST_SUBSCRIPTION_VIEW,
-  SUBSCRIPTION_FILTERS,
-  SUBSCRIPTION_SORTS,
-  decodePodcastSubscriptionView,
-  encodePodcastSubscriptionView,
-  podcastSubscriptionViewQuery,
-  subscriptionFilterLabel,
-  subscriptionSortLabel,
-  type DecodedPodcastSubscriptionView,
-  type SubscriptionFilter,
-  type SubscriptionSort,
-} from "@/lib/podcasts/subscriptionView";
-import {
-  podcastRefreshRequestAnnouncement,
-  requestPodcastRefresh,
-} from "@/lib/podcasts/refresh";
-import type { PaneRefreshExecute } from "@/lib/panes/panePublications";
-import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
-import styles from "./page.module.css";
 
-const PAGE_SIZE = 100;
-
-// Module-level so the published descriptor keeps one identity: the chrome
-// republishes whenever an action's icon element changes.
-const PODCASTS_ACTIONS: readonly PaneHeaderAction[] = [
+const VISIT = definePaneVisitDataKey<Visit<ListData<PodcastSubscriptionRow>>>(
+  "Podcasts.Subscriptions",
+);
+const REFRESH = podcastRefresh({ kind: "Podcasts" });
+const ACTIONS: readonly PaneHeaderAction[] = [
   {
     kind: "link",
     id: "Podcasts.Browse",
@@ -91,860 +55,263 @@ const PODCASTS_ACTIONS: readonly PaneHeaderAction[] = [
     href: "/browse?kind=Podcast",
   },
 ];
+const SORTS = [
+  { value: "recent_episode", label: "Newest episode" },
+  { value: "unplayed_count", label: "Most unplayed" },
+  { value: "alpha", label: "Title A–Z" },
+];
+const FILTERS = [
+  { value: "all", label: "All shows" },
+  { value: "has_new", label: "Has new episodes" },
+  { value: "not_in_library", label: "Not in a library" },
+];
 
-type PodcastsLoadOperation = "Subscriptions" | "Libraries" | "Revalidate";
-
-function podcastsLoadErrorMessage(
-  error: unknown,
-  operation: PodcastsLoadOperation,
-): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  const requestId = error.requestId;
-  const title =
-    operation === "Subscriptions"
-      ? "Followed podcasts couldn’t be loaded"
-      : operation === "Libraries"
-        ? "Podcast libraries couldn’t be loaded"
-        : "Podcasts couldn’t be refreshed";
-  switch (error.code) {
-    case "E_NETWORK":
-      return { tone: "Danger", title, message: "Check your connection and retry.", requestId };
-    case "E_UPSTREAM":
-    case "E_UPSTREAM_TIMEOUT":
-      return {
-        tone: "Danger",
-        title,
-        message: "The server took too long to respond. Retry the load.",
-        requestId,
-      };
-    case "E_RATE_LIMITED":
-      return { tone: "Danger", title, message: "Wait a moment, then retry.", requestId };
-    case "E_INVALID_REQUEST":
-      if (operation !== "Revalidate") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "The podcast view changed. Refresh the pane, then retry.",
-        requestId,
-      };
-    case "E_FORBIDDEN":
-      return {
-        tone: "Danger",
-        title,
-        message: "This account can’t view those podcasts.",
-        requestId,
-      };
-    case "E_NOT_FOUND":
-    case "E_LIBRARY_NOT_FOUND":
-      if (operation !== "Libraries") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "The selected library is no longer available. Clear the library filter.",
-        requestId,
-      };
-    default:
-      throw error;
-  }
-}
-
-interface PodcastsSnapshot {
-  readonly subscriptions: readonly PodcastSubscriptionListItem[];
-  readonly queryIdentity: string;
-  readonly collectionRevision: CollectionRevision;
-  readonly nextCursor: Presence<CollectionCursor>;
-  readonly libraries: readonly MemberLibrary[];
-}
-
-const PODCASTS_VISIT_DATA =
-  definePaneVisitDataKey<PodcastsSnapshot>("Podcasts.Subscriptions");
-const EMPTY_SUBSCRIPTIONS: readonly PodcastSubscriptionListItem[] = [];
-const EMPTY_MEMBER_LIBRARIES: readonly MemberLibrary[] = [];
+const fields = (row: PodcastSubscriptionRow) => [
+  row.title,
+  ...row.contributors.flatMap((credit) => [
+    credit.contributor_display_name ?? "",
+    credit.credited_name,
+  ]),
+];
 
 export default function PodcastsPaneBody() {
-  const isPaneActive = usePaneIsActive();
-  // The pane URL owns the subscriptions view through a strict, total codec;
-  // `view` is null only when the URL is Invalid, which is a terminal,
-  // user-recoverable state that requests nothing.
-  const subscriptionViewCodec = useMemo(
-    () => ({
-      basePath: "/podcasts",
-      decode: decodePodcastSubscriptionView,
-      encode: (
-        decoded: DecodedPodcastSubscriptionView,
-        current: URLSearchParams,
-      ) =>
-        encodePodcastSubscriptionView(
-          decoded.kind === "Valid"
-            ? decoded.view
-            : CANONICAL_PODCAST_SUBSCRIPTION_VIEW,
-          current,
-        ),
-      replaceOptions: {
-        viewTransition: { kind: "collection-reflow" } as const,
-      },
-    }),
-    [],
-  );
-  const { state: decodedView, setState: setDecodedView } =
-    usePaneUrlState(subscriptionViewCodec);
-  const view = decodedView.kind === "Valid" ? decodedView.view : null;
-  // The request identity is the exact API query the view names.
-  const subscriptionQueryIdentity =
-    view === null ? null : podcastSubscriptionViewQuery(view).toString();
-  const committedSnapshotRef = useRef<PodcastsSnapshot | null>(null);
-  const refreshFallbackSnapshotRef = useRef<PodcastsSnapshot | null>(null);
-  const captureCommitted = useCallback(
-    () => committedSnapshotRef.current,
-    [],
-  );
-  const restored = usePaneVisitData(PODCASTS_VISIT_DATA, captureCommitted);
-  const [controller, setController] = useState<PodcastsSnapshot | null>(
-    restored,
-  );
-  const controllerRef = useRef<PodcastsSnapshot | null>(restored);
-  const [chainEpoch, setChainEpoch] = useState(0);
-  const [initialLoadEnabled, setInitialLoadEnabled] = useState(restored === null);
-  const [reloadNonce, setReloadNonce] = useState(0);
-  const reloadNonceRef = useRef(0);
-  const revalidation = useRevalidationSettlement();
-  const completedPodcastsRevalidationNonceRef = useRef<number | null>(null);
-  const clearAllVisitData = useClearAllPaneVisitData();
-  const initialPageRef = useRef<
-    CollectionPage<PodcastSubscriptionListItem> | null
-  >(null);
-  const initialPageNonceRef = useRef(0);
-  const initialLibrariesRef = useRef<readonly MemberLibrary[] | null>(
-    restored?.libraries ?? null,
-  );
-  const allowInitialAdoptionRef = useRef(restored === null);
-  const rejectPendingPodcastsRevalidation = useCallback((error: unknown) => {
-    completedPodcastsRevalidationNonceRef.current = null;
-    revalidation.reject(error);
-  }, [revalidation]);
-  // Abandons the committed chain so the next first page is adopted afresh. A
-  // view change needs only this: the view is already part of the request
-  // identity.
-  const resetSubscriptionChain = useCallback(() => {
-    rejectPendingPodcastsRevalidation(
-      new DOMException("Podcasts refresh was superseded.", "AbortError"),
-    );
-    if (committedSnapshotRef.current !== null) {
-      refreshFallbackSnapshotRef.current = committedSnapshotRef.current;
-    }
-    committedSnapshotRef.current = null;
-    clearAllVisitData();
-    allowInitialAdoptionRef.current = true;
-    initialPageRef.current = null;
-    setInitialLoadEnabled(true);
-  }, [clearAllVisitData, rejectPendingPodcastsRevalidation]);
-  // A refresh keeps the view, so only a fresh nonce makes the request identity
-  // differ from the one already loaded.
-  const refreshSubscriptions = useCallback(() => {
-    resetSubscriptionChain();
-    const nonce = reloadNonceRef.current + 1;
-    reloadNonceRef.current = nonce;
-    setReloadNonce(nonce);
-  }, [resetSubscriptionChain]);
-  const revalidateSubscriptions = useCallback(
-    (signal: AbortSignal): Promise<void> => {
-      if (signal.aborted) {
-        return Promise.reject(
-          signal.reason ??
-            new DOMException("Podcasts refresh was aborted.", "AbortError"),
-        );
-      }
-      refreshSubscriptions();
-      const nonce = reloadNonceRef.current;
-      return revalidation.wait({
-        requestId: nonce,
-        signal,
-        onAbort: () => {
-          completedPodcastsRevalidationNonceRef.current = null;
-          allowInitialAdoptionRef.current = false;
-          setInitialLoadEnabled(false);
-          committedSnapshotRef.current = refreshFallbackSnapshotRef.current;
-          refreshFallbackSnapshotRef.current = null;
-        },
-      });
-    },
-    [refreshSubscriptions, revalidation],
-  );
-  useEffect(
-    () => () => {
-      rejectPendingPodcastsRevalidation(
-        new DOMException("Podcasts refresh source was replaced.", "AbortError"),
-      );
-    },
-    [rejectPendingPodcastsRevalidation, subscriptionQueryIdentity],
-  );
-  const commitInitialController = useCallback(() => {
-    if (
-      !allowInitialAdoptionRef.current ||
-      subscriptionQueryIdentity === null ||
-      initialPageRef.current === null ||
-      initialLibrariesRef.current === null
-    ) {
-      return;
-    }
-    allowInitialAdoptionRef.current = false;
-    const page = initialPageRef.current;
-    const snapshot: PodcastsSnapshot = {
-      subscriptions: page.items,
-      queryIdentity: subscriptionQueryIdentity,
-      collectionRevision: page.collectionRevision,
-      nextCursor: page.nextCursor,
-      libraries: initialLibrariesRef.current,
-    };
-    controllerRef.current = snapshot;
-    committedSnapshotRef.current = snapshot;
-    refreshFallbackSnapshotRef.current = null;
-    setController(snapshot);
-    setChainEpoch((epoch) => epoch + 1);
-
-    if (revalidation.isPending(initialPageNonceRef.current)) {
-      completedPodcastsRevalidationNonceRef.current = initialPageNonceRef.current;
-    }
-  }, [revalidation, subscriptionQueryIdentity]);
-  const setRows = useCallback(
-    (update: SetStateAction<PodcastSubscriptionListItem[]>) => {
-      setController((current) => {
-        if (current === null) return current;
-        const previous = [...current.subscriptions];
-        const subscriptions =
-          typeof update === "function" ? update(previous) : update;
-        const next = { ...current, subscriptions };
-        controllerRef.current = next;
-        return next;
-      });
-    },
-    [],
-  );
-  const [error, setError] = useState<FeedbackContent | null>(null);
-  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
-  const captureLoadError = useCallback(
-    (loadError: unknown, operation: PodcastsLoadOperation) => {
-      try {
-        setError(podcastsLoadErrorMessage(loadError, operation));
-      } catch (defect) {
-        setAsyncDefect({ error: defect });
-      }
-    },
-    [],
-  );
-  const previousSubscriptionQueryIdentityRef = useRef(
-    subscriptionQueryIdentity,
-  );
-  const [librariesLoading, setLibrariesLoading] = useState(restored === null);
-  useEffect(
-    () =>
-      subscribePodcastSubscriptionSettingsInstalls((install) => {
-        if (install.kind !== "Settings") return;
-        const response = install.settings;
-        setRows((prev) =>
-          prev.map((row) =>
-            row.podcast_id === response.podcast_id
-              ? {
-                  ...row,
-                  default_playback_speed: response.default_playback_speed,
-                  pause_shortening_mode: response.pause_shortening_mode,
-                  auto_queue: response.auto_queue,
-                }
-              : row,
-          ),
-        );
-        refreshSubscriptions();
-      }),
-    [refreshSubscriptions, setRows],
-  );
-
-  const rows = controller?.subscriptions ?? EMPTY_SUBSCRIPTIONS;
-  const libraries = controller?.libraries ?? EMPTY_MEMBER_LIBRARIES;
-  const loading = controller === null && error === null;
-
-  useLayoutEffect(() => {
-    if (
-      previousSubscriptionQueryIdentityRef.current ===
-      subscriptionQueryIdentity
-    ) {
-      return;
-    }
-    previousSubscriptionQueryIdentityRef.current = subscriptionQueryIdentity;
-    resetSubscriptionChain();
-  }, [resetSubscriptionChain, subscriptionQueryIdentity]);
-
-  const subscriptionListResource = useResource<
-    CollectionPage<PodcastSubscriptionListItem>
-  >({
-    cacheKey:
-      view !== null && initialLoadEnabled
-        ? ["podcast-subscriptions", subscriptionQueryIdentity, reloadNonce].join(
-            ":",
-          )
-        : null,
-    load: async (signal) => {
-      if (view === null) {
-        throw new Error("Podcast subscriptions require an addressable view");
-      }
-      const params = podcastSubscriptionViewQuery(view);
-      params.set("limit", String(PAGE_SIZE));
-      const response = await apiFetch<ApiJson<"/podcasts/subscriptions", "get">>(
-        `/api/podcasts/subscriptions?${params.toString()}`,
-        { signal },
-      );
-      return podcastSubscriptionPageFromWire(response.data);
-    },
+  const router = usePaneRouter();
+  const params = usePaneSearchParams();
+  const sort = params.get("sort") ?? "recent_episode";
+  const filter = params.get("filter") ?? "all";
+  const libraryId = params.get("library_id");
+  const query = new URLSearchParams({ sort, filter });
+  if (libraryId !== null) query.set("library_id", libraryId);
+  const key = query.toString();
+  const revision = usePodcastRevision();
+  const mediaRevision = useMediaQueryRevision();
+  const list = useServerList<PodcastSubscriptionRow>({
+    key,
+    stale: `${revision}:${mediaRevision}`,
+    pageSize: 100,
+    visit: VISIT,
+    fetchPage: (page, signal) =>
+      listSubscriptions(new URLSearchParams(`${key}&${page}`), signal),
   });
-
-  useEffect(() => {
-    if (subscriptionListResource.status === "loading") {
-      setError(null);
-      return;
-    }
-
-    if (subscriptionListResource.status === "ready") {
-      initialPageRef.current = subscriptionListResource.data;
-      initialPageNonceRef.current = reloadNonce;
-      commitInitialController();
-      setError(null);
-      return;
-    }
-
-    if (subscriptionListResource.status === "error") {
-      allowInitialAdoptionRef.current = false;
-      setInitialLoadEnabled(false);
-      committedSnapshotRef.current = refreshFallbackSnapshotRef.current;
-      refreshFallbackSnapshotRef.current = null;
-
-      captureLoadError(
-        subscriptionListResource.error,
-        revalidation.isPending(reloadNonce) ? "Revalidate" : "Subscriptions",
-      );
-      if (revalidation.isPending(reloadNonce)) {
-        rejectPendingPodcastsRevalidation(subscriptionListResource.error);
-      }
-    }
-  }, [
-    revalidation,
-    commitInitialController,
-    captureLoadError,
-    rejectPendingPodcastsRevalidation,
-    reloadNonce,
-    subscriptionListResource,
-  ]);
-
-  useEffect(() => {
-    if (restored !== null || view === null) return;
-    let cancelled = false;
-    setLibrariesLoading(true);
-    void listMemberLibraries({ limit: 200 })
-      .then((data) => {
-        if (!cancelled) {
-          initialLibrariesRef.current = data;
-          commitInitialController();
-        }
-      })
-      .catch((err) => {
-        if (handleUnauthenticatedApiError(err)) return;
-        if (!cancelled) {
-          captureLoadError(err, "Libraries");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLibrariesLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [captureLoadError, commitInitialController, restored, view]);
-
-  useLayoutEffect(() => {
-    committedSnapshotRef.current = controller;
-    controllerRef.current = controller;
-    const completedNonce = completedPodcastsRevalidationNonceRef.current;
-    if (
-      controller === null ||
-      completedNonce === null ||
-      !revalidation.isPending(completedNonce) ||
-      controller.queryIdentity !== subscriptionQueryIdentity
-    ) {
-      return;
-    }
-    completedPodcastsRevalidationNonceRef.current = null;
-    revalidation.resolve(completedNonce);
-  }, [revalidation, controller, subscriptionQueryIdentity]);
-
-  usePaneReturnReady(controller !== null || error !== null);
-
-  const loadSubscriptionPage = useCallback(
-    async (
-      cursor: CollectionCursor,
-      revision: CollectionRevision,
-      signal: AbortSignal,
-    ) => {
-      if (view === null) {
-        throw new Error("Podcast subscriptions require an addressable view");
-      }
-      const params = podcastSubscriptionViewQuery(view);
-      params.set("limit", String(PAGE_SIZE));
-      params.set("cursor", cursor);
-      params.set("collection_revision", String(revision));
-      const response = await apiFetch<ApiJson<"/podcasts/subscriptions", "get">>(
-        `/api/podcasts/subscriptions?${params.toString()}`,
-        { signal },
-      );
-      return podcastSubscriptionPageFromWire(response.data);
-    },
-    [view],
-  );
-  const commitSubscriptionPage = useCallback(
-    (page: CollectionPage<PodcastSubscriptionListItem>) => {
-      const current = controllerRef.current;
-      if (
-        current === null ||
-        page.collectionRevision !== current.collectionRevision
-      ) {
-        throw new Error("Podcast subscription continuation revision mismatch");
-      }
-      const seen = new Set(current.subscriptions.map((row) => row.podcast_id));
-      const subscriptions = [...current.subscriptions];
-      for (const row of page.items) {
-        if (seen.has(row.podcast_id)) continue;
-        seen.add(row.podcast_id);
-        subscriptions.push(row);
-      }
-      const next: PodcastsSnapshot = {
-        ...current,
-        subscriptions,
-        nextCursor: page.nextCursor,
-      };
-      controllerRef.current = next;
-      setController(next);
-      return subscriptions.length;
-    },
-    [],
-  );
-  const exhaustion = useExhaustivePagination({
-    active:
-      isPaneActive &&
-      controller !== null &&
-      controller.queryIdentity === subscriptionQueryIdentity &&
-      !allowInitialAdoptionRef.current,
-    chainKey: [subscriptionQueryIdentity, reloadNonce, chainEpoch].join(":"),
-    cursor: controller?.nextCursor ?? { kind: "Absent" },
-    collectionRevision:
-      controller?.collectionRevision ?? (0 as CollectionRevision),
-    itemCount: rows.length,
-    loadPage: loadSubscriptionPage,
-    commitPage: commitSubscriptionPage,
-    refresh: refreshSubscriptions,
+  const libraries = useResource({
+    cacheKey: "podcasts:member-libraries",
+    load: (signal) => listMemberLibraries({ limit: 200, signal }),
   });
-
-  const finalCount =
-    !loading && exhaustion.kind === "Complete"
-      ? exhaustion.itemCount
-      : null;
-  const sortSelectRef = useRef<HTMLSelectElement | null>(null);
-  const filtersTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const selectedLibraryId = view?.library.kind === "ExactLibrary"
-    ? view.library.id
-    : null;
-  const selectedLibrary = selectedLibraryId === null
-    ? undefined
-    : libraries.find((library) => library.id === selectedLibraryId);
-  const subscriptionFilterNodes = useMemo(
-    () =>
-      view === null ? undefined : (
-        <>
-          <SelectField
-            layout="Stacked"
-            label="Show"
-            value={view.filter}
-            onChange={(event) =>
-              setDecodedView({
-                kind: "Valid",
-                view: {
-                  ...view,
-                  filter: event.target.value as SubscriptionFilter,
-                },
-              })
-            }
-          >
-            {SUBSCRIPTION_FILTERS.map((filter) => (
-              <option key={filter} value={filter}>
-                {subscriptionFilterLabel(filter)}
-              </option>
-            ))}
-          </SelectField>
-
-          <SelectField
-            layout="Stacked"
-            label="Library"
-            value={
-              view.library.kind === "ExactLibrary" ? view.library.id : ""
-            }
-            onChange={(event) =>
-              setDecodedView({
-                kind: "Valid",
-                view: {
-                  ...view,
-                  library:
-                    event.target.value === ""
-                      ? { kind: "AllLibraries" }
-                      : { kind: "ExactLibrary", id: event.target.value },
-                },
-              })
-            }
-            disabled={librariesLoading}
-          >
-            <option value="">All libraries</option>
-            {selectedLibraryId !== null && selectedLibrary === undefined ? (
-              <option value={selectedLibraryId}>{selectedLibraryId}</option>
-            ) : null}
-            {libraries.map((library) => (
-              <option key={library.id} value={library.id}>
-                {library.name}
-              </option>
-            ))}
-          </SelectField>
-
-        </>
-      ),
-    [
-      libraries,
-      librariesLoading,
-      selectedLibrary,
-      selectedLibraryId,
-      setDecodedView,
-      view,
-    ],
-  );
-  const getSubscriptionRowStatus = useCallback(
-    (query: string) => {
-      const visibleCount = rows.filter((row) =>
-        matchesPaneFilterQuery(query, [
-          row.title,
-          ...row.contributors.flatMap((credit) => [
-            credit.contributor_display_name ?? "",
-            credit.credited_name,
-          ]),
-        ]),
-      ).length;
-      if (
-        controller !== null &&
-        (loading || controller.queryIdentity !== subscriptionQueryIdentity)
-      ) {
-        return {
-          kind: "Retained" as const,
-          visibleCount,
-          loadedCount: rows.length,
-          unit: { singular: "show", plural: "shows" },
-          cause: error === null ? "Updating" as const : "Failed" as const,
-        };
-      }
-      if (
-        (controller === null && error !== null) ||
-        exhaustion.kind === "ResumeFailed" ||
-        exhaustion.kind === "RefreshRequired"
-      ) {
-        return {
-          kind: "Failed" as const,
-          visibleCount,
-          loadedCount: rows.length,
-          unit: { singular: "show", plural: "shows" },
-        };
-      }
-      return exhaustion.kind === "Complete"
-        ? {
-            kind: "Complete" as const,
-            visibleCount,
-            totalCount: rows.length,
-            unit: { singular: "show", plural: "shows" },
-          }
-        : {
-            kind: "Partial" as const,
-            visibleCount,
-            loadedCount: rows.length,
-            unit: { singular: "show", plural: "shows" },
-          };
+  const rows = list.status === "ready" ? list.items : null;
+  const complete = list.status === "ready" && list.complete;
+  const getRowStatus = useCallback(
+    (text: string) => {
+      const loaded = rows ?? [];
+      const visible = loaded.filter((row) =>
+        matchesPaneFilterQuery(text, fields(row)),
+      );
+      return listRowStatus(
+        list.status,
+        complete,
+        loaded.length,
+        visible.length,
+        "show",
+      );
     },
-    [controller, error, exhaustion.kind, loading, rows, subscriptionQueryIdentity],
+    [complete, list.status, rows],
   );
-  const {
-    query: filterQuery,
-    onQueryChange,
-    clearQuery,
-    rowStatus,
-  } = usePaneFilterRows({
+  const filterRows = usePaneFilterRows({
     sourceKey: "Podcasts.Subscriptions",
-    getRowStatus: getSubscriptionRowStatus,
+    getRowStatus,
   });
-  const resetToCanonicalView = useCallback(() => {
-    clearQuery();
-    setDecodedView({
-      kind: "Valid",
-      view: CANONICAL_PODCAST_SUBSCRIPTION_VIEW,
-    });
-  }, [clearQuery, setDecodedView]);
-  const clearDomainFilters = useCallback(() => {
-    if (view === null) return;
-    setDecodedView({
-      kind: "Valid",
-      view: { ...view, filter: "all", library: { kind: "AllLibraries" } },
-    });
-  }, [setDecodedView, view]);
-  const appliedFilters = useMemo<AppliedFilterChip[]>(() => view === null ? [] : [
-    ...(view.filter === "all"
-      ? []
-      : [{ id: "filter", label: subscriptionFilterLabel(view.filter) }]),
-    ...(view.library.kind === "AllLibraries"
-      ? []
-      : [{
-          id: "library",
-          label: `Library: ${selectedLibrary?.name ?? view.library.id}`,
-        }]),
-  ], [view, selectedLibrary?.name]);
+  const replaceView = useCallback(
+    (changes: Readonly<Record<string, string | null>>) =>
+      router.replace(podcastViewHref("/podcasts", params, changes), {
+        viewTransition: { kind: "collection-reflow" },
+      }),
+    [params, router],
+  );
   const { inputRef, focusInput } = usePaneCollectionInput();
-  const collection = useMemo(
-    () =>
-      view === null
-        ? undefined
-        : {
-            label: "Filter followed podcasts",
-            content: (
-              <PaneCollectionBar
-                inputRef={inputRef}
-                inputLabel="Filter followed podcasts"
-                placeholder="Filter shows"
-                query={filterQuery}
-                onQueryChange={onQueryChange}
-                onClearQuery={clearQuery}
-                rowStatus={rowStatus}
-                filters={
-                  <>
-                    <SelectField
-                      layout="Inline"
-                      label="Sort shows"
-                      size="sm"
-                      ref={sortSelectRef}
-                      value={view.sort}
-                      onChange={(event) =>
-                        setDecodedView({
-                          kind: "Valid",
-                          view: { ...view, sort: event.target.value as SubscriptionSort },
-                        })
-                      }
-                    >
-                      {SUBSCRIPTION_SORTS.map((sort) => (
-                        <option key={sort} value={sort}>{subscriptionSortLabel(sort)}</option>
-                      ))}
-                    </SelectField>
-                    <CollectionFilterEditor
-                      activeCount={appliedFilters.length}
-                      triggerRef={filtersTriggerRef}
-                      onClearFilters={clearDomainFilters}
-                      onResetView={view.sort !== "recent_episode" || filterQuery.trim() || appliedFilters.length > 0 ? resetToCanonicalView : undefined}
-                    >
-                      {subscriptionFilterNodes}
-                    </CollectionFilterEditor>
-                  </>
-                }
-                appliedFilters={
-                  <AppliedFilters
-                    chips={appliedFilters}
-                    returnFocusTo={filtersTriggerRef}
-                    onRemove={(chipId) => {
-                      if (chipId === "filter") {
-                        setDecodedView({ kind: "Valid", view: { ...view, filter: "all" } });
-                      } else if (chipId === "library") {
-                        setDecodedView({ kind: "Valid", view: { ...view, library: { kind: "AllLibraries" } } });
-                      }
-                    }}
-                  />
-                }
-              />
-            ),
-            focusInput,
-          },
-    [
-      appliedFilters,
-      clearDomainFilters,
-      clearQuery,
-      filterQuery,
-      focusInput,
-      inputRef,
-      onQueryChange,
-      resetToCanonicalView,
-      rowStatus,
-      setDecodedView,
-      subscriptionFilterNodes,
-      view,
-    ],
-  );
-  const visibleRows = useMemo(
-    () =>
-      rows.filter((row) =>
-        matchesPaneFilterQuery(filterQuery, [
-          row.title,
-          ...row.contributors.flatMap((credit) => [
-            credit.contributor_display_name ?? "",
-            credit.credited_name,
-          ]),
-        ]),
+  const collection = useMemo(() => {
+    const options = libraries.status === "ready" ? libraries.data : [];
+    const library = {
+      param: "library_id",
+      label: "Library",
+      value: libraryId ?? "",
+      defaultValue: "",
+      options: [
+        { value: "", label: "All libraries" },
+        ...options.map((option) => ({ value: option.id, label: option.name })),
+      ],
+      disabled: libraries.status === "loading",
+    };
+    return {
+      label: "Filter followed podcasts",
+      content: (
+        <PodcastViewBar
+          inputRef={inputRef}
+          inputLabel="Filter followed podcasts"
+          placeholder="Filter shows"
+          filterRows={filterRows}
+          sort={{
+            param: "sort",
+            label: "Sort shows",
+            value: sort,
+            defaultValue: "recent_episode",
+            options: SORTS,
+          }}
+          filters={[
+            {
+              param: "filter",
+              label: "Show",
+              value: filter,
+              defaultValue: "all",
+              options: FILTERS,
+            },
+            library,
+          ]}
+          onChange={replaceView}
+        />
       ),
-    [filterQuery, rows],
-  );
-  const initialFilterNoMatch =
-    loading &&
-    filterQuery.trim().length > 0 &&
-    visibleRows.length === 0;
-
-  const executeRefresh = useCallback<PaneRefreshExecute>(
-    async ({ signal }) => {
-      try {
-        const requestedCount = await requestPodcastRefresh(
-          { kind: "Podcasts" },
-          signal,
-        );
-        await revalidateSubscriptions(signal);
-        return {
-          kind: "Complete",
-          announcement: podcastRefreshRequestAnnouncement(requestedCount),
-        };
-      } catch (refreshError: unknown) {
-        if (isAbortError(refreshError)) throw refreshError;
-        if (!handleUnauthenticatedApiError(refreshError)) {
-          try {
-            podcastsLoadErrorMessage(refreshError, "Revalidate");
-          } catch (defect) {
-            setAsyncDefect({ error: defect });
-          }
-        }
-        return {
-          kind: "Failed",
-          announcement: "Podcasts failed to refresh",
-        };
-      }
-    },
-    [revalidateSubscriptions],
-  );
+      focusInput,
+    };
+  }, [
+    filter,
+    filterRows,
+    focusInput,
+    inputRef,
+    libraries,
+    libraryId,
+    replaceView,
+    sort,
+  ]);
   usePanePrimaryChrome({
     header: {
       kind: "Section",
-      meta:
-        finalCount === null || loading || exhaustion.kind !== "Complete"
+      meta: complete
+        ? { kind: "Count", value: rows?.length ?? 0, unit: "show" }
+        : list.status === "loading"
           ? { kind: "Pending" }
-          : { kind: "Count", value: finalCount, unit: "show" },
+          : { kind: "None" },
     },
-    menuActions: PODCASTS_ACTIONS,
+    menuActions: ACTIONS,
     collection,
     refresh: {
       kind: "Refreshable",
-      sourceKey: `Podcasts.Subscriptions:${subscriptionQueryIdentity}`,
-      execute: executeRefresh,
+      sourceKey: `Podcasts.Subscriptions:${key}`,
+      execute: REFRESH,
     },
   });
+  usePaneReturnReady(list.status !== "loading");
 
-  if (asyncDefect !== null) throw asyncDefect.error;
-
-  if (view === null) {
+  if (list.status === "failed") {
+    const invalidView = list.error.code === "E_INVALID_REQUEST";
     return (
       <FeedbackNotice
-        content={{ tone: "Danger", title: "Invalid podcasts view" }}
+        content={podcastErrorMessage(
+          list.error,
+          "Followed podcasts couldn’t be loaded",
+        )}
         announcement="Assertive"
-        actions={[{ label: "Reset view", onClick: () => {
-          resetToCanonicalView();
-          requestAnimationFrame(() => sortSelectRef.current?.focus({ preventScroll: true }));
-        } }]}
+        actions={[
+          invalidView
+            ? {
+                label: "Reset view",
+                onClick: () => router.replace("/podcasts"),
+              }
+            : { label: "Retry", onClick: list.retry },
+        ]}
       />
     );
   }
 
-  const collectionRows = visibleRows.map((row) =>
-    presentPodcast({
-      id: row.podcast_id,
-      title: row.title,
-      contributors: row.contributors,
-      unplayedCount: row.unplayedCount,
-      publicationDate: row.publicationDate,
-      syncStatus: row.syncStatus,
-    }),
+  const text = filterRows.query.trim();
+  const visible = (rows ?? []).filter((row) =>
+    matchesPaneFilterQuery(text, fields(row)),
   );
-
+  const filtered = filter !== "all" || libraryId !== null;
   return (
-      <div style={{ display: "contents" }}>
-        <CollectionView
-          returnScope="Podcasts.Subscriptions"
-          rows={collectionRows}
-          status={loading ? "loading" : "ready"}
-          ariaLabel="Followed podcasts"
-          rowChangePresentation={{
-            kind: "ImmediateOnKeyChange",
-            key: filterQuery.trim(),
-          }}
-          notice={
-            error ? (
-              <FeedbackNotice content={error} announcement="Assertive" />
-            ) : initialFilterNoMatch ? (
-              <FeedbackNotice
-                content={{ tone: "Neutral", title: "No matching show found so far." }}
-                announcement="None"
-              />
-            ) : undefined
-          }
-          empty={
-            filterQuery.trim() ? (
-              <FeedbackNotice
-                content={{
-                  tone: "Neutral",
-                  title:
-                    exhaustion.kind === "Complete"
-                      ? "No shows match this filter."
-                      : "No matching show found so far.",
-                }}
-                announcement="None"
-              />
-            ) : appliedFilters.length > 0 ? (
-              <FeedbackNotice
-                content={{
-                  tone: "Neutral",
-                  title: "No podcasts match the current filters.",
-                }}
-                announcement="None"
-              >
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className={styles.inlineButton}
-                    onClick={() => {
-                      filtersTriggerRef.current?.focus({ preventScroll: true });
-                      clearDomainFilters();
-                    }}
-                  >
-                    Clear filters
-                  </Button>
-              </FeedbackNotice>
-            ) : (
-              <FeedbackNotice
-                content={{ tone: "Neutral", title: "No followed podcasts yet." }}
-                announcement="None"
-              >
-                  <Button
-                    asChild
-                    variant="ghost"
-                    size="sm"
-                    className={styles.inlineButton}
-                  >
-                    <Link href="/browse?kind=Podcast">
-                      Browse podcasts
-                    </Link>
-                  </Button>
-              </FeedbackNotice>
-            )
-          }
-          collectionBusy={exhaustion.kind === "Draining"}
-          footer={<CollectionExhaustionNotice state={exhaustion} />}
-        />
-      </div>
+    <CollectionView
+      returnScope="Podcasts.Subscriptions"
+      rows={visible.map((row) =>
+        presentPodcast({
+          id: row.podcast_id,
+          title: row.title,
+          contributors: row.contributors,
+          unplayedCount:
+            row.unplayed_count > 0
+              ? present({ value: row.unplayed_count })
+              : absent(),
+          syncStatus: present(row.sync_status),
+          publicationDate: row.latest_episode_published_at,
+        }),
+      )}
+      status={list.status === "loading" ? "loading" : "ready"}
+      ariaLabel="Followed podcasts"
+      rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
+      notice={
+        list.status === "ready" && list.error ? (
+          <FeedbackNotice
+            content={podcastErrorMessage(
+              list.error,
+              "Followed podcasts couldn’t be refreshed",
+            )}
+            announcement="Polite"
+            actions={[{ label: "Retry", onClick: list.retry }]}
+          />
+        ) : libraries.status === "error" ? (
+          <FeedbackNotice
+            content={podcastErrorMessage(
+              libraries.error,
+              "Podcast libraries couldn’t be loaded",
+            )}
+            announcement="Polite"
+            actions={[{ label: "Retry", onClick: libraries.retry }]}
+          />
+        ) : undefined
+      }
+      empty={
+        text ? (
+          <FeedbackNotice
+            content={{
+              tone: "Neutral",
+              title: complete
+                ? "No shows match this filter."
+                : "No matching show found so far.",
+            }}
+            announcement="None"
+          />
+        ) : filtered ? (
+          <FeedbackNotice
+            content={{
+              tone: "Neutral",
+              title: "No podcasts match the current filters.",
+            }}
+            announcement="None"
+          >
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => replaceView({ filter: null, library_id: null })}
+            >
+              Clear filters
+            </Button>
+          </FeedbackNotice>
+        ) : (
+          <FeedbackNotice
+            content={{ tone: "Neutral", title: "No followed podcasts yet." }}
+            announcement="None"
+          >
+            <Button asChild variant="ghost" size="sm">
+              <Link href="/browse?kind=Podcast">Browse podcasts</Link>
+            </Button>
+          </FeedbackNotice>
+        )
+      }
+      footer={
+        list.status === "ready" && !list.complete ? (
+          <LoadMoreFooter
+            hasMore
+            loading={list.loadingMore}
+            onLoadMore={list.loadMore}
+          />
+        ) : undefined
+      }
+    />
   );
 }

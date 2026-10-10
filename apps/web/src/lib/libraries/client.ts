@@ -36,7 +36,7 @@ export function isLibraryDestinationDefect(error: unknown): boolean {
   );
 }
 
-export type MemberLibrary = LibraryOut;
+type MemberLibrary = LibraryOut;
 
 export async function listMemberLibraries({
   limit = 200,

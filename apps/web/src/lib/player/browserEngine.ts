@@ -19,7 +19,6 @@ import { apiFetch, apiKeepaliveJson, isApiError } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { absent, present, type Presence } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import type { PreviewAudioDescriptor } from "@/lib/browse/contract";
 import {
   parseMediaRef,
   type ActivityDeviceClass,
@@ -41,6 +40,7 @@ import {
   PLAYER_SKIP_FORWARD_MS,
   type Engine,
   type EngineState,
+  type PreviewAudioDescriptor,
 } from "@/lib/player/playerRuntime";
 
 export interface BrowserEngineDeps {

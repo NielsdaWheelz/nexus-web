@@ -1,5 +1,9 @@
 "use client";
 
+// A preview shows something outside Nexus without acquiring it: opening,
+// playing and leaving write nothing. Only AcquisitionControl acquires. A
+// target already in Nexus redirects to its owned pane.
+
 import { useEffect, useMemo, useState } from "react";
 import AcquisitionControl, {
   type AcquisitionCommand,
@@ -13,143 +17,118 @@ import {
 import YouTubeEmbedFrame from "@/components/media/YouTubeEmbedFrame";
 import PodcastOverview from "@/components/podcasts/PodcastOverview";
 import Button from "@/components/ui/Button";
+import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import MediaImage from "@/components/ui/MediaImage";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import type { CursorPage } from "@/lib/api/useCursorPagination";
+import type { ApiError } from "@/lib/api/client";
+import { absent, present } from "@/lib/api/presence";
 import { useCursorPagination } from "@/lib/api/useCursorPagination";
-import { useResource, type AsyncResource } from "@/lib/api/useResource";
-import {
-  isApiError,
-  isSameSystemApiDefect,
-} from "@/lib/api/client";
-import {
-  addEpisodeFromDiscovery,
-  fetchBrowsePreview,
-} from "@/lib/browse/client";
+import { useResource } from "@/lib/api/useResource";
 import {
   browsePreviewHref,
-  parseDiscoveryTargetHandle,
-  proxiedImageHref,
+  fetchBrowsePreview,
   type BrowsePreview,
-  type DiscoveryTargetHandle,
-  type PreviewEpisodeItem,
-} from "@/lib/browse/contract";
-import { decodeBrowsePreviewQuery } from "@/lib/browse/query";
+} from "@/lib/browse/api";
+import { BROWSE_SOURCE_LABELS } from "@/lib/browse/query";
 import { presentPreviewEpisode } from "@/lib/collections/presenters/browse";
+import type { MediaImageProxySrc } from "@/lib/media/imageProxy";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
 import {
   usePaneRouter,
   usePaneSearchParams,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
-import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { usePlayerCommands } from "@/lib/player/playerRuntime";
-import { subscribeToPodcast } from "@/lib/podcasts/acquisition";
+import {
+  addEpisodeFromDiscovery,
+  subscribeToPodcast,
+} from "@/lib/podcasts/api";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "../browse.module.css";
 
-const PREVIEW_EPISODE_PAGE_SIZE = 20;
+interface Failure {
+  readonly content: FeedbackContent;
+  readonly retryable: boolean;
+}
 
-type BrowsePreviewFailure = {
-  content: FeedbackContent;
-  retryable: boolean;
+const INVALID: Failure = {
+  content: {
+    tone: "Warning",
+    title: "Invalid preview link",
+    message: "This link is malformed or obsolete.",
+  },
+  retryable: false,
 };
 
-function browsePreviewErrorMessage(error: unknown): BrowsePreviewFailure {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  const requestId = error.requestId;
+/** Retryable or terminal; any other code is a defect. */
+function previewErrorMessage(error: ApiError): Failure {
+  const failed = (message: string): Failure => ({
+    content: {
+      tone: "Danger",
+      title: "Preview couldn’t be loaded",
+      message,
+      requestId: error.requestId,
+    },
+    retryable: true,
+  });
+  const terminal = (title: string, message?: string): Failure => ({
+    content: { tone: "Warning", title, message, requestId: error.requestId },
+    retryable: false,
+  });
   switch (error.code) {
     case "E_NETWORK":
-      return {
-        content: {
-          tone: "Danger",
-          title: "Preview couldn’t be loaded",
-          message: "Check your connection and retry.",
-          requestId,
-        },
-        retryable: true,
-      };
+    case "E_UPSTREAM":
+    case "E_UPSTREAM_TIMEOUT":
+      return failed("Check your connection and retry.");
     case "E_BROWSE_PROVIDER_UNAVAILABLE":
-      return {
-        content: {
-          tone: "Danger",
-          title: "Preview couldn’t be loaded",
-          message: "The discovery provider is unavailable. Retry in a moment.",
-          requestId,
-        },
-        retryable: true,
-      };
+      return failed(
+        "The discovery provider is unavailable. Retry in a moment.",
+      );
+    case "E_RATE_LIMITED":
     case "E_BROWSE_PROVIDER_RATE_LIMITED":
-      return {
-        content: {
-          tone: "Warning",
-          title: "Preview couldn’t be loaded",
-          message: "Wait a moment, then retry.",
-          requestId,
-        },
-        retryable: true,
-      };
+      return failed("Wait a moment, then retry.");
     case "E_BROWSE_PROVIDER_QUOTA_EXHAUSTED":
-      return {
-        content: {
-          tone: "Warning",
-          title: "Preview isn’t available",
-          message: "The discovery provider’s allowance has been exhausted.",
-          requestId,
-        },
-        retryable: false,
-      };
+      return terminal(
+        "Preview isn’t available",
+        "The discovery provider’s allowance has been exhausted.",
+      );
     case "E_INVALID_DISCOVERY_TARGET":
-      return {
-        content: { tone: "Warning", title: "Invalid preview link", requestId },
-        retryable: false,
-      };
+      return terminal("Invalid preview link");
     case "E_NOT_FOUND":
-      return {
-        content: { tone: "Warning", title: "No longer available", requestId },
-        retryable: false,
-      };
+      return terminal("No longer available");
     default:
       throw error;
   }
 }
 
-function PodcastEpisodePreviewList({
+function PreviewEpisodes({
   preview,
 }: {
   readonly preview: Extract<BrowsePreview, { kind: "Podcast" }>;
 }) {
-  const firstPage: AsyncResource<CursorPage<PreviewEpisodeItem>> = useMemo(
-    () => ({ status: "ready", data: preview.episodes }),
-    [preview.episodes],
-  );
   const pagination = useCursorPagination({
-    firstPage,
+    firstPage: useMemo(
+      () => ({ status: "ready" as const, data: preview.episodes }),
+      [preview.episodes],
+    ),
     initialMoreError: null,
     loadMorePage: async (cursor, signal) => {
-      const next = await fetchBrowsePreview({
-        target: preview.target,
-        limit: PREVIEW_EPISODE_PAGE_SIZE,
-        cursor,
-        signal,
-      });
+      const next = await fetchBrowsePreview(preview.target, cursor, signal);
       if (next.kind !== "Podcast") {
-        throw new TypeError("Podcast Preview continuation changed identity");
+        // justify-defect: a podcast target always previews as a podcast.
+        throw new Error("A podcast preview continued as another kind");
       }
       return next.episodes;
     },
   });
-  const rows = useMemo(
-    () => pagination.items.map(presentPreviewEpisode),
-    [pagination.items],
-  );
   return (
     <PaneSection title="Episodes">
       <CollectionView
         returnScope="Browse.Preview.PodcastEpisodes"
-        rows={rows}
+        rows={pagination.items.map(presentPreviewEpisode)}
         status="ready"
         ariaLabel="Podcast episodes"
         empty={<p className={styles.statusRow}>No episodes available</p>}
@@ -164,82 +143,47 @@ function PodcastEpisodePreviewList({
           </Button>
         </div>
       ) : null}
-      {pagination.hasMore ? (
-        <div className={styles.continuation}>
-          <Button
-            size="sm"
-            variant="secondary"
-            loading={pagination.loadingMore}
-            onClick={pagination.loadMore}
-          >
-            Load more
-          </Button>
-        </div>
-      ) : null}
+      <LoadMoreFooter
+        hasMore={pagination.hasMore}
+        loading={pagination.loadingMore}
+        onLoadMore={pagination.loadMore}
+      />
     </PaneSection>
   );
 }
 
-function sourceUrlForAdd(
-  preview: Extract<
-    BrowsePreview,
-    { kind: "Epub" | "WebArticle" | "Video" }
-  >,
-): string {
-  switch (preview.kind) {
-    case "Epub":
-      return preview.kindFacts.importHref;
-    case "WebArticle":
-      return preview.kindFacts.canonicalUrl;
-    case "Video":
-      return preview.sourceHref;
-  }
-}
-
 export default function BrowsePreviewPaneBody() {
   const router = usePaneRouter();
-  const params = usePaneSearchParams();
-  const decoded = useMemo(() => decodeBrowsePreviewQuery(params), [params]);
-  const target = decoded.kind === "Valid" ? decoded.target : null;
+  const target = usePaneSearchParams().get("target");
   const resource = useResource<BrowsePreview>({
-    cacheKey: target,
-    load: (signal) => {
-      // justify-type-assertion: useResource never invokes load when cacheKey is
-      // null, so this closure runs only for a successfully decoded target.
-      const activeTarget = target as DiscoveryTargetHandle;
-      return fetchBrowsePreview({
-        target: activeTarget,
-        limit: PREVIEW_EPISODE_PAGE_SIZE,
-        signal,
-      });
-    },
+    cacheKey: target === null ? null : `browse-preview:${target}`,
+    // justify-type-assertion: useResource loads only for a non-null cacheKey.
+    load: (signal) => fetchBrowsePreview(target as string, null, signal),
   });
-  const [loadVideo, setLoadVideo] = useState(false);
+  const [videoLoaded, setVideoLoaded] = useState(false);
   const { playPreviewAudio } = usePlayerCommands();
   const preview = resource.status === "ready" ? resource.data : null;
-  const ownedHref =
-    preview?.resolution.kind === "InNexusMedia" || preview?.resolution.kind === "InNexusPodcast"
+  const owned =
+    preview !== null && preview.resolution.kind !== "Preview"
       ? preview.resolution.href
       : null;
-  const backToBrowse = () => {
-    if (router.canGoBack) {
-      router.back();
-      return;
-    }
-    router.replace("/browse");
-  };
-
   useEffect(() => {
-    if (ownedHref) router.replace(ownedHref, { labelHint: preview?.title });
-  }, [ownedHref, preview?.title, router]);
-
+    if (owned !== null) router.replace(owned, { labelHint: preview?.title });
+  }, [owned, preview?.title, router]);
+  const failure =
+    target === null
+      ? INVALID
+      : resource.status === "error"
+        ? previewErrorMessage(resource.error)
+        : null;
   useSetPaneLabel(preview?.title ?? null);
   usePanePrimaryChrome({
     header:
-      decoded.kind === "Invalid" || resource.status === "error"
+      failure !== null
         ? { kind: "Resource", resource: { status: "Failed" } }
-        : preview
-          ? {
+        : preview === null
+          ? undefined
+          : {
               kind: "Resource",
               resource: {
                 status: "Ready",
@@ -249,250 +193,186 @@ export default function BrowsePreviewPaneBody() {
                     label: "Source",
                     credits: [
                       {
-                        label:
-                          preview.source === "ProjectGutenberg"
-                            ? "Project Gutenberg"
-                            : preview.source === "PodcastIndex"
-                              ? "Podcast Index"
-                              : preview.source,
+                        label: BROWSE_SOURCE_LABELS[preview.source],
                         href: preview.sourceHref,
                       },
                     ],
                   },
                 ],
               },
-            }
-          : undefined,
+            },
   });
-  usePaneReturnReady(
-    decoded.kind === "Invalid" ||
-      resource.status === "error" ||
-      (resource.status === "ready" && ownedHref === null),
-  );
+  usePaneReturnReady(failure !== null || (preview !== null && owned === null));
 
-  if (decoded.kind === "Invalid") {
+  if (failure !== null) {
+    const back = () =>
+      router.canGoBack ? router.back() : router.replace("/browse");
     return (
       <PaneSurface
         state={
-          <FeedbackNotice
-            content={{
-              tone: "Warning",
-              title: "Invalid preview link",
-              message: "This link is malformed or obsolete.",
-            }}
-            announcement="Assertive"
-          />
+          <FeedbackNotice content={failure.content} announcement="Assertive" />
         }
       >
-        <Button onClick={backToBrowse}>Back to Browse</Button>
-      </PaneSurface>
-    );
-  }
-
-  if (resource.status === "idle" || resource.status === "loading" || ownedHref) {
-    return (
-      <PaneSurface
-        state={<PaneLoadingState label="Loading preview…" announcement="Polite" />}
-      />
-    );
-  }
-
-  if (resource.status === "error") {
-    const failure = browsePreviewErrorMessage(resource.error);
-    return (
-      <PaneSurface
-        state={
-          <FeedbackNotice
-            content={failure.content}
-            announcement="Assertive"
-          />
-        }
-      >
-        {failure.retryable ? (
+        {failure.retryable && resource.status === "error" ? (
           <Button onClick={resource.retry}>Retry</Button>
         ) : (
-          <Button onClick={backToBrowse}>Back to Browse</Button>
+          <Button onClick={back}>Back to Browse</Button>
         )}
       </PaneSurface>
+    );
+  }
+  if (preview === null || owned !== null) {
+    return (
+      <PaneSurface
+        state={
+          <PaneLoadingState label="Loading preview…" announcement="Polite" />
+        }
+      />
     );
   }
 
   const commit = async (
     command: AcquisitionCommand,
   ): Promise<AcquisitionSuccess> => {
-    switch (resource.data.kind) {
+    const { namedLibraryIds, idempotencyKey } = command;
+    switch (preview.kind) {
       case "Podcast": {
         const result = await subscribeToPodcast({
-          target: {
-            kind: "Discovery",
-            target: parseDiscoveryTargetHandle(resource.data.target),
-          },
-          namedLibraryIds: command.namedLibraryIds,
+          target: { kind: "Discovery", target: preview.target },
+          namedLibraryIds,
           replacementConfirmation: command.replacementConfirmation,
-          idempotencyKey: command.idempotencyKey,
+          idempotencyKey,
         });
         return { href: result.href };
       }
       case "Episode": {
-        const result = await addEpisodeFromDiscovery({
-          target: parseDiscoveryTargetHandle(resource.data.target),
-          namedLibraryIds: command.namedLibraryIds,
-          idempotencyKey: command.idempotencyKey,
+        const { href, mediaId } = await addEpisodeFromDiscovery({
+          target: preview.target,
+          namedLibraryIds,
+          idempotencyKey,
         });
-        return { href: result.href, mediaId: result.mediaId };
+        return { href, mediaId };
       }
-      case "Epub":
-      case "WebArticle":
-      case "Video": {
-        const result = await addMediaFromUrl({
-          url: sourceUrlForAdd(resource.data),
-          libraryIds: command.namedLibraryIds,
-          idempotencyKey: command.idempotencyKey,
+      default: {
+        const url =
+          preview.kind === "Epub"
+            ? preview.kindFacts.importHref
+            : preview.kind === "WebArticle"
+              ? preview.kindFacts.canonicalUrl
+              : preview.sourceHref;
+        const { mediaId } = await addMediaFromUrl({
+          url,
+          libraryIds: namedLibraryIds,
+          idempotencyKey,
         });
-        return {
-          href: `/media/${result.mediaId}`,
-          mediaId: result.mediaId,
-        };
+        return { href: `/media/${mediaId}`, mediaId };
       }
     }
   };
-
-  const description =
-    resource.data.description.kind === "Present"
-      ? resource.data.description.value
-      : null;
-  const image =
-    resource.data.image.kind === "Present"
-      ? proxiedImageHref(resource.data.image.value, "BrowsePreview.image.value")
-      : null;
-  const episode =
-    resource.data.kind === "Episode" ? resource.data : null;
   const acquisition = (
     <AcquisitionControl
-      kind={resource.data.kind === "Podcast" ? "Subscribe" : "Add"}
-      previewTarget={parseDiscoveryTargetHandle(resource.data.target)}
+      kind={preview.kind === "Podcast" ? "Subscribe" : "Add"}
+      previewTarget={preview.target}
       commit={commit}
-      onCommitted={(href) =>
-        router.replace(href, { labelHint: resource.data.title })
-      }
+      onCommitted={(href) => router.replace(href, { labelHint: preview.title })}
     />
   );
+  // justify-type-assertion: the server issues every browse image as a media
+  // image proxy src (services/browse/models.py proxied_image).
+  const image =
+    preview.image.kind === "Present"
+      ? (preview.image.value as MediaImageProxySrc)
+      : null;
+  const description =
+    preview.description.kind === "Present" ? preview.description.value : null;
 
+  if (preview.kind === "Podcast") {
+    const website = preview.kindFacts.websiteHref;
+    return (
+      <PaneSurface>
+        <PodcastOverview
+          title={preview.title}
+          image={image ? { kind: "Proxied", url: image } : { kind: "Absent" }}
+          contributors={preview.contributors}
+          description={description}
+          facts={["Podcast Index"]}
+          links={[
+            { label: "Open source", href: preview.sourceHref },
+            { label: "RSS feed", href: preview.kindFacts.feedHref },
+            ...(website.kind === "Present"
+              ? [{ label: "Website", href: website.value }]
+              : []),
+          ]}
+          note="Previewing does not subscribe or add episodes."
+        />
+        {acquisition}
+        <PreviewEpisodes preview={preview} />
+      </PaneSurface>
+    );
+  }
+  const audio = preview.kind === "Episode" ? preview.kindFacts : null;
+  const host = audio === null ? null : new URL(audio.audioHref).hostname;
   return (
     <PaneSurface>
-      {resource.data.kind === "Podcast" ? (
-        <>
-          <PodcastOverview
-            title={resource.data.title}
-            image={
-              image
-                ? { kind: "Proxied", url: image }
-                : { kind: "Absent" }
-            }
-            contributors={resource.data.contributors}
-            description={description}
-            facts={["Podcast Index"]}
-            links={[
-              { label: "Open source", href: resource.data.sourceHref },
-              { label: "RSS feed", href: resource.data.kindFacts.feedHref },
-              ...(resource.data.kindFacts.websiteHref.kind === "Present"
-                ? [
-                    {
-                      label: "Website",
-                      href: resource.data.kindFacts.websiteHref.value,
-                    },
-                  ]
-                : []),
-            ]}
-            note="Previewing does not subscribe or add episodes."
+      <div className={styles.lead}>
+        {image ? (
+          <MediaImage
+            kind="proxy-src"
+            src={image}
+            alt=""
+            width={128}
+            height={128}
+            className={styles.image}
           />
-          {acquisition}
-          <PodcastEpisodePreviewList preview={resource.data} />
-        </>
+        ) : null}
+        <div>
+          {audio ? <p>{audio.podcastTitle}</p> : null}
+          <p>{description ?? "No summary from source."}</p>
+          <a
+            href={preview.sourceHref}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Open source
+          </a>
+        </div>
+      </div>
+      {preview.kind !== "Video" ? null : videoLoaded ? (
+        <YouTubeEmbedFrame
+          embedUrl={preview.kindFacts.embedHref}
+          className={styles.video}
+        />
       ) : (
-        <>
-          <div className={styles.previewLead}>
-            {image ? (
-              <MediaImage
-                kind="proxy-src"
-                src={image}
-                alt=""
-                width={128}
-                height={128}
-                className={styles.previewImage}
-              />
-            ) : null}
-            <div className={styles.previewCopy}>
-              {resource.data.kind === "Episode" ? (
-                <p>{resource.data.kindFacts.podcastTitle}</p>
-              ) : null}
-              <p>{description ?? "No summary from source."}</p>
-              <a
-                href={resource.data.sourceHref}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Open source
-              </a>
-            </div>
-          </div>
-          {resource.data.kind === "Video" ? (
-            loadVideo ? (
-              <YouTubeEmbedFrame
-                embedUrl={resource.data.kindFacts.embedHref}
-                className={styles.videoFrame}
-              />
-            ) : (
-              <Button variant="secondary" onClick={() => setLoadVideo(true)}>
-                Load video
-              </Button>
-            )
-          ) : null}
-          {episode ? (
-            <div className={styles.actions}>
-              <Button
-                variant="secondary"
-                onClick={() =>
-                  playPreviewAudio({
-                    target: parseDiscoveryTargetHandle(episode.target),
-                    previewHref: browsePreviewHref(episode.target),
-                    title: episode.title,
-                    source: new URL(
-                      episode.kindFacts.audioHref,
-                    ).hostname,
-                    sourceHref: episode.sourceHref,
-                    audioUrl: episode.kindFacts.audioHref,
-                    imageUrl: episode.image.kind === "Present"
-                      ? {
-                          kind: "Present",
-                          value: proxiedImageHref(
-                            episode.image.value,
-                            "BrowsePreview.image.value",
-                          ),
-                        }
-                      : { kind: "Absent" },
-                    durationMs:
-                      episode.kindFacts.durationSeconds.kind === "Present"
-                        ? {
-                            kind: "Present",
-                            value:
-                              episode.kindFacts.durationSeconds.value * 1000,
-                          }
-                        : { kind: "Absent" },
-                  })
-                }
-              >
-                Play preview
-              </Button>
-              <span>
-                Audio from{" "}
-                {new URL(episode.kindFacts.audioHref).hostname}
-              </span>
-            </div>
-          ) : null}
-          {acquisition}
-        </>
+        <Button variant="secondary" onClick={() => setVideoLoaded(true)}>
+          Load video
+        </Button>
       )}
+      {audio !== null && host !== null ? (
+        <div className={styles.actions}>
+          <Button
+            variant="secondary"
+            onClick={() =>
+              playPreviewAudio({
+                target: preview.target,
+                previewHref: browsePreviewHref(preview.target),
+                title: preview.title,
+                source: host,
+                sourceHref: preview.sourceHref,
+                audioUrl: audio.audioHref,
+                imageUrl: image ? present(image) : absent(),
+                durationMs:
+                  audio.durationSeconds.kind === "Present"
+                    ? present(audio.durationSeconds.value * 1000)
+                    : absent(),
+              })
+            }
+          >
+            Play preview
+          </Button>
+          <span>Audio from {host}</span>
+        </div>
+      ) : null}
+      {acquisition}
     </PaneSurface>
   );
 }

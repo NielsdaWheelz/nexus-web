@@ -6,8 +6,9 @@ with billing gone, `POST /media/transcript/forecasts` returns only
 `{eligibleCount, selectionFingerprint}`
 (`python/nexus/schemas/podcast.py:306`,
 `services/podcasts/transcription.py::forecast_podcast_episode_query_transcripts`).
-its one caller, `useEpisodeTranscriptController.handleBatchTranscriptRequest`,
-shows the count in a `window.confirm` and echoes the fingerprint into
+its one caller, the "Transcribe all" command in
+`apps/web/src/app/(authenticated)/podcasts/[podcastId]/PodcastEpisodeList.tsx`
+(through `forecastEpisodeTranscripts` in `lib/podcasts/api.ts`), shows the count in a `window.confirm` and echoes the fingerprint into
 `POST /media/transcript/request/batch`, so a batch is two round trips whose
 first exists to keep a count-only confirm exact against a changing selection.
 the forecast name now overstates it. `PodcastEpisodeQueryTranscriptRequest`

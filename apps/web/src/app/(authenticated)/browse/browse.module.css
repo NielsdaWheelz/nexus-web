@@ -11,77 +11,57 @@
   min-width: 0;
 }
 
-.validationHelp,
+.note,
 .summary,
-.sortLabel {
+.statusRow {
   margin: 0;
   color: var(--ink-muted);
   font-size: var(--text-sm);
 }
 
-.sortLabel {
-  white-space: nowrap;
-}
-
-.summary {
+.summary,
+.actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
 }
 
-.committedQuery {
+.committedQuery,
+.lead p {
   overflow-wrap: anywhere;
 }
 
-.facets {
+.invalid,
+.chapter,
+.sourceSection {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-2);
-}
-
-.facetGroup {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.invalid {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: flex-start;
   gap: var(--space-3);
 }
 
 .chapter {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
   gap: var(--space-4);
 }
 
-.chapterHeading {
+.invalid {
+  align-items: flex-start;
+}
+
+.chapterHeading,
+.sourceHeading {
   margin: 0;
   color: var(--ink);
   font-size: var(--text-lg);
 }
 
 .sourceSection {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-3);
   padding-block-start: var(--space-3);
   border-block-start: 1px solid var(--edge-subtle);
 }
 
 .sourceHeading {
-  margin: 0;
   color: var(--ink-muted);
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
@@ -93,9 +73,6 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  margin: 0;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
 }
 
 .continuation {
@@ -104,7 +81,7 @@
   padding-block: var(--space-2);
 }
 
-.previewLead {
+.lead {
   display: grid;
   min-width: 0;
   grid-template-columns: minmax(0, 8rem) minmax(0, 1fr);
@@ -112,7 +89,7 @@
   gap: var(--space-4);
 }
 
-.previewImage {
+.image {
   width: 100%;
   height: auto;
   aspect-ratio: 1;
@@ -120,22 +97,7 @@
   object-fit: cover;
 }
 
-.previewCopy {
-  min-width: 0;
-}
-
-.previewCopy p {
-  overflow-wrap: anywhere;
-}
-
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.videoFrame {
+.video {
   width: 100%;
   aspect-ratio: 16 / 9;
   border: 0;
@@ -143,21 +105,11 @@
 }
 
 @media (max-width: 360px) {
-  .facetGroup button {
-    min-height: 2.75rem;
-  }
-
-  .previewLead {
+  .lead {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .previewImage {
+  .image {
     width: min(8rem, 45vw);
-  }
-}
-
-@media (pointer: coarse) {
-  .facetGroup button {
-    min-height: 2.75rem;
   }
 }

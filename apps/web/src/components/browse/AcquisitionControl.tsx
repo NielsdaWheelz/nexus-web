@@ -1,42 +1,28 @@
 "use client";
 
+// The one acquisition owner (browse preview, podcast detail, the Subscribe
+// overlay): a split Add/Subscribe button whose chevron stages named library
+// destinations. One logical command carries one Idempotency-Key: a delivery
+// that may have landed replays it, and confirming a placement conflict mints
+// one fresh key for the confirmed command.
+
 import { useId, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
-import {
-  FeedbackNotice,
-  useFeedback,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
 import LibraryDestinationPicker from "@/components/libraries/LibraryDestinationPicker";
 import Button from "@/components/ui/Button";
-import {
-  apiCommand204,
-  isApiError,
-  isSameSystemApiDefect,
-} from "@/lib/api/client";
-import type { DiscoveryTargetHandle } from "@/lib/browse/contract";
+import Dialog from "@/components/ui/Dialog";
+import { apiCommand204 } from "@/lib/api/client";
+import { absent, present, type Presence } from "@/lib/api/presence";
 import { isAbortError } from "@/lib/errors";
-import type { Presence } from "@/lib/api/presence";
 import {
   createLibrary,
   searchWritableLibraryDestinations,
 } from "@/lib/libraries/client";
 import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
-import {
-  definePaneVisitDataKey,
-  usePaneVisitData,
-} from "@/lib/workspace/paneReturnMemento";
 import { usePlayerCommands } from "@/lib/player/playerRuntime";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import PodcastReplacementDialog, {
-  type PodcastReplacementConflict,
-} from "./PodcastReplacementDialog";
+import { modeledApiError, useThrowLater } from "@/lib/podcasts/paneState";
 import styles from "./AcquisitionControl.module.css";
-
-export interface AcquisitionSuccess {
-  readonly href: string;
-  readonly mediaId?: string;
-}
 
 export interface AcquisitionCommand {
   readonly namedLibraryIds: readonly string[];
@@ -46,6 +32,11 @@ export interface AcquisitionCommand {
   }>;
 }
 
+export interface AcquisitionSuccess {
+  readonly href: string;
+  readonly mediaId?: string;
+}
+
 interface FrozenCommand extends AcquisitionCommand {
   readonly previewPosition: {
     readonly positionMs: number;
@@ -53,212 +44,132 @@ interface FrozenCommand extends AcquisitionCommand {
   } | null;
 }
 
-type AcquisitionFailure = {
-  readonly kind:
-    "DeliveryUnknown" | "Unavailable" | "Permission" | "PermissionRefresh";
-  readonly message: string;
+interface Conflict {
+  readonly conflicts: readonly {
+    readonly libraryId: string;
+    readonly libraryName: string;
+    readonly episodeCount: number;
+  }[];
+  readonly conflictFingerprint: string;
+}
+
+const FAILURES = {
+  DeliveryUnknown: "Delivery unknown",
+  Unavailable: "No longer available",
+  Permission: "Library access changed. Review your destinations.",
+  PermissionRefresh: "Couldn’t refresh your writable libraries.",
+} as const;
+
+type Failure = {
+  readonly kind: keyof typeof FAILURES;
   readonly requestId?: string;
 };
 
-interface AcquisitionSnapshot {
-  readonly selected: readonly LibraryDestinationSelection[];
-  readonly frozen: FrozenCommand | null;
-  readonly failure: AcquisitionFailure | null;
-  readonly conflict: {
-    readonly conflicts: readonly PodcastReplacementConflict[];
-    readonly fingerprint: string;
-  } | null;
-}
-
-const ACQUISITION_VISIT_DATA =
-  definePaneVisitDataKey<AcquisitionSnapshot>("Browse.Acquisition");
-
-function mutationId(): string {
-  return crypto.randomUUID();
-}
-
-function isDeliveryUnknown(error: unknown): boolean {
-  return (
-    isAbortError(error) || (isApiError(error) && error.code === "E_NETWORK")
-  );
-}
-
-function previewTransferErrorMessage(error: unknown): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  switch (error.code) {
-    case "E_NETWORK":
-      return {
-        tone: "Warning",
-        title: "Added without preview position",
-        message: "The preview listening position couldn’t be transferred.",
-        requestId: error.requestId,
-      };
-    default:
-      throw error;
-  }
-}
-
-function permissionRefreshErrorMessage(error: unknown): AcquisitionFailure {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  switch (error.code) {
-    case "E_NETWORK":
-      return {
-        kind: "PermissionRefresh",
-        message: "Couldn’t refresh your writable libraries.",
-        ...(error.requestId === undefined ? {} : { requestId: error.requestId }),
-      };
-    default:
-      throw error;
-  }
-}
-
-async function fetchWritableDestinationIndex(): Promise<
-  ReadonlyMap<string, LibraryDestinationSelection>
-> {
-  const writable = new Map<string, LibraryDestinationSelection>();
-  let cursor: string | null = null;
-  do {
-    const page = await searchWritableLibraryDestinations({
-      cursor,
-      limit: 50,
-    });
-    for (const destination of page.data) {
-      writable.set(destination.id, destination);
-    }
-    cursor = page.page.next_cursor;
-  } while (cursor !== null);
-  return writable;
-}
-
-function replacementConflict(error: unknown): {
-  conflicts: readonly PodcastReplacementConflict[];
-  conflictFingerprint: string;
-} | null {
-  if (!isApiError(error) || error.code !== "E_PODCAST_REPLACES_EPISODES") {
-    return null;
-  }
-  const conflicts = error.details?.conflicts;
-  const conflictFingerprint = error.details?.conflictFingerprint;
-  if (!Array.isArray(conflicts) || typeof conflictFingerprint !== "string") {
-    throw error;
-  }
-  return {
-    conflicts: conflicts as readonly PodcastReplacementConflict[],
-    conflictFingerprint,
-  };
-}
-
-type AcquisitionControlProps = {
+export default function AcquisitionControl({
+  kind,
+  subscribed = false,
+  previewTarget,
+  commit,
+  onCommitted,
+}: {
+  readonly kind: "Add" | "Subscribe";
+  /** Subscribe on a followed show only adds it to the staged libraries. */
+  readonly subscribed?: boolean;
+  /** Add from a preview stops that preview's audio and keeps its position. */
+  readonly previewTarget?: string;
   readonly commit: (command: AcquisitionCommand) => Promise<AcquisitionSuccess>;
   readonly onCommitted: (href: string) => void | Promise<void>;
-} & (
-  | {
-      readonly kind: "Add";
-      readonly previewTarget: DiscoveryTargetHandle;
-    }
-  | {
-      readonly kind: "Subscribe";
-      readonly previewTarget?: DiscoveryTargetHandle;
-      readonly subscribed?: boolean;
-    }
-);
-
-export default function AcquisitionControl(props: AcquisitionControlProps) {
-  const { kind, commit, onCommitted } = props;
-  const { stopPreviewAudio } = usePlayerCommands();
+}) {
+  const fail = useThrowLater();
   const feedback = useFeedback();
+  const { stopPreviewAudio } = usePlayerCommands();
   const panelId = useId();
   const chevronRef = useRef<HTMLButtonElement>(null);
-  const destinationCreateIds = useRef(new Map<string, string>());
-  const snapshotRef = useRef<AcquisitionSnapshot | null>(null);
-  const restored = usePaneVisitData(
-    ACQUISITION_VISIT_DATA,
-    () => snapshotRef.current,
-  );
+  const createIds = useRef(new Map<string, string>());
   const [pickerOpen, setPickerOpen] = useState(false);
   const [selected, setSelected] = useState<
     readonly LibraryDestinationSelection[]
-  >(restored?.selected ?? []);
+  >([]);
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [reviewingPermissions, setReviewingPermissions] = useState(false);
-  const [frozen, setFrozen] = useState<FrozenCommand | null>(
-    restored?.frozen ?? null,
-  );
-  const [failure, setFailure] = useState<AcquisitionFailure | null>(
-    restored?.failure ?? null,
-  );
-  const [conflict, setConflict] = useState<{
-    readonly conflicts: readonly PodcastReplacementConflict[];
-    readonly fingerprint: string;
-  } | null>(restored?.conflict ?? null);
-  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  snapshotRef.current = { selected, frozen, failure, conflict };
+  const [reviewing, setReviewing] = useState(false);
+  const [frozen, setFrozen] = useState<FrozenCommand | null>(null);
+  const [failure, setFailure] = useState<Failure | null>(null);
+  const [conflict, setConflict] = useState<Conflict | null>(null);
 
-  const createDestination = async (
-    name: string,
-  ): Promise<LibraryDestinationSelection> => {
+  // A retried create reuses the library id minted for that name.
+  const createDestination = async (name: string) => {
     setCreating(true);
     const normalized = name.trim();
-    const id =
-      destinationCreateIds.current.get(normalized) ?? crypto.randomUUID();
-    destinationCreateIds.current.set(normalized, id);
+    const id = createIds.current.get(normalized) ?? crypto.randomUUID();
+    createIds.current.set(normalized, id);
     try {
       const library = await createLibrary({ libraryId: id, name: normalized });
-      destinationCreateIds.current.delete(normalized);
+      createIds.current.delete(normalized);
       return library;
     } finally {
       setCreating(false);
     }
   };
 
-  const freeze = (
-    confirmation: AcquisitionCommand["replacementConfirmation"],
-  ): FrozenCommand => {
-    const stopped =
-      kind === "Add" ? stopPreviewAudio(props.previewTarget) : null;
-    return {
-      namedLibraryIds: selected.map((destination) => destination.id),
-      idempotencyKey: mutationId(),
-      replacementConfirmation: confirmation,
-      previewPosition:
-        stopped && stopped.positionMs > 0
-          ? {
-              positionMs: Math.floor(stopped.positionMs),
-              durationMs: stopped.durationMs,
-            }
-          : null,
-    };
-  };
-
-  const reviewWritableDestinations = async (permissionRequestId?: string) => {
-    setReviewingPermissions(true);
+  // Library access changed: keep only still-writable destinations, reopen.
+  const reviewDestinations = async (requestId?: string) => {
+    setReviewing(true);
     setFailure(null);
     try {
-      const writable = await fetchWritableDestinationIndex();
+      const writable = new Map<string, LibraryDestinationSelection>();
+      let cursor: string | null = null;
+      do {
+        const page = await searchWritableLibraryDestinations({
+          cursor,
+          limit: 50,
+        });
+        for (const library of page.data) writable.set(library.id, library);
+        cursor = page.page.next_cursor;
+      } while (cursor !== null);
       setSelected((current) =>
-        current.flatMap((destination) => {
-          const authorized = writable.get(destination.id);
-          return authorized ? [authorized] : [];
-        }),
+        current.flatMap((library) => writable.get(library.id) ?? []),
       );
       setPickerOpen(true);
-      setFailure({
-        kind: "Permission",
-        message: "Library access changed. Review your destinations.",
-        ...(permissionRequestId === undefined ? {} : { requestId: permissionRequestId }),
-      });
+      setFailure({ kind: "Permission", requestId });
     } catch (error) {
-      if (handleUnauthenticatedApiError(error)) return;
-      try {
-        setFailure(permissionRefreshErrorMessage(error));
-      } catch (caughtDefect) {
-        setDefect({ error: caughtDefect });
-        return;
-      }
-      setPickerOpen(false);
+      const modeled = modeledApiError(error, fail);
+      if (modeled?.code === "E_NETWORK") {
+        setPickerOpen(false);
+        setFailure({ kind: "PermissionRefresh", requestId: modeled.requestId });
+      } else if (modeled !== null) fail({ error: modeled });
     } finally {
-      setReviewingPermissions(false);
+      setReviewing(false);
+    }
+  };
+
+  /** False when the transfer failed beyond a warning: the pane stays put. */
+  const transferPreviewPosition = async (
+    mediaId: string,
+    position: NonNullable<FrozenCommand["previewPosition"]>,
+  ) => {
+    try {
+      await apiCommand204(`/api/media/${mediaId}/preview-position`, {
+        method: "POST",
+        body: JSON.stringify(position),
+      });
+      return true;
+    } catch (error) {
+      const modeled = modeledApiError(error, fail);
+      if (modeled?.code !== "E_NETWORK") {
+        if (modeled !== null) fail({ error: modeled });
+        return false;
+      }
+      feedback.publish({
+        kind: "Hud",
+        content: {
+          tone: "Warning",
+          title: "Added without preview position",
+          message: "The preview listening position couldn’t be transferred.",
+          requestId: modeled.requestId,
+        },
+      });
+      return true;
     }
   };
 
@@ -267,36 +178,12 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
     setBusy(true);
     setFailure(null);
     setFrozen(command);
-    let dispatched = false;
     try {
-      const pending = commit(command);
-      dispatched = true;
-      const result = await pending;
-      if (
-        kind === "Add" &&
-        result.mediaId &&
-        command.previewPosition !== null
-      ) {
-        try {
-          await apiCommand204(
-            `/api/media/${encodeURIComponent(result.mediaId)}/preview-position`,
-            {
-              method: "POST",
-              body: JSON.stringify(command.previewPosition),
-            },
-          );
-        } catch (error) {
-          if (handleUnauthenticatedApiError(error)) return;
-          try {
-            feedback.publish({
-              kind: "Hud",
-              content: previewTransferErrorMessage(error),
-            });
-          } catch (caughtDefect) {
-            setDefect({ error: caughtDefect });
-            return;
-          }
-        }
+      const result = await commit(command);
+      const { mediaId } = result;
+      const position = command.previewPosition;
+      if (mediaId !== undefined && position !== null) {
+        if (!(await transferPreviewPosition(mediaId, position))) return;
       }
       setSelected([]);
       setFrozen(null);
@@ -304,90 +191,114 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
       setPickerOpen(false);
       await onCommitted(result.href);
     } catch (error) {
-      if (handleUnauthenticatedApiError(error)) return;
-      let nextConflict: ReturnType<typeof replacementConflict>;
-      try {
-        nextConflict = replacementConflict(error);
-      } catch (caughtDefect) {
-        setDefect({ error: caughtDefect });
-        return;
-      }
-      if (nextConflict) {
-        setFrozen(command);
-        setConflict({
-          conflicts: nextConflict.conflicts,
-          fingerprint: nextConflict.conflictFingerprint,
-        });
-        return;
-      }
-      if (
-        isApiError(error) &&
-        (error.code === "E_NOT_FOUND" ||
-          error.code === "E_INVALID_DISCOVERY_TARGET")
-      ) {
-        setFrozen(null);
-        setPickerOpen(false);
-        setFailure({
-          kind: "Unavailable",
-          message: "No longer available",
-          ...(error.requestId === undefined ? {} : { requestId: error.requestId }),
-        });
-        return;
-      }
-      if (
-        isApiError(error) &&
-        (error.code === "E_FORBIDDEN" || error.code === "E_LIBRARY_FORBIDDEN")
-      ) {
-        setFrozen(null);
-        await reviewWritableDestinations(error.requestId);
-        return;
-      }
-      if (!dispatched && isAbortError(error)) {
-        setFrozen(null);
-        return;
-      }
-      if (dispatched && isDeliveryUnknown(error)) {
-        // Release the replacement dialog so the primary button — which reruns the
-        // frozen confirmed command with its original mutation id — is reachable
-        // instead of being trapped behind the modal backdrop.
+      // A command that may have landed keeps its frozen key for "Retry".
+      if (isAbortError(error)) {
         setConflict(null);
-        setFailure({
-          kind: "DeliveryUnknown",
-          message: "Delivery unknown",
-          ...(isApiError(error) && error.requestId !== undefined
-            ? { requestId: error.requestId }
-            : {}),
-        });
+        setFailure({ kind: "DeliveryUnknown" });
         return;
       }
-      setDefect({ error });
+      const modeled = modeledApiError(error, fail);
+      if (modeled === null) return;
+      const requestId = modeled.requestId;
+      switch (modeled.code) {
+        case "E_PODCAST_REPLACES_EPISODES":
+          // justify-type-assertion: the 409's details are the server's
+          // PodcastReplacementConflict contract; errors carry no wire schema.
+          setConflict(modeled.details as unknown as Conflict);
+          return;
+        case "E_NOT_FOUND":
+        case "E_INVALID_DISCOVERY_TARGET":
+          setFrozen(null);
+          setPickerOpen(false);
+          setFailure({ kind: "Unavailable", requestId });
+          return;
+        case "E_FORBIDDEN":
+        case "E_LIBRARY_FORBIDDEN":
+          setFrozen(null);
+          await reviewDestinations(requestId);
+          return;
+        case "E_NETWORK":
+          setConflict(null);
+          setFailure({ kind: "DeliveryUnknown", requestId });
+          return;
+        default:
+          fail({ error: modeled });
+      }
     } finally {
       setBusy(false);
     }
   };
 
-  const stagedCount = selected.length;
-  const subscribed = kind === "Subscribe" && props.subscribed === true;
-  const actionLabel =
+  const freeze = (): FrozenCommand => {
+    const stopped =
+      kind === "Add" && previewTarget !== undefined
+        ? stopPreviewAudio(previewTarget)
+        : null;
+    return {
+      namedLibraryIds: selected.map((library) => library.id),
+      idempotencyKey: crypto.randomUUID(),
+      replacementConfirmation: absent(),
+      previewPosition:
+        stopped !== null && stopped.positionMs > 0
+          ? {
+              positionMs: Math.floor(stopped.positionMs),
+              durationMs: stopped.durationMs,
+            }
+          : null,
+    };
+  };
+
+  // Confirming mints one fresh key; retrying that confirmation reuses it.
+  const confirmReplacement = () => {
+    if (conflict === null || frozen === null) return;
+    const fingerprint = conflict.conflictFingerprint;
+    const confirmation = frozen.replacementConfirmation;
+    const confirmed =
+      confirmation.kind === "Present" &&
+      confirmation.value.conflictFingerprint === fingerprint;
+    void run(
+      confirmed
+        ? frozen
+        : {
+            ...frozen,
+            idempotencyKey: crypto.randomUUID(),
+            replacementConfirmation: present({
+              conflictFingerprint: fingerprint,
+            }),
+          },
+    );
+  };
+
+  const cancelConflict = () => {
+    setConflict(null);
+    setFrozen(null);
+  };
+
+  const staged = selected.length;
+  const noun = staged === 1 ? "Library" : "Libraries";
+  const action =
     kind === "Add"
       ? "Add"
-      : subscribed
-        ? stagedCount > 0
+      : !subscribed
+        ? "Subscribe"
+        : staged > 0
           ? "Add to Libraries"
-          : "Subscribed"
-        : "Subscribe";
-  const primaryLabel =
-    failure?.kind === "DeliveryUnknown"
-      ? `Retry ${actionLabel}`
-      : stagedCount > 0
-        ? subscribed
-          ? `Add to ${stagedCount} ${stagedCount === 1 ? "Library" : "Libraries"}`
-          : `${actionLabel} +${stagedCount}`
-        : actionLabel;
-  const accessibleActionLabel =
-    failure?.kind === "DeliveryUnknown" ? primaryLabel : actionLabel;
-
-  if (defect) throw defect.error;
+          : "Subscribed";
+  const unknown = failure?.kind === "DeliveryUnknown";
+  const label = unknown
+    ? `Retry ${action}`
+    : staged === 0
+      ? action
+      : subscribed
+        ? `Add to ${staged} ${noun}`
+        : `${action} +${staged}`;
+  const spoken = unknown ? label : action;
+  const unavailable = failure?.kind === "Unavailable";
+  const conflictEpisodes =
+    conflict?.conflicts.reduce((total, row) => total + row.episodeCount, 0) ??
+    0;
+  const cautious =
+    failure?.kind === "Unavailable" || failure?.kind === "Permission";
 
   return (
     <div className={styles.root}>
@@ -397,56 +308,38 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
           loading={busy}
           disabled={
             creating ||
+            unavailable ||
             failure?.kind === "PermissionRefresh" ||
-            failure?.kind === "Unavailable" ||
-            (subscribed && stagedCount === 0)
+            (subscribed && staged === 0)
           }
           aria-label={
-            stagedCount > 0
-              ? `${accessibleActionLabel}, also add to ${stagedCount} named ${
-                  stagedCount === 1 ? "Library" : "Libraries"
-                }`
-              : accessibleActionLabel
+            staged > 0
+              ? `${spoken}, also add to ${staged} named ${noun}`
+              : spoken
           }
-          onClick={() =>
-            void run(
-              frozen ??
-                freeze(
-                  conflict
-                    ? {
-                        kind: "Present",
-                        value: {
-                          conflictFingerprint: conflict.fingerprint,
-                        },
-                      }
-                    : { kind: "Absent" },
-                ),
-            )
-          }
+          onClick={() => void run(frozen ?? freeze())}
         >
-          {primaryLabel}
+          {label}
         </Button>
         <button
           ref={chevronRef}
           type="button"
           className={styles.chevron}
-          aria-label={`Also add to Libraries${
-            stagedCount > 0 ? `, ${stagedCount} selected` : ""
-          }`}
+          aria-label={
+            staged > 0
+              ? `Also add to Libraries, ${staged} selected`
+              : "Also add to Libraries"
+          }
           aria-haspopup="dialog"
           aria-expanded={pickerOpen}
           aria-controls={panelId}
           disabled={
-            busy ||
-            creating ||
-            reviewingPermissions ||
-            frozen !== null ||
-            failure?.kind === "Unavailable"
+            busy || creating || reviewing || frozen !== null || unavailable
           }
           onClick={() => setPickerOpen((open) => !open)}
         >
           <ChevronDown size={16} aria-hidden="true" />
-          {stagedCount > 0 ? <span>+{stagedCount}</span> : null}
+          {staged > 0 ? <span>+{staged}</span> : null}
         </button>
       </div>
       <LibraryDestinationPicker
@@ -469,66 +362,56 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
         panelId={panelId}
       />
       {failure ? (
-        <>
-          <FeedbackNotice
-            content={{
-              tone:
-                failure.kind === "Unavailable" || failure.kind === "Permission"
-                  ? "Warning"
-                  : "Danger",
-              title: failure.message,
-              requestId: failure.requestId,
-            }}
-            announcement={
-              failure.kind === "Unavailable" || failure.kind === "Permission"
-                ? "Polite"
-                : "Assertive"
-            }
-          />
-          {failure.kind === "PermissionRefresh" ? (
-            <Button
-              size="sm"
-              variant="secondary"
-              loading={reviewingPermissions}
-              onClick={() => void reviewWritableDestinations()}
-            >
-              Retry destination review
-            </Button>
-          ) : null}
-        </>
+        <FeedbackNotice
+          content={{
+            tone: cautious ? "Warning" : "Danger",
+            title: FAILURES[failure.kind],
+            requestId: failure.requestId,
+          }}
+          announcement={cautious ? "Polite" : "Assertive"}
+        />
       ) : null}
-      <PodcastReplacementDialog
+      {failure?.kind === "PermissionRefresh" ? (
+        <Button
+          size="sm"
+          variant="secondary"
+          loading={reviewing}
+          onClick={() => void reviewDestinations()}
+        >
+          Retry destination review
+        </Button>
+      ) : null}
+      <Dialog
         open={conflict !== null}
-        conflicts={conflict?.conflicts ?? []}
-        busy={busy}
-        onCancel={() => {
-          setConflict(null);
-          setFrozen(null);
-        }}
-        onConfirm={() => {
-          if (!conflict || frozen === null) return;
-          // Confirming a conflict is one logical command: mint its mutation id
-          // once (fresh vs. the pre-conflict attempt), then reuse it on every
-          // transport retry of the same fingerprint so a delivery-unknown replay
-          // returns the frozen response instead of double-applying the removal.
-          const retryingConfirmed =
-            frozen.replacementConfirmation.kind === "Present" &&
-            frozen.replacementConfirmation.value.conflictFingerprint ===
-              conflict.fingerprint;
-          void run(
-            retryingConfirmed
-              ? frozen
-              : {
-                  ...frozen,
-                  idempotencyKey: mutationId(),
-                  replacementConfirmation: {
-                    kind: "Present",
-                    value: { conflictFingerprint: conflict.fingerprint },
-                  },
-                },
-          );
-        }}
-      />
+        onClose={cancelConflict}
+        title="Replace episode placements?"
+        onDismissRequest={() => (busy ? "blocked" : "accepted")}
+      >
+        <p>
+          Subscribing will replace {conflictEpisodes} directly filed{" "}
+          {conflictEpisodes === 1 ? "episode" : "episodes"} with the Podcast in:
+        </p>
+        <ul>
+          {conflict?.conflicts.map((row) => (
+            <li key={row.libraryId}>
+              {row.libraryName} · {row.episodeCount}{" "}
+              {row.episodeCount === 1 ? "episode" : "episodes"}
+            </li>
+          ))}
+        </ul>
+        <p>
+          Removed episode filing intent will not be restored if the Podcast is
+          removed later.
+        </p>
+        <div>
+          <Button variant="danger" loading={busy} onClick={confirmReplacement}>
+            Replace and subscribe
+          </Button>{" "}
+          <Button variant="ghost" disabled={busy} onClick={cancelConflict}>
+            Cancel
+          </Button>
+        </div>
+      </Dialog>
     </div>
   );
 }

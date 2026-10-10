@@ -34,20 +34,18 @@ listener. Each pane keeps its source checks, committed-result marker, and
 cancellation restoration; it resolves the promise only after its matching
 result is committed. The settlement helper owns no data, fetch, or commit effect.
 
-podcast refresh is [durable admission](jobs.md#podcast-live-sync-and-backfill),
-followed by that pane's matching read. `lib/podcasts/refresh.ts` owns one typed
-`requestPodcastRefresh` command returning the selected-subscription count.
-the library detail, podcast detail and podcast index own reload and settled
-announcement: `Refresh requested for n show(s)`, or `Nothing to refresh` at zero.
-the pane stays indeterminate until reload commits; Complete describes this
-command/read, never provider sync completion. ordinary request and read failures
-retain their pane-owned feedback/retry behavior. command catch normalization
-preserves native aborts and errors handled after the signal becomes aborted.
-library retry uses the same command and reload. a mounted podcast action commits
-its invocation immediately after accepted admission, before local reload, so a
-failed projection cannot abort a durable request. shared pane source fencing,
-progress and lifecycle remain owned by `usePaneRefresh`; subscription streams
-independently observe the later worker state.
+podcast refresh is [durable admission](jobs.md#podcast-live-sync-and-backfill).
+`lib/podcasts/api.ts` owns one typed `requestPodcastRefresh` command returning
+the selected-subscription count and announced as `Refresh requested for n
+show(s)`, or `Nothing to refresh` at zero. the podcast index and detail settle
+their refresh on admission (`podcastRefresh` in `lib/podcasts/paneState.ts`):
+the command bumps the podcast revision and the panes refetch through it a moment
+later. the library detail keeps admission followed by its matching reload and
+retry. Complete describes the admitted command, never provider sync completion.
+the RefreshPodcast resource action posts the same command and opens no pane; an
+open detail pane converges through the revision and its subscription stream.
+shared pane source fencing, progress and lifecycle remain owned by
+`usePaneRefresh`.
 
 admission cleanup verification (2026-10-02): 16 authenticated api cases preserved
 202 bytes, aliases, scope errors and the same committed pending job/generation
@@ -81,10 +79,13 @@ page and note editors retain transient `FilterRows` over their direct ordered
 items. document panes, including individual conversations, retain transient `Find`
 (the pane's `useFind` controller) with transient Inspector results.
 
-Every domain view is pane-URL state decoded by one strict, total owner codec.
-An unknown, duplicate, partial, or redundantly-default owned key is `Invalid`:
-the pane renders `Invalid {surface} view` with `Reset view` and makes no
-collection request. Because a view change replaces the pane URL on the same
+Every domain view is pane-URL state. Most are decoded by one strict, total
+owner codec: an unknown, duplicate, partial, or redundantly-default owned key is
+`Invalid`, and the pane renders `Invalid {surface} view` with `Reset view` and
+makes no collection request. The podcast and browse panes pass their params to
+the API instead and render its 400 as a notice with `Reset view` (browse:
+`Reset Browse`); browse keeps only the mapping of `kind`/`source` onto its
+planned sections ([podcast](podcast.md)). Because a view change replaces the pane URL on the same
 path, every refinement-capable route declares `queryNavigation: "in-place"` so
 its body survives the replacement with its local text, focus, scroll, and
 previously committed rows intact.

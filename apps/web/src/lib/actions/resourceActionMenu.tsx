@@ -59,9 +59,10 @@ import { METADATA_RETRY_BLOCKED_COPY } from "@/lib/media/mediaMetadataOperations
 import { deleteMedia } from "@/lib/media/mediaLibraries";
 import { deleteConversation } from "@/lib/chat/conversationIndex";
 import {
+  requestPodcastRefresh,
   retryPodcastSubscriptionBackfill,
   unsubscribeFromPodcast,
-} from "@/app/(authenticated)/podcasts/podcastSubscriptions";
+} from "@/lib/podcasts/api";
 import {
   playingEpisode,
   type usePlayerCommands,
@@ -83,7 +84,6 @@ import {
   requestNoteBlockActionIntent,
   requestPageActionIntent,
 } from "@/lib/notes/actionIntents";
-import { requestPodcastActionIntent } from "@/lib/podcasts/actionIntent";
 
 export interface ResourceActionPorts {
   readonly linkComposer: ReturnType<typeof useResourceOverlaysController>["linkComposer"];
@@ -897,14 +897,9 @@ export function resourceActionDescriptors({
         return make(
           capability,
           "ResourceOperation.Podcast.Refresh",
-          (ports) =>
-            mountedMutation(snapshot, ports, (completion) =>
-              requestPodcastActionIntent({
-                kind: "RefreshPodcast",
-                ...mounted,
-                ...completion,
-              }),
-            ),
+          async () => {
+            await requestPodcastRefresh({ kind: "Podcast", podcastId: id() });
+          },
           { reconcile: subjectScope },
         );
       case "LearnHighlight":
