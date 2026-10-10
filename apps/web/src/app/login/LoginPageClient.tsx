@@ -84,9 +84,13 @@ function GoogleMark() {
   );
 }
 
-// Browser OAuth stays server-initiated. In the Android shell, these anchors
-// hand the same fixed provider/return-target intent to the native owner.
-function ProviderForm({
+// A provider start is a navigation, not a form submission: /auth/oauth answers
+// with a redirect to the Supabase origin, and chromium holds a form submission's
+// whole redirect chain to the csp's form-action 'self', so a form is refused.
+// In the browser the anchor starts OAuth server-side at /auth/oauth; in the
+// Android shell it hands the same fixed provider/return-target intent to the
+// native owner. role="button" keeps the control's accessible role.
+function ProviderLink({
   provider,
   nextPath,
   label,
@@ -101,52 +105,35 @@ function ProviderForm({
   isShell: boolean;
   disabled: boolean;
 }) {
-  const variant = provider === "google" ? "primary" : "secondary";
+  let href: string;
   if (isShell) {
-    const href =
+    href =
       provider === "google"
         ? buildAuthNativeGoogleDeepLink(nextPath)
         : buildAuthStartDeepLink(provider, "signin", nextPath);
-    return (
-      <Button
-        asChild
-        variant={variant}
-        size="lg"
-        className={disabled ? authStyles.providerDisabled : undefined}
-      >
-        <a
-          href={href}
-          aria-disabled={disabled || undefined}
-          tabIndex={disabled ? -1 : undefined}
-          onClick={disabled ? (event) => event.preventDefault() : undefined}
-        >
-          {mark}
-          {label}
-        </a>
-      </Button>
-    );
+  } else {
+    const query = new URLSearchParams({ provider });
+    if (!isDefaultAuthReturnTarget(nextPath)) query.set("next", nextPath);
+    href = `/auth/oauth?${query}`;
   }
   return (
-    <form
-      aria-label={label}
-      className={authStyles.providerForm}
-      action="/auth/oauth"
-      method="get"
+    <Button
+      asChild
+      variant={provider === "google" ? "primary" : "secondary"}
+      size="lg"
+      className={disabled ? authStyles.providerDisabled : undefined}
     >
-      <input type="hidden" name="provider" value={provider} />
-      {isDefaultAuthReturnTarget(nextPath) ? null : (
-        <input type="hidden" name="next" value={nextPath} />
-      )}
-      <Button
-        variant={variant}
-        size="lg"
-        type="submit"
-        leadingIcon={mark}
-        disabled={disabled}
+      <a
+        href={href}
+        role="button"
+        aria-disabled={disabled || undefined}
+        tabIndex={disabled ? -1 : undefined}
+        onClick={disabled ? (event) => event.preventDefault() : undefined}
       >
+        {mark}
         {label}
-      </Button>
-    </form>
+      </a>
+    </Button>
   );
 }
 
@@ -362,7 +349,7 @@ export default function LoginPageClient({
           </div>
         ) : null}
 
-        <ProviderForm
+        <ProviderLink
           provider="google"
           nextPath={nextPath}
           label="Continue with Google"
@@ -492,7 +479,7 @@ export default function LoginPageClient({
             Other ways to sign in
           </summary>
           <div className={authStyles.methodBody}>
-            <ProviderForm
+            <ProviderLink
               provider="github"
               nextPath={nextPath}
               label="Continue with GitHub"

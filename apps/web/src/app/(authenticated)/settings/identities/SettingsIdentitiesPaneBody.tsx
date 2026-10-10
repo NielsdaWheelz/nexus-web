@@ -43,18 +43,20 @@ function linkedDate(identity: LinkedIdentity, display: RenderEnvironment): strin
   return formatted ? `linked ${formatted}` : "linked date unavailable";
 }
 
-// Identity linking is OAuth initiation: a GET form to the server /auth/oauth
-// route, which asks Supabase for the provider URL and redirects there. The
-// browser never holds a Supabase client.
-function ConnectProviderForm({ provider }: { provider: OAuthProvider }) {
+// Identity linking is OAuth initiation: a link to the server /auth/oauth
+// route, which asks Supabase for the provider URL and redirects there. A link,
+// not a GET form: chromium holds a form submission's whole redirect chain to
+// the csp's form-action 'self', so the redirect to the Supabase origin would be
+// refused. role="button" keeps the control's accessible role. The browser never
+// holds a Supabase client.
+function ConnectProviderLink({ provider }: { provider: OAuthProvider }) {
+  const query = new URLSearchParams({ mode: "link", provider });
   return (
-    <form className={styles.linkForm} action="/auth/oauth" method="get">
-      <input type="hidden" name="mode" value="link" />
-      <input type="hidden" name="provider" value={provider} />
-      <Button variant="pill" type="submit">
+    <Button asChild variant="pill">
+      <a href={`/auth/oauth?${query}`} role="button">
         {`Connect ${formatIdentityProvider(provider)}`}
-      </Button>
-    </form>
+      </a>
+    </Button>
   );
 }
 
@@ -227,7 +229,7 @@ export default function SettingsIdentitiesPaneBody() {
         ) : (
           <div className={styles.linkButtons}>
             {connectableProviders.map((provider) => (
-              <ConnectProviderForm key={provider} provider={provider} />
+              <ConnectProviderLink key={provider} provider={provider} />
             ))}
           </div>
         )}

@@ -112,6 +112,19 @@
   border-color: var(--edge-strong);
 }
 
+/* An asChild anchor keeps its variant's ink on hover: the global a:hover color
+   outranks a lone variant class. */
+a.primary:hover,
+a.danger:hover {
+  color: var(--ink-on-accent);
+}
+
+a.secondary:hover,
+a.ghost:hover,
+a.pill:hover {
+  color: var(--ink);
+}
+
 /* Icon slot wrapper */
 .icon {
   display: inline-flex;
