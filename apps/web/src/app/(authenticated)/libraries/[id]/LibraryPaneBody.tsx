@@ -29,10 +29,10 @@ import CollectionExhaustionNotice from "@/components/collections/CollectionExhau
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
 import type { CollectionRowView } from "@/lib/collections/types";
 import LibraryMembersSurface from "@/components/libraries/LibraryMembersSurface";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
 import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
 import CollectionFilterEditor from "@/components/workspace/CollectionFilterEditor";
-import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
+import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import {
@@ -71,11 +71,13 @@ import {
   type ProjectionOptionId,
 } from "@/lib/libraries/libraryView";
 import { libraryPresentation } from "@/lib/libraries/presentation";
-import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
-import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import {
+  matchesPaneFilterQuery,
+  usePaneFilterRows,
+} from "@/lib/panes/paneFilterRows";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
-import type { PaneRefreshExecute } from "@/lib/panes/panePublications";
+import type { PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { isAbortError } from "@/lib/errors";
 import { podcastRefreshRequestAnnouncement, requestPodcastRefresh } from "@/lib/podcasts/api";
@@ -176,8 +178,15 @@ export default function LibraryPaneBody() {
     }
   }, [currentLibrary?.canManageMembers]);
   useEffect(() => setAuthorityFeedback(null), [id]);
+  // the runtime reports the stored Companion: a remembered Members tab counts
+  // only where this viewer is shown it.
+  const membersShown =
+    currentLibrary?.canManageMembers === true &&
+    currentLibrary.isDefault === false &&
+    currentLibrary.systemKey === null;
   const membersActive =
     isPaneActive &&
+    membersShown &&
     paneRuntime?.secondaryPane?.groupId === "resource-inspector" &&
     paneRuntime.secondaryPane.visibility === "visible" &&
     paneRuntime.secondaryPane.activeSurfaceId === "resource-members";
@@ -514,12 +523,8 @@ export default function LibraryPaneBody() {
       ) : null,
     [libraryMembersController],
   );
-  const publishMembers =
-    currentLibrary?.canManageMembers === true &&
-    currentLibrary.isDefault === false &&
-    currentLibrary.systemKey === null &&
-    membersBody !== null;
-  const { companionAction } = useResourceInspector({
+  const publishMembers = membersShown && membersBody !== null;
+  useResourceInspector({
     scheme: "library",
     handle: currentLibrary ? id : null,
     bodies: {
@@ -592,7 +597,7 @@ export default function LibraryPaneBody() {
     },
     [id, revalidateLibraryEntries],
   );
-  usePanePrimaryChrome({
+  usePaneChrome({
     collection,
     refresh:
       currentLibrary && requestedViewKey && viewIsCommitted
@@ -602,7 +607,6 @@ export default function LibraryPaneBody() {
           execute: executeRefresh,
         }
         : undefined,
-    companionAction: companionAction ?? undefined,
     // The pane's canonical identity is its route key, not a fact of any read it
     // is still waiting on. Publishing it late leaves the menu with no subject,
     // so it renders no resource suffix and no loading row either: the surface

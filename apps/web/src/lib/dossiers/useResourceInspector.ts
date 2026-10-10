@@ -1,31 +1,18 @@
 "use client";
 
-import {
-  createElement,
-  useCallback,
-  useMemo,
-  useRef,
-  type ReactNode,
-} from "react";
+import { createElement, useCallback, useMemo, useRef } from "react";
 import {
   SubjectDossier,
   type DossierCitationActivate,
 } from "@/components/dossier/DossierSurface";
-import { companionAction } from "@/components/resource-inspector/companionAction";
 import {
   planInspectorSurfaces,
   type InspectorDomainBodies,
 } from "@/components/resource-inspector/inspectorSurfaces";
-import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import { dispatchReaderSourceActivation } from "@/lib/resourceGraph/citations";
 import { hasSamePaneResource } from "@/lib/panes/paneRouteModel";
-import {
-  normalizePaneSecondaryPublication,
-  secondaryPublicationIncludesSurface,
-  type PaneCompanionAction,
-} from "@/lib/panes/panePublications";
+import { usePaneCompanion, type PaneCompanion } from "@/lib/panes/paneChrome";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
-import { paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
 import type { ResourceScheme } from "@/lib/resourceGraph/resourceRef";
 import { activateResource } from "@/lib/resources/activation";
 import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities";
@@ -37,31 +24,23 @@ export interface UseResourceInspectorParams {
   handle: string | null;
   /** The route-owned bodies the subject's policy requires, and only those. */
   bodies: InspectorDomainBodies;
-  /** The pane's transient find results; never a durable tab or the default. */
-  searchResults?: ReactNode;
   /** The pane's own citation routing; by default citations open as panes. */
   onCitationActivate?: DossierCitationActivate;
 }
 
-export interface ResourceInspectorComposition {
-  /** The one action eligible for primary chrome, or null without an inspector. */
-  companionAction: PaneCompanionAction | null;
-}
-
 /**
  * The one resource-pane inspector composition: the pane's bodies plus the
- * subject's Dossier tab, published once per change, and the companion action
- * that opens the remembered tab while it is published, else the default. The
- * Dossier body is one element per subject: its commands read the latest pane
- * through a ref, so pane re-renders never remount it.
+ * subject's Dossier tab, published as the pane's Companion once per change;
+ * the shell derives the Inspector action from it. The Dossier body is one
+ * element per subject: its commands read the latest pane through a ref, so
+ * pane re-renders never remount it.
  */
 export function useResourceInspector({
   scheme,
   handle,
   bodies,
-  searchResults,
   onCitationActivate,
-}: UseResourceInspectorParams): ResourceInspectorComposition {
+}: UseResourceInspectorParams): void {
   const paneRuntime = usePaneRuntime();
   const policy = RESOURCE_CAPABILITIES[scheme].inspectorPolicy;
   const { contents, members, linkedItems, forks } = bodies;
@@ -116,74 +95,14 @@ export function useResourceInspector({
         : null,
     [activateCitation, handle, policy, scheme, viewMediaEvidence],
   );
-  const publication = useMemo(() => {
+  const companion = useMemo<PaneCompanion | null>(() => {
     if (!policy || !dossierBody) return null;
     const plan = planInspectorSurfaces({
       policy,
       bodies: { contents, members, linkedItems, forks },
       dossierBody,
-      searchResultsBody: searchResults,
     });
-    return normalizePaneSecondaryPublication({
-      groupId: "resource-inspector",
-      surfaces: plan.surfaces,
-      defaultSurfaceId: plan.defaultSurfaceId,
-      ...(plan.transientSurfaces.length > 0
-        ? { transientSurfaces: plan.transientSurfaces }
-        : {}),
-    });
-  }, [
-    contents,
-    dossierBody,
-    forks,
-    linkedItems,
-    members,
-    policy,
-    searchResults,
-  ]);
-  const requestSurface = usePaneSecondary(publication);
-
-  // Never rewrite the remembered tab: the host shows the default while it is
-  // unpublished, so a later publication brings it back.
-  const secondaryPane = paneRuntime?.secondaryPane ?? null;
-  const remembered = secondaryPane?.activeSurfaceId ?? null;
-  const openTarget =
-    publication &&
-    remembered &&
-    secondaryPublicationIncludesSurface(publication, remembered)
-      ? remembered
-      : (publication?.defaultSurfaceId ?? null);
-  const openTargetRef = useRef(openTarget);
-  openTargetRef.current = openTarget;
-  const onOpen = useCallback(
-    (trigger: HTMLButtonElement | null) => {
-      if (openTargetRef.current)
-        requestSurface(openTargetRef.current, { returnFocusTo: trigger });
-    },
-    [requestSurface],
-  );
-  const closeSecondaryPane = paneRuntime?.closeSecondaryPane;
-  const onClose = useCallback(
-    () => closeSecondaryPane?.(),
-    [closeSecondaryPane],
-  );
-
-  const paneId = paneRuntime?.paneId ?? null;
-  const expanded =
-    secondaryPane?.groupId === "resource-inspector" &&
-    secondaryPane.visibility === "visible" &&
-    paneRuntime?.transientSecondarySurface === null;
-  const companion = useMemo(
-    () =>
-      publication !== null && paneId !== null
-        ? companionAction({
-            expanded,
-            regionId: paneSecondaryRegionId(paneId, "resource-inspector"),
-            onOpen,
-            onClose,
-          })
-        : null,
-    [expanded, onClose, onOpen, paneId, publication],
-  );
-  return { companionAction: companion };
+    return { groupId: "resource-inspector", ...plan };
+  }, [contents, dossierBody, forks, linkedItems, members, policy]);
+  usePaneCompanion(companion);
 }

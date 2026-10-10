@@ -21,7 +21,7 @@ import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import MediaImage from "@/components/ui/MediaImage";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { ApiError } from "@/lib/api/client";
 import { absent, present } from "@/lib/api/presence";
@@ -177,7 +177,7 @@ export default function BrowsePreviewPaneBody() {
         ? previewErrorMessage(resource.error)
         : null;
   useSetPaneLabel(preview?.title ?? null);
-  usePanePrimaryChrome({
+  usePaneChrome({
     header:
       failure !== null
         ? { kind: "Resource", resource: { status: "Failed" } }

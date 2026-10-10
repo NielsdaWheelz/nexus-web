@@ -1,6 +1,8 @@
 import { useCallback, useMemo, useState } from "react";
-import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
-import { usePaneTransientFilterRows } from "@/lib/panes/usePaneFilterRows";
+import {
+  matchesPaneFilterQuery,
+  usePaneTransientFilterRows,
+} from "@/lib/panes/paneFilterRows";
 import type { ResourceSurface } from "@/lib/resources/resourceItems";
 import { resourceSurfaceFilterFields } from "./resourceSurfaceFilterFields";
 
@@ -48,7 +50,7 @@ export function useResourceSurfaceFilterRows(
     },
     [filterRows, ready],
   );
-  const { query, publication } = usePaneTransientFilterRows({
+  const { query, search } = usePaneTransientFilterRows({
     sourceKey,
     inputLabel,
     placeholder: "Filter items",
@@ -70,5 +72,5 @@ export function useResourceSurfaceFilterRows(
       ),
     [sourceKey],
   );
-  return { ready, query, search: publication, acceptSurface, markReady };
+  return { ready, query, search, acceptSurface, markReady };
 }

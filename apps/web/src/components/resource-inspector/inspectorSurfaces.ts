@@ -13,11 +13,9 @@ import type {
   ResourceInspectorResourcePolicy,
   ResourceInspectorSurfaceRole,
 } from "@/lib/resources/resourceCapabilities";
-import type {
-  PaneSecondarySurfacePublication,
-  PaneTransientSecondarySurfacePublication,
-} from "@/lib/panes/panePublications";
-import type { WorkspaceSecondarySurfaceId } from "@/lib/panes/paneSecondaryModel";
+import type { WorkspaceSecondarySurfaceIdOf } from "@/lib/panes/paneSecondaryModel";
+
+type InspectorSurfaceId = WorkspaceSecondarySurfaceIdOf<"resource-inspector">;
 
 export interface InspectorDomainBodies {
   /** `resource-contents` — published only when the pane supplies it (Media TOC). */
@@ -31,14 +29,13 @@ export interface InspectorDomainBodies {
 }
 
 interface InspectorSurfacePlan {
-  surfaces: PaneSecondarySurfacePublication[];
-  transientSurfaces: PaneTransientSecondarySurfacePublication[];
-  defaultSurfaceId: WorkspaceSecondarySurfaceId;
+  surfaces: { id: InspectorSurfaceId; body: ReactNode }[];
+  defaultSurfaceId: InspectorSurfaceId;
 }
 
 function linkedItemsSurfaceId(
   linkedItems: ResourceInspectorLinkedItemsSurface,
-): WorkspaceSecondarySurfaceId {
+): InspectorSurfaceId {
   switch (linkedItems) {
     case "MediaEvidence":
     case "ResourceConnections":
@@ -51,19 +48,17 @@ function linkedItemsSurfaceId(
 }
 
 /**
- * Build the ordered surface publications + resolved default. `dossierBody` is the
- * reference-stable Dossier element (so streaming does not republish). Throws via
- * `normalizePaneSecondaryPublication` downstream if the result is empty — but
- * Dossier is always appended, so there is always ≥1 surface (A12 guarantee).
+ * Build the ordered surfaces + resolved default. `dossierBody` is the
+ * reference-stable Dossier element (so streaming does not republish); Dossier
+ * is always appended, so there is always ≥1 surface (A12 guarantee).
  */
 export function planInspectorSurfaces(input: {
   policy: ResourceInspectorResourcePolicy;
   bodies: InspectorDomainBodies;
   dossierBody: ReactNode;
-  searchResultsBody?: ReactNode;
 }): InspectorSurfacePlan {
-  const { policy, bodies, dossierBody, searchResultsBody } = input;
-  const surfaces: PaneSecondarySurfacePublication[] = [];
+  const { policy, bodies, dossierBody } = input;
+  const surfaces: InspectorSurfacePlan["surfaces"] = [];
   const linkedId = linkedItemsSurfaceId(policy.linkedItems);
 
   if (bodies.linkedItems == null) {
@@ -91,7 +86,7 @@ export function planInspectorSurfaces(input: {
   const publishedIds = new Set(surfaces.map((surface) => surface.id));
   const roleSurfaceId = (
     role: ResourceInspectorSurfaceRole,
-  ): WorkspaceSecondarySurfaceId | null => {
+  ): InspectorSurfaceId | null => {
     switch (role) {
       case "Contents":
         return publishedIds.has("resource-contents") ? "resource-contents" : null;
@@ -111,7 +106,7 @@ export function planInspectorSurfaces(input: {
   // `default_surface_order` is fallback preference (NOT tab order): first role
   // that maps to a published surface. It always ends in Dossier, so this
   // resolves.
-  let defaultSurfaceId: WorkspaceSecondarySurfaceId = "resource-dossier";
+  let defaultSurfaceId: InspectorSurfaceId = "resource-dossier";
   for (const role of policy.defaultSurfaceOrder) {
     const resolved = roleSurfaceId(role);
     if (resolved !== null) {
@@ -120,12 +115,5 @@ export function planInspectorSurfaces(input: {
     }
   }
 
-  return {
-    surfaces,
-    transientSurfaces:
-      searchResultsBody == null
-        ? []
-        : [{ id: "resource-search", body: searchResultsBody }],
-    defaultSurfaceId,
-  };
+  return { surfaces, defaultSurfaceId };
 }

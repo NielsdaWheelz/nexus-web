@@ -290,19 +290,21 @@ function useScope() {
   return { memory, ...scope };
 }
 
-/** PaneShell's scrollport; a new visit or route restores into it. */
+/** PaneShell's scrollport and its route content; a new visit or route restores into it. */
 export function usePaneReturnScrollport(input: {
   enabled: boolean;
   scrollportRef: RefObject<HTMLElement | null>;
+  /** The route's own content: the anchor search starts here, past any collection row. */
+  contentRef: RefObject<HTMLElement | null>;
   continuityKey: string | null;
 }): void {
   const { memory, paneId, visitId, routeKey } = useScope();
-  const { enabled, scrollportRef, continuityKey } = input;
+  const { enabled, scrollportRef, contentRef, continuityKey } = input;
   const previous = useRef<string | null>(null);
   useLayoutEffect(() => {
     const element = scrollportRef.current;
-    const content = element?.firstElementChild;
-    if (!enabled || !paneId || !element || !(content instanceof HTMLElement)) {
+    const content = contentRef.current;
+    if (!enabled || !paneId || !element || !content) {
       previous.current = null;
       return;
     }
@@ -311,7 +313,7 @@ export function usePaneReturnScrollport(input: {
     previous.current = continuityKey;
     const port = { visitId, routeKey, element, content };
     return memory.register(paneId, port, restore);
-  }, [enabled, scrollportRef, continuityKey, memory, paneId, visitId, routeKey]);
+  }, [enabled, scrollportRef, contentRef, continuityKey, memory, paneId, visitId, routeKey]);
 }
 
 /** Every scroll-restoring body reports when its first content is on screen. */

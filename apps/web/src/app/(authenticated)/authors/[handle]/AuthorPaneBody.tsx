@@ -18,8 +18,8 @@ import PaneSurface from "@/components/ui/PaneSurface";
 import SelectField from "@/components/ui/SelectField";
 import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
 import {
   apiTransportFeedback,
   isApiError,
@@ -58,8 +58,10 @@ import {
   usePaneSearchParams,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
-import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
-import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import {
+  matchesPaneFilterQuery,
+  usePaneFilterRows,
+} from "@/lib/panes/paneFilterRows";
 import { usePodcastRevision } from "@/lib/podcasts/api";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
@@ -336,7 +338,7 @@ export default function AuthorPaneBody() {
       ),
     [contributorId, detail.status],
   );
-  const { companionAction } = useResourceInspector({
+  useResourceInspector({
     scheme: "contributor",
     handle: detail.status === "ready" ? detail.data.handle : null,
     bodies: { linkedItems },
@@ -355,9 +357,8 @@ export default function AuthorPaneBody() {
     refetchWorks();
     return { kind: "Complete" as const, announcement: "Refreshing author" };
   }, [refetchDetail, refetchWorks]);
-  usePanePrimaryChrome({
+  usePaneChrome({
     collection,
-    companionAction: companionAction ?? undefined,
     actionSubject:
       detail.status === "ready"
         ? { ref: assumeCanonicalResourceRef(detail.data.actionSubject.ref) }

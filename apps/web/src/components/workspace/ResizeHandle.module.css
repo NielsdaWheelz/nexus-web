@@ -1,0 +1,8 @@
+.handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: var(--resize-handle-width);
+  height: 100%;
+  cursor: col-resize;
+}

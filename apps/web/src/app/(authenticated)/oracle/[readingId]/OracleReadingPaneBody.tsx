@@ -7,7 +7,7 @@ import {
 } from "@/components/feedback/Feedback";
 import MediaImage from "@/components/ui/MediaImage";
 import ReaderCitation from "@/components/ui/ReaderCitation";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { apiFetch } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -191,7 +191,7 @@ export default function OracleReadingPaneBody() {
   useSetPaneLabel(
     reading?.question_text ?? (loadError === null ? null : "Reading"),
   );
-  usePanePrimaryChrome({
+  usePaneChrome({
     actionSubject:
       reading === null
         ? undefined

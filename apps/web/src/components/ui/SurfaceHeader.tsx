@@ -4,7 +4,7 @@ import { forwardRef } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
-import type { PaneCompanionAction } from "@/lib/panes/panePublications";
+import type { PaneCompanionAction } from "@/lib/panes/paneChrome";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import ActionBar from "./ActionBar";

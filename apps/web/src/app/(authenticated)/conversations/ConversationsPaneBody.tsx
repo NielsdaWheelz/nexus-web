@@ -7,9 +7,9 @@ import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import SelectField from "@/components/ui/SelectField";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
 import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
-import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
+import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
 import { NO_CURSOR, ZERO_REVISION } from "@/lib/api/collectionPage";
 import { conversationsInitialResource } from "@/lib/api/resource";
 import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
@@ -40,8 +40,10 @@ import {
   usePaneIsActive,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
-import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
-import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import {
+  matchesPaneFilterQuery,
+  usePaneFilterRows,
+} from "@/lib/panes/paneFilterRows";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
 import {
@@ -319,7 +321,7 @@ export default function ConversationsPaneBody() {
     },
     [refresh],
   );
-  usePanePrimaryChrome({
+  usePaneChrome({
     collection,
     refresh: { kind: "Refreshable", sourceKey: "Conversations:mine", execute },
     menuActions: NEW_CHAT,

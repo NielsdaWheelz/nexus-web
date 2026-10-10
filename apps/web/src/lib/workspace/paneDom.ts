@@ -1,90 +1,38 @@
-/**
- * Resolves the programmatic chrome focus target owned by one canonical
- * workspace pane wrapper. The wrapper's `data-pane-id` is intentionally the
- * only DOM identity for a pane; nested pane surfaces must not repeat it.
- */
-function findPane(paneId: string | null | undefined): HTMLElement | null {
-  if (!paneId) return null;
-  return document.querySelector<HTMLElement>(
-    `[data-pane-id="${CSS.escape(paneId)}"]`,
-  );
+// A pane's one DOM identity is its wrap's `data-pane-id`; these find the focus
+// targets inside it, and in the mobile top bar that projects its chrome. A
+// target is usable only while it is connected and outside inert chrome.
+function usable(element: Element | null | undefined): HTMLElement | null {
+  return element instanceof HTMLElement &&
+    element.isConnected &&
+    !element.closest("[inert]")
+    ? element
+    : null;
 }
 
-/** A focus target is usable only while it is live and not inside inert chrome. */
-function usable(el: HTMLElement | null | undefined): HTMLElement | null {
-  return el?.isConnected && !el.closest("[inert]") ? el : null;
+function inPane(paneId: string, selector: string): HTMLElement | null {
+  return usable(
+    document
+      .querySelector(`[data-pane-id="${CSS.escape(paneId)}"]`)
+      ?.querySelector(selector),
+  );
 }
 
 export function findPaneLandmarkFocusTarget(
   paneId: string | null | undefined,
 ): HTMLElement | null {
-  return usable(
-    findPane(paneId)?.querySelector<HTMLElement>(
-      "[data-pane-focus-landmark='true']",
-    ),
-  );
+  return paneId ? inPane(paneId, "[data-pane-focus-landmark='true']") : null;
 }
 
+/** Mobile: the top bar's More trigger; desktop: the pane's chrome. */
 export function findPaneChromeFocusTarget(
   paneId: string | null | undefined,
 ): HTMLElement | null {
   if (!paneId) return null;
-  const mobileProjection = document.querySelector<HTMLElement>(
-    `[data-pane-chrome-for="${CSS.escape(paneId)}"]`,
-  );
-  const mobileOptions = usable(
-    mobileProjection?.querySelector<HTMLElement>("[data-pane-menu-trigger]"),
-  );
-  if (mobileOptions) return mobileOptions;
-
-  const pane = findPane(paneId);
-  const desktopOptions = usable(
-    pane?.querySelector<HTMLElement>("[data-pane-menu-trigger]"),
-  );
-  if (desktopOptions) return desktopOptions;
-  return usable(
-    pane?.querySelector<HTMLElement>("[data-pane-chrome-focus='true']"),
-  );
-}
-
-export function findPaneSearchFocusTarget(
-  paneId: string | null | undefined,
-): HTMLElement | null {
-  if (!paneId) return null;
-  const pane = findPane(paneId);
-  const input = usable(
-    pane?.querySelector<HTMLElement>("[data-pane-search-input]"),
-  );
-  if (input) return input;
-  const action = usable(
-    pane?.querySelector<HTMLElement>('[data-action-id="Pane.Search"]'),
-  );
-  if (action) return action;
-  return findPaneChromeFocusTarget(paneId);
-}
-
-function isScrollableY(element: HTMLElement): boolean {
-  const { overflowY } = window.getComputedStyle(element);
   return (
-    /(auto|scroll|overlay)/.test(overflowY) &&
-    element.scrollHeight > element.clientHeight
+    usable(
+      document
+        .querySelector(`[data-pane-chrome-for="${CSS.escape(paneId)}"]`)
+        ?.querySelector("[data-pane-menu-trigger]"),
+    ) ?? inPane(paneId, "[data-pane-chrome-focus='true']")
   );
-}
-
-/** The element that scrolls a node inside a pane: its pane viewport, else its nearest scrolling ancestor. */
-export function getPaneScrollContainer(
-  contentNode: HTMLElement | null,
-): HTMLElement | null {
-  if (!contentNode) return null;
-  const paneViewport = contentNode.closest<HTMLElement>(
-    '[data-pane-content="true"]',
-  );
-  if (paneViewport && isScrollableY(paneViewport)) return paneViewport;
-  for (
-    let candidate: HTMLElement | null = contentNode;
-    candidate && candidate !== document.body;
-    candidate = candidate.parentElement
-  )
-    if (isScrollableY(candidate)) return candidate;
-  return paneViewport ?? (document.scrollingElement as HTMLElement | null);
 }

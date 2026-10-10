@@ -19,8 +19,8 @@ import Button from "@/components/ui/Button";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import PaneSection from "@/components/ui/PaneSection";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
 import { presenceValueOr } from "@/lib/api/presence";
 import { useConsumptionProjectionRevision } from "@/lib/consumption/projectionRevision";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
@@ -38,8 +38,10 @@ import {
   usePaneSearchParams,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
-import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
-import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import {
+  matchesPaneFilterQuery,
+  usePaneFilterRows,
+} from "@/lib/panes/paneFilterRows";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import {
   getPodcastDetail,
@@ -326,13 +328,12 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     ),
     [podcastId],
   );
-  const { companionAction } = useResourceInspector({
+  useResourceInspector({
     scheme: "podcast",
     handle: podcastId,
     bodies: { linkedItems: connections },
   });
-  usePanePrimaryChrome({
-    companionAction: companionAction ?? undefined,
+  usePaneChrome({
     // Only a subscription refreshes; until the head loads that is unknown.
     refresh:
       subscription !== null

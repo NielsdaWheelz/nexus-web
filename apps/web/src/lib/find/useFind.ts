@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import type { FindRow, FindSource } from "@/lib/find/find";
-import { truncatePaneSearchQuery } from "@/lib/panes/paneSearch";
+import { truncatePaneSearchQuery } from "@/lib/panes/paneChrome";
 
 const FIND_INPUT_DELAY_MS = 120;
 

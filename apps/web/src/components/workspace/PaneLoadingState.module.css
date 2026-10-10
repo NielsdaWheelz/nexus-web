@@ -9,7 +9,8 @@
   height: 0.75em;
   border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--ink-faint) 20%, var(--surface-2));
-  animation: pane-loading-pulse calc(var(--duration-deliberate) * 3) ease-in-out infinite;
+  animation: pane-loading-pulse calc(var(--duration-deliberate) * 3) ease-in-out
+    infinite;
 }
 
 .bar:nth-child(1) {

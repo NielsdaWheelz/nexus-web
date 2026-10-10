@@ -17,7 +17,7 @@ import {
 } from "react";
 import type { SurfaceHeaderNavigation } from "@/components/ui/SurfaceHeader";
 import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
-import type { PaneCompanionAction } from "@/lib/panes/panePublications";
+import type { PaneCompanionAction } from "@/lib/panes/paneChrome";
 import type { TargetLinkMouseEvent } from "@/lib/panes/targetLinkActivation";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";

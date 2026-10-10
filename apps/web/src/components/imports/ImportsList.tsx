@@ -10,8 +10,7 @@ import Pill from "@/components/ui/Pill";
 import ResourceList from "@/components/ui/ResourceList";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
+import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
 import {
   fetchImportPage,
   usePagePrefix,
@@ -39,7 +38,7 @@ import {
   withoutFilters,
   type ImportsUrlState,
 } from "@/lib/imports/query";
-import type { PaneCompanionAction } from "@/lib/panes/panePublications";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import ImportRow from "./ImportRow";
 import ImportsToolbar from "./ImportsToolbar";
@@ -58,7 +57,6 @@ export default function ImportsList({
   state,
   setState,
   today,
-  companion,
   onMatched,
   onSelect,
   onSettled,
@@ -67,7 +65,6 @@ export default function ImportsList({
   readonly state: ImportsUrlState;
   readonly setState: (next: ImportsUrlState) => void;
   readonly today: () => string;
-  readonly companion: PaneCompanionAction | null;
   readonly onMatched: (matched: ImportItem["matched_event"]) => void;
   readonly onSelect: (ref: string | null) => void;
   readonly onSettled: (settled: boolean) => void;
@@ -173,17 +170,13 @@ export default function ImportsList({
       view,
     ],
   );
-  usePanePrimaryChrome(
-    useMemo(() => {
-      const collection = {
-        label: "Filter imports",
-        content: toolbar,
-        focusInput,
-      };
-      return companion === null
-        ? { collection }
-        : { collection, companionAction: companion };
-    }, [companion, focusInput, toolbar]),
+  usePaneChrome(
+    useMemo(
+      () => ({
+        collection: { label: "Filter imports", content: toolbar, focusInput },
+      }),
+      [focusInput, toolbar],
+    ),
   );
 
   const filtered = chips.some((chip) => chip.id !== "q");

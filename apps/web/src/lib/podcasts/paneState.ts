@@ -14,7 +14,7 @@ import {
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
-import type { PaneRefreshExecute } from "@/lib/panes/panePublications";
+import type { PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import {
   podcastRefreshRequestAnnouncement,
   requestPodcastRefresh,

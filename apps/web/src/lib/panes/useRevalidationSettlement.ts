@@ -1,73 +1,73 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
-interface PendingRevalidation {
+interface Pending {
   readonly requestId: number;
   readonly resolve: () => void;
   readonly reject: (error: unknown) => void;
-  readonly removeAbortListener: () => void;
+  readonly signal: AbortSignal;
+  readonly abort: () => void;
 }
 
-/** Owns one refresh waiter. The pane decides when its data has committed. */
+const abortError = (message: string) => new DOMException(message, "AbortError");
+
+/**
+ * One refresh waiter: a pane's refresh waits on it, and the pane resolves it
+ * when its revalidated data commits. A new wait supersedes the old one.
+ */
 export function useRevalidationSettlement() {
-  const pendingRef = useRef<PendingRevalidation | null>(null);
-  const reject = useCallback((error: unknown) => {
-    const pending = pendingRef.current;
-    if (pending === null) return;
-    pendingRef.current = null;
-    pending.removeAbortListener();
-    pending.reject(error);
+  const pending = useRef<Pending | null>(null);
+  const settlement = useMemo(() => {
+    // the waiter, if it is `requestId`'s (or any, without one), now detached.
+    const take = (requestId?: number): Pending | null => {
+      const current = pending.current;
+      if (
+        !current ||
+        (requestId !== undefined && current.requestId !== requestId)
+      )
+        return null;
+      pending.current = null;
+      current.signal.removeEventListener("abort", current.abort);
+      return current;
+    };
+    const reject = (error: unknown) => take()?.reject(error);
+    return {
+      isPending: (requestId: number) =>
+        pending.current?.requestId === requestId,
+      resolve: (requestId: number) => take(requestId)?.resolve(),
+      reject,
+      wait(input: {
+        readonly requestId: number;
+        readonly signal: AbortSignal;
+        readonly onAbort: () => void;
+      }): Promise<void> {
+        reject(abortError("Pane refresh was superseded."));
+        const { requestId, signal } = input;
+        return new Promise<void>((resolve, rejectWait) => {
+          const abort = () => {
+            if (!take(requestId)) return;
+            input.onAbort();
+            rejectWait(
+              signal.reason ?? abortError("Pane refresh was aborted."),
+            );
+          };
+          pending.current = {
+            requestId,
+            resolve,
+            reject: rejectWait,
+            signal,
+            abort,
+          };
+          signal.addEventListener("abort", abort, { once: true });
+          if (signal.aborted) abort();
+        });
+      },
+    };
   }, []);
-  const isPending = useCallback(
-    (requestId: number) => pendingRef.current?.requestId === requestId,
-    [],
-  );
-  const resolve = useCallback((requestId: number) => {
-    const pending = pendingRef.current;
-    if (pending?.requestId !== requestId) return;
-    pendingRef.current = null;
-    pending.removeAbortListener();
-    pending.resolve();
-  }, []);
-  const wait = useCallback(
-    ({ requestId, signal, onAbort }: {
-      requestId: number;
-      signal: AbortSignal;
-      onAbort: () => void;
-    }): Promise<void> => {
-      reject(new DOMException("Pane refresh was superseded.", "AbortError"));
-      return new Promise<void>((resolve, reject) => {
-        const abort = () => {
-          if (pendingRef.current?.requestId !== requestId) return;
-          pendingRef.current = null;
-          signal.removeEventListener("abort", abort);
-          onAbort();
-          reject(
-            signal.reason ??
-              new DOMException("Pane refresh was aborted.", "AbortError"),
-          );
-        };
-        pendingRef.current = {
-          requestId,
-          resolve,
-          reject,
-          removeAbortListener: () => signal.removeEventListener("abort", abort),
-        };
-        signal.addEventListener("abort", abort, { once: true });
-        if (signal.aborted) abort();
-      });
-    },
-    [reject],
-  );
   useEffect(
-    () => () => {
-      reject(new DOMException("Pane refresh was unmounted.", "AbortError"));
-    },
-    [reject],
+    () => () => settlement.reject(abortError("Pane refresh was unmounted.")),
+    [settlement],
   );
-  return useMemo(
-    () => ({ wait, isPending, resolve, reject }),
-    [wait, isPending, resolve, reject],
-  );
+  return settlement;
 }

@@ -13,16 +13,18 @@ import PodcastViewBar, {
 } from "@/components/podcasts/PodcastViewBar";
 import Button from "@/components/ui/Button";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
 import { absent, present } from "@/lib/api/presence";
 import { useResource } from "@/lib/api/useResource";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import { listMemberLibraries } from "@/lib/libraries/client";
 import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
-import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
-import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import {
+  matchesPaneFilterQuery,
+  usePaneFilterRows,
+} from "@/lib/panes/paneFilterRows";
 import {
   listSubscriptions,
   usePodcastRevision,
@@ -182,7 +184,7 @@ export default function PodcastsPaneBody() {
     replaceView,
     sort,
   ]);
-  usePanePrimaryChrome({
+  usePaneChrome({
     header: {
       kind: "Section",
       meta: complete

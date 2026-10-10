@@ -1,18 +1,14 @@
 import styles from "./PaneLoadingState.module.css";
 
-type PaneLoadingAnnouncement = "None" | "Polite";
-
-// The one generic pane placeholder. The caller owns whether this initial load
-// is announced; a refresh stays with PaneShell and must not reuse this state.
-export function PaneLoadingState({
-  label,
-  announcement,
-}: {
-  label: string;
-  announcement: PaneLoadingAnnouncement;
+/**
+ * The one pane placeholder. The caller decides whether this first load is
+ * announced; a refresh belongs to the shell and never reuses it.
+ */
+export function PaneLoadingState(props: {
+  readonly label: string;
+  readonly announcement: "None" | "Polite";
 }) {
-  const announces = announcement === "Polite";
-
+  const announces = props.announcement === "Polite";
   return (
     <div
       className={styles.root}
@@ -20,12 +16,12 @@ export function PaneLoadingState({
       aria-live={announces ? "polite" : undefined}
       aria-atomic={announces ? "true" : undefined}
       aria-busy="true"
-      aria-label={announces ? undefined : label}
+      aria-label={announces ? undefined : props.label}
     >
       <span className={styles.bar} aria-hidden />
       <span className={styles.bar} aria-hidden />
       <span className={styles.bar} aria-hidden />
-      <span className="sr-only">{label}</span>
+      <span className="sr-only">{props.label}</span>
     </div>
   );
 }
