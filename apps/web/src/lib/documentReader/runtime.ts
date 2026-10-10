@@ -83,7 +83,8 @@ export interface Reader {
   revalidate(): void;
   /** Host: publication and processing events, E_READER_CONTENT_CHANGED. */
   reload(): void;
-  drainForReset(): Promise<void>;
+  prepareProgressFence(): Promise<void>;
+  reconcileProgressFence(): Promise<void>;
   install(snapshot: CursorSnapshot): void;
   /** pdf; clamped to PDF_ZOOM. */
   setZoom(zoom: number): void;
@@ -184,7 +185,10 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     options.progress &&
     createProgressSync(options.progress, {
       changed: () => set({ progress: sync!.state() }),
-      remote: (snapshot) => void applySnapshot(snapshot),
+      remote(snapshot, move) {
+        input = { at: -Infinity, direction: "none" };
+        if (move) void applySnapshot(snapshot);
+      },
       dormant: () =>
         isAway &&
         state.navigation.mode === "Reading" &&
@@ -198,6 +202,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     });
 
   async function applySnapshot(snapshot: CursorSnapshot) {
+    input = { at: -Infinity, direction: "none" };
     const doc = ready();
     if (!doc) return;
     const target: ReaderTarget | null =
@@ -349,7 +354,11 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       });
     },
     reload: () => void load(),
-    drainForReset: async () => sync?.flush(false),
+    async prepareProgressFence() {
+      input = { at: -Infinity, direction: "none" };
+      await sync?.prepareFence();
+    },
+    reconcileProgressFence: async () => sync?.reconcileFence(),
     install(snapshot) {
       sync?.install(snapshot);
       void applySnapshot(snapshot);

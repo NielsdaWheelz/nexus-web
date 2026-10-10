@@ -38,7 +38,8 @@ its wire types are generated from FastAPI's OpenAPI schema, so tsc catches drift
 ## generation
 
 - `python -m nexus.wire_schema` prints FastAPI's OpenAPI document, built from
-  the routers with every deployment toggle on, plus the SSE payload models, as
+  the routers with every deployment toggle on, plus the SSE payload models and
+  the explicit native payload `PlayerDescriptor`, as
   sorted JSON. it needs no settings, database, network or secrets. two
   different schemas with one name fail it; rename one model.
 - `cd apps/web && bun run gen:wire` renders it with `openapi-typescript`

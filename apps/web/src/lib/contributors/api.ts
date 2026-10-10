@@ -12,7 +12,6 @@ import { contributorWorksResource } from "@/lib/api/resource";
 import type { AuthorWorksView } from "@/lib/contributors/workView";
 import { parseContributorHandle } from "@/lib/contributors/handle";
 import { decodeOptionalPublicationDate } from "@/lib/dates/publicationDate";
-import { mediaSummaryFromWire } from "@/lib/media/mediaSummary";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type {
   ContributorDetail,
@@ -50,7 +49,7 @@ export function contributorWorksPageFromWire(
         if (item.kind === "Media") {
           return {
             ...item,
-            mediaSummary: mediaSummaryFromWire(item.mediaSummary),
+            mediaSummary: item.mediaSummary,
             actionSubject: { ref: assumeCanonicalResourceRef(item.actionSubject.ref) },
           };
         }

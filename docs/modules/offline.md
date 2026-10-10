@@ -9,7 +9,7 @@ and carrying reading positions taken offline back to nexus.
 offline is one thing on one device: a **download list** of items (episode
 audio or a reading copy), each fetched by **one user-initiated data-transfer
 job** into **one directory**, recorded in **one json state file**, exposed to
-web code through **one bridge** (`window.nexusOffline`), and shown in **one
+web code through **one bridge** (`window.nexusDownloads`), and shown in **one
 screen**, the shelf. the shelf is the Downloads screen whether or not there is
 a network. the hosted app only enqueues, reflects item state in its resource
 menus, opens the shelf and purges on sign-out. a reading copy is a zip of the
@@ -23,7 +23,7 @@ owns one route and one optional field.
 |---|---|---|
 | store | `apps/android/.../offline/OfflineStore.kt` | `files/offline/state.json` + `files/offline/items/{mediaId}/`; items, positions, leases, account binding, wipe |
 | jobs | `offline/OfflineJobService.kt`, `Transfers.kt`, `PositionSync.kt` | one UIDT transfer job (both kinds, network per policy) and one persisted sync job |
-| bridge | `offline/OfflineBridge.kt` ⇄ `apps/web/src/lib/offline/bridge.ts` | `window.nexusOffline` on the hosted and shelf origins |
+| bridge | `offline/OfflineBridge.kt` ⇄ `apps/web/src/lib/offline/bridge.ts` | `window.nexusDownloads` on the hosted and shelf origins |
 | router | `offline/ShelfRouter.kt` | serves `https://appassets.androidplatform.net/shelf/**`; 404s every other subresource while the shelf is the main document |
 | shelf | `apps/web/src/shelf/` (`Shelf.tsx`, `ShelfReader.tsx`) | the Downloads screen and the shared reader core over a copy; built by `bun run build:shelf` into the git-ignored `assets/shelf` |
 | hosted | `lib/actions/resourceActionMenu.tsx` (`Download`), `components/appnav/AccountMenu.tsx` | menu commands, *Downloads* entry, purge before sign-out |
@@ -79,7 +79,7 @@ lease (`store.open`) and plays `file://`, else streams.
 
 ## contracts
 
-**bridge** `window.nexusOffline` (both origins, main frame, json string
+**bridge** `window.nexusDownloads` (both origins, main frame, json string
 frames). request `{id, op, ...args}`; reply `{id, ok: true, ...}` or
 `{id, ok: false, error}`; push `{snapshot}` to the document that last said
 hello, always before the reply to the op that caused it (download progress
@@ -91,12 +91,19 @@ after fsync; `resolve {mediaId, choice: Canonical|Device}`; `policy {value}`;
 there is no version: the object name is the identity, and an incompatible
 change renames it.
 
-`Snapshot = {policy: UnmeteredOnly|AnyConnected, authRequired, items}`, items
+`Snapshot = {policy: UnmeteredOnly|AnyConnected, authRequired, consumptionRevision, items}`, items
 in enqueue order: `{mediaId, kind, title, state: Queued|Downloading|Ready|
 Failed|Removing, failure, attempts, received, total, sizeBytes, savedAt,
 progress}`. `progress` is set only on a ready reading copy: `Canonical
 {snapshot}`, `Pending|ContentChanged|SourceUnavailable {baseline, device}` or
 `Conflict {canonical, device}`.
+
+`consumptionRevision` advances after accepted canonical saves, including an
+equal-locator save whose cursor revision is unchanged. Pending storage alone
+does not advance it. A newer equal canonical cursor retires old pending data
+without resuming unread; genuine equal-position activity at the matching base
+still sends a real save. The reader adopts `Pending → Canonical` even when the
+revision is unchanged.
 
 **reading copy** `GET /stream/media/{id}/reading-copy`, `Authorization: Bearer
 <stream token>` → 200 `application/zip` with `Content-Length`,

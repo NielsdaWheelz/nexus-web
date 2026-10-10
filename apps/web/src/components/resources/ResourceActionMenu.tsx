@@ -1,6 +1,6 @@
 "use client";
 
-import type { ComponentProps } from "react";
+import { useCallback, type ComponentProps } from "react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
@@ -44,7 +44,12 @@ export default function ResourceActionMenu({
   anchored,
 }: ResourceActionMenuProps) {
   const model = useResourceActionMenuModel(actionSubject);
-  const { onOpenChange } = useMobileChromeActionMenuLock();
+  const { onOpenChange: lockOpenChange } = useMobileChromeActionMenuLock();
+  const refresh = model.refresh;
+  const onOpenChange = useCallback((open: boolean) => {
+    lockOpenChange(open);
+    if (open) refresh();
+  }, [lockOpenChange, refresh]);
   return (
     <ActionMenu
       options={model.descriptors}

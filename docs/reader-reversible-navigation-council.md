@@ -8,6 +8,8 @@ evidence: static source inspection plus web research; no live reader or device r
 subsequent owner approval is captured in the
 [implementation plan](reader-reversible-navigation-plan.md), which settles this
 review's proposed choices and owns execution. the research below is historical.
+its maximum-progress policy was superseded by the
+[current-position contract](media-row-plan.md).
 
 three native subagents examined progress correctness, reader products, and
 reading research/accessibility. the council is a synthesis of these perspectives,

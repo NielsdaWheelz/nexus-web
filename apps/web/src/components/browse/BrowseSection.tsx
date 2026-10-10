@@ -17,6 +17,8 @@ import {
 import type { BrowseRequestRunner } from "@/lib/browse/requestGate";
 import type { BrowseSectionIdentity } from "@/lib/browse/plan";
 import { presentBrowseCandidate } from "@/lib/collections/presenters/browse";
+import { useMediaQueryRevision, useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
+import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import styles from "@/app/(authenticated)/browse/browse.module.css";
 
 const PAGE_SIZE = 20;
@@ -101,14 +103,21 @@ export default function BrowseSection({
   readonly runRequest: BrowseRequestRunner;
 }) {
   const headingId = useId();
+  const queryRevision = useMediaQueryRevision();
   const requestKey = `${query}\u0000${identity.kind}\u0000${identity.source}\u0000${identity.sort}`;
   const initialRestoreRef = useRef(restored);
   const [discardedRestore, setDiscardedRestore] = useState(false);
   const activeRestore = discardedRestore ? null : initialRestoreRef.current;
-  const loaded = useResource<BrowsePage>({
-    cacheKey: activeRestore === null ? requestKey : null,
-    load: (signal) =>
-      runRequest(signal, () =>
+  const [updatedPage, setUpdatedPage] = useState<CursorPage<BrowseCandidate> | null>(null);
+  const [prefixRequest, setPrefixRequest] = useState<{
+    key: string; revision: number; count: number;
+  } | null>(null);
+  const adoptedQueryRevisionRef = useRef(queryRevision);
+  const loaded = useResource<{ page: BrowsePage; queryRevision: number }>({
+    cacheKey: activeRestore === null && updatedPage === null
+      ? `${requestKey}:facts:${identity.source === "Nexus" ? queryRevision : "external"}` : null,
+    load: async (signal) => ({ queryRevision,
+      page: await runRequest(signal, () =>
         fetchBrowsePage({
           query,
           ...identity,
@@ -116,8 +125,16 @@ export default function BrowseSection({
           signal,
         }),
       ),
+    }),
   });
+  useEffect(() => {
+    if (loaded.status !== "ready" || updatedPage !== null ||
+      (identity.source === "Nexus" && loaded.data.queryRevision !== queryRevision)) return;
+    adoptedQueryRevisionRef.current = loaded.data.queryRevision;
+    setUpdatedPage(loaded.data.page);
+  }, [loaded, updatedPage, identity.source, queryRevision]);
   const firstPage: AsyncResource<CursorPage<BrowseCandidate>> = useMemo(() => {
+    if (updatedPage !== null) return { status: "ready", data: updatedPage };
     if (activeRestore?.kind === "Pending") {
       return {
         status: "error",
@@ -150,19 +167,21 @@ export default function BrowseSection({
       case "error":
         return loaded;
       case "ready":
-        return { status: "ready", data: loaded.data };
+        return { status: "ready", data: loaded.data.page };
     }
-  }, [activeRestore, loaded]);
+  }, [activeRestore, loaded, updatedPage]);
   const initialMoreError = useMemo(
     () =>
-      activeRestore?.kind === "Failed" && activeRestore.page !== null
+      updatedPage === null && activeRestore?.kind === "Failed" && activeRestore.page !== null
         ? restoreFailure(activeRestore.failure)
         : null,
-    [activeRestore],
+    [activeRestore, updatedPage],
   );
   const pagination = useCursorPagination({
     firstPage,
     initialMoreError,
+    loadMoreEnabled: prefixRequest === null && (identity.source !== "Nexus" ||
+      (adoptedQueryRevisionRef.current === queryRevision && (activeRestore?.page == null || updatedPage !== null))),
     loadMorePage: async (cursor, signal) =>
       runRequest(signal, () =>
         fetchBrowsePage({
@@ -174,10 +193,55 @@ export default function BrowseSection({
         }),
       ),
   });
-  const rows = useMemo(
-    () => pagination.items.map(presentBrowseCandidate),
-    [pagination.items],
-  );
+  const summaries = useMediaSummaries(pagination.items.flatMap((candidate) =>
+    candidate.resolution.kind === "InNexusMedia" ? [candidate.resolution.mediaSummary] : []));
+  const restoreNeedsRefreshRef = useRef(activeRestore?.page != null);
+  useEffect(() => {
+    if (identity.source !== "Nexus" || pagination.status !== "ready" ||
+      (adoptedQueryRevisionRef.current === queryRevision && !restoreNeedsRefreshRef.current) ||
+      (prefixRequest?.key === requestKey && prefixRequest.revision === queryRevision)) return;
+    setPrefixRequest({ key: requestKey, revision: queryRevision, count: pagination.items.length });
+  }, [identity.source, pagination.status, prefixRequest,
+    pagination.items.length, requestKey, queryRevision]);
+  const prefix = useResource<{ request: NonNullable<typeof prefixRequest>; page: BrowsePage }>({
+    cacheKey: prefixRequest !== null && prefixRequest.revision === queryRevision
+      ? `${prefixRequest.key}:facts:${prefixRequest.revision}` : null,
+    load: async (signal) => {
+      const request = prefixRequest;
+      if (request === null) {
+        // justify-defect: the prefix query is enabled only for its request.
+        throw new Error("Browse prefix lost its request");
+      }
+      let page = await runRequest(signal, () => fetchBrowsePage({
+        query, ...identity, limit: request.count === 0 ? PAGE_SIZE : Math.min(PAGE_SIZE, request.count), signal,
+      }));
+      const items = [...page.items];
+      while (items.length < request.count && page.nextCursor.kind === "Present") {
+        const cursor = page.nextCursor.value;
+        page = await runRequest(signal, () => fetchBrowsePage({ query, ...identity, cursor,
+          limit: Math.min(PAGE_SIZE, request.count - items.length), signal,
+        }));
+        items.push(...page.items);
+      }
+      return { request, page: { ...page, items } };
+    },
+  });
+  useEffect(() => {
+    if (prefix.status !== "ready" || prefix.data.request !== prefixRequest ||
+      prefixRequest?.key !== requestKey || prefixRequest.revision !== queryRevision) return;
+    // The prefix includes every loaded occurrence. Stable row keys retain focus.
+    setUpdatedPage(prefix.data.page);
+    adoptedQueryRevisionRef.current = prefix.data.request.revision;
+    restoreNeedsRefreshRef.current = false;
+    setPrefixRequest(null);
+  }, [prefix, prefixRequest, requestKey, queryRevision]);
+  const rows = pagination.items.flatMap((candidate) => {
+    if (candidate.resolution.kind !== "InNexusMedia") return [presentBrowseCandidate(candidate)];
+    const mediaSummary = summaries.resolve(candidate.resolution.mediaSummary);
+    return mediaSummary.kind === "Absent" ? [] : [presentBrowseCandidate({
+      ...candidate, resolution: { ...candidate.resolution, mediaSummary: mediaSummary.value },
+    })];
+  });
   const lastSnapshotKeyRef = useRef<string | null>(null);
   const controller = useMemo<BrowseSectionSnapshot>(() => {
     if (pagination.status === "loading") {
@@ -237,7 +301,7 @@ export default function BrowseSection({
         Loading…
       </p>
     );
-  } else if (pagination.status === "error" || pagination.error) {
+  } else if (pagination.status === "error" || (pagination.error && identity.source !== "Nexus")) {
     const error = pagination.error;
     if (error === null) {
       throw new Error("Browse section failed without an error");
@@ -250,6 +314,7 @@ export default function BrowseSection({
           variant="secondary"
           aria-label={`Retry ${label}`}
           onClick={pagination.retry}
+          disabled={prefixRequest !== null}
         >
           Retry
         </Button>
@@ -270,6 +335,16 @@ export default function BrowseSection({
         rows={rows}
         status="ready"
         ariaLabel={`${label} results`}
+        notice={<MediaSummaryNotice
+          error={summaries.error ?? (prefix.status === "error" ? prefix.error : null) ??
+            (pagination.status === "ready" && identity.source === "Nexus" ? pagination.error : null)}
+          retry={() => {
+            if (summaries.error !== null) summaries.retry();
+            if (prefix.status === "error") prefix.retry();
+            if (pagination.status === "ready" && pagination.error !== null && prefixRequest === null &&
+              (identity.source !== "Nexus" || adoptedQueryRevisionRef.current === queryRevision)) pagination.retry();
+          }}
+        />}
         empty={null}
         surface={false}
       />
@@ -279,6 +354,8 @@ export default function BrowseSection({
             size="sm"
             variant="secondary"
             loading={pagination.loadingMore}
+            disabled={prefixRequest !== null ||
+              (identity.source === "Nexus" && adoptedQueryRevisionRef.current !== queryRevision)}
             onClick={pagination.loadMore}
           >
             Load more

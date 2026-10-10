@@ -14,7 +14,7 @@ import java.util.UUID
 private val KINDS = setOf(AUDIO, "pdf", "epub", "web_article")
 
 /**
- * `window.nexusOffline` on the hosted and shelf origins: json request/reply
+ * `window.nexusDownloads` on the hosted and shelf origins: json request/reply
  * frames plus a snapshot push to the document that last said hello. The object
  * name is the compatibility identity; there is no protocol version.
  */
@@ -32,7 +32,7 @@ internal class OfflineBridge(
     private val context = webView.context.applicationContext
     private val framing = OwnedOriginWebMessage(
         webView,
-        "nexusOffline",
+        "nexusDownloads",
         setOf(BuildConfig.NEXUS_BASE_URL, SHELF_ORIGIN),
         ::onMessage,
     )

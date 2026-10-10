@@ -22,6 +22,10 @@ consumption state, or user-authored time. The implementing cutover is
   `Finished` transition for one viewer/media. Exact completion Undo may remove
   the fact it created; ordinary later Unread and `ResetProgress` do not rewrite
   history.
+  Current percentage follows the saved cursor/listening position; accepted
+  known progress ≥95% writes sticky finished separately. Unread preserves the
+  bookmark and genuine canonical activity resumes it. These current-state rules
+  belong to [the player](player.md), not observed-time aggregation.
 - Reading requires the eligible focused reader/input state in a visible tab.
   Listening follows the sole platform audio owner (the global browser audio
   element off Android, the native Media3 service in the Android shell) and

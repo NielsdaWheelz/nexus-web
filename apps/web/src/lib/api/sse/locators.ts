@@ -1,3 +1,4 @@
+import type { Schema } from "@/lib/api/wire";
 import { isRecord } from "@/lib/validation";
 import {
   hasOnlyKeys,
@@ -6,77 +7,17 @@ import {
   isValidTimeRange,
 } from "./guards";
 
-/** Structured selector for a text quote: the exact text plus optional surrounding context. */
-export interface QuoteSelector {
-  exact: string;
-  prefix?: string;
-  suffix?: string;
-}
-
+/** Shared API shapes; SSE still validates each event at its versioned boundary. */
+export type QuoteSelector = Schema<"TextQuoteSelector">;
 export type RetrievalLocator =
-  | {
-      type: "web_text_offsets";
-      media_id: string;
-      fragment_id: string;
-      start_offset: number;
-      end_offset: number;
-      media_kind?: string | null;
-      text_quote_selector?: QuoteSelector | null;
-    }
-  | {
-      type: "epub_fragment_offsets";
-      media_id: string;
-      section_id?: string | null;
-      fragment_id: string;
-      start_offset: number;
-      end_offset: number;
-      media_kind?: string | null;
-      text_quote_selector?: QuoteSelector | null;
-    }
-  | {
-      type: "pdf_page_geometry";
-      media_id: string;
-      page_number: number;
-      quads: Record<"x1" | "y1" | "x2" | "y2" | "x3" | "y3" | "x4" | "y4", number>[];
-      exact: string;
-      prefix?: string | null;
-      suffix?: string | null;
-      text_quote_selector?: QuoteSelector | null;
-    }
-  | {
-      type: "audio_time_range" | "video_time_range";
-      media_id: string;
-      t_start_ms: number;
-      t_end_ms: number;
-    }
-  | {
-      type: "transcript_time_range";
-      media_id: string;
-      t_start_ms: number;
-      t_end_ms: number;
-      text_quote_selector?: QuoteSelector | null;
-    }
-  | {
-      type: "note_block_offsets";
-      block_id: string;
-      start_offset: number;
-      end_offset: number;
-    }
-  | {
-      type: "message_offsets";
-      conversation_id: string;
-      message_id: string;
-      start_offset: number;
-      end_offset: number;
-      message_seq?: number | null;
-    }
-  | {
-      type: "external_url";
-      url: string;
-      title?: string | null;
-      display_url?: string | null;
-      accessed_at?: string | null;
-    };
+  | Schema<"WebTextOffsetsLocator">
+  | Schema<"EpubFragmentOffsetsLocator">
+  | Schema<"PdfPageGeometryLocator">
+  | Schema<"PlaybackTimeRangeLocator">
+  | Schema<"TranscriptTimeRangeLocator">
+  | Schema<"NoteBlockOffsetsLocator">
+  | Schema<"MessageOffsetsLocator">
+  | Schema<"ExternalUrlLocator">;
 
 export type MediaRetrievalLocator = Extract<
   RetrievalLocator,

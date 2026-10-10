@@ -58,7 +58,7 @@ private suspend fun put(store: OfflineStore, origin: NexusOriginClient, item: Sy
         .put("base_revision", item.baseRevision)
         .put("expected_reader_generation", item.generation)
     try {
-        store.synced(item.mediaId, device, origin.putReaderState(item.mediaId, body))
+        store.synced(item.mediaId, device, origin.putReaderState(item.mediaId, body), accepted = true)
     } catch (error: NexusOriginError) {
         when {
             error.code == "E_READER_STATE_CONFLICT" -> {

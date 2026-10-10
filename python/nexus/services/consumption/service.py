@@ -23,8 +23,15 @@ from nexus.db.retries import retry_serializable
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
 from nexus.schemas import consumption as wire
-from nexus.schemas.presence import Absent, Present, absent, nullable_from_presence, present
-from nexus.schemas.reader import CursorWrite, PdfReaderResumeState, ReaderCursorSnapshot
+from nexus.schemas.presence import (
+    Absent,
+    Present,
+    absent,
+    nullable_from_presence,
+    presence_from_nullable,
+    present,
+)
+from nexus.schemas.reader import CursorWrite, ReaderCursorSnapshot
 from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_collection_families,
@@ -53,9 +60,16 @@ _PODCAST_FAMILIES = (
 
 
 def get_lectern(db: Session, viewer_id: UUID) -> wire.LecternSnapshot:
-    return projection.lectern_snapshot(
-        db, viewer_id=viewer_id, rows=lectern.load(db, viewer_id=viewer_id)
-    )
+    from nexus.services.media import list_collection_media_for_viewer_by_ids
+
+    rows = lectern.load(db, viewer_id=viewer_id)
+    summaries = {
+        media.id: media.summary
+        for media in list_collection_media_for_viewer_by_ids(
+            db, viewer_id=viewer_id, media_ids=[row.media_id for row in rows if row.visible]
+        )
+    }
+    return projection.lectern_snapshot(db, viewer_id=viewer_id, rows=rows, summaries=summaries)
 
 
 def lectern_has_capacity(db: Session, *, viewer_id: UUID) -> bool:
@@ -116,34 +130,20 @@ def put_reader_cursor_in_txn(
         lock_publication_generation(db, media_id=media_id) != write.expected_reader_generation
     ):
         raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
-    was_finished = _is_finished(db, viewer_id, media_id)
     snapshot = reader_cursor.put_in_txn(
         db, viewer_id=viewer_id, media_id=media_id, media_kind=kind, write=write
     )
-    # A PDF page progression is page-local, so PDF saves never raise the maximum.
     db.execute(
         text("""
-            INSERT INTO reader_engagement_states (
-                id, user_id, media_id, last_engaged_at, max_total_progression
-            ) VALUES (:id, :viewer_id, :media_id, now(), :progression)
-            ON CONFLICT (user_id, media_id) DO UPDATE
-            SET last_engaged_at = now(),
-                max_total_progression = GREATEST(
-                    reader_engagement_states.max_total_progression,
-                    EXCLUDED.max_total_progression
-                )
+            INSERT INTO reader_engagement_states (id, user_id, media_id, last_engaged_at)
+            VALUES (:id, :viewer_id, :media_id, now())
+            ON CONFLICT (user_id, media_id) DO UPDATE SET last_engaged_at = now()
         """),
-        {
-            "id": new_uuid7(),
-            "viewer_id": viewer_id,
-            "media_id": media_id,
-            "progression": None
-            if isinstance(write.locator, PdfReaderResumeState)
-            else write.locator.locations.total_progression,
-        },
+        {"id": new_uuid7(), "viewer_id": viewer_id, "media_id": media_id},
     )
-    if not was_finished and _is_finished(db, viewer_id, media_id):
-        _record_completion(db, viewer_id, media_id)
+    # A podcast transcript is not listening activity.
+    if kind != _PODCAST:
+        _resume(db, viewer_id, media_id)
     _bump(db, viewer_id, podcast=kind == _PODCAST)
     return snapshot
 
@@ -230,7 +230,7 @@ def _apply(db: Session, viewer_id: UUID, command: wire.ConsumptionCommand) -> di
         index = lectern.remove_media(db, viewer_id=viewer_id, media_id=media_id)
         memo["next"] = None if index is None else {"from": index, "activation": "Readable"}
     elif isinstance(command, wire.SetUnreadCommand):
-        _set_override(db, viewer_id, media_id, "unread")
+        _mark_unread(db, viewer_id, media_id, podcast=kind == _PODCAST)
     elif isinstance(command, wire.UndoFinishCommand):
         _undo_finish(db, viewer_id, command)
     _bump(db, viewer_id, podcast=kind == _PODCAST)
@@ -279,6 +279,9 @@ def _undo_finish(db: Session, viewer_id: UUID, command: wire.UndoFinishCommand) 
             """),
             {**params, "status": status, "revision": revision},
         )
+    reader_cursor.fence_in_txn(db, viewer_id=viewer_id, media_id=command.media_id)
+    if projection.media_kind(db, command.media_id) == _PODCAST:
+        listening.fence(db, viewer_id=viewer_id, media_id=command.media_id)
     if isinstance(command.restore, Present):
         restore = command.restore.value
         lectern.restore(
@@ -346,6 +349,9 @@ def _answer(
                     wire.ListeningPositionOut(
                         position_ms=heard.position_ms if heard else 0,
                         reset_epoch=heard.reset_epoch if heard else 0,
+                        consumption_override_revision=presence_from_nullable(
+                            projection.override_revision(db, viewer_id=viewer_id, media_id=media_id)
+                        ),
                     )
                 )
                 if kind == _PODCAST
@@ -375,43 +381,55 @@ def set_podcast_episode_states_in_txn(
         if state == "Finished":
             _finish(db, viewer_id, media_id, was_finished=before[media_id].state == "finished")
         else:
-            _set_override(db, viewer_id, media_id, "unread")
+            _mark_unread(db, viewer_id, media_id, podcast=True)
     target = "finished" if state == "Finished" else "unread"
     changed = sum(1 for media_id in media_ids if before[media_id].state != target)
-    if changed:
+    if media_ids:
         _bump(db, viewer_id, podcast=True)
     return changed
 
 
-def record_listening(viewer_id: UUID, media_id: UUID, body: wire.ListeningIn) -> None:
-    """Store one listening sample; 409 with the current position under a newer epoch."""
+def record_listening(
+    viewer_id: UUID, media_id: UUID, body: wire.ListeningIn
+) -> wire.ListeningPositionOut:
+    """Store a sample and acknowledge its current fences in the same transaction."""
 
-    def run(db: Session) -> None:
+    def run(db: Session) -> wire.ListeningPositionOut:
         if not can_read_media(db, viewer_id, media_id):
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
         if projection.media_kind(db, media_id) != _PODCAST:
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_KIND, "Listening state is podcast-episode only"
             )
-        was_finished = _is_finished(db, viewer_id, media_id)
-        if _write_listening(db, viewer_id, media_id, body) is None:
+        heard = _write_listening(db, viewer_id, media_id, body)
+        if heard is None:
             heard = listening.load_many(db, viewer_id=viewer_id, media_ids=[media_id]).get(media_id)
             raise ConflictError(
                 ApiErrorCode.E_STALE_LISTENING_REVISION,
                 "Listening progress was reset",
                 details={
-                    "current": {
-                        "positionMs": heard.position_ms if heard else 0,
-                        "resetEpoch": heard.reset_epoch if heard else 0,
-                    }
+                    "current": wire.ListeningPositionOut(
+                        position_ms=heard.position_ms if heard else 0,
+                        reset_epoch=heard.reset_epoch if heard else 0,
+                        consumption_override_revision=presence_from_nullable(
+                            projection.override_revision(db, viewer_id=viewer_id, media_id=media_id)
+                        ),
+                    ).model_dump(mode="json", by_alias=True)
                 },
             )
-        if not was_finished and _is_finished(db, viewer_id, media_id):
-            _record_completion(db, viewer_id, media_id)
+        _resume(db, viewer_id, media_id)
         _bump(db, viewer_id, podcast=True)
+        result = wire.ListeningPositionOut(
+            position_ms=heard.position_ms,
+            reset_epoch=heard.reset_epoch,
+            consumption_override_revision=presence_from_nullable(
+                projection.override_revision(db, viewer_id=viewer_id, media_id=media_id)
+            ),
+        )
         db.commit()
+        return result
 
-    viewer_txn("record_listening", viewer_id, run)
+    return viewer_txn("record_listening", viewer_id, run)
 
 
 def install_preview_position(viewer_id: UUID, media_id: UUID, body: wire.PreviewPositionIn) -> None:
@@ -430,10 +448,11 @@ def install_preview_position(viewer_id: UUID, media_id: UUID, body: wire.Preview
             viewer_id=viewer_id,
             media_id=media_id,
             position_ms=body.position_ms
-            if duration_ms is None
+            if duration_ms is None or duration_ms <= 0
             else min(body.position_ms, duration_ms),
             duration_ms=duration_ms,
         ):
+            _resume(db, viewer_id, media_id)
             _bump(db, viewer_id, podcast=True)
         db.commit()
 
@@ -483,6 +502,32 @@ def _write_listening(
         episode_rate=nullable_from_presence(body.episode_playback_rate),
         expected_reset_epoch=body.expected_reset_epoch,
     )
+
+
+def _mark_unread(db: Session, viewer_id: UUID, media_id: UUID, *, podcast: bool) -> None:
+    _set_override(db, viewer_id, media_id, "unread")
+    reader_cursor.fence_in_txn(db, viewer_id=viewer_id, media_id=media_id)
+    if podcast:
+        listening.fence(db, viewer_id=viewer_id, media_id=media_id)
+
+
+def _resume(db: Session, viewer_id: UUID, media_id: UUID) -> None:
+    """Accepted canonical activity clears unread; completion persists independently of position."""
+    db.execute(
+        text("""
+            DELETE FROM consumption_overrides
+            WHERE user_id = :viewer_id AND media_id = :media_id AND status = 'unread'
+        """),
+        {"viewer_id": viewer_id, "media_id": media_id},
+    )
+    state = projection.media_read_states(db, viewer_id=viewer_id, media_ids=[media_id])[media_id]
+    if (
+        state.state != "finished"
+        and state.progress_fraction is not None
+        and state.progress_fraction >= projection.FINISHED_PROGRESSION
+    ):
+        _set_override(db, viewer_id, media_id, "finished")
+        _record_completion(db, viewer_id, media_id)
 
 
 def _finish(

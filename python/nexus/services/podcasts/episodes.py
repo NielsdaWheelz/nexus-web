@@ -88,9 +88,7 @@ def resolve_episode_selection_ids(
                     SELECT
                         pe.media_id,
                         {
-                    projection.episode_state_case_sql(
-                        listening_alias="pls", override_alias="co", episode_alias="pe"
-                    )
+                    projection.episode_state_case_sql(listening_alias="pls", override_alias="co")
                 } AS episode_state
                     FROM podcast_episodes pe
                     JOIN visible_media vm ON vm.media_id = pe.media_id
@@ -227,9 +225,7 @@ def list_podcast_episodes_for_viewer(
                         CASE WHEN pe.duration_seconds IS NULL THEN 1 ELSE 0 END AS duration_missing,
                         (NULLIF(BTRIM(pe.description_text), '') IS NOT NULL) AS has_show_notes,
                         {
-                    projection.episode_state_case_sql(
-                        listening_alias="pls", override_alias="co", episode_alias="pe"
-                    )
+                    projection.episode_state_case_sql(listening_alias="pls", override_alias="co")
                 } AS episode_state
                     FROM podcast_episodes pe
                     JOIN visible_media vm ON vm.media_id = pe.media_id

@@ -11,7 +11,7 @@ import {
   type SetStateAction,
 } from "react";
 import Link from "next/link";
-import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiFetch, isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import {
   type CollectionCursor,
@@ -53,6 +53,7 @@ import { useStringIdSet } from "@/lib/useStringIdSet";
 import PodcastOverview from "@/components/podcasts/PodcastOverview";
 import AcquisitionControl from "@/components/browse/AcquisitionControl";
 import PodcastEpisodeList from "./PodcastEpisodeList";
+import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import PaneSection from "@/components/ui/PaneSection";
 import {
   FeedbackNotice,
@@ -85,6 +86,10 @@ import {
   podcastEpisodePageFromWire,
   type PodcastEpisodeMedia,
 } from "./episodeTranscript";
+import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
+import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
+import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
+import { useConsumptionProjectionRevision } from "@/lib/consumption/projectionRevision";
 import styles from "./page.module.css";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
@@ -202,6 +207,7 @@ function podcastDetailErrorMessage(
 }
 
 interface PodcastDetailLoadResult {
+  readonly factsRevision: string;
   detail: PodcastDetailResponse;
   episodes: CollectionPage<PodcastEpisodeMedia>;
   podcastLibraries: LibraryPlacementOption[];
@@ -268,11 +274,17 @@ export default function PodcastDetailPaneBody() {
   const [chainEpoch, setChainEpoch] = useState(0);
   const clearAllVisitData = useClearAllPaneVisitData();
   const detail = controller?.detail ?? null;
-  const episodes = useMemo(
+  const loadedEpisodes = useMemo(
     () =>
       controller === null ? EMPTY_PODCAST_EPISODES : [...controller.episodes],
     [controller],
   );
+  const summaries = useMediaSummaries(loadedEpisodes.map((episode) => episode.mediaSummary));
+  const episodes = useMemo(() => loadedEpisodes.flatMap((episode) => {
+    const mediaSummary = summaries.resolve(episode.mediaSummary);
+    return mediaSummary.kind === "Absent" ? [] : [{ ...episode, mediaSummary: mediaSummary.value }];
+  }), [loadedEpisodes, summaries]);
+  const consumption = useConsumptionProjectionRevision();
   const podcastLibraries = useMemo(
     () =>
       controller === null
@@ -327,6 +339,10 @@ export default function PodcastDetailPaneBody() {
     view === null
       ? null
       : [podcastId, podcastEpisodeViewQuery(view).toString()].join("\u0000");
+  const factsRevision = [summaries.queryRevision,
+    view !== null && view.state !== "all" ? consumption.revision : null].join(":");
+  const adoptedFactsRevisionRef = useRef<string | null>(null);
+  const factsPending = adoptedFactsRevisionRef.current !== factsRevision;
   const [markAllAsPlayedBusy, setMarkAllAsPlayedBusy] = useState(false);
   const expandedShowNotesMediaIds = useStringIdSet();
   const [loading, setLoading] = useState(restored === null);
@@ -334,6 +350,7 @@ export default function PodcastDetailPaneBody() {
     restored !== null,
   );
   const [error, setError] = useState<FeedbackContent | null>(null);
+  const [refreshError, setRefreshError] = useState<ApiError | null>(null);
   const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
   const [lifecycleObservationFailure, setLifecycleObservationFailure] =
     useState<{ readonly error: unknown; readonly identity: string } | null>(
@@ -393,8 +410,8 @@ export default function PodcastDetailPaneBody() {
 
   const { clear: clearExpandedShowNotesMediaIds } = expandedShowNotesMediaIds;
   const podcastDetailCacheKey =
-    episodeQueryIdentity !== null && !suppressInitialLoad
-      ? ["podcast-detail", episodeQueryIdentity, reloadNonce].join(":")
+    episodeQueryIdentity !== null && (!suppressInitialLoad || factsPending)
+      ? ["podcast-detail", episodeQueryIdentity, reloadNonce, factsRevision].join(":")
       : null;
   const rejectPendingPodcastDetailRevalidation = useCallback((refreshError: unknown) => {
     completedPodcastDetailRevalidationNonceRef.current = null;
@@ -413,6 +430,7 @@ export default function PodcastDetailPaneBody() {
     reconciliationPendingRef.current = true;
     committedSnapshotRef.current = null;
     clearAllVisitData();
+    setRefreshError(null);
     setSuppressInitialLoad(false);
   }, [clearAllVisitData, rejectPendingPodcastDetailRevalidation]);
   // A reload keeps the view, so only a fresh nonce makes the request identity
@@ -490,7 +508,9 @@ export default function PodcastDetailPaneBody() {
           throw new Error("Podcast episodes require an addressable view");
         }
         const episodeParams = podcastEpisodeViewQuery(view);
-        episodeParams.set("limit", String(EPISODES_PAGE_SIZE));
+        const retainedCount = controllerRef.current?.queryIdentity === episodeQueryIdentity
+          ? controllerRef.current.episodes.length : 0;
+        episodeParams.set("limit", String(retainedCount === 0 ? EPISODES_PAGE_SIZE : Math.min(EPISODES_PAGE_SIZE, retainedCount)));
 
         const fetchOptions = signal ? { signal } : undefined;
         // Detail is the lifecycle fence: a terminal subscription guarantees its
@@ -520,11 +540,28 @@ export default function PodcastDetailPaneBody() {
         if (signal?.aborted) {
           throw signal.reason ?? new DOMException("Aborted", "AbortError");
         }
-        return {
-          detail: decodedDetail,
-          episodes: podcastEpisodePageFromWire(episodesResp.data),
-          podcastLibraries,
-        };
+        let episodePage = podcastEpisodePageFromWire(episodesResp.data);
+        for (;;) {
+          try {
+            const items = [...episodePage.items];
+            while (items.length < retainedCount && episodePage.nextCursor.kind === "Present") {
+              const continuation = new URLSearchParams(episodeParams);
+              continuation.set("cursor", episodePage.nextCursor.value);
+              continuation.set("collection_revision", String(episodePage.collectionRevision));
+              continuation.set("limit", String(Math.min(EPISODES_PAGE_SIZE, retainedCount - items.length)));
+              episodePage = podcastEpisodePageFromWire((await apiFetch<ApiJson<"/podcasts/{podcast_id}/episodes", "get">>(
+                `/api/podcasts/${podcastId}/episodes?${continuation}`, fetchOptions,
+              )).data);
+              items.push(...episodePage.items);
+            }
+            return { factsRevision, detail: decodedDetail, episodes: { ...episodePage, items }, podcastLibraries };
+          } catch (error) {
+            if (signal?.aborted || !isApiError(error) || error.code !== "E_COLLECTION_CHANGED") throw error;
+            episodePage = podcastEpisodePageFromWire((await apiFetch<ApiJson<"/podcasts/{podcast_id}/episodes", "get">>(
+              `/api/podcasts/${podcastId}/episodes?${episodeParams}`, fetchOptions,
+            )).data);
+          }
+        }
       } catch (loadError) {
         const observationLoss = pendingLifecycleObservationLossRef.current;
         if (
@@ -540,16 +577,24 @@ export default function PodcastDetailPaneBody() {
         throw loadError;
       }
     },
-    [podcastId, view],
+    [podcastId, view, episodeQueryIdentity, factsRevision],
   );
 
   const applyPodcastDetailLoad = useCallback(
     (result: PodcastDetailLoadResult) => {
-      if (episodeQueryIdentity === null) return;
+      if (episodeQueryIdentity === null || result.factsRevision !== factsRevision) return;
       reconciliationPendingRef.current = false;
+      adoptedFactsRevisionRef.current = result.factsRevision;
+      const previous = controllerRef.current;
+      const sameTopology = previous !== null && previous.queryIdentity === episodeQueryIdentity &&
+        previous.episodes.length === result.episodes.items.length &&
+        previous.episodes.every((episode, index) => episode.id === result.episodes.items[index].id) &&
+        previous.nextCursor.kind === result.episodes.nextCursor.kind;
+      const priorById = new Map(previous?.episodes.map((episode) => [episode.id, episode]) ?? []);
       const snapshot: PodcastDetailSnapshot = {
         detail: result.detail,
-        episodes: result.episodes.items,
+        episodes: result.episodes.items.map((episode) => ({ ...episode,
+          description_text: priorById.get(episode.id)?.description_text ?? episode.description_text })),
         queryIdentity: episodeQueryIdentity,
         collectionRevision: result.episodes.collectionRevision,
         nextCursor: result.episodes.nextCursor,
@@ -560,9 +605,9 @@ export default function PodcastDetailPaneBody() {
       refreshFallbackSnapshotRef.current = null;
       setController(snapshot);
       setChainEpoch((epoch) => epoch + 1);
-      clearExpandedShowNotesMediaIds();
+      if (!sameTopology) clearExpandedShowNotesMediaIds();
     },
-    [clearExpandedShowNotesMediaIds, episodeQueryIdentity],
+    [clearExpandedShowNotesMediaIds, episodeQueryIdentity, factsRevision],
   );
 
   const podcastDetailResource = useResource<PodcastDetailLoadResult>({
@@ -574,18 +619,22 @@ export default function PodcastDetailPaneBody() {
     if (!podcastId || view === null) {
       setLoading(false);
       setError(null);
+      setRefreshError(null);
       return;
     }
 
     if (podcastDetailResource.status === "loading") {
       setLoading(true);
-      setError(null);
+      setRefreshError(null);
+      if (controllerRef.current === null) setError(null);
       return;
     }
 
     if (podcastDetailResource.status === "ready") {
+      const initial = controllerRef.current === null;
       applyPodcastDetailLoad(podcastDetailResource.data);
-      setError(null);
+      if (initial) setError(null);
+      setRefreshError(null);
       setLoading(false);
 
       if (
@@ -603,10 +652,8 @@ export default function PodcastDetailPaneBody() {
       committedSnapshotRef.current = refreshFallbackSnapshotRef.current;
       refreshFallbackSnapshotRef.current = null;
 
-      captureDetailError(
-        podcastDetailResource.error,
-        revalidation.isPending(reloadNonce) ? "PaneRefresh" : "Load",
-      );
+      if (controllerRef.current === null) captureDetailError(podcastDetailResource.error, "Load");
+      else setRefreshError(podcastDetailResource.error);
       setLoading(false);
       if (revalidation.isPending(reloadNonce)) {
         rejectPendingPodcastDetailRevalidation(podcastDetailResource.error);
@@ -627,7 +674,7 @@ export default function PodcastDetailPaneBody() {
   useLayoutEffect(() => {
     controllerRef.current = controller;
     committedSnapshotRef.current = reconciliationPendingRef.current
-      ? null
+      || factsPending ? null
       : controller;
     const completedNonce = completedPodcastDetailRevalidationNonceRef.current;
     if (
@@ -636,13 +683,13 @@ export default function PodcastDetailPaneBody() {
       !revalidation.isPending(completedNonce) ||
       revalidationSourceKeyRef.current !== episodeQueryIdentity ||
       controller.queryIdentity !== episodeQueryIdentity ||
-      reconciliationPendingRef.current
+      reconciliationPendingRef.current || factsPending
     ) {
       return;
     }
     completedPodcastDetailRevalidationNonceRef.current = null;
     revalidation.resolve(completedNonce);
-  }, [revalidation, controller, episodeQueryIdentity]);
+  }, [revalidation, controller, episodeQueryIdentity, factsPending]);
 
   const subscriptionLifecycleSnapshot = useMemo<PodcastSubscriptionLifecycleSnapshot | null>(
     () =>
@@ -900,8 +947,8 @@ export default function PodcastDetailPaneBody() {
       isPaneActive &&
       controller !== null &&
       controller.queryIdentity === episodeQueryIdentity &&
-      !reconciliationPendingRef.current,
-    chainKey: [episodeQueryIdentity, reloadNonce, chainEpoch].join(":"),
+      !reconciliationPendingRef.current && !factsPending,
+    chainKey: [episodeQueryIdentity, reloadNonce, chainEpoch, factsRevision].join(":"),
     cursor: controller?.nextCursor ?? { kind: "Absent" },
     collectionRevision:
       controller?.collectionRevision ?? (0 as CollectionRevision),
@@ -910,6 +957,14 @@ export default function PodcastDetailPaneBody() {
     commitPage: commitEpisodePage,
     refresh: reload,
   });
+  const handledCollectionChangeRef = useRef<unknown>(null);
+  useEffect(() => {
+    if (loading || factsPending || controller === null || reconciliationPendingRef.current ||
+      episodeExhaustion.kind !== "RefreshRequired" || episodeExhaustion.reason !== "CollectionChanged" ||
+      handledCollectionChangeRef.current === episodeExhaustion.error) return;
+    handledCollectionChangeRef.current = episodeExhaustion.error;
+    reload();
+  }, [episodeExhaustion, loading, factsPending, controller, reload]);
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
   const filtersTriggerRef = useRef<HTMLButtonElement | null>(null);
   const episodeFilterNodes = useMemo(
@@ -940,24 +995,18 @@ export default function PodcastDetailPaneBody() {
   const getEpisodeRowStatus = useCallback(
     (query: string) => {
       const visibleCount = episodes.filter((episode) =>
-        matchesPaneFilterQuery(query, [
-          episode.mediaSummary.title,
-          ...episode.mediaSummary.contributors.flatMap((credit) => [
-            credit.contributor_display_name ?? "",
-            credit.credited_name,
-          ]),
-        ]),
+        matchesPaneFilterQuery(query, mediaListFilterFields(episode.mediaSummary)),
       ).length;
       if (
         controller !== null &&
-        (loading || controller.queryIdentity !== episodeQueryIdentity)
+        (loading || refreshError !== null || controller.queryIdentity !== episodeQueryIdentity)
       ) {
         return {
           kind: "Retained" as const,
           visibleCount,
           loadedCount: episodes.length,
           unit: { singular: "episode", plural: "episodes" },
-          cause: error === null ? "Updating" as const : "Failed" as const,
+          cause: refreshError === null ? "Updating" as const : "Failed" as const,
         };
       }
       if (
@@ -986,7 +1035,7 @@ export default function PodcastDetailPaneBody() {
             unit: { singular: "episode", plural: "episodes" },
           };
     },
-    [controller, episodeExhaustion.kind, episodeQueryIdentity, episodes, error, loading],
+    [controller, episodeExhaustion.kind, episodeQueryIdentity, episodes, error, loading, refreshError],
   );
   const {
     query: filterQuery,
@@ -1078,13 +1127,7 @@ export default function PodcastDetailPaneBody() {
   const visibleEpisodes = useMemo(
     () =>
       episodes.filter((episode) =>
-        matchesPaneFilterQuery(filterQuery, [
-          episode.mediaSummary.title,
-          ...episode.mediaSummary.contributors.flatMap((credit) => [
-            credit.contributor_display_name ?? "",
-            credit.credited_name,
-          ]),
-        ]),
+        matchesPaneFilterQuery(filterQuery, mediaListFilterFields(episode.mediaSummary)),
       ),
     [episodes, filterQuery],
   );
@@ -1285,7 +1328,11 @@ export default function PodcastDetailPaneBody() {
           try {
             await revalidatePodcastDetail(new AbortController().signal);
           } catch (refreshError) {
-            reportMountedRefreshError(refreshError);
+            if (isAbortError(refreshError) || handleUnauthenticatedApiError(refreshError)) return;
+            // The request owner already exposes ordinary read failure in its retained collection.
+            if (!isApiError(refreshError) || isSameSystemApiDefect(refreshError)) {
+              setAsyncDefect({ error: refreshError });
+            }
           }
         } catch (refreshError) {
           if (!refreshCommitted) {
@@ -1377,6 +1424,9 @@ export default function PodcastDetailPaneBody() {
   const podcastLibraryCount = podcastLibraries.filter(
     (placement) => placement.relation.kind !== "Absent",
   ).length;
+  const episodeRefreshError = refreshError ??
+    (episodeExhaustion.kind === "ResumeFailed" || episodeExhaustion.kind === "RefreshRequired"
+      ? episodeExhaustion.error : null);
   const episodePaneContent =
     view === null ? (
       <FeedbackNotice
@@ -1388,7 +1438,6 @@ export default function PodcastDetailPaneBody() {
         } }]}
       />
     ) : (
-      <div style={{ display: "contents" }}>
         <PodcastEpisodeList
           episodes={visibleEpisodes}
           filterQuery={filterQuery}
@@ -1401,10 +1450,20 @@ export default function PodcastDetailPaneBody() {
           markAllAsPlayedBusy={markAllAsPlayedBusy}
           collectionBusy={episodeExhaustion.kind === "Draining"}
           exhaustion={episodeExhaustion}
+          notice={<MediaSummaryNotice
+            error={episodeRefreshError ?? summaries.error}
+            retry={() => {
+              if (summaries.error !== null) summaries.retry();
+              if (refreshError !== null) reload();
+              if (episodeExhaustion.kind === "ResumeFailed") episodeExhaustion.retry();
+              if (episodeExhaustion.kind === "RefreshRequired") episodeExhaustion.refresh();
+            }}
+          />}
+          footer={!loading && !factsPending && episodeRefreshError === null
+            ? <CollectionExhaustionNotice state={episodeExhaustion} /> : undefined}
           onMarkAllAsPlayed={() => void handleMarkAllAsPlayed()}
           onToggleShowNotes={toggleEpisodeShowNotesExpansion}
         />
-      </div>
     );
 
   if (!podcastId) {
@@ -1448,13 +1507,13 @@ export default function PodcastDetailPaneBody() {
           </div>
         </div>
         <PaneSection>
-          {loading && (
+          {loading && detail === null && (
             <PaneLoadingState label="Loading podcast…" announcement="Polite" />
           )}
           {error && (
             <FeedbackNotice content={error} announcement="Assertive" />
           )}
-          {!loading && detail && (
+          {detail && (
             <PodcastOverview
               title={detail.podcast.title}
               image={

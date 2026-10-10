@@ -25,6 +25,7 @@ import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import { useFeedback } from "@/components/feedback/Feedback";
+import { useMediaBibliographyInvalidation } from "@/lib/media/MediaSummaryProvider";
 import {
   deleteMemberLibrary,
   getMemberLibrary,
@@ -377,6 +378,7 @@ function AuthorsEditorOverlay({
   onClose: () => void;
 }) {
   const feedback = useFeedback();
+  const invalidateBibliography = useMediaBibliographyInvalidation();
   const [source, setSource] = useState<MediaAuthorsSource | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const returnFocusTo = useMemo(returnFocusToActiveElement, []);
@@ -423,6 +425,7 @@ function AuthorsEditorOverlay({
         onClose={onClose}
         mutation={mutation}
         onSaved={async (_next, lease) => {
+          invalidateBibliography(mediaId);
           await lease.reconcile({
             kind: "Subjects",
             refs: [assumeCanonicalResourceRef(`media:${mediaId}`)],

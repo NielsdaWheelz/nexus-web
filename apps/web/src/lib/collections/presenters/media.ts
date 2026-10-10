@@ -29,7 +29,8 @@ export function presentMedia(
   return {
     id: occurrence.id,
     kind: summary.mediaKind === "podcast_episode" ? "podcast_episode" : "media",
-    mediaIdentity: true,
+    mediaIdentity: "Stored",
+    consumption: summary.consumption,
     primary: { ...occurrence.primary, paneLabelHint: summary.title },
     title: { text: summary.title },
     contributors: selectMediaAuthors(summary.contributors),
@@ -37,8 +38,14 @@ export function presentMedia(
     context: occurrence.searchEvidence?.length
       ? present({ kind: "Snippet", segments: occurrence.searchEvidence })
       : absent(),
-    activity: summary.duration.kind === "Present"
-      ? present({ kind: "MediaDuration", duration: summary.duration.value })
+    activity: summary.consumption.state !== "Finished" &&
+      summary.duration.kind === "Present" &&
+      summary.duration.value.estimate.remainingMinutes.kind === "Present"
+      ? present({
+          kind: "RemainingTime",
+          modality: summary.duration.value.modality,
+          minutes: summary.duration.value.estimate.remainingMinutes.value,
+        })
       : absent(),
     exceptionalStatus: summary.processingStatus === "failed"
       ? present({ kind: "MediaProcessing", status: "failed" })

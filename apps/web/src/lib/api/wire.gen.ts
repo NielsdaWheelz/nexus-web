@@ -1490,6 +1490,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/media/summaries/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve Media Summaries */
+        post: operations["resolve_media_summaries_media_summaries_resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/media/transcript/forecasts": {
         parameters: {
             query?: never;
@@ -4370,8 +4387,6 @@ export interface components {
         /** ConsumptionOut */
         ConsumptionOut: {
             progress: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____-Output"];
-            /** Progressresettable */
-            progressResettable: boolean;
             /**
              * State
              * @enum {string}
@@ -5181,6 +5196,10 @@ export interface components {
         Data_LinkedNoteBlockRef_: {
             data: components["schemas"]["LinkedNoteBlockRef"];
         };
+        /** Data[ListeningPositionOut] */
+        Data_ListeningPositionOut_: {
+            data: components["schemas"]["ListeningPositionOut"];
+        };
         /** Data[MediaFileOut] */
         Data_MediaFileOut_: {
             data: components["schemas"]["MediaFileOut"];
@@ -5304,6 +5323,10 @@ export interface components {
         /** Data[ReaderSelectionPreview] */
         Data_ReaderSelectionPreview_: {
             data: components["schemas"]["ReaderSelectionPreview"];
+        };
+        /** Data[ResolvedMediaSummariesOut] */
+        Data_ResolvedMediaSummariesOut_: {
+            data: components["schemas"]["ResolvedMediaSummariesOut"];
         };
         /** Data[ResourceActionSnapshotResolveResponse] */
         Data_ResourceActionSnapshotResolveResponse_: {
@@ -6093,6 +6116,8 @@ export interface components {
             actionSubject: null;
             /** Contentkind */
             contentKind: string;
+            /** Contributors */
+            contributors: components["schemas"]["ContributorCreditOut"][];
             /** Date */
             date: string | null;
             /** Href */
@@ -6985,7 +7010,6 @@ export interface components {
              * Format: date-time
              */
             addedAt: string;
-            consumption: components["schemas"]["ConsumptionOut"];
             /** Href */
             href: string;
             /**
@@ -7111,15 +7135,6 @@ export interface components {
             id: string;
             /** Last Engaged At */
             last_engaged_at: string | null;
-            /** Progress Fraction */
-            progress_fraction: number | null;
-            /** Progress Resettable */
-            progress_resettable: boolean;
-            /**
-             * Read State
-             * @enum {string}
-             */
-            read_state: "unread" | "in_progress" | "finished";
         };
         /** LibraryEntryOrderRequest */
         LibraryEntryOrderRequest: {
@@ -7536,6 +7551,7 @@ export interface components {
         };
         /** ListeningPositionOut */
         ListeningPositionOut: {
+            consumptionOverrideRevision: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Output"];
             /** Positionms */
             positionMs: number;
             /** Resetepoch */
@@ -7904,6 +7920,7 @@ export interface components {
         };
         /** MediaSummaryOut */
         MediaSummaryOut: {
+            consumption: components["schemas"]["ConsumptionOut"];
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
             duration: components["schemas"]["Presence_MediaDurationOut_"];
@@ -7921,6 +7938,15 @@ export interface components {
             processingStatus: "pending" | "extracting" | "ready_for_reading" | "failed" | "suspended";
             /** Title */
             title: string;
+        };
+        /** MediaSummaryResolutionOut */
+        MediaSummaryResolutionOut: {
+            /**
+             * Mediaid
+             * Format: uuid
+             */
+            mediaId: string;
+            summary: components["schemas"]["Presence_MediaSummaryOut_"];
         };
         /** MessageDeleteOut */
         MessageDeleteOut: {
@@ -9901,7 +9927,6 @@ export interface components {
         Presence_BrowseSort_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_BrowseSort_"];
         Presence_ChatPublicationWarning_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ChatPublicationWarning_"];
         Presence_ChatRunExecutionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ChatRunExecutionOut_"];
-        Presence_ConsumptionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ConsumptionOut_"];
         Presence_DailyPageSummaryOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_DailyPageSummaryOut_"];
         Presence_DossierBuildOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_DossierBuildOut_"];
         Presence_DossierFailureCode_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_DossierFailureCode_"];
@@ -9922,6 +9947,7 @@ export interface components {
         Presence_MediaAbstractOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MediaAbstractOut_"];
         Presence_MediaDurationOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MediaDurationOut_"];
         Presence_MediaProgressState_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MediaProgressState_"];
+        Presence_MediaSummaryOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MediaSummaryOut_"];
         Presence_MetadataOperationOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MetadataOperationOut_"];
         Presence_MetadataSelection_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MetadataSelection_"];
         Presence_PlayerDescriptor_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_PlayerDescriptor_"];
@@ -10210,15 +10236,6 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["ChatRunExecutionOut"];
         };
-        /** Present[ConsumptionOut] */
-        Present_ConsumptionOut_: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Present";
-            value: components["schemas"]["ConsumptionOut"];
-        };
         /** Present[DailyPageSummaryOut] */
         Present_DailyPageSummaryOut_: {
             /**
@@ -10422,6 +10439,15 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["MediaProgressState"];
+        };
+        /** Present[MediaSummaryOut] */
+        Present_MediaSummaryOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["MediaSummaryOut"];
         };
         /** Present[MetadataOperationOut] */
         Present_MetadataOperationOut_: {
@@ -11921,6 +11947,16 @@ export interface components {
              * Format: uuid
              */
             mediaId: string;
+        };
+        /** ResolveMediaSummariesIn */
+        ResolveMediaSummariesIn: {
+            /** Mediaids */
+            mediaIds: string[];
+        };
+        /** ResolvedMediaSummariesOut */
+        ResolvedMediaSummariesOut: {
+            /** Items */
+            items: components["schemas"]["MediaSummaryResolutionOut"][];
         };
         /** ResourceActionSnapshotOut */
         ResourceActionSnapshotOut: {
@@ -13617,7 +13653,6 @@ export interface components {
         };
         /** SuggestionItemOut */
         SuggestionItemOut: {
-            consumption: components["schemas"]["Presence_ConsumptionOut_"];
             /** Target */
             target: components["schemas"]["MediaSuggestionTargetOut"] | components["schemas"]["PodcastSuggestionTargetOut"];
         };
@@ -17865,6 +17900,39 @@ export interface operations {
             };
         };
     };
+    resolve_media_summaries_media_summaries_resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveMediaSummariesIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_ResolvedMediaSummariesOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     forecast_podcast_transcripts_media_transcript_forecasts_post: {
         parameters: {
             query?: never;
@@ -18438,11 +18506,13 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Data_ListeningPositionOut_"];
+                };
             };
             /** @description Validation Error */
             422: {

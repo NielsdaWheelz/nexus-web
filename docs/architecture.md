@@ -538,14 +538,14 @@ consumption state does not derive directly from it),
 viewer, membership/order only — completion is never stored on the row),
 `consumption_overrides` (explicit `Unread`/
 `Finished` state), `reader_engagement_states` (one current-state row per
-viewer/media: `last_engaged_at` recency and, for non-PDF locators, a
-monotonic `max_total_progression`), `consumption_activity_spans` (bounded
+viewer/media: `last_engaged_at` recency), `consumption_activity_spans` (bounded
 observed Reading/Listening/Viewing intervals), `consumption_completion_facts`
 (the first observed post-cutover canonical completion per viewer/media), and
 `media_teardown_intents` (media-deletion claim; see §8.8 and
 [`modules/storage.md`](modules/storage.md)). Current state and historical facts
 are separate. Explicit status and current progress are also independent:
-`SetUnread` changes only the override, while `ResetProgress` clears the
+`SetUnread` preserves the bookmark and advances reader/audio fences; accepted
+activity clears its override. `ResetProgress` clears the
 override and atomically resets Nexus-owned cursor, engagement, and listening
 state without deleting history or Lectern membership. See
 [`modules/consumption-activity.md`](modules/consumption-activity.md) and
@@ -1412,11 +1412,11 @@ the hide-finished completion filter for reads — no DML on
   `consumption/reader_cursor.py`. quotable positive-count web/epub/pdf documents
   receive total seconds at 240 words/minute. no/empty cursor means full remaining
   duration; positioned web/epub uses current whole-document progression;
-  positioned pdf or unknown progression means unknown remainder. high-water
-  consumption progress and completion remain separate. one projection serves
+  positioned pdf or unknown progression means unknown remainder. percentage
+  follows current position; persisted completion remains separate. one projection serves
   library ordering and suggestion eligibility; display alone uses coarse rounding
-  and retains exact zero. `schemas/reading_time.py` and `lib/media/readingTime.ts`
-  own the shared wire shape and decoder. requests never scan document text.
+  and retains exact zero. `schemas/reading_time.py` owns the generated wire
+  shape; collection formatting consumes its numbers directly. requests never scan document text.
 - **remaining-time order belongs to library listing.** `sort=remaining` orders
   raw `float8` seconds before pagination, unknowns last in either direction,
   then title and target identity. finite `FloatOrNull` cursor keys retain exact
@@ -1635,8 +1635,7 @@ Playing** is one device-local audio session, not a second durable list.
 command facades and the DML of
 `consumption_overrides` explicit `Unread`/`Finished` plus the natural-end
 override revision, `consumption_completion_facts`, and
-`reader_engagement_states` current-state reader recency — `last_engaged_at`
-plus, for non-PDF locators, a monotonic `max_total_progression`),
+`reader_engagement_states` reader recency — `last_engaged_at`),
 `listening.py` (`podcast_listening_states` position/duration/nullable episode
 rate under the `reset_epoch` fence), `reader_cursor.py`
 (`reader_media_state` revisioned
@@ -1647,7 +1646,7 @@ and `projection.py` (the combined
 explicit-override + reader-engagement read model, the Lectern snapshot, and
 batched `PlayerDescriptor`s reusing `derive_playback_source`; the server owns
 the resume point, so a finished episode's descriptor starts at 0). Consumption exposes
-policy-neutral engagement and complete queue-membership reads to Resonance; it
+policy-neutral engagement and complete queue-membership reads to suggestions; it
 does not own a second public Recent product. `GET /lectern/slate` builds the
 on-demand **At hand** projection from Continuity, Arrival, and factual graph,
 author, and calibrated semantic evidence. It returns at most ten placeable
@@ -1683,7 +1682,7 @@ and every command on one promise chain, `lib/lectern/`) above
 it persists across pane navigation and is never an editor. The provider selects
 exactly one engine: non-Android uses one browser-owned `<audio>` element with its
 listening writer, Media Session and activity observer (`browserEngine.ts`); the
-Android shell uses the service-owned Media3 player through `window.nexusAudio`
+Android shell uses the service-owned Media3 player through `window.nexusPlayback`
 (`nativeEngine.ts`) and mounts none of those browser owners. The provider
 exposes stable Commands plus separate Session and Timeline contexts. A natural
 end is one `SettleNaturalEnd` sent by the engine that heard it; the server
@@ -1705,8 +1704,15 @@ refreshing on active mount, reactivation and consumption/placement revisions.
 it has no selection controls or dedicated add button; opening navigates without
 enqueueing. shared collection rows retain standard menus, factual dates and
 reading estimates without relation explanations or inline expansion. known
-remaining reading time replaces percentage; unread with only total time labels
-it total. zero is representable and audio formatting is unchanged.
+stored media share title, author credits, original publication year,
+unread/current percentage/finished, and plain remaining time at canonical 1×.
+current cursor/listening position owns percentage and time; accepted progress
+at ≥95% persists sticky completion. unread/reset fences older writes; genuine
+accepted resumption clears unread. `MediaSummaryProvider` refreshes retained
+facts in bounded account-scoped batches; query owners reconcile real topology
+changes. unknown facts disappear and finished hides time. catalogue rows expose
+stored author credits without invented viewer facts. the contract and receipts
+are in [media-row-plan.md](media-row-plan.md).
 
 ### 8.9 Consumption Activity & Stats
 
@@ -2056,8 +2062,8 @@ they open over Resume and never become panes.
 hardened WebView and `ShareActivity` for system-share capture. The WebView has
 no `addJavascriptInterface`, file/content access, third-party cookies, or
 off-origin in-WebView navigation. Two AndroidX WebKit listeners are confined to
-their owned main-frame origins: `nexusAudio` carries service-player
-ops/snapshots, and `nexusOffline` carries the offline commands/snapshots
+their owned main-frame origins: `nexusPlayback` carries service-player
+ops/snapshots, and `nexusDownloads` carries the offline commands/snapshots
 for the hosted origin and the packaged shelf.
 
 Offline ([module](modules/offline.md)) is one store (`OfflineStore`: one json

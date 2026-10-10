@@ -38,12 +38,19 @@ export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean
 
 function ResourceMenu({ subject, menuProps }: { subject: ResourceActionSubject; menuProps: MenuProps }) {
   const model = useResourceActionMenuModel(subject);
+  const refresh = model.refresh;
+  const upstreamOpenChange = menuProps.onOpenChange;
+  const onOpenChange = useCallback((open: boolean) => {
+    upstreamOpenChange?.(open);
+    if (open) refresh();
+  }, [refresh, upstreamOpenChange]);
   return (
     <ActionMenu
       options={model.descriptors}
       triggerDisabled={model.triggerDisabled}
       triggerDisabledReason={model.triggerDisabledReason}
       {...menuProps}
+      onOpenChange={onOpenChange}
     />
   );
 }

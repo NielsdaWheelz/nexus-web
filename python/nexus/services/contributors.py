@@ -84,7 +84,10 @@ from nexus.services.collection_revisions import (
     read_collection_revision,
     require_collection_revision,
 )
-from nexus.services.contributor_credits import distinct_visible_works_sql
+from nexus.services.contributor_credits import (
+    distinct_visible_works_sql,
+    load_contributor_credits_for_catalogue,
+)
 from nexus.services.contributor_taxonomy import (
     CONTRIBUTOR_ROLES_ORDERED,
     ContributorHandle,
@@ -421,6 +424,14 @@ def list_contributor_works(
             media_ids=[UUID(str(row["media_id"])) for row in page if row["media_id"] is not None],
         )
     }
+    catalogue_credits = load_contributor_credits_for_catalogue(
+        db,
+        [
+            int(row["project_gutenberg_catalog_ebook_id"])
+            for row in page
+            if row["media_id"] is None and row["project_gutenberg_catalog_ebook_id"] is not None
+        ],
+    )
     next_cursor: CollectionCursor | None = None
     if len(rows) > limit and page:
         next_cursor = encode_keyset_cursor(
@@ -470,6 +481,9 @@ def list_contributor_works(
                     href=row["href"],
                     contentKind=row["content_kind"],
                     date=row["date_key"],
+                    contributors=catalogue_credits.get(
+                        int(row["project_gutenberg_catalog_ebook_id"]), []
+                    ),
                     roleFacts=facts,
                     actionSubject=None,
                 )

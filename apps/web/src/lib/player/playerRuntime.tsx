@@ -2,7 +2,7 @@
 
 /**
  * The global player: one audio engine per device (the browser's `<audio>`, or the Android
- * service behind `window.nexusAudio`), rendered from one `EngineState`, plus what only the web
+ * service behind `window.nexusPlayback`), rendered from one `EngineState`, plus what only the web
  * shell knows: device history (previous/next), what plays next, and where a play starts.
  *
  * Every play starts from the server's resume point: another media loads its fresh descriptor,
@@ -34,6 +34,7 @@ import {
   playerDescriptorFromWire,
   type ChapterOut,
   type LecternItem,
+  type ListeningPosition,
   type MediaId,
   type PlayerDescriptor,
 } from "@/lib/lectern/contract";
@@ -73,6 +74,7 @@ export interface EngineState {
   readonly shortenPausesSavedMs: number;
   readonly error: string | null; // playback failure
   readonly synced: boolean; // the newest listening sample is stored
+  readonly consumptionRevision: number; // accepted native writes, never device-only activity
 }
 
 export const IDLE_ENGINE_STATE: EngineState = {
@@ -89,6 +91,7 @@ export const IDLE_ENGINE_STATE: EngineState = {
   shortenPausesSavedMs: 0,
   error: null,
   synced: true,
+  consumptionRevision: 0,
 };
 
 export interface Engine {
@@ -109,7 +112,12 @@ export interface Engine {
   /** This session's override; null returns to the podcast's or the device's setting. */
   setShortenPauses(on: boolean | null): void;
   setShortenPausesDefault(on: boolean): void;
-  adopt(mediaId: MediaId, positionMs: number, resetEpoch: number): void;
+  /** An operational refusal rejects with action feedback; its consumption command must not send. */
+  prepareProgressFence(mediaId: MediaId): Promise<void>;
+  /** An authority outage keeps the fence and local retry feedback; defects reject. */
+  reconcileProgressFence(mediaId: MediaId): Promise<void>;
+  /** Install committed reset authority; a bridge outage stays local and must not retry reset. */
+  adopt(mediaId: MediaId, position: ListeningPosition): Promise<void>;
   dismiss(): Promise<void>;
   close(): void;
 }
@@ -407,16 +415,23 @@ export function GlobalPlayerProvider({
   }, [enqueue, play]);
   navigation.current = commands;
 
-  // A reset elsewhere arrives with the Lectern's progressState: the loaded episode adopts it.
-  useEffect(
-    () =>
-      lecternRef.current.onCanonicalInstall(({ state }) => {
+  useEffect(() => {
+    const offInstall = lecternRef.current.onCanonicalInstall((event) => {
+        if (event.kind !== "progressState") return;
+        const { state } = event;
         if (state.listeningState.kind !== "Present") return;
-        const { positionMs, resetEpoch } = state.listeningState.value;
-        engine?.adopt(state.mediaId, positionMs, resetEpoch);
-      }),
-    [engine],
-  );
+        return engine?.adopt(state.mediaId, state.listeningState.value);
+      });
+    const offFence = lecternRef.current.registerProgressFence({
+      async prepare(mediaIds) {
+        for (const mediaId of mediaIds) await engine?.prepareProgressFence(mediaId);
+      },
+      async reconcile(mediaIds) {
+        for (const mediaId of mediaIds) await engine?.reconcileProgressFence(mediaId);
+      },
+    });
+    return () => { offInstall(); offFence(); };
+  }, [engine]);
 
   // Space plays/pauses, ←/→ skip, shift+←/→ previous/next; never inside controls or text.
   const keyed = useRef({ commands, playing: false, loaded: false });

@@ -6,6 +6,7 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
+from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.services.contributor_taxonomy import (
     MAX_CONTRIBUTOR_NAME_CODE_POINTS,
@@ -165,6 +166,7 @@ class ExternalContributorWorkItemOut(_CamelResponse):
     href: str
     content_kind: str = Field(alias="contentKind")
     date: str | None
+    contributors: list[ContributorCreditOut]
     role_facts: list[ContributorRoleFactOut] = Field(alias="roleFacts")
     action_subject: None = Field(alias="actionSubject")
 

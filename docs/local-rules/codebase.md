@@ -46,7 +46,7 @@ technology-ownership, import, and module-boundary model.
   Android Media3 player, Media Session, native Consumption recording, and
   player notification lifecycle.
 - `apps/android/app/src/main/java/.../playback/PlayerBridge.kt` owns the
-  main-frame, owned-origin `nexusAudio` WebKit bridge and adapts it to the
+  main-frame, owned-origin `nexusPlayback` WebKit bridge and adapts it to the
   service-owned MediaController.
 - `apps/android/app/src/main/java/.../NexusOriginClient.kt` is the one
   authorized native product API client, shared by the player and offline. It
@@ -56,7 +56,7 @@ technology-ownership, import, and module-boundary model.
   owned Origin; it accepts no arbitrary URL, path, headers, or credentials.
 - `apps/android/app/src/main/java/.../offline/` owns offline
   ([module](../modules/offline.md)): the store, the transfer and sync jobs, the
-  `nexusOffline` bridge and the shelf router. Its only direct calls are the
+  `nexusDownloads` bridge and the shelf router. Its only direct calls are the
   episode's https enclosure and `/stream/media/{id}/reading-copy` at the
   `stream_base_url` a stream token names; it accepts no renderer-supplied URL,
   path, headers, credentials, or filesystem location.
@@ -70,8 +70,8 @@ technology-ownership, import, and module-boundary model.
   `GoogleSignInController` may make the auth-bootstrap
   `POST /auth/native/google`; `NexusOriginClient` may call only its fixed
   paths above; offline may make only the two direct calls above; and AndroidX
-  WebKit may expose the main-frame `nexusAudio` listener on the owned origin
-  and the main-frame `nexusOffline` listener on the owned and shelf origins.
+  WebKit may expose the main-frame `nexusPlayback` listener on the owned origin
+  and the main-frame `nexusDownloads` listener on the owned and shelf origins.
   Android code must not add other product or Supabase clients, OAuth/PKCE
   exchange logic, upload clients, `addJavascriptInterface`, or generic bridges.
   OAuth/PKCE exchange remains server-side.

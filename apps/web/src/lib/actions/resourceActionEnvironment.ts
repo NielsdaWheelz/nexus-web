@@ -17,7 +17,7 @@ export type ResourceActionLecternState =
  */
 export type ResourceActionPlaybackState = "Idle" | "Paused" | "Ended";
 
-/** Android's offline store, as seen through `window.nexusOffline`. */
+/** Android's offline store, as seen through `window.nexusDownloads`. */
 export type ResourceActionOfflineState =
   | { readonly kind: "Loading" }
   | { readonly kind: "Unavailable" }

@@ -1,4 +1,4 @@
-// The one client of Android's `window.nexusOffline` bridge, bundled into both
+// The one client of Android's `window.nexusDownloads` bridge, bundled into both
 // the hosted app and the packaged shelf. Both ends ship in the same release
 // train, so frames are trusted json: no versions, no decoders. The object's
 // name is the compatibility identity; where it is absent (desktop, Android
@@ -8,6 +8,7 @@
 // push    {snapshot}, always before the reply to the op that caused it.
 import { useSyncExternalStore } from "react";
 import type { ProgressView } from "@/lib/documentReader/ports";
+import { publishConsumptionProjectionChange } from "@/lib/consumption/projectionRevision";
 
 export type MediaKind = "podcast_episode" | "pdf" | "epub" | "web_article";
 export type FailureReason =
@@ -32,6 +33,7 @@ export interface OfflineItem {
 export interface OfflineSnapshot {
   readonly policy: "UnmeteredOnly" | "AnyConnected";
   readonly authRequired: boolean;
+  readonly consumptionRevision: number;
   /** In enqueue order. */
   readonly items: readonly OfflineItem[];
 }
@@ -48,7 +50,7 @@ interface Port {
 
 const port = typeof window === "undefined"
   ? undefined
-  : (window as Window & { nexusOffline?: Port }).nexusOffline;
+  : (window as Window & { nexusDownloads?: Port }).nexusDownloads;
 
 export const offlineAvailable = port !== undefined;
 
@@ -62,6 +64,8 @@ const pending = new Map<number, {
 }>();
 
 function publish(next: OfflineSnapshot): void {
+  if (next.consumptionRevision !== snapshot?.consumptionRevision)
+    publishConsumptionProjectionChange();
   snapshot = next;
   for (const listener of listeners) listener();
 }

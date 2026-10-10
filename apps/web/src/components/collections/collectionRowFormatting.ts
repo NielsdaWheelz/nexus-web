@@ -1,5 +1,5 @@
 import type { CollectionActivity } from "@/lib/collections/types";
-import type { PublicationDate } from "@/lib/dates/publicationDate";
+import type { Schema } from "@/lib/api/wire";
 import { assertNever } from "@/lib/assertNever";
 
 export interface ActivityText {
@@ -7,38 +7,31 @@ export interface ActivityText {
   readonly accessible: string;
 }
 
-function minuteLabel(minutes: number): string {
-  return minutes === 1 ? "minute" : "minutes";
+export function collectionConsumptionText(consumption: Schema<"ConsumptionOut">): string {
+  switch (consumption.state) {
+    case "Unread":
+      return "unread";
+    case "Finished":
+      return "finished";
+    case "InProgress":
+      return consumption.progress.kind === "Present"
+        ? `${Math.round(consumption.progress.value * 100)}%`
+        : "in progress";
+  }
 }
 
 export function collectionActivityText(activity: CollectionActivity): ActivityText {
   switch (activity.kind) {
-    case "MediaDuration": {
-      const { modality, estimate } = activity.duration;
-      const remaining = estimate.remainingMinutes;
-      const minutes = remaining.kind === "Present"
-        ? remaining.value.value
-        : estimate.totalMinutes.value;
-      if (modality === "Listen") {
-        return remaining.kind === "Present"
-          ? {
-              visible: `${minutes} min left to listen`,
-              accessible: `${minutes} ${minuteLabel(minutes)} left to listen`,
-            }
-          : {
-              visible: `${minutes} min to listen`,
-              accessible: `${minutes} ${minuteLabel(minutes)} to listen`,
-            };
-      }
-      return remaining.kind === "Present"
-        ? {
-            visible: `${minutes === 0 ? "" : "≈"}${minutes} min left`,
-            accessible: `${minutes === 0 ? "" : "About "}${minutes} ${minuteLabel(minutes)} left to read`,
-          }
-        : {
-            visible: `≈${minutes} min total`,
-            accessible: `About ${minutes} ${minuteLabel(minutes)} total to read`,
-          };
+    case "RemainingTime": {
+      const { modality, minutes } = activity;
+      const hours = Math.floor(minutes / 60);
+      const rest = minutes % 60;
+      return {
+        visible: hours === 0
+          ? `${minutes} min`
+          : `${hours} h${rest === 0 ? "" : ` ${rest} min`}`,
+        accessible: `${minutes} ${minutes === 1 ? "minute" : "minutes"} remaining to ${modality === "Read" ? "read" : "listen"}`,
+      };
     }
     case "Unplayed": {
       const count = activity.count.value;
@@ -85,7 +78,11 @@ const FULL_DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
   timeZone: "UTC",
 });
 
-export function formatCollectionPublicationDate(value: PublicationDate): string {
+export function collectionPublicationYear(value: string): string {
+  return value.slice(0, 4);
+}
+
+export function formatCollectionPublicationDate(value: string): string {
   if (YEAR_ONLY.test(value)) return value;
 
   const monthMatch = YEAR_MONTH.exec(value);

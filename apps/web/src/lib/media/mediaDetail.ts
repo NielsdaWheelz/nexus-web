@@ -47,13 +47,6 @@ export function mediaDetailFromResponse(
     // PublicationDate's calendar validation belongs to the generated schema owner.
     original_published_date: mapPresence(media.original_published_date, (date) => date as PublicationDate),
     edition_published_date: mapPresence(media.edition_published_date, (date) => date as PublicationDate),
-    duration: mapPresence(media.duration, (duration) => ({
-      modality: duration.modality,
-      estimate: {
-        totalMinutes: { value: duration.estimate.totalMinutes },
-        remainingMinutes: mapPresence(duration.estimate.remainingMinutes, (value) => ({ value })),
-      },
-    })),
     chapters: media.chapters
       .map((chapter) => ({ ...chapter, title: chapter.title.trim() }))
       .filter((chapter) => chapter.title.length > 0)

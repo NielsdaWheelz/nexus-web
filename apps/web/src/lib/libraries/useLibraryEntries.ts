@@ -58,6 +58,7 @@ import {
   confirmedLibraryEntriesRevision,
   subscribePodcastSubscriptionSettingsInstalls,
 } from "@/lib/podcasts/subscriptionSettings";
+import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import type { LibraryOut } from "./contract";
 import { libraryEntryPageFromWire, type LibraryEntryListItem } from "./entryListItem";
@@ -78,6 +79,7 @@ import {
 import { libraryRequestErrorMessage } from "./libraryRequestErrorMessage";
 
 interface Facts {
+  query: number;
   metadata: number;
   placement: number;
   consumption: ConsumptionProjectionChange;
@@ -103,18 +105,12 @@ interface Replacement {
   error?: ApiError;
 }
 const VISIT_DATA = definePaneVisitDataKey<Snapshot>("Library.Entries");
-const factsNow = (): Facts => ({
-  metadata: metadataCollectionSnapshot(),
-  placement: libraryPlacementSnapshot().revision,
-  consumption: consumptionProjectionSnapshot(),
-});
 const targetId = (entry: LibraryEntryListItem) =>
   entry.kind === "media" ? entry.media.id : entry.podcast.id;
 
-export function useLibraryEntries({ id, active, visible, regionRef }: {
+export function useLibraryEntries({ id, active, regionRef }: {
   readonly id: string;
   readonly active: boolean;
-  readonly visible: boolean;
   readonly regionRef: RefObject<HTMLElement | null>;
 }) {
   const router = usePaneRouter();
@@ -127,6 +123,13 @@ export function useLibraryEntries({ id, active, visible, regionRef }: {
   const metadata = useMetadataCollectionRevision();
   const placement = useLibraryPlacementRevision();
   const consumption = useConsumptionProjectionRevision();
+  const queryRevision = useMediaQueryRevision();
+  const factsNow = useCallback((): Facts => ({
+    query: queryRevision,
+    metadata: metadataCollectionSnapshot(),
+    placement: libraryPlacementSnapshot().revision,
+    consumption: consumptionProjectionSnapshot(),
+  }), [queryRevision]);
   const codec = useMemo(() => ({
     basePath: `/libraries/${id}`,
     decode: decodeLibraryView,
@@ -178,7 +181,7 @@ export function useLibraryEntries({ id, active, visible, regionRef }: {
   const committedKey = snapshot?.library.id === id ? keyOf(snapshot.entries.view) : null;
   const seedClaimable = adoptSeed.current &&
     (view.kind === "Invalid" || isInitialLibraryView(view.view)) &&
-    metadata === 0 && placement.revision === 0 && consumption.revision === 0 &&
+    metadata === 0 && placement.revision === 0 && consumption.revision === 0 && queryRevision === 0 &&
     (bootstrap.status !== "ready" || bootstrap.data.collectionRevision >= confirmedRevision);
   const ready = snapshot !== null && requestedKey !== null && requestedKey === committedKey &&
     request?.reason !== "View" && snapshot.entries.collectionRevision >= confirmedRevision;
@@ -196,7 +199,7 @@ export function useLibraryEntries({ id, active, visible, regionRef }: {
   ) => {
     settlement.reject(new DOMException("Library refresh was superseded.", "AbortError"));
     completedRefresh.current = null;
-    scroll();
+    if (reason === "View") scroll();
     invalidateCapture();
     if (reason === "View") {
       reorderGeneration.current += 1;
@@ -208,16 +211,15 @@ export function useLibraryEntries({ id, active, visible, regionRef }: {
     latest.current.request = next;
     setRequest(next);
     return next.serial;
-  }, [id, invalidateCapture, scroll, settlement]);
+  }, [id, invalidateCapture, scroll, settlement, factsNow]);
   const stale = useCallback((facts: Facts, entryView: LibraryEntryView) => {
     const now = factsNow();
     return (now.placement !== facts.placement &&
       (latest.current.library?.isDefault === true || libraryPlacementAffectedSince(facts.placement, id))) ||
       (now.consumption.revision !== facts.consumption.revision &&
         (entryView.order.kind === "Remaining" || entryView.projection.kind === "InProgress" || completionOf(entryView) === "unfinished")) ||
-      now.consumption.rowRevision !== facts.consumption.rowRevision ||
-      now.metadata !== facts.metadata;
-  }, [id]);
+      now.metadata !== facts.metadata || now.query !== facts.query;
+  }, [id, factsNow]);
 
   useEffect(() => {
     mounted.current = true;
@@ -243,7 +245,7 @@ export function useLibraryEntries({ id, active, visible, regionRef }: {
     if (bootstrap.status !== "ready" || !adoptSeed.current) return;
     adoptSeed.current = false;
     if ((view.kind === "Invalid" || isInitialLibraryView(view.view)) &&
-      metadata === 0 && placement.revision === 0 && consumption.revision === 0 &&
+      metadata === 0 && placement.revision === 0 && consumption.revision === 0 && queryRevision === 0 &&
       bootstrap.data.collectionRevision >= confirmedLibraryEntriesRevision(accountId)) {
       setSnapshot({
         library: bootstrap.data.library, entries: {
@@ -251,30 +253,48 @@ export function useLibraryEntries({ id, active, visible, regionRef }: {
           entries: bootstrap.data.entries,
           collectionRevision: bootstrap.data.collectionRevision,
           nextCursor: bootstrap.data.nextCursor,
-          revisions: { metadata: 0, placement: 0, consumption: { revision: 0, rowRevision: 0 } },
+          revisions: { query: 0, metadata: 0, placement: 0, consumption: { revision: 0, rowRevision: 0 } },
         }
       });
     }
-  }, [bootstrap, router, view, metadata, placement.revision, consumption.revision, confirmedRevision, accountId]);
+  }, [bootstrap, router, view, metadata, placement.revision, consumption.revision, confirmedRevision, accountId, queryRevision]);
   useEffect(() => {
     if (view.kind === "Invalid" || unavailableId === id || seedClaimable) return;
     const needsPage = snapshot === null
-      ? !isInitialLibraryView(view.view) || !adoptSeed.current || metadata !== 0 || placement.revision !== 0 || consumption.revision !== 0
+      ? !isInitialLibraryView(view.view) || !adoptSeed.current || metadata !== 0 || placement.revision !== 0 || consumption.revision !== 0 || queryRevision !== 0
       : requestedKey !== committedKey || snapshot.entries.collectionRevision < confirmedLibraryEntriesRevision(accountId);
     if (needsPage && !(request?.reason === "View" && request.id === id && keyOf(request.view) === requestedKey)) {
       begin("View", view.view);
     }
   }, [id, view, snapshot, requestedKey, committedKey, request, metadata,
-    placement.revision, consumption.revision, begin, keyOf, unavailableId, seedClaimable, confirmedRevision, accountId]);
+    placement.revision, consumption.revision, begin, keyOf, unavailableId, seedClaimable, confirmedRevision, accountId, queryRevision]);
   useEffect(() => {
     if (request === null || request.error || request.page) return;
     const current = request;
     const controller = new AbortController();
-    const load = async (signal: AbortSignal) => libraryEntryPageFromWire(
-      (await apiFetch<ApiJson<"/libraries/{library_id}/entries", "get">>(
-        libraryEntriesResource.clientPath({ id: current.id, view: current.view }), { signal },
-      )).data,
-    );
+    const load = async (signal: AbortSignal) => {
+      const retained = current.reason === "Reconcile" ? latest.current.snapshot?.entries.entries.length ?? 0 : 0;
+      for (;;) {
+        try {
+          let page = libraryEntryPageFromWire((await apiFetch<ApiJson<"/libraries/{library_id}/entries", "get">>(
+            libraryEntriesResource.clientPath({ id: current.id, view: current.view,
+              limit: retained === 0 ? 100 : Math.min(100, retained) }), { signal },
+          )).data);
+          const items = [...page.items];
+          while (items.length < retained && page.nextCursor.kind === "Present") {
+            page = libraryEntryPageFromWire((await apiFetch<ApiJson<"/libraries/{library_id}/entries", "get">>(
+              libraryEntriesResource.clientPath({ id: current.id, view: current.view,
+                limit: Math.min(100, retained - items.length), cursor: page.nextCursor.value,
+                collectionRevision: page.collectionRevision }), { signal },
+            )).data);
+            items.push(...page.items);
+          }
+          return { ...page, items };
+        } catch (error) {
+          if (signal.aborted || !isApiError(error) || error.code !== "E_COLLECTION_CHANGED") throw error;
+        }
+      }
+    };
     void (current.reason === "View" ? requestWithRetry(load, controller.signal) : load(controller.signal)).then(page => {
       if (!controller.signal.aborted && serial.current === current.serial) {
         setRequest(value => value?.serial === current.serial ? { ...value, page } : value);
@@ -304,8 +324,8 @@ export function useLibraryEntries({ id, active, visible, regionRef }: {
       begin(request.reason, request.view, request.recovery);
       return;
     }
-    if (request.reason === "View" && stale(request.facts, request.view)) {
-      begin("View", request.view);
+    if (stale(request.facts, request.view)) {
+      begin(request.reason, request.view, request.recovery);
       return;
     }
     if (request.reason === "Reconcile" && committedKey !== requestedKey) return;
@@ -323,18 +343,16 @@ export function useLibraryEntries({ id, active, visible, regionRef }: {
     if (settlement.isPending(request.serial)) completedRefresh.current = request.serial;
     setRequest(null);
     setChain(value => value + 1);
-  }, [request, id, library, keyOf, requestedKey, committedKey, stale, begin, settlement, accountId]);
+  }, [request, id, library, keyOf, requestedKey, committedKey, stale, begin, settlement, accountId, factsNow]);
   // a stale captured reconciliation starts its followup before refresh settlement.
   // beginning that request supersedes the waiter rather than announcing stale completion.
   useEffect(() => {
     if (!ready || snapshot === null || request !== null || latest.current.request !== null) return;
-    if (unknownPending.current ||
-      ((active || (visible && metadata !== snapshot.entries.revisions.metadata)) &&
-        stale(snapshot.entries.revisions, snapshot.entries.view))) {
+    if (unknownPending.current || stale(snapshot.entries.revisions, snapshot.entries.view)) {
       unknownPending.current = false;
       begin("Reconcile", snapshot.entries.view);
     }
-  }, [active, visible, metadata, placement.revision, consumption, ready, snapshot, request, stale, begin]);
+  }, [metadata, placement.revision, consumption, queryRevision, ready, snapshot, request, stale, begin]);
   useLayoutEffect(() => {
     captureRef.current = ready && request === null && snapshot !== null &&
       snapshot.entries.collectionRevision >= confirmedLibraryEntriesRevision(accountId) ? snapshot : null;
@@ -404,11 +422,16 @@ export function useLibraryEntries({ id, active, visible, regionRef }: {
   const loadPage = useCallback(async (cursor: CollectionCursor, collectionRevision: CollectionRevision, signal: AbortSignal) => {
     const current = latest.current.snapshot;
     if (current === null) throw new Error("Library continuation lost its committed view");
-    return libraryEntryPageFromWire((await apiFetch<ApiJson<"/libraries/{library_id}/entries", "get">>(
+    const page = libraryEntryPageFromWire((await apiFetch<ApiJson<"/libraries/{library_id}/entries", "get">>(
       libraryEntriesResource.clientPath({ id, view: current.entries.view, cursor, collectionRevision, limit: 100 }),
       { signal },
     )).data);
-  }, [id]);
+    if (latest.current.snapshot !== current || latest.current.request !== null ||
+      stale(current.entries.revisions, current.entries.view)) {
+      throw new DOMException("Library continuation was superseded.", "AbortError");
+    }
+    return page;
+  }, [id, stale]);
   const commitPage = useCallback((page: CollectionPage<LibraryEntryListItem>) => {
     const current = latest.current.snapshot;
     if (current === null) throw new Error("Library continuation lost its committed view");
@@ -436,6 +459,13 @@ export function useLibraryEntries({ id, active, visible, regionRef }: {
     loadPage, commitPage,
     refresh: refreshList,
   });
+  const handledCollectionChange = useRef<unknown>(null);
+  useEffect(() => {
+    if (request !== null || exhaustion.kind !== "RefreshRequired" ||
+      exhaustion.reason !== "CollectionChanged" || handledCollectionChange.current === exhaustion.error) return;
+    handledCollectionChange.current = exhaustion.error;
+    refreshList();
+  }, [request, exhaustion, refreshList]);
   const reorder = useCallback(async (entries: readonly LibraryEntryListItem[]) => {
     const current = latest.current;
     const saved = current.snapshot;

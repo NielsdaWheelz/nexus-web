@@ -340,7 +340,7 @@ unexpected timeouts. See
 - [open] web / unused output contracts · 2026-10-04 simplification audit · unused media capability alias remains for a later scoped deletion: [ticket](tickets/unused-client-output-contracts.md).
 - [open] jobs / registry · 2026-10-04 simplification audit · six adapters forward unchanged arguments to concrete handlers: [ticket](tickets/jobs-registry-has-pure-forwarding-adapters.md).
 
-- [open] web / library focus · 2026-10-04 presentation audit · row-removal traversal is promised by a comment but absent from the current implementation: [ticket](tickets/library-row-removal-focus-contract-unimplemented.md).
+- [open] web / navigation hydration · 2026-10-09 media-row integration · one initial library reload warned beneath AppNav/NavRail; subsequent reloads were clear, differing attribute unrecorded: [ticket](tickets/app-nav-intermittent-hydration-warning.md).
 - [open] web / library write uncertainty · 2026-10-04 snapshot-owner audit · reorder transport rejection restores rows without proving authoritative order: [ticket](tickets/library-reorder-acknowledgement-loss-leaves-uncertain-order.md).
 - [open] oracle / job recovery · 2026-10-04 source audit, restated by the oracle rewrite · a dead generation job leaves its reading pending forever, and a stored streaming reading has no owner; pruning deletes its journal: [ticket](tickets/oracle-dead-jobs-can-lose-publication-replay.md).
 - [open] oracle / storage · 2026-10-04 oracle rewrite · 36 plate objects under `oracle/plates/` lost their owner when plates became static assets: [ticket](tickets/oracle-plates-orphaned-r2-objects.md).
@@ -352,7 +352,7 @@ unexpected timeouts. See
 - [open] oracle / generation · 2026-10-04 oracle rewrite · the quote guard's false-positive rate on real readings is unmeasured: [ticket](tickets/oracle-quote-guard-false-positive-rate-unmeasured.md).
 - [open] oracle / corpus · 2026-10-04 oracle rewrite · a reindexed work's chips stay typographic until the next reading heals its anchors: [ticket](tickets/oracle-anchor-chips-typographic-after-corpus-reindex.md).
 - [deferred] daily / prepend ownership · 2026-10-04 source review · the sole anchor-capture callback is passed but never consumed: [ticket](tickets/daily-prepend-anchor-wiring-is-dormant.md).
-- [deferred] shared media / success contract · 2026-10-04 fresh podcast source census · native summary permits duration modality relationships rejected by its shared display conversion: [ticket](tickets/media-summary-native-duration-modality-relation-is-implicit.md).
+- [deferred] shared media / success contract · 2026-10-09 cutover recheck · native duration modality relationship remains implicit; sole producer verified and duplicate browser conversion removed: [ticket](tickets/media-summary-native-duration-modality-relation-is-implicit.md).
 - [deferred] podcast / acquisition failure boundary · 2026-10-04 independent fresh source review · expected discovery provider exceptions escape acquisition translation as native defects: [ticket](tickets/podcast-acquisition-provider-failures-escape-domain-translation.md).
 - [deferred] collections / revision contract · 2026-10-04 source review · collection revision wire range exceeds javascript safe integers: [ticket](tickets/collection-revision-wire-range-exceeds-javascript-safe-integers.md).
 - [deferred] resource surface / mounted title actions · 2026-10-04 source review · mounted title retry loses its mutation lease: [ticket](tickets/mounted-title-retry-loses-mutation-lease.md).

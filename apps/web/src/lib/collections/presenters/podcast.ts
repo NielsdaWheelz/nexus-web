@@ -8,7 +8,6 @@ import type {
   ExceptionalStatus,
 } from "@/lib/collections/types";
 import type { PositiveCount } from "@/lib/consumption/activityFacts";
-import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { PodcastSyncStatus } from "@/lib/podcasts/types";
 
@@ -18,7 +17,7 @@ export interface PodcastPresenterItem {
   contributors: ContributorCredit[];
   unplayedCount: Presence<PositiveCount>;
   syncStatus: Presence<PodcastSyncStatus>;
-  publicationDate: Presence<PublicationDate>;
+  publicationDate: Presence<string>;
 }
 
 function exceptionalStatus(

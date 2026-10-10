@@ -2,7 +2,6 @@ import { expectExactRecord, expectIsoInstant, expectRecord } from "@/lib/validat
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import type { ApiError } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { mediaSummaryFromWire } from "@/lib/media/mediaSummary";
 import {
   parseMediaImageProxySrc,
   type MediaImageProxySrc,
@@ -131,21 +130,15 @@ function checkImage(image: Presence<string>, context: string): void {
   if (image.kind === "Present") proxiedImageHref(image.value, context);
 }
 
-function checkResolution(resolution: Schema<"BrowseResolution">): void {
-  if (resolution.kind === "InNexusMedia") mediaSummaryFromWire(resolution.mediaSummary);
-}
-
 /** Only the semantic leaves the backend schema cannot establish are checked here. */
 export function checkBrowsePageLeaves(page: BrowsePage): void {
   page.items.forEach((candidate, index) => {
     checkImage(candidate.image, `BrowsePage.items[${index}].image.value`);
-    checkResolution(candidate.resolution);
   });
 }
 
 export function checkBrowsePreviewLeaves(preview: BrowsePreview): void {
   checkImage(preview.image, "BrowsePreview.image.value");
-  checkResolution(preview.resolution);
   if (preview.kind === "Podcast") {
     preview.episodes.items.forEach((episode, index) =>
       checkImage(episode.image, `PreviewEpisodePage.items[${index}].image.value`),

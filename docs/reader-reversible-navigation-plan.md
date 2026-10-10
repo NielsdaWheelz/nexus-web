@@ -19,8 +19,10 @@ remains reading. clicking already-visible content without movement is not a jump
 
 approved decisions: one origin, explicit adoption, no timeout, position-based
 progress, duration-only hosted engagement during canonical-document inspection.
-adoption can advance maximum progress and mark finished at the existing 95%
+adoption changes current progress and can mark finished at the existing 95%
 threshold. this is intentional; it does not assert coverage of skipped text.
+current progress, sticky completion and unread fences are owned by the
+[media-row contract](media-row-plan.md).
 
 non-goals: per-hop history, read-coverage accounting, speed/dwell inference,
 cross-device excursion sync, restart restoration of detours, new note previews,
@@ -49,7 +51,7 @@ this feature must expose unavailable origins without guessing replacements.
    its duration-only activity interval, enqueues that exact locator and ends
    inspection as one local transition. failed capture retains protection; later
    save failure/conflict uses existing recovery. no extra confirmation.
-5. inspect/return movement alone cannot change cursor, high-water progress,
+5. inspect/return movement alone cannot change cursor, current progress,
    completion, remaining-time projection or native pending progress. legitimate
    pre-departure writes may finish. freeze acquisition, not the entire writer.
 6. remote revalidation continues; automatic viewport adoption is forbidden while
@@ -225,7 +227,7 @@ test-only product hooks and mocked adapters are not.
 
 overlay keyboard/screen-reader, narrow/zoomed layout, touch and keyboard-obstruction
 checks on n1/n2/n6. desktop emulation is not device proof. compare locator writes,
-maximum progress, completion facts, remaining-time and activity endpoints after
+current progress, completion facts, remaining-time and activity endpoints after
 settling or identifying pre-departure writes; unchanged revision alone is not the
 invariant.
 

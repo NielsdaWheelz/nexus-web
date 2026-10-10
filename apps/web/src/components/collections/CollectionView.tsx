@@ -22,6 +22,14 @@ import {
 } from "@/lib/ui/viewTransitions";
 import { usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
 import CollectionRow from "./CollectionRow";
+import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
+import { getFocusableElements } from "@/lib/ui/getFocusableElements";
+
+function followingRowIds(root: HTMLElement, target: HTMLElement): string[] {
+  const row = target.closest("[data-collection-row-id]");
+  const all = Array.from(root.querySelectorAll<HTMLElement>("[data-collection-row-id]"));
+  return all.slice(all.indexOf(row as HTMLElement) + 1).map((item) => item.dataset.collectionRowId!);
+}
 
 export interface CollectionViewRowRenderProps {
   readonly row: CollectionRowView;
@@ -83,8 +91,37 @@ export default function CollectionView({
 }) {
   const transitionScopeId = useId();
   const returnScopeRef = useRef<HTMLDivElement | null>(null);
+  const ownedFocusRef = useRef<{
+    target: HTMLElement;
+    rowId: string;
+    controlSelector: string | null;
+    followingIds: string[];
+  } | null>(null);
   const viewTransitionsReady = useClientViewTransitionsReady();
   const rowIds = useMemo(() => rows.map((row) => row.id), [rows]);
+  useLayoutEffect(() => {
+    const focus = ownedFocusRef.current;
+    const root = returnScopeRef.current;
+    if (focus === null || root === null) return;
+    if (focus.target.isConnected) {
+      focus.followingIds = followingRowIds(root, focus.target);
+      return;
+    }
+    if (document.activeElement !== document.body || root.closest("[inert]")) return;
+    ownedFocusRef.current = null;
+    const remaining = Array.from(root.querySelectorAll<HTMLElement>("[data-collection-row-id]"));
+    const sameRow = remaining.find((item) => item.dataset.collectionRowId === focus.rowId);
+    const control = sameRow?.querySelector<HTMLElement>(focus.controlSelector ?? "[data-row-focusable]:not([disabled])");
+    const sameControl = control?.hasAttribute("data-row-primary-control")
+      ? getFocusableElements(control)[0] : control;
+    const followingRow = focus.followingIds.map((id) => remaining.find((item) => item.dataset.collectionRowId === id))
+      .find((item) => item !== undefined);
+    const target = sameControl ?? sameRow?.querySelector<HTMLElement>("[data-row-focusable]:not([disabled])") ??
+      followingRow?.querySelector<HTMLElement>("a[href], button:not([disabled])") ??
+      root.closest<HTMLElement>('section[aria-label][tabindex="-1"], [role="region"][aria-label][tabindex="-1"]') ??
+      findPaneChromeFocusTarget(root.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId);
+    target?.focus({ preventScroll: true });
+  });
   const [displayRows, setDisplayRows] = useState<readonly CollectionRowView[]>(rows);
   const displayRowIdsRef = useRef(rowIds);
   const latestRowsRef = useRef(rows);
@@ -141,7 +178,7 @@ export default function CollectionView({
     const props: CollectionViewRowRenderProps = {
       row,
       as,
-      reorder,
+      reorder: reorder?.disabled ? undefined : reorder,
       panel: rowPanels?.[row.id],
       primaryControl: rowControls?.[row.id],
       rowActionsAvailable,
@@ -192,6 +229,28 @@ export default function CollectionView({
     <div
       ref={returnScopeRef}
       data-pane-return-scope={returnScope}
+      onFocusCapture={(event) => {
+        const target = event.target as HTMLElement;
+        const row = target.closest<HTMLElement>("[data-collection-row-id]");
+        if (!row) return;
+        const href = target.getAttribute("href");
+        let controlSelector: string | null = null;
+        if (target.matches("[data-row-focusable]")) {
+          controlSelector = "[data-row-focusable]:not([disabled])";
+        } else if (target.matches('[aria-haspopup="menu"]')) {
+          controlSelector = '[aria-haspopup="menu"]:not([disabled])';
+        } else if (target.closest("[data-row-primary-control]")) {
+          controlSelector = "[data-row-primary-control]";
+        } else if (href !== null) {
+          controlSelector = `a[href="${CSS.escape(href)}"]`;
+        }
+        ownedFocusRef.current = { target, rowId: row.dataset.collectionRowId!, controlSelector,
+          followingIds: followingRowIds(event.currentTarget, target) };
+      }}
+      onBlurCapture={(event) => {
+        if (event.target.isConnected && (event.relatedTarget === null ||
+          !event.currentTarget.contains(event.relatedTarget as Node))) ownedFocusRef.current = null;
+      }}
       style={{ display: "contents" }}
     >
       {surface ? (

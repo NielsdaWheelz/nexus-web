@@ -22,6 +22,8 @@ import type {
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import {
   collectionActivityText,
+  collectionConsumptionText,
+  collectionPublicationYear,
   formatCollectionPublicationDate,
 } from "./collectionRowFormatting";
 import { assertNever } from "@/lib/assertNever";
@@ -167,6 +169,7 @@ export default function CollectionRow({
   readonly viewTransitionName?: string;
 }) {
   const reorderHintId = useId();
+  const mediaLayout = row.mediaIdentity !== undefined;
 
   const title = row.title.segments
     ? (
@@ -178,13 +181,15 @@ export default function CollectionRow({
     : row.title.text;
 
   const supportParts: ReactNode[] = [];
-  const mediaDuration =
-    row.activity.kind === "Present" && row.activity.value.kind === "MediaDuration"
+  const remainingTime =
+    row.activity.kind === "Present" && row.activity.value.kind === "RemainingTime"
       ? collectionActivityText(row.activity.value)
       : null;
   const date = row.publicationDate.kind === "Present" ? (
-    <time key="date" dateTime={row.publicationDate.value}>
-      {formatCollectionPublicationDate(row.publicationDate.value)}
+    <time key="date" className={styles.year} dateTime={row.publicationDate.value}>
+      {mediaLayout
+        ? collectionPublicationYear(row.publicationDate.value)
+        : formatCollectionPublicationDate(row.publicationDate.value)}
     </time>
   ) : null;
   const contributors = row.contributors.length > 0 ? (
@@ -192,35 +197,21 @@ export default function CollectionRow({
       key="contributors"
       className={styles.contributorList}
       credits={row.contributors}
-      maxVisible={2}
-      overflowNoun={row.mediaIdentity ? "authors" : "contributors"}
+      maxVisible={row.mediaIdentity === "External" ? row.contributors.length : 2}
+      overflowNoun={mediaLayout ? "authors" : "contributors"}
     />
   ) : null;
-  if (row.mediaIdentity) {
-    if (date) supportParts.push(date);
-    if (contributors) supportParts.push(contributors);
-  } else {
-    if (contributors) supportParts.push(contributors);
-    if (date) supportParts.push(date);
-  }
-  if (mediaDuration) {
-    supportParts.push(
-      <span key="duration" className={styles.duration}>
-        <span aria-hidden="true">{mediaDuration.visible}</span>
-        <span className="sr-only">{mediaDuration.accessible}</span>
-      </span>,
-    );
-  }
-  if (row.context.kind === "Present" && !row.mediaIdentity) {
+  if (contributors) supportParts.push(contributors);
+  if (date) supportParts.push(date);
+  if (row.context.kind === "Present" && !mediaLayout) {
     supportParts.push(
       <span key="context" className={styles.context}>
         {renderContext(row.context.value)}
       </span>,
     );
   }
-  const supporting =
-    supportParts.length > 0 ? (
-      <span className={styles.supportLine}>
+  const bibliography = supportParts.length > 0 ? (
+      <span className={mediaLayout ? styles.bibliography : styles.supportLine}>
         {supportParts.map((part, index) => (
           <Fragment key={index}>
             {index > 0 ? (
@@ -234,32 +225,51 @@ export default function CollectionRow({
         ))}
       </span>
     ) : undefined;
+  const supporting = mediaLayout && (bibliography !== undefined || row.mediaIdentity === "Stored") ? (
+    <span className={styles.mediaSupportLine}>
+      {bibliography}
+      {row.mediaIdentity === "Stored" ? (
+        <span className={styles.readingFacts}>
+          <span>{collectionConsumptionText(row.consumption)}</span>
+          {remainingTime ? (
+            <>
+              <span className={styles.supportSeparator} aria-hidden="true">·</span>
+              <span>
+                <span aria-hidden="true" dir="auto">{remainingTime.visible}</span>
+                <span className="sr-only">, {remainingTime.accessible}</span>
+              </span>
+            </>
+          ) : null}
+        </span>
+      ) : null}
+    </span>
+  ) : bibliography;
   const evidence =
-    row.mediaIdentity && row.context.kind === "Present"
+    mediaLayout && row.context.kind === "Present"
       ? <span className={styles.context}>{renderContext(row.context.value)}</span>
       : undefined;
 
   const activity =
-    row.activity.kind === "Present" && !mediaDuration
+    row.activity.kind === "Present" && row.activity.value.kind !== "RemainingTime"
       ? collectionActivityText(row.activity.value)
       : null;
   const exceptionalStatus =
     row.exceptionalStatus.kind === "Present"
       ? renderExceptionalStatus(row.exceptionalStatus.value)
       : undefined;
-  const baseStatus =
-    exceptionalStatus ??
-    (activity ? (
-      <span className={styles.activity}>
-        <span aria-hidden="true">{activity.visible}</span>
-        <span className="sr-only">{activity.accessible}</span>
-      </span>
-    ) : undefined);
-  const status = baseStatus ? (
-    <span className={styles.status}>{baseStatus}</span>
+  const status = exceptionalStatus || activity ? (
+    <span className={styles.status}>
+      {exceptionalStatus}
+      {activity ? (
+        <span className={styles.activity}>
+          <span aria-hidden="true">{activity.visible}</span>
+          <span className="sr-only">{activity.accessible}</span>
+        </span>
+      ) : null}
+    </span>
   ) : undefined;
 
-  const menuLabel = `${row.mediaIdentity ? "more" : "More"} actions for ${row.title.text}`;
+  const menuLabel = `${mediaLayout ? "more" : "More"} actions for ${row.title.text}`;
   const occurrenceActions: ActionDescriptor[] = [];
   if (rowActionsAvailable && reorder) {
     occurrenceActions.push(
@@ -316,7 +326,7 @@ export default function CollectionRow({
         "aria-current": row.selected ? "true" : undefined,
         "data-collection-row-id": row.id,
         "data-collection-item-kind": row.kind,
-        "data-media-identity": row.mediaIdentity ? "true" : undefined,
+        "data-media-identity": mediaLayout ? "true" : undefined,
         "data-media-failed": row.mediaIdentity && exceptionalStatus ? "true" : undefined,
         "data-view-transition-part": "row",
         style: rootStyle,
@@ -324,7 +334,7 @@ export default function CollectionRow({
       title={title}
       supporting={supporting}
       status={status}
-      separateStatus={!row.mediaIdentity}
+      separateStatus={!mediaLayout}
       evidence={evidence}
       primaryControl={primaryControl}
       actions={actions}

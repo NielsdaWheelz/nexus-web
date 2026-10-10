@@ -20,7 +20,6 @@ from nexus.schemas.reader import ReaderCursorSnapshot
 
 ActivityModality = Literal["Reading", "Listening", "Viewing"]
 ActivityDeviceClass = Literal["Desktop", "Mobile"]
-ConsumptionStateValue = Literal["Unread", "InProgress", "Finished"]
 PauseShorteningMode = Literal["Off", "Natural"]
 PlaybackRate = Annotated[float, Field(strict=True, ge=0.5, le=3)]
 _Int32 = Annotated[int, Field(ge=0, le=2_147_483_647)]
@@ -161,18 +160,11 @@ class OpenPaneActivation(_Tagged):
     kind: Literal["OpenPane"] = "OpenPane"
 
 
-class ConsumptionOut(CamelOut):
-    state: ConsumptionStateValue
-    progress: Presence[_Progress]
-    progress_resettable: bool
-
-
 class LecternItemOut(CamelOut):
     item_id: UUID
     media_summary: MediaSummaryOut
     href: str
     added_at: AwareDatetime
-    consumption: ConsumptionOut
     activation: Annotated[
         FooterAudioActivation | ReadableActivation | OpenPaneActivation,
         Field(discriminator="kind"),
@@ -331,6 +323,7 @@ ConsumptionCommand = Annotated[
 class ListeningPositionOut(CamelOut):
     position_ms: _Int32
     reset_epoch: _Int32
+    consumption_override_revision: Presence[_Int32]
 
 
 class MediaProgressState(CamelOut):

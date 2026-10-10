@@ -7,7 +7,6 @@ import {
   type CollectionRevision,
 } from "@/lib/api/collectionPage";
 import {
-  mediaSummaryFromWire,
   type MediaSummary,
 } from "@/lib/media/mediaSummary";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
@@ -58,7 +57,6 @@ export interface LecternItem {
   mediaSummary: MediaSummary;
   href: AppHref;
   addedAt: string;
-  consumption: ConsumptionInfo;
   activation: Activation;
   actionSubject: ResourceActionSubject;
 }
@@ -76,10 +74,11 @@ export interface LecternResult {
     | { kind: "Ordered" };
   lectern: LecternSnapshot;
 }
+export type ListeningPosition = Schema<"ListeningPositionOut">;
 export interface MediaProgressState {
   mediaId: MediaId;
   readerCursor: Schema<"MediaProgressState">["readerCursor"];
-  listeningState: Presence<{ positionMs: number; resetEpoch: number }>;
+  listeningState: Presence<ListeningPosition>;
 }
 export interface ConsumptionResult {
   outcome: "Done" | "Superseded" | "Gone";
@@ -111,14 +110,13 @@ export function playerDescriptorFromWire(
 export function lecternItemFromWire(
   item: Schema<"LecternItemOut">,
 ): LecternItem {
-  const mediaSummary = mediaSummaryFromWire(item.mediaSummary);
+  const mediaSummary = item.mediaSummary;
   const activation = item.activation;
   return {
     itemId: parseLecternItemId(item.itemId),
     mediaSummary,
     href: assumeAppHref(item.href),
     addedAt: item.addedAt,
-    consumption: item.consumption,
     activation:
       activation.kind === "FooterAudio"
         ? {

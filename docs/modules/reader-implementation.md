@@ -91,6 +91,10 @@ listed in Evidence as unavailable (`Stale`), never painted.
   tombstone. cursor, engagement and completion commit in one transaction; a stale
   write records none of them. android adds `expected_reader_generation` (409
   `E_READER_CONTENT_CHANGED` on mismatch); see [offline](offline.md).
+- base-revision validation precedes equal-locator handling. An accepted equal
+  save keeps its revision but counts as resumed activity; stale equal saves
+  conflict without effects. Percentage follows current position. Completion at
+  known progress ≥95% remains finished until unread/reset; history is separate.
 - the locator wire is unchanged (android stores locators opaquely). the web writes
   `target` and `locations.text_offset`/`total_progression` exactly and `null` for
   `progression`, `position` and the quote triple. pdf writes `page`,
@@ -132,7 +136,11 @@ any other failed save shows *progress not synced · retry*.
 revalidate. a newer revision adopts silently only when the reader was away and
 nothing is unsaved; otherwise (and on a 409) *newer reading spot available* offers
 *use newer spot* / *keep my reading spot*, and movement waits for the choice. a
-lectern reset drains pending saves and installs the empty snapshot.
+lectern unread/reset/undo drains and gates pending saves through paired progress
+fences. Unread and failed commands re-read authority; a successful reset installs
+the returned empty snapshot. Authority adoption retires earlier input intent;
+hydration, reflow and inspection cannot clear unread. Genuine post-command input
+can save the same locator to resume it.
 
 **jumps.** contents, section and page buttons, links, footnotes, evidence rows,
 rail markers, find, home/end and scrollbar seeks call `reader.inspect(target)`:

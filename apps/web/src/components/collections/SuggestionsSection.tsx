@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
+import { useMediaQueryRevision, useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
+import { useConsumptionProjectionRevision } from "@/lib/consumption/projectionRevision";
+import { useLibraryPlacementRevision } from "@/lib/libraries/placementRevision";
 import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
@@ -61,31 +65,40 @@ export default function SuggestionsSection({
       signal,
     );
   const [version, setVersion] = useState(0);
+  const [rows, setRows] = useState<SuggestionItem[] | null>(null);
+  const [adding, setAdding] = useState<string | null>(null);
+  const consumption = useConsumptionProjectionRevision();
+  const placement = useLibraryPlacementRevision();
+  const queryRevision = useMediaQueryRevision();
+  const factsKey = [consumption.revision, placement.revision, queryRevision].join(":");
   const wasActive = useRef(isActive);
   useEffect(() => {
     if (isActive && !wasActive.current) setVersion((value) => value + 1);
     wasActive.current = isActive;
   }, [isActive]);
+  const resourceKey = lectern
+    ? lecternSuggestionsResource.cacheKey({ refreshVersion: version })
+    : librarySuggestionsResource.cacheKey({ id: destination.id, refreshVersion: version });
   const resource = useResource<Suggestions>({
-    cacheKey: !isActive
-      ? null
-      : lectern
-        ? lecternSuggestionsResource.cacheKey({ refreshVersion: version })
-        : librarySuggestionsResource.cacheKey({
-            id: destination.id,
-            refreshVersion: version,
-          }),
+    cacheKey: adding !== null || (!isActive && rows === null) ? null
+      : factsKey === "0:0:0" ? resourceKey : `${resourceKey}:facts:${factsKey}`,
     load,
   });
 
   // Rows follow each fresh read; an Add edits them locally until the next one.
-  const [rows, setRows] = useState<SuggestionItem[] | null>(null);
   const [read, setRead] = useState<Suggestions | null>(null);
   if (resource.status === "ready" && resource.data !== read) {
     setRead(resource.data);
     setRows(resource.data.items);
   }
-  const [adding, setAdding] = useState<string | null>(null);
+  const summaries = useMediaSummaries(rows?.flatMap((item) =>
+    item.target.kind === "Media" ? [item.target.mediaSummary] : []) ?? []);
+  const currentRows = rows?.flatMap<SuggestionItem>((item) => {
+    if (item.target.kind !== "Media") return [item];
+    const mediaSummary = summaries.resolve(item.target.mediaSummary);
+    return mediaSummary.kind === "Absent" ? [] : [{ ...item,
+      target: { ...item.target, mediaSummary: mediaSummary.value } }];
+  }) ?? [];
   const [notice, setNotice] = useState<{
     text: string;
     alert?: boolean;
@@ -103,7 +116,10 @@ export default function SuggestionsSection({
   const live = useRef(true);
   const activeRef = useRef(isActive);
   activeRef.current = isActive;
-  useEffect(() => () => void (live.current = false), []);
+  useEffect(() => {
+    live.current = true;
+    return () => { live.current = false; };
+  }, []);
   const focusRef = useRef<string | null | undefined>(undefined);
   const rootRef = useRef<HTMLDivElement>(null);
   // The root always commits: pane return needs it even while the section hides.
@@ -125,7 +141,7 @@ export default function SuggestionsSection({
 
   async function add(item: SuggestionItem, row: HTMLElement) {
     const current = rows ?? [];
-    const index = current.indexOf(item);
+    const index = current.findIndex((candidate) => candidate.target.ref === item.target.ref);
     const ownsFocus = row.contains(document.activeElement);
     setAdding(item.target.ref);
     setNotice(null);
@@ -142,7 +158,7 @@ export default function SuggestionsSection({
         alert: true,
       });
     }
-    const survivors = current.filter((candidate) => candidate !== item);
+    const survivors = current.filter((candidate) => candidate.target.ref !== item.target.ref);
     let next = survivors;
     try {
       const known = new Set([
@@ -188,12 +204,12 @@ export default function SuggestionsSection({
         >
           <CollectionView
             returnScope={returnScope}
-            rows={(rows ?? []).map(presentSuggestionItem)}
+            rows={currentRows.map(presentSuggestionItem)}
             status="ready"
             ariaLabel={ariaLabel}
             surface={false}
             notice={
-              status ? (
+              <><MediaSummaryNotice error={summaries.error} retry={summaries.retry} />{status ? (
                 <div
                   className={status.alert ? styles.alert : styles.quiet}
                   role={status.alert ? "alert" : undefined}
@@ -205,10 +221,10 @@ export default function SuggestionsSection({
                     </Button>
                   ) : null}
                 </div>
-              ) : null
+              ) : null}</>
             }
             rowControls={Object.fromEntries(
-              (rows ?? []).map((item) => [
+              currentRows.map((item) => [
                 item.target.ref,
                 <Button
                   key={item.target.ref}
