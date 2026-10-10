@@ -5,13 +5,13 @@ from __future__ import annotations
 from nexus.config import get_settings
 from nexus.errors import ApiErrorCode, InvalidRequestError
 
-_CONTENT_TYPES = {"pdf": "application/pdf", "epub": "application/epub+zip"}
+CONTENT_TYPES = {"pdf": "application/pdf", "epub": "application/epub+zip"}
 _MAGIC_BYTES = {"pdf": b"%PDF-", "epub": b"PK\x03\x04"}
 
 
 def validate_file_ingest_request(kind: str, content_type: str, size_bytes: int) -> None:
     """Raise unless the declared kind, content type, and size are all acceptable."""
-    expected_content_type = _CONTENT_TYPES.get(kind)
+    expected_content_type = CONTENT_TYPES.get(kind)
     if expected_content_type is None:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_KIND,

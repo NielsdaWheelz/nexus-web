@@ -1,37 +1,46 @@
 """The one SSRF-safe streaming GET for untrusted URLs.
 
-Feed pages, chapter JSON, transcript sidecars, remote PDF/EPUB downloads and
-proxied images all leave the process through ``safe_stream``. Every hop re-runs
-the public-URL policy and re-resolves DNS, rejecting any loopback, private,
-link-local or reserved address; redirects are bounded and the body is streamed
-into the caller's sink under a hard byte cap, so nothing is buffered past it.
-
-Failures surface as one transport-neutral ``SafeFetchFailed`` that each caller
-maps into its own error vocabulary; ``safe_get`` is the source-ingest mapping.
+Article pages, feeds, chapter JSON, transcript sidecars, remote PDF/EPUB files,
+proxied images and the Gutenberg catalog leave the process through ``safe_stream``.
+Every hop passes the URL policy and resolves once; every answer must be public, and the
+connection dials only those addresses (the URL keeps the hostname, which the Host header,
+TLS and cookies use), so nothing resolves twice. Every socket read, write and handshake
+ends by one overall deadline, and the body's wire and decoded bytes each stay under the
+byte cap. Failures are classified where the response is seen.
 """
 
 from __future__ import annotations
 
+import re
 import socket
-from collections.abc import Callable
+import ssl
+import zlib
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from ipaddress import ip_address
+from time import monotonic
 from typing import Literal
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
+import httpcore
 import httpx
 
-from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
-from nexus.services.net.egress_policy import is_private_ip
-from nexus.services.url_normalize import validate_requested_url
+from nexus.services.url_normalize import is_public_ip, validate_requested_url
 
 _REDIRECT_STATUS = frozenset({301, 302, 303, 307, 308})
 _CHUNK_BYTES = 64 * 1024
-_USER_AGENT = "nexus-podcast-client/1.0"
+_DEFAULT_HEADERS = {
+    "User-Agent": "nexus-podcast-client/1.0",
+    "Accept": "*/*",
+    "Accept-Encoding": "gzip, deflate",
+}
+_INFLATED = frozenset({"gzip", "x-gzip", "deflate"})
+_SSL_CONTEXT = httpx.create_ssl_context(trust_env=False)
+_CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 type SafeFetchReason = Literal[
-    "Blocked", "NotFound", "Status", "Timeout", "Network", "TooLarge", "Encoding"
+    "Blocked", "Gone", "Denied", "Status", "Timeout", "Network", "TooLarge", "Type"
 ]
 
 
@@ -45,17 +54,18 @@ class SafeFetchFailed(Exception):
 
 
 class SafeFetchNotFound(ApiError):
-    """The public target is explicitly gone (HTTP 404/410)."""
+    """The public target is gone (HTTP 404/410)."""
 
     def __init__(self) -> None:
-        super().__init__(ApiErrorCode.E_SOURCE_FETCH_FAILED, "Upstream target no longer exists")
+        super().__init__(ApiErrorCode.E_SOURCE_GONE, "Upstream target no longer exists")
 
 
 @dataclass(frozen=True, slots=True)
 class SafeStreamHeaders:
     final_url: str
-    content_type: str
-    encoding: str | None
+    content_type: str  # media type only, lowercased
+    raw_content_type: str
+    encoding: str  # the declared charset when Python knows it, else utf-8
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,134 +76,112 @@ class SafeFetchResult:
     text: str
 
 
-def require_public_target(url: str, allowed_ports: frozenset[int] | None = None) -> None:
-    """Run the pre-DNS policy and re-resolve the host, rejecting private addresses."""
-    try:
-        validate_requested_url(url)
-        port = urlparse(url).port
-    except InvalidRequestError as exc:
-        raise SafeFetchFailed("Blocked", exc.message) from exc
-    except ValueError as exc:
-        raise SafeFetchFailed("Blocked", "URL has an invalid port") from exc
-    if allowed_ports is not None and port is not None and port not in allowed_ports:
-        raise SafeFetchFailed("Blocked", f"URL port is not allowed: {port}")
-    hostname = urlparse(url).hostname or ""
-    try:
-        resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-    except socket.gaierror as exc:
-        raise SafeFetchFailed("Network", "Failed to resolve hostname") from exc
-    if not resolved:
-        raise SafeFetchFailed("Network", "Failed to resolve hostname")
-    for *_address, sockaddr in resolved:
-        try:
-            ip = ip_address(str(sockaddr[0]))
-        except ValueError:
-            continue
-        if is_private_ip(ip):
-            raise SafeFetchFailed("Blocked", "Request blocked for security reasons")
-
-
 def safe_stream(
     url: str,
     *,
     max_bytes: int,
     timeout_s: float,
     sink: Callable[[bytes], None],
-    accept: str = "*/*",
+    headers: Mapping[str, str] | None = None,
     max_redirects: int = 3,
-    identity_encoding: bool = False,
     allowed_ports: frozenset[int] | None = None,
-    client: httpx.Client | None = None,
-    proxy: str | None = None,
+    media_types: frozenset[str] | None = None,
 ) -> SafeStreamHeaders:
-    """Stream one bounded response body into ``sink``, revalidating every hop."""
-    headers = {"User-Agent": _USER_AGENT, "Accept": accept}
-    if identity_encoding:
-        # HTTP decompression can allocate past the byte cap before the first
-        # chunk is yielded, so the image lane accepts only an identity body.
-        headers["Accept-Encoding"] = "identity"
-    http = client or httpx.Client(
-        timeout=timeout_s, trust_env=False, follow_redirects=False, proxy=proxy
-    )
-    try:
-        current_url = url
-        for _hop in range(max_redirects + 1):
-            require_public_target(current_url, allowed_ports)
-            try:
-                with http.stream(
-                    "GET", current_url, headers=headers, timeout=timeout_s, follow_redirects=False
-                ) as response:
-                    if response.status_code in _REDIRECT_STATUS:
-                        location = response.headers.get("location")
-                        if not location:
-                            raise SafeFetchFailed("Status", "Redirect without a Location header")
-                        current_url = urljoin(str(response.url), location)
-                        continue
-                    if response.status_code in {404, 410}:
-                        raise SafeFetchFailed("NotFound", "Upstream target no longer exists")
-                    if response.status_code >= 400:
-                        raise SafeFetchFailed(
-                            "Status", f"Upstream returned status {response.status_code}"
-                        )
-                    if identity_encoding and (
-                        response.headers.get("content-encoding") or ""
-                    ).strip().lower() not in {"", "identity"}:
-                        raise SafeFetchFailed(
-                            "Encoding", "Response content encoding must be identity"
-                        )
-                    chunks = (
-                        response.iter_raw(chunk_size=_CHUNK_BYTES)
-                        if identity_encoding
-                        else response.iter_bytes(chunk_size=_CHUNK_BYTES)
-                    )
-                    received = 0
-                    for chunk in chunks:
-                        received += len(chunk)
-                        if received > max_bytes:
-                            raise SafeFetchFailed(
-                                "TooLarge", f"Response exceeded {max_bytes} bytes"
-                            )
-                        sink(chunk)
-                    return SafeStreamHeaders(
-                        final_url=str(response.url),
-                        content_type=(response.headers.get("content-type") or "")
-                        .split(";")[0]
-                        .strip()
-                        .lower(),
-                        encoding=response.encoding,
-                    )
-            except httpx.TimeoutException as exc:
-                raise SafeFetchFailed("Timeout", "Fetch timed out") from exc
-            except httpx.HTTPError as exc:
-                raise SafeFetchFailed("Network", f"Fetch failed: {exc}") from exc
-        raise SafeFetchFailed("Status", "Too many redirects")
-    finally:
-        if client is None:
-            http.close()
+    """Stream one bounded response body into ``sink``, vetting and pinning every hop."""
+    deadline = monotonic() + timeout_s
+    cookies = httpx.Cookies()  # a cookie set on one hop goes to the later hops it is scoped to
+    current = url
+    for _hop in range(max_redirects + 1):
+        target, addresses = _vetted_target(current, allowed_ports)
+        request = httpx.Request("GET", target, headers={**_DEFAULT_HEADERS, **(headers or {})})
+        cookies.set_cookie_header(request)
+        try:
+            # One pool per hop: its connections reach only this hop's vetted addresses.
+            with (
+                httpcore.ConnectionPool(
+                    ssl_context=_SSL_CONTEXT, network_backend=_Pinned(addresses, deadline)
+                ) as pool,
+                pool.stream(
+                    "GET",
+                    httpcore.URL(
+                        scheme=target.raw_scheme,
+                        host=target.raw_host,
+                        port=target.port,
+                        target=target.raw_path,
+                    ),
+                    headers=request.headers.raw,
+                ) as raw,
+            ):
+                response = httpx.Response(raw.status, headers=raw.headers, request=request)
+                cookies.extract_cookies(response)
+                status = response.status_code
+                if status in _REDIRECT_STATUS:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise SafeFetchFailed("Status", "Redirect without a Location header")
+                    current = urljoin(str(target), location)
+                    continue
+                if status in {404, 410}:
+                    raise SafeFetchFailed("Gone", f"Upstream target no longer exists ({status})")
+                if status in {401, 403}:
+                    raise SafeFetchFailed("Denied", f"Upstream denied access ({status})")
+                if not 200 <= status < 300:
+                    raise SafeFetchFailed("Status", f"Upstream returned status {status}")
+                raw_type = response.headers.get("content-type", "")
+                media_type = raw_type.split(";")[0].strip().lower()
+                if media_types is not None and media_type not in media_types:
+                    raise SafeFetchFailed("Type", f"Unexpected content type: {media_type}")
+                # gzip and zlib bodies inflate at most one byte past the cap per read; any other
+                # coding passes through as sent.
+                coding = response.headers.get("content-encoding", "").strip().lower()
+                inflate = zlib.decompressobj(zlib.MAX_WBITS | 32) if coding in _INFLATED else None
+                wire = 0
+                received = 0
+                pending = bytearray()
+                for read in raw.iter_stream():
+                    wire += len(read)
+                    body = inflate.decompress(read, max_bytes - received + 1) if inflate else read
+                    received += len(body)
+                    if wire > max_bytes or received > max_bytes:
+                        raise SafeFetchFailed("TooLarge", f"Response exceeded {max_bytes} bytes")
+                    pending += body
+                    if len(pending) >= _CHUNK_BYTES:
+                        sink(bytes(pending))
+                        pending.clear()
+                if pending:
+                    sink(bytes(pending))
+                return SafeStreamHeaders(
+                    final_url=str(target),
+                    content_type=media_type,
+                    raw_content_type=raw_type,
+                    encoding=response.encoding or "utf-8",
+                )
+        except httpcore.TimeoutException as exc:
+            raise SafeFetchFailed("Timeout", "Fetch timed out") from exc
+        except (httpcore.NetworkError, httpcore.ProtocolError, zlib.error) as exc:
+            raise SafeFetchFailed("Network", f"Fetch failed: {exc}") from exc
+    raise SafeFetchFailed("Status", "Too many redirects")
 
 
 def source_fetch_error(exc: SafeFetchFailed) -> ApiError:
-    """Map one egress failure into the source-ingest error vocabulary."""
-    if exc.reason == "NotFound":
+    """Map one egress failure into the source-ingest vocabulary; the code decides terminality."""
+    if exc.reason == "Gone":
         return SafeFetchNotFound()
-    if exc.reason == "Blocked":
-        return ApiError(ApiErrorCode.E_SSRF_BLOCKED, exc.message)
-    if exc.reason == "TooLarge":
-        return ApiError(ApiErrorCode.E_SOURCE_TOO_LARGE, exc.message)
-    return ApiError(ApiErrorCode.E_SOURCE_FETCH_FAILED, exc.message)
+    code = {
+        "Blocked": ApiErrorCode.E_SSRF_BLOCKED,
+        "Denied": ApiErrorCode.E_SOURCE_ACCESS_DENIED,
+        "TooLarge": ApiErrorCode.E_SOURCE_TOO_LARGE,
+        "Type": ApiErrorCode.E_INVALID_CONTENT_TYPE,
+        "Timeout": ApiErrorCode.E_INGEST_TIMEOUT,
+    }.get(exc.reason, ApiErrorCode.E_SOURCE_FETCH_FAILED)
+    return ApiError(code, exc.message)
 
 
 def safe_get(url: str, *, max_bytes: int, timeout_s: float) -> SafeFetchResult:
-    """Fetch a feed-controlled URL into memory, or raise a typed source error."""
+    """Fetch an untrusted URL into memory, or raise its typed source error."""
     body = bytearray()
     try:
-        headers = safe_stream(
-            url,
-            max_bytes=max_bytes,
-            timeout_s=timeout_s,
-            sink=body.extend,
-            proxy=get_settings().outbound_http_proxy_url,
-        )
+        headers = safe_stream(url, max_bytes=max_bytes, timeout_s=timeout_s, sink=body.extend)
     except SafeFetchFailed as exc:
         raise source_fetch_error(exc) from exc
     content = bytes(body)
@@ -201,5 +189,87 @@ def safe_get(url: str, *, max_bytes: int, timeout_s: float) -> SafeFetchResult:
         final_url=headers.final_url,
         content_type=headers.content_type,
         content=content,
-        text=content.decode(headers.encoding or "utf-8", errors="replace"),
+        text=content.decode(headers.encoding, errors="replace"),
     )
+
+
+def _vetted_target(url: str, allowed_ports: frozenset[int] | None) -> tuple[httpx.URL, list[str]]:
+    """Apply the URL policy, resolve once, and return the URL with every address, all public."""
+    try:
+        validate_requested_url(url)
+        if _CONTROL_CHARACTERS.search(url):
+            raise SafeFetchFailed("Blocked", "URL contains control characters")
+        target = httpx.URL(url).copy_with(fragment=None)
+    except InvalidRequestError as exc:
+        raise SafeFetchFailed("Blocked", exc.message) from exc
+    except httpx.InvalidURL as exc:
+        raise SafeFetchFailed("Blocked", f"Invalid URL: {exc}") from exc
+    if allowed_ports is not None and target.port is not None and target.port not in allowed_ports:
+        raise SafeFetchFailed("Blocked", f"URL port is not allowed: {target.port}")
+    host = target.raw_host.decode("ascii")
+    try:
+        answers = socket.getaddrinfo(host, target.port or 0, type=socket.SOCK_STREAM)
+    except (socket.gaierror, UnicodeError) as exc:
+        raise SafeFetchFailed("Network", "Failed to resolve hostname") from exc
+    addresses = [str(answer[4][0]).split("%")[0] for answer in answers]  # no zone id
+    if not addresses:
+        raise SafeFetchFailed("Network", "Failed to resolve hostname")
+    if not all(is_public_ip(ip_address(address)) for address in addresses):
+        raise SafeFetchFailed("Blocked", "Request blocked for security reasons")
+    return target, addresses
+
+
+class _Pinned(httpcore.SyncBackend):
+    """Connects only to one hop's vetted addresses, under the call deadline."""
+
+    def __init__(self, addresses: list[str], deadline: float) -> None:
+        self.addresses = addresses
+        self.deadline = deadline
+
+    def connect_tcp(
+        self, host: str, port: int, *_args: object, **_kwargs: object
+    ) -> httpcore.NetworkStream:
+        """Dial the addresses in order (never ``host``), moving on only when one cannot be
+        connected; each spends at most its share of the time left."""
+        for index, address in enumerate(self.addresses):
+            share = (self.deadline - monotonic()) / (len(self.addresses) - index)
+            try:
+                stream = super().connect_tcp(address, port, max(share, 0.001))
+                return _Bounded(stream, self.deadline)
+            except (httpcore.ConnectError, httpcore.ConnectTimeout):
+                if index == len(self.addresses) - 1:
+                    raise
+        raise AssertionError("a vetted host always has an address")
+
+
+class _Bounded(httpcore.NetworkStream):
+    """A connection whose every read, write and TLS handshake ends by the deadline, so a drip
+    of headers, chunk framing or empty compressed blocks cannot outlive it."""
+
+    def __init__(self, stream: httpcore.NetworkStream, deadline: float) -> None:
+        self.stream = stream
+        self.deadline = deadline
+
+    def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+        return self.stream.read(max_bytes, self._left())
+
+    def write(self, buffer: bytes, timeout: float | None = None) -> None:
+        self.stream.write(buffer, self._left())
+
+    def close(self) -> None:
+        self.stream.close()
+
+    def start_tls(
+        self,
+        ssl_context: ssl.SSLContext,
+        server_hostname: str | None = None,
+        timeout: float | None = None,
+    ) -> httpcore.NetworkStream:
+        tls = self.stream.start_tls(ssl_context, server_hostname, self._left())
+        return _Bounded(tls, self.deadline)
+
+    def _left(self) -> float:
+        left = self.deadline - monotonic()
+        if left <= 0:
+            raise httpcore.TimeoutException("Fetch timed out")
+        return left

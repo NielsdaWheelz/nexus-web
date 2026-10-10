@@ -140,7 +140,7 @@ def _is_safe_url(page_url: str) -> bool:
 def _fetch_feed_page(page_url: str, *, strict: bool) -> tuple[list[dict[str, Any]], str | None]:
     """Fetch and parse one feed page; a strict caller surfaces the failure."""
     try:
-        result = safe_get(page_url, max_bytes=_MAX_FEED_PAGE_BYTES, timeout_s=15.0)
+        result = safe_get(page_url, max_bytes=_MAX_FEED_PAGE_BYTES, timeout_s=60.0)
         parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=not strict)
         root = etree.fromstring(result.content, parser=parser)
     except (ApiError, etree.XMLSyntaxError) as exc:

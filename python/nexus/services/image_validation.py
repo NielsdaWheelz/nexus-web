@@ -7,7 +7,6 @@ import warnings
 from contextlib import closing
 from dataclasses import dataclass
 
-import httpx
 from PIL import Image
 
 from nexus.errors import ApiError, ApiErrorCode
@@ -41,7 +40,6 @@ _FORMAT_CONTENT_TYPES = {
     "bmp": "image/bmp",
     "ico": "image/x-icon",
 }
-_SSL_CONTEXT = httpx.create_ssl_context(trust_env=False)
 
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_DIMENSION * MAX_IMAGE_DIMENSION
 warnings.filterwarnings("error", category=Image.DecompressionBombWarning)
@@ -55,17 +53,7 @@ class ValidatedImage:
     height: int
 
 
-def create_http_client() -> httpx.Client:
-    """One image-fetch client: shared trust store, no environment proxies."""
-    return httpx.Client(
-        verify=_SSL_CONTEXT,
-        timeout=HTTP_TIMEOUT,
-        follow_redirects=False,
-        trust_env=False,
-    )
-
-
-def fetch_validated_image(url: str, client: httpx.Client) -> ValidatedImage:
+def fetch_validated_image(url: str) -> ValidatedImage:
     """Fetch one external image behind the SSRF boundary and decode it.
 
     The port allowlist is part of the per-hop policy, so a redirect can no more
@@ -78,11 +66,9 @@ def fetch_validated_image(url: str, client: httpx.Client) -> ValidatedImage:
             max_bytes=MAX_IMAGE_BYTES,
             timeout_s=HTTP_TIMEOUT,
             sink=body.extend,
-            accept="image/*,*/*;q=0.8",
+            headers={"Accept": "image/*,*/*;q=0.8"},
             max_redirects=1,
-            identity_encoding=True,
             allowed_ports=_ALLOWED_PORTS,
-            client=client,
         )
     except SafeFetchFailed as exc:
         raise _image_error(exc) from exc
@@ -142,6 +128,4 @@ def _image_error(exc: SafeFetchFailed) -> ApiError:
         )
     if exc.reason == "Timeout":
         return ApiError(ApiErrorCode.E_INGEST_TIMEOUT, "Image fetch timed out")
-    if exc.reason == "Encoding":
-        return ApiError(ApiErrorCode.E_INVALID_REQUEST, "Image content encoding must be identity")
     return ApiError(ApiErrorCode.E_IMAGE_FETCH_FAILED, f"Failed to fetch image: {exc.message}")

@@ -247,6 +247,12 @@ export const IMPORT_FAILURE_COPY: Readonly<
     explanation: "The source did not respond.",
     recovery: "SameSource",
   },
+  E_SOURCE_GONE: {
+    reason: "Source no longer exists",
+    title: "This source no longer exists.",
+    explanation: "Its address answered that nothing is there. Use another copy.",
+    recovery: "None",
+  },
   E_SOURCE_INTEGRITY: {
     reason: "Stored bytes did not verify",
     title: "Nexus could not verify the uploaded bytes.",

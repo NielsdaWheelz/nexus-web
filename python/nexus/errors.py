@@ -199,6 +199,7 @@ class ApiErrorCode(str, Enum):
 
     # Feed-controlled fetch errors — RSS feeds, chapters, transcript sidecars
     E_SOURCE_FETCH_FAILED = ("E_SOURCE_FETCH_FAILED", 502)  # feed-controlled fetch failed
+    E_SOURCE_GONE = ("E_SOURCE_GONE", 502)  # the source answered 404/410: nothing is there
     E_SOURCE_TOO_LARGE = ("E_SOURCE_TOO_LARGE", 413)  # response exceeded streamed size cap
 
     # Server errors

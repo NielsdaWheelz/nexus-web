@@ -13,7 +13,7 @@ from nexus.services.url_normalize import validate_requested_url
 
 logger = get_logger(__name__)
 
-_TIMEOUT_SECONDS = 15.0
+_TIMEOUT_SECONDS = 30.0
 _MAX_TRANSCRIPT_BYTES = 5 * 1024 * 1024
 _ALLOWED_CONTENT_TYPES = {
     "vtt": {"text/vtt", "text/plain"},

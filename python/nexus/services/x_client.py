@@ -1,430 +1,334 @@
-"""Official X API client for public post/thread snapshots."""
+"""Official X API v2 snapshots of public posts and same-author threads.
+
+Provider failures become their ``E_X_*`` ``ApiError`` where the response is seen.
+Transport and retry belong to ``net.http_retry``.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from time import perf_counter, sleep
-from typing import Any
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Annotated, Any
 
 import httpx
-from pydantic import TypeAdapter, ValidationError
+from pydantic import BaseModel, BeforeValidator, ConfigDict, ValidationError, model_validator
 
 from nexus.config import get_settings
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.services.x_identity import normalize_x_username
-from nexus.services.x_types import (
-    XAuthorThreadSnapshot,
-    XMediaSnapshot,
-    XPostSnapshot,
-    XProviderError,
-    XProviderErrorCode,
-    XQuoteReference,
-    XResolvedQuoteReference,
-    XSinglePostSnapshot,
-    XUnavailableQuoteReference,
-    XUserSnapshot,
-    canonical_x_post_url,
-)
+from nexus.services.net.http_retry import get_json_with_retry
 
 logger = get_logger(__name__)
 
-_LOOKUP_PARAMS = {
-    "tweet.fields": (
-        "id,text,author_id,created_at,conversation_id,referenced_tweets,"
-        "in_reply_to_user_id,attachments,entities,note_tweet,lang,possibly_sensitive"
-    ),
-    "expansions": "referenced_tweets.id,attachments.media_keys,author_id,referenced_tweets.id.author_id",
+_FIELDS = {
+    "tweet.fields": "id,text,author_id,created_at,conversation_id,referenced_tweets,"
+    "in_reply_to_user_id,attachments,entities,note_tweet,lang,possibly_sensitive",
+    "expansions": "referenced_tweets.id,attachments.media_keys,author_id,"
+    "referenced_tweets.id.author_id",
     "media.fields": "media_key,type,url,preview_image_url,alt_text,width,height",
     "user.fields": "id,name,username",
 }
-_SEARCH_PAGE_SIZE = 100
-_RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
-_RETRY_BACKOFF_SECONDS = (0.05, 0.1)
-_POST_LOOKUP_OPERATIONS = frozenset({"lookup_post", "lookup_x_post"})
-_UNAVAILABLE_ERROR_SUFFIXES = ("/resource-not-found", "/not-authorized-for-resource")
-
-_POSTS = TypeAdapter(XPostSnapshot)
-_USERS = TypeAdapter(XUserSnapshot)
-_MEDIA = TypeAdapter(XMediaSnapshot)
-
-
-class _Snapshots:
-    """Every post, user and media item seen across one operation's payloads."""
-
-    def __init__(self) -> None:
-        self.posts: dict[str, XPostSnapshot] = {}
-        self.users: dict[str, XUserSnapshot] = {}
-        self.media: dict[str, XMediaSnapshot] = {}
-
-    def absorb(self, payload: Mapping[str, Any]) -> list[XPostSnapshot]:
-        data = _decode(_POSTS, payload.get("data"))
-        raw_includes = payload.get("includes")
-        includes: dict[str, Any] = raw_includes if isinstance(raw_includes, dict) else {}
-        for post in (*data, *_decode(_POSTS, includes.get("tweets"))):
-            existing = self.posts.get(post.id)
-            self.posts[post.id] = post if existing is None else _merge_posts(existing, post)
-        for user in _decode(_USERS, includes.get("users")):
-            handle = normalize_x_username(user.username)
-            if handle is not None:
-                self.users[user.id] = user.model_copy(
-                    update={"name": user.name or handle, "username": handle}
-                )
-        for item in _decode(_MEDIA, includes.get("media")):
-            self.media[item.media_key] = item
-        return data
+_USERNAME = re.compile(r"^[A-Za-z0-9_]{1,15}$")
+_UNAVAILABLE_TYPES = ("/resource-not-found", "/not-authorized-for-resource")
+_UNAVAILABLE = "X imports are temporarily unavailable."
+_MESSAGES = {
+    ApiErrorCode.E_X_PROVIDER_CREDITS_DEPLETED: _UNAVAILABLE,
+    ApiErrorCode.E_X_PROVIDER_AUTH_REJECTED: _UNAVAILABLE,
+    ApiErrorCode.E_X_PROVIDER_UNAVAILABLE: _UNAVAILABLE,
+    ApiErrorCode.E_X_PROVIDER_RATE_LIMITED: "X is rate limiting imports.",
+    ApiErrorCode.E_X_PROVIDER_TIMEOUT: "X import timed out.",
+    ApiErrorCode.E_X_POST_UNAVAILABLE: "That X post is not available.",
+}
 
 
-def fetch_author_thread_snapshot(post_id: str) -> XAuthorThreadSnapshot:
+def _blank_to_none(value: Any) -> Any:
+    return (value.strip() or None) if isinstance(value, str) else value
+
+
+type Text = Annotated[str | None, BeforeValidator(_blank_to_none)]
+
+
+class _Model(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+
+class XReference(_Model):
+    type: str
+    id: str
+
+
+class XUrlEntity(_Model):
+    url: str
+    expanded_url: Text = None
+    display_url: Text = None
+    title: Text = None
+
+
+class XMedia(_Model):
+    media_key: str
+    type: str
+    url: Text = None
+    preview_image_url: Text = None
+    alt_text: Text = None
+
+
+class XUser(_Model):
+    id: str
+    name: str = ""
+    username: str
+
+
+class XPost(_Model):
+    """One post, flattened from the API's attachments, entities and note_tweet."""
+
+    id: str
+    author_id: str
+    text: str = ""
+    created_at: Text = None
+    conversation_id: Text = None
+    referenced_tweets: tuple[XReference, ...] = ()
+    media_keys: tuple[str, ...] = ()
+    urls: tuple[XUrlEntity, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _flatten(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        raw_note = value.get("note_tweet")
+        note = raw_note if isinstance(raw_note, dict) else {}
+        note_text = str(note.get("text") or "").strip()
+        entities = note.get("entities") if note_text else value.get("entities")
+        attachments = value.get("attachments")
+        keys = attachments.get("media_keys") if isinstance(attachments, dict) else []
+        urls = entities.get("urls") if isinstance(entities, dict) else []
+        refs = value.get("referenced_tweets")
+        return {
+            **value,
+            "text": note_text or value.get("text") or "",
+            "media_keys": [key for key in _items(keys) if isinstance(key, str) and key],
+            "urls": [item for item in _items(urls) if _has_text(item, "url")],
+            "referenced_tweets": [
+                item for item in _items(refs) if _has_text(item, "type") and _has_text(item, "id")
+            ],
+        }
+
+    @property
+    def quoted_post_ids(self) -> tuple[str, ...]:
+        return tuple(ref.id for ref in self.referenced_tweets if ref.type == "quoted")
+
+
+@dataclass(frozen=True)
+class XThread:
+    author: XUser
+    conversation_id: str
+    posts: tuple[XPost, ...]  # the author's reply chain, in time order, holding the root
+    quotes: Mapping[str, XPost | None]  # None: X answered that the quoted post is unavailable
+    users: Mapping[str, XUser]
+    media: Mapping[str, XMedia]
+
+
+@dataclass(frozen=True)
+class XSinglePost:
+    post: XPost
+    users: Mapping[str, XUser]
+    media: Mapping[str, XMedia]
+
+
+@dataclass
+class _Seen:
+    posts: dict[str, XPost]
+    users: dict[str, XUser]
+    media: dict[str, XMedia]
+
+
+def fetch_author_thread(post_id: str) -> XThread:
     """Look the post up, page the author's conversation, and resolve its quotes."""
-    settings = get_settings()
-    max_posts = int(settings.x_api_author_thread_max_posts)
-    base_url, headers, deadline = _request_config("lookup_post")
-    snapshots = _Snapshots()
-    unavailable_quote_ids: set[str] = set()
-
-    with httpx.Client(trust_env=False, headers=headers) as client:
-        get = _json_getter(client, deadline)
-        snapshots.absorb(get(f"{base_url}/tweets/{post_id}", _LOOKUP_PARAMS, "lookup_post"))
-        root = snapshots.posts.get(post_id)
-        if root is None:
-            raise _unavailable("X API returned no post data.", "lookup_post")
-        author = snapshots.users.get(root.author_id)
-        if author is None:
-            raise _unavailable("X API returned no author data.", "lookup_post")
-
-        conversation_id = root.conversation_id or root.id
-        candidate_ids = {root.id}
-        next_token: str | None = None
-        while len(candidate_ids) < max_posts:
-            params = {
-                **_LOOKUP_PARAMS,
-                "query": f"conversation_id:{conversation_id} from:{author.username}",
-                "max_results": str(max(10, min(_SEARCH_PAGE_SIZE, max_posts - len(candidate_ids)))),
-            }
-            if next_token:
-                params["next_token"] = next_token
-            page = get(f"{base_url}/tweets/search/all", params, "search_author_thread")
-            candidate_ids.update(post.id for post in snapshots.absorb(page))
-            meta = page.get("meta")
-            next_token = meta.get("next_token") if isinstance(meta, dict) else None
-            if not next_token:
-                break
-
-        thread_posts = _select_thread_posts(
-            snapshots.posts, root=root, candidate_ids=candidate_ids, max_posts=max_posts
-        )
-        quote_ids = {qid for post in thread_posts for qid in post.quoted_post_ids}
-        missing = sorted(qid for qid in quote_ids if qid not in snapshots.posts)
-        for start in range(0, len(missing), 100):
-            chunk = missing[start : start + 100]
-            payload = get(
-                f"{base_url}/tweets",
-                {**_LOOKUP_PARAMS, "ids": ",".join(chunk)},
-                "lookup_quotes",
-            )
-            snapshots.absorb(payload)
-            unavailable_quote_ids.update(_unavailable_post_ids(payload))
-
-    root = snapshots.posts.get(root.id, root)
-    anchor_id = thread_posts[0].id if thread_posts else root.id
-    return XAuthorThreadSnapshot(
-        conversation_id=root.conversation_id or root.id,
-        canonical_url=canonical_x_post_url(anchor_id),
-        author=author,
-        posts=tuple(thread_posts),
-        quote_references=_quote_references(snapshots, quote_ids, unavailable_quote_ids),
-        users=snapshots.users,
-        media=snapshots.media,
-    )
+    max_posts = int(get_settings().x_api_author_thread_max_posts)
+    seen = _Seen({}, {}, {})
+    root = _lookup(post_id, seen)
+    author = seen.users[root.author_id]
+    conversation_id = root.conversation_id or root.id
+    candidates = {root.id}
+    params = {**_FIELDS, "query": f"conversation_id:{conversation_id} from:{author.username}"}
+    while len(candidates) < max_posts:
+        params["max_results"] = str(max(10, min(100, max_posts - len(candidates))))
+        page = _get("/tweets/search/all", params, "search_author_thread")
+        candidates.update(post.id for post in _absorb(page, seen))
+        meta = page.get("meta")
+        next_token = meta.get("next_token") if isinstance(meta, dict) else None
+        if not next_token:
+            break
+        params["next_token"] = next_token
+    posts = _thread_posts(seen.posts, root=root, candidates=candidates, max_posts=max_posts)
+    quote_ids = sorted({quote_id for post in posts for quote_id in post.quoted_post_ids})
+    missing = [quote_id for quote_id in quote_ids if quote_id not in seen.posts]
+    unavailable: set[str] = set()
+    for start in range(0, len(missing), 100):
+        params = {**_FIELDS, "ids": ",".join(missing[start : start + 100])}
+        payload = _get("/tweets", params, "lookup_quotes")
+        _absorb(payload, seen)
+        unavailable |= _unavailable_ids(payload)
+    quotes: dict[str, XPost | None] = {}
+    for quote_id in quote_ids:
+        quoted = seen.posts.get(quote_id)
+        if (quoted is None and quote_id not in unavailable) or (
+            quoted is not None and quoted.author_id not in seen.users
+        ):
+            raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "lookup_quotes")
+        quotes[quote_id] = quoted
+    return XThread(author, conversation_id, tuple(posts), quotes, seen.users, seen.media)
 
 
-def fetch_single_post_snapshot(post_id: str) -> XSinglePostSnapshot:
+def fetch_single_post(post_id: str) -> XSinglePost:
     """Look one public post up by id."""
-    base_url, headers, deadline = _request_config("lookup_x_post")
-    snapshots = _Snapshots()
-    with httpx.Client(trust_env=False, headers=headers) as client:
-        snapshots.absorb(
-            _json_getter(client, deadline)(
-                f"{base_url}/tweets/{post_id}", _LOOKUP_PARAMS, "lookup_x_post"
-            )
-        )
-    post = snapshots.posts.get(post_id)
-    if post is None:
-        raise _unavailable("X API returned no post data.", "lookup_x_post")
-    if post.author_id not in snapshots.users:
-        raise _unavailable("X API returned no author data.", "lookup_x_post")
-    return XSinglePostSnapshot(
-        canonical_url=canonical_x_post_url(post.id),
-        post=post,
-        users=snapshots.users,
-        media=snapshots.media,
-    )
+    seen = _Seen({}, {}, {})
+    return XSinglePost(_lookup(post_id, seen), seen.users, seen.media)
 
 
-def _request_config(operation: str) -> tuple[str, dict[str, str], float]:
+def _handle(value: str | None) -> str | None:
+    """Strip a leading ``@`` and accept only a well-formed X handle."""
+    username = (value or "").strip().removeprefix("@")
+    return username if _USERNAME.fullmatch(username) else None
+
+
+def _lookup(post_id: str, seen: _Seen) -> XPost:
+    payload = _get(f"/tweets/{post_id}", _FIELDS, "lookup_post")
+    _absorb(payload, seen)
+    post = seen.posts.get(post_id)
+    if post is None and post_id in _unavailable_ids(payload):
+        raise _error(ApiErrorCode.E_X_POST_UNAVAILABLE, "lookup_post")
+    if post is None or post.author_id not in seen.users:
+        raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "lookup_post")
+    return post
+
+
+def _get(path: str, params: Mapping[str, str], operation: str) -> dict[str, Any]:
     settings = get_settings()
-    bearer_token = (settings.x_api_bearer_token or "").strip()
-    if not bearer_token:
-        raise XProviderError(
-            XProviderErrorCode.AUTH_REJECTED,
-            "X API bearer token is not configured.",
-            operation=operation,
-        )
-    return (
-        settings.x_api_base_url.rstrip("/"),
-        {
-            "Authorization": f"Bearer {bearer_token}",
-            "User-Agent": "Nexus Media Ingestion/1.0",
-        },
-        perf_counter() + float(settings.x_api_timeout_seconds),
-    )
-
-
-def _json_getter(
-    client: httpx.Client, deadline: float
-) -> Callable[[str, Mapping[str, str], str], dict[str, Any]]:
-    """Bind one GET-JSON-with-backoff to this operation's shared deadline."""
-
-    def get(url: str, params: Mapping[str, str], operation: str) -> dict[str, Any]:
-        for attempt_index in range(len(_RETRY_BACKOFF_SECONDS) + 1):
-            remaining = deadline - perf_counter()
-            if remaining <= 0:
-                raise XProviderError(
-                    XProviderErrorCode.TIMEOUT, "X API request timed out.", operation=operation
-                )
-            try:
-                response = client.get(
-                    url,
-                    params=dict(params),
-                    timeout=httpx.Timeout(remaining, connect=min(5.0, remaining)),
-                )
-                if 200 <= response.status_code < 300:
-                    return _decode_json(response, operation)
-                error = _http_error(response, operation)
-            except httpx.TimeoutException:
-                error = XProviderError(
-                    XProviderErrorCode.TIMEOUT, "X API request timed out.", operation=operation
-                )
-            except httpx.RequestError:
-                error = XProviderError(
-                    XProviderErrorCode.UNAVAILABLE, "X API request failed.", operation=operation
-                )
-            delay = _retry_delay(error, attempt_index, deadline)
-            if delay is None:
-                raise error
-            logger.warning(
-                "x_provider_request_retry",
-                operation=operation,
-                attempt=attempt_index + 1,
-                provider_status_code=error.provider_status_code,
-                provider_error_title=error.provider_error_title,
-                retry_after_seconds=error.retry_after_seconds,
-                delay_seconds=delay,
-            )
-            sleep(delay)
-        raise XProviderError(
-            XProviderErrorCode.UNAVAILABLE, "X API request failed.", operation=operation
-        )
-
-    return get
-
-
-def _decode_json(response: httpx.Response, operation: str) -> dict[str, Any]:
+    token = (settings.x_api_bearer_token or "").strip()
+    if not token:
+        raise _error(ApiErrorCode.E_X_PROVIDER_AUTH_REJECTED, operation)
     try:
-        payload = response.json()
-    except ValueError as exc:
-        raise _unavailable("X API returned invalid JSON.", operation) from exc
-    if not isinstance(payload, dict):
-        raise _unavailable("X API returned invalid JSON.", operation)
-    return payload
+        return get_json_with_retry(
+            settings.x_api_base_url.rstrip("/") + path,
+            headers={"Authorization": f"Bearer {token}", "User-Agent": "Nexus Media Ingestion/1.0"},
+            params=params,
+            timeout_s=float(settings.x_api_timeout_seconds),
+            backoff_seconds=(0.05, 0.1),
+            error_code=ApiErrorCode.E_X_PROVIDER_UNAVAILABLE,
+            provider_name="x",
+            honor_retry_after=True,
+        )
+    except ApiError as exc:
+        cause = exc.__cause__
+        if isinstance(cause, httpx.TimeoutException):
+            raise _error(ApiErrorCode.E_X_PROVIDER_TIMEOUT, operation) from exc
+        if not isinstance(cause, httpx.HTTPStatusError):
+            raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, operation) from exc
+        status = cause.response.status_code
+        if status == 402 and "CreditsDepleted" in cause.response.text:
+            code = ApiErrorCode.E_X_PROVIDER_CREDITS_DEPLETED
+        elif status == 404 or (status == 403 and operation == "lookup_post"):
+            code = ApiErrorCode.E_X_POST_UNAVAILABLE
+        elif status in {401, 403}:
+            code = ApiErrorCode.E_X_PROVIDER_AUTH_REJECTED
+        elif status == 429:
+            code = ApiErrorCode.E_X_PROVIDER_RATE_LIMITED
+        else:
+            code = ApiErrorCode.E_X_PROVIDER_UNAVAILABLE
+        raise _error(code, operation, status=status) from exc
 
 
-def _http_error(response: httpx.Response, operation: str) -> XProviderError:
-    try:
-        payload = response.json()
-    except ValueError:
-        payload = None
-    title: str | None = None
-    error_type: str | None = None
-    if isinstance(payload, dict):
-        title = _text(payload.get("title"))
-        error_type = _text(payload.get("type"))
-        errors = payload.get("errors")
-        if not title and isinstance(errors, list) and errors and isinstance(errors[0], dict):
-            title = _text(errors[0].get("title"))
-            error_type = _text(errors[0].get("type")) or error_type
-
-    status = response.status_code
-    if status == 402 and (
-        title == "CreditsDepleted" or (error_type or "").endswith("CreditsDepleted")
-    ):
-        code = XProviderErrorCode.CREDITS_DEPLETED
-    elif status == 403 and operation in _POST_LOOKUP_OPERATIONS:
-        code = XProviderErrorCode.POST_UNAVAILABLE
-    elif status in {401, 403}:
-        code = XProviderErrorCode.AUTH_REJECTED
-    elif status == 429:
-        code = XProviderErrorCode.RATE_LIMITED
-    elif status == 404:
-        code = XProviderErrorCode.POST_UNAVAILABLE
-    else:
-        code = XProviderErrorCode.UNAVAILABLE
-
-    retry_after: int | None = None
-    raw_retry_after = response.headers.get("retry-after")
-    if raw_retry_after:
-        try:
-            retry_after = max(0, int(float(raw_retry_after)))
-        except ValueError:
-            retry_after = None
-    return XProviderError(
-        code,
-        f"X API returned status {status}.",
+def _error(code: ApiErrorCode, operation: str, *, status: int | None = None) -> ApiError:
+    logger.warning(
+        "x_provider_failure",
         operation=operation,
         provider_status_code=status,
-        provider_error_title=title,
-        retry_after_seconds=retry_after,
+        api_error_code=code.value,
     )
+    return ApiError(code, _MESSAGES[code])
 
 
-def _retry_delay(error: XProviderError, attempt_index: int, deadline: float) -> float | None:
-    if attempt_index >= len(_RETRY_BACKOFF_SECONDS):
-        return None
-    if error.provider_status_code is not None:
-        retryable = error.provider_status_code in _RETRYABLE_STATUS
-    else:
-        retryable = error.code in {XProviderErrorCode.TIMEOUT, XProviderErrorCode.UNAVAILABLE}
-    if not retryable:
-        return None
-    delay = _RETRY_BACKOFF_SECONDS[attempt_index]
-    if error.retry_after_seconds is not None:
-        delay = min(max(0, error.retry_after_seconds), 10)
-    return None if perf_counter() + delay >= deadline else delay
+def _absorb(payload: Mapping[str, Any], seen: _Seen) -> list[XPost]:
+    """Record every post, user and media item of one payload; return its primary posts."""
+    raw_includes = payload.get("includes")
+    includes = raw_includes if isinstance(raw_includes, dict) else {}
+    for post in _decode(XPost, includes.get("tweets")):  # an expansion never replaces a primary
+        seen.posts.setdefault(post.id, post)
+    data = _decode(XPost, payload.get("data"))
+    seen.posts.update((post.id, post) for post in data)
+    for user in _decode(XUser, includes.get("users")):
+        if handle := _handle(user.username):
+            seen.users[user.id] = user.model_copy(
+                update={"name": user.name or handle, "username": handle}
+            )
+    for item in _decode(XMedia, includes.get("media")):
+        seen.media[item.media_key] = item
+    return data
 
 
-def _unavailable(message: str, operation: str) -> XProviderError:
-    return XProviderError(XProviderErrorCode.UNAVAILABLE, message, operation=operation)
-
-
-def _decode[T](adapter: TypeAdapter[T], value: Any) -> list[T]:
+def _decode[M: _Model](model: type[M], value: Any) -> list[M]:
     """Decode a payload list, skipping items that do not satisfy the model."""
-    items = [value] if isinstance(value, dict) else value if isinstance(value, list) else []
-    decoded: list[T] = []
-    for item in items:
+    decoded: list[M] = []
+    for item in [value] if isinstance(value, dict) else _items(value):
         try:
-            decoded.append(adapter.validate_python(item))
+            decoded.append(model.model_validate(item))
         except ValidationError:
             continue
     return decoded
 
 
-def _merge_posts(existing: XPostSnapshot, post: XPostSnapshot) -> XPostSnapshot:
-    """Later payloads may carry a fuller version of a post already seen."""
-    return post.model_copy(
-        update={
-            "author_id": post.author_id or existing.author_id,
-            "text": post.text or existing.text,
-            "created_at": post.created_at or existing.created_at,
-            "conversation_id": post.conversation_id or existing.conversation_id,
-            "referenced_tweets": _unique(
-                (*existing.referenced_tweets, *post.referenced_tweets),
-                lambda ref: (ref.type, ref.id),
-            ),
-            "media_keys": tuple(dict.fromkeys((*existing.media_keys, *post.media_keys))),
-            "urls": _unique(
-                (*existing.urls, *post.urls), lambda entity: entity.expanded_url or entity.url
-            ),
-        }
-    )
+def _unavailable_ids(payload: Mapping[str, Any]) -> set[str]:
+    """Posts the payload's errors declare not found or not authorized."""
+    return {
+        post_id
+        for error in _items(payload.get("errors"))
+        if isinstance(error, dict)
+        and (_text(error.get("type")) or "").endswith(_UNAVAILABLE_TYPES)
+        and (post_id := _text(error.get("resource_id")) or _text(error.get("value")))
+    }
 
 
-def _unique[T](items: tuple[T, ...], key: Callable[[T], object]) -> tuple[T, ...]:
-    first_seen: dict[object, T] = {}
-    for item in items:
-        first_seen.setdefault(key(item), item)
-    return tuple(first_seen.values())
-
-
-def _quote_references(
-    snapshots: _Snapshots, quote_ids: set[str], unavailable_ids: set[str]
-) -> dict[str, XQuoteReference]:
-    references: dict[str, XQuoteReference] = {}
-    for quote_id in quote_ids:
-        quoted = snapshots.posts.get(quote_id)
-        if quoted is not None:
-            if quoted.author_id not in snapshots.users:
-                raise _unavailable(
-                    f"X API returned no author data for quoted post {quote_id}.", "lookup_quotes"
-                )
-            references[quote_id] = XResolvedQuoteReference(post=quoted)
-        elif quote_id in unavailable_ids:
-            references[quote_id] = XUnavailableQuoteReference(
-                post_id=quote_id, canonical_url=canonical_x_post_url(quote_id)
-            )
-        else:
-            raise _unavailable(
-                f"X API returned neither post data nor a terminal error for quoted post"
-                f" {quote_id}.",
-                "lookup_quotes",
-            )
-    return references
-
-
-def _unavailable_post_ids(payload: Mapping[str, Any]) -> set[str]:
-    errors = payload.get("errors")
-    post_ids: set[str] = set()
-    for item in errors if isinstance(errors, list) else []:
-        if not isinstance(item, dict):
-            continue
-        if not (_text(item.get("type")) or "").endswith(_UNAVAILABLE_ERROR_SUFFIXES):
-            continue
-        post_id = _text(item.get("resource_id")) or _text(item.get("value"))
-        if post_id:
-            post_ids.add(post_id)
-    return post_ids
-
-
-def _select_thread_posts(
-    posts: Mapping[str, XPostSnapshot],
-    *,
-    root: XPostSnapshot,
-    candidate_ids: set[str],
-    max_posts: int,
-) -> list[XPostSnapshot]:
-    """The author's own reply chain rooted at the conversation, in time order."""
+def _thread_posts(
+    posts: Mapping[str, XPost], *, root: XPost, candidates: set[str], max_posts: int
+) -> list[XPost]:
+    """The author's own reply chain in the conversation, in time order, always with the root."""
     conversation_id = root.conversation_id or root.id
-    candidates = {
+    own = {
         post_id: post
         for post_id, post in posts.items()
-        if post_id in candidate_ids
+        if post_id in candidates
         and post.author_id == root.author_id
-        and (post.id == root.id or post.conversation_id == conversation_id)
+        and (post_id == root.id or post.conversation_id == conversation_id)
     }
-    included = {conversation_id if conversation_id in candidates else root.id}
-    if root.id in candidates:
-        included.add(root.id)
+    included = {root.id, conversation_id if conversation_id in own else root.id}
     grew = True
     while grew:
         grew = False
-        for post_id, post in candidates.items():
-            if post_id in included:
-                continue
-            if any(
+        for post_id, post in own.items():
+            if post_id not in included and any(
                 ref.type == "replied_to" and ref.id in included for ref in post.referenced_tweets
             ):
                 included.add(post_id)
                 grew = True
-
-    thread_posts = sorted(
-        (post for post_id, post in candidates.items() if post_id in included), key=_sort_key
-    )[:max_posts]
-    if root.id not in {post.id for post in thread_posts}:
-        thread_posts.insert(0, root)
-    return thread_posts
+    thread = sorted((own[post_id] for post_id in included), key=_time_order)
+    if len(thread) > max_posts:
+        others = [post for post in thread if post.id != root.id][: max_posts - 1]
+        thread = sorted([root, *others], key=_time_order)
+    return thread
 
 
-def _sort_key(post: XPostSnapshot) -> tuple[str, int]:
+def _time_order(post: XPost) -> tuple[str, int]:
     return (post.created_at or "", int(post.id) if post.id.isdecimal() else 0)
+
+
+def _items(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _has_text(item: Any, key: str) -> bool:
+    return isinstance(item, dict) and bool(str(item.get(key) or "").strip())
 
 
 def _text(value: Any) -> str | None:

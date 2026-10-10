@@ -2,7 +2,7 @@
   "name": "nexus-ingest",
   "version": "1.0.0",
   "type": "module",
-  "description": "Web article ingestion using native fetch and Mozilla Readability",
+  "description": "Readability filter for web article pages fetched by the Python egress",
   "main": "ingest.mjs",
   "dependencies": {
     "@mozilla/readability": "^0.5.0",

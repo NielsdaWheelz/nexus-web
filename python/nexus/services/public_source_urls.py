@@ -12,9 +12,8 @@ from urllib.parse import urlparse, urlunparse
 
 from sqlalchemy import RowMapping
 
-from nexus.services.remote_file_ingest import arxiv_pdf_source_from_url
-from nexus.services.x_identity import classify_x_url
-from nexus.services.x_types import canonical_x_post_url
+from nexus.services.remote_file import arxiv_pdf_id
+from nexus.services.x_identity import canonical_x_post_url, classify_x_url
 from nexus.services.youtube_identity import classify_youtube_provider_video_id, classify_youtube_url
 
 
@@ -65,5 +64,5 @@ def _agreed(from_ref: list[str | None], from_urls: list[str | None]) -> str | No
 
 
 def _arxiv_abs_url(url: str) -> str | None:
-    arxiv = arxiv_pdf_source_from_url(url)
-    return None if arxiv is None else f"https://arxiv.org/abs/{arxiv.arxiv_id}"
+    arxiv_id = arxiv_pdf_id(url)
+    return None if arxiv_id is None else f"https://arxiv.org/abs/{arxiv_id}"
