@@ -1,6 +1,6 @@
 /**
- * Owned-absence wire encoding (spec `lectern-player-lifecycle-hard-cutover.md`
- * §4): the one repository-wide forward encoding for a field whose absence is
+ * Owned-absence wire encoding: the one repository-wide forward encoding for a
+ * field whose absence is
  * a normal, successful outcome.
  *
  *   Presence<T> = { kind: "Absent" } | { kind: "Present"; value: T }

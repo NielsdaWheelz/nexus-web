@@ -2,8 +2,7 @@
  * The reader-facing presentation of a media failure. It holds no reason
  * dictionary of its own: the one record per `SafeFailureCode` lives in
  * `lib/status/imports.ts`, and this module maps that record plus this viewer's
- * capabilities, source URL and retrieval status to what the screen shows
- * (contract §6).
+ * capabilities, source URL and retrieval status to what the screen shows.
  */
 
 import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";

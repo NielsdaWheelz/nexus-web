@@ -2,8 +2,7 @@
  * The pure view model of the Imports workspace: which view an unqualified entry
  * lands on, the badge the navigation shows, how rows group under a stage, how
  * recorded events group into attempts, and which filters are currently applied.
- * Nothing here reads or writes; the workspace renders what it returns
- * (contract §6).
+ * Nothing here reads or writes; the workspace renders what it returns.
  */
 
 import { absent, present } from "@/lib/api/presence";

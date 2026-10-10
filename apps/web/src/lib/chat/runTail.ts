@@ -1,6 +1,6 @@
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { Schema } from "@/lib/api/wire";
-import { openGenerationRunStream } from "@/lib/api/useGenerationRun";
+import { openGenerationRunStream } from "@/lib/api/generationRunStream";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { Execution } from "./wire";
 

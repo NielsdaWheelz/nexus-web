@@ -1,7 +1,6 @@
 // The followed-podcasts view: the closed filter/sort/library-scope type, a
 // strict total URLSearchParams <-> PodcastSubscriptionView codec, the unchanged
-// subscriptions API query, and the exact control inventories. See
-// docs/cutovers/collection-refinement-capability-hard-cutover.md.
+// subscriptions API query, and the exact control inventories.
 
 import { assertNever } from "@/lib/assertNever";
 

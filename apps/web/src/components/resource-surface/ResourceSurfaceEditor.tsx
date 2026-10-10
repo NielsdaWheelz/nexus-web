@@ -3,7 +3,6 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -38,7 +37,6 @@ import {
   readDailyDraftRaw,
   subscribeDailyDraft,
 } from "@/lib/notes/dailyDraftStore";
-import { getPaneScrollContainer } from "@/lib/workspace/paneDom";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { resolveResourceLocator } from "@/lib/resources/resourceLocators";
@@ -423,12 +421,6 @@ function LoadedResourceSurfaceEditor({
     : sourceRef!;
   const dailyIdentity = daily ? `${daily.accountId}:${daily.localDate}` : null;
   const dailyDraft = useDailyDraftSnapshot(daily);
-  const surfaceRootRef = useRef<HTMLDivElement | null>(null);
-  const prependAnchorRef = useRef<{
-    noteRef: string;
-    top: number;
-    scrollport: HTMLElement;
-  } | null>(null);
   const sessionRef = useRef<
     ResourceSurfaceSession | DailyResourceSurfaceSession | null
   >(null);
@@ -457,19 +449,6 @@ function LoadedResourceSurfaceEditor({
       resourceSurfaceErrorMessage(error, "Save");
     } catch (caughtDefect: unknown) {
       setDefectState({ error: caughtDefect });
-    }
-  }, []);
-  const beforePrepend = useCallback((noteRef: string) => {
-    const row = surfaceRootRef.current?.querySelector<HTMLElement>(
-      `[data-note-ref="${noteRef}"]`,
-    );
-    const scrollport = getPaneScrollContainer(row ?? null);
-    if (row && scrollport) {
-      prependAnchorRef.current = {
-        noteRef,
-        top: row.getBoundingClientRect().top,
-        scrollport,
-      };
     }
   }, []);
   const claimDelivery = useCallback(
@@ -504,7 +483,6 @@ function LoadedResourceSurfaceEditor({
               }
             : {}),
           onDeliveryClaimed: claimDelivery,
-          beforePrepend,
           onError: reportError,
           onTitleMutationStarted,
           onSourceBodyMutationStarted,
@@ -535,18 +513,6 @@ function LoadedResourceSurfaceEditor({
   }, [session]);
   sessionRef.current = session;
   const surface = session.surface;
-  useLayoutEffect(() => {
-    const anchor = prependAnchorRef.current;
-    if (!anchor) return;
-    prependAnchorRef.current = null;
-    const row = surfaceRootRef.current?.querySelector<HTMLElement>(
-      `[data-note-ref="${anchor.noteRef}"]`,
-    );
-    if (row) {
-      anchor.scrollport.scrollTop +=
-        row.getBoundingClientRect().top - anchor.top;
-    }
-  }, [surface]);
   const onSurfaceChangeRef = useRef(onSurfaceChange);
   onSurfaceChangeRef.current = onSurfaceChange;
   useEffect(() => {
@@ -725,7 +691,7 @@ function LoadedResourceSurfaceEditor({
               ? "Recovered unsaved changes are open. Review them before retrying."
               : "An older or unreadable draft is kept on this device. Copy its recovery data before continuing.";
   return (
-    <div ref={surfaceRootRef} className={styles.surface}>
+    <div className={styles.surface}>
       {recovery ? (
         <div
           className={styles.recovery}

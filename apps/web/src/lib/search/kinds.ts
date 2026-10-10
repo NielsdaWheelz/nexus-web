@@ -1,4 +1,4 @@
-// Frontend mirror of the backend search kind taxonomy (search cutover §4.3-§4.5).
+// Frontend mirror of the backend search kind taxonomy.
 // The six user-facing kinds + the format vocab + implied-kind compatibility.
 
 export const SEARCH_KINDS = [

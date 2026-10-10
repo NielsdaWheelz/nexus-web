@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useEffect, useState } from "react";
 import type { Schema } from "@/lib/api/wire";
-import { useGenerationRun } from "@/lib/api/useGenerationRun";
+import { openGenerationRunStream } from "@/lib/api/generationRunStream";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isDocumentProcessingTerminal } from "@/lib/media/documentReadiness";
 
 export type MediaProcessingSnapshot = Schema<"MediaProcessingSnapshotOut">;
@@ -40,27 +41,51 @@ export function useMediaProcessingStatus(
     mediaId: string;
     snapshot: MediaProcessingSnapshot;
   } | null>(null);
-  const shouldStream =
-    mediaId !== null && !isDocumentProcessingTerminal(initialStatus);
+  const [phase, setPhase] = useState<
+    "idle" | "connecting" | "streaming" | "done" | "failed"
+  >("idle");
+  // Idle (terminal initial status / no media) when null; otherwise the run
+  // owns token mint + reconnect.
+  const streamId =
+    mediaId !== null && !isDocumentProcessingTerminal(initialStatus)
+      ? mediaId
+      : null;
 
-  const handleEvent = useCallback(
-    (event: MediaSSEEvent) => {
-      if (mediaId === null) return;
-      setSnapshotState({ mediaId, snapshot: event.data });
-    },
-    [mediaId],
-  );
-
-  // Idle (terminal initial status / no media) when `id` is null; otherwise the
-  // run owns token mint + reconnect. Every event carries a full snapshot, so
-  // reconnects are idempotent — no Last-Event-ID tracking needed.
-  const { phase } = useGenerationRun<MediaSSEEvent, MediaProcessingSnapshot>({
-    kind: "media",
-    id: shouldStream ? mediaId : null,
-    decode: decodeMediaSSEEvent,
-    isTerminal: (event) => event.type === "done",
-    onEvent: handleEvent,
-  });
+  useEffect(() => {
+    if (streamId === null) {
+      setPhase("idle");
+      return;
+    }
+    const controller = new AbortController();
+    setPhase("connecting");
+    openGenerationRunStream<MediaSSEEvent>("media", streamId, {
+      // justify-type-assertion: the same deploy serializes every payload as
+      // MediaProcessingSnapshotOut.
+      decode: (type, data) =>
+        decodeMediaSSEEvent(type, data as MediaProcessingSnapshot),
+      isTerminal: (event) => event.type === "done",
+      onEvent: (event) => {
+        if (controller.signal.aborted) return;
+        setPhase((current) => (current === "connecting" ? "streaming" : current));
+        setSnapshotState({ mediaId: streamId, snapshot: event.data });
+      },
+      onError: (err) => {
+        if (controller.signal.aborted) return;
+        console.error("Generation run stream failed (media):", err);
+        setPhase("failed");
+      },
+      onComplete: (terminalEventSeen) => {
+        if (controller.signal.aborted) return;
+        if (terminalEventSeen) setPhase("done");
+      },
+      signal: controller.signal,
+    }).catch((err: unknown) => {
+      if (controller.signal.aborted || handleUnauthenticatedApiError(err)) return;
+      console.error("Failed to open generation run stream (media):", err);
+      setPhase("failed");
+    });
+    return () => controller.abort();
+  }, [streamId]);
 
   // `idle` covers the not-streaming case (terminal status): treat as "open".
   const connectionState: "connecting" | "open" | "error" =

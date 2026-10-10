@@ -18,8 +18,7 @@
   --font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo,
     Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   /* Machine voice — a distinct semantic token over the already-shipped mono
-     stack (see machine-hand-hard-cutover.md D-2). Referenced only through
-     MachineText.module.css. */
+     stack. Referenced only through MachineText.module.css. */
   --font-machine: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular,
     Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 
@@ -71,7 +70,6 @@
   --focus-ring-offset: 2px;
 
   /* Spacing */
-  --space-0: 0;
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
@@ -93,7 +91,6 @@
   --duration-instant: 80ms;
   --duration-fast: 150ms;
   --duration-base: 220ms;
-  --duration-slow: 360ms;
   --duration-deliberate: 600ms;
 
   /* Control sizing */
@@ -102,10 +99,8 @@
   --size-md: 32px;
   --size-lg: 36px;
   --size-xl: 44px;
-  --size-2xl: 52px;
 
   /* Z-index */
-  --z-base: 0;
   --z-raised: 10;
   --z-overlay: 100;
   --z-modal: 1000;
@@ -151,7 +146,7 @@
   --ink-muted: #a3a3a8;
   --ink-faint: #6f6f76;
   /* Machine voice ink + apparatus rail — cooler + a step recessed vs --ink;
-     AAA on --surface-1/--surface-canvas (machine-hand-hard-cutover.md §4.3). */
+     AAA on --surface-1/--surface-canvas. */
   --ink-machine: #c4ccd6;
   --rail-machine: color-mix(in srgb, var(--ink-machine) 34%, transparent);
   --ink-on-accent: #0e0e10;
@@ -392,7 +387,6 @@
     --duration-instant: 0ms;
     --duration-fast: 0ms;
     --duration-base: 0ms;
-    --duration-slow: 0ms;
     --duration-deliberate: 0ms;
   }
 

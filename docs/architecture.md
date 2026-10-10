@@ -327,8 +327,8 @@ Streaming bypasses the BFF for data delivery:
 3. FastAPI `/stream/*` (`api/routes/stream.py`) authenticates the stream token,
    asserts ownership, and **tails persisted events** pushed via Postgres
    `LISTEN/NOTIFY` — re-reading new rows in a threadpool, never blocking the loop.
-4. The client parses the SSE wire format (`lib/api/sse-stream.ts`), validates each
-   event exhaustively (`lib/api/sse/events.ts`), and folds it into UI state.
+4. The client parses the SSE wire format (`lib/api/sse-stream.ts`), each stream's
+   caller decodes its events, and folds them into UI state.
 
 This is used by chat runs, oracle readings, Dossier builds, media processing
 status, and the active Podcast subscription lifecycle.

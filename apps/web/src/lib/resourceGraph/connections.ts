@@ -3,8 +3,6 @@ import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 
-export type EdgeKind = Schema<"ConnectionOut">["kind"];
-export type EdgeOrigin = Schema<"ConnectionOut">["origin"];
 export type ConnectionActionEndpointOut = Schema<"ConnectionEndpointOut"> & {
   actionSubject: ResourceActionSubject;
 };

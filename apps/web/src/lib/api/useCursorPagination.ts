@@ -28,7 +28,7 @@ interface CursorContinuation<T, Cursor extends string> {
 }
 
 // One owner for the "page 1 via useResource, then append more pages by cursor"
-// pane pattern (CT-1). page-1 items+cursor derive from `firstPage`; later pages
+// pane pattern. page-1 items+cursor derive from `firstPage`; later pages
 // accumulate in local state, reset whenever the page-1 data reference changes.
 export function useCursorPagination<T, Cursor extends string = string>(args: {
   firstPage: AsyncResource<CursorPage<T, Cursor>>;

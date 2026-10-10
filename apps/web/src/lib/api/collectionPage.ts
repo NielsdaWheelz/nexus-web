@@ -1,15 +1,6 @@
 import { ApiError } from "@/lib/api/client";
-import {
-  absent,
-  decodePresence,
-  type Presence,
-} from "@/lib/api/presence";
-import {
-  expectArray,
-  expectExactRecord,
-  expectNonnegativeInteger,
-  expectString,
-} from "@/lib/validation";
+import { absent, type Presence } from "@/lib/api/presence";
+import { expectNonnegativeInteger, expectString } from "@/lib/validation";
 
 declare const collectionCursorBrand: unique symbol;
 declare const collectionRevisionBrand: unique symbol;
@@ -56,57 +47,4 @@ export function decodeCollectionRevision(raw: unknown): CollectionRevision {
     );
   }
   return revision as CollectionRevision;
-}
-
-export function decodeCollectionRevisionOut(raw: unknown): CollectionRevision {
-  try {
-    const envelope = expectExactRecord(raw, ["data"], "CollectionRevisionOut");
-    const data = expectExactRecord(
-      envelope.data,
-      ["collectionRevision"],
-      "CollectionRevisionOut.data",
-    );
-    return decodeCollectionRevision(data.collectionRevision);
-  } catch (error) {
-    if (error instanceof ApiError) {
-      throw error;
-    }
-    return invalidCollectionPage(
-      error instanceof Error ? error.message : "Invalid CollectionRevisionOut",
-    );
-  }
-}
-
-/**
- * Strict same-system decoder for the complete-collection page envelope.
- * Presence remains owned on the browser side; omission and null are defects.
- */
-export function decodeCollectionPage<T>(
-  raw: unknown,
-  decodeItem: (raw: unknown, index: number) => T,
-): CollectionPage<T> {
-  try {
-    const envelope = expectExactRecord(raw, ["data"], "CollectionPage");
-    const data = expectExactRecord(
-      envelope.data,
-      ["items", "collectionRevision", "nextCursor"],
-      "CollectionPage.data",
-    );
-    return {
-      items: expectArray(
-        data.items,
-        decodeItem,
-        "CollectionPage.data.items",
-      ),
-      collectionRevision: decodeCollectionRevision(data.collectionRevision),
-      nextCursor: decodePresence(data.nextCursor, decodeCollectionCursor),
-    };
-  } catch (error) {
-    if (error instanceof ApiError) {
-      throw error;
-    }
-    return invalidCollectionPage(
-      error instanceof Error ? error.message : "Invalid CollectionPage",
-    );
-  }
 }

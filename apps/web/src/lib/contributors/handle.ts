@@ -1,5 +1,4 @@
-// Contributor handles are stable outward short aliases (see
-// docs/cutovers/lightweight-author-deduplication-hard-cutover.md §2.3): 3..80
+// Contributor handles are stable outward short aliases: 3..80
 // lowercase ASCII characters matching CONTRIBUTOR_HANDLE_RE, excluding the
 // reserved collection segments the `/authors/{handle}` route space shadows.
 // Mirrors the Python twin `parse_contributor_handle` /

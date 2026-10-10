@@ -5,9 +5,7 @@ import { useSyncExternalStore } from "react";
 // Process-local, monotonic Library relationship/presentation revision. Every
 // definitive placement writer and every Library rename/delete publishes here
 // after authoritative success; consumers (panes/indexes) coalesce
-// reconciliation. See
-// docs/cutovers/library-all-and-smart-views-hard-cutover.md ("Mutation
-// Composition"). No `targets` field: no consumer reads it (simplicity.md).
+// reconciliation. No `targets` field: no consumer reads it (simplicity.md).
 
 export interface LibraryPlacementChange {
   revision: number;

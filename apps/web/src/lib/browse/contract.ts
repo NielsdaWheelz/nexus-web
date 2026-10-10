@@ -6,7 +6,6 @@ import {
   parseMediaImageProxySrc,
   type MediaImageProxySrc,
 } from "@/lib/media/imageProxy";
-import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 declare const DISCOVERY_TARGET_HANDLE: unique symbol;
 
@@ -50,21 +49,6 @@ function string(raw: unknown, context: string): string {
   return raw;
 }
 
-function nonnegativeInteger(raw: unknown, context: string): number {
-  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
-    throw new TypeError(`${context} must be a nonnegative integer`);
-  }
-  return raw;
-}
-
-function internalHref(raw: unknown, context: string): string {
-  const value = string(raw, context);
-  if (normalizeWorkspaceHref(value) !== value) {
-    throw new TypeError(`${context} must be a canonical internal href`);
-  }
-  return value;
-}
-
 export function proxiedImageHref(raw: unknown, context: string): MediaImageProxySrc {
   const value = string(raw, context);
   try {
@@ -72,42 +56,6 @@ export function proxiedImageHref(raw: unknown, context: string): MediaImageProxy
   } catch {
     throw new TypeError(`${context} must use the image proxy`);
   }
-}
-
-export function decodePreviewAudioDescriptor(
-  raw: unknown,
-): PreviewAudioDescriptor {
-  const value = expectExactRecord(
-    raw,
-    [
-      "target",
-      "previewHref",
-      "title",
-      "source",
-      "sourceHref",
-      "audioUrl",
-      "imageUrl",
-      "durationMs",
-    ],
-    "PreviewAudioDescriptor",
-  );
-  return {
-    target: parseDiscoveryTargetHandle(value.target),
-    previewHref: internalHref(
-      value.previewHref,
-      "PreviewAudioDescriptor.previewHref",
-    ),
-    title: string(value.title, "PreviewAudioDescriptor.title"),
-    source: string(value.source, "PreviewAudioDescriptor.source"),
-    sourceHref: string(value.sourceHref, "PreviewAudioDescriptor.sourceHref"),
-    audioUrl: string(value.audioUrl, "PreviewAudioDescriptor.audioUrl"),
-    imageUrl: decodePresence(value.imageUrl, (imageUrl) =>
-      proxiedImageHref(imageUrl, "PreviewAudioDescriptor.imageUrl.value"),
-    ),
-    durationMs: decodePresence(value.durationMs, (durationMs) =>
-      nonnegativeInteger(durationMs, "PreviewAudioDescriptor.durationMs.value"),
-    ),
-  };
 }
 
 export function parseDiscoveryTargetHandle(

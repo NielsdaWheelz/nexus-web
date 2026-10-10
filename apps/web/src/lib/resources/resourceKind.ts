@@ -6,7 +6,6 @@
 
 import {
   AlignLeft,
-  BookOpen,
   Disc3,
   File,
   FileText,
@@ -16,18 +15,15 @@ import {
   Link2,
   MessageSquare,
   MessagesSquare,
-  Mic,
   NotebookTabs,
   Sparkles,
   StickyNote,
   TextQuote,
   User,
-  Video,
   type LucideIcon,
 } from "lucide-react";
 import {
   isResourceScheme,
-  parseResourceRef,
   type ResourceScheme,
 } from "@/lib/resourceGraph/resourceRef";
 
@@ -53,11 +49,6 @@ const RESOURCE_SCHEME_ICONS = {
   passage_anchor: TextQuote,
 } satisfies Record<ResourceScheme, LucideIcon>;
 
-export function resourceIconForUri(resourceRef: string): LucideIcon {
-  const parsed = parseResourceRef(resourceRef);
-  return parsed ? RESOURCE_SCHEME_ICONS[parsed.scheme] : Link2;
-}
-
 export function resourceIconForScheme(scheme: string): LucideIcon {
   return isResourceScheme(scheme) ? RESOURCE_SCHEME_ICONS[scheme] : Link2;
 }
@@ -74,24 +65,4 @@ export function resourceTypeLabel(scheme: ResourceScheme): string {
     passage_anchor: "Passage",
   };
   return labels[scheme];
-}
-
-/**
- * Detail-header icon for media by its `kind`. Collection rows deliberately
- * carry no lead image or type icon; MediaPane remains the owner of this finer
- * book/pdf/audio/video distinction.
- */
-export function mediaKindIcon(kind: string): LucideIcon {
-  switch (kind) {
-    case "epub":
-      return BookOpen;
-    case "pdf":
-      return FileText;
-    case "podcast_episode":
-      return Mic;
-    case "video":
-      return Video;
-    default:
-      return Globe;
-  }
 }

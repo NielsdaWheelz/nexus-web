@@ -1,4 +1,4 @@
-// Pure operator parser for the search box (search cutover §7.2). Tokenizes raw
+// Pure operator parser for the search box. Tokenizes raw
 // input honoring quotes; a token matching a closed operator set with a valid value
 // becomes a filter chip, anything else stays free text. No throw, async, or network.
 

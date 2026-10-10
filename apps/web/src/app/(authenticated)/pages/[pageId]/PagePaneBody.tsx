@@ -30,11 +30,9 @@ import {
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
-import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
-import { usePaneTransientFilterRows } from "@/lib/panes/usePaneFilterRows";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { ResourceSurface } from "@/lib/resources/resourceItems";
-import { resourceSurfaceFilterFields } from "@/components/resource-surface/resourceSurfaceFilterFields";
+import { useResourceSurfaceFilterRows } from "@/components/resource-surface/useResourceSurfaceFilterRows";
 import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { PaneReadySearchPublication } from "@/lib/panes/paneSearch";
@@ -142,53 +140,13 @@ export default function PagePaneBody({
     source.kind === "PageRef"
       ? `page:${source.pageId}`
       : `daily:${source.accountId}:${source.localDate}`;
-  const [filterRowsState, setFilterRowsState] = useState<{
-    sourceRef: string;
-    ready: boolean;
-    fields: readonly (readonly string[])[];
-  }>({
-    sourceRef: sourceKey,
-    ready: false,
-    fields: [],
-  });
-  if (filterRowsState.sourceRef !== sourceKey) {
-    setFilterRowsState({ sourceRef: sourceKey, ready: false, fields: [] });
-  }
-  const filterRows = useMemo(
-    () =>
-      filterRowsState.sourceRef === sourceKey ? filterRowsState.fields : [],
-    [filterRowsState, sourceKey],
-  );
-  const ready =
-    filterRowsState.sourceRef === sourceKey && filterRowsState.ready;
-  const getFilterStatus = useCallback(
-    (query: string) => {
-      const visibleCount = filterRows.filter((fields) =>
-        matchesPaneFilterQuery(query, fields),
-      ).length;
-      const unit = { singular: "item", plural: "items" };
-      return ready
-        ? {
-            kind: "Complete" as const,
-            visibleCount,
-            totalCount: filterRows.length,
-            unit,
-          }
-        : {
-            kind: "Partial" as const,
-            visibleCount,
-            loadedCount: filterRows.length,
-            unit,
-          };
-    },
-    [filterRows, ready],
-  );
-  const { query: filterQuery, publication: search } = usePaneTransientFilterRows({
-    sourceKey,
-    inputLabel: "Filter page items",
-    placeholder: "Filter items",
-    getRowStatus: getFilterStatus,
-  });
+  const {
+    ready,
+    query: filterQuery,
+    search,
+    acceptSurface,
+    markReady,
+  } = useResourceSurfaceFilterRows(sourceKey, "Filter page items");
   const [page, setPage] = useState<PageView | null>(
     source.kind === "PageRef" && initialPage?.id === source.pageId
       ? initialPage
@@ -354,11 +312,7 @@ export default function PagePaneBody({
   );
   const handleSurfaceChange = useCallback(
     (surface: ResourceSurface) => {
-      setFilterRowsState({
-        sourceRef: sourceKey,
-        ready: true,
-        fields: surface.orderedItems.map(resourceSurfaceFilterFields),
-      });
+      acceptSurface(surface);
       if (surface.source.content.kind !== "page_title") return;
       const { title } = surface.source.content;
       setPage((current) =>
@@ -379,20 +333,14 @@ export default function PagePaneBody({
             : current,
       );
     },
-    [dailySourceDate, sourceKey],
+    [acceptSurface, dailySourceDate],
   );
   const handleDailyTitleChange = useCallback(
     (title: string | null) => {
       setDailyTitle(title);
-      if (title !== null) {
-        setFilterRowsState((current) =>
-          current.sourceRef === sourceKey
-            ? { ...current, ready: true }
-            : current,
-        );
-      }
+      if (title !== null) markReady();
     },
-    [sourceKey],
+    [markReady],
   );
   const chrome = (
     <PageChrome page={page} search={search} viewActions={viewActions} />

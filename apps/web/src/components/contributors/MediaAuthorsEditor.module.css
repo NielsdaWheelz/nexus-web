@@ -73,10 +73,6 @@
   border-radius: var(--radius-xs);
 }
 
-.notice {
-  margin: 0;
-}
-
 .rows {
   display: flex;
   min-width: 0;

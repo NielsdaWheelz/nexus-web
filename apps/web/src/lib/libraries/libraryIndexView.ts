@@ -1,7 +1,6 @@
 // The Libraries index view: the closed sort type, a strict total
 // URLSearchParams <-> LibrariesIndexView codec, the API query, and the exact
-// `Sort by` inventory. See
-// docs/cutovers/collection-refinement-capability-hard-cutover.md.
+// `Sort by` inventory.
 
 import { assertNever } from "@/lib/assertNever";
 

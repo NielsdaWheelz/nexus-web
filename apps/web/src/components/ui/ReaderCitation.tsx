@@ -7,10 +7,7 @@ import HoverPreview, {
 import { truncateText } from "@/lib/display/format";
 import type { ReaderCitationPreview } from "@/lib/resourceGraph/readerCitation";
 import type { ReaderSourceTarget } from "@/lib/resourceGraph/readerTarget";
-import {
-  hrefForResourceActivation,
-  type ResourceActivation,
-} from "@/lib/resources/activation";
+import type { ResourceActivation } from "@/lib/resources/activation";
 import styles from "./ReaderCitation.module.css";
 import {
   ClipboardWriteUnavailableError,
@@ -42,7 +39,7 @@ export default function ReaderCitation({
 }) {
   const feedback = useFeedback();
   const paneRuntime = usePaneRuntime();
-  const href = hrefForResourceActivation(activation);
+  const href = activation.href;
   const [showPreview, setShowPreview] = useState(false);
   const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
   const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(

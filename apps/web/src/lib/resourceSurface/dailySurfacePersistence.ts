@@ -33,7 +33,6 @@ export interface DailySurfaceSessionOptions {
     delivery: PaneEntryDelivery,
     claimedNoteId: string,
   ) => void;
-  beforePrepend?: (noteRef: string) => void;
   onError?: (error: unknown) => void;
   onTitleMutationStarted?: () => MountedEditorMutationLease | null;
   onSourceBodyMutationStarted?: () => MountedEditorMutationLease | null;

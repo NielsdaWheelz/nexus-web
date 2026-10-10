@@ -10,8 +10,6 @@ import {
   useNotePulseHighlight,
   type NotePulseTarget,
 } from "@/lib/reader/pulseEvent";
-import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
-import { usePaneTransientFilterRows } from "@/lib/panes/usePaneFilterRows";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ResourceSurface } from "@/lib/resources/resourceItems";
 import {
@@ -23,7 +21,7 @@ import {
 } from "@/lib/panes/paneRuntime";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { usePassageResolution } from "@/lib/reader/passageResolution";
-import { resourceSurfaceFilterFields } from "@/components/resource-surface/resourceSurfaceFilterFields";
+import { useResourceSurfaceFilterRows } from "@/components/resource-surface/useResourceSurfaceFilterRows";
 import {
   notifyNoteBlockActionIntentOwnerReady,
   useNoteBlockActionIntentOwner,
@@ -49,53 +47,12 @@ export default function NotePaneBody() {
     ownerId: blockId,
   });
   const sourceRef = `note_block:${blockId}`;
-  const [filterRowsState, setFilterRowsState] = useState<{
-    sourceRef: string;
-    ready: boolean;
-    fields: readonly (readonly string[])[];
-  }>({
-    sourceRef,
-    ready: false,
-    fields: [],
-  });
-  if (filterRowsState.sourceRef !== sourceRef) {
-    setFilterRowsState({ sourceRef, ready: false, fields: [] });
-  }
-  const filterRows = useMemo(
-    () =>
-      filterRowsState.sourceRef === sourceRef ? filterRowsState.fields : [],
-    [filterRowsState, sourceRef],
-  );
-  const ready =
-    filterRowsState.sourceRef === sourceRef && filterRowsState.ready;
-  const getFilterStatus = useCallback(
-    (query: string) => {
-      const visibleCount = filterRows.filter((fields) =>
-        matchesPaneFilterQuery(query, fields),
-      ).length;
-      const unit = { singular: "item", plural: "items" };
-      return ready
-        ? {
-            kind: "Complete" as const,
-            visibleCount,
-            totalCount: filterRows.length,
-            unit,
-          }
-        : {
-            kind: "Partial" as const,
-            visibleCount,
-            loadedCount: filterRows.length,
-            unit,
-          };
-    },
-    [filterRows, ready],
-  );
-  const { query: filterQuery, publication: search } = usePaneTransientFilterRows({
-    sourceKey: sourceRef,
-      inputLabel: "Filter note items",
-      placeholder: "Filter items",
-    getRowStatus: getFilterStatus,
-  });
+  const {
+    ready,
+    query: filterQuery,
+    search,
+    acceptSurface,
+  } = useResourceSurfaceFilterRows(sourceRef, "Filter note items");
   const [label, setLabel] = useState<string | null>(null);
   const [focusBodySerial, setFocusBodySerial] = useState(0);
   const editBodyIntentControllerRef = useRef<
@@ -186,16 +143,12 @@ export default function NotePaneBody() {
   });
   const handleSurfaceChange = useCallback(
     (surface: ResourceSurface) => {
-      setFilterRowsState({
-        sourceRef,
-        ready: true,
-        fields: surface.orderedItems.map(resourceSurfaceFilterFields),
-      });
+      acceptSurface(surface);
       if (surface.source.content.kind === "note_body") {
         setLabel(surface.source.content.bodyText.trim() || "Note");
       }
     },
-    [sourceRef],
+    [acceptSurface],
   );
   usePanePrimaryChrome({
     search,

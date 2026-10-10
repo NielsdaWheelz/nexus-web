@@ -17,10 +17,9 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { getFileUploadError, uploadIngestFile } from "@/lib/media/ingestionClient";
 import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
 import { queryConnections, type ConnectionOut } from "@/lib/resourceGraph/connections";
-import { connectionMutationAction, connectionMutationErrorMessage, mutateConnection } from "@/lib/resourceGraph/connectionMutations";
+import { connectionMutationErrorMessage, mutateConnection } from "@/lib/resourceGraph/connectionMutations";
 import { subscribeLinkMutations } from "@/lib/resourceGraph/links";
 import { formatResourceRef, type ResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { hrefForResourceActivation } from "@/lib/resources/activation";
 import { CONNECTION_DISCOVERY_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities";
 import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
 import { fetchDiscoveryScanStatus, requestDiscoveryScan, type DiscoveryScanStatus } from "@/lib/connectionDiscovery";
@@ -162,7 +161,7 @@ function ConnectionRow({ connection, onChanged }: {
   onChanged: () => void;
 }) {
   const endpoint = connection.other;
-  const href = hrefForResourceActivation(endpoint.activation);
+  const href = endpoint.activation.href;
   const missing = endpoint.missing || href === null;
   const machine = connection.origin === "discovery" || connection.origin === "assistant";
   const reason = connection.mutation?.kind === "detach_context"
@@ -170,7 +169,6 @@ function ConnectionRow({ connection, onChanged }: {
     : machine ? "Machine-created link" : connection.origin === "user" ? "Linked by you" : connection.origin === "citation" ? connection.direction === "incoming" ? "Cited by" : "Cites" : connection.origin === "system" ? "Added to chat" : connection.origin === "document_embed" ? "Attachment" : connection.origin === "link_note" ? "Note on link" : "Note attachment";
   const excerpt = connection.snapshot?.excerpt;
   const mutation = connection.mutation;
-  const action = mutation ? connectionMutationAction(mutation) : null;
   return <ResourceRow
     rootProps={{ "data-connection-id": connection.edge_id }}
     primary={missing ? { kind: "static" } : { kind: "link", href, paneLabelHint: endpoint.label ?? endpoint.ref }}
@@ -179,7 +177,7 @@ function ConnectionRow({ connection, onChanged }: {
     evidence={typeof excerpt === "string" && excerpt ? machine ? <MachineText variant="inline" as="span" origin={{ label: connection.origin === "discovery" ? "Connection discovery" : "Assistant" }}>{excerpt}</MachineText> : excerpt : undefined}
     actions={<>
       <ResourceActionMenu actionSubject={endpoint.actionSubject} label={`Actions for ${endpoint.label ?? endpoint.ref}`} />
-      {action && mutation ? <ContextEdgeMenu action={action} label={`Edit connection ${endpoint.label ?? endpoint.ref}`} retryable execute={async () => { await mutateConnection(connection.edge_id, mutation); onChanged(); }} presentFailure={connectionMutationErrorMessage} /> : null}
+      {mutation ? <ContextEdgeMenu mutationKind={mutation.kind} label={`Edit connection ${endpoint.label ?? endpoint.ref}`} retryable execute={async () => { await mutateConnection(connection.edge_id, mutation); onChanged(); }} presentFailure={connectionMutationErrorMessage} /> : null}
     </>}
     expanded={<>
       {mutation?.kind === "dismiss_discovery" ? <p className={styles.connectionMeta}>Dismissing hides this link and prevents rediscovery of this pair.</p> : null}

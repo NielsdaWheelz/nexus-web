@@ -12,7 +12,7 @@ import MachineText from "@/components/ui/MachineText";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
-import { connectionMutationAction, connectionMutationErrorMessage, mutateConnection, type ConnectionMutation } from "@/lib/resourceGraph/connectionMutations";
+import { connectionMutationErrorMessage, mutateConnection, type ConnectionMutation } from "@/lib/resourceGraph/connectionMutations";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import ConnectionCreation from "@/components/connections/ConnectionCreation";
 import type { ResourceActivation } from "@/lib/resources/activation";
@@ -86,7 +86,7 @@ function ObjectActions({
       />
       {remove ? (
         <ContextEdgeMenu
-          action={connectionMutationAction(remove.mutation)}
+          mutationKind={remove.mutation.kind}
           retryable
           label={`Edit connection ${object.label}`}
           execute={async () => {

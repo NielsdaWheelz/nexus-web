@@ -1,6 +1,7 @@
 "use client";
 
-import { createElement, useRef, useState, type ComponentProps } from "react";
+import { useRef, useState, type ComponentProps } from "react";
+import { ListMinus } from "lucide-react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import {
   FeedbackNotice,
@@ -8,13 +9,39 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import {
-  contextEdgeActionEntry,
-  projectContextEdgeAction,
-  type ContextEdgeActionKind,
-} from "@/lib/actions/contextEdgeActions";
+import type { ConnectionMutation } from "@/lib/resourceGraph/connectionMutations";
 
 type ActionMenuProps = ComponentProps<typeof ActionMenu>;
+
+const UNDO_ASSISTANT = {
+  id: "ContextEdgeAction.Assistant.Undo",
+  label: "Undo assistant link",
+  busyLabel: "Undoing…",
+};
+
+/** Menu item copy per server-named edge mutation. */
+const EDGE_ACTIONS: Record<
+  ConnectionMutation["kind"],
+  { id: string; label: string; busyLabel: string }
+> = {
+  unlink: {
+    id: "ContextEdgeAction.Connection.Unlink",
+    label: "Remove link",
+    busyLabel: "Removing…",
+  },
+  dismiss_discovery: {
+    id: "ContextEdgeAction.Connection.Dismiss",
+    label: "Dismiss link",
+    busyLabel: "Dismissing...",
+  },
+  detach_context: {
+    id: "ContextEdgeAction.Context.Remove",
+    label: "Remove from chat",
+    busyLabel: "Removing...",
+  },
+  undo_assistant_chat: UNDO_ASSISTANT,
+  undo_assistant_generation: UNDO_ASSISTANT,
+};
 
 /**
  * The separate control that owns context-edge commands — remove from
@@ -27,13 +54,13 @@ type ActionMenuProps = ComponentProps<typeof ActionMenu>;
  * any same-system defect (via `presentFailure` throwing) to the nearest boundary.
  */
 export default function ContextEdgeMenu({
-  action,
+  mutationKind,
   execute,
   presentFailure,
   label,
   retryable = false,
 }: {
-  readonly action: ContextEdgeActionKind;
+  readonly mutationKind: ConnectionMutation["kind"];
   /**
    * Runs the server-declared owning mutation. Any post-mutation reload is the
    * caller's own — this control never touches the resource snapshot cache.
@@ -44,8 +71,8 @@ export default function ContextEdgeMenu({
    * escalate a same-system defect / unknown error to the nearest error boundary.
    */
   readonly presentFailure: (error: unknown) => FeedbackContent;
-  /** Trigger accessible label. Presentation only; defaults to the action copy. */
-  readonly label?: string;
+  /** Trigger accessible label. */
+  readonly label: string;
   /** Offer a Retry affordance on the failure notice. */
   readonly retryable?: boolean;
 }) {
@@ -80,30 +107,35 @@ export default function ContextEdgeMenu({
 
   if (defect !== null) throw defect.error;
 
-  const entry = contextEdgeActionEntry(action);
-  const descriptor = projectContextEdgeAction({
-    kind: action,
-    busy,
-    onSelect: () => void run(),
-  });
+  const entry = EDGE_ACTIONS[mutationKind];
   const retryActions: FeedbackActions | undefined = retryable
     ? [{ label: "Retry", onClick: () => void run() }]
     : undefined;
 
-  // Default to the action's own icon (not the "…" overflow glyph) so this edge
-  // control is visually distinct from the adjacent canonical resource menu.
-  const iconTrigger: ActionMenuProps["renderTrigger"] = (triggerProps) =>
-    createElement(
-      "button",
-      triggerProps,
-      createElement(entry.icon, { size: 16, "aria-hidden": true }),
-    );
+  // The action's own icon (not the "…" overflow glyph) keeps this edge control
+  // visually distinct from the adjacent canonical resource menu.
+  const iconTrigger: ActionMenuProps["renderTrigger"] = (triggerProps) => (
+    <button {...triggerProps}>
+      <ListMinus size={16} aria-hidden="true" />
+    </button>
+  );
 
   return (
     <>
       <ActionMenu
-        options={[descriptor]}
-        label={label ?? entry.triggerLabel}
+        options={[
+          {
+            kind: "command",
+            id: entry.id,
+            label: busy ? entry.busyLabel : entry.label,
+            icon: <ListMinus size={14} aria-hidden="true" />,
+            disabled: busy || undefined,
+            disabledReason: busy ? "Working…" : undefined,
+            onSelect: () => void run(),
+            restoreFocusOnClose: false,
+          },
+        ]}
+        label={label}
         renderTrigger={iconTrigger}
         triggerRef={(node) => { triggerRef.current = node; }}
       />

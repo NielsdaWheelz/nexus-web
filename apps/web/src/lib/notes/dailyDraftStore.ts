@@ -84,14 +84,6 @@ export function clearDailyDraft(accountId: string, localDate: string): boolean {
   return true;
 }
 
-export function discardDailyDraftRaw(accountId: string, localDate: string): boolean {
-  if (typeof window === "undefined") return false;
-  try { window.localStorage.removeItem(dailyDraftKey(accountId, localDate)); }
-  catch { return false; }
-  publishDailyDraftChange(accountId, localDate);
-  return true;
-}
-
 export function claimDailyDraftBody(accountId: string, localDate: string, noteId: string): boolean {
   let draft: DailyDraft | null;
   try { draft = readDailyDraft(accountId, localDate); }
