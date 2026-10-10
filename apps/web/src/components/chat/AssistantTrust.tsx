@@ -146,7 +146,7 @@ function WriteTrail({ trail }: { trail: Trail }) {
   );
 }
 
-/** Closed by default: the run, counts, notices, tools and retrievals, citations and context refs. */
+/** Closed by default: the run, counts, tools and retrievals, citations and context refs. */
 function Details({
   trail,
   cite,
@@ -172,15 +172,10 @@ function Details({
     Output: count(run?.usage?.output_tokens),
     "Support ID":
       run?.support_id.kind === "Present" ? run.support_id.value : null,
-    Notices: trail.integrity_notices.map((n) => n.message).join(" · "),
   };
-  const notices = trail.integrity_notices.length;
   return (
     <details className={styles.details}>
-      <summary>
-        Details
-        {notices ? ` ${notices} ${notices === 1 ? "notice" : "notices"}` : ""}
-      </summary>
+      <summary>Details</summary>
       <div className={styles.inspector}>
         <p>
           {trail.tool_calls.length} tools · {retrievals.length} retrieved ·{" "}

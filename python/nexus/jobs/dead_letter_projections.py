@@ -51,9 +51,9 @@ def apply_dead_letter_projection(
     elif projection == "PodcastBackfill":
         _project_podcast_backfill(db, job)
     elif projection == "ChatRun":
-        from nexus.tasks.chat_run import record_dead_lettered_chat_run
+        from nexus.services.chat.worker import on_dead_letter
 
-        record_dead_lettered_chat_run(db, job)
+        on_dead_letter(db, job)
     elif projection == "Generation":
         from nexus.services.generation.ledger import interrupt_job_generations
 

@@ -9,13 +9,10 @@ from fastapi import APIRouter
 from nexus.api.routes.atlas import router as atlas_router
 from nexus.api.routes.auth_handoff_codes import router as auth_handoff_codes_router
 from nexus.api.routes.browse import router as browse_router
-from nexus.api.routes.chat_reader_selections import router as chat_reader_selections_router
-from nexus.api.routes.chat_runs import router as chat_runs_router
+from nexus.api.routes.chat import router as chat_router
 from nexus.api.routes.connection_discovery import router as connection_discovery_router
 from nexus.api.routes.consumption_activity import router as consumption_activity_router
 from nexus.api.routes.contributors import router as contributors_router
-from nexus.api.routes.conversation_branches import router as conversation_branches_router
-from nexus.api.routes.conversations import router as conversations_router
 from nexus.api.routes.dossiers import router as dossiers_router
 from nexus.api.routes.extension_captures import router as extension_captures_router
 from nexus.api.routes.extension_sessions import router as extension_sessions_router
@@ -29,7 +26,6 @@ from nexus.api.routes.me import router as me_router
 from nexus.api.routes.media import router as media_router
 from nexus.api.routes.media_assets import router as media_assets_router
 from nexus.api.routes.media_ingest import router as media_ingest_router
-from nexus.api.routes.messages import router as messages_router
 from nexus.api.routes.notes import router as notes_router
 from nexus.api.routes.operational import router as operational_router
 from nexus.api.routes.oracle import router as oracle_router
@@ -81,12 +77,8 @@ def create_api_router(*, podcasts: bool, email_ingest: bool) -> APIRouter:
     api_router.include_router(resource_graph_router)
     api_router.include_router(connection_discovery_router)
     api_router.include_router(highlights_router)
-    api_router.include_router(conversations_router)
-    api_router.include_router(conversation_branches_router)
-    api_router.include_router(messages_router)
+    api_router.include_router(chat_router)
     api_router.include_router(contributors_router)
-    api_router.include_router(chat_runs_router)
-    api_router.include_router(chat_reader_selections_router)
     api_router.include_router(oracle_router)
     api_router.include_router(llm_router)
     api_router.include_router(browse_router)

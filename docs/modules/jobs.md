@@ -178,13 +178,11 @@ accepted findings settle `succeeded`; known retryable pre-submission failures an
 waits retain ordinary queue semantics. provider success is not domain success.
 see [media-metadata.md](media-metadata.md).
 
-Chat hard-cuts this generic convention at its task boundary:
-`execute_chat_run` returns a closed `Published | Degraded | Failed | Cancelled |
-Skipped` outcome, and `tasks/chat_run.py` is its sole plain-object serializer.
-A handled `Failed` outcome completes the queue job because the domain run is
-already terminal. Queue retry is reserved for an exception escaping that
-boundary. The worker logs `worker_job_completed` with the serialized result
-kind; queue completion is not a claim that the answer published.
+Chat's job (`services/chat/worker.chat_run`) returns nothing: a handled
+outcome (published, degraded, failed or cancelled) is already terminal on the
+run, so the queue job completes. Queue retry is reserved for an exception
+escaping that boundary; queue completion is not a claim that the answer
+published.
 
 ## Worker lanes
 

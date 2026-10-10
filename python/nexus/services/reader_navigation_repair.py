@@ -804,8 +804,8 @@ def _assert_legacy_marker_unreferenced(
     if lock:
         db.execute(
             text(
-                "LOCK TABLE chat_run_turn_contexts, message_retrievals, resource_edges,"
-                " resource_grants, resource_versions, resource_view_states"
+                "LOCK TABLE message_retrievals, resource_edges, resource_grants,"
+                " resource_versions, resource_view_states"
                 " IN SHARE MODE NOWAIT"
             )
         )
@@ -846,13 +846,6 @@ def _assert_legacy_marker_unreferenced(
         (
             "SELECT 1 FROM resource_grants WHERE"
             " subject_scheme = 'reader_apparatus_item' AND subject_id = :id LIMIT 1",
-            {"id": item_id},
-        ),
-        (
-            "SELECT 1 FROM chat_run_turn_contexts WHERE"
-            " (subject_scheme = 'reader_apparatus_item' AND subject_id = :id) OR"
-            " (requested_subject_scheme = 'reader_apparatus_item'"
-            " AND requested_subject_id = :id) LIMIT 1",
             {"id": item_id},
         ),
     )

@@ -14,7 +14,7 @@ import { TOOL_PROJECTION_REVISION } from "@/lib/chat/toolContractProjection";
 export type ApiPath = `/api/${string}`;
 export const TOOL_PROJECTION_HEADER = "X-Nexus-Tool-Projection";
 export const CHAT_CONTRACT_HEADER = "X-Nexus-Chat-Contract";
-export const CHAT_CONTRACT_REVISION = "3";
+export const CHAT_CONTRACT_REVISION = "4";
 export const TOOL_PROJECTION_RELOAD_REQUIRED_CODE =
   "E_TOOL_PROJECTION_RELOAD_REQUIRED";
 

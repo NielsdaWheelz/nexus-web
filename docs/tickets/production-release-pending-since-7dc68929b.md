@@ -185,3 +185,15 @@ WHERE NOT EXISTS (SELECT 1 FROM podcast_subscriptions s WHERE s.id = b.subscript
 expect a few backfills to read Failed after release: a history page that fails to
 fetch or parse now fails the backfill (it used to end history silently); "Retry
 backlog" is the remedy ([ticket](backfills-completed-by-silent-page-failures.md)).
+
+the chat runs rewrite adds `0271` (chat runs own their intent), after the podcasts
+`0270`. it moves each run's frozen prompt from `chat_prompt_assemblies` onto
+`chat_runs.generation_intent` (refusing, nothing written, if a run has no
+assembly), drops that table and the write-only `chat_run_turn_contexts`, deletes
+the never-read `meta`, `assistant_activity` and `citation_index` frames (and
+`tool_call_delta`) and narrows the event-type CHECK, rebuilds eight chat foreign
+keys `ON DELETE CASCADE` with two supporting indexes, and drops
+`message_retrievals.snippet_prefix/suffix`. production crosses `0246` first, so it
+touches no rows there. it is irreversible: its downgrade raises; rollback is the
+pre-release backup plus the prior builds. it runs in the same window as 0268 to
+0270, writers stopped; web and api ship together (chat contract "4").

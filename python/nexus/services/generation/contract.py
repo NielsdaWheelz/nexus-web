@@ -97,7 +97,7 @@ type GenerationOutput = Annotated[TextOutput | JsonSchemaOutput, Field(discrimin
 
 
 class GenerationIntent(BaseModel):
-    """What the model is asked; chat stores it on ``chat_prompt_assemblies``."""
+    """What the model is asked; chat freezes it on ``chat_runs.generation_intent``."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 

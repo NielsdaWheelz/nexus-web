@@ -662,7 +662,7 @@ def _error_tags(schema: object) -> set[str]:
 
 
 # The browser's decoder is a closed vocabulary; the revision below gates a stale
-# tab. The per-record nullability rule is enforced by ToolProjectionOut and by
+# tab. The per-record nullability rule is enforced by the projection's writers and by
 # toolProjectionWire.ts, not published here.
 BROWSER_TOOL_PROJECTION_CONTRACT: Mapping[str, tuple[str, ...]] = {
     "effects": tuple(effect.value for effect in ToolEffect),

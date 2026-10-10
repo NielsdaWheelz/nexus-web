@@ -65,3 +65,12 @@ and repeat bodies drop `catalog_definition_revision`, `GenerationCatalog` drops
 both catalog revisions, and migration `0269_drop_generation_replay` drops the
 replay tables and columns the old worker writes. the same one-vector rule
 applies.
+
+2026-10-10 chat runs rewrite: the chat contract revision is now "4".
+`ChatRunResponse` loses `run` (its facts are the answer's `trust_trail.run`),
+`ConversationOut` keeps only `id` and `title`, the trust trail drops its mirrors
+and `integrity_notices`, assistant-selection anchors are `unmapped` only, and the
+`meta`, `assistant_activity` and `citation_index` frames are gone (web `runTail`
+no longer knows them). migration `0271_chat_runs_own_their_intent` drops
+`chat_prompt_assemblies` and `chat_run_turn_contexts`, which the old worker and
+admission write. the same one-vector rule applies.

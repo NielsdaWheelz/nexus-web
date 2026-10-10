@@ -7,21 +7,10 @@ conversation panes, resource-subject chats, fork replies, context refs,
 assistant-answer selection forks, exact per-run generation selection, rerun and
 regenerate, and the browser contract for `/api/chat-runs`.
 
-Backend owners live under `python/nexus/api/routes/chat_runs.py`,
-`python/nexus/services/chat_run_*`, `python/nexus/services/context_assembler.py`, and
-`python/nexus/services/conversation_branches.py`.
-
-`chat_runs.py` is the Chat domain orchestrator. It assembles the prompt, admits
-one immutable `GenerationSpec` through `GenerationService`, folds route-neutral
-events, and finalizes the answer. The cohesive services it composes each have one owner:
-`chat_run_citations` (candidate numbering, attached/read evidence, final
-canonical publication, `citation_index`), `chat_run_tools` (`message_tool_calls`
-lifecycle + numbered Provider API tool-output rendering), and the
-`ChatRunEventEmitter` in `chat_run_event_store` — the single durable run-event
-append owner (typed streaming methods commit inline for SSE visibility; batch
-tool-result/citation/context events defer to the executor's transaction). The
-run-tail query + terminal check is `chat_run_event_store.read_run_events`; viewer
-scoping stays in the `/stream/chat-runs` route's ownership assert, never in the query.
+The backend is one package, `python/nexus/services/chat/`, behind one route
+module (`api/routes/chat.py`, every chat route) and one wire module
+(`schemas/conversation.py`: quotes, conversations, messages, sends, receipts,
+run events, trust trail). See [Backend: one package](#backend-one-package).
 
 Web owners: `apps/web/src/lib/chat/*` (wire names, tree derivations, selection,
 drafts, run tails, quote intents, index, message intents) and
@@ -65,8 +54,9 @@ Invariants:
 
 ## Durable Execution And Recovery
 
-`chat_run_worker.py` runs the queued run's one generation (`generate`,
-[llms.md](llms.md)) from its admitted spec and prompt, then publishes it.
+`services/chat/worker.py` runs the queued run's one generation (`generate`,
+[llms.md](llms.md)) from its admitted spec and frozen prompt
+(`chat_runs.generation_spec`, `chat_runs.generation_intent`), then publishes it.
 `services/tool_runtime/` and `tool_authority.py` own the immutable declarations,
 grants, binding policy, and one durable tool executor.
 
@@ -99,12 +89,12 @@ history. account settings lists all owned completed assistant writes, including
 failed attempts and successes that created no items. only successful writes
 with created items offer undo; chat and account settings share the same owner.
 
-`chat_run_event_store.finalize_run` is the one terminal writer. In the same
+`events.finalize` is the one terminal writer. In the same
 transaction it settles every tool call of the answer still `pending` or
 `running`: `cancelled` for a cancelled run, else `error`. No tool call outlives
 its run as `running`.
 
-`ChatRunOut.execution` and trust-run `execution` are required `Presence` values.
+Trust-run `execution` is a required `Presence` value.
 nonterminal runs project `Queued | Running | Recovering | Suspended` plus
 `cancel_requested`, derived from the run's persisted stop intent. terminal
 runs project `Absent`. sse sends the same value as an unsequenced
@@ -200,7 +190,7 @@ publication warning is a quiet amber `role="status"` notice, never a red
 failure.
 
 Details holds route, model, thinking, status, billing, privacy, usage, support
-id, integrity notices, one counts line (tools, retrieved, selected, included,
+id, one counts line (tools, retrieved, selected, included,
 cited, context refs), the tool list with each tool's retrievals, the citations
 (each opens its source) and the context refs the run added. Undo renders only for a completed write whose tool call carries a
 machine authorship and no `reverted_at`.
@@ -285,12 +275,12 @@ top-level `conversation_id`, no `chat_subject`, and no client
 
 `POST /chat-runs` is a receipt boundary. Under the viewer/key advisory lock it
 first replays the immutable `ResourceMutation(scope="chat:admission")` decision
-or validates a new admission. Accepted run/messages/event/job and receipt commit
-atomically, and admission sets the conversation's active leaf to the new
-assistant. A modeled rejection rolls provisional writes back to a savepoint and
+or validates a new admission. Accepted chat (when New), messages, run, attached
+evidence, job, the owner's index-revision bump and the receipt commit atomically,
+and admission sets the conversation's active leaf to the new assistant. A modeled rejection rolls provisional writes back to a savepoint and
 commits only its closed reason. The response is
 `{data:{idempotency_key,outcome:Accepted|Rejected}}`; it contains no run
-projection. Every chat route requires `X-Nexus-Chat-Contract: 3`; an older tab
+projection. Every chat route requires `X-Nexus-Chat-Contract: 4`; an older tab
 gets `409 E_CHAT_CONTRACT_RELOAD_REQUIRED` and the reload notice.
 
 ### Drafts
@@ -336,11 +326,13 @@ send with its reason. The browser owns no allowlist and substitutes nothing.
 `POST /messages/{assistant_message_id}/rerun` recovers an eligible failed or
 cancelled turn; `POST /messages/{assistant_message_id}/regenerate` makes a
 fresh alternative for a completed answer. Both share one sibling-candidate
-constructor (`services/chat_runs.py`): it clones the source user turn (content,
-parent, branch anchor, reader-selection snapshot, turn context) into a new user
-sibling with a pending assistant and one queued run, and selects the new
-assistant as the active leaf. Each request carries an exact selection and the
-catalog revision. The source assistant maps to exactly one owning run.
+constructor (`services/chat/admit.py::repeat`): under the conversation lock it
+clones the source user turn (content, parent, branch anchor, reader-selection
+snapshot) into a new user sibling with a pending assistant and one queued run
+with fresh context, and selects the new assistant as the active leaf. Each
+request carries an exact selection. An answer with no run (written before
+0246 kept runs) answers 404 `E_MESSAGE_NOT_FOUND`; its action facts already
+hide both actions.
 
 Without an explicit choice the store reuses the source run's selection only
 while the current catalog still offers it; otherwise it says "The original model
@@ -434,7 +426,7 @@ turn-context pair and never live-reconstructed at prompt time. On send the
 server row-locks the Highlight, derives the canonical quote fields, and stores
 one `ReaderSelectionSnapshot` on `messages.reader_selection_snapshot` (JSONB).
 Every later read — transcript, reload, branch switch, rerun, and
-prompt assembly — derives from that snapshot. `services/chat_reader_selection.py`
+prompt assembly — derives from that snapshot. `services/chat/quotes.py`
 is the sole snapshot owner (build, encode/decode, revision, quote-subfield
 projection, and prompt-render input); the snapshot shape is
 `key{media_id, highlight_id}`, `source_label`, `exact`, `prefix`, `suffix`, and
@@ -474,7 +466,7 @@ shared updated/title codec (`lib/collections/updatedTitleIndexView.ts`):
 newest update is canonical and has no keys; `sort=updated&direction=asc` and
 `sort=title&direction=asc|desc` are the others. The Sort control writes the URL,
 Reset view returns to canonical, and a malformed pair shows "Invalid chats view"
-with Reset. The server sorts titles on the presented title, then
+with Reset. The server sorts titles on the title (a DB CHECK keeps it nonblank), then
 `updated_at DESC, id DESC`, and binds cursors to the order plan. Optional
 `title_search` is a trimmed, case-insensitive literal substring of the stored
 title, bounded to 200 characters. Any other key, `has_context_ref` included, is
@@ -483,10 +475,14 @@ title, bounded to 200 characters. Any other key, `has_context_ref` included, is
 ## Citation Candidates And Final Edges
 
 Chat keeps model-facing evidence candidates separate from reader-facing
-citations. One numbering helper assigns dense turn-global
-`message_retrievals.citation_candidate_ordinal` values only to citable rows
-actually exposed to the model. Selection or prompt inclusion alone does not
-make a row a candidate.
+citations. One numbering rule (`citations.number_candidates`) assigns dense
+answer-global `message_retrievals.citation_candidate_ordinal` values only to
+citable rows actually exposed to the model: under the run lock each numbering
+continues after the answer's largest ordinal so far and never renumbers a row.
+Attached evidence (the citable `<resources>`, tool call 0) is numbered at
+admission, `1..k`; every tool call's candidates follow, in whatever order the
+calls complete. Selection or prompt inclusion alone does not make a row a
+candidate.
 
 After generation, one canonicalizer maps the candidate markers used in the
 answer to dense final ordinals by first appearance. Only then does publication
@@ -496,10 +492,11 @@ Unknown or linked markers publish marker-free prose with the closed
 `CitationsUnavailable` warning and a support id. Graph or database defects fail
 the run; they never degrade.
 
-Final markdown, citation edges, retrieval back-pointers, context refs,
-`citation_index`, warning state, and terminal `done` are one transaction.
-Rendered citations are built from the final edges by `build_citation_outs`
-(`chat_run_response.py`), uniformly with Oracle and Universal Dossiers.
+Final markdown, citation edges, retrieval back-pointers, context refs and their
+`context_ref_added` events, warning state, and terminal `done` are one
+transaction. A degraded answer writes no edges. Rendered citations are built from
+the final edges by `build_citation_outs_for_sources` (in `reads`), uniformly with
+Oracle and Universal Dossiers.
 
 `message_retrievals` is chat-owned **telemetry** and the sole durable
 per-result record: candidate generation and rerank/selection are transient,
@@ -510,10 +507,8 @@ the telemetry row; final reader ordinal lives on the edge.
 
 Assistant messages also carry a backend-built `trust_trail`: the durable
 inspector read model over `chat_runs`, tool calls, retrieval
-rows, citation edges, and context-ref-added events. Its tool calls are checked
-on the way out: counts equal their arrays, targets are unique, one effect
-identity, and each authorship's `position_path` is
-`generation/{seq}/tool/{position}`. Messages ship their `content`; the
+rows, citation edges, and the `done`/`context_ref_added` events, read in one
+batched pass and never stored. Messages ship their `content`; the
 assistant's text is rendered as markdown, the user's as plain text.
 
 The run is the sole support-id and publication-warning owner. The terminal run
@@ -527,20 +522,81 @@ to each source while the sentence that cites it stays in view (`n`/`→`,
 ## Backend Validation And Prompt Rendering
 
 FastAPI schemas accept `assistant_selection` branch anchors and `reader_selection`
-key+revision inputs as separate concepts.
+key+revision inputs as separate concepts. An `assistant_selection` anchor is
+always `offset_status: "unmapped"` (a mapped anchor is a 400); admission checks
+that a reply's anchor names its parent, a complete answer of this chat, after
+locking the conversation.
 
-`conversation_branches.branch_anchor_for_message` validates assistant-selection
-offsets (when mapped), exact text, prefix, and suffix against the parent
-assistant message. For a selection-backed
-turn, `context_assembler` renders `<subject>` (Highlight identity/source
-metadata) and `<reader_selection>` (the sole quote-text block) from the immutable
-snapshot, never the live Highlight, and excludes the selection Highlight from the
-generic `<resources>` block so the quote text appears exactly once. Historical
-quoted turns insert a bounded `<historical_reader_selection>` block immediately
-before their user message; that block, the user message, and its assistant
-response are one indivisible history-budget unit. Source-activation
+The frozen prompt (`services/chat/context.py`): the instructions are the fixed
+system prompt alone. The input opens with the turn's context — for a quote turn
+`<subject>` (Highlight identity/source metadata) and `<reader_selection>` (the
+sole quote-text block) from the immutable snapshot, never the live Highlight; a
+fork's selected answer text (`<assistant_selection>`); and the chat's
+`<resources>`, with `n` only on citable rows and the quote's Highlight compact
+so its text appears once — then history, then `<user>` and the turn. History is
+the parent's root path as user/answer pairs, newest first while both the token
+budget (`chat_budgets`, already net of the output) and chat's 512 KiB input
+bound hold; the first pair that does not fit ends it, so history stays
+contiguous. Historical quoted turns insert a `<historical_reader_selection>`
+block before their user text. Mandatory context never drops: when it cannot fit,
+the send is a recorded `E_GENERATION_CONTEXT_TOO_LARGE`. Source-activation
 destination comes from the immutable locator (gated by live visibility), never
 the live Highlight.
+
+## Backend: one package
+
+`services/chat/` (2026-10-10 rewrite, mig 0271):
+
+| module | owns |
+|---|---|
+| `admit` | send, rerun/regenerate, cancel: the receipt envelope (advisory key lock, replay, one savepoint, memo), destination, anchor, quote, message pair, run freeze, job, the owner's index bump |
+| `context` | the system prompt, the turn's context blocks, two-budget history, the frozen intent |
+| `quotes` | the reader-quote snapshot: build (locked highlight), encode/decode, revision, projection, preview, the XML quote renderer |
+| `citations` | candidate numbering, attached evidence, publication |
+| `retrievals` | `RetrievalCitation`, `citation_from_search_result`, the one `message_retrievals` writer |
+| `tool_calls` | the `message_tool_calls` writer: start, finish, attached (index 0), live write count |
+| `events` | run lock, claim fence, append (and the threaded live append), tail read, stop flag, the terminal fold |
+| `worker` | the `chat_run` job, its dead-letter projection, the attempt, the text coalescer |
+| `reads` | failure and rerun policy, run selection, owner gate, advisory, run response, tree, trust trails, the Undo projection |
+| `conversations` | create, the index, leaf select, fork title, deletes, owned ids, message action facts, the agent's page reader |
+
+Invariants: one admission is one savepoint (or only a rejection receipt); every
+nonterminal run has exactly one `chat_run:{id}` job; `events.finalize` is the
+only terminal writer and no-ops on a terminal run; the lock order is run, then
+job claim, everywhere; nothing replays (an attempt that finds its run's
+generation started, or a dead job, ends it `interrupted`, or `cancelled` when a
+stop was asked); candidate ordinals are dense from 1 per answer and never
+renumbered; a quote snapshot is written once; the active leaf is a leaf or NULL;
+every read and write is owner-scoped and foreign ids mask as not found; every
+existing-chat insertion locks the conversation before it reads a parent, as
+deletion does.
+
+Streamed text frames commit on a worker thread, each in its own session, at 512
+chars, 2048 bytes or 33 ms, in order. A frame waiting on a lock never holds the
+job's loop, so the stop poll, claim check and deadline keep running; those stay
+on the loop, as short reads in their own sessions. Adding text never waits on a
+write: frames queue in memory behind one writer task, because the codex
+runtime's event buffer is finite (256 events) and a consumer that stalls on the
+database overflows it into a `defect`. Phases before and after the generation
+run on the job's session.
+
+Event payloads are the wire models (`ChatRunAssistantTextDeltaEventPayload`,
+`ChatRunToolCall{Start,Done}EventOut`, `ChatRunToolResultEventOut`,
+`ChatRunContextRefAddedEventPayload`, `ChatRunDoneEventPayload`): six types, one
+model each, stored and streamed as is. A stored payload carries at least its
+current model's keys (pre-0271 rows may carry more); nothing validates stored
+frames on read, and the trust trail reads `done.usage` and four
+`context_ref_added` keys by name.
+
+Deletion (`conversations._delete`, under the conversation lock): the subtree's
+ids, their runs' jobs revoked, every web-snapshot id their retrievals captured,
+message edges, `DELETE FROM messages` (FK cascades take runs, events, tool calls
+and retrievals), the orphaned snapshots, and when no message remains, the chat's
+edges, its dossier subject and the chat. `llm_calls` has no FK and outlives the
+chat as the operational ledger.
+
+Index revisions are per owner: a send, delete or create bumps only its owner's
+`ConversationIndex` revision, once.
 
 ## Assumptions
 
@@ -553,7 +609,7 @@ until the owner says otherwise.
    "fork graph kept" of 2026-09-18).
 2. Fork titles are kept, on the user turn (`messages.fork_title`).
 3. The docent ("Walk the sources") and Details are kept whole: Details lists the
-   run, counts, notices, tools, citations and context refs.
+   run, counts, tools, citations and context refs.
 4. Drafts are one per account and conversation, plus one `new` draft per
    account per tab. Fork mode is not persisted.
 5. Reload resumes a pending run by replaying its events from 0. There is no
