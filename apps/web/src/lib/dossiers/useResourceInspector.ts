@@ -18,7 +18,7 @@ import {
 } from "@/components/resource-inspector/inspectorSurfaces";
 import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import { dispatchReaderSourceActivation } from "@/lib/resourceGraph/readerSourceActivation";
-import { hasSamePaneResource } from "@/lib/panes/paneIdentity";
+import { hasSamePaneResource } from "@/lib/panes/paneRouteModel";
 import {
   normalizePaneSecondaryPublication,
   secondaryPublicationIncludesSurface,

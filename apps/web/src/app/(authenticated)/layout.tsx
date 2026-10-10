@@ -1,39 +1,52 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import "@/lib/documentReader/documentReader.module.css";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { verifySession } from "@/lib/auth/dal";
 import { loadRenderEnvironment } from "@/lib/renderEnvironment/server";
+import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
+import { loadWorkspaceBootstrap } from "@/lib/workspace/bootstrap.server";
 import "./media/[id]/media.module.css";
-import { AuthenticatedShellSkeleton } from "./AuthenticatedShellSkeleton";
+import AuthenticatedShell from "./AuthenticatedShell";
 import { AuthenticatedWorkspaceErrorBoundary } from "./AuthenticatedWorkspaceErrorBoundary";
-import WorkspaceBootstrapGate from "./WorkspaceBootstrapGate";
+import styles from "./layout.module.css";
 
-// The active pane's label is the browser title, and only the workspace host
-// knows it. Dropping the inherited metadata title leaves the host's rendered
-// <title> as the single title element in this tree: Next resolves a null title
-// to no element at all, so its streamed metadata can no longer overwrite the
-// pane identity with the generic app name.
+// The workspace host renders the only <title> (the active pane's label), so
+// the tree emits no metadata title that could overwrite it.
 export const metadata: Metadata = { title: null };
 
-// Pane JavaScript stays lazy, but reader layout CSS is shell-critical. Next's
-// runtime CSS hook resolves dynamic imports before their stylesheets commit;
-// owning these small styles in the authenticated layout prevents a cached or
-// preloaded media pane from rendering unstyled (and satisfies PDF.js's strict
-// absolutely-positioned container precondition before its constructor runs).
-
-// Only LOCAL work runs above the Suspense boundary — the auth gate (may redirect) and the
-// header-derived render environment. The chrome skeleton is the first flush (TTFB depends on
-// nothing networked); the data root resolves behind the boundary and streams in (S4 / R1).
-// The client class boundary owns required account, profile and session bootstrap failure: a
-// same-segment error.tsx cannot catch its own layout.
+// Reader layout css is shell-critical: a lazily loaded media pane must never
+// render unstyled (PDF.js requires its positioned container up front). Only
+// local work runs above Suspense, so the skeleton is the first flush and the
+// workspace streams in when its data root resolves. A same-segment error.tsx
+// cannot catch its own layout, hence the client boundary.
 export default async function AuthenticatedLayout() {
   await verifySession();
   const renderEnvironment = await loadRenderEnvironment();
   return (
     <AuthenticatedWorkspaceErrorBoundary>
-      <Suspense fallback={<AuthenticatedShellSkeleton />}>
-        <WorkspaceBootstrapGate renderEnvironment={renderEnvironment} />
+      <Suspense fallback={<Skeleton />}>
+        <Workspace renderEnvironment={renderEnvironment} />
       </Suspense>
     </AuthenticatedWorkspaceErrorBoundary>
+  );
+}
+
+function Skeleton() {
+  return (
+    <div className={styles.layout}>
+      <title>Nexus</title>
+      <div className={styles.rail} aria-hidden />
+      <main className={styles.main}>
+        <PaneLoadingState label="Loading workspace…" announcement="None" />
+      </main>
+    </div>
+  );
+}
+
+async function Workspace(props: { renderEnvironment: RenderEnvironment }) {
+  const bootstrap = await loadWorkspaceBootstrap();
+  return (
+    <AuthenticatedShell {...bootstrap} renderEnvironment={props.renderEnvironment} />
   );
 }

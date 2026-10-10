@@ -69,11 +69,11 @@ import {
   definePaneVisitDataKey,
   useClearAllPaneVisitData,
   usePaneReturnReady,
+  usePaneScrollRetention,
   usePaneVisitData,
 } from "@/lib/workspace/paneReturnMemento";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
-import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
 import type { PaneRefreshExecute } from "@/lib/panes/panePublications";
 import {
   acceptLibraryInvite,
@@ -175,8 +175,7 @@ export default function LibrariesPaneBody() {
   // view is requested.
   const [viewInvalid, setViewInvalid] = useState(false);
   const invalidView = decodedView.kind === "Invalid" || viewInvalid;
-  const listRegionRef = useRef<HTMLDivElement | null>(null);
-  const capturePaneScroll = usePaneScrollRetention(listRegionRef, controller);
+  const capturePaneScroll = usePaneScrollRetention(controller);
   // Set by a refresh, which re-requests the view already committed; the
   // requested/committed key comparison alone cannot see that.
   const committedViewInvalidatedRef = useRef(false);
@@ -827,7 +826,7 @@ export default function LibrariesPaneBody() {
           </div>
         </section>
       ) : null}
-      <div ref={listRegionRef}>
+      <div>
         <CollectionView
           returnScope="Libraries.Items"
           rows={filteredLibraryRows}

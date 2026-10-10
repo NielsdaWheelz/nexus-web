@@ -1,53 +1,27 @@
-// Pure, SSR-safe href helpers (the window reads below are guarded), so both the
-// client workspace and the server bootstrap can import them.
-
+// Workspace hrefs are same-origin `pathname+search+hash`. Isomorphic: the
+// server resolves against http://localhost, the browser against its origin.
 import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
 
 export const WORKSPACE_DEFAULT_FALLBACK_HREF = APP_AUTHENTICATED_HOME_HREF;
+export const MAX_WORKSPACE_HREF_LENGTH = 4096;
 
-function resolveBaseOrigin(baseOrigin?: string): string {
-  if (baseOrigin && baseOrigin.length > 0) {
-    return baseOrigin;
-  }
-  if (
-    typeof window !== "undefined" &&
-    window.location.origin &&
-    window.location.origin !== "null"
-  ) {
-    return window.location.origin;
-  }
-  return "http://localhost";
-}
-
-export function parseWorkspaceHref(
-  href: string,
-  options?: { baseOrigin?: string }
-): URL | null {
-  if (typeof href !== "string" || href.trim().length === 0) {
-    return null;
-  }
-  const baseOrigin = resolveBaseOrigin(options?.baseOrigin);
+export function parseWorkspaceHref(href: string): URL | null {
+  const origin =
+    typeof window === "undefined" ? "http://localhost" : window.location.origin;
+  if (!href.trim()) return null;
   try {
-    const parsed = new URL(href, baseOrigin);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return null;
-    }
-    if (parsed.origin !== baseOrigin) {
-      return null;
-    }
-    return parsed;
+    const url = new URL(href, origin);
+    return url.origin === origin && /^https?:$/.test(url.protocol) ? url : null;
   } catch {
     return null;
   }
 }
 
-export function normalizeWorkspaceHref(
-  href: string,
-  options?: { baseOrigin?: string }
-): string | null {
-  const parsed = parseWorkspaceHref(href, options);
-  if (!parsed) {
-    return null;
-  }
-  return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+/** The canonical href, or null when not same-origin or over 4096 chars. */
+export function normalizeWorkspaceHref(href: string): string | null {
+  const url = parseWorkspaceHref(href);
+  const normalized = url && `${url.pathname}${url.search}${url.hash}`;
+  return normalized && normalized.length <= MAX_WORKSPACE_HREF_LENGTH
+    ? normalized
+    : null;
 }

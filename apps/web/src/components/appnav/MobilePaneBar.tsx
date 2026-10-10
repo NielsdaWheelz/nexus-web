@@ -10,13 +10,10 @@ import {
   useMobileChrome,
   useMobileChromeSurface,
 } from "@/lib/workspace/mobileChrome";
-import { usePaneWarmOnIntent } from "@/lib/panes/paneWarm";
 import styles from "./AppNav.module.css";
-import { pointerModality } from "@/lib/ui/pointerModality";
 
 export default function MobilePaneBar() {
   const { motionPhase, paneChrome } = useMobileChrome();
-  const handleChromeIntentCapture = usePaneWarmOnIntent();
   const navigation = paneChrome?.navigation;
   const topBarRef = useRef<HTMLElement>(null);
   useMobileChromeSurface(topBarRef, "AppBar", true);
@@ -57,16 +54,12 @@ export default function MobilePaneBar() {
       inert={!interactive || undefined}
       style={{ pointerEvents: interactive ? undefined : "none" }}
       onClickCapture={handleChromeClickCapture}
-      onMouseOverCapture={handleChromeIntentCapture}
-      onFocusCapture={handleChromeIntentCapture}
     >
       <div className={styles.topBarControls}>
         <button
           type="button"
           className={styles.topBarButton}
-          onClick={(event) =>
-            navigation?.onBack(pointerModality(event))
-          }
+          onClick={() => navigation?.onBack()}
           disabled={!navigation?.canGoBack}
           aria-label="Go back"
         >
@@ -75,9 +68,7 @@ export default function MobilePaneBar() {
         <button
           type="button"
           className={styles.topBarButton}
-          onClick={(event) =>
-            navigation?.onForward(pointerModality(event))
-          }
+          onClick={() => navigation?.onForward()}
           disabled={!navigation?.canGoForward}
           aria-label="Go forward"
         >

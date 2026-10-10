@@ -130,7 +130,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
               else {
                 controller.activate(
                   active.action,
-                  { disposition: { kind: event.shiftKey ? "Fork" : "Follow" }, modality: "Keyboard" },
+                  { disposition: { kind: event.shiftKey ? "Fork" : "Follow" } },
                   null,
                   active,
                 );
@@ -187,7 +187,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                       select(row, "Primary");
                       controller.activate(
                         row.action,
-                        { disposition: { kind: event.shiftKey ? "Fork" : "Follow" }, modality: "Pointer" },
+                        { disposition: { kind: event.shiftKey ? "Fork" : "Follow" } },
                         null,
                         row,
                       );

@@ -13,8 +13,10 @@ import {
 } from "lucide-react";
 import { browseHref } from "@/lib/browse/query";
 import { DESTINATIONS, getDestination, type Destination, type DestinationId } from "@/lib/navigation/destinations";
-import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneIdentity";
-import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
+import {
+  getPaneRouteIcon,
+  resolveWorkspaceActivationRouteId,
+} from "@/lib/panes/paneRouteModel";
 import type { ResourceItem } from "@/lib/resources/resourceItems";
 import { searchHref } from "@/lib/search/searchParams";
 import { SEARCH_TYPE_ICON } from "@/lib/search/searchTypeIcon";

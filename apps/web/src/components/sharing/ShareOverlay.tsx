@@ -220,7 +220,6 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
         secondaryActivation: { surfaceId: "resource-members" },
       },
       disposition: { kind: "Follow" },
-      modality: "Programmatic",
     });
     if (result.kind !== "Rejected") onClose();
     else showError({ tone: "Danger", title: "Members could not be opened. Try again." });

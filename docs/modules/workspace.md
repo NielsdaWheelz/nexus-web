@@ -12,68 +12,76 @@ Frontend owners live under `apps/web/src/components/workspace/*` and
 
 ## persisted workspace sessions
 
-durable state is one json object per authenticated user/device pair.
-[`workspace_sessions.py`](../../python/nexus/services/workspace_sessions.py)
-owns reads and last-write-wins saves; pane order lives in
-`WorkspaceState.primaryPaneOrder` inside that object. the table has no separate
-order key. saves commit the state and database timestamp together.
+the workspace is four modules: routes
+([`paneRouteModel.ts`](../../apps/web/src/lib/panes/paneRouteModel.ts), the only
+url → pane-kind table, deriving routeKey, resource locator and mount key in one
+resolver), state ([`model.ts`](../../apps/web/src/lib/workspace/model.ts), the
+api's own type plus entry and pane moves), the store
+([`store.tsx`](../../apps/web/src/lib/workspace/store.tsx), one external store
+whose commands apply synchronously) and the return memento
+([`paneReturnMemento.tsx`](../../apps/web/src/lib/workspace/paneReturnMemento.tsx)).
 
-`GET /me/workspace-session?device_id=...` returns
-`{data:{own,most_recent_elsewhere}}`. each value is null or `{state,updated_at}`;
-both are scoped to the authenticated user. elsewhere excludes the requested
-device and selects newest by `updated_at DESC`, then `id DESC`.
-api put accepts `{device_id,state}` and returns `{data:{state,updated_at}}`.
-device length, state-size validation, authentication and error envelopes belong
-to the existing [schema](../../python/nexus/schemas/workspace_session.py) and
-[routes](../../python/nexus/api/routes/me.py).
+durable state is one json object per authenticated user/device pair:
+`WorkspaceState = {activePrimaryPaneId, panes}`. panes are one ordered array;
+each pane is `{id, currentVisit, primaryWidthPx, visibility, history:{back,
+forward}, secondary}` with its inspector embedded. `primaryWidthPx: null` means
+"the reader column": such a pane follows the column when the reader font or
+column changes, and only a user resize stores a number. labels, recently closed,
+mementos, visit data, the transient inspector and daily-page publications are
+not persisted.
 
-browser [put](../../apps/web/src/app/api/me/workspace-session/route.ts) accepts
-exactly `{state}`, validates the persisted shape, and injects the server-owned
-httpOnly `nx_device` cookie. supplied device identity is rejected with 400
-`E_INVALID_WORKSPACE_STATE`; an absent cookie is a 500 `E_INTERNAL` defect.
-restore is a direct server api read, with no browser get route.
+python owns the shape and validates every save and every stored read
+([schema](../../python/nexus/schemas/workspace_session.py),
+[service](../../python/nexus/services/workspace_sessions.py)): structure and
+bounds (1..12 panes, back + forward ≤ 12 per pane, ≤ 48 history in all, ids ≤ 64,
+hrefs `^/` and not `//`, ≤ 4096), unique pane and visit ids, an active pane that
+is visible, and an inspector surface inside its group. the web has no decoder:
+its state type is the generated `Schema<"WorkspaceState-Output">`. a stored row
+the model cannot read reads as absent (one `workspace_session_unreadable`
+warning), so drift loads the default workspace instead of the error boundary.
+which inspector group a route offers is the web's rule, applied on every write.
+
+`GET /me/workspace-session?device_id=` returns
+`Data[WorkspaceSessionsOut]` = `{data:{own, most_recent_elsewhere}}`, each a
+`WorkspaceState` or null; elsewhere is the same user's newest other-device row
+(`updated_at DESC, id DESC`). `PUT /me/workspace-session?device_id=` takes a
+`WorkspaceState` body and answers 204; a model violation is 400
+`E_INVALID_REQUEST`. the browser
+[put](../../apps/web/src/app/api/me/workspace-session/route.ts) forwards the body
+untouched and sets the query from the server-owned httpOnly `nx_device` cookie, so
+a client cannot name a device; an absent cookie is a 500 `E_INTERNAL` defect.
+
 [`bootstrap.server.ts`](../../apps/web/src/lib/workspace/bootstrap.server.ts)
-requires restoration on the normal 30 s server deadline: nontrivial own state
-wins, then nontrivial newest elsewhere, then the current deep-link/default state
-after a successful read confirms no nontrivial saved state. missing device
-identity, failed reads and malformed saved data reject bootstrap into its
-existing error/retry boundary;
-no fallback mounts the save hook while stored state is unknown. only speculative
-pane seeds keep the 500 ms budget. slow restoration may delay workspace content
-or show the error boundary; the shell skeleton still streams immediately.
-[`workspaceRestore.ts`](../../apps/web/src/lib/workspace/workspaceRestore.ts)
-owns validation, width adjustment and deep-link merging.
+reads the account, reader profile and sessions concurrently on the normal 30 s
+deadline (all required: a failure is the workspace error region, never a
+fabricated default that could autosave over an unread session). `enterWorkspace`
+picks own-if-nontrivial, else elsewhere-if-nontrivial, else one Lectern pane, and
+merges a deep link: `/` and non-canonical request paths resume; bare `/daily` is
+today in the account zone; any other path reuses the pane on its routeKey or
+resource (keeping its visit id, width and inspector) or is appended, keeping the
+newest 11 at the cap. visible panes are then seeded best effort, one load per
+cache key. the authenticated group has one optional catch-all page
+(`[[...path]]/page.tsx`), so an unknown path renders the unsupported pane inside
+the restored workspace. the workspace error region's Retry reloads the document.
+
 [`useWorkspaceSession.ts`](../../apps/web/src/lib/workspace/useWorkspaceSession.ts)
-debounces edits for 1 s; only successful transport acknowledges the exact sent
-snapshot. one live writer coalesces newer requested state, reading latest at
-dispatch. failures retain dirty state. pagehide/hidden requests a dirty keepalive
-save independently of the timer; repeated events for the same live snapshot
-coalesce without creating an automatic retry.
-
+saves 1 s after the state last changed identity; the initial state counts as
+unsaved, so every page load saves once. one request is in flight; a newer state
+requested meanwhile is sent when it settles (keepalive if any request asked), and
+a success acknowledges exactly the state it sent. pagehide and hidden flush with
+keepalive (best effort for states over the browser's 64 KiB keepalive budget).
 network, upstream, upstream-timeout and auth-dependency failures publish one
-persistent retry notice; retry reads latest state. 401 keeps existing login
-handling. malformed/internal/unexpected faults reach the authenticated workspace
-render boundary. lifetime cleanup cancels timers, clears unsent intent and
-withdraws the notice; withdrawal is not acknowledgement. late settlements cannot
-publish feedback or dispatch after their owner unmounts.
+persistent "Workspace save wasn’t confirmed" notice with Retry; 401 goes to
+login; anything else is a defect thrown into the workspace boundary.
 
-this serializes known requests in the mounted hook, not remote intent across
-tabs or ambiguous failures. per-device/cross-tab saves remain last-write-wins.
-closing during an older live request may destroy the document before the latest
-queued keepalive dispatches; offline and close delivery remain best-effort.
-no server revision protocol, local journal or retry loop is added.
-
-live qualification: 14 cases and 24 recorded browser puts, with genuine
-bff/api readback, cover initial
-deep-link/no-op, debounce, failed save → latest retry → root restore, dirty
-pagehide, keepalive failure without an automatic loop, real pre-forward
-serialization, delayed acknowledgement, committed/lost response, the four named
-delivery failures, auth redirect and internal/non-json fault handoff. the
-persistent notice withdraws on defect; historical aria announcement text may
-remain without a retry action. receipts: `/tmp/nexus-workspace-save-{baseline,candidate}-receipt.json`.
-pagehide events were explicitly injected; actual visibility-hidden, mobile and
-document-close delivery were not observed. the hidden branch is source-qualified
-through the same flush callback. final static gate passed.
+the address bar names the active pane. the store projects it with next's patched
+`history.replaceState(null, "", href)`, so next's router url follows and a server
+action or refresh cannot revert it. next installs that patch in a passive effect
+that runs after the first commit's layout effects; the first projection then
+writes the entry directly and projects again on the next frame. a location hash
+(cold load, `hashchange`, `popstate`) is folded into the active pane only when
+the location's path and search equal the pane's; an entry for another path
+(browser Back onto a fragment entry) is re-projected to the active pane.
 
 ## Layout Modes
 
@@ -111,33 +119,19 @@ Mobile mode is not a narrow desktop canvas. It is a different composition
 contract.
 
 The workspace store is the sole owner of sequential traversal. It follows
-visible panes in stable `primaryPaneOrder`, clamps at the first and last pane,
+visible panes in strip order, clamps at the first and last pane,
 and never wraps. The Nexus swipe and `pane-next` / `pane-previous` keybindings
 invoke that same store command.
 
-## Pane Resource Resolution
+## Pane Resource Identity
 
-Pane route identity and pane resource identity are separate. The route remains
-renderable while its resource locator settles.
-
-- `paneResourceLocator.ts` owns locator identity, equality, and keys.
-- `resourceLocators.ts` is the strict transport owner. A successful batch must
-  return exactly one typed row per requested locator, in request order, and
-  each `canonicalHref` must equal the returned resource item's route.
-- `usePaneResourceResolutionRegistry.ts` owns live-locator deduplication,
-  pending/settled state, generation-fenced installation, pruning, retry, and
-  request cleanup for `WorkspaceHost`.
-
-The registry publishes one closed state per locator: `Pending`, `Resolved`
-(`ready` or `missing`, always carrying the `ResourceItem`), or `Failed`
-(`unauthorized`, `invalid`, or `error`, never carrying an item). Decoder drift,
-same-system API defects, and non-API failures are thrown to the pane defect
-boundary; they are not flattened into retryable resource failures.
-
-`WorkspaceHost` only projects that tagged state into `PaneRuntimeProvider`.
-The runtime defects if a resolved status and its item do not arrive together;
-there is no ready-to-pending fallback. Direct one-object workflows use the
-strict singleton transport and never accept the first row positionally.
+a pane's resource is its route's own locator (`resource_ref` or
+`contributor_handle`), resolved synchronously by `resolvePaneRouteModel`; the
+runtime's `resourceRef` is that ref (null for authors and routes naming no
+resource). nothing resolves locators for open panes: the author body takes its
+contributor ref from the author it loaded, and a pane for deleted media shows the
+body's own not-found. `resourceLocators.ts` remains the one-locator transport
+for editors that resolve a typed link.
 
 ## Pane Canvas
 
@@ -400,47 +394,40 @@ preview keeps its resource controls and has no collection publication.
 ## Target Activation
 
 The workspace owns cross-pane product-target activation through
-`activateWorkspaceTarget`. Callers provide a supported href, semantic
-disposition, optional label/secondary payload, and navigation modality; they
-never choose a pane or invoke pane creation directly.
+`activateWorkspaceTarget`. Callers provide an href, a semantic disposition and
+an optional label hint or inspector surface; they never choose a pane or invoke
+pane creation directly.
 
-- `Follow`: activate and restore an exact route-key match; otherwise push the
-  target in the origin pane.
+- `Follow`: activate an exact match; otherwise push the target in the origin
+  pane.
 - `Fork`: always create and activate a fresh pane immediately after the origin.
-- `Adopt`: activate and restore an exact match; otherwise create after the
-  origin. Only named workflows that must preserve their source use it.
+- `Adopt`: activate an exact match; otherwise create after the origin. Only
+  named workflows that must preserve their source use it.
 
 Exact identity is route plus normalized query and ignores hash. With duplicate
-exact panes, selection is origin first, then the first visible match, then the
-first minimized match. A different hash pushes in the selected target pane;
-query-distinct product targets remain distinct. Secondary activation is
-delivered after pane selection and never changes disposition.
+matches, selection is origin first, then the first visible match, then the first
+minimized match. A different hash pushes in the selected pane. An unsupported
+href opens the unsupported pane instead of throwing; it has the standard section
+header, so its pane Back and Forward work like any route's. A requested inspector
+surface is attached in the same commit (when the route offers its group); if the
+body never publishes that surface, the host shows its publication's default.
 
-At the 12-pane cap, `Fork` or creating `Adopt` is rejected atomically with
-non-modal feedback. The workspace never evicts another pane to satisfy target
-activation.
+At the 12-pane cap, `Fork` or creating `Adopt` is rejected atomically with the
+"Pane limit reached" HUD. The workspace never evicts another pane to satisfy
+target activation.
+
+the daily page is one explicit rule: a page body publishes its
+`PaneDailyPage {localDate, pageId}` (layout phase, `usePaneDailyPage`), and a
+`/daily/{date}` target matches a pane of another route whose publication names
+that date, a `/pages/{id}` target one naming that page. Today, quick note and
+add to Today therefore reuse an open daily pane under either href.
 
 Accepted activation may carry one pane-entry delivery addressed to the chosen
-`paneId` plus its current `visitId`. Lazy body mounting queues that delivery
-until the visit subscribes; an already-mounted visit receives it immediately.
-Each AppendNote delivery carries its initial text and replay-safe note and
-client-mutation identities. Each activation ID is consumed once for the
-workspace-provider lifetime. A
-visit holds at most one unclaimed delivery: a newer accepted entry explicitly
-supersedes it, while View cancels it. Acknowledgement names the exact claimed
-delivery, so a stale acknowledgement cannot clear its replacement. Rejected,
-closed, or `ActivationBlocked` activation leaves no ambient intent for a later
-pane.
-
-The planner derives `daily:{localDate}` and `page:{pageId}` aliases from their
-routes and unions them with aliases published by Page panes. Quick Note,
-query-seeded Add to Today, and
-ordinary Page opens therefore reuse an open `/pages/{pageId}` daily pane or
-`/daily/{localDate}` pane and deliver append to that exact visit. The daily
-surface owner appends seed text to an appendable draft and rejects a seeded
-atomic draft before navigation. A latent
-daily visit adopts its returned persistence ref without replacing the visit
-href or mount identity.
+pane and the exact visit the target lands on; the page body reads it through
+`usePaneEntryDelivery` and acknowledges it by activation id. A newer entry
+supersedes (cancels) the pane's previous delivery, a View cancels it, a rejected
+activation cancels itself, and a commit that changes the pane's visit cancels
+it; `MobileQuickNoteHandoff` watches `cancelledPaneEntryActivationIds`.
 
 Learn is one of the named Adopt workflows. It preserves the source reader and
 opens `/artifacts/artifact:<id>` as a standalone resource pane after its durable
@@ -453,26 +440,23 @@ Conversation find keeps its own way back, offered in the find bar and the pane
 header. previews write no pane history entry.
 
 `targetLinkActivation.ts` is the one browser gesture adapter. Plain click and
-`Enter` are `Follow`; `Shift`+click is `Fork`; Meta/Ctrl/Alt, middle-click,
-downloads, external links, `_blank`, fragments, and already-prevented events
-remain browser- or route-owned. Anchors retain real hrefs. Route-local reader
-location, sort/filter, and pagination controls keep their feature-owned
-push/replace/no-write policy.
+`Enter` are `Follow`; `Shift`+pointer click is `Fork`; Meta/Ctrl/Alt,
+middle-click, downloads, external links, `_blank`, fragments, browser-owned
+paths and already-prevented events remain browser- or route-owned. Browser-owned
+paths are `/` (the workspace entry) and what Next serves outside the catch-all
+(app pages and handlers such as `/login`, `/account`, `/auth`, `/s`, `/api`;
+metadata files; `public/`; `/_next`). Every other path is a pane's, so a stale
+link follows in its pane to the unsupported pane instead of reloading the
+document (where, as a deep link, it would append a pane and evict at the cap).
 
 ## Recently Closed Panes
 
-`WorkspaceStoreProvider` owns a session-local, newest-first stack of at most
-five valid closed-pane snapshots outside persisted `WorkspaceState`. A snapshot
-contains the primary pane, its attached secondary pane when present, and its
-former order index.
-
-Close snapshots before removal, including close-last fallback. Restore is one
-atomic workspace transition: reject before mutation at the pane cap, reject
-duplicate primary or secondary identity as a defect, normalize secondary
-attachment and parent identity, clamp current widths, make the restored pane
-visible and active at the clamped former index, and reapply the per-pane and
-global history budgets. Remove the snapshot only after successful restore.
-Reload clears the stack.
+The store keeps a page-lifetime, newest-first stack of at most five closed panes
+(`{pane, index}`, the inspector inside the pane) outside the persisted state.
+Closing activates the right visible neighbour, else the left; closing the last
+pane leaves a fresh Lectern pane. Restore rejects at the pane cap, otherwise
+reinserts the pane at its clamped former index, visible and active, keeping its
+inspector while the route still offers its group. Reload clears the stack.
 
 ## Mobile Viewport And Bottom Geometry
 
@@ -564,24 +548,34 @@ workspace is the sole owner of `push`, `replace`, Back, and Forward mechanics.
 - `replace` retains the current visit id and changes its href without changing
   either stack.
 - Back and Forward traverse visit occurrences.
-- A replace that consumes a target hash writes `pathname + search` — hash
-  consumption always strips the hash from the href it stores.
 - The workspace never infers push-versus-replace from URL shape or resource
   equality. Feature owners choose the operation for every navigation they
   perform; the workspace only executes it.
-- Per-pane history is capped at 12 entries in each direction; the workspace
-  holds at most 48 history entries across every pane combined. When a write
-  exceeds either budget, Back trims its head and Forward trims its tail;
-  non-active panes are trimmed before the active pane.
+- A pane's back + forward is at most 12 (push clears forward, traversal
+  conserves the sum) and all panes hold at most 48 entries; past that, Back
+  trims its head and Forward its tail, non-active panes first.
+- A move keeps the pane's width and inspector within one resource, or within
+  one route and path for routes naming no resource (query-only changes).
 
 For every `ShellScroll` route, `PaneShell` is the one primary vertical
-scrollport. `PaneReturnMementoProvider` keeps current-tab-only presentation
-state keyed by visit id: raw position, semantic eye-line anchor, keyboard focus
-anchor, and a bounded route-owned loaded-extent snapshot. Capture is synchronous
-before a visit is displaced. Restore waits for the successful lazy body and the
-route's committed async content, then restores semantic position before
-clamping raw pixels. Reader, Chat transcripts, and Atlas keep their separate
-scroll/location owners. Mementos and loaded extent are never persisted.
+scrollport. The return memento keeps current-tab-only presentation state per
+visit: scroll offset, the eye-line row and its offset, the keyboard focus row,
+and route-owned visit data (`usePaneVisitData`). The store captures a pane
+synchronously before its visit leaves the screen: push and traverse capture the
+navigated pane, and any command that moves activation captures the pane losing
+it (mobile unmounts it). Keyboard-ness is read at capture: the focused element
+is inside the pane, matches `:focus-visible` and is not editable. A new visit's
+registration restores: it places the eye-line row (else the clamped offset) at
+once and twice more over two frames after the body reports ready
+(`usePaneReturnReady`, and every `usePaneReturnDescendantReady` inside the
+content), then focuses the row's `[data-row-focusable]` (else the pane
+landmark). Wheel, touch, pointer and scroll keys cancel a pending restore.
+Visit data is written on every commit and tagged with its routeKey, so a replace
+to another route never restores stale data; `useClearAllPaneVisitData` drops all
+of it after a mutation. `usePaneScrollRetention` holds the live offset across a
+same-path view swap. Reader, Chat transcripts, and Atlas keep their separate
+scroll/location owners. Mementos and visit data are never persisted and are
+forgotten when their visit leaves every stack.
 
 ## Reader-To-Chat Launch Intent
 

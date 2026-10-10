@@ -2,7 +2,7 @@
 
 import { Maximize2, Minus, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
+import { getPaneRouteIcon } from "@/lib/panes/paneRouteModel";
 import styles from "./WorkspacePaneStrip.module.css";
 
 interface WorkspacePaneStripItem {

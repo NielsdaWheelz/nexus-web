@@ -63,21 +63,19 @@ import {
 } from "@/lib/panes/paneResourceLoaders";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import {
-  type PaneResourceStatus,
   usePaneIsActive,
   usePaneIsVisible,
   usePaneParam,
-  usePaneRuntime,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import {
   definePaneVisitDataKey,
   useClearAllPaneVisitData,
   usePaneReturnReady,
+  usePaneScrollRetention,
   usePaneVisitData,
 } from "@/lib/workspace/paneReturnMemento";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
-import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import SelectField from "@/components/ui/SelectField";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
@@ -120,32 +118,16 @@ function authorLoadErrorMessage(error: unknown): FeedbackContent {
   }
 }
 
-function resolveAuthorConnectionsResource(
-  resourceRef: string | null,
-  resourceStatus: PaneResourceStatus,
+/** The Connections surface needs the author's resource ref, which its load carries. */
+function authorConnectionsResource(
+  ref: string | undefined,
+  loadFailed: boolean,
 ): AuthorConnectionsResource {
-  const parsed = resourceRef ? parseResourceRef(resourceRef) : null;
+  const parsed = ref ? parseResourceRef(ref) : null;
   if (parsed?.scheme === "contributor") {
-    return {
-      kind: "Ready",
-      ref: { scheme: "contributor", id: parsed.id },
-    };
+    return { kind: "Ready", ref: { scheme: "contributor", id: parsed.id } };
   }
-  switch (resourceStatus) {
-    case "none":
-    case "pending":
-      return { kind: "Loading" };
-    case "ready":
-    case "missing":
-    case "unauthorized":
-    case "invalid":
-    case "error":
-      return { kind: "Unavailable" };
-    default: {
-      const exhaustive: never = resourceStatus;
-      return exhaustive;
-    }
-  }
+  return loadFailed ? { kind: "Unavailable" } : { kind: "Loading" };
 }
 
 export default function AuthorPaneBody() {
@@ -153,7 +135,6 @@ export default function AuthorPaneBody() {
   if (!handle) {
     throw new Error("author route requires a handle");
   }
-  const paneRuntime = usePaneRuntime();
   const isPaneActive = usePaneIsActive();
   const isPaneVisible = usePaneIsVisible();
   const metadataRevision = useMetadataCollectionRevision();
@@ -184,7 +165,6 @@ export default function AuthorPaneBody() {
   // view is requested.
   const [viewInvalid, setViewInvalid] = useState(false);
   const invalidView = decodedView.kind === "Invalid" || viewInvalid;
-  const worksRegionRef = useRef<HTMLElement | null>(null);
   const committedSnapshotRef = useRef<CommittedAuthorWorks | null>(null);
   const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
   const restored = usePaneVisitData(AUTHOR_VISIT_DATA, captureCommitted);
@@ -209,7 +189,7 @@ export default function AuthorPaneBody() {
   }
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const capturePaneScroll = usePaneScrollRetention(worksRegionRef, data);
+  const capturePaneScroll = usePaneScrollRetention(data);
   // Set by a refresh so the already-committed view refetches once under a new
   // request identity; cleared by the commit that answers it. A view change needs
   // no flag — the requested and committed identities differ on their own.
@@ -642,13 +622,10 @@ export default function AuthorPaneBody() {
     [filterQuery, workRows],
   );
   const canonicalHandle = data?.detail.handle ?? null;
+  const contributorRef = (data?.detail ?? seedDetail)?.actionSubject.ref;
   const connectionsResource = useMemo(
-    () =>
-      resolveAuthorConnectionsResource(
-        paneRuntime?.resourceRef ?? null,
-        paneRuntime?.resourceStatus ?? "none",
-      ),
-    [paneRuntime?.resourceRef, paneRuntime?.resourceStatus],
+    () => authorConnectionsResource(contributorRef, error !== null),
+    [contributorRef, error],
   );
   const connectionsBody = useMemo(
     () =>
@@ -780,7 +757,7 @@ export default function AuthorPaneBody() {
             </section>
           ) : null}
 
-          <section aria-label="Works" ref={worksRegionRef}>
+          <section aria-label="Works">
             <CollectionView
               returnScope="Author.Works"
               rows={filteredWorkRows}

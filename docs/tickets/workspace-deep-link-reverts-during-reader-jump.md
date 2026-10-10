@@ -23,3 +23,12 @@ owner if the explicit deep link is being lost.
 acceptance: a full-page `/media/:id` deep link settles on its requested media
 with matching pane URL/options after workspace restore, independent of an old
 pane's in-flight fragment response. ordinary tab switching remains stable.
+
+2026-10-09 workspace reauthoring (cleanup/workspace-reauthor): the bootstrap
+merge (`enterWorkspace`), the store and the address projection were rewritten;
+the address now goes through next's patched `replaceState`, so next's router
+url follows the projection (that removed one way an older url could be
+re-asserted). remaining hypothesis: the old EPUB pane's late fragment
+completion calls its pane router's `replace`, and `navigatePane` activates the
+navigated pane by default (`activate` defaults to true), so a background pane's
+replace takes activation back from the deep-linked pane. not reproduced here.

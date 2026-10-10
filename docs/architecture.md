@@ -467,8 +467,8 @@ method-specific contracts; bootstrap alone projects the two-field account domain
 its provider keeps the current account-local zone. plain-text share freezes that
 date before saving. native names allow 100 raw code points while the web form allows
 80 UTF-16 units; [alignment remains deferred](tickets/account-display-name-has-conflicting-length-bounds.md).
-bare `/daily` still opens an unsupported pane: the declared server redirect is a
-[hidden entry path](tickets/daily-root-entry-bypasses-server-redirect.md), not qualified behavior.
+bare `/daily` opens today's daily page in the account zone (the workspace bootstrap
+resolves it).
 page/note links, highlight-note attachments and backlinks use `resource_edges`;
 notes own no separate relationship table.
 
@@ -1786,8 +1786,8 @@ controller, focus, and measurement lifecycles are not recreated on every use;
 the inactive projection becomes `hidden` and `inert`, while children continue
 to receive lifecycle updates before the next opening.
 The mobile Nexus control also carries a primary-touch horizontal adjacent-tab
-accelerator over the workspace store's stable `primaryPaneOrder`, visible-only,
-clamped traversal command; tap remains the task entrance and the gesture creates
+accelerator over visible panes in `state.panes` order, the store's clamped
+traversal command; tap remains the task entrance and the gesture creates
 no second navigation model.
 The viewport-fixed dialog owns an opaque safe-area- and keyboard-aware canvas;
 it has no scrim, grabber, outside-click target, drag dismissal, or
@@ -1889,30 +1889,32 @@ internalize first:
 
 **Routing is a client-side pane system, not Next.js `children`.** The
 `(authenticated)` layout renders a fixed `AuthenticatedShell` and _ignores_
-`children`. Each route's `page.tsx` exists only so Next resolves the URL; the
-actual body is a `*PaneBody` component that the **pane route registry**
-(`lib/panes/paneRouteModel.ts`, `lib/panes/paneRouteTable.ts`, and
-`lib/panes/paneRenderRegistry.tsx`) resolves and renders inside a pane. The URL
-is a _projection_ of the active pane (mirrored via `history.replaceState`), not
-the driver. New devs frequently look in `page.tsx` for behavior that lives in
-`*PaneBody.tsx`.
+`children`. One optional catch-all `[[...path]]/page.tsx` exists only so Next
+resolves every URL; the actual body is a `*PaneBody` component that the **pane
+route table** (`lib/panes/paneRouteModel.ts`, with lazy bodies in
+`lib/panes/paneRenderRegistry.tsx`) resolves and renders inside a pane; an
+unknown path renders the unsupported pane. The URL is a _projection_ of the
+active pane (mirrored through next's patched `history.replaceState`, so next's
+router url follows), not the driver. New devs frequently look for a `page.tsx`
+for behavior that lives in `*PaneBody.tsx`.
 
 Authenticated entry is classified once by `loadWorkspaceBootstrap`: pathname
 `/` is Resume and preserves the selected saved workspace exactly; every other
-protected href is Navigate and uses the existing deep-link merge. With no usable
-saved session, Resume creates the existing one-pane Lectern empty state.
+protected href is Navigate and uses the deep-link merge (`enterWorkspace`); bare
+`/daily` is today in the account zone and a non-canonical path resumes. With no
+usable saved session, Resume creates the one-pane Lectern empty state.
 `/lectern` remains explicit Home. Shell global-access query intents are consumed
-in a layout effect before the workspace's passive state-to-URL projection, so
-they open over Resume and never become panes.
+in a layout effect before the store's first state-to-URL projection, so they
+open over Resume and never become panes.
 
 - **Workspace shell** (`lib/workspace/*`, `components/workspace/*`): a tabbed,
   multi-pane canvas. Durable state (`WorkspaceState`: primary panes with
-  visit-identified Back/Forward history, attached secondary tool panes, widths)
-  lives in a React reducer+context store and is persisted
-  **per-user-per-device** to `workspace_sessions`. Current-tab return
-  presentation is separate: `PaneReturnMementoProvider` keys semantic
-  scroll/focus mementos and bounded route-owned loaded extent by the exact
-  `PaneVisit` UUID. `PaneShell` is the sole primary vertical scroll owner for
+  visit-identified Back/Forward history, embedded inspectors, widths) lives in
+  one external store (`useSyncExternalStore`) whose commands apply synchronously,
+  and is persisted **per-user-per-device** to `workspace_sessions`; the api's
+  pydantic model is the only validator. Current-tab return presentation is
+  separate: the return memento keys scroll/eye-line/focus mementos and
+  route-owned visit data by the exact `PaneVisit` UUID. `PaneShell` is the sole primary vertical scroll owner for
   ordinary routes; Reader, Chat transcripts, and Atlas retain distinct owners.
   Desktop keeps every primary pane host mounted. Mobile renders exactly the
   active primary pane through one stable host identity: switching panes replaces
@@ -1923,11 +1925,10 @@ they open over Resume and never become panes.
   A pane is identified by a stable pane id; its resolved `routeKey` gates
   route-scoped labels, layout, secondary/fixed chrome, primary-chrome
   publication, and return data so stale cleanup cannot mutate a newer route
-  instance. `WorkspaceStoreProvider` separately owns a bounded ephemeral
-  recently-closed stack and atomic normalized restoration; it is intentionally
-  absent from persistence codecs.
-  Routes resolve via a pure model (`paneRouteModel.ts`) plus metadata table
-  (`paneRouteTable.ts`) bound to React bodies (`paneRenderRegistry.tsx`). Bodies talk
+  instance. The store separately owns a bounded page-lifetime recently-closed
+  stack; it is not persisted.
+  Routes resolve via one table (`paneRouteModel.ts`) bound to lazy React bodies
+  (`paneRenderRegistry.tsx`). Bodies talk
   to the shell only through `paneRuntime.tsx` hooks (`usePaneRouter`, `usePaneParam`,
   `useSetPaneLabel`, `usePaneSecondary`) and route-keyed
   `usePanePrimaryChrome`; `usePaneRuntime().isActive` exposes the
@@ -1991,47 +1992,36 @@ they open over Resume and never become panes.
   [`modules/app-navigation.md`](modules/app-navigation.md).
 - **First paint: stream, don't gate.** The `(authenticated)` layout runs only
   **local** work (`verifySession`, header-derived `loadRenderEnvironment`) above a
-  `<Suspense fallback={<AuthenticatedShellSkeleton/>}>`, itself wrapped in
+  `Suspense` whose fallback is the chrome skeleton, itself wrapped in
   `AuthenticatedWorkspaceErrorBoundary` (a client class boundary — a same-segment
-  `error.tsx` cannot catch its own layout); `WorkspaceBootstrapGate` awaits the data
-  root inside the boundary and streams the shell in. The first HTTP flush is the
-  chrome skeleton (nav-rail placeholder + pane region in `PaneLoadingState`)
-  — **data never gates TTFB**. The data root (`loadWorkspaceBootstrap`) is parallel and
-  restore-aware: two concurrent `Promise.all` waves — (1) the reader profile — a
-  **required** read on the normal 30 s server-request deadline, since it seeds
-  `ReaderProvider` and workspace width restoration, so a failed or malformed read
-  rejects the whole bootstrap rather than fabricating a default — alongside the
-  required saved session on that same normal deadline and, only for Navigate,
-  the explicit pane's speculative resource seed, then (2) the remaining restored visible panes —
-  returning `{ account, readerProfile, initialState, persistInitialState, resources }`.
-  `resources` is a hydration cache keyed exactly as each pane's `useResource`
-  reads it. Resume never seeds root. Session
-  restoration failure cannot fabricate a fallback or mount its save hook. only
-  pane seeds stay best-effort under the 500 ms deadline; a timed-out seed degrades
-  to the normal client fetch.
-  A rejected bootstrap surfaces as the error boundary's accessible Retry UI, which
-  re-issues the Server Component request (`router.refresh()`) before resetting the
-  boundary.
+  `error.tsx` cannot catch its own layout); the layout's async `Workspace` awaits
+  the data root inside the boundary and streams the shell in. The first HTTP
+  flush is the chrome skeleton (nav-rail placeholder + pane region in
+  `PaneLoadingState`) — **data never gates TTFB**. The data root
+  (`loadWorkspaceBootstrap`) reads the account, the reader profile and the saved
+  sessions concurrently — all **required** on the normal 30 s server-request
+  deadline, so a failed read rejects the whole bootstrap rather than fabricating
+  a default — then seeds the visible panes in one best-effort wave, returning
+  `{ account, readerProfile, initialState, resources }`. `resources` is a
+  hydration cache keyed exactly as each pane's `useResource` reads it; a
+  timed-out seed degrades to the normal client fetch. A rejected bootstrap
+  surfaces as the error boundary's accessible Retry, which reloads the document.
 - **Server-side restore (no round-trip, no flash).** Device identity is a server-owned
   httpOnly `nx_device` cookie minted in middleware (`lib/auth/deviceCookie.ts`) —
   request-forwarded so this SSR sees it, response-set for future requests. The data root
-  reads it, fetches the saved workspace-session, and classifies `/` as Resume or every
-  other protected href as Navigate. Resume uses `selectRestoredState` unchanged or the
-  Lectern empty state; Navigate applies `mergeRestoredWorkspaceWithDeepLink`. The store
-  **seeds its reducer** with that `initialState`, so the first render already shows the
-  right panes (no `hydrate` dispatch on load). `useWorkspaceSession` keeps only **capture**
-  (debounced PUT) + **flush** (keepalive on page hide); the BFF `PUT /api/me/workspace-session`
-  injects the device id from the cookie — the client never reads or sends it. Identity
-  (which panes) is owned by the server; column **widths** reconcile on the client at render
-  via `resolveEffectivePaneSizing` — server width metrics derive from the reader profile
-  (shared `estimatePrimaryWidthPx`) so widths match first paint and need no settle. The
-  URL-hash fold navigates the active pane (preserving the restored layout) rather than
-  resetting state. The restore algebra lives in one isomorphic resolver
-  (`workspaceRestore.ts`, server-safe, shared by the bootstrap and the store reducer;
-  `schema.ts`/`paneWidth.ts` are likewise isomorphic, not `"use client"`). The
-  canonical `/lectern` request is explicit home intent: restore preserves the saved
-  layout, then reuses or appends and activates Lectern; it is not a neutral alias for
-  the previously active pane.
+  reads it, fetches the saved sessions (an unreadable row is null), and classifies `/`
+  as Resume or every other protected href as Navigate; `enterWorkspace`
+  (`lib/workspace/model.ts`, isomorphic) picks the session and merges the deep link. The
+  store is created from that `initialState`, so the first render already shows the
+  right panes. `useWorkspaceSession` saves 1 s after a change and flushes with keepalive
+  on page hide; the BFF `PUT /api/me/workspace-session` forwards the body and puts the
+  device id from the cookie in the query — the client never reads or sends it. Column
+  **widths** resolve on the client at render via `resolveEffectivePaneSizing`; a null
+  width is the reader column, whose first-paint estimate (`estimatePrimaryWidthPx`) the
+  shell's probe refines. The URL-hash fold navigates the active pane (preserving the
+  restored layout) rather than resetting state. The canonical `/lectern` request is
+  explicit home intent: restore preserves the saved layout, then reuses or appends and
+  activates Lectern; it is not a neutral alias for the previously active pane.
 - **Measurement.** The workspace pane boundary emits one bounded, authenticated
   structural failure through `/api/telemetry/client-defects`; the BFF injects the
   serving release and FastAPI logs `rum.client_defect`. It carries pane/visit,
@@ -2039,8 +2029,9 @@ they open over Resume and never become panes.
   stack, never exception messages, request bodies, draft text, tokens, or
   provider payloads. Kept constraints: nonce-CSP + **streaming only** — no PPR,
   no `next/dynamic`, no server-emitted `modulepreload` (chunk URLs are unknown
-  server-side); `React.lazy` + runtime `preloadPane` (warming all restored
-  visible panes) stays the splitting mechanism. The standard `nexus_auth`,
+  server-side); `React.lazy` stays the splitting mechanism (a lazy body starts
+  its import while hydrating; a failed import is forgotten so "Retry pane" imports
+  again). The standard `nexus_auth`,
   `nexus_openables`, `nexus_api`, and `nexus_bff` Server-Timing phases separate
   auth, service, remaining API, and BFF time during manual diagnosis.
 - **BFF / proxy / auth / SSE** (`lib/api/*`, `lib/auth/*`, `lib/supabase/*`): covered

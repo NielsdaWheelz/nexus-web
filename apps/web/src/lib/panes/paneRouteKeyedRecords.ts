@@ -1,8 +1,6 @@
-/**
- * Pane runtime registries are `Map<paneId, record>` where every record carries the
- * routeKey it was published under. A record counts only while the pane is still on
- * that route; the moment the pane navigates, the record is stale and is dropped.
- */
+// A pane registry is `Map<paneId, record>` whose records carry the routeKey
+// they were published for. A record counts only while its pane still shows
+// that route; the moment the pane navigates, it is stale and pruned.
 interface PaneRouteKeyedRecord {
   readonly routeKey: string;
 }
@@ -17,14 +15,11 @@ export function routeKeyedRecord<T extends PaneRouteKeyedRecord>(
 }
 
 export function pruneRouteKeyedRecords<T extends PaneRouteKeyedRecord>(
-  current: Map<string, T>,
-  currentRouteKeyByPaneId: ReadonlyMap<string, string>,
-): Map<string, T> {
-  let next: Map<string, T> | null = null;
-  for (const [paneId, record] of current) {
-    if (currentRouteKeyByPaneId.get(paneId) === record.routeKey) continue;
-    next ??= new Map(current);
-    next.delete(paneId);
-  }
-  return next ?? current;
+  current: ReadonlyMap<string, T>,
+  routeKeyByPaneId: ReadonlyMap<string, string>,
+): ReadonlyMap<string, T> {
+  const kept = [...current].filter(
+    ([paneId, record]) => routeKeyByPaneId.get(paneId) === record.routeKey,
+  );
+  return kept.length === current.size ? current : new Map(kept);
 }

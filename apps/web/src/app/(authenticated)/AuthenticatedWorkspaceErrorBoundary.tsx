@@ -1,87 +1,42 @@
 "use client";
 
-import {
-  Component,
-  useEffect,
-  useRef,
-  useTransition,
-  type ReactNode,
-} from "react";
-import { useRouter } from "next/navigation";
+import { Component, type ReactNode } from "react";
 import Button from "@/components/ui/Button";
-import styles from "./AuthenticatedWorkspaceErrorBoundary.module.css";
+import styles from "./layout.module.css";
 
 /**
- * The error boundary for the whole authenticated workspace. A same-segment
- * `error.tsx` cannot catch its own layout, so the authenticated layout wraps
- * its Suspense/bootstrap subtree in this client class boundary. Bootstrap and
- * live workspace faults surface here with accessible retry.
+ * The whole authenticated workspace's boundary: bootstrap and live workspace
+ * defects. Retry reloads the document, so every client cache and the server
+ * data root start over.
  */
-
-function WorkspaceError({ onReset }: { onReset: () => void }) {
-  const router = useRouter();
-  const [retrying, startTransition] = useTransition();
-  const regionRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    regionRef.current?.focus();
-  }, []);
-
-  // Recovery requires a new Server Component request: `reset()` alone would
-  // re-render the same rejected tree. Both run in one transition so this
-  // error UI (with its pending state) holds until the refreshed tree is ready.
-  const retry = () => {
-    startTransition(() => {
-      router.refresh();
-      onReset();
-    });
-  };
-
-  return (
-    <div
-      ref={regionRef}
-      role="alert"
-      aria-labelledby="workspace-error-heading"
-      tabIndex={-1}
-      className={styles.region}
-    >
-      <h2 id="workspace-error-heading" className={styles.heading}>
-        Something went wrong in your workspace
-      </h2>
-      <p className={styles.body}>
-        Retry to reopen your saved workspace. Unsaved changes may be lost.
-      </p>
-      <Button onClick={retry} disabled={retrying}>
-        {retrying ? "Retrying…" : "Retry"}
-      </Button>
-    </div>
-  );
-}
-
-interface AuthenticatedWorkspaceErrorBoundaryState {
-  hasError: boolean;
-}
-
 export class AuthenticatedWorkspaceErrorBoundary extends Component<
   { children: ReactNode },
-  AuthenticatedWorkspaceErrorBoundaryState
+  { failed: boolean }
 > {
-  state: AuthenticatedWorkspaceErrorBoundaryState = { hasError: false };
+  state = { failed: false };
 
-  static getDerivedStateFromError(): AuthenticatedWorkspaceErrorBoundaryState {
-    return { hasError: true };
+  static getDerivedStateFromError() {
+    return { failed: true };
   }
 
-  componentDidCatch(error: unknown) {
+  componentDidCatch(error: unknown): void {
     console.error("Authenticated workspace failed:", error);
   }
 
   render() {
-    if (this.state.hasError) {
-      return (
-        <WorkspaceError onReset={() => this.setState({ hasError: false })} />
-      );
-    }
-    return this.props.children;
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div
+        ref={(element) => element?.focus()}
+        role="alert"
+        aria-labelledby="workspace-error-heading"
+        tabIndex={-1}
+        className={styles.error}
+      >
+        <h2 id="workspace-error-heading">Something went wrong in your workspace</h2>
+        <p>Retry to reopen your saved workspace. Unsaved changes may be lost.</p>
+        <Button onClick={() => window.location.reload()}>Retry</Button>
+      </div>
+    );
   }
 }

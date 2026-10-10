@@ -15,7 +15,6 @@ import type {
   WorkspaceTargetActivationResult,
   WorkspaceTargetDisposition,
 } from "@/lib/workspace/targetActivation";
-import type { PaneNavigationModality } from "@/lib/workspace/paneReturnMemento";
 
 export type OpenDailyPageTarget =
   | MaterializedOpenDailyPageTarget
@@ -27,7 +26,6 @@ export type OpenDailyPageTarget =
 
 export interface OpenDailyPageActivation {
   disposition: WorkspaceTargetDisposition;
-  modality: PaneNavigationModality;
 }
 
 export interface OpenDailyPageResult {
@@ -74,19 +72,14 @@ export function useOpenDailyPage(): (
       target: OpenDailyPageTarget,
       activation: OpenDailyPageActivation = {
         disposition: { kind: "Adopt" },
-        modality: "Programmatic",
       },
     ): OpenDailyPageResult => {
       const localDate = resolveLocalDate(target.date);
       const activationId = crypto.randomUUID();
       const result = activateWorkspaceTarget({
         originPaneId: state.activePrimaryPaneId,
-        target: {
-          href: `/daily/${localDate}`,
-          aliases: [`daily:${localDate}`],
-        },
+        target: { href: `/daily/${localDate}` },
         disposition: activation.disposition,
-        modality: activation.modality,
         paneEntryActivation: {
           activationId,
           entry:

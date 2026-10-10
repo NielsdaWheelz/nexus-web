@@ -26,7 +26,6 @@ import {
 import {
   usePaneRouter,
   usePaneRuntime,
-  useRecordPaneNavigationModality,
 } from "@/lib/panes/paneRuntime";
 import {
   activateTargetAnchor,
@@ -45,8 +44,8 @@ import {
 import type {
   PaneBodyMode,
   PaneRouteHeaderContract,
+  PaneRouteShareIdentity,
 } from "@/lib/panes/paneRouteModel";
-import type { PaneRouteShareIdentity } from "@/lib/panes/paneResourceLocator";
 import { useShareController } from "@/lib/sharing/controller";
 import { present } from "@/lib/api/presence";
 import { usePaneSearchRequested } from "@/lib/panes/paneSearchEvents";
@@ -65,14 +64,13 @@ import {
   type WorkspaceSecondarySizing,
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
-import type { WorkspaceAttachedSecondaryPaneState } from "@/lib/workspace/schema";
+import type { WorkspaceSecondaryPane } from "@/lib/workspace/model";
 import {
   findPaneLandmarkFocusTarget,
   findPaneSearchFocusTarget,
 } from "@/lib/workspace/paneDom";
 import { useActiveMobileViewport } from "@/lib/mobileViewport/MobileViewportProvider";
 import styles from "./PaneShell.module.css";
-import { pointerModality } from "@/lib/ui/pointerModality";
 
 const EMPTY_ACTIONS: readonly ActionDescriptor[] = [];
 type PaneShellStyle = CSSProperties & {
@@ -91,10 +89,10 @@ interface PaneShellProps {
   label: string;
   labelPending: boolean;
   returnMementoEnabled: boolean;
-  queryNavigation?: "in-place";
+  queryNavigation: "in-place" | null;
   sizing: EffectivePaneSizing;
   bodyMode: PaneBodyMode;
-  secondaryPane: WorkspaceAttachedSecondaryPaneState | null;
+  secondaryPane: WorkspaceSecondaryPane | null;
   secondarySizing: WorkspaceSecondarySizing | null;
   secondaryPublication: PaneSecondaryPublication | null;
   fixedChromePublication: PaneFixedChromePublication | null;
@@ -149,14 +147,12 @@ export default function PaneShell({
     // justify-defect: PaneShell execution requires pane-scoped navigation.
     throw new Error("PaneShell must be used inside PaneRuntimeProvider");
   }
-  const recordNavigationModality = useRecordPaneNavigationModality();
   const activateTarget = paneRuntime.activateTarget;
   const activateChromeAnchor = useCallback(
     (event: TargetLinkMouseEvent, anchor: HTMLAnchorElement) => {
-      recordNavigationModality(pointerModality(event));
       activateTargetAnchor({ event, runtime: { activateTarget }, anchor });
     },
-    [activateTarget, recordNavigationModality],
+    [activateTarget],
   );
   const canGoBack = paneRouter.canGoBack;
   const canGoForward = paneRouter.canGoForward;
@@ -164,21 +160,10 @@ export default function PaneShell({
     () => ({
       canGoBack,
       canGoForward,
-      onBack: (modality) => {
-        recordNavigationModality(modality);
-        paneRouter.back();
-      },
-      onForward: (modality) => {
-        recordNavigationModality(modality);
-        paneRouter.forward();
-      },
+      onBack: () => paneRouter.back(),
+      onForward: () => paneRouter.forward(),
     }),
-    [
-      canGoBack,
-      canGoForward,
-      paneRouter,
-      recordNavigationModality,
-    ],
+    [canGoBack, canGoForward, paneRouter],
   );
   const { handleResizeMouseDown, handleResizeKeyDown } = useResizeHandle({
     id: paneId,
@@ -193,10 +178,9 @@ export default function PaneShell({
   const mobileViewport = useActiveMobileViewport(contentSurfaceActive);
   const sourceContinuityKey = panePrimaryChromeSourceKey(paneRuntime);
   usePaneReturnScrollport({
-    paneId,
     enabled: returnMementoEnabled,
     scrollportRef: bodyRef,
-    routeContinuityKey:
+    continuityKey:
       queryNavigation === "in-place"
         ? `${paneRuntime.visitId}:${paneRuntime.routeId}:${paneRuntime.pathname}`
         : null,

@@ -1418,12 +1418,12 @@ export interface paths {
         };
         /**
          * Get Workspace Session
-         * @description Get this device's own workspace session and the most recent one elsewhere.
+         * @description This device's own workspace session and the newest one saved elsewhere.
          */
         get: operations["get_workspace_session_me_workspace_session_get"];
         /**
          * Put Workspace Session
-         * @description Upsert this device's workspace session (last-write-wins).
+         * @description Replace this device's workspace session (last write wins).
          */
         put: operations["put_workspace_session_me_workspace_session_put"];
         post?: never;
@@ -5397,6 +5397,10 @@ export interface components {
         Data_UserProfileOut_: {
             data: components["schemas"]["UserProfileOut"];
         };
+        /** Data[WorkspaceSessionsOut] */
+        Data_WorkspaceSessionsOut_: {
+            data: components["schemas"]["WorkspaceSessionsOut"];
+        };
         /** Data[list[LibraryPlacementOptionOut]] */
         Data_list_LibraryPlacementOptionOut__: {
             /** Data */
@@ -8950,6 +8954,20 @@ export interface components {
             kind: "page_title";
             /** Title */
             title: string;
+        };
+        /** PaneHistory */
+        PaneHistory: {
+            /** Back */
+            back: components["schemas"]["PaneVisit"][];
+            /** Forward */
+            forward: components["schemas"]["PaneVisit"][];
+        };
+        /** PaneVisit */
+        PaneVisit: {
+            /** Href */
+            href: string;
+            /** Id */
+            id: string;
         };
         /**
          * PartialHistoryCoverage
@@ -14942,17 +14960,85 @@ export interface components {
              */
             type: "web_text_offsets";
         };
+        /** WorkspacePane */
+        "WorkspacePane-Input": {
+            currentVisit: components["schemas"]["PaneVisit"];
+            history: components["schemas"]["PaneHistory"];
+            /** Id */
+            id: string;
+            /** Primarywidthpx */
+            primaryWidthPx: number | null;
+            secondary: components["schemas"]["WorkspaceSecondaryPane"] | null;
+            /**
+             * Visibility
+             * @enum {string}
+             */
+            visibility: "visible" | "minimized";
+        };
+        /** WorkspacePane */
+        "WorkspacePane-Output": {
+            currentVisit: components["schemas"]["PaneVisit"];
+            history: components["schemas"]["PaneHistory"];
+            /** Id */
+            id: string;
+            /** Primarywidthpx */
+            primaryWidthPx: number | null;
+            secondary: components["schemas"]["WorkspaceSecondaryPane"] | null;
+            /**
+             * Visibility
+             * @enum {string}
+             */
+            visibility: "visible" | "minimized";
+        };
+        /** WorkspaceSecondaryPane */
+        WorkspaceSecondaryPane: {
+            /**
+             * Activesurfaceid
+             * @enum {string}
+             */
+            activeSurfaceId: "resource-contents" | "resource-members" | "resource-connections" | "resource-forks" | "resource-dossier" | "import-detail";
+            /**
+             * Groupid
+             * @enum {string}
+             */
+            groupId: "resource-inspector" | "imports-inspector";
+            /** Id */
+            id: string;
+            /**
+             * Visibility
+             * @enum {string}
+             */
+            visibility: "visible" | "collapsed";
+            /** Widthpx */
+            widthPx: number;
+        };
         /**
-         * WorkspaceSessionPutRequest
-         * @description PUT body for a per-device workspace session.
+         * WorkspaceSessionsOut
+         * @description This device's session and the newest one saved by another device.
          */
-        WorkspaceSessionPutRequest: {
-            /** Device Id */
-            device_id: string;
-            /** State */
-            state: {
-                [key: string]: unknown;
-            };
+        WorkspaceSessionsOut: {
+            most_recent_elsewhere: components["schemas"]["WorkspaceState-Output"] | null;
+            own: components["schemas"]["WorkspaceState-Output"] | null;
+        };
+        /**
+         * WorkspaceState
+         * @description One device's panes, in strip order, and the active one.
+         */
+        "WorkspaceState-Input": {
+            /** Activeprimarypaneid */
+            activePrimaryPaneId: string;
+            /** Panes */
+            panes: components["schemas"]["WorkspacePane-Input"][];
+        };
+        /**
+         * WorkspaceState
+         * @description One device's panes, in strip order, and the active one.
+         */
+        "WorkspaceState-Output": {
+            /** Activeprimarypaneid */
+            activePrimaryPaneId: string;
+            /** Panes */
+            panes: components["schemas"]["WorkspacePane-Output"][];
         };
     };
     responses: never;
@@ -17725,9 +17811,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_WorkspaceSessionsOut_"];
                 };
             };
             /** @description Validation Error */
@@ -17743,27 +17827,25 @@ export interface operations {
     };
     put_workspace_session_me_workspace_session_put: {
         parameters: {
-            query?: never;
+            query: {
+                device_id: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WorkspaceSessionPutRequest"];
+                "application/json": components["schemas"]["WorkspaceState-Input"];
             };
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

@@ -117,13 +117,13 @@ meaning from copy or identifiers.
 | Desktop rail projection and pane dispatch                         | `apps/web/src/components/appnav/AppNav.tsx`                                                                       |
 | Internal-link gesture policy                                      | `apps/web/src/lib/panes/targetLinkActivation.ts`                                                                  |
 | Target selection, restoration, creation, and activation           | `activateWorkspaceTarget` in `apps/web/src/lib/workspace/store.tsx`                                               |
-| Server-restored deep-link merge                                   | `apps/web/src/lib/workspace/workspaceRestore.ts`                                                                  |
+| Server-restored deep-link merge                                   | `enterWorkspace` in `apps/web/src/lib/workspace/model.ts`                                                         |
 | Nexus semantic contract                                          | `apps/web/src/lib/nexus/model.ts`                                                                                  |
 | Desktop Nexus renderer                                           | `apps/web/src/components/nexus/desktop/DesktopNexus.tsx`                                                           |
 | Mobile Nexus renderer                                            | `apps/web/src/components/switchboard/SwitchboardTask.tsx` and `NexusButton.tsx`                                   |
 | Nexus workflow pages and row parts (both surfaces)               | `apps/web/src/components/nexus/NexusPages.tsx` and `NexusRow.tsx`                                                 |
 | Nexus ingress and direct action session                          | `apps/web/src/lib/nexus/events.ts` and `apps/web/src/components/nexus/useNexusController.ts`                      |
-| Daily Page location and append entry                             | `apps/web/src/lib/notes/openDailyPage.ts` and workspace pane-entry delivery                                       |
+| Daily Page location and append entry                             | `apps/web/src/lib/notes/openDailyPage.ts`; the store delivers the entry to the visit the target lands on          |
 | Keybinding projection                                             | `apps/web/src/app/(authenticated)/settings/keybindings/KeybindingsPaneBody.tsx`                                   |
 | Nexus history href canonicalization                              | `python/nexus/services/nexus_history.py`                                                                          |
 
