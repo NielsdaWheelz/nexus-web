@@ -1,25 +1,43 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import {
   useFeedback,
   type FeedbackActions,
   type FeedbackContent,
+  type FeedbackContextValue,
 } from "@/components/feedback/Feedback";
-import {
-  isApiError,
-  isSameSystemApiDefect,
-} from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
-import { createLink, deleteLink } from "@/lib/resourceGraph/links";
-import type { CreateLinkInput, LinkSource, LinkTarget } from "@/lib/resourceGraph/links";
-
 import { resolveResourceLocator } from "@/lib/resources/resourceLocators";
+import {
+  createLink,
+  deleteLink,
+  type LinkSource,
+  type LinkTarget,
+} from "./links";
 
-type LinkMutation = "Create" | "Undo";
+const CREATE_FAILURES: Record<string, string> = {
+  E_NOT_FOUND:
+    "The source or target is no longer available. Choose another target.",
+  E_INVALID_REQUEST:
+    "This selection or target can’t be linked. Choose another target.",
+  E_LINK_SELF: "An item can’t be linked to itself. Choose another target.",
+  E_LINK_CAPABILITY:
+    "This source or target doesn’t support links. Choose another target.",
+  E_LINK_TARGET_AMBIGUOUS:
+    "That passage matches more than once. Choose a more specific target.",
+  E_LINK_TARGET_STALE: "That passage changed. Search for it again, then retry.",
+  E_HIGHLIGHT_CONFLICT:
+    "The selected passage changed. Close Link, select the passage again, and retry.",
+  E_IDEMPOTENCY_KEY_REPLAY_MISMATCH:
+    "The link request changed. Close Link, then try again.",
+};
+const UNCONFIRMED = "Couldn’t confirm the change.";
 
-function isUndoOutcomeUnknown(error: unknown): boolean {
+/** A request that may still have been applied: its retry must replay it. */
+function outcomeUnknown(error: unknown): boolean {
   return (
     isApiError(error) &&
     !isSameSystemApiDefect(error) &&
@@ -27,127 +45,23 @@ function isUndoOutcomeUnknown(error: unknown): boolean {
   );
 }
 
-/** Endpoint-owned finite adapter; unknown codes and defects stay defects. */
-function linkErrorMessage(error: unknown, mutation: LinkMutation): FeedbackContent {
+/** The finite create-failure table; an unknown code or a defect stays a defect. */
+function createFailure(error: unknown): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-
-  const requestId = error.requestId;
-  const title = mutation === "Create" ? "Link wasn’t created" : "Link wasn’t removed";
-  switch (error.code) {
-    case "E_NETWORK":
-      if (mutation === "Create") {
-        return {
-          tone: "Warning",
-          title: "Couldn’t confirm the change.",
-          message:
-            "The link may already be saved. Retry checks the same change.",
-          requestId,
-        };
-      }
-      return {
-        tone: "Danger",
-        title,
-        message: "A network problem interrupted the change. Retry when you’re connected.",
-        requestId,
-      };
-    case "E_UPSTREAM_TIMEOUT":
-      if (mutation === "Create") {
-        return {
-          tone: "Warning",
-          title: "Couldn’t confirm the change.",
-          message:
-            "The link may already be saved. Retry checks the same change.",
-          requestId,
-        };
-      }
-      return {
-        tone: "Danger",
-        title,
-        message: "The server took too long to respond. Retry the change.",
-        requestId,
-      };
-    case "E_NOT_FOUND":
-      return {
-        tone: "Danger",
-        title,
-        message:
-          mutation === "Create"
-            ? "The source or target is no longer available. Choose another target."
-            : "This link is no longer available.",
-        requestId,
-      };
-    case "E_FORBIDDEN":
-      if (mutation !== "Undo") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "This link can’t be removed from this account.",
-        requestId,
-      };
-    case "E_INVALID_REQUEST":
-      if (mutation !== "Create") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "This selection or target can’t be linked. Choose another target.",
-        requestId,
-      };
-    case "E_LINK_SELF":
-      if (mutation !== "Create") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "An item can’t be linked to itself. Choose another target.",
-        requestId,
-      };
-    case "E_LINK_CAPABILITY":
-      if (mutation !== "Create") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "This source or target doesn’t support links. Choose another target.",
-        requestId,
-      };
-    case "E_LINK_TARGET_AMBIGUOUS":
-      if (mutation !== "Create") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "That passage matches more than once. Choose a more specific target.",
-        requestId,
-      };
-    case "E_LINK_TARGET_STALE":
-      if (mutation !== "Create") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "That passage changed. Search for it again, then retry.",
-        requestId,
-      };
-    case "E_HIGHLIGHT_CONFLICT":
-      if (mutation !== "Create") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "The selected passage changed. Close Link, select the passage again, and retry.",
-        requestId,
-      };
-    case "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH":
-      if (mutation !== "Create") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "The link request changed. Close Link, then try again.",
-        requestId,
-      };
-    default:
-      throw error;
+  const { code, requestId } = error;
+  if (outcomeUnknown(error)) {
+    return {
+      tone: "Warning",
+      title: UNCONFIRMED,
+      message: "The link may already be saved. Retry checks the same change.",
+      requestId,
+    };
   }
-}
-
-export interface LinkComposerFailure {
-  content: FeedbackContent;
-  actions: FeedbackActions;
+  const message = Object.hasOwn(CREATE_FAILURES, code)
+    ? CREATE_FAILURES[code]
+    : undefined;
+  if (message === undefined) throw error;
+  return { tone: "Danger", title: "Link wasn’t created", message, requestId };
 }
 
 export interface LinkSessionInput {
@@ -161,7 +75,11 @@ export interface LinkSessionInput {
   savedFile?: boolean;
 }
 
-type Session = LinkSessionInput & { key: number };
+export interface LinkComposerFailure {
+  content: FeedbackContent;
+  actions: FeedbackActions;
+}
+
 export interface LinkComposer {
   open: boolean;
   sourceRef: string | undefined;
@@ -170,47 +88,52 @@ export interface LinkComposer {
   failure: LinkComposerFailure | null;
   openLink: (input: LinkSessionInput) => void;
   openResourceLink: (ref: string) => Promise<void>;
-  linkTo: (input: LinkSessionInput & { target: LinkTarget; targetLabel: string }) => Promise<void>;
+  linkTo: (
+    input: LinkSessionInput & { target: LinkTarget; targetLabel: string },
+  ) => Promise<void>;
   close: () => void;
   confirm: (target: LinkTarget, label: string) => Promise<void>;
 }
 
-/** One app-owned mutation session. Closing a submitted picker never abandons its intent. */
-export function useLinkComposer(): LinkComposer {
-  const feedback = useFeedback();
-  const [session, setSession] = useState<Session | null>(null);
-  const sessionRef = useRef<Session | null>(null);
-  const nextKey = useRef(0);
-  const [open, setOpen] = useState(false);
-  const openRef = useRef(false);
-  const [committing, setCommitting] = useState(false);
-  const [failure, setFailure] = useState<LinkComposerFailure | null>(null);
-  const failureRef = useRef<{ key: string; failure: LinkComposerFailure } | null>(null);
-  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const commitGuard = useRef(false);
+/** The open picker's failure, and whether its outcome is unknown. */
+type Pending = { key: string; unknown: boolean; failure: LinkComposerFailure };
 
-  const openLink = useCallback((input: LinkSessionInput) => {
-    if (commitGuard.current || openRef.current) return;
-    const next = { ...input, key: ++nextKey.current };
-    sessionRef.current = next;
-    setSession(next);
-    setFailure(null);
-    failureRef.current = null;
-    openRef.current = true;
-    setOpen(true);
-  }, []);
+interface Snapshot {
+  session: LinkSessionInput | null;
+  open: boolean;
+  committing: boolean;
+  pending: Pending | null;
+  defect: { error: unknown } | null;
+}
 
-  const close = useCallback(() => {
-    openRef.current = false;
-    setOpen(false);
-    sessionRef.current?.onClose?.();
-    const pending = failureRef.current;
-    if (pending) feedback.publish({
-      kind: "Persistent", key: pending.key, announcement: "Polite", ...pending.failure,
+/**
+ * The app's one link-mutation owner. A pick freezes its intent (a fresh mutation id)
+ * and keeps running when the picker closes; a failure stays in the open picker with an
+ * exact Retry, or becomes a persistent notice once the picker is closed. One save runs
+ * at a time.
+ */
+function createLinkComposer(feedback: FeedbackContextValue) {
+  let snap: Snapshot = {
+    session: null,
+    open: false,
+    committing: false,
+    pending: null,
+    defect: null,
+  };
+  const listeners = new Set<() => void>();
+  const set = (patch: Partial<Snapshot>) => {
+    snap = { ...snap, ...patch };
+    for (const listener of listeners) listener();
+  };
+  const persist = (key: string, failure: LinkComposerFailure) =>
+    feedback.publish({
+      kind: "Persistent",
+      key,
+      announcement: "Polite",
+      ...failure,
     });
-  }, [feedback]);
 
-  const undo = useCallback(async (linkId: string, owner: LinkSessionInput) => {
+  async function undo(linkId: string, owner: LinkSessionInput): Promise<void> {
     const key = `resource-link-undo:${linkId}`;
     try {
       await deleteLink(linkId);
@@ -218,116 +141,219 @@ export function useLinkComposer(): LinkComposer {
       owner.onLinked?.();
     } catch (error) {
       if (handleUnauthenticatedApiError(error)) return;
-      try {
-        feedback.publish({
-          kind: "Persistent", key, announcement: "Polite",
-          content: isUndoOutcomeUnknown(error) ? {
-            tone: "Warning", title: "Couldn’t confirm the change.",
-            message: "Retry removes the same link; its items remain saved.",
-          } : linkErrorMessage(error, "Undo"),
-          actions: [{ label: "Retry", onClick: () => void undo(linkId, owner) }],
-        });
-      } catch (error) { setDefect({ error }); }
+      // Removal is idempotent and only user links are undone: only an unknown
+      // outcome is expected; anything else is a defect.
+      if (!outcomeUnknown(error)) return set({ defect: { error } });
+      persist(key, {
+        content: {
+          tone: "Warning",
+          title: UNCONFIRMED,
+          message: "Retry removes the same link; its items remain saved.",
+        },
+        actions: [{ label: "Retry", onClick: () => void undo(linkId, owner) }],
+      });
     }
-  }, [feedback]);
+  }
 
-  const run = useCallback(async (owner: LinkSessionInput, intent: CreateLinkInput, label: string, sessionKey: number | null) => {
+  /** `picked`: the intent came from the open session's picker, not a direct `linkTo`. */
+  async function run(
+    owner: LinkSessionInput,
+    target: LinkTarget,
+    label: string,
+    picked: boolean,
+  ): Promise<void> {
+    const intent = {
+      clientMutationId: createRandomId("link"),
+      source: owner.source,
+      target,
+    };
     const key = `resource-link:${intent.clientMutationId}`;
-    const current = () => sessionKey !== null && sessionRef.current?.key === sessionKey;
-    async function submit() {
-      if (commitGuard.current) {
-        feedback.publish({ kind: "Persistent", key, announcement: "Polite",
-          content: { tone: "Info", title: owner.savedFile ? "File saved. Link pending." : "Link pending", message: "Another link is being saved. Retry this link when it finishes." },
+    const current = () => picked && snap.session === owner;
+    async function submit(): Promise<void> {
+      if (snap.committing) {
+        return persist(key, {
+          content: {
+            tone: "Info",
+            title: owner.savedFile
+              ? "File saved. Link pending."
+              : "Link pending",
+            message:
+              "Another link is being saved. Retry this link when it finishes.",
+          },
           actions: [{ label: "Retry link", onClick: () => void submit() }],
         });
-        return;
       }
-      commitGuard.current = true;
-      setCommitting(true);
-      if (current()) { setFailure(null); failureRef.current = null; }
+      set({ committing: true, ...(current() ? { pending: null } : {}) });
       try {
-        const result = await createLink(intent);
+        const { created, connection } = await createLink(intent);
         feedback.resolve(key);
-        const notifyClose = current() && openRef.current;
-        if (current()) {
-          openRef.current = false;
-          setOpen(false);
-          setFailure(null);
-          failureRef.current = null;
-        }
-        const linkId = result.connection.edge_id;
-        let actions: FeedbackActions | undefined;
-        if (result.created) {
-          const undoAction = { label: "Undo", onClick: () => void undo(linkId, owner) };
-          actions = owner.onAddLinkNote
-            ? [undoAction, { label: "Add note to link", onClick: () => owner.onAddLinkNote?.(linkId) }]
+        const closing = current() && snap.open;
+        if (current()) set({ open: false, pending: null });
+        const linkId = connection.edge_id;
+        const { onAddLinkNote: addNote, onViewConnection: view } = owner;
+        const undoAction = {
+          label: "Undo",
+          onClick: () => void undo(linkId, owner),
+        };
+        const note = {
+          label: "Add note to link",
+          onClick: () => addNote?.(linkId),
+        };
+        const actions: FeedbackActions | undefined = !created
+          ? view && [{ label: "View connection", onClick: view }]
+          : addNote
+            ? [undoAction, note]
             : [undoAction];
-        } else if (owner.onViewConnection) {
-          actions = [{ label: "View connection", onClick: owner.onViewConnection }];
-        }
         feedback.publish({
           kind: "Hud",
-          content: { tone: result.created ? "Success" : "Info", title: result.created ? "Linked" : "Already linked", message: owner.savedFile ? `${label}. Undo removes the link; the file stays saved.` : label },
+          content: {
+            tone: created ? "Success" : "Info",
+            title: created ? "Linked" : "Already linked",
+            message: owner.savedFile
+              ? `${label}. Undo removes the link; the file stays saved.`
+              : label,
+          },
           actions,
         });
-        if (current() || sessionKey === null) owner.onLinked?.();
-        if (notifyClose) owner.onClose?.();
+        if (current() || !picked) owner.onLinked?.();
+        if (closing) owner.onClose?.();
       } catch (error) {
         if (handleUnauthenticatedApiError(error)) return;
         try {
-          const failed: LinkComposerFailure = {
-            content: owner.savedFile ? { ...linkErrorMessage(error, "Create"), title: "File saved. Link not confirmed.", message: "Retry link uses the saved file. It won’t upload it again." } : linkErrorMessage(error, "Create"),
-            actions: [{ label: owner.savedFile ? "Retry link" : "Retry", onClick: () => void submit() }],
+          const content = createFailure(error);
+          const failure: LinkComposerFailure = {
+            content: owner.savedFile
+              ? {
+                  ...content,
+                  title: "File saved. Link not confirmed.",
+                  message:
+                    "Retry link uses the saved file. It won’t upload it again.",
+                }
+              : content,
+            actions: [
+              {
+                label: owner.savedFile ? "Retry link" : "Retry",
+                onClick: () => void submit(),
+              },
+            ],
           };
-          if (current()) { setFailure(failed); failureRef.current = { key, failure: failed }; }
-          if (!current() || !openRef.current) feedback.publish({
-            kind: "Persistent", key, announcement: "Polite", ...failed,
-          });
-        } catch (error) { setDefect({ error }); }
+          if (current() && snap.open) {
+            set({ pending: { key, unknown: outcomeUnknown(error), failure } });
+          } else {
+            persist(key, failure);
+          }
+        } catch (defect) {
+          set({ defect: { error: defect } });
+        }
       } finally {
-        commitGuard.current = false;
-        setCommitting(false);
+        set({ committing: false });
       }
     }
     await submit();
-  }, [feedback, undo]);
+  }
 
-  const confirm = useCallback(async (target: LinkTarget, label: string) => {
-    const owner = sessionRef.current;
-    if (!owner || commitGuard.current) return;
-    const pending = failureRef.current;
-    if (pending) feedback.publish({ kind: "Persistent", key: pending.key, announcement: "Polite", ...pending.failure });
-    await run(owner, { clientMutationId: createRandomId("link"), source: owner.source, target }, label, owner.key);
-  }, [feedback, run]);
+  function openLink(input: LinkSessionInput): void {
+    if (snap.open) return;
+    if (snap.committing) {
+      feedback.publish({
+        kind: "Hud",
+        content: {
+          tone: "Info",
+          title: "Another link is being saved.",
+          message: "Link again when it finishes.",
+        },
+      });
+      return;
+    }
+    set({ session: input, open: true, pending: null });
+  }
 
-  const linkTo = useCallback(async (input: LinkSessionInput & { target: LinkTarget; targetLabel: string }) => {
-    await run(input, { clientMutationId: createRandomId("link"), source: input.source, target: input.target }, input.targetLabel, null);
-  }, [run]);
+  function close(): void {
+    const { session, open, pending } = snap;
+    if (!open || !session) return;
+    set({ open: false });
+    session.onClose?.();
+    if (pending) persist(pending.key, pending.failure);
+  }
 
-  const openResourceLink = useCallback(async (ref: string) => {
+  async function confirm(target: LinkTarget, label: string): Promise<void> {
+    const { session, open, committing, pending } = snap;
+    if (!open || !session || committing) return;
+    // A re-pick drops a definite failure; an unknown outcome stays retryable.
+    if (pending?.unknown) persist(pending.key, pending.failure);
+    await run(session, target, label, true);
+  }
+
+  async function openResourceLink(ref: string): Promise<void> {
     try {
-      const { resourceItem } = await resolveResourceLocator({ kind: "resource_ref", ref });
-      if (resourceItem.missing || resourceItem.capabilities.linkMode === "none") {
-        feedback.publish({ kind: "Hud", content: { tone: "Warning", title: "This item can’t be linked." } });
+      const { resourceItem: item } = await resolveResourceLocator({
+        kind: "resource_ref",
+        ref,
+      });
+      if (item.missing || item.capabilities.linkMode === "none") {
+        feedback.publish({
+          kind: "Hud",
+          content: { tone: "Warning", title: "This item can’t be linked." },
+        });
         return;
       }
       openLink({
-        source: resourceItem.capabilities.linkMode === "materialize_passage"
-          ? { kind: "passage", candidate_ref: resourceItem.ref }
-          : { kind: "resource", ref: resourceItem.ref },
-        sourceRef: resourceItem.ref, label: resourceItem.label,
+        source:
+          item.capabilities.linkMode === "materialize_passage"
+            ? { kind: "passage", candidate_ref: item.ref }
+            : { kind: "resource", ref: item.ref },
+        sourceRef: item.ref,
+        label: item.label,
       });
     } catch (error) {
       if (handleUnauthenticatedApiError(error)) return;
-      try { feedback.publish({ kind: "Hud", content: linkErrorMessage(error, "Create") }); }
-      catch (error) { setDefect({ error }); }
+      try {
+        feedback.publish({ kind: "Hud", content: createFailure(error) });
+      } catch (defect) {
+        set({ defect: { error: defect } });
+      }
     }
-  }, [feedback, openLink]);
+  }
 
-  const composer = useMemo(() => ({
-    open, sourceRef: session?.sourceRef, sourceLabel: session?.label ?? "item", committing, failure,
-    openLink, openResourceLink, linkTo, close, confirm,
-  }), [open, session, committing, failure, openLink, openResourceLink, linkTo, close, confirm]);
-  if (defect) throw defect.error;
-  return composer;
+  const commands = {
+    openLink,
+    openResourceLink,
+    close,
+    confirm,
+    linkTo: (
+      input: LinkSessionInput & { target: LinkTarget; targetLabel: string },
+    ) => run(input, input.target, input.targetLabel, false),
+  };
+  return {
+    commands,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    snapshot: () => snap,
+  };
+}
+
+/** Binds the one composer to React; renders rethrow a defect. */
+export function useLinkComposer(): LinkComposer {
+  const feedback = useFeedback();
+  const [composer] = useState(() => createLinkComposer(feedback));
+  const snap = useSyncExternalStore(
+    composer.subscribe,
+    composer.snapshot,
+    composer.snapshot,
+  );
+  const bound = useMemo(
+    () => ({
+      ...composer.commands,
+      open: snap.open,
+      sourceRef: snap.session?.sourceRef,
+      sourceLabel: snap.session?.label ?? "item",
+      committing: snap.committing,
+      failure: snap.pending?.failure ?? null,
+    }),
+    [composer, snap],
+  );
+  if (snap.defect) throw snap.defect.error;
+  return bound;
 }

@@ -17,7 +17,7 @@ import {
   type InspectorDomainBodies,
 } from "@/components/resource-inspector/inspectorSurfaces";
 import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
-import { dispatchReaderSourceActivation } from "@/lib/resourceGraph/readerSourceActivation";
+import { dispatchReaderSourceActivation } from "@/lib/resourceGraph/citations";
 import { hasSamePaneResource } from "@/lib/panes/paneRouteModel";
 import {
   normalizePaneSecondaryPublication,

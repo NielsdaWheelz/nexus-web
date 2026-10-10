@@ -6,7 +6,7 @@
 // pushes become reader jumps.
 import { useEffect, useMemo, useRef } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
-import type { RetrievalLocator } from "@/lib/resourceGraph/citationOut";
+import type { RetrievalLocator } from "@/lib/resourceGraph/citations";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { publishConsumptionProjectionChange } from "@/lib/consumption/projectionRevision";
 import type { Reader, ReaderEntry } from "@/lib/documentReader/DocumentReader";

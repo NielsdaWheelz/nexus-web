@@ -12,7 +12,7 @@ import MachineText from "@/components/ui/MachineText";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
-import { connectionMutationErrorMessage, mutateConnection, type ConnectionMutation } from "@/lib/resourceGraph/connectionMutations";
+import { connectionMutationErrorMessage, mutateConnection, type ConnectionMutation } from "@/lib/resourceGraph/links";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import ConnectionCreation from "@/components/connections/ConnectionCreation";
 import type { ResourceActivation } from "@/lib/resources/activation";

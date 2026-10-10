@@ -32,6 +32,7 @@ from nexus.jobs.queue import (
     lock_running_job_claim,
 )
 from nexus.logging import get_logger
+from nexus.schemas.resource_graph import CitationSnapshot
 from nexus.schemas.search import (
     SearchResultContentChunkOut,
     SearchResultNoteBlockOut,
@@ -45,6 +46,8 @@ from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation
 from nexus.services.llm_ledger import LlmCallOwner
 from nexus.services.media_intelligence import NotReady, get_media_unit
 from nexus.services.resource_graph.edges import (
+    CONNECTION_DISCOVERY_SOURCE_SCHEMES,
+    EdgeCreate,
     delete_edge,
     get_owned_edge,
     replace_edges_for_origin,
@@ -52,11 +55,6 @@ from nexus.services.resource_graph.edges import (
 from nexus.services.resource_graph.owners import owner_rows_sql
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_graph.resolve import resolve_ref, resolve_refs
-from nexus.services.resource_graph.schemas import (
-    CONNECTION_DISCOVERY_SOURCE_SCHEMES,
-    CitationSnapshot,
-    EdgeCreate,
-)
 from nexus.services.resource_items.capabilities import expand_owned_child_refs
 from nexus.services.search.query import SearchQuery
 from nexus.services.search.service import search

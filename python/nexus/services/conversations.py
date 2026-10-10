@@ -35,7 +35,6 @@ from nexus.schemas.conversation import (
     ConversationOut,
     MessageDeleteOut,
     MessageOut,
-    PageInfo,
 )
 from nexus.schemas.presence import Presence, absent, present
 from nexus.schemas.resource_graph import LinkPassageEndpoint, LinkResourceEndpoint
@@ -70,19 +69,16 @@ from nexus.services.keyset_cursor import (
 )
 from nexus.services.media_read_map import READ_DOCUMENT_MAX_CHARS
 from nexus.services.resource_graph import cleanup as graph_cleanup
-from nexus.services.resource_graph import context as context_service
 from nexus.services.resource_graph.citations import citation_counts_for_sources
 from nexus.services.resource_graph.edges import create_link
+from nexus.services.resource_graph.links import materialize_link_endpoint
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
     parse_resource_ref,
 )
-from nexus.services.resource_graph.user_relations import materialize_link_endpoint
 from nexus.services.resource_items.capabilities import resource_link_mode
 
-DEFAULT_LIMIT = 50
-MAX_LIMIT = 100
 DEFAULT_CONVERSATION_TITLE = "Chat"
 MAX_CONVERSATION_TITLE_LENGTH = 120
 MAX_CONVERSATION_SEARCH_QUERY = 200
@@ -620,28 +616,6 @@ def list_conversation_index(
         collectionRevision=current_revision,
         nextCursor=present(next_cursor) if next_cursor is not None else absent(),
     )
-
-
-def list_conversations_with_context_ref(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    has_context_ref: str,
-    limit: int,
-    cursor: str | None,
-) -> tuple[list[ConversationOut], PageInfo]:
-    """The retained resource-graph mode: conversations with an edge to a ref."""
-
-    ref = parse_resource_ref(has_context_ref)
-    if isinstance(ref, ResourceRefParseFailure):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"Invalid has_context_ref: {has_context_ref!r}. Expected '<scheme>:<uuid>'.",
-        )
-    page = context_service.list_conversations_with_any_edge_to_ref(
-        db, viewer_id=viewer_id, target=ref, limit=limit, cursor=cursor
-    )
-    return page.conversations, page.page
 
 
 # =============================================================================

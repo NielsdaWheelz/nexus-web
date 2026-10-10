@@ -39,9 +39,8 @@ from nexus.services.resource_graph.cleanup import (
     delete_edges_for_deleted_resource,
     delete_resource_protocol_state,
 )
-from nexus.services.resource_graph.edges import create_edge, delete_edge
+from nexus.services.resource_graph.edges import EdgeCreate, create_edge, delete_edge
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
-from nexus.services.resource_graph.schemas import EdgeCreate
 from nexus.services.resource_items import surfaces as resource_surfaces
 from nexus.services.resource_items import versions
 from nexus.services.resource_mutation_replay import (

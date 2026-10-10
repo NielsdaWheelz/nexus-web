@@ -15,7 +15,6 @@ from nexus.api.routes.connection_discovery import router as connection_discovery
 from nexus.api.routes.consumption_activity import router as consumption_activity_router
 from nexus.api.routes.contributors import router as contributors_router
 from nexus.api.routes.conversation_branches import router as conversation_branches_router
-from nexus.api.routes.conversation_context import router as conversation_context_router
 from nexus.api.routes.conversations import router as conversations_router
 from nexus.api.routes.dossiers import router as dossiers_router
 from nexus.api.routes.extension_captures import router as extension_captures_router
@@ -83,7 +82,6 @@ def create_api_router(*, podcasts: bool, email_ingest: bool) -> APIRouter:
     api_router.include_router(connection_discovery_router)
     api_router.include_router(highlights_router)
     api_router.include_router(conversations_router)
-    api_router.include_router(conversation_context_router)
     api_router.include_router(conversation_branches_router)
     api_router.include_router(messages_router)
     api_router.include_router(contributors_router)

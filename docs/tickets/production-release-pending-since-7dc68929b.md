@@ -133,3 +133,21 @@ backend, web and android ship together, in the
 [offline cutover](offline-cutover-release-steps.md) order: old app online once,
 deploy, new apk. see `docs/media-row-plan.md` (migration and hard cutover) at
 `407fcc735`.
+
+the graph reauthor adds `0268` (graph wire cutover, data only). preflight, read-only,
+before the release; a non-zero count stops the release and becomes a ticket:
+
+```sql
+SELECT count(*) FROM resource_edges WHERE origin = 'user' AND (
+    kind <> 'context' OR ordinal IS NOT NULL OR snapshot IS NOT NULL
+    OR source_order_key IS NOT NULL
+    OR (source_scheme || ':' || source_id::text) COLLATE "C"
+        >= (target_scheme || ':' || target_id::text) COLLATE "C")
+```
+
+`0268` runs that count and fails closed (nothing written) when it is non-zero, then
+deletes the link and link-note replay memos (`resource_mutations` scopes
+`resource_graph:link` and `link_note:%`); no edge, view state or version changes. its
+downgrade is a no-op. web and api ship together: `ConnectionOut` lost its mirrors and
+`GET /conversations?has_context_ref` answers 400. stale tabs re-execute a pre-release
+retry instead of replaying it (a link answers "Already linked"); reload fixes them.

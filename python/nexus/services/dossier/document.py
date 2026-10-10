@@ -18,8 +18,9 @@ import html5lib
 from html5lib.serializer import serialize
 from pydantic import BaseModel, ConfigDict
 
+from nexus.schemas.resource_graph import EdgeKind
 from nexus.services.dossier.inputs import Candidate
-from nexus.services.resource_graph.schemas import CitationInput, EdgeKind
+from nexus.services.resource_graph.citations import CitationInput
 
 _HTML = "{http://www.w3.org/1999/xhtml}"
 _ELEMENTS = frozenset(

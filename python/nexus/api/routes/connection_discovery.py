@@ -14,20 +14,20 @@ from nexus.schemas.connection_discovery import (
     ConnectionDiscoveryScanRequest,
 )
 from nexus.services import connection_discovery
-from nexus.services.resource_graph.refs import ResourceRef, parse_resource_ref
+from nexus.services.resource_graph.edges import CONNECTION_DISCOVERY_SOURCE_SCHEMES
+from nexus.services.resource_graph.refs import ResourceRef, require_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible
-from nexus.services.resource_graph.schemas import CONNECTION_DISCOVERY_SOURCE_SCHEMES
 
 router = APIRouter(prefix="/connection-discovery", tags=["connection-discovery"])
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 
 
 def _scannable(raw: str) -> ResourceRef:
-    ref = parse_resource_ref(raw)
-    if not isinstance(ref, ResourceRef) or ref.scheme not in CONNECTION_DISCOVERY_SOURCE_SCHEMES:
+    ref = require_ref(raw)
+    if ref.scheme not in CONNECTION_DISCOVERY_SOURCE_SCHEMES:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
-            f"Expected '<scheme>:<uuid>' with a scheme in {', '.join(CONNECTION_DISCOVERY_SOURCE_SCHEMES)}.",
+            f"Expected a scheme in {', '.join(CONNECTION_DISCOVERY_SOURCE_SCHEMES)}.",
         )
     return ref
 

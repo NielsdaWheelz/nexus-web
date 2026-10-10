@@ -8,7 +8,7 @@ import {
   type RefObject,
 } from "react";
 import { dossierSheet } from "@/components/dossier/dossierSheet";
-import type { CitationOut } from "@/lib/resourceGraph/citationOut";
+import type { CitationOut } from "@/lib/resourceGraph/citations";
 import styles from "./DossierSurface.module.css";
 
 const HTML = "http://www.w3.org/1999/xhtml";

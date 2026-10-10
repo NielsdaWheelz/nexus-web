@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Literal, assert_never, cast
+from typing import Literal, cast
 from uuid import UUID
 
 from pydantic import ValidationError
@@ -51,7 +51,6 @@ from nexus.schemas.reader_document_map import (
 )
 from nexus.schemas.resource_graph import (
     ConnectionEndpointOut,
-    ConnectionLinkNoteOut,
 )
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.reader_connections import ReaderConnectionRow
@@ -62,6 +61,7 @@ from nexus.services.reader_locations import (
     locator_json,
     order_key_from_locator,
 )
+from nexus.services.resource_graph.refs import assert_resource_ref
 from nexus.services.resource_items.routing import route_for_visible_apparatus_item
 
 _APPARATUS_FORWARD_RELATIONS = frozenset(
@@ -399,20 +399,12 @@ def _add_generated_citations(
             consumed_edge_ids.add(row.connection.edge_id)
             continue
         locus_ref = _matched_ref(row)
-        snapshot = row.connection.citation.snapshot if row.connection.citation else {}
-        snapshot = snapshot if isinstance(snapshot, dict) else {}
-        title = snapshot.get("title")
-        excerpt_value = snapshot.get("excerpt")
-        excerpt = (
-            str(excerpt_value).strip()
-            if isinstance(excerpt_value, str) and excerpt_value.strip()
-            else row.excerpt
-        )
+        snapshot = row.connection.snapshot
+        title = (snapshot.title or "").strip() if snapshot else ""
+        excerpt = ((snapshot.excerpt or "").strip() if snapshot else "") or row.excerpt
         item = ReaderEvidenceGeneratedCitationOut(
             id=f"generated-citation:{row.connection.edge_id}",
-            label=str(title).strip()
-            if isinstance(title, str) and title.strip()
-            else f"Cited by {source_object.label}",
+            label=title or f"Cited by {source_object.label}",
             excerpt=present(excerpt) if excerpt else absent(),
             associations=[ReaderEvidenceAuthoredInOut(object=source_object)],
             edge_id=row.connection.edge_id,
@@ -514,17 +506,7 @@ def _add_remaining_connections(
                 role=row.connection.kind,
                 origin=row.connection.origin,
                 object=related,
-                link_note=(
-                    ConnectionLinkNoteOut(
-                        ref=row.connection.link_note.ref,
-                        note_block_id=row.connection.link_note.note_block_id,
-                        preview=row.connection.link_note.preview,
-                    )
-                    if row.connection.origin == "user"
-                    and row.connection.kind == "context"
-                    and row.connection.link_note is not None
-                    else None
-                ),
+                link_note=row.connection.link_note if row.connection.origin == "user" else None,
             ),
         )
 
@@ -533,16 +515,14 @@ def _load_related_metadata(
     db: Session, *, viewer_id: UUID, rows: list[ReaderConnectionRow]
 ) -> tuple[dict[UUID, _MessageMeta], dict[UUID, _NoteMeta]]:
     endpoints = [
-        endpoint
+        assert_resource_ref(endpoint.ref)
         for row in rows
         for endpoint in (row.connection.source, row.connection.target)
         if not endpoint.missing
     ]
-    message_ids = sorted(
-        {endpoint.id for endpoint in endpoints if endpoint.scheme == "message"}, key=str
-    )
+    message_ids = sorted({ref.id for ref in endpoints if ref.scheme == "message"}, key=str)
     note_ids = sorted(
-        {endpoint.id for endpoint in endpoints if endpoint.scheme == "note_block"}
+        {ref.id for ref in endpoints if ref.scheme == "note_block"}
         | {
             row.connection.link_note.note_block_id
             for row in rows
@@ -592,11 +572,12 @@ def _object_for_endpoint(
 ) -> ReaderEvidenceObjectOut | None:
     if endpoint.missing:
         return None
+    ref = assert_resource_ref(endpoint.ref)
     label = endpoint.label or endpoint.ref
     excerpt = present(endpoint.description) if endpoint.description else absent()
     activation = endpoint.activation
-    if endpoint.scheme == "message":
-        meta = ctx.message_meta.get(endpoint.id)
+    if ref.scheme == "message":
+        meta = ctx.message_meta.get(ref.id)
         if meta is None:
             return None
         return ReaderEvidenceChatObjectOut(
@@ -607,17 +588,17 @@ def _object_for_endpoint(
             conversation_id=meta.conversation_id,
             message_ref=present(endpoint.ref),
         )
-    if endpoint.scheme == "conversation":
+    if ref.scheme == "conversation":
         return ReaderEvidenceChatObjectOut(
             ref=endpoint.ref,
             label=label,
             excerpt=excerpt,
             activation=activation,
-            conversation_id=endpoint.id,
+            conversation_id=ref.id,
             message_ref=absent(),
         )
-    if endpoint.scheme == "note_block":
-        meta = ctx.note_meta.get(endpoint.id)
+    if ref.scheme == "note_block":
+        meta = ctx.note_meta.get(ref.id)
         if meta is None:
             return None
         return ReaderEvidenceNoteObjectOut(
@@ -625,11 +606,11 @@ def _object_for_endpoint(
             label=meta.body_text or label,
             excerpt=present(meta.body_text) if meta.body_text else excerpt,
             activation=activation,
-            note_block_id=endpoint.id,
+            note_block_id=ref.id,
             body_pm_json=meta.body_pm_json,
         )
     return ReaderEvidencePlainObjectOut(
-        kind=_PLAIN_OBJECT_KINDS.get(endpoint.scheme, "Other"),
+        kind=_PLAIN_OBJECT_KINDS.get(ref.scheme, "Other"),
         ref=endpoint.ref,
         label=label,
         excerpt=excerpt,
@@ -642,11 +623,10 @@ def _matched_ref(row: ReaderConnectionRow) -> str:
     # the matched locus is its opposite. Never re-derive the locus from storage
     # direction — a neutral Link is undirected, so ``other`` is the only authoritative
     # signal for which endpoint sits on this document.
-    return (
-        row.connection.source_ref
-        if row.connection.other.ref == row.connection.target_ref
-        else row.connection.target_ref
-    )
+    connection = row.connection
+    if connection.other.ref == connection.target.ref:
+        return connection.source.ref
+    return connection.target.ref
 
 
 def _resolution_for_connection(
@@ -677,14 +657,8 @@ def _resolution_for_connection(
                     reason="Stale", sort_order_key=row.anchor.order_key
                 )
     reason: ReaderEvidenceUnavailableReason = "Unanchorable"
-    if row.connection.citation is not None:
-        match row.connection.citation.target_status:
-            case "missing" | "forbidden":
-                reason = "Missing"
-            case "current" | "unanchorable":
-                reason = "Unanchorable"
-            case unexpected:
-                assert_never(unexpected)
+    if row.connection.ordinal is not None and row.connection.target.missing:
+        reason = "Missing"
     return ReaderEvidenceUnavailableOut(
         reason=reason,
         sort_order_key=None

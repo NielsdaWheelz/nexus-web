@@ -16,13 +16,18 @@ import { useCursorPagination, type CursorPage } from "@/lib/api/useCursorPaginat
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { getFileUploadError, uploadIngestFile } from "@/lib/media/ingestionClient";
 import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
-import { queryConnections, type ConnectionOut } from "@/lib/resourceGraph/connections";
-import { connectionMutationErrorMessage, mutateConnection } from "@/lib/resourceGraph/connectionMutations";
-import { subscribeLinkMutations } from "@/lib/resourceGraph/links";
+import {
+  connectionMutationErrorMessage,
+  mutateConnection,
+  queryConnections,
+  subscribeLinkMutations,
+  type ConnectionOut,
+} from "@/lib/resourceGraph/links";
 import { formatResourceRef, type ResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { CONNECTION_DISCOVERY_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities";
 import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
 import { fetchDiscoveryScanStatus, requestDiscoveryScan, type DiscoveryScanStatus } from "@/lib/connectionDiscovery";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import ConnectionCreation from "./ConnectionCreation";
 import styles from "./ConnectionsSurface.module.css";
@@ -72,7 +77,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
     const data: ConnectionOut[] = [];
     let next = cursor;
     do {
-      const page = await queryConnections({ refs: [selfRef], direction: "both", rollup: "owner", limit: 100, cursor: next }, { signal });
+      const page = await queryConnections({ refs: [selfRef], direction: "both", rollup: "owner", limit: 100, cursor: next }, signal);
       data.push(...page.items);
       next = page.next_cursor;
       // Refresh through the previously visible last row, even when new rows
@@ -176,7 +181,7 @@ function ConnectionRow({ connection, onChanged }: {
     supporting={<>{missing ? "Unavailable · " : ""}{reason}{connection.origin === "discovery" ? " · Connection discovery" : connection.origin === "assistant" ? " · Assistant" : ""}</>}
     evidence={typeof excerpt === "string" && excerpt ? machine ? <MachineText variant="inline" as="span" origin={{ label: connection.origin === "discovery" ? "Connection discovery" : "Assistant" }}>{excerpt}</MachineText> : excerpt : undefined}
     actions={<>
-      <ResourceActionMenu actionSubject={endpoint.actionSubject} label={`Actions for ${endpoint.label ?? endpoint.ref}`} />
+      <ResourceActionMenu actionSubject={{ ref: assumeCanonicalResourceRef(endpoint.ref) }} label={`Actions for ${endpoint.label ?? endpoint.ref}`} />
       {mutation ? <ContextEdgeMenu mutationKind={mutation.kind} label={`Edit connection ${endpoint.label ?? endpoint.ref}`} retryable execute={async () => { await mutateConnection(connection.edge_id, mutation); onChanged(); }} presentFailure={connectionMutationErrorMessage} /> : null}
     </>}
     expanded={<>

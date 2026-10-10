@@ -276,16 +276,7 @@ export function ResourceActionOverlays() {
 
   return (
     <PaneReturnVisitScope visitId={visitId} routeKey="resource-action-overlays">
-      {linkComposer.open ? <LinkTargetDialog
-        open={linkComposer.open}
-        sourceLabel={linkComposer.sourceLabel}
-        sourceRef={linkComposer.sourceRef}
-        excludeRefs={linkComposer.sourceRef ? [linkComposer.sourceRef] : undefined}
-        busy={linkComposer.committing}
-        failure={linkComposer.failure}
-        onPick={(target, label) => void linkComposer.confirm(target, label)}
-        onClose={linkComposer.close}
-      /> : null}
+      {linkComposer.open ? <LinkTargetDialog composer={linkComposer} /> : null}
       {authors ? (
         <AuthorsEditorOverlay
           key={authors.key}

@@ -31,19 +31,19 @@ from sqlalchemy.orm import Session
 from nexus.db.models import Conversation, MessageToolCall
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.notes import DailyCaptureRequest
+from nexus.schemas.resource_graph import CitationSnapshot
 from nexus.schemas.resource_items import AbsentExpectedBody
 from nexus.services import highlights, library_entries, note_bodies, notes, text_quote, users
 from nexus.services.consumption import lectern
 from nexus.services.consumption import service as consumption_service
 from nexus.services.passage_anchors import normalize_quote_text
-from nexus.services.resource_graph.edges import create_edge, delete_edge
+from nexus.services.resource_graph.edges import EdgeCreate, create_edge, delete_edge
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
     parse_resource_ref,
 )
 from nexus.services.resource_graph.resolve import assert_ref_visible, resolve_refs
-from nexus.services.resource_graph.schemas import CitationSnapshot, EdgeCreate
 
 if TYPE_CHECKING:
     from nexus.services.tool_runtime.declarations import (

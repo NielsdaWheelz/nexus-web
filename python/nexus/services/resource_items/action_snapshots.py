@@ -74,12 +74,7 @@ from nexus.services.podcasts.subscriptions_query import (
     subscribed_podcast_ids,
 )
 from nexus.services.resource_graph.refs import RESOURCE_SCHEMES, ResourceRef, ResourceScheme
-from nexus.services.resource_graph.resolve import (
-    resolve_refs,
-    visible_content_chunk_ids,
-    visible_evidence_span_ids,
-    visible_fragment_ids,
-)
+from nexus.services.resource_graph.resolve import resolve_refs, visible_ids
 from nexus.services.resource_items.capabilities import ResourceItemCapability, capability_for_scheme
 from nexus.services.resource_items.routing import resource_activations_for_refs
 
@@ -358,14 +353,14 @@ class _ResolvedFacts:
             ),
             artifact_has_active_build=artifact_has_active_build,
             visible_artifact_revision_ids=visible_artifact_revision_ids,
-            visible_evidence_span_ids=visible_evidence_span_ids(
-                db, viewer_id=viewer_id, evidence_span_ids=ids("evidence_span")
+            visible_evidence_span_ids=visible_ids(
+                db, viewer_id=viewer_id, scheme="evidence_span", ids=ids("evidence_span")
             ),
-            visible_content_chunk_ids=visible_content_chunk_ids(
-                db, viewer_id=viewer_id, content_chunk_ids=ids("content_chunk")
+            visible_content_chunk_ids=visible_ids(
+                db, viewer_id=viewer_id, scheme="content_chunk", ids=ids("content_chunk")
             ),
-            visible_fragment_ids=visible_fragment_ids(
-                db, viewer_id=viewer_id, fragment_ids=ids("fragment")
+            visible_fragment_ids=visible_ids(
+                db, viewer_id=viewer_id, scheme="fragment", ids=ids("fragment")
             ),
             visible_reader_apparatus_item_ids=reader_apparatus.visible_reader_apparatus_item_ids(
                 db, viewer_id=viewer_id, item_ids=ids("reader_apparatus_item")

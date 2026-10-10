@@ -1,43 +1,6 @@
-/* Shared Link-target search overlay. A compact result list, not a bordered
-   card — borderless, type-forward, calm; replaces CitePicker's hand-rolled
-   overlay with the shared dialog-overlay contract. */
-
-.backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-modal);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: var(--space-8) var(--space-4);
-  background: var(--overlay-scrim);
-}
-
-.panel {
-  display: flex;
-  width: min(28rem, 90vw);
-  max-height: calc(100dvh - var(--space-16));
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-xl);
-  background: var(--surface-canvas);
-  box-shadow: var(--shadow-4);
-}
-
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-
-.header > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* The link picker inside the shared Dialog: a search field over a compact,
+   borderless result list. The list keeps one height so the centred dialog does
+   not jump as results arrive. */
 
 .input {
   width: 100%;
@@ -55,16 +18,13 @@
   border-bottom-color: var(--accent);
 }
 
-/* Result listbox: text-forward rows, no per-row border/card. */
-
 .list {
-  max-height: 20rem;
+  height: 20rem;
   overflow-y: auto;
   padding: var(--space-1);
 }
 
-/* While the caller's commit is in flight: dim the settled rows and stop
-   pointer interaction so a second click can't fire a duplicate submit. */
+/* While a save is in flight: dim the rows and stop a second pick. */
 .list[data-busy] {
   opacity: 0.6;
   pointer-events: none;
@@ -131,18 +91,5 @@
 .status {
   padding: var(--space-3);
   color: var(--ink-faint);
-  font-size: var(--text-sm);
-}
-
-.errorRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-3);
-}
-
-.errorText {
-  color: var(--ink);
   font-size: var(--text-sm);
 }

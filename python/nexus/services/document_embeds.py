@@ -41,9 +41,8 @@ from nexus.schemas.media import (
 )
 from nexus.services import library_entries
 from nexus.services.playback_source import derive_playback_source
-from nexus.services.resource_graph.edges import replace_edges_for_origin
+from nexus.services.resource_graph.edges import EdgeCreate, replace_edges_for_origin
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_graph.schemas import EdgeCreate
 
 
 @dataclass(frozen=True, slots=True)

@@ -30,9 +30,11 @@ import {
   activateResource,
   type ResourceActivation,
 } from "@/lib/resources/activation";
-import { toReaderCitationData } from "@/lib/resourceGraph/citations";
-import { dispatchReaderSourceActivation } from "@/lib/resourceGraph/readerSourceActivation";
-import type { ReaderSourceTarget } from "@/lib/resourceGraph/readerTarget";
+import {
+  dispatchReaderSourceActivation,
+  toReaderCitationData,
+  type ReaderSourceTarget,
+} from "@/lib/resourceGraph/citations";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { toRoman } from "@/lib/toRoman";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";

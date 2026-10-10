@@ -45,7 +45,7 @@ from nexus.services.llm_execution import (
     generation_has_local_recovery,
 )
 from nexus.services.llm_ledger import LlmCallOwner
-from nexus.services.resource_graph.schemas import CitationInput
+from nexus.services.resource_graph.citations import CitationInput
 from nexus.services.structured_synthesis import (
     StructuredSynthesisError,
     build_synthesis_intent,

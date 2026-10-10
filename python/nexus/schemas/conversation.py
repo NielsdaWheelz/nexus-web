@@ -592,12 +592,6 @@ class AssistantTrustTrailOut(BaseModel):
 MessageOut.model_rebuild()
 
 
-class PageInfo(BaseModel):
-    """Manual-paging cursor envelope for retained conversation context queries."""
-
-    next_cursor: str | None
-
-
 # =============================================================================
 # Branch / fork wire models
 # =============================================================================

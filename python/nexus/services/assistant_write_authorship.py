@@ -28,15 +28,15 @@ from nexus.schemas.machine_authorship import (
     MachineAuthorshipOut,
     MachineAuthorshipTargetKind,
 )
-from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
-from nexus.services.resource_graph.resolve import assert_ref_visible
-from nexus.services.resource_graph.schemas import (
+from nexus.schemas.resource_graph import (
     ChatCreationRecord,
-    ConnectionCreation,
+    ConnectionCreationOut,
     GenerationCreationRecord,
     UndoAssistantChatMutation,
     UndoAssistantGenerationMutation,
 )
+from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
+from nexus.services.resource_graph.resolve import assert_ref_visible
 
 if TYPE_CHECKING:
     from nexus.services.tool_authority import ToolPositionRecord
@@ -229,7 +229,7 @@ def machine_authorship_for_edge(
 def assistant_edge_provenance(
     db: Session, *, viewer_id: UUID, edge_id: UUID
 ) -> tuple[
-    ConnectionCreation | None,
+    ConnectionCreationOut | None,
     UndoAssistantChatMutation | UndoAssistantGenerationMutation | None,
 ]:
     """Project one assistant link's retained authorship, receipt and undo owner.
@@ -295,7 +295,7 @@ def assistant_edge_provenance(
         if targets != (("resource_edge", edge_id),):
             raise AssertionError("assistant link differs from its chat undo effect")
         return (
-            ConnectionCreation(
+            ConnectionCreationOut(
                 authorship=projected_authorship,
                 record=ChatCreationRecord(
                     conversation_id=chat_call.conversation_id,
@@ -310,7 +310,7 @@ def assistant_edge_provenance(
             else None,
         )
     return (
-        ConnectionCreation(
+        ConnectionCreationOut(
             authorship=projected_authorship,
             record=GenerationCreationRecord(
                 generation_id=receipt.generation_id, position_id=receipt.id
