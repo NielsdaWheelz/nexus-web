@@ -25,12 +25,7 @@ from nexus.services.chat_reader_selection import (
     render_subject_metadata_block,
 )
 from nexus.services.conversation_branches import load_message_path
-from nexus.services.generation_spec import (
-    GenerationIntent,
-    ImmutablePromptPayloadRef,
-    TextOutput,
-    generation_fact_digest,
-)
+from nexus.services.generation.contract import GenerationIntent, TextOutput
 from nexus.services.resource_graph.context import (
     admits_resource_for_conversation_read,
     list_context_refs,
@@ -50,7 +45,6 @@ from nexus.services.resource_items.capabilities import (
 from nexus.services.retrieval_citation import RetrievalCitation, citation_from_search_result
 from nexus.services.search.service import get_search_result
 
-CHAT_PROMPT_TEMPLATE_REVISION = "chat-context.v6"
 MAX_PROMPT_CHARS = 100_000
 
 PromptRole = Literal["system", "user", "assistant"]
@@ -469,17 +463,6 @@ def _generation_intent_from_plan(plan: PromptPlan) -> GenerationIntent:
             for turn in plan.turns[1:]
         ),
         output=TextOutput(),
-    )
-
-
-def chat_prompt_payload_ref(*, run_id: UUID, intent: GenerationIntent) -> ImmutablePromptPayloadRef:
-    """Address one immutable raw Chat intent in its protected payload owner."""
-
-    return ImmutablePromptPayloadRef(
-        owner_kind="chat_run",
-        owner_id=str(run_id),
-        revision="chat-prompt-payload.v1",
-        payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
     )
 
 

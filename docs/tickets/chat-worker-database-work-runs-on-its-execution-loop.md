@@ -2,15 +2,17 @@
 
 status: open · origin: 2026-09-21 chat-database repair (cleanup/chat-database), main `8d6a9209b5` · area: chat execution / jobs worker
 
-`python/nexus/tasks/llm_task.py:29-69` runs each chat job's async handler on a
-private event loop (`loop.run_until_complete`). on that loop,
-`python/nexus/services/chat_run_worker.py:266-692` executes synchronous
-sqlalchemy work: `is_cancel_requested(db, ...)` (line 579),
-`lock_chat_run_for_update`, event-store appends from the text coalescer flush,
-and `db.commit()` (line 586). the same loop drives the provider stream, the
-33 ms coalescer flush timer (`CHAT_TEXT_FLUSH_INTERVAL_MS`, line 116), and the
-cancel watcher (`_watch_cancel`, lines 679-694), which opens a second session
-and reads on the loop every 0.25 s.
+`run_generation_job` (`python/nexus/services/generation/runtime.py`) runs each
+chat job's async handler on a private event loop (`loop.run_until_complete`). on
+that loop, `python/nexus/services/chat_run_worker.py` executes synchronous
+sqlalchemy work: `is_cancel_requested(db, ...)`, `lock_chat_run_for_update`,
+event-store appends from the text coalescer flush (`_ChatTextCoalescer._flush_now`),
+and `db.commit()`. the same loop drives the model stream, the 33 ms coalescer
+flush timer (`CHAT_TEXT_FLUSH_INTERVAL_MS`), and `generate`'s watcher
+(`services/generation/run.py` `_watch`), which opens a session and checks the
+stop, the job claim and the deadline on the loop every 0.25 s
+(`STOP_POLL_SECONDS`). (updated 2026-10-10 for the generation rewrite, which
+deleted `tasks/llm_task.py` and moved the loop; the shape is unchanged.)
 
 impact: bounded to that job's loop, which runs one job in a worker process
 separate from the api. a slow write or lock wait pauses stream consumption,

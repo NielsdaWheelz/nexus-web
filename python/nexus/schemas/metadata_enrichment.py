@@ -16,7 +16,7 @@ from pydantic import (
 
 from nexus.schemas.client_mutation import ClientMutationUuidText
 from nexus.schemas.isbn import Isbn13
-from nexus.schemas.presence import Presence, Present, absent
+from nexus.schemas.presence import Presence, Present
 from nexus.schemas.publication_dates import PublicationDate
 from nexus.services.contributor_taxonomy import (
     CONTRIBUTOR_ROLES_ORDERED,
@@ -45,8 +45,6 @@ type MetadataField = Literal[
 METADATA_FIELDS: tuple[MetadataField, ...] = get_args(MetadataField.__value__)
 
 type MetadataFailureCode = Literal[
-    "catalog_unavailable",
-    "configuration_error",
     "model_unavailable",
     "authentication_failed",
     "quota_unavailable",
@@ -221,23 +219,6 @@ type MetadataOutcome = Annotated[
 ]
 
 
-class MetadataAcceptedMemo(_MetadataModel):
-    status: Literal["accepted"] = "accepted"
-    enrichment: AcceptedMetadataEnrichment
-    published: Presence[MetadataOutcome] = Field(default_factory=absent)
-
-
-class MetadataFailedMemo(_MetadataModel):
-    status: Literal["failed"] = "failed"
-    reason: MetadataFailureCode
-    published: Presence[MetadataOutcome] = Field(default_factory=absent)
-
-
-type MetadataMemo = Annotated[
-    MetadataAcceptedMemo | MetadataFailedMemo, Field(discriminator="status")
-]
-
-
 class MetadataEnrichmentRequest(_MetadataModel):
     client_mutation_id: ClientMutationUuidText
     expected_job_id: Presence[UUID]
@@ -255,7 +236,7 @@ class MetadataRetryAllowed(_MetadataModel):
 
 class MetadataRetryBlocked(_MetadataModel):
     status: Literal["blocked"] = "blocked"
-    reason: Literal["not_creator", "not_eligible", "active", "uncertain"]
+    reason: Literal["not_creator", "not_eligible", "active"]
 
 
 type MetadataRetry = Annotated[
@@ -289,10 +270,6 @@ class MetadataRecoveringOperation(_MetadataOperationBase):
     status: Literal["recovering"] = "recovering"
 
 
-class MetadataUncertainOperation(_MetadataOperationBase):
-    status: Literal["uncertain"] = "uncertain"
-
-
 class MetadataWaitingOperation(_MetadataOperationBase):
     status: Literal["waiting"] = "waiting"
     reason: Literal["retry"]
@@ -319,7 +296,6 @@ type MetadataOperationOut = Annotated[
     MetadataQueuedOperation
     | MetadataRunningOperation
     | MetadataRecoveringOperation
-    | MetadataUncertainOperation
     | MetadataWaitingOperation
     | MetadataCompletedOperation
     | MetadataNoFindingsOperation

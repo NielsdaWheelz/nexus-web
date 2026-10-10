@@ -25,9 +25,10 @@ from nexus.schemas.metadata_enrichment import (
     MetadataField,
 )
 from nexus.schemas.presence import Present, absent, present
-from nexus.services import generation_policy
 from nexus.services.contributor_credits import load_contributor_credits_for_media
 from nexus.services.contributor_taxonomy import parse_contributor_handle
+from nexus.services.generation.contract import InvalidOutput
+from nexus.services.generation.policy import policy
 from nexus.services.reader_publication import replace_reader_document_title
 
 _ENRICHMENT_SYSTEM_PROMPT = """\
@@ -89,14 +90,12 @@ Contributors and other fields:
   established; do not fabricate findings to make the operation succeed.\
 """
 
-_METADATA_INPUT_MAX_BYTES = generation_policy.workflow_for_operation(
-    "metadata_enrichment"
-).bounds.input_max_bytes
+_METADATA_INPUT_MAX_BYTES = policy("metadata_enrichment").input_max_bytes
 _SOURCE_READ_MAX_CHARS = 64_000
 _HINT_MAX_BYTES = 1_024
 
 
-class MetadataInvalidOutput(ValueError):
+class MetadataInvalidOutput(InvalidOutput):
     """Generated metadata violates the bibliographic output contract."""
 
 

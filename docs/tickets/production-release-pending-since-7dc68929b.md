@@ -151,3 +151,12 @@ deletes the link and link-note replay memos (`resource_mutations` scopes
 downgrade is a no-op. web and api ship together: `ConnectionOut` lost its mirrors and
 `GET /conversations?has_context_ref` answers 400. stale tabs re-execute a pre-release
 retry instead of replaying it (a link answers "Already linked"); reload fixes them.
+
+the generation reauthor adds `0269` (drop crash replay). it ends every in-flight
+chat run as `interrupted` (queued with a cancel request: `cancelled`), closes open
+ledger rows and unfinished tool positions, fails dossier/oracle/summary rows whose
+job is dead, rewrites retired failure codes, and drops the turn and continuation
+tables. it is irreversible: its downgrade raises; rollback is the pre-release backup
+plus the prior builds, so stop writers and take that backup first (0268 and 0269 run
+in the same window). web and api ship together (chat contract "3"). after the
+release, remove `GENERATION_CONTINUATION_ENCRYPTION_KEY` from the live env.

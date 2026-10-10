@@ -10,10 +10,10 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from nexus.jobs.queue import DurableExecutionPhase
 from nexus.schemas.citation import CitationOut
 from nexus.schemas.presence import Presence
 from nexus.schemas.resource_items import ResourceActivationOut
-from nexus.services.durable_step_journal import DurableExecutionPhase
 
 
 class DossierFailureCode(StrEnum):
@@ -28,7 +28,6 @@ class DossierFailureCode(StrEnum):
     InvalidOutput = "InvalidOutput"
     PolicyViolation = "PolicyViolation"
     RuntimeUnavailable = "RuntimeUnavailable"
-    CapacityUnavailable = "CapacityUnavailable"
     DocumentValidationFailed = "DocumentValidationFailed"
     CitationValidationFailed = "CitationValidationFailed"
 

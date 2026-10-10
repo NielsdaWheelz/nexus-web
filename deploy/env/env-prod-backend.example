@@ -55,8 +55,6 @@ ANTHROPIC_GENERATION_API_KEY=<anthropic-generation-api-key>
 GEMINI_GENERATION_API_KEY=<gemini-generation-api-key>
 DEEPSEEK_GENERATION_API_KEY=<deepseek-generation-api-key>
 XAI_GENERATION_API_KEY=<xai-generation-api-key>
-# Generate with the same command as STREAM_TOKEN_SIGNING_KEY, using a distinct key.
-GENERATION_CONTINUATION_ENCRYPTION_KEY=<base64-encoded-distinct-32-byte-key>
 # Required acknowledgement for Anthropic/Fable retention semantics.
 NEXUS_FABLE_RETENTION_ACCEPTED_AT=2026-08-31T00:00:00Z
 

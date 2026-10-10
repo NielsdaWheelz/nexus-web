@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict
 
 from nexus.schemas.resource_graph import EdgeKind
 from nexus.services.dossier.inputs import Candidate
+from nexus.services.generation.contract import InvalidOutput
 from nexus.services.resource_graph.citations import CitationInput
 
 _HTML = "{http://www.w3.org/1999/xhtml}"
@@ -37,7 +38,7 @@ _SECTION_ID = re.compile(r"[a-z][a-z0-9-]{0,63}\Z")
 _ORDINAL = re.compile(r"[1-9][0-9]*\Z")
 
 
-class DocumentRejected(ValueError):
+class DocumentRejected(InvalidOutput):
     def __init__(self, kind: Literal["Document", "Citation"], message: str) -> None:
         super().__init__(message)
         self.kind = kind

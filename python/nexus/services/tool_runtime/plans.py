@@ -9,8 +9,7 @@ limits, revisions, and transport publication all originate from the resulting
 
 from __future__ import annotations
 
-import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Final
 
@@ -26,12 +25,10 @@ from llm_tools import (
     ToolId,
     ToolPlan,
     ToolSpec,
-    canonical_json_bytes,
 )
 from universal_memory.tools import MEMORY_READ_IDS, MEMORY_READ_SPECS, MEMORY_SAVE_NOTE_SPEC
 
 from nexus.services.tool_runtime.declarations import NEXUS_TOOL_DECLARATIONS
-from nexus.services.tool_runtime.plan_revisions import TOOL_PLAN_AUTHORITY_REVISIONS
 
 _NEXUS_READ_TOOL_IDS: Final[tuple[ToolId, ...]] = tuple(
     ToolId(value)
@@ -79,7 +76,6 @@ class ToolPlanDefinition:
     profile: CapabilityProfile
     plan: ToolPlan
     max_live_writes: int | None
-    authority_revision: str = field(init=False)
 
     def __post_init__(self) -> None:
         if not self.plan_id:
@@ -98,47 +94,6 @@ class ToolPlanDefinition:
             raise ValueError("read-only tool plans cannot carry a write-effect bound")
         if write_count > 0 and (type(self.max_live_writes) is not int or self.max_live_writes < 1):
             raise ValueError("write-capable tool plans require a positive live-write bound")
-        semantic = _definition_json(
-            plan_id=self.plan_id,
-            profile=self.profile,
-            plan=self.plan,
-            max_live_writes=self.max_live_writes,
-        )
-        object.__setattr__(
-            self,
-            "authority_revision",
-            hashlib.sha256(canonical_json_bytes(semantic)).hexdigest(),
-        )
-
-
-def _definition_json(
-    *,
-    plan_id: str,
-    profile: CapabilityProfile,
-    plan: ToolPlan,
-    max_live_writes: int | None,
-) -> dict[str, object]:
-    grants: list[dict[str, object]] = []
-    for grant in profile.grants:
-        spec = _TOOL_SPECS[grant.id]
-        effective_limits = grant.limits or spec.limits
-        grants.append(
-            {
-                "effect": spec.effect.value,
-                "id": str(grant.id),
-                "limits": effective_limits.json(),
-                "tool_contract_revision": spec.tool_contract_revision,
-            }
-        )
-    return {
-        # every plan is Native; the literal stays in the hashed authority revision.
-        "exposure": "Native",
-        "grants": grants,
-        "max_live_writes": max_live_writes,
-        "plan_id": plan_id,
-        "profile_id": str(profile.id),
-        "run_limits": profile.run_limits.json(),
-    }
 
 
 # one call in flight, otherwise unlimited: no plan carries an elapsed budget.
@@ -227,11 +182,6 @@ TOOL_PLAN_DEFINITIONS: Final[tuple[ToolPlanDefinition, ...]] = (
     CHAT_MEMORY_READ_TOOL_DEFINITION,
     CHAT_MEMORY_READ_SAVE_TOOL_DEFINITION,
 )
-_computed_authority_revisions = {
-    definition.plan_id: definition.authority_revision for definition in TOOL_PLAN_DEFINITIONS
-}
-if _computed_authority_revisions != dict(TOOL_PLAN_AUTHORITY_REVISIONS):
-    raise ValueError("tool plan definitions differ from the reviewed authority-revision lock")
 if len({definition.plan_id for definition in TOOL_PLAN_DEFINITIONS}) != len(TOOL_PLAN_DEFINITIONS):
     raise ValueError("tool plan definitions contain a duplicate plan id")
 if len({definition.profile.id for definition in TOOL_PLAN_DEFINITIONS}) != len(

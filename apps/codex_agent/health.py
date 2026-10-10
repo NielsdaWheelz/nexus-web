@@ -8,7 +8,7 @@ from pathlib import Path
 
 from apps.codex_agent.path_environment import required_absolute_path
 
-from nexus.services.native_catalog_client import NativeCatalogClient
+from nexus.services.generation.catalog import fetch_codex_catalog
 from nexus.services.native_health_contract import expected_health_identity
 
 
@@ -19,7 +19,7 @@ async def check(socket_path: Path | None = None) -> dict[str, str]:
         else required_absolute_path("NEXUS_CODEX_NATIVE_SOCKET")
     )
     async with asyncio.timeout(3):
-        await NativeCatalogClient(path).health()
+        await fetch_codex_catalog(path)
     return expected_health_identity()
 
 

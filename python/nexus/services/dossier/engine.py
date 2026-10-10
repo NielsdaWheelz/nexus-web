@@ -22,8 +22,10 @@ from nexus.config import get_settings
 from nexus.db.retries import retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.jobs.queue import (
+    DurableExecutionPhase,
     JobExecutionContext,
     enqueue_unique_job,
+    project_execution_phase,
     revoke_jobs_by_dedupe_keys,
     running_job_claim_is_current,
 )
@@ -42,14 +44,7 @@ from nexus.schemas.presence import absent, presence_from_nullable, present
 from nexus.services.dossier import research, subjects
 from nexus.services.dossier.inputs import Coverage, InputTooLarge
 from nexus.services.dossier.synthesis import Published
-from nexus.services.durable_step_journal import DurableExecutionPhase, project_execution_phase
-from nexus.services.generation_spec import CodexPersonalSelection
-from nexus.services.llm_ledger import (
-    LlmCallOwner,
-    fence_native_attempts_for_owner,
-    read_latest_generations_for_owners,
-    read_model_turns_for_generations,
-)
+from nexus.services.generation.ledger import latest_generations
 from nexus.services.media_intelligence import read_single
 from nexus.services.resource_graph.citations import (
     build_citation_outs_for_sources,
@@ -228,7 +223,6 @@ def cancel_build(db: Session, *, build_id: UUID, viewer_id: UUID) -> None:
 
     def op() -> None:
         head_id = _visible_build(db, build_id, viewer_id).artifact_id
-        fence_native_attempts_for_owner(db, owner=LlmCallOwner(kind="artifact_build", id=build_id))
         _sql(db, "SELECT 1 FROM artifacts WHERE id = :id FOR UPDATE", id=head_id)
         if not _transition(db, build_id, "cancelled"):
             status = _sql(db, "SELECT status FROM artifact_builds WHERE id = :id", id=build_id)
@@ -484,18 +478,14 @@ def _build_out(db: Session, build: Any) -> DossierBuildOut:
 
 def _provenance(db: Session, build_id: UUID) -> tuple[str | None, int | None]:
     """The model and total tokens of the build's succeeded generation, from the ledger."""
-    owner = LlmCallOwner(kind="artifact_build", id=build_id)
-    call = read_latest_generations_for_owners(db, owners=[owner], outcome="Succeeded").get(owner)
+    call = latest_generations(db, kind="artifact_build", ids=[build_id], succeeded=True).get(
+        build_id
+    )
     if call is None:
         return None, None
-    selection = call.spec.selection
-    model = (
-        selection.model if isinstance(selection, CodexPersonalSelection) else selection.model_ref
-    )
-    turns = read_model_turns_for_generations(db, generation_ids=[call.id])[call.id]
-    tokens = [turn.usage.get("total_tokens") if turn.usage else None for turn in turns]
-    exact = tokens and all(type(count) is int and count >= 0 for count in tokens)
-    return model, sum(cast(list[int], tokens)) if exact else None
+    selection = cast(dict[str, str], call.generation_spec["selection"])
+    tokens = None if call.usage is None else call.usage.get("total_tokens")
+    return selection.get("model") or selection.get("model_ref"), cast(int | None, tokens)
 
 
 def _visible_head(db: Session, artifact_id: UUID, viewer_id: UUID) -> Any:

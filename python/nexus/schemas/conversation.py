@@ -23,13 +23,12 @@ from nexus.schemas.chat_reader_selection import ReaderSelectionInput, ReaderSele
 from nexus.schemas.citation import CitationOut, CitationRole, CitationTargetRef
 from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.execution import ChatRunExecutionOut
-from nexus.schemas.llm import ExpectedChatFailure, RunSelectionOut
+from nexus.schemas.llm import ExpectedChatFailure, GenerationSelection, RunSelectionOut
 from nexus.schemas.machine_authorship import MachineAuthorshipOut
 from nexus.schemas.presence import Absent, Presence, Present, absent, present
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
 from nexus.schemas.search_types import SEARCH_RESULT_TYPES
-from nexus.services.generation_spec import GenerationSelectionSpec
 from nexus.services.tool_runtime.declarations import BROWSER_TOOL_PROJECTION_CONTRACT
 
 MESSAGE_TOOL_STATUSES = Literal["pending", "running", "complete", "error", "cancelled"]
@@ -716,7 +715,6 @@ ChatDestination = Annotated[
 
 ChatAdmissionRejectionCode = Literal[
     "E_MESSAGE_TOO_LONG",
-    "E_CATALOG_DEFINITION_STALE",
     "E_INVALID_GENERATION_SELECTION",
     "E_GENERATION_SELECTION_UNAVAILABLE",
     "E_INVALID_REQUEST",
@@ -784,8 +782,7 @@ class ChatRunCreateRequest(BaseModel):
 
     destination: ChatDestination
     content: str
-    catalog_definition_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
-    selection: GenerationSelectionSpec
+    selection: GenerationSelection
     reader_selection: Presence[ReaderSelectionInput]
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid", strict=True)
@@ -800,8 +797,7 @@ class ChatRunCreateRequest(BaseModel):
 class ChatRunRepeatRequest(BaseModel):
     """Exact selection for rerun/regenerate."""
 
-    catalog_definition_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
-    selection: GenerationSelectionSpec
+    selection: GenerationSelection
 
     model_config = ConfigDict(extra="forbid", strict=True)
 

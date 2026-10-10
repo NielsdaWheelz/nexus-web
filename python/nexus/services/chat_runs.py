@@ -23,11 +23,7 @@ from starlette.concurrency import run_in_threadpool
 from nexus.db.models import ChatRun, ChatRunTurnContext, Conversation, Message
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.jobs.queue import (
-    current_dead_job_for_payload,
-    enqueue_job,
-    lock_chat_generation_admission_in_current_transaction,
-)
+from nexus.jobs.queue import current_dead_job_for_payload, enqueue_job
 from nexus.schemas.chat_reader_selection import ReaderSelectionInput
 from nexus.schemas.conversation import (
     MAX_MESSAGE_CONTENT_LENGTH,
@@ -45,14 +41,13 @@ from nexus.schemas.conversation import (
     ReplyInsertion,
 )
 from nexus.schemas.llm import (
-    CatalogDefinitionStale,
+    GenerationSelection,
     GenerationSelectionUnavailable,
     Ineligible,
     InvalidGenerationSelection,
     RunSelectionOut,
 )
 from nexus.schemas.presence import Present
-from nexus.services import generation_policy
 from nexus.services.chat_failure import rerun_eligibility
 from nexus.services.chat_reader_selection import (
     build_reader_selection_snapshot,
@@ -64,6 +59,7 @@ from nexus.services.chat_run_citations import persist_attached_citations
 from nexus.services.chat_run_event_store import (
     TERMINAL_RUN_STATUSES,
     ChatRunEventEmitter,
+    finalize_dead_run,
     lock_chat_run_for_update,
 )
 from nexus.services.chat_run_response import build_chat_run_response, read_chat_run_response
@@ -74,30 +70,23 @@ from nexus.services.collection_revisions import (
     bump_collection_revision,
 )
 from nexus.services.context_assembler import (
-    CHAT_PROMPT_TEMPLATE_REVISION,
     ContextBudgetError,
     assemble_chat_context,
-    chat_prompt_payload_ref,
     persist_prompt_assembly,
 )
 from nexus.services.conversation_branches import branch_anchor_for_message, set_active_leaf
 from nexus.services.conversations import DEFAULT_CONVERSATION_TITLE, derive_conversation_title
-from nexus.services.generation_admission import GenerationOperationUnavailable
-from nexus.services.generation_catalog import (
-    CatalogDefinitionStaleError,
-    GenerationCatalogRefreshError,
-    GenerationCatalogService,
-    GenerationSelectionUnavailableError,
-    InvalidGenerationSelectionError,
-    ResolvedCatalogPair,
+from nexus.services.generation.catalog import (
+    Catalog,
+    CatalogUnavailable,
+    InvalidSelection,
+    Row,
+    SelectionUnavailable,
+    chat_budgets,
+    chat_row,
 )
-from nexus.services.generation_service import GenerationService
-from nexus.services.generation_spec import (
-    CodexPersonalSelection,
-    FrozenToolScope,
-    GenerationSpec,
-    ProviderApiSelection,
-)
+from nexus.services.generation.contract import GenerationSpec
+from nexus.services.generation.policy import chat_tool_plan
 from nexus.services.resource_graph.context import (
     add_context_ref_without_commit,
     list_context_refs,
@@ -106,9 +95,8 @@ from nexus.services.resource_graph.edges import create_link
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_mutation_replay import lookup_replay, record_replay
 from nexus.services.seq import assign_next_message_seq
-from nexus.services.tool_runtime.catalog import ComposedToolRuntime
+from nexus.services.tool_runtime.catalog import ComposedToolRuntime, unavailable_tool_ids
 
-type ExactChatSelection = CodexPersonalSelection | ProviderApiSelection
 type RepeatOperation = Literal["rerun", "regenerate"]
 
 CHAT_ADMISSION_SCOPE = "chat:admission"
@@ -137,10 +125,9 @@ async def create_chat_run(
     destination: ChatDestination,
     reader_selection: ReaderSelectionInput | None,
     content: str,
-    catalog_definition_revision: str,
-    selection: ExactChatSelection,
+    selection: GenerationSelection,
     idempotency_key: str | None,
-    catalog: GenerationCatalogService,
+    catalog: Catalog,
     tool_runtime: ComposedToolRuntime,
 ) -> ChatAdmissionReceipt:
     """Admit one send. Never a domain error: the outcome is a committed receipt."""
@@ -153,7 +140,6 @@ async def create_chat_run(
         {
             "destination": destination.model_dump(mode="json"),
             "content": content,
-            "catalog_definition_revision": catalog_definition_revision,
             "selection": selection.model_dump(mode="json"),
             "reader_selection_key": (
                 {
@@ -165,27 +151,17 @@ async def create_chat_run(
             ),
         }
     )
-    pair, catalog_error = await _resolve_catalog_pair(
-        catalog,
-        catalog_definition_revision=catalog_definition_revision,
-        selection=selection,
-    )
-    generation_service = GenerationService(
-        catalog=catalog,
-        policy=generation_policy.GENERATION_POLICY,
-        tools=tool_runtime,
-    )
+    pair, catalog_error = await _resolve_catalog_row(catalog, selection)
 
-    def build(db: Session, resolved: ResolvedCatalogPair) -> ChatRun:
+    def build(db: Session, resolved: Row) -> ChatRun:
         return _admit_send(
             db,
             viewer_id=viewer_id,
             destination=destination,
             reader_selection=reader_selection,
             content=content,
-            catalog_definition_revision=catalog_definition_revision,
-            pair=resolved,
-            generation_service=generation_service,
+            row=resolved,
+            tool_runtime=tool_runtime,
         )
 
     def settle() -> ChatAdmissionReceipt:
@@ -207,10 +183,9 @@ async def repeat_assistant_response(
     operation: RepeatOperation,
     viewer_id: UUID,
     assistant_message_id: UUID,
-    catalog_definition_revision: str,
-    selection: ExactChatSelection,
+    selection: GenerationSelection,
     idempotency_key: str | None,
-    catalog: GenerationCatalogService,
+    catalog: Catalog,
     tool_runtime: ComposedToolRuntime,
 ) -> ChatRunResponse:
     """Mint a sibling candidate under the same parent, with a fresh admission.
@@ -224,30 +199,19 @@ async def repeat_assistant_response(
         {
             "operation": operation,
             "source_assistant_message_id": str(assistant_message_id),
-            "catalog_definition_revision": catalog_definition_revision,
             "selection": selection.model_dump(mode="json"),
         }
     )
-    pair, catalog_error = await _resolve_catalog_pair(
-        catalog,
-        catalog_definition_revision=catalog_definition_revision,
-        selection=selection,
-    )
-    generation_service = GenerationService(
-        catalog=catalog,
-        policy=generation_policy.GENERATION_POLICY,
-        tools=tool_runtime,
-    )
+    pair, catalog_error = await _resolve_catalog_row(catalog, selection)
 
-    def build(db: Session, resolved: ResolvedCatalogPair) -> ChatRun:
+    def build(db: Session, resolved: Row) -> ChatRun:
         return _admit_repeat(
             db,
             operation=operation,
             viewer_id=viewer_id,
             assistant_message_id=assistant_message_id,
-            catalog_definition_revision=catalog_definition_revision,
-            pair=resolved,
-            generation_service=generation_service,
+            row=resolved,
+            tool_runtime=tool_runtime,
         )
 
     def settle() -> ChatAdmissionReceipt:
@@ -278,12 +242,9 @@ async def repeat_assistant_response(
 # =============================================================================
 
 
-async def _resolve_catalog_pair(
-    catalog: GenerationCatalogService,
-    *,
-    catalog_definition_revision: str,
-    selection: ExactChatSelection,
-) -> tuple[ResolvedCatalogPair | None, ApiError | None]:
+async def _resolve_catalog_row(
+    catalog: Catalog, selection: GenerationSelection
+) -> tuple[Row | None, ApiError | None]:
     """Resolve the exact selection outside the settlement lock.
 
     A competing admission may commit while this request is in flight, so no
@@ -292,65 +253,37 @@ async def _resolve_catalog_pair(
     """
 
     try:
-        return await _admit_chat_selection(
-            catalog,
-            catalog_definition_revision=catalog_definition_revision,
-            selection=selection,
-        ), None
-    except ApiError as exc:
-        return None, exc
-
-
-async def _admit_chat_selection(
-    catalog: GenerationCatalogService,
-    *,
-    catalog_definition_revision: str,
-    selection: ExactChatSelection,
-) -> ResolvedCatalogPair:
-    try:
-        return await catalog.final_chat_selection_check(
-            catalog_definition_revision=catalog_definition_revision,
-            selection=selection,
-        )
-    except GenerationCatalogRefreshError as error:
-        raise ApiError(
+        return chat_row(await catalog.read(), selection), None
+    except CatalogUnavailable:
+        return None, ApiError(
             ApiErrorCode.E_GENERATION_RUNTIME_UNAVAILABLE,
-            "Generation availability could not be refreshed; retry the same command",
-        ) from error
-    except CatalogDefinitionStaleError as error:
-        raise ApiError(
-            ApiErrorCode.E_CATALOG_DEFINITION_STALE,
-            "Generation catalog changed; refresh and confirm the selection again",
-            details=CatalogDefinitionStale(
-                current_definition_revision=error.current_definition_revision
-            ).model_dump(mode="json"),
-        ) from error
-    except InvalidGenerationSelectionError as error:
+            "Generation availability could not be read; retry the same command",
+        )
+    except InvalidSelection:
         failure = InvalidGenerationSelection(
             field=Present(value="selection"),
             explanation="The exact generation selection is not in the configured catalog.",
         )
-        raise ApiError(
+        return None, ApiError(
             ApiErrorCode.E_INVALID_GENERATION_SELECTION,
             failure.explanation,
             details=failure.model_dump(mode="json"),
-        ) from error
-    except GenerationSelectionUnavailableError as error:
-        if not isinstance(error.pair.state, Ineligible):
+        )
+    except SelectionUnavailable as error:
+        if not isinstance(error.row.chat_state, Ineligible):
             # Readiness is volatile operational evidence, not an immutable
             # rejection of this exact command. Keep its key unsettled.
-            raise ApiError(
+            return None, ApiError(
                 ApiErrorCode.E_GENERATION_RUNTIME_UNAVAILABLE,
                 "The selected generation route is unavailable; retry the same command",
-            ) from error
-        raise ApiError(
+            )
+        return None, ApiError(
             ApiErrorCode.E_GENERATION_SELECTION_UNAVAILABLE,
             "The exact generation selection is not currently runnable",
             details=GenerationSelectionUnavailable(
-                selection=error.pair.selection,
-                state=error.pair.state,
+                selection=error.row.selection, state=error.row.chat_state
             ).model_dump(mode="json"),
-        ) from error
+        )
 
 
 def _settle_admission(
@@ -358,9 +291,9 @@ def _settle_admission(
     viewer_id: UUID,
     idempotency_key: str,
     request_bytes: bytes,
-    pair: ResolvedCatalogPair | None,
+    pair: Row | None,
     catalog_error: ApiError | None,
-    build: Callable[[Session, ResolvedCatalogPair], ChatRun],
+    build: Callable[[Session, Row], ChatRun],
     rejection_codes: frozenset[str],
 ) -> ChatAdmissionReceipt:
     """One committed admission decision per (viewer, idempotency key).
@@ -373,7 +306,6 @@ def _settle_admission(
 
     with get_session_factory()() as db:
         try:
-            lock_chat_generation_admission_in_current_transaction(db)
             db.execute(
                 text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
                 {"lock_key": f"chat_run:{viewer_id}:{idempotency_key}"},
@@ -462,9 +394,8 @@ def _admit_send(
     destination: ChatDestination,
     reader_selection: ReaderSelectionInput | None,
     content: str,
-    catalog_definition_revision: str,
-    pair: ResolvedCatalogPair,
-    generation_service: GenerationService,
+    row: Row,
+    tool_runtime: ComposedToolRuntime,
 ) -> ChatRun:
     if len(content) > MAX_MESSAGE_CONTENT_LENGTH:
         raise ApiError(
@@ -547,9 +478,8 @@ def _admit_send(
         assistant_message=assistant_message,
         subject=subject,
         chat_subject=chat_subject,
-        pair=pair,
-        catalog_definition_revision=catalog_definition_revision,
-        generation_service=generation_service,
+        row=row,
+        tool_runtime=tool_runtime,
     )
 
 
@@ -625,9 +555,8 @@ def _admit_repeat(
     operation: RepeatOperation,
     viewer_id: UUID,
     assistant_message_id: UUID,
-    catalog_definition_revision: str,
-    pair: ResolvedCatalogPair,
-    generation_service: GenerationService,
+    row: Row,
+    tool_runtime: ComposedToolRuntime,
 ) -> ChatRun:
     # Source deletion takes the same parent lock, so once admission resolves its
     # source, deletion cannot invalidate the snapshot before publication.
@@ -694,9 +623,8 @@ def _admit_repeat(
             else None
         ),
         chat_subject=None,
-        pair=pair,
-        catalog_definition_revision=catalog_definition_revision,
-        generation_service=generation_service,
+        row=row,
+        tool_runtime=tool_runtime,
     )
 
 
@@ -777,9 +705,8 @@ def _start_run(
     assistant_message: Message,
     subject: _TurnSubject | None,
     chat_subject: dict[str, object] | None,
-    pair: ResolvedCatalogPair,
-    catalog_definition_revision: str,
-    generation_service: GenerationService,
+    row: Row,
+    tool_runtime: ComposedToolRuntime,
 ) -> ChatRun:
     """Freeze the prompt and spec, append ``meta``, and enqueue the one job."""
 
@@ -803,13 +730,8 @@ def _start_run(
         if subject is not None
         else None
     )
-    spec, run_selection = _freeze_admission(
-        db,
-        run=run,
-        turn_context=turn_context,
-        pair=pair,
-        catalog_definition_revision=catalog_definition_revision,
-        generation_service=generation_service,
+    run_selection = _freeze_admission(
+        db, run=run, turn_context=turn_context, row=row, tool_runtime=tool_runtime
     )
     ChatRunEventEmitter(db, run).batch(
         "meta",
@@ -825,7 +747,7 @@ def _start_run(
     enqueue_job(
         db,
         kind="chat_run",
-        payload={"run_id": str(run.id), "generation_spec_fingerprint": spec.fingerprint},
+        payload={"run_id": str(run.id)},
         priority=50,
         max_attempts=3,
         dedupe_key=f"chat_run:{run.id}",
@@ -838,18 +760,18 @@ def _freeze_admission(
     *,
     run: ChatRun,
     turn_context: ChatRunTurnContext | None,
-    pair: ResolvedCatalogPair,
-    catalog_definition_revision: str,
-    generation_service: GenerationService,
-) -> tuple[GenerationSpec, RunSelectionOut]:
-    """Persist one complete Chat prompt and spec before its queue row exists."""
+    row: Row,
+    tool_runtime: ComposedToolRuntime,
+) -> RunSelectionOut:
+    """Persist one complete chat prompt and spec before its queue row exists."""
 
+    context_budget, output_budget = chat_budgets(row)
     try:
         assembly = assemble_chat_context(
             db,
             run=run,
-            max_context_tokens=pair.effective_context_budget_tokens,
-            max_output_tokens=pair.effective_output_budget_tokens,
+            max_context_tokens=context_budget,
+            max_output_tokens=output_budget,
             turn_context=turn_context,
         )
     except ContextBudgetError as error:
@@ -857,44 +779,34 @@ def _freeze_admission(
             ApiErrorCode.E_GENERATION_CONTEXT_TOO_LARGE,
             "This conversation no longer fits the model context window",
         ) from error
-    try:
-        spec = generation_service.freeze_chat_from_pair(
-            catalog_definition_revision=catalog_definition_revision,
-            pair=pair,
-            owner_user_id=run.owner_user_id,
-            scope=FrozenToolScope(
-                admitted_refs=tuple(
-                    sorted(
-                        context.target.uri
-                        for context in list_context_refs(
-                            db,
-                            viewer_id=run.owner_user_id,
-                            conversation_id=run.conversation_id,
-                        )
-                    )
-                ),
-                predicates=(),
-            ),
-            intent=assembly.generate_intent,
-            prompt_template_revision=CHAT_PROMPT_TEMPLATE_REVISION,
-            prompt_payload_ref=chat_prompt_payload_ref(
-                run_id=run.id,
-                intent=assembly.generate_intent,
-            ),
-        )
-    except GenerationOperationUnavailable as error:
+    plan = chat_tool_plan(
+        tool_runtime.memory_config,
+        user_id=run.owner_user_id,
+        processors=row.presentation.processor_chain.processors,
+    )
+    if unavailable_tool_ids(tool_runtime.operations[plan]):
         raise ApiError(
             ApiErrorCode.E_GENERATION_RUNTIME_UNAVAILABLE,
             "The selected generation route cannot run its complete tool plan",
-        ) from error
-    run.generation_spec = spec.model_dump(mode="json", by_alias=True)
+        )
+    scope = list_context_refs(db, viewer_id=run.owner_user_id, conversation_id=run.conversation_id)
+    run.generation_spec = GenerationSpec(
+        operation="chat",
+        selection=row.selection,
+        display_at_dispatch=row.presentation,
+        tool_plan=plan,
+        tool_scope=tuple(sorted(context.target.uri for context in scope)),
+        effect_mode="AdditiveWrites",
+        context_budget_tokens=context_budget,
+        output_budget_tokens=output_budget,
+    ).model_dump(mode="json")
     db.add(run)
     db.flush()
     if turn_context is not None:
         db.add(turn_context)
     persist_prompt_assembly(db, run=run, assembly=assembly)
     persist_attached_citations(db, run, assembly.attached_citations)
-    return spec, run_selection_out(run)
+    return run_selection_out(run)
 
 
 # =============================================================================
@@ -934,36 +846,26 @@ def cancel_chat_run(
     viewer_id: UUID,
     run_id: UUID,
 ) -> ChatRunResponse:
-    """Record stop intent and fold only proven local dead-job states."""
-
-    from nexus.services.chat_run_worker import settle_cancelled_dead_chat_run
-    from nexus.services.llm_ledger import (
-        LlmCallOwner,
-        fence_native_attempts_for_owner,
-        lock_generation_owner_in_current_transaction,
-    )
+    """Record stop intent; a run whose job already died ends cancelled here."""
 
     owned = get_run_for_owner(db, viewer_id, run_id)
-    lock_chat_generation_admission_in_current_transaction(db)
-    owner = LlmCallOwner(kind="chat_run", id=owned.id)
-    lock_generation_owner_in_current_transaction(db, owner)
     run = lock_chat_run_for_update(db, owned.id)
     if run is None or run.owner_user_id != viewer_id:
         raise AssertionError("owned chat run disappeared before cancellation")
     if run.status in TERMINAL_RUN_STATUSES:
         db.rollback()
         return read_chat_run_response(db, viewer_id, run_id)
-    first_request = run.cancel_requested_at is None
-    if first_request:
+    if run.cancel_requested_at is None:
         run.cancel_requested_at = datetime.now(UTC)
         run.updated_at = datetime.now(UTC)
-    fence_native_attempts_for_owner(db, owner=owner)
     dead_job = current_dead_job_for_payload(
         db,
         kind="chat_run",
         expected_payload_match={"run_id": str(run.id)},
     )
     if dead_job is not None:
-        settle_cancelled_dead_chat_run(db, run=run, job=dead_job)
+        # Its dead-letter projection closed the job's generation but skipped this
+        # locked run.
+        finalize_dead_run(db, run)
     db.commit()
     return read_chat_run_response(db, viewer_id, run_id)

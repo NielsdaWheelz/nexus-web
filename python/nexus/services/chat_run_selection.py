@@ -1,57 +1,27 @@
-"""Historical selection projection from the frozen Chat generation spec."""
+"""A chat run's selection as admitted, from its stored generation spec."""
 
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 from nexus.db.models import ChatRun
 from nexus.schemas.llm import RunSelectionOut
-from nexus.schemas.presence import Present
-from nexus.services.generation_spec import (
-    GenerationSpec,
-    decode_generation_spec_document,
-    read_generation_history,
-)
+from nexus.services.generation.contract import GenerationSpec
 
 
-def chat_generation_spec(run: ChatRun) -> GenerationSpec:
-    """Decode the sole frozen Chat dispatch document at its storage boundary."""
+def run_selection_out(run: ChatRun) -> RunSelectionOut:
+    """Project the admitted selection without consulting current availability."""
 
-    try:
-        spec = decode_generation_spec_document(run.generation_spec)
-    except (TypeError, ValueError) as error:
-        raise AssertionError(f"Chat run {run.id} carries an invalid generation spec") from error
-    if spec.operation != "chat" or spec.selection_source != "ChatRun":
-        raise AssertionError(f"Chat run {run.id} carries a non-Chat generation spec")
-    return spec
-
-
-def run_selection_out(
-    run: ChatRun,
-) -> RunSelectionOut:
-    """Project immutable dispatch facts without consulting current availability."""
-
-    try:
-        spec = read_generation_history(run.generation_spec)
-    except (TypeError, ValueError) as error:
-        raise AssertionError(f"Chat run {run.id} carries an invalid generation spec") from error
-    if spec.operation != "chat" or spec.selection_source != "ChatRun":
-        raise AssertionError(f"Chat run {run.id} carries a non-Chat generation spec")
-    if not isinstance(spec.tool_effect_mode, Present):
-        raise AssertionError(f"Chat run {run.id} lacks frozen tool authority")
-
+    spec = GenerationSpec.model_validate_json(json.dumps(run.generation_spec))
+    if spec.display_at_dispatch is None or spec.effect_mode is None:
+        raise AssertionError(f"chat run {run.id} lacks its admitted presentation or tools")
     return RunSelectionOut(
         selection=spec.selection,
-        catalog_definition_revision=spec.catalog_definition_revision,
-        source_catalog_definition_revision=spec.source_catalog_definition_revision,
         display_at_dispatch=spec.display_at_dispatch,
-        tool_authority=spec.tool_effect_mode.value,
+        tool_authority=spec.effect_mode,
     )
 
 
-def run_selections_out(
-    runs: list[ChatRun],
-) -> dict[UUID, RunSelectionOut]:
-    """Project a loaded run set from its frozen dispatch facts."""
-
+def run_selections_out(runs: list[ChatRun]) -> dict[UUID, RunSelectionOut]:
     return {run.id: run_selection_out(run) for run in runs}

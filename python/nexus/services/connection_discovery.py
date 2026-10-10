@@ -23,14 +23,8 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import ConnectionDiscoverySuppression, Highlight, NoteBlock
 from nexus.db.retries import retry_serializable
-from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
-from nexus.jobs.queue import (
-    JobExecutionContext,
-    enqueue_unique_job,
-    get_job,
-    lock_running_job_claim,
-)
+from nexus.jobs.queue import JobExecutionContext, enqueue_unique_job, lock_running_job_claim
 from nexus.logging import get_logger
 from nexus.schemas.resource_graph import CitationSnapshot
 from nexus.schemas.search import (
@@ -38,12 +32,10 @@ from nexus.schemas.search import (
     SearchResultNoteBlockOut,
     SearchResultOut,
 )
-from nexus.services import durable_step_journal as step_journal
-from nexus.services import generation_policy
-from nexus.services import llm_execution as llm
-from nexus.services import structured_synthesis as synthesis
-from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
-from nexus.services.llm_ledger import LlmCallOwner
+from nexus.services.generation import synthesis
+from nexus.services.generation.contract import Failed, InvalidOutput, Owner, Succeeded
+from nexus.services.generation.run import generate
+from nexus.services.generation.runtime import Runtime, run_generation_job
 from nexus.services.media_intelligence import NotReady, get_media_unit
 from nexus.services.resource_graph.edges import (
     CONNECTION_DISCOVERY_SOURCE_SCHEMES,
@@ -58,13 +50,11 @@ from nexus.services.resource_graph.resolve import resolve_ref, resolve_refs
 from nexus.services.resource_items.capabilities import expand_owned_child_refs
 from nexus.services.search.query import SearchQuery
 from nexus.services.search.service import search
-from nexus.tasks.llm_task import run_llm_task
 
 logger = get_logger(__name__)
 
 ScanStatus = Literal["idle", "pending", "running", "failed"]
 ScanResult = Literal["ok", "skipped", "terminal_failed"]
-_STEP = "synthesis"
 _MAX_CANDIDATES = 12
 _MAX_EDGES = 4
 _MAX_PER_WORK = 2  # two passages of one work is passage grain; four is monologue
@@ -107,15 +97,6 @@ class _Input(BaseModel):
     source_ref: str
     source_text: str
     candidates: tuple[_Candidate, ...]
-
-
-class _Outcome(BaseModel):
-    """The journal's terminal memo."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    connections: tuple[ConnectionDiscoveryConnection, ...] = ()
-    error_code: str | None = None
 
 
 _PROMPT = synthesis.build_synthesis_prompt(
@@ -233,13 +214,13 @@ def connection_discovery_scan_job(
 ) -> dict:
     user_id, ref = UUID(str(payload["user_id"])), assert_resource_ref(str(payload["ref"]))
 
-    async def handle(db: Session, runtime: llm.ExecutionRuntime) -> dict:
+    async def handle(db: Session, runtime: Runtime) -> dict:
         status, error_code = await _scan(
             db, user_id=user_id, ref=ref, context=context, runtime=runtime
         )
         return {"status": status, "error_code": error_code, "ref": ref.uri}
 
-    return run_llm_task("connection_discovery_scan", handle)
+    return run_generation_job("connection_discovery_scan", context, handle)
 
 
 async def _scan(
@@ -248,116 +229,59 @@ async def _scan(
     user_id: UUID,
     ref: ResourceRef,
     context: JobExecutionContext,
-    runtime: llm.ExecutionRuntime,
+    runtime: Runtime,
 ) -> tuple[ScanResult, str | None]:
-    """An admitted generation replays its frozen input; otherwise the input is
-    built fresh. Only ``ok`` touches the edges."""
+    """Build the input fresh, generate once; only ``ok`` touches the edges."""
     if not get_settings().connection_discovery_enabled:
         return "skipped", None
-
-    def lock_dispatch(dispatch_db: Session):
-        if resolve_ref(dispatch_db, viewer_id=user_id, ref=ref).missing:
-            return None
-        return get_job(dispatch_db, context.job_id)
-
-    journal = llm.JobGenerationJournal(
-        context=context, step_path=_STEP, lock_dispatch=lock_dispatch
+    dossier = _dossier(db, user_id=user_id, ref=ref)
+    excluded = set() if dossier is None else _excluded(db, user_id=user_id, ref=ref)
+    db.commit()  # search() embeds first: it needs a session without a transaction
+    if dossier is None:
+        return "skipped", None
+    source_text, kin = dossier
+    response = search(
+        db,
+        user_id,
+        SearchQuery(
+            text=source_text[:800],
+            requested_kinds=frozenset({"documents", "notes"}),
+            limit=_MAX_CANDIDATES * 4,
+        ),
     )
-    frozen = journal.read_admission(db)
-    db.commit()
-    if frozen is not None:
-        intent = frozen[1]
-        candidates = _Input.model_validate_json(intent.input).candidates
-    else:
-        dossier = _dossier(db, user_id=user_id, ref=ref)
-        excluded = set() if dossier is None else _excluded(db, user_id=user_id, ref=ref)
-        db.commit()  # search() embeds first: it needs a session without a transaction
-        if dossier is None:
-            return "skipped", None
-        source_text, kin = dossier
-        response = search(
-            db,
-            user_id,
-            SearchQuery(
-                text=source_text[:800],
-                requested_kinds=frozenset({"documents", "notes"}),
-                limit=_MAX_CANDIDATES * 4,
-            ),
+    candidates = _candidates(response.results, excluded=excluded | kin)
+    if not candidates:
+        return _publish(db, user_id=user_id, ref=ref, context=context, picks=[])
+    source = _Input(source_ref=ref.uri, source_text=source_text, candidates=candidates)
+
+    def accept(
+        value: ConnectionDiscoverySynthesis,
+    ) -> list[tuple[str, ConnectionDiscoveryConnection]]:
+        if len(value.connections) > _MAX_EDGES:
+            raise InvalidOutput(f"connection_discovery output exceeds {_MAX_EDGES} connections")
+        grounded = synthesis.ground_indices(
+            value.connections, candidates, index_of=lambda c: c.candidate_index
         )
-        candidates = _candidates(response.results, excluded=excluded | kin)
-        if not candidates:
-            return _publish(db, user_id=user_id, ref=ref, context=context, picks=[])
-        source = _Input(source_ref=ref.uri, source_text=source_text, candidates=candidates)
-        intent = synthesis.build_synthesis_intent(
+        if grounded is None:
+            raise InvalidOutput("connection_discovery output names a candidate not offered")
+        return [(candidate.target, connection) for connection, candidate in grounded]
+
+    terminal = await generate(
+        runtime,
+        owner=Owner("connection_discovery_scan", ref.id, user_id, context),
+        operation="connection_discovery",
+        intent=synthesis.build_synthesis_intent(
             system_prompt=_PROMPT,
             user_content=canonical_json_bytes(source.model_dump(mode="json")).decode(),
             schema=ConnectionDiscoverySynthesis,
-        )
-    revision = (
-        generation_policy.operation_revision("connection_discovery")
-        + ".connection_discovery-input.v2"
+        ),
+        decode=synthesis.strict(ConnectionDiscoverySynthesis, accept),
     )
-    try:
-        request = await llm.admit_job_generation(
-            owner=LlmCallOwner(kind="connection_discovery_scan", id=ref.id),
-            user_id=user_id,
-            generation_id=step_journal.stable_generation_id(context.job_id, _STEP),
-            operation="connection_discovery",
-            intent=intent,
-            prompt_template_revision=revision,
-            prompt_payload_ref=ImmutablePromptPayloadRef(
-                owner_kind="connection_discovery_scan",
-                owner_id=str(ref.id),
-                revision=revision,
-                payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
-            ),
-            journal=journal,
-            session_factory=get_session_factory(),
-            runtime=runtime,
-        )
-        result = await llm.execute_generation(
-            request,
-            session_factory=get_session_factory(),
-            runtime=runtime,
-            encode_terminal=lambda terminal: _encode(terminal, len(candidates)),
-            encode_failure=lambda code, _: _Outcome(error_code=code).model_dump_json(),
-        )
-    except llm.GenerationDispatchAborted:
-        # Claim lost or source gone before dispatch: nothing was sent, and the
-        # Prepared step dies with this row when the next scan frees the key.
+    if isinstance(terminal, Failed):
+        return "terminal_failed", terminal.code
+    if not isinstance(terminal, Succeeded):
         return "skipped", None
-    outcome = step_journal.decode_step_result(result.terminal_result, _Outcome)
-    if outcome.error_code is not None:
-        return "terminal_failed", outcome.error_code
-    picks = [(candidates[c.candidate_index].target, c) for c in outcome.connections]
-    return _publish(db, user_id=user_id, ref=ref, context=context, picks=picks)
-
-
-def _encode(terminal: llm.BackendTerminal, offered: int) -> llm.EncodedGenerationTerminal:
-    evidence = llm.codex_terminal_evidence(terminal)
-    if evidence.status != "succeeded":
-        code, _ = synthesis.outcome_failure_facts(evidence)
-        return llm.EncodedGenerationTerminal(_Outcome(error_code=code).model_dump_json())
-
-    def grounded(value: ConnectionDiscoverySynthesis) -> str | None:
-        if len(value.connections) > _MAX_EDGES:
-            return f"connection_discovery output exceeds {_MAX_EDGES} connections"
-        if any(not 0 <= c.candidate_index < offered for c in value.connections):
-            return "connection_discovery output references a candidate index that was not offered"
-        return None
-
-    try:
-        value = synthesis.decode_structured_synthesis(
-            evidence, schema=ConnectionDiscoverySynthesis, validate=grounded
-        )
-    except synthesis.StructuredSynthesisError as exc:
-        return llm.EncodedGenerationTerminal(
-            _Outcome(error_code="invalid_output").model_dump_json(),
-            accepted_failure=llm.AcceptedGenerationFailure(code="invalid_output", detail=str(exc)),
-        )
-    return llm.EncodedGenerationTerminal(
-        _Outcome(connections=tuple(value.connections)).model_dump_json()
-    )
+    return _publish(db, user_id=user_id, ref=ref, context=context, picks=terminal.value)
 
 
 def _publish(

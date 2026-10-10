@@ -16,8 +16,6 @@ Local/test environments use Supabase local, staging/prod use cloud.
 Supabase service-role keys are not application runtime settings.
 """
 
-import base64
-import binascii
 import os
 from datetime import datetime
 from enum import Enum
@@ -337,11 +335,6 @@ class Settings(BaseSettings):
         alias="XAI_GENERATION_API_KEY",
         repr=False,
     )
-    generation_continuation_encryption_key: SecretStr | None = Field(
-        default=None,
-        alias="GENERATION_CONTINUATION_ENCRYPTION_KEY",
-        repr=False,
-    )
     fable_retention_accepted_at: datetime | None = Field(
         default=None,
         alias="NEXUS_FABLE_RETENTION_ACCEPTED_AT",
@@ -619,25 +612,6 @@ class Settings(BaseSettings):
                 "Generation credentials are forbidden for unconfigured provider "
                 + ", ".join(name.removesuffix("_GENERATION_API_KEY").lower() for name in stale)
             )
-        if configured:
-            if self.generation_continuation_encryption_key is None:
-                raise ValueError(
-                    "GENERATION_CONTINUATION_ENCRYPTION_KEY is required when an API provider "
-                    "is configured"
-                )
-            encoded_key = self.generation_continuation_encryption_key.get_secret_value()
-            try:
-                decoded_key = base64.b64decode(encoded_key, validate=True)
-            except (binascii.Error, ValueError) as exc:
-                raise ValueError(
-                    "GENERATION_CONTINUATION_ENCRYPTION_KEY must be canonical base64 for a "
-                    "32-byte key"
-                ) from exc
-            if len(decoded_key) != 32 or base64.b64encode(decoded_key).decode() != encoded_key:
-                raise ValueError(
-                    "GENERATION_CONTINUATION_ENCRYPTION_KEY must be canonical base64 for a "
-                    "32-byte key"
-                )
         if "anthropic" in configured:
             if self.fable_retention_accepted_at is None:
                 raise ValueError(
@@ -759,18 +733,6 @@ class Settings(BaseSettings):
         if self.nexus_env in (Environment.LOCAL, Environment.TEST):
             return "dGVzdC1zdHJlYW0tdG9rZW4tc2lnbmluZy1rZXktMzJieXRlcw=="  # test key
         raise ValueError("STREAM_TOKEN_SIGNING_KEY is required in staging/prod")
-
-    @property
-    def effective_generation_continuation_encryption_key(self) -> SecretStr:
-        """Return the deployment key, or an unused deterministic local/test key."""
-
-        if self.generation_continuation_encryption_key is not None:
-            return self.generation_continuation_encryption_key
-        if self.nexus_env in (Environment.LOCAL, Environment.TEST) and not (
-            self.generation_api_provider_list
-        ):
-            return SecretStr(base64.b64encode(b"nexus-local-continuation-key-v1!").decode("ascii"))
-        raise ValueError("GENERATION_CONTINUATION_ENCRYPTION_KEY is required")
 
     @property
     def generation_api_provider_list(self) -> tuple[GenerationApiProvider, ...]:

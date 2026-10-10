@@ -2,7 +2,7 @@
 
 The run owns product state; its one ``chat_run:{id}`` queue row owns execution
 liveness. This adapter correlates those owners in one batched read and delegates
-the queue-state mapping to the durable-step journal kernel.
+the queue-state mapping to the queue.
 """
 
 from __future__ import annotations
@@ -15,10 +15,10 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
 from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.jobs.queue import project_execution_phase
 from nexus.schemas.execution import ChatRunExecutionOut
 from nexus.schemas.presence import Presence, absent, present
 from nexus.services.chat_run_event_store import TERMINAL_RUN_STATUSES
-from nexus.services.durable_step_journal import project_execution_phase
 
 
 def project_chat_run_executions(

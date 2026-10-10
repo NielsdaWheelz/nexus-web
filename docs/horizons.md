@@ -34,7 +34,7 @@ already has by construction:
    origin-owned. The provenance spec's N9 was written for this exact future:
    "a new typed relationship arrives as a new `origin` with a sole writer."
    An agent is just the next sole writer.
-2. **One generation substrate.** `run_llm_task` / `structured_synthesis` /
+2. **One generation substrate.** `run_generation_job` / `generate` /
    `llm_calls` means a new ambient capability is a prompt, a schema, and a job
    kind — not a new architecture.
 3. **Retrieval as a library.** `search()` is callable from any worker.

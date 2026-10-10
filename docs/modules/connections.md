@@ -81,8 +81,8 @@ an idle queue alone proves no successful generation.
   page-owned notes, existing relations and dismissed work pairs.
 - one job key is `connection_discovery_scan:<user>:<ref>`; queueing is flush-only
   inside a savepoint. `CONNECTION_DISCOVERY_ENABLED=false` disables admission.
-- generation-journal replay retains frozen `connection_discovery-input.v2` and
-  the terminal memo. publication runs under the actual job lease in a fresh
+- every attempt builds its `connection_discovery-input.v2` fresh and generates
+  once; nothing replays. publication runs under the actual job lease in a fresh
   serializable transaction, rechecking visibility and exclusions.
 
 already-related checks read relations incident to the source itself and project

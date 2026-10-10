@@ -4,15 +4,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response
 
-from nexus.api.deps import get_generation_catalog_service
+from nexus.api.deps import get_generation_catalog
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import Data
 from nexus.schemas.llm import GenerationCatalog
-from nexus.services.generation_catalog import (
-    GenerationCatalogRefreshError,
-    GenerationCatalogService,
-)
+from nexus.services.generation.catalog import Catalog, CatalogUnavailable
 
 router = APIRouter(tags=["llm"])
 
@@ -21,17 +18,17 @@ router = APIRouter(tags=["llm"])
 async def get_llm_catalog(
     response: Response,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    catalog_service: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
+    catalog: Annotated[Catalog, Depends(get_generation_catalog)],
 ) -> Data[GenerationCatalog]:
     """Return exact selectable and visible-ineligible generation facts."""
 
     del viewer
     response.headers["Cache-Control"] = "private, no-store"
     try:
-        snapshot = await catalog_service.read_chat()
-    except GenerationCatalogRefreshError as error:
+        snapshot = await catalog.read()
+    except CatalogUnavailable as error:
         raise ApiError(
             ApiErrorCode.E_GENERATION_RUNTIME_UNAVAILABLE,
             "Generation catalog is temporarily unavailable",
         ) from error
-    return Data(data=snapshot.catalog)
+    return Data(data=snapshot.wire)

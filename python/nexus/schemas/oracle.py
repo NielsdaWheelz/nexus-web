@@ -32,7 +32,6 @@ type OracleFailureCode = Literal[
     "invalid_output",
     "policy_violation",
     "runtime_unavailable",
-    "capacity_unavailable",
     "context_too_large",
     "cancelled",
     "E_ORACLE_CORPUS_NOT_READY",

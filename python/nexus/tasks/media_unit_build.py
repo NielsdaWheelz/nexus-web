@@ -1,12 +1,9 @@
 """The per-media intelligence unit build: one grounded synthesis per fingerprint.
 
-The claimed job attempt owns one stable ``(media_id, fingerprint, synthesis)``
-generation: Prepared, then Uncertain immediately before dispatch, then Completed
-with a normalized memo. A Completed replay re-applies that memo without
-redispatching. Uncertain permits local settlement only with the original native
-seal or positive non-submission proof. Both head writes are
-fenced on the captured content fingerprint and this exact running lease, so a
-superseded attempt can neither publish nor fail the live head.
+The claimed job attempt generates once and writes the head it owns. Both head
+writes are fenced on the captured content fingerprint and this exact running
+lease, so a superseded attempt can neither publish nor fail the live head. A
+retry after a dead worker generates again from scratch.
 """
 
 from __future__ import annotations
@@ -15,61 +12,26 @@ from typing import Any, Literal, NamedTuple, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import MediaSummary
 from nexus.db.retries import retry_serializable
-from nexus.db.session import get_session_factory
-from nexus.jobs.queue import (
-    JobExecutionContext,
-    JobRow,
-    get_job,
-    lock_jobs_for_payload,
-    running_job_claim_is_current,
-)
-from nexus.schemas.presence import Present
-from nexus.services import durable_step_journal as step_journal
-from nexus.services import generation_policy
+from nexus.jobs.queue import JobExecutionContext, get_job, running_job_claim_is_current
 from nexus.services.connection_discovery import queue_connection_discovery_scan
-from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
-from nexus.services.generation_terminal import GenerationTerminal
-from nexus.services.llm_execution import (
-    AcceptedGenerationFailure,
-    EncodedGenerationTerminal,
-    ExecutionRuntime,
-    GenerationAdmissionInputsChanged,
-    GenerationDispatchAborted,
-    GenerationFailureCode,
-    GenerationUncertain,
-    JobGenerationJournal,
-    admit_job_generation,
-    cancel_prepared_generation_without_dispatch_in_current_transaction,
-    codex_terminal_evidence,
-    execute_generation,
-    generation_has_local_recovery,
-)
-from nexus.services.llm_ledger import LlmCallOwner
-from nexus.services.media_intelligence import Candidate, load_candidates, media_summary_orm_or_none
-from nexus.services.media_intelligence_lifecycle import (
-    MEDIA_UNIT_JOB_KIND,
-    MEDIA_UNIT_OPERATION,
-    current_content_fingerprint,
-)
-from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.structured_synthesis import (
+from nexus.services.generation.contract import Failed, InvalidOutput, Owner, Succeeded
+from nexus.services.generation.run import generate
+from nexus.services.generation.runtime import Runtime, run_generation_job
+from nexus.services.generation.synthesis import (
     INDEX_GROUNDING_RULE,
-    StructuredSynthesisError,
     build_synthesis_intent,
     build_synthesis_prompt,
     build_synthesis_user_content,
-    decode_structured_synthesis,
     ground_indices,
-    outcome_failure_facts,
+    strict,
 )
-from nexus.tasks.llm_task import run_llm_task
-
-_STEP_PATH = "synthesis"
+from nexus.services.media_intelligence import Candidate, load_candidates, media_summary_orm_or_none
+from nexus.services.media_intelligence_lifecycle import current_content_fingerprint
+from nexus.services.resource_graph.refs import ResourceRef
 
 
 class MediaUnitClaimOut(BaseModel):
@@ -115,16 +77,15 @@ class _Claim(NamedTuple):
 
 
 class _Memo(BaseModel):
-    """The durable replay memo of one unit synthesis."""
+    """The outcome of one unit synthesis, applied to the head this attempt owns."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    kind: Literal["success", "failure", "skip"]
+    kind: Literal["success", "failure"]
     summary_md: str = ""
     claims: tuple[_Claim, ...] = ()
     error_code: str = ""
     error_detail: str | None = None
-    reason: str = ""
 
 
 class _Head(NamedTuple):
@@ -135,17 +96,13 @@ class _Head(NamedTuple):
     content_fingerprint: str
 
 
-class _UncertainMediaUnitTurn(RuntimeError):
-    """A dispatch may have landed and has no reconciliation key."""
-
-
 def media_unit_build(
     *, media_id: str, content_fingerprint: str, context: JobExecutionContext
 ) -> dict:
-    """Worker entry: synthesize (or replay) one media unit."""
+    """Worker entry: synthesize one media unit."""
     media_uuid = UUID(media_id)
 
-    async def handler(db: Session, runtime: ExecutionRuntime) -> dict:
+    async def handler(db: Session, runtime: Runtime) -> dict:
         outcome = await _build(
             db,
             media_id=media_uuid,
@@ -157,7 +114,7 @@ def media_unit_build(
         # infrastructure failure.
         return {"status": "ok", "outcome": outcome, "media_id": media_id}
 
-    return run_llm_task("media_unit_build", handler)
+    return run_generation_job("media_unit_build", context, handler)
 
 
 async def _build(
@@ -166,38 +123,15 @@ async def _build(
     media_id: UUID,
     content_fingerprint: str,
     ctx: JobExecutionContext,
-    runtime: ExecutionRuntime,
+    runtime: Runtime,
 ) -> Literal["ok", "failed"]:
     job = get_job(db, ctx.job_id)
     if job is None:
         return "ok"
     head = _Head(media_id, UUID(str(job.payload["summary_id"])), content_fingerprint)
-    owner = LlmCallOwner(kind="media_summary", id=head.summary_id)
     if not running_job_claim_is_current(db, context=ctx):
         db.rollback()
         return "ok"
-
-    state = step_journal.read_step_states(job).get(_STEP_PATH)
-    if (
-        state is not None
-        and state.dispatch_phase is step_journal.Uncertain
-        and not generation_has_local_recovery(db, state)
-    ):
-        raise _UncertainMediaUnitTurn(f"media unit {head.summary_id} synthesis is uncertain")
-
-    def terminalize(memo: _Memo) -> bool:
-        """Close a Prepared start that will not dispatch; commit either way.
-
-        The admission may have written Prepared after this attempt read its
-        state, so the phase is re-read here rather than captured above.
-        """
-        prepared = get_job(db, ctx.job_id)
-        live = None if prepared is None else step_journal.read_step_states(prepared).get(_STEP_PATH)
-        if live is None or live.dispatch_phase is not step_journal.Prepared:
-            db.commit()
-            return True
-        return _complete_prepared(db, owner=owner, ctx=ctx, state=live, memo=memo)
-
     current = media_summary_orm_or_none(db, media_id=head.media_id)
     if (
         current is None
@@ -206,17 +140,19 @@ async def _build(
         or current.content_fingerprint != head.content_fingerprint
         or current_content_fingerprint(db, media_id=head.media_id) != head.content_fingerprint
     ):
-        terminalize(_Memo(kind="skip", reason="summary_superseded"))
+        db.commit()
         return "ok"
-
     owner_row = db.execute(
         text("SELECT created_by_user_id FROM media WHERE id = :media_id"),
         {"media_id": head.media_id},
     ).scalar_one_or_none()
     candidates = [] if owner_row is None else load_candidates(db, media_id=head.media_id)
     if owner_row is None or not candidates:
-        memo = (
-            _Memo(
+        _fail_head(
+            db,
+            ctx=ctx,
+            head=head,
+            memo=_Memo(
                 kind="failure",
                 error_code="no_owner",
                 error_detail="media has no owning user to attribute the generation to",
@@ -226,14 +162,10 @@ async def _build(
                 kind="failure",
                 error_code="no_candidates",
                 error_detail="media has no indexed content chunks with evidence spans",
-            )
+            ),
         )
-        if not terminalize(memo):
-            return "ok"
-        _fail_head(db, ctx=ctx, head=head, memo=memo)
         return "failed"
     owner_user_id = UUID(str(owner_row))
-
     intent = build_synthesis_intent(
         system_prompt=_SYSTEM_PROMPT,
         user_content=build_synthesis_user_content(
@@ -245,167 +177,40 @@ async def _build(
         ),
         schema=MediaUnitSynthesis,
     )
-    if state is not None and state.dispatch_phase is step_journal.Completed:
-        stored = state.terminal_result
-        if not isinstance(stored, Present):
-            raise AssertionError("Completed synthesis step has no terminal result")
-        db.commit()
-        return _apply(
-            db,
-            ctx=ctx,
-            head=head,
-            owner_user_id=owner_user_id,
-            memo=step_journal.decode_step_result(stored.value, _Memo),
-        )
-
-    def lock_dispatch(dispatch_db: Session) -> JobRow | None:
-        locked = dispatch_db.scalar(
-            select(MediaSummary).where(MediaSummary.id == head.summary_id).with_for_update()
-        )
-        jobs = lock_jobs_for_payload(
-            dispatch_db,
-            kind=MEDIA_UNIT_JOB_KIND,
-            expected_payload_match={
-                "media_id": str(head.media_id),
-                "content_fingerprint": head.content_fingerprint,
-            },
-        )
-        if (
-            locked is None
-            or locked.status != "building"
-            or locked.content_fingerprint != head.content_fingerprint
-            or current_content_fingerprint(dispatch_db, media_id=head.media_id)
-            != head.content_fingerprint
-        ):
-            return None
-        return next((candidate for candidate in jobs if candidate.id == ctx.job_id), None)
-
-    # Every request-shaping read is complete; no transaction may cross the
-    # generation host's I/O boundary.
+    # Every request-shaping read is complete; no transaction crosses the model call.
     db.commit()
-    revision = generation_policy.operation_revision(MEDIA_UNIT_OPERATION)
-    try:
-        request = await admit_job_generation(
-            owner=owner,
-            user_id=owner_user_id,
-            generation_id=step_journal.stable_generation_id(
-                head.media_id, f"{head.content_fingerprint}:{_STEP_PATH}"
-            ),
-            operation="media_summary",
-            intent=intent,
-            prompt_template_revision=revision,
-            prompt_payload_ref=ImmutablePromptPayloadRef(
-                owner_kind="media_summary",
-                owner_id=str(head.summary_id),
-                revision=revision,
-                payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
-            ),
-            journal=JobGenerationJournal(
-                context=ctx, step_path=_STEP_PATH, lock_dispatch=lock_dispatch
-            ),
-            session_factory=get_session_factory(),
-            runtime=runtime,
-        )
-        result = await execute_generation(
-            request,
-            session_factory=get_session_factory(),
-            runtime=runtime,
-            encode_terminal=lambda terminal: _encode_terminal(
-                codex_terminal_evidence(terminal), candidates=candidates
-            ),
-            encode_failure=_encode_failure,
-        )
-    except GenerationAdmissionInputsChanged:
-        terminalize(_Memo(kind="skip", reason="request_fingerprint_changed"))
-        return "ok"
-    except GenerationDispatchAborted:
-        terminalize(_Memo(kind="skip", reason="dispatch_aborted"))
-        return "ok"
-    except GenerationUncertain as exc:
-        raise _UncertainMediaUnitTurn(str(exc)) from exc
-    return _apply(
-        db,
-        ctx=ctx,
-        head=head,
-        owner_user_id=owner_user_id,
-        memo=step_journal.decode_step_result(result.terminal_result, _Memo),
+    terminal = await generate(
+        runtime,
+        owner=Owner("media_summary", head.summary_id, owner_user_id, ctx),
+        operation="media_summary",
+        intent=intent,
+        decode=strict(MediaUnitSynthesis, lambda value: _accept(value, candidates)),
     )
-
-
-def _complete_prepared(
-    db: Session,
-    *,
-    owner: LlmCallOwner,
-    ctx: JobExecutionContext,
-    state: step_journal.StepReplayState,
-    memo: _Memo,
-) -> bool:
-    """Atomically cancel a Prepared start and complete the owner journal."""
-    # Earlier owner checks are snapshot reads: start a fresh transaction so the
-    # generation-owner advisory lock stays the first lock of this transition.
-    db.rollback()
-    next_state = cancel_prepared_generation_without_dispatch_in_current_transaction(
-        db, owner=owner, state=state, terminal_result=step_journal.encode_step_result(memo)
-    )
-    job = get_job(db, ctx.job_id)
-    if job is None or step_journal.read_step_states(job).get(_STEP_PATH) != state:
-        db.rollback()
-        return False
-    if not step_journal.checkpoint_step_state(
-        db, ctx=ctx, job=job, step_path=_STEP_PATH, state=next_state
-    ):
-        db.rollback()
-        return False
-    db.commit()
-    return True
-
-
-def _encode_terminal(
-    terminal: GenerationTerminal, *, candidates: list[Candidate]
-) -> EncodedGenerationTerminal:
-    """Normalize one terminal into the replay memo, grounding every claim."""
-    accepted_failure: AcceptedGenerationFailure | None = None
-    if terminal.status != "succeeded":
-        code, detail = outcome_failure_facts(terminal)
-        memo = _Memo(kind="failure", error_code=code, error_detail=detail)
+    if isinstance(terminal, Succeeded):
+        memo = terminal.value
+    elif isinstance(terminal, Failed):
+        memo = _Memo(kind="failure", error_code=terminal.code, error_detail=terminal.detail)
     else:
-        try:
-            value = decode_structured_synthesis(terminal, schema=MediaUnitSynthesis)
-            grounded = (
-                ground_indices(
-                    value.claims,
-                    candidates,
-                    index_of=lambda claim: claim.candidate_index,
-                    policy="drop",
-                )
-                or []
-            )
-            if len(grounded) != len(value.claims):
-                raise StructuredSynthesisError(
-                    "media summary output references a candidate index that was not offered"
-                )
-        except StructuredSynthesisError as exc:
-            memo = _Memo(kind="failure", error_code="invalid_output", error_detail=str(exc))
-            accepted_failure = AcceptedGenerationFailure(code="invalid_output", detail=str(exc))
-        else:
-            # Survivors keep model order and take dense ordinals 0..M.
-            memo = _Memo(
-                kind="success",
-                summary_md=value.summary_md,
-                claims=tuple(
-                    _Claim(claim.claim_text, candidate.evidence_span_id, ordinal)
-                    for ordinal, (claim, candidate) in enumerate(grounded)
-                ),
-            )
-    return EncodedGenerationTerminal(
-        terminal_result=step_journal.encode_step_result(memo),
-        accepted_failure=accepted_failure,
+        memo = _Memo(kind="failure", error_code="cancelled")
+    return _apply(db, ctx=ctx, head=head, owner_user_id=owner_user_id, memo=memo)
+
+
+def _accept(value: MediaUnitSynthesis, candidates: list[Candidate]) -> _Memo:
+    """Ground every claim on an offered passage; survivors take dense ordinals in order."""
+    grounded = ground_indices(
+        value.claims, candidates, index_of=lambda claim: claim.candidate_index
     )
-
-
-def _encode_failure(code: GenerationFailureCode, detail: str) -> str:
-    return step_journal.encode_step_result(
-        _Memo(kind="failure", error_code=code, error_detail=detail)
+    if grounded is None:
+        raise InvalidOutput(
+            "media summary output references a candidate index that was not offered"
+        )
+    return _Memo(
+        kind="success",
+        summary_md=value.summary_md,
+        claims=tuple(
+            _Claim(claim.claim_text, candidate.evidence_span_id, ordinal)
+            for ordinal, (claim, candidate) in enumerate(grounded)
+        ),
     )
 
 
@@ -418,8 +223,6 @@ def _apply(
     memo: _Memo,
 ) -> Literal["ok", "failed"]:
     """Write the memo's outcome to the head this attempt owns."""
-    if memo.kind == "skip":
-        return "ok"
     if memo.kind == "failure":
         _fail_head(db, ctx=ctx, head=head, memo=memo)
         return "failed"

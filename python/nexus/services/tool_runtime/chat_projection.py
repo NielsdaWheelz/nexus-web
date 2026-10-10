@@ -65,7 +65,7 @@ from nexus.services.tool_runtime.catalog import (
 from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS_BY_ID
 
 if TYPE_CHECKING:
-    from nexus.services.llm_ledger import LlmCallOwner
+    from nexus.services.generation.contract import Owner
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +83,7 @@ class ChatToolExecutionProjection:
     def scope_label(self) -> str:
         return "conversation_context"
 
-    def lock_owner(self, db: Session, *, user_id: UUID, owner: LlmCallOwner) -> None:
+    def lock_owner(self, db: Session, *, user_id: UUID, owner: Owner) -> None:
         if owner.kind != "chat_run" or owner.id != self.run_id:
             raise ToolAuthorityRefused("Chat projection differs from generation owner")
         run = lock_chat_run_for_update(db, self.run_id)
@@ -147,8 +147,6 @@ class ChatToolExecutionProjection:
                 if effect is ToolEffect.Write
                 else "public_web"
                 if position.canonical_tool_id.startswith("web.")
-                else "account_visible"
-                if authority.account_visible
                 else "conversation_context"
             ),
             requested_types=[],

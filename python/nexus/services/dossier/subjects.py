@@ -26,7 +26,7 @@ from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.services.contributor_taxonomy import try_parse_contributor_handle
 from nexus.services.dossier import inputs
 from nexus.services.dossier.inputs import Collected, Readiness
-from nexus.services.generation_spec import BackgroundOperationKey
+from nexus.services.generation.contract import BackgroundOperation
 
 
 def invalid_subject() -> InvalidRequestError:
@@ -54,7 +54,7 @@ def _contributor_handle(db: Session, handle: str) -> UUID:
 @dataclass(frozen=True, slots=True)
 class Binding:
     label: str  # the prompt's subject phrase
-    operation: BackgroundOperationKey
+    operation: BackgroundOperation
     visible: str  # sql boolean over "{s}", the subject id; binds :viewer_id
     inputs: Callable[[Session, UUID, UUID], Collected] | None  # None: idea research
     ensure: Callable[[Session, UUID, UUID], Readiness] | None = None

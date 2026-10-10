@@ -58,3 +58,10 @@ shape, so the same one-vector rule applies: stop the writers, migrate and prove
 backend health, then promote the same web sha.
 open tabs at deploy get `409 E_CHAT_CONTRACT_RELOAD_REQUIRED` and the reload
 notice; their `nx_chat_draft.v5` drafts are not read.
+
+2026-10-10 generation rewrite: the chat contract revision is now "3". the send
+and repeat bodies drop `catalog_definition_revision`, `GenerationCatalog` drops
+`definition_revision` and `ChatSeed.policy_revision`, `RunSelectionOut` drops
+both catalog revisions, and migration `0269_drop_generation_replay` drops the
+replay tables and columns the old worker writes. the same one-vector rule
+applies.

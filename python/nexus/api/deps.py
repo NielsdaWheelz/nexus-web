@@ -8,12 +8,12 @@ from fastapi import Header, Request
 from nexus.auth.bearer import parse_bearer_token
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services import stream_tokens
-from nexus.services.generation_catalog import GenerationCatalogService
+from nexus.services.generation.catalog import Catalog
 from nexus.services.tool_runtime.declarations import BROWSER_TOOL_PROJECTION_REVISION
 
 TOOL_PROJECTION_HEADER = "X-Nexus-Tool-Projection"
 CHAT_CONTRACT_HEADER = "X-Nexus-Chat-Contract"
-CHAT_CONTRACT_REVISION = "2"
+CHAT_CONTRACT_REVISION = "3"
 
 
 def require_chat_contract_revision(
@@ -52,13 +52,13 @@ def get_stream_viewer(request: Request) -> UUID:
     return stream_tokens.verify_stream_token(token)
 
 
-def get_generation_catalog_service(request: Request) -> GenerationCatalogService:
-    """Return the one process-owned generation catalog/cache service."""
+def get_generation_catalog(request: Request) -> Catalog:
+    """Return the one process-owned generation catalog."""
 
-    service = getattr(request.app.state, "generation_catalog_service", None)
+    service = getattr(request.app.state, "generation_catalog", None)
     # justify-service-invariant-check: Starlette app.state is intentionally
     # dynamic, so this boundary must turn incomplete composition into one loud
     # operator defect instead of leaking Any into request handlers.
-    if not isinstance(service, GenerationCatalogService):
-        raise RuntimeError("generation catalog service is not initialized")
+    if not isinstance(service, Catalog):
+        raise RuntimeError("generation catalog is not initialized")
     return service

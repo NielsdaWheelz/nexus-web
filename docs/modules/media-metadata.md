@@ -42,31 +42,27 @@ author proposals, and the outcome reports that fact. no new manual field pins.
 
 ## research input and capability
 
-metadata policy selects codex personal, `gpt-6-luna`, `xhigh`: 300 seconds,
-32,768 utf-8 input bytes, a 64,000-token context budget and an 8,000-token output
-reservation. the generation owner admits that selection or fails visibly.
-no model substitution.
-native execution and genuine tool qualification belong to the separate kernel
-integration. stock 0.160 has no native hard context/output token-cap field;
-the user accepted admission/reservation semantics on 2026-10-02. frozen budgets
-and observed usage are not proof of enforced ceilings.
+metadata policy selects codex personal, `gpt-6-luna`, `xhigh`: 300 seconds and
+32,768 utf-8 input bytes. the generation owner runs that selection or fails
+visibly. no model substitution. stock 0.160 has no native hard context/output
+token-cap field, so no token budget is recorded for it.
 
 input includes current metadata, complete ordered credits/handles, source and
 provider identifiers, media reference and up to 1,000 normalized opening words.
 `metadata_enrichment_max_content_words` configures that allocation. raw reads are
 bounded to 64,000 characters total; source order remains plain text, ready indexed
 chunks, fragments, podcast notes, then description. all serialized content,
-including frozen admission facts, fits the utf-8 budget. descriptive hints are
+including the admission facts, fits the utf-8 budget. descriptive hints are
 clamped, then the excerpt shrinks to fit. identifiers, dates and credit rosters
 are never silently truncated. oversized fixed context fails before dispatch.
 
 the prompt requests `nexus.document.search`, `nexus.resource.read`, `web.search`
 and `web.read`; public queries use identifying strings, not private passages.
-source text is evidence, never instructions. the frozen `MetadataResearch` grant
+source text is evidence, never instructions. the `MetadataResearch` plan
 permits exactly those four tools; local reads use the admitted media scope.
 `CodexCallbacks` executes that plan through the shared generation owner.
 required search bindings need configured brave and embedding credentials;
-absent local configuration yields typed unavailability before submission.
+absent local configuration fails the operation `model_unavailable` before submission.
 see [llms.md](llms.md). metadata owns no provider adapter or
 second context builder. exact model/effort and successful search/read require a
 real live receipt before release; controlled responses qualify domain behavior
@@ -74,37 +70,30 @@ only.
 
 ## operation and publication
 
-one `enrich_metadata` job is one operation. its stable `codex/metadata` step
-stores accepted metadata and publication outcome in the existing memo. provider
-terminal truth, domain acceptance and queue settlement are separate facts.
+one `enrich_metadata` job is one operation: every attempt builds its input,
+generates once and publishes. the decode (`validate_structured_enrichment`)
+accepts the output or fails the generation `invalid_output`; the queue stores the
+settled outcome as the job's result.
 
 publication locks media before the exact job claim, rechecks authorization,
-eligibility and frozen source/credit context, then commits changed facts,
+eligibility and that the input it asked about is still the current one, then
+commits changed facts,
 collection invalidations, successful timestamp and outcome together. it performs
 no network call or nested transaction. contributor identity validation precedes
 all writes. stale context, lost claim or revoked access cannot publish.
 
 successful timestamps use database time, strictly later than the previous stamp;
 the outcome uses the same instant. accepted unchanged values do not replace
-identical credit rows or republish the reader title. completed memo replay reuses
-the stored outcome without merging, restamping or buying another generation.
+identical credit rows or republish the reader title.
 
 accepted findings settle `succeeded`. no findings, invalid output and terminal
 research/domain failures return `TerminalJobFailure` and settle `dead` without
-retrying paid research. known retryable pre-submission failures use the ordinary
-bounded queue retry. terminal native quota failures settle failed; shell quota
-parking is retired. unresolved submission blocks
-fresh research until the generation owner settles it. metadata failures never
+retrying paid research; a generation that never reached codex (host or
+configuration unavailable) takes the job's one immediate retry, then settles a
+terminal `model_unavailable`. a worker that dies mid-research reruns the whole operation
+from scratch on the job's retry. metadata failures never
 write source-processing error fields. successful and dead metadata jobs are
 retained indefinitely so pruning cannot revive an older failure as latest.
-
-`generation_has_local_recovery` authorizes only local settlement from the exact
-original native seal or authoritative non-submission evidence. metadata reuses
-the original frozen spec, intent and handles before mutable domain reads;
-execution recovers before provider/catalog calls. publication still checks
-current source, credits, access and claim. a parent terminal or process stop
-alone never unlocks research. completed-journal publication replay remains
-metadata-owned.
 
 ## api and observation
 
@@ -125,8 +114,8 @@ presentation remains owned by that ingress as described in the
   snapshot and stays open after terminal/absent activity to discover later jobs.
 
 replay follows authorization and precedes fresh-admission barriers. a fresh
-request must name the latest observed job; any pending/running/scheduled retry or
-uncertain retained step blocks it. a lost response resends the original intent.
+request must name the latest observed job; any pending/running/scheduled retry
+blocks it. a lost response resends the original intent.
 automatic source-triggered jobs retain their existing timing and use the same
 result contract; they are not coalesced with stale work. every enqueue locks the
 media and stamps a strictly ordered database creation time.

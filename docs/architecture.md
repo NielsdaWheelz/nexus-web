@@ -502,9 +502,8 @@ one transaction.
 **Conversations / chat** — `conversations` (carries the owner's
 `active_leaf_message_id`), `messages` (the message tree with branch pointers;
 a user turn may carry a `fork_title`); plus the **chat-run** machinery: `chat_runs`
-(carries the exact immutable `generation_spec` and `support_id`;
-authoritative execution provenance lives in its parent `llm_calls` row and
-accepted `llm_model_turns` children),
+(carries its admitted `generation_spec` and `support_id`;
+execution provenance lives in its `llm_calls` row),
 `chat_run_events` (append-only SSE log), `chat_prompt_assemblies`; and the
 **retrieval/citation** ledger: `message_tool_calls`, `message_retrievals` — the
 sole durable per-result record (telemetry; carries `cited_edge_id` pointing
@@ -713,35 +712,32 @@ rather than proposed and reconciled after the fact.
 > row, and recovery relies on the stale reconciler + manual API retry, not
 > queue-level retries.
 
-**Generation boundary.** Every durable generative job — chat, Oracle,
-connection discovery, dossiers, media summaries, and metadata enrichment — runs through
-`GenerationService` and `services/llm_execution.py`. Admission freezes the
-exact selection, budgets, output contract, prompt reference, and operation-owned
-tool plan in one `GenerationSpec`; workers never reread mutable policy. All
-background policy rows select Codex Personal. Chat may instead select any ready,
-qualified route/model/reasoning pair in the complete configured `llm-calling`
-catalog. There are no user defaults, profiles, presets, or fallback routes.
+**Generation boundary.** Every generative job — chat, Oracle, connection
+discovery, dossiers, media summaries, and metadata enrichment — makes one
+`generate` call (`services/generation/run.py`). It reads the exact selection from
+the chat run or the operation table, checks the catalog, opens one `llm_calls`
+row, runs Codex Personal (the kernel's transient native mode) or a provider API
+(the kernel's `run_generation` loop, held in memory), decodes the output with
+the caller's decode, and closes the row once. All background operations select
+Codex Personal. Chat may instead select any ready route/model/reasoning pair in
+the configured `llm-calling` catalog. There are no user defaults, profiles,
+presets, or fallback routes.
 
-One parent `llm_calls` row owns generation truth. Codex normally creates one
-accepted child model turn through the private UDS host; a ProviderRuntime API
-tool loop creates one child per accepted provider call and advances only from a
-sealed persisted continuation. Completed children replay without dispatch;
-accepted ambiguity requires exact operator reconciliation.
-Within `dossier_build`, `services/dossier/synthesis.py` owns the one `synthesis`
-step: its prompt, its `Published | Failed | Stopped` outcome memo, and the
-rule that an Uncertain step without native recovery evidence dead-letters
-instead of dispatching again. Idea research journals only its billed
-`research/web` step. The existing PostgreSQL queue, leases, and publication
-owners remain unchanged.
-See [modules/llms.md](modules/llms.md).
+Nothing replays. A worker that dies mid-generation leaves its row open until its
+job's next attempt starts, the job dies or is revoked, or migration 0269 closes
+it `interrupted`; chat fails the run and the user reruns, background jobs rerun
+from scratch. Within `dossier_build`, `services/dossier/synthesis.py`
+owns the synthesis prompt and its `Published | Failed | Stopped` outcome; idea
+research keeps its billed web search picks in the job payload across
+reschedules. The existing PostgreSQL queue, leases, and publication owners
+remain unchanged. See [modules/llms.md](modules/llms.md).
 
 Eligible Chat and background runs use one canonical tool authority. Provider
 API tool proposals adapt frozen plans to the executor and use
 `generation/{generation_seq}/tool/{n}` with one monotonic parent-generation
-ordinal, receipts, evidence, citations, trust, and Undo. Codex Personal admits
-only text and strict structured output without model tools; its tool-bearing
-Chat seed and three background policies remain ineligible until an approved
-route change or a proven native-authority boundary.
+ordinal, receipts, evidence, citations, trust, and Undo; Codex native callbacks
+use the same positions. Every call that reaches dispatch leaves one row, completed
+with its effects.
 
 Local execution capacity belongs to the single-process interactive/background
 lanes and queue claims. SERIALIZABLE retries everywhere (including the scheduler
@@ -817,9 +813,10 @@ Other identity surfaces:
   pinned `0.144.4` in-place OAuth refresh persistence. All other mutable SDK
   state is per-turn tmpfs and deleted after close. The Codex host receives no
   generation API key. API/worker processes receive only the provider keys named
-  by `GENERATION_API_PROVIDERS`; `services/llm_credentials.py` projects that
-  exact configured set into ProviderRuntime and keeps the OpenAI embedding key
-  in its separate narrow credential. See [modules/llms.md](modules/llms.md).
+  by `GENERATION_API_PROVIDERS`; `services/generation/provider.py` projects that
+  exact configured set into ProviderRuntime, and `services/semantic_chunks.py`
+  keeps the OpenAI embedding key in its separate narrow credential. See
+  [modules/llms.md](modules/llms.md).
 
 ### 7.6 Search, retrieval & the embedding pipeline
 
@@ -1258,19 +1255,17 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
   counts, inclusion manifests, prompt hashes or remote cache key. Attached references render as numbered `<resources>`;
   the transient `<reader_selection>` (a highlight the user is asking about) is
   bind-only and never numbered.
-- **Durable recovery**: the claimed job stores a strict step journal in its
-  payload. Preparation, model turns, tools, and publication have stable
-  identities and fingerprints. Retries replay `Completed` results and never
-  blindly repeat an ambiguous paid call or write. Code defects escape to queue
-  retry; exhaustion retains the same nonterminal run/job as `Suspended`.
-  Cancellation or operator reconciliation requeues that same job. Terminal
-  publication and journal clearing commit atomically.
+- **No crash replay**: a chat job attempt that finds its run's generation
+  already started fails the run `interrupted` (or `cancelled` when a stop was
+  asked) and never reruns it; a dead chat job ends its run the same way. Code
+  defects escape to queue retry. Publication is the final effect, taken under the
+  run lock and the job claim.
 - **Connection is not execution**: SSE only tails committed events. Unsequenced
   execution advisories (`Queued | Running | Recovering | Suspended`) report queue
   liveness without advancing the event cursor or starting work.
 - **Selection is exact per run**: Chat sends one tagged route/model/reasoning
-  selection from `GET /llm-catalog`, the catalog-definition revision, and
-  `ReadOnly | AdditiveWrites` authority. The developer Codex seed initializes a
+  selection from `GET /llm-catalog`, validated against the current catalog at
+  admission, with `ReadOnly | AdditiveWrites` authority. The developer Codex seed initializes a
   new composer but is not a user default. There is no Fast/Balanced/Deep preset,
   preference, AI Settings control, or fallback. See [modules/llms.md](modules/llms.md).
 
@@ -2212,7 +2207,7 @@ The things most likely to bite you, distilled:
 | DB layer / sessions / LISTEN-NOTIFY                               | `python/nexus/db/` (`engine.py`, `session.py`, `listen.py`)                                                                                                                                            |
 | The schema                                                        | `migrations/alembic/versions/0236_baseline_schema.sql` (the squashed baseline) + the revisions after it + the live database (`pg_dump --schema-only`); `python/nexus/db/models.py` is the ORM-mapped classes only                                                               |
 | Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
-| Generation backends                                               | `python/nexus/services/{generation_catalog,generation_policy,generation_service,generation_spec,generation_backend,provider_generation_backend,codex_generation_client,llm_execution,llm_ledger,tool_authority}.py`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md) |
+| Generation backends                                               | `python/nexus/services/generation/`, `python/nexus/services/tool_authority.py`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md)                                                                                                    |
 | Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_fact_revisions.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
 | Imports workspace (query owner, history, pane)                    | `python/nexus/services/{imports,import_history}.py`, `python/nexus/api/routes/imports.py`, `apps/web/src/lib/imports/`, `apps/web/src/components/imports/`, `apps/web/src/app/(authenticated)/imports/`                                              |
 | Reader/highlights backend                                         | `python/nexus/services/{reader_profile,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote}.py`                                                                        |

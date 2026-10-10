@@ -19,7 +19,6 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
-    LargeBinary,
     Numeric,
     Text,
     text,
@@ -1556,7 +1555,7 @@ class Conversation(Base):
 
 
 class LLMCall(Base):
-    """One route-neutral product generation (sole writer: ``llm_ledger``)."""
+    """One generation, opened before dispatch and closed once (sole writer: the ledger)."""
 
     __tablename__ = "llm_calls"
 
@@ -1571,17 +1570,14 @@ class LLMCall(Base):
     generation_spec: Mapped[dict[str, object]] = mapped_column(
         JSONB(none_as_null=True), nullable=False
     )
-    generation_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
-    tool_principal_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=True,
-    )
+    # The job attempt that runs it; no foreign key, finished jobs are pruned.
+    job_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
     failure_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     terminal: Mapped[dict[str, object] | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )
+    usage: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -1590,86 +1586,8 @@ class LLMCall(Base):
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
 
-class LLMModelTurn(Base):
-    """One independently accepted or billable model call within a generation."""
-
-    __tablename__ = "llm_model_turns"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    generation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("llm_calls.id"),
-        nullable=False,
-    )
-    turn_seq: Mapped[int] = mapped_column(Integer, nullable=False)
-    request_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
-    route_request_identity: Mapped[dict[str, object]] = mapped_column(
-        JSONB(none_as_null=True), nullable=False
-    )
-    terminal: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    usage: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
-    billability: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-    dispatch_started_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    accepted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    fenced_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    native_binding: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True),
-        nullable=True,
-    )
-    submission_evidence: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True),
-        nullable=True,
-    )
-    local_outcome: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True),
-        nullable=True,
-    )
-
-
-class LLMModelTurnContinuation(Base):
-    """One sealed provider continuation authorizing an exact successor turn."""
-
-    __tablename__ = "llm_model_turn_continuations"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    generation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("llm_calls.id"),
-        nullable=False,
-    )
-    source_model_turn_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("llm_model_turns.id"),
-        nullable=False,
-    )
-    successor_turn_seq: Mapped[int] = mapped_column(Integer, nullable=False)
-    target_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
-    codec_id: Mapped[str] = mapped_column(Text, nullable=False)
-    policy_revision: Mapped[str] = mapped_column(Text, nullable=False)
-    envelope_version: Mapped[str] = mapped_column(Text, nullable=False)
-    nonce: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-
-
 class LLMToolPosition(Base):
-    """One globally ordered canonical tool position within a generation."""
+    """One tool call that reached dispatch, completed with its effects (sole writer: tool authority)."""
 
     __tablename__ = "llm_tool_positions"
 
@@ -1689,24 +1607,10 @@ class LLMToolPosition(Base):
     plan_revision: Mapped[str] = mapped_column(Text, nullable=False)
     binding_revision: Mapped[str] = mapped_column(Text, nullable=False)
     arguments: Mapped[object | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
-    callback_reply: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True),
-        nullable=True,
-    )
-    reservation: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    dispatch_claim: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    abandoned_attempts: Mapped[int] = mapped_column(Integer, nullable=False)
     result_evidence: Mapped[dict[str, object] | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )
     effect_identity: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    settlement: Mapped[dict[str, object] | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )
     replay_status: Mapped[str] = mapped_column(Text, nullable=False)
@@ -1810,7 +1714,7 @@ class MessageToolCall(Base):
     tool_contract_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
     binding_policy_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Current canonical executions point at the route-neutral generation
-    # position that owns ordering, replay, and any stable write-effect identity.
+    # position that owns ordering and any write-effect identity.
     # Rejected provider calls have no canonical position and remain NULL.
     tool_position_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),

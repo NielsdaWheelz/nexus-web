@@ -127,7 +127,6 @@ def _admitted_target(
         recorder.db,
         uri=uri,
         admitted_resource_uris=recorder.admitted_resource_uris,
-        account_visible=recorder.account_visible,
         allow_derived_read=allow_derived_read,
     ):
         _resource_unavailable()
@@ -265,17 +264,12 @@ async def _run_search(
         _db: Session,
     ) -> tuple[SearchQuery, list[SearchScope], list[str], dict[str, list[str]]]:
         with recorder.db.begin():
-            frozen_refs = (
-                None
-                if recorder.account_visible
-                else tuple(
-                    _parse_ref_or_unavailable(uri)
-                    for uri in sorted(recorder.admitted_resource_uris)
-                )
+            frozen_refs = tuple(
+                _parse_ref_or_unavailable(uri) for uri in sorted(recorder.admitted_resource_uris)
             )
             requested_scopes = list(value.scopes or ())
             scopes = []
-            if value.scopes is None and frozen_refs is not None:
+            if value.scopes is None:
                 # Exact frozen targets cover notes/messages as well as scope resources.
                 # Existing media/library scopes retain their bounded descendant search.
                 requested_scopes = [ref.uri for ref in frozen_refs]
@@ -286,17 +280,8 @@ async def _run_search(
                     if ref.scheme in ("media", "library")
                 )
             else:
-                if value.scopes is None:
-                    requested_scopes = ["all"]
                 for uri in requested_scopes:
-                    if uri == "all" and recorder.account_visible:
-                        scopes.append(scope_from_uri("all"))
-                        continue
-                    ref = (
-                        _assert_visible(recorder, uri)
-                        if recorder.account_visible
-                        else _admitted_target(recorder, uri)
-                    )
+                    ref = _admitted_target(recorder, uri)
                     if not resource_can_be_app_search_scope(ref):
                         _resource_unavailable()
                     scopes.append(scope_from_uri(uri))
@@ -327,7 +312,7 @@ async def _run_search(
     if not scopes:
         recorder.stage_audit(
             ToolAuditProjection(
-                scope="account_visible" if recorder.account_visible else "conversation_context",
+                scope="conversation_context",
                 requested_types=list(query.effective_result_types),
                 filters=filters,
                 search_query_fingerprint=hash_query(value.query),
@@ -374,13 +359,7 @@ async def _run_search(
         ]
         recorder.stage_audit(
             ToolAuditProjection(
-                scope=(
-                    "account_visible"
-                    if recorder.account_visible
-                    else ",".join(requested_scopes)
-                    if requested_scopes
-                    else "conversation_context"
-                ),
+                scope=",".join(requested_scopes) if requested_scopes else "conversation_context",
                 requested_types=list(query.effective_result_types),
                 filters=filters,
                 citations=citations,
@@ -531,7 +510,7 @@ def _run_resource_read(
     )
     recorder.stage_audit(
         ToolAuditProjection(
-            scope="account_visible" if recorder.account_visible else "conversation_context",
+            scope="conversation_context",
             filters={"uri": value.uri},
             citations=[citation] if citation is not None else [],
             selected_citations=[citation] if citation is not None else [],
@@ -596,7 +575,7 @@ def _run_resource_inspect(
     )
     recorder.stage_audit(
         ToolAuditProjection(
-            scope="account_visible" if recorder.account_visible else "conversation_context",
+            scope="conversation_context",
             filters={"uri": value.uri},
             citations=[citation] if citation is not None else [],
             selected_citations=[citation] if citation is not None else [],
@@ -674,7 +653,7 @@ def _run_relations_list(
     )
     recorder.stage_audit(
         ToolAuditProjection(
-            scope="account_visible" if recorder.account_visible else "conversation_context",
+            scope="conversation_context",
             filters={"uri": value.uri},
             citations=[citation] if citation is not None else [],
             selected_citations=[citation] if citation is not None else [],

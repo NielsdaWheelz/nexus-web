@@ -31,11 +31,13 @@ generation bearer, callback relay, or worker account mount.
 runtime env file. neither ambient `CODEX_HOME` nor `*_API_KEY` is accepted by
 the host. subscription credentials never overflow onto api billing.
 
-`python -m apps.codex_agent.health` uses public `AgentRuntime` catalog access
-and verifies subscription availability and the current source contract. it
-performs no inference. start ordering is `service_started`, so expired account
-state cannot stop unrelated ingest or reader work. the catalog reports typed
-unavailability; native uncertainty blocks redispatch.
+`python -m apps.codex_agent.health` reads the catalog through public
+`AgentRuntime` access (`fetch_codex_catalog`, the same read the product catalog
+makes) and verifies subscription availability and the current source contract.
+it performs no inference. start ordering is `service_started`, so expired
+account state cannot stop unrelated ingest or reader work. the catalog reports
+typed unavailability. a worker that dies mid-turn loses that turn; nothing is
+recovered from the host.
 
 ## encrypted state and enrollment
 

@@ -1,19 +1,24 @@
-"""One route-neutral authority, executor, and durable model-tool position ledger."""
+"""One generation's tool authority, its executor, and the one durable row per tool call.
+
+Every call that reaches dispatch writes one ``llm_tool_positions`` row before it
+runs and completes it in the same transaction as the handler's domain effects,
+so a crash leaves no effect without its row. Nothing is replayed: a repeated
+call runs again, and a rerun generation is new work.
+"""
 
 from __future__ import annotations
 
-import asyncio
+import hashlib
 import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from llm_tools import (
     BudgetState,
-    BudgetTotals,
     EffectId,
     ExecutionContext,
     InvocationPosition,
@@ -21,85 +26,47 @@ from llm_tools import (
     PlanCatalogView,
     PositionState,
     Principal,
+    RecoveryRequired,
     ReplayPolicy,
     Reservation,
-    RunLimits,
+    RunBudgetState,
     Scope,
     Settlement,
     ToolEffect,
     ToolExecutor,
     ToolId,
     ToolResult,
-    can_reserve,
     canonical_json_bytes,
     raw_input_digest,
 )
-from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.async_session import open_async_session
-from nexus.db.models import LLMCall, LLMModelTurn, LLMToolPosition
-from nexus.jobs.queue import JobExecutionContext, JobRow, get_job, lock_running_job_claim
-from nexus.schemas.presence import Present
-from nexus.services.durable_step_journal import stable_generation_id
-from nexus.services.generation_spec import (
-    CodexCallbacks,
-    GenerationSpec,
-    ProviderFunctions,
-    generation_fact_digest,
-)
-from nexus.services.llm_ledger import (
-    GenerationRecord,
-    LlmCallOwner,
-    lock_active_generation_for_authority_in_current_transaction,
-    lock_generation_owner_in_current_transaction,
-)
+from nexus.db.models import LLMToolPosition
+from nexus.jobs.queue import lock_running_job_claim
+from nexus.services.generation.contract import Owner
+from nexus.services.generation.ledger import lock_open_generation
 from nexus.services.retrieval_citation import RetrievalCitation
-from nexus.services.tool_runtime.catalog import FrozenToolOperation, freeze_tool_plan_snapshot
-from nexus.services.tool_runtime.snapshots import FrozenToolPlanSnapshot
+from nexus.services.tool_runtime.catalog import FrozenToolOperation
 
 if TYPE_CHECKING:
-    from nexus.services.generation_backend import (
-        BackendToolExecutionRequest,
-        BackendToolExecutionResult,
-    )
+    from provider_runtime.tool_adapter import RejectedToolArguments, ToolCallResolution
+
     from nexus.services.tool_runtime.chat_projection import ChatToolExecutionProjection
 
 type ToolExecutionProjection = ChatToolExecutionProjection
 
-type ToolEffectMode = Literal["ReadOnly", "AdditiveWrites"]
-type ToolReplayStatus = Literal["Prepared", "Uncertain", "Completed"]
-type ToolTransportKind = Literal["ProviderApi", "NativeCallback", "GenerationApi"]
+type ToolReplayStatus = Literal["Prepared", "Completed"]
+type ToolTransportKind = Literal["ProviderApi", "NativeCallback"]
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _MAX_TRANSPORT_CALL_ID_BYTES = 1_024
 
 
 class ToolAuthorityRefused(RuntimeError):
-    """The live generation, lease, claim, or frozen authority no longer matches."""
-
-
-class _LedgerModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
-
-
-class _ReservationDocument(_LedgerModel):
-    """The ``reservation`` JSONB column this module solely writes."""
-
-    accepted: bool
-    calls: int = Field(ge=0)
-    input_bytes: int = Field(ge=0)
-    max_attempts: int = Field(ge=0)
-    max_output_bytes: int = Field(ge=0)
-
-
-class _DispatchClaimDocument(_LedgerModel):
-    """The ``dispatch_claim`` JSONB column this module solely writes."""
-
-    attempt_no: int = Field(ge=1)
-    worker_id: str = Field(min_length=1)
+    """The generation closed, or its owner or job claim is no longer live."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,7 +83,6 @@ class ToolPositionRecord:
     tool_contract_revision: str
     plan_revision: str
     binding_revision: str
-    abandoned_attempts: int
     result_evidence: dict[str, object] | None
     effect_identity: dict[str, object] | None
     replay_status: ToolReplayStatus
@@ -138,10 +104,10 @@ class ToolModelOutput:
 
 @dataclass(frozen=True, slots=True)
 class ModelToolExecutionResult:
-    """Transport-neutral model result plus its optional durable tool position."""
+    """The model-facing result plus the call's durable row."""
 
     model_output: ToolModelOutput
-    position: ToolPositionRecord | None
+    position: ToolPositionRecord
 
 
 @dataclass(slots=True)
@@ -161,97 +127,35 @@ class ToolAuditProjection:
 
 @dataclass(frozen=True, slots=True)
 class ToolAuthority:
-    """Frozen plan/scope/budget authority fenced by one generation and job attempt."""
+    """One open generation's plan, admitted scope and in-memory run budget."""
 
     session_factory: sessionmaker[Session] = field(repr=False, compare=False)
-    user_id: UUID
-    owner: LlmCallOwner
+    owner: Owner
     generation_id: UUID
     generation_seq: int
-    spec: GenerationSpec
-    job_context: JobExecutionContext
     operation: FrozenToolOperation = field(repr=False, compare=False)
-    effect_mode: ToolEffectMode
+    transport_kind: ToolTransportKind
     admitted_resource_uris: frozenset[str]
-    account_visible: bool
     projection: ToolExecutionProjection | None = field(repr=False, compare=False)
+    budgets: RunBudgetState = field(repr=False, compare=False)
 
-    @classmethod
-    async def from_claimed_generation_attempt(
-        cls,
-        *,
-        session_factory: sessionmaker[Session],
-        user_id: UUID,
-        owner: LlmCallOwner,
-        generation_id: UUID,
-        job_context: JobExecutionContext,
-        operation: FrozenToolOperation,
-        projection: ToolExecutionProjection | None = None,
-    ) -> ToolAuthority:
-        """Bind executable handlers once to already-persisted semantic authority."""
+    @property
+    def user_id(self) -> UUID:
+        return self.owner.user_id
 
-        def bind(db: Session) -> ToolAuthority:
-            with db.begin():
-                generation, spec, job = _lock_authority(
-                    db,
-                    user_id=user_id,
-                    owner=owner,
-                    generation_id=generation_id,
-                    job_context=job_context,
-                    projection=projection,
-                )
-                plan, effect_mode, refs, account_visible = _model_tool_facts(spec)
-                if plan != freeze_tool_plan_snapshot(operation):
-                    raise ToolAuthorityRefused("runtime operation differs from frozen plan")
-                _assert_job_attempt(job, job_context)
-            return cls(
-                session_factory=session_factory,
-                user_id=user_id,
-                owner=owner,
-                generation_id=generation_id,
-                generation_seq=generation.generation_seq,
-                spec=spec,
-                job_context=job_context,
-                operation=operation,
-                effect_mode=effect_mode,
-                admitted_resource_uris=refs,
-                account_visible=account_visible,
-                projection=projection,
-            )
+    def lock_in_current_transaction(self, db: Session) -> None:
+        """Fence one effect transaction: open generation, live owner, live job claim."""
 
-        async with open_async_session(session_factory) as database:
-            return await database.run_sync(bind)
-
-    def position_path(self, position: int) -> str:
-        if position < 1:
-            raise ValueError("tool position must be positive")
-        return f"generation/{self.generation_seq}/tool/{position}"
-
-    def lock_in_current_transaction(
-        self,
-        db: Session,
-    ) -> tuple[GenerationRecord[GenerationSpec], GenerationSpec, JobRow]:
-        """Re-fence the generation, projection owner, and worker lease."""
-
-        generation, spec, job = _lock_authority(
-            db,
-            user_id=self.user_id,
-            owner=self.owner,
-            generation_id=self.generation_id,
-            job_context=self.job_context,
-            projection=self.projection,
-        )
-        if generation.generation_seq != self.generation_seq:
-            raise ToolAuthorityRefused("generation sequence changed")
-        if spec.fingerprint != self.spec.fingerprint:
-            raise ToolAuthorityRefused("generation specification changed")
-        _assert_job_attempt(job, self.job_context)
-        return generation, spec, job
+        if not lock_open_generation(db, generation_id=self.generation_id):
+            raise ToolAuthorityRefused("generation is closed")
+        if self.projection is not None:
+            self.projection.lock_owner(db, user_id=self.user_id, owner=self.owner)
+        if not lock_running_job_claim(db, context=self.owner.job):
+            raise ToolAuthorityRefused("worker lease is absent or expired")
 
     async def prepare_position(
         self,
         *,
-        transport_kind: ToolTransportKind,
         model_turn_seq: int,
         transport_call_id: str,
         tool_id: ToolId,
@@ -259,96 +163,57 @@ class ToolAuthority:
         provider_wire_name: str,
         arguments: object,
     ) -> ToolPositionRecord:
-        """Replay or allocate one globally monotonic position before dispatch."""
+        """Write the call's one row, at the next position, before it runs."""
 
-        if model_turn_seq < 1:
-            raise ValueError("model turn sequence must be positive")
-        _validate_transport_call_id(transport_call_id)
+        if not transport_call_id or len(transport_call_id.encode()) > _MAX_TRANSPORT_CALL_ID_BYTES:
+            raise ValueError("transport call id must be bounded nonblank text")
         if not _SHA256_RE.fullmatch(input_digest):
             raise ValueError("tool input digest must be lowercase SHA-256")
         try:
             binding = self.operation.plan.catalog_view.binding(tool_id)
         except KeyError as error:
             raise ToolAuthorityRefused("tool is outside the frozen catalogue") from error
-        plan, _mode, _refs, _account_visible = _model_tool_facts(self.spec)
-        expected_transport = (
-            "NativeCallback" if isinstance(self.spec.authority, CodexCallbacks) else "ProviderApi"
-        )
-        if transport_kind != expected_transport:
-            raise ToolAuthorityRefused("tool transport differs from the frozen generation")
-        if not any(grant.id == str(tool_id) for grant in plan.grants):
-            raise ToolAuthorityRefused("tool is outside the frozen plan")
 
         def prepare(db: Session) -> ToolPositionRecord:
             with db.begin():
-                generation, _spec, _job = self.lock_in_current_transaction(db)
-                if transport_kind == "NativeCallback":
-                    require_native_turn_in_current_transaction(
-                        db, self.generation_id, model_turn_seq
-                    )
-                lookup = select(LLMToolPosition).where(
-                    LLMToolPosition.generation_id == self.generation_id,
-                    LLMToolPosition.transport_kind == transport_kind,
-                    LLMToolPosition.transport_call_id == transport_call_id,
-                )
-                lookup = lookup.where(LLMToolPosition.model_turn_seq == model_turn_seq)
-                existing = db.scalar(lookup.with_for_update())
-                if existing is not None:
-                    record = _position_record(existing, generation_seq=generation.generation_seq)
-                    _assert_position_identity(
-                        record,
-                        tool_id=tool_id,
-                        input_digest=input_digest,
-                        binding_revision=binding.policy_revision,
-                        tool_contract_revision=binding.spec.tool_contract_revision,
-                        plan_revision=self.operation.plan.plan_revision,
-                    )
-                    if existing.arguments != {"value": arguments}:
-                        raise ToolAuthorityRefused(
-                            "native call identity changed its original arguments"
+                self.lock_in_current_transaction(db)
+                position = int(
+                    db.scalar(
+                        select(func.coalesce(func.max(LLMToolPosition.position), 0) + 1).where(
+                            LLMToolPosition.generation_id == self.generation_id
                         )
-                    return record
-                next_position = db.scalar(
-                    select(func.coalesce(func.max(LLMToolPosition.position), 0) + 1).where(
-                        LLMToolPosition.generation_id == self.generation_id
                     )
+                    or 1
                 )
-                if next_position is None:
-                    raise AssertionError("tool position allocation returned no scalar")
-                position = int(next_position)
-                position_path = self.position_path(position)
-                position_id = stable_generation_id(self.generation_id, position_path)
-                effect_identity: dict[str, object] | None = None
-                if binding.spec.effect is ToolEffect.Write:
-                    effect_identity = {
-                        "effect_id": str(position_id),
-                        "generation_id": str(self.generation_id),
-                        "position_path": position_path,
-                    }
+                position_id = uuid4()
                 row = LLMToolPosition(
                     id=position_id,
                     generation_id=self.generation_id,
                     position=position,
-                    transport_kind=transport_kind,
+                    transport_kind=self.transport_kind,
                     model_turn_seq=model_turn_seq,
                     transport_call_id=transport_call_id,
                     canonical_tool_id=str(tool_id),
                     canonical_input_digest=input_digest,
                     tool_contract_revision=binding.spec.tool_contract_revision,
-                    plan_revision=plan.plan_revision,
+                    plan_revision=self.operation.plan.plan_revision,
                     binding_revision=binding.policy_revision,
                     arguments={"value": arguments},
-                    reservation=None,
-                    dispatch_claim=None,
-                    abandoned_attempts=0,
                     result_evidence=None,
-                    effect_identity=effect_identity,
-                    settlement=None,
+                    effect_identity=(
+                        {
+                            "effect_id": str(position_id),
+                            "generation_id": str(self.generation_id),
+                            "position_path": f"generation/{self.generation_seq}/tool/{position}",
+                        }
+                        if binding.spec.effect is ToolEffect.Write
+                        else None
+                    ),
                     replay_status="Prepared",
                 )
                 db.add(row)
                 db.flush()
-                record = _position_record(row, generation_seq=generation.generation_seq)
+                record = _position_record(row, generation_seq=self.generation_seq)
                 if self.projection is not None:
                     self.projection.stage_started(
                         db,
@@ -365,41 +230,11 @@ class ToolAuthority:
             return await database.run_sync(prepare)
 
 
-class _PositionBudgetState:
-    """Live-write reservation only: no Nexus tool plan carries an elapsed budget."""
-
-    def __init__(self, recorder: ToolPositionRecorder, limits: RunLimits) -> None:
-        if limits.max_elapsed_seconds is not None:
-            raise ValueError("Nexus tool plans carry no elapsed budget")
-        self._recorder = recorder
-        self._limits = limits
-
-    @property
-    def limits(self) -> RunLimits:
-        return self._limits
-
-    @property
-    def remaining_elapsed_seconds(self) -> None:
-        return None
-
-    async def reserve(self, position: InvocationPosition, reservation: Reservation) -> bool:
-        del position
-        return await self._recorder.budget_accepts(reservation)
-
-    async def settle(self, position: InvocationPosition, settlement: Settlement) -> None:
-        del position
-        _validate_settlement(settlement)
-
-
 class ToolPositionRecorder:
-    """Portable ``ToolExecutor`` recorder backed only by ``llm_tool_positions``."""
+    """The llm-tools recorder over one call's row; budgets live in process memory."""
 
     def __init__(
-        self,
-        *,
-        db: AsyncSession,
-        authority: ToolAuthority,
-        position: ToolPositionRecord,
+        self, *, db: AsyncSession, authority: ToolAuthority, position: ToolPositionRecord
     ) -> None:
         self.database = db
         self.db = db.sync_session
@@ -409,10 +244,11 @@ class ToolPositionRecorder:
         self.catalog_view: PlanCatalogView = authority.operation.plan.catalog_view
         self.max_live_writes = authority.operation.definition.max_live_writes
         self.audit = ToolAuditProjection(scope="conversation_context")
-        self.budgets = _PositionBudgetState(self, authority.operation.profile.run_limits)
+        self.reserved = False
 
     @property
     def durable(self) -> bool:
+        # The one row commits with the handler's effects; nothing is replayed from it.
         return True
 
     @property
@@ -423,32 +259,27 @@ class ToolPositionRecorder:
     def admitted_resource_uris(self) -> frozenset[str]:
         return self.authority.admitted_resource_uris
 
-    @property
-    def account_visible(self) -> bool:
-        return self.authority.account_visible
-
     def stage_audit(self, audit: ToolAuditProjection) -> None:
         self.audit = audit
 
     def live_write_count(self, db: Session) -> int:
         projection = self.authority.projection
-        count = projection.live_write_count(db, authority=self.authority) if projection else None
-        if count is None:
-            from nexus.services.tool_runtime.catalog import write_tool_ids
+        if projection is not None:
+            return projection.live_write_count(db, authority=self.authority)
+        from nexus.services.tool_runtime.catalog import write_tool_ids
 
-            count = (
-                db.scalar(
-                    select(func.count(LLMToolPosition.id)).where(
-                        LLMToolPosition.generation_id == self.authority.generation_id,
-                        LLMToolPosition.canonical_tool_id.in_(write_tool_ids()),
-                        LLMToolPosition.replay_status == "Completed",
-                        LLMToolPosition.reverted_at.is_(None),
-                        LLMToolPosition.result_evidence["tool_result"]["type"].astext == "Success",
-                    )
+        return (
+            db.scalar(
+                select(func.count(LLMToolPosition.id)).where(
+                    LLMToolPosition.generation_id == self.authority.generation_id,
+                    LLMToolPosition.canonical_tool_id.in_(write_tool_ids()),
+                    LLMToolPosition.replay_status == "Completed",
+                    LLMToolPosition.reverted_at.is_(None),
+                    LLMToolPosition.result_evidence["tool_result"]["type"].astext == "Success",
                 )
-                or 0
             )
-        return count
+            or 0
+        )
 
     def authorize_effect_in_current_transaction(self, db: Session) -> None:
         self.authority.lock_in_current_transaction(db)
@@ -465,116 +296,21 @@ class ToolPositionRecorder:
         input_digest: str,
         replay_policy: ReplayPolicy,
     ) -> PositionState:
-        del position
-
-        def operation(_db: Session) -> PositionState:
-            with self.db.begin():
-                self.authority.lock_in_current_transaction(self.db)
-                row = self._lock_row()
-                record = _position_record(row, generation_seq=self.authority.generation_seq)
-                _assert_position_identity(
-                    record,
-                    tool_id=tool_id,
-                    input_digest=input_digest,
-                    binding_revision=policy_revision,
-                    tool_contract_revision=tool_contract_revision,
-                    plan_revision=plan_revision,
-                )
-                if (
-                    record.replay_status == "Uncertain"
-                    and record.transport_kind == "ProviderApi"
-                    and replay_policy is ReplayPolicy.ReDispatchable
-                    and _dispatch_claim(row).attempt_no < self.authority.job_context.attempt_no
-                ):
-                    row.replay_status = "Prepared"
-                    row.dispatch_claim = None
-                    self.db.flush()
-                    record = _position_record(row, generation_seq=self.authority.generation_seq)
-                self.position_record = record
-                return _portable_position_state(row, record)
-
-        return await self.database.run_sync(operation)
+        del position, tool_id, tool_contract_revision, policy_revision, plan_revision
+        del input_digest, replay_policy
+        return PositionState(terminal_result=None, uncertain=False, actual_attempts=0)
 
     async def reserve(
-        self,
-        *,
-        position: InvocationPosition,
-        budgets: BudgetState,
-        reservation: Reservation,
+        self, *, position: InvocationPosition, budgets: BudgetState, reservation: Reservation
     ) -> bool:
-        del position, budgets
-
-        def operation(_db: Session) -> bool:
-            with self.db.begin():
-                self.authority.lock_in_current_transaction(self.db)
-                row = self._lock_row()
-                if row.reservation is not None:
-                    stored = _reservation(row)
-                    if (
-                        stored.calls,
-                        stored.input_bytes,
-                        stored.max_attempts,
-                        stored.max_output_bytes,
-                    ) != (
-                        reservation.calls,
-                        reservation.input_bytes,
-                        reservation.max_attempts,
-                        reservation.max_output_bytes,
-                    ):
-                        raise ValueError("durable tool budget reservation changed")
-                    return stored.accepted
-                if row.replay_status != "Prepared":
-                    raise ValueError("only a prepared tool position may reserve budget")
-                accepted = self._budget_accepts_in_current_transaction(self.db, reservation)
-                row.reservation = _ReservationDocument(
-                    accepted=accepted,
-                    calls=reservation.calls,
-                    input_bytes=reservation.input_bytes,
-                    max_attempts=reservation.max_attempts,
-                    max_output_bytes=reservation.max_output_bytes,
-                ).model_dump(mode="json")
-                self.db.flush()
-                return accepted
-
-        return await self.database.run_sync(operation)
+        self.reserved = await budgets.reserve(position, reservation)
+        return self.reserved
 
     async def dispatch_started(
-        self,
-        *,
-        position: InvocationPosition,
-        replay_policy: ReplayPolicy,
+        self, *, position: InvocationPosition, replay_policy: ReplayPolicy
     ) -> PositionState:
-        del position
-
-        def operation(_db: Session) -> PositionState:
-            with self.db.begin():
-                self.authority.lock_in_current_transaction(self.db)
-                row = self._lock_row()
-                record = _position_record(row, generation_seq=self.authority.generation_seq)
-                if record.replay_status in {"Completed", "Uncertain"}:
-                    return _portable_position_state(row, record)
-                if not _reservation(row).accepted:
-                    raise ValueError("dispatch requires an accepted reservation")
-                binding = self.catalog_view.binding(ToolId(record.canonical_tool_id))
-                if binding.replay_policy is not replay_policy:
-                    raise ValueError("durable tool replay policy changed")
-                row.dispatch_claim = _DispatchClaimDocument(
-                    attempt_no=self.authority.job_context.attempt_no,
-                    worker_id=self.authority.job_context.worker_id,
-                ).model_dump(mode="json")
-                row.replay_status = "Uncertain"
-                self.db.flush()
-                self.position_record = _position_record(
-                    row,
-                    generation_seq=self.authority.generation_seq,
-                )
-                return PositionState(
-                    terminal_result=None,
-                    uncertain=False,
-                    actual_attempts=row.abandoned_attempts,
-                )
-
-        return await self.database.run_sync(operation)
+        del position, replay_policy
+        return PositionState(terminal_result=None, uncertain=False, actual_attempts=0)
 
     async def dispatch_abandoned(
         self,
@@ -584,36 +320,10 @@ class ToolPositionRecorder:
         actual_attempts: int,
         lease_recovered: bool,
     ) -> None:
-        del position
-
-        def operation(_db: Session) -> None:
-            if self.position_record.transport_kind == "GenerationApi":
-                raise ValueError("generation API dispatch cannot be re-admitted")
-            if replay_policy is not ReplayPolicy.ReDispatchable or not lease_recovered:
-                raise ValueError("only verified ReDispatchable work may be re-admitted")
-            with self.db.begin():
-                self.authority.lock_in_current_transaction(self.db)
-                row = self._lock_row()
-                if row.replay_status != "Uncertain":
-                    raise ValueError("only uncertain tool work may be abandoned")
-                _dispatch_claim(row)
-                if actual_attempts < row.abandoned_attempts:
-                    raise ValueError("abandoned tool attempt accounting moved backwards")
-                row.abandoned_attempts = actual_attempts
-                row.dispatch_claim = None
-                row.replay_status = "Prepared"
-
-        return await self.database.run_sync(operation)
+        raise AssertionError("no tool dispatch is ever re-admitted")
 
     async def uncertain(self, *, position: InvocationPosition) -> None:
         del position
-
-        def operation(_db: Session) -> None:
-            with self.db.begin():
-                if self._lock_row(execution=False).replay_status != "Uncertain":
-                    raise ValueError("only dispatched tool work may remain uncertain")
-
-        return await self.database.run_sync(operation)
 
     async def terminalize_and_settle(
         self,
@@ -623,42 +333,18 @@ class ToolPositionRecorder:
         result: ToolResult,
         settlement: Settlement,
     ) -> ToolResult:
-        del position, budgets
+        """Complete the row, its receipt and projection with the handler's effects."""
+
+        if self.reserved:
+            await budgets.settle(position, settlement)
 
         def operation(_db: Session) -> ToolResult:
-            evidence = {"tool_result": cast(object, result)}
+            evidence: dict[str, object] = {"tool_result": cast(object, result)}
             if self.position_record.effect_identity is not None:
                 evidence["created_refs"] = cast(object, self.audit.created_refs)
             try:
-                row = self._lock_row(execution=False)
-                record = _position_record(row, generation_seq=self.authority.generation_seq)
-                if record.replay_status == "Completed":
-                    if (
-                        record.result_evidence is None
-                        or record.result_evidence.get("tool_result") != result
-                    ):
-                        raise ValueError("terminal result differs from completed durable position")
-                    self.position_record = record
-                    self.db.commit()
-                    return result
-                reservation = _reservation(row)
-                stored = (
-                    settlement
-                    if reservation.accepted
-                    else Settlement(actual_attempts=0, actual_output_bytes=0)
-                )
-                _validate_settlement(stored)
-                if (
-                    stored.actual_attempts < row.abandoned_attempts
-                    or stored.actual_attempts > reservation.max_attempts
-                    or stored.actual_output_bytes > reservation.max_output_bytes
-                ):
-                    raise ValueError("durable tool settlement exceeds its reservation")
+                row = self._lock_row()
                 row.result_evidence = evidence
-                row.settlement = {
-                    "actual_attempts": stored.actual_attempts,
-                    "actual_output_bytes": stored.actual_output_bytes,
-                }
                 row.replay_status = "Completed"
                 row.completed_at = func.now()
                 self.db.flush()
@@ -687,8 +373,6 @@ class ToolPositionRecorder:
                         audit=self.audit,
                     )
                 self.position_record = record
-                # Handler-owned domain effects, the canonical terminal receipt, and
-                # any optional projection become visible atomically.
                 self.db.commit()
             except BaseException:
                 self.db.rollback()
@@ -697,120 +381,33 @@ class ToolPositionRecorder:
 
         return await self.database.run_sync(operation)
 
-    async def budget_accepts(self, reservation: Reservation) -> bool:
-        def operation(_db: Session) -> bool:
-            with self.db.begin():
-                self.authority.lock_in_current_transaction(self.db)
-                return self._budget_accepts_in_current_transaction(self.db, reservation)
-
-        return await self.database.run_sync(operation)
-
     async def render_output(self, result: ToolResult) -> str:
         def operation(_db: Session) -> str:
             if self.db.in_transaction():
                 raise RuntimeError("tool output rendering requires a committed terminal phase")
             with self.db.begin():
-                row = self._lock_row(execution=False)
+                row = self._lock_row()
                 record = _position_record(row, generation_seq=self.authority.generation_seq)
-                if (
-                    record.replay_status != "Completed"
-                    or record.result_evidence is None
-                    or record.result_evidence.get("tool_result") != result
-                ):
-                    raise ValueError("model output requires the completed durable tool result")
+                if record.replay_status != "Completed":
+                    raise AssertionError("model output requires the completed tool row")
                 projection = self.authority.projection
                 if projection is None:
                     return canonical_json_bytes(result).decode("utf-8")
                 return projection.render_output(
-                    self.db,
-                    authority=self.authority,
-                    position=record,
-                    result=result,
+                    self.db, authority=self.authority, position=record, result=result
                 )
 
         return await self.database.run_sync(operation)
 
-    def _lock_row(self, *, execution: bool = True) -> LLMToolPosition:
-        if not execution:
-            lock_generation_owner_in_current_transaction(self.db, self.authority.owner)
-            generation = self.db.scalar(
-                select(LLMCall).where(LLMCall.id == self.authority.generation_id).with_for_update()
-            )
-            if (
-                generation is None
-                or (generation.owner_kind, generation.owner_id)
-                != (self.authority.owner.kind, self.authority.owner.id)
-                or generation.tool_principal_user_id != self.authority.user_id
-                or generation.generation_fingerprint != self.authority.spec.fingerprint
-            ):
-                raise ToolAuthorityRefused("recorded work changed its original generation")
+    def _lock_row(self) -> LLMToolPosition:
         row = self.db.scalar(
             select(LLMToolPosition)
-            .where(
-                LLMToolPosition.generation_id == self.authority.generation_id,
-                LLMToolPosition.position == self.position_record.position,
-            )
+            .where(LLMToolPosition.id == self.position_record.id)
             .with_for_update()
         )
         if row is None:
             raise ToolAuthorityRefused("tool position does not exist")
-        _assert_position_identity(
-            _position_record(row, generation_seq=self.authority.generation_seq),
-            tool_id=ToolId(self.position_record.canonical_tool_id),
-            input_digest=self.position_record.canonical_input_digest,
-            binding_revision=self.position_record.binding_revision,
-            tool_contract_revision=self.position_record.tool_contract_revision,
-            plan_revision=self.position_record.plan_revision,
-        )
-        if not execution and row.replay_status == "Uncertain":
-            claim = _dispatch_claim(row)
-            if (claim.worker_id, claim.attempt_no) != (
-                self.authority.job_context.worker_id,
-                self.authority.job_context.attempt_no,
-            ):
-                raise ToolAuthorityRefused("recorded work belongs to another dispatch claim")
-        if execution and row.transport_kind == "NativeCallback":
-            require_native_turn_in_current_transaction(
-                self.db, self.authority.generation_id, row.model_turn_seq
-            )
         return row
-
-    def _budget_accepts_in_current_transaction(
-        self,
-        db: Session,
-        reservation: Reservation,
-    ) -> bool:
-        limits = self.authority.operation.profile.run_limits
-        rows = db.scalars(
-            select(LLMToolPosition).where(
-                LLMToolPosition.generation_id == self.authority.generation_id
-            )
-        ).all()
-        calls = input_bytes = external_attempts = output_bytes = in_flight = 0
-        for row in rows:
-            if row.reservation is None:
-                continue
-            reserved = _reservation(row)
-            if not reserved.accepted:
-                continue
-            calls += reserved.calls
-            input_bytes += reserved.input_bytes
-            if row.settlement is None:
-                external_attempts += reserved.max_attempts
-                output_bytes += reserved.max_output_bytes
-                in_flight += 1
-            else:
-                settlement = Settlement(
-                    cast(int, row.settlement["actual_attempts"]),
-                    cast(int, row.settlement["actual_output_bytes"]),
-                )
-                external_attempts += settlement.actual_attempts
-                output_bytes += settlement.actual_output_bytes
-        return can_reserve(
-            limits,
-            BudgetTotals(calls, input_bytes, external_attempts, output_bytes, in_flight),
-            reservation,
-        )
 
 
 class _AuthorityCancellation:
@@ -840,57 +437,37 @@ class _ToolTelemetry:
 
 @dataclass(frozen=True, slots=True)
 class GenerationToolExecutor:
-    """Execute admitted Provider API tool proposals."""
+    """Run one model tool call under its generation's authority."""
 
     authority: ToolAuthority
 
-    async def execute(
-        self,
-        request: BackendToolExecutionRequest,
-    ) -> BackendToolExecutionResult:
-        from provider_runtime.tool_adapter import (
-            CanonicalToolCall,
-            RejectedToolArguments,
-            RejectedToolCall,
-        )
+    async def execute(self, proposal: ToolCallResolution, *, turn: int) -> ToolModelOutput:
+        """Run one provider proposal; a malformed or unknown call answers the model."""
 
-        from nexus.services.generation_backend import BackendToolExecutionResult
+        from provider_runtime.tool_adapter import CanonicalToolCall, RejectedToolArguments
 
-        if request.generation_id != self.authority.generation_id:
-            raise ToolAuthorityRefused("provider proposal names a different generation")
-        proposal = request.proposal
         if isinstance(proposal, CanonicalToolCall):
             result = await self.execute_canonical(
-                transport_kind="ProviderApi",
-                model_turn_seq=request.child_seq,
+                model_turn_seq=turn,
                 transport_call_id=proposal.provider_call_id,
                 provider_wire_name=str(proposal.tool_id),
                 tool_id=proposal.tool_id,
                 arguments=proposal.arguments,
             )
-        elif isinstance(proposal, RejectedToolArguments):
-            result = await self.refuse_known_call(
-                transport_kind="ProviderApi",
-                model_turn_seq=request.child_seq,
-                transport_call_id=proposal.provider_call_id,
-                provider_wire_name=str(proposal.tool_id),
-                tool_id=proposal.tool_id,
-                reason=proposal.reason,
-            )
-        elif isinstance(proposal, RejectedToolCall):
-            result = self.refuse_unknown_call(transport_call_id=proposal.provider_call_id)
-        else:
-            raise TypeError("provider proposal has an unknown closed variant")
-        return BackendToolExecutionResult(
-            provider_call_id=result.model_output.call_id,
-            output=result.model_output.output,
-            is_error=result.model_output.is_error,
+            return result.model_output
+        if isinstance(proposal, RejectedToolArguments):
+            return await self._refuse_arguments(proposal, turn=turn)
+        # An unpublished tool name has no canonical row; the model is told and may retry.
+        unavailable: ToolResult = {"type": "Failure", "error": {"type": "ToolUnavailable"}}
+        return ToolModelOutput(
+            call_id=proposal.provider_call_id,
+            output=canonical_json_bytes(unavailable).decode("utf-8"),
+            is_error=True,
         )
 
     async def execute_canonical(
         self,
         *,
-        transport_kind: ToolTransportKind,
         model_turn_seq: int,
         transport_call_id: str,
         provider_wire_name: str,
@@ -900,7 +477,6 @@ class GenerationToolExecutor:
         arguments = json.loads(canonical_json_bytes(dict(arguments)))
         raw = ParsedJson(arguments)
         record = await self.authority.prepare_position(
-            transport_kind=transport_kind,
             model_turn_seq=model_turn_seq,
             transport_call_id=transport_call_id,
             tool_id=tool_id,
@@ -912,34 +488,42 @@ class GenerationToolExecutor:
             recorder = ToolPositionRecorder(db=db, authority=self.authority, position=record)
             cancellation = _AuthorityCancellation(self.authority)
             await cancellation.refresh(db)
-            binding = self.authority.operation.plan.catalog_view.binding(tool_id)
-            effect_id = None
-            if binding.spec.effect is ToolEffect.Write:
-                identity = record.effect_identity
-                if identity is None or not isinstance(identity.get("effect_id"), str):
-                    raise AssertionError("write tool position lacks its stable effect identity")
-                effect_id = EffectId(cast(str, identity["effect_id"]))
+            plan = self.authority.operation.plan
+            identity = record.effect_identity
             projection = self.authority.projection
             context = ExecutionContext(
-                plan=self.authority.operation.plan,
-                grant=self.authority.operation.plan.grant(tool_id),
-                catalog_view=self.authority.operation.plan.catalog_view,
+                plan=plan,
+                grant=plan.grant(tool_id),
+                catalog_view=plan.catalog_view,
                 position=recorder.position,
                 recorder=recorder,
-                effect_id=effect_id,
-                budgets=recorder.budgets,
+                effect_id=None if identity is None else EffectId(str(identity["effect_id"])),
+                budgets=self.authority.budgets,
                 principal=Principal(str(self.authority.user_id)),
-                scope=Scope(
-                    "account_visible"
-                    if self.authority.account_visible
-                    else projection.scope_label
-                    if projection
-                    else "generation_scope"
-                ),
+                scope=Scope(projection.scope_label if projection else "generation_scope"),
                 cancellation=cancellation,
                 telemetry=_ToolTelemetry(),
             )
-            result = await ToolExecutor.execute(binding, raw, context)
+            try:
+                result = await ToolExecutor.execute(
+                    plan.catalog_view.binding(tool_id), raw, context
+                )
+            except RecoveryRequired as error:
+                if isinstance(error.__cause__, ToolAuthorityRefused):
+                    # The fence refused a BilledOnce call: the generation is ending, not broken.
+                    raise error.__cause__ from None
+                if not isinstance(error.__cause__, TimeoutError):
+                    raise
+                # A timed-out paid search or write: its effects rolled back with the
+                # handler's transaction, so the model is told the call did not finish.
+                await db.run_sync(lambda session: session.rollback())
+                recorder.audit = ToolAuditProjection(scope=recorder.audit.scope)
+                result = await recorder.terminalize_and_settle(
+                    position=recorder.position,
+                    budgets=self.authority.budgets,
+                    result={"type": "Failure", "error": {"type": "DeadlineExceeded"}},
+                    settlement=Settlement(actual_attempts=1, actual_output_bytes=0),
+                )
             return ModelToolExecutionResult(
                 model_output=ToolModelOutput(
                     call_id=transport_call_id,
@@ -949,25 +533,18 @@ class GenerationToolExecutor:
                 position=recorder.position_record,
             )
 
-    async def refuse_known_call(
-        self,
-        *,
-        transport_kind: ToolTransportKind,
-        model_turn_seq: int,
-        transport_call_id: str,
-        provider_wire_name: str,
-        tool_id: ToolId,
-        reason: Literal["InvalidJson", "InputTooLarge"],
-    ) -> ModelToolExecutionResult:
+    async def _refuse_arguments(
+        self, proposal: RejectedToolArguments, *, turn: int
+    ) -> ToolModelOutput:
+        reason = proposal.reason
         record = await self.authority.prepare_position(
-            transport_kind=transport_kind,
-            model_turn_seq=model_turn_seq,
-            transport_call_id=transport_call_id,
-            tool_id=tool_id,
-            input_digest=generation_fact_digest(
-                {"kind": "RejectedToolArguments", "reason": reason}
-            ),
-            provider_wire_name=provider_wire_name,
+            model_turn_seq=turn,
+            transport_call_id=proposal.provider_call_id,
+            tool_id=proposal.tool_id,
+            input_digest=hashlib.sha256(
+                canonical_json_bytes({"kind": "RejectedToolArguments", "reason": reason})
+            ).hexdigest(),
+            provider_wire_name=str(proposal.tool_id),
             arguments={"refusal": reason},
         )
         async with open_async_session(self.authority.session_factory) as db:
@@ -976,198 +553,20 @@ class GenerationToolExecutor:
                 "type": "Failure",
                 "error": {"type": "InvalidInput" if reason == "InvalidJson" else "BudgetExceeded"},
             }
-            limits = self.authority.operation.plan.grant(tool_id).limits
-            await recorder.reserve(
-                position=recorder.position,
-                budgets=recorder.budgets,
-                reservation=Reservation(
-                    calls=1,
-                    input_bytes=0,
-                    max_attempts=limits.max_attempts,
-                    max_output_bytes=limits.max_output_bytes,
-                ),
-            )
             await recorder.terminalize_and_settle(
                 position=recorder.position,
-                budgets=recorder.budgets,
+                budgets=self.authority.budgets,
                 result=result,
                 settlement=Settlement(actual_attempts=0, actual_output_bytes=0),
             )
-            return ModelToolExecutionResult(
-                model_output=ToolModelOutput(
-                    call_id=transport_call_id,
-                    output=await recorder.render_output(result),
-                    is_error=True,
-                ),
-                position=recorder.position_record,
-            )
-
-    def refuse_unknown_call(self, *, transport_call_id: str) -> ModelToolExecutionResult:
-        """Answer an unpublished provider tool name as an error result so the model
-        self-corrects; an unresolvable name has no canonical position to record."""
-        _validate_transport_call_id(transport_call_id)
-        result: ToolResult = {"type": "Failure", "error": {"type": "ToolUnavailable"}}
-        return ModelToolExecutionResult(
-            model_output=ToolModelOutput(
-                call_id=transport_call_id,
-                output=canonical_json_bytes(result).decode("utf-8"),
+            return ToolModelOutput(
+                call_id=proposal.provider_call_id,
+                output=await recorder.render_output(result),
                 is_error=True,
-            ),
-            position=None,
-        )
-
-
-@dataclass(slots=True)
-class DeferredGenerationToolExecutor:
-    """Provider-facing handle that opens authority after parent dispatch is armed."""
-
-    session_factory: sessionmaker[Session] = field(repr=False, compare=False)
-    user_id: UUID
-    owner: LlmCallOwner
-    generation_id: UUID
-    job_context: JobExecutionContext
-    operation: FrozenToolOperation = field(repr=False, compare=False)
-    projection: ToolExecutionProjection | None = field(default=None, repr=False, compare=False)
-    _executor: GenerationToolExecutor | None = field(default=None, init=False, repr=False)
-    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
-
-    async def open(self) -> GenerationToolExecutor:
-        async with self._lock:
-            if self._executor is None:
-                self._executor = GenerationToolExecutor(
-                    authority=await ToolAuthority.from_claimed_generation_attempt(
-                        session_factory=self.session_factory,
-                        user_id=self.user_id,
-                        owner=self.owner,
-                        generation_id=self.generation_id,
-                        job_context=self.job_context,
-                        operation=self.operation,
-                        projection=self.projection,
-                    )
-                )
-            return self._executor
-
-    async def execute(
-        self,
-        request: BackendToolExecutionRequest,
-    ) -> BackendToolExecutionResult:
-        executor = await self.open()
-        return await executor.execute(request)
-
-
-def require_native_turn_in_current_transaction(
-    db: Session, generation_id: UUID, turn_seq: int
-) -> LLMModelTurn:
-    turn = db.scalar(
-        select(LLMModelTurn)
-        .where(
-            LLMModelTurn.generation_id == generation_id,
-            LLMModelTurn.turn_seq == turn_seq,
-        )
-        .with_for_update()
-    )
-    if (
-        turn is None
-        or turn.native_binding is None
-        or turn.fenced_at is not None
-        or turn.terminal is not None
-    ):
-        raise ToolAuthorityRefused("native attempt is absent, unbound, fenced or terminal")
-    return turn
-
-
-def _lock_authority(
-    db: Session,
-    *,
-    user_id: UUID,
-    owner: LlmCallOwner,
-    generation_id: UUID,
-    job_context: JobExecutionContext,
-    projection: ToolExecutionProjection | None,
-) -> tuple[GenerationRecord[GenerationSpec], GenerationSpec, JobRow]:
-    generation = lock_active_generation_for_authority_in_current_transaction(
-        db,
-        owner=owner,
-        generation_id=generation_id,
-    )
-    if generation is None:
-        raise ToolAuthorityRefused("generation is absent or terminal")
-    spec = generation.spec
-    from nexus.services.generation_ownership import user_id_for_job_owner
-
-    if user_id_for_job_owner(db, owner=owner, job_id=job_context.job_id) != user_id:
-        raise ToolAuthorityRefused("generation principal differs from its claimed owner")
-    if projection is not None:
-        projection.lock_owner(db, user_id=user_id, owner=owner)
-    if not lock_running_job_claim(db, context=job_context):
-        raise ToolAuthorityRefused("worker lease is absent or expired")
-    job = get_job(db, job_context.job_id)
-    if job is None:
-        raise ToolAuthorityRefused("worker job disappeared")
-    return generation, spec, job
-
-
-def _model_tool_facts(
-    spec: GenerationSpec,
-) -> tuple[FrozenToolPlanSnapshot, ToolEffectMode, frozenset[str], bool]:
-    authority = spec.authority
-    if not isinstance(authority, CodexCallbacks | ProviderFunctions):
-        raise ToolAuthorityRefused("generation authority has an unknown variant")
-    plan = authority.model_tool_plan_snapshot
-    effect = authority.tool_effect_mode
-    scope = authority.admitted_tool_scope
-    if not all(isinstance(value, Present) for value in (plan, effect, scope)):
-        raise ToolAuthorityRefused("NoModelTools generation cannot acquire tool authority")
-    assert isinstance(plan, Present)
-    assert isinstance(effect, Present)
-    assert isinstance(scope, Present)
-    return plan.value, effect.value, frozenset(scope.value.admitted_refs), False
-
-
-def _assert_job_attempt(job: JobRow, context: JobExecutionContext) -> None:
-    if (
-        job.id != context.job_id
-        or job.status != "running"
-        or job.claimed_by != context.worker_id
-        or job.attempts != context.attempt_no
-    ):
-        raise ToolAuthorityRefused("job differs from the claimed worker attempt")
-
-
-def _validate_transport_call_id(value: str) -> None:
-    if not value or len(value.encode("utf-8")) > _MAX_TRANSPORT_CALL_ID_BYTES:
-        raise ValueError("transport call id must be bounded nonblank text")
-
-
-def _validate_settlement(settlement: Settlement) -> None:
-    if settlement.actual_attempts < 0 or settlement.actual_output_bytes < 0:
-        raise ValueError("tool settlement cannot be negative")
-
-
-def _assert_position_identity(
-    record: ToolPositionRecord,
-    *,
-    tool_id: ToolId,
-    input_digest: str,
-    binding_revision: str,
-    tool_contract_revision: str,
-    plan_revision: str,
-) -> None:
-    if (
-        record.canonical_tool_id != str(tool_id)
-        or record.canonical_input_digest != input_digest
-        or record.tool_contract_revision != tool_contract_revision
-        or record.binding_revision != binding_revision
-        or record.plan_revision != plan_revision
-    ):
-        raise ValueError("transport call identity was reused with different authority")
+            )
 
 
 def _position_record(row: LLMToolPosition, *, generation_seq: int) -> ToolPositionRecord:
-    if row.replay_status not in {"Prepared", "Uncertain", "Completed"}:
-        raise AssertionError("persisted tool position has an unknown replay status")
-    if row.transport_kind not in {"ProviderApi", "NativeCallback", "GenerationApi"}:
-        raise AssertionError("persisted tool position has an unknown transport")
     return ToolPositionRecord(
         id=row.id,
         generation_id=row.generation_id,
@@ -1181,7 +580,6 @@ def _position_record(row: LLMToolPosition, *, generation_seq: int) -> ToolPositi
         tool_contract_revision=row.tool_contract_revision,
         plan_revision=row.plan_revision,
         binding_revision=row.binding_revision,
-        abandoned_attempts=row.abandoned_attempts,
         result_evidence=cast(dict[str, object] | None, row.result_evidence),
         effect_identity=cast(dict[str, object] | None, row.effect_identity),
         replay_status=cast(ToolReplayStatus, row.replay_status),
@@ -1189,44 +587,3 @@ def _position_record(row: LLMToolPosition, *, generation_seq: int) -> ToolPositi
         completed_at=row.completed_at,
         reverted_at=row.reverted_at,
     )
-
-
-def _portable_position_state(row: LLMToolPosition, record: ToolPositionRecord) -> PositionState:
-    attempts = record.abandoned_attempts
-    settlement = row.settlement
-    if isinstance(settlement, dict) and isinstance(settlement.get("actual_attempts"), int):
-        attempts = cast(int, settlement["actual_attempts"])
-    return PositionState(
-        terminal_result=(
-            cast(ToolResult, record.result_evidence["tool_result"])
-            if record.result_evidence is not None
-            else None
-        ),
-        uncertain=record.replay_status == "Uncertain",
-        actual_attempts=attempts,
-    )
-
-
-def _reservation(row: LLMToolPosition) -> _ReservationDocument:
-    return _ReservationDocument.model_validate(row.reservation)
-
-
-def _dispatch_claim(row: LLMToolPosition) -> _DispatchClaimDocument:
-    return _DispatchClaimDocument.model_validate(row.dispatch_claim)
-
-
-__all__ = [
-    "DeferredGenerationToolExecutor",
-    "GenerationToolExecutor",
-    "ModelToolExecutionResult",
-    "ToolAuditProjection",
-    "ToolAuthority",
-    "ToolAuthorityRefused",
-    "ToolEffectMode",
-    "ToolExecutionProjection",
-    "ToolModelOutput",
-    "ToolPositionRecord",
-    "ToolPositionRecorder",
-    "ToolReplayStatus",
-    "ToolTransportKind",
-]

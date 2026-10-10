@@ -1,7 +1,7 @@
 """The oracle reading: one row, pending until one transaction completes or fails it.
 
-The job prepares a snapshot, dispatches it once through the durable generation contract
-(a replay reuses the frozen snapshot) and publishes the folio with three citation edges.
+The job prepares a snapshot, generates once and publishes the folio with three citation
+edges; a retry after a dead worker prepares and generates again from scratch.
 Reads project the row; only navigation is current (``get_reading``). A pending reading
 that history shows started (``started_at``) displays ``streaming``; the job still owns it.
 """
@@ -16,16 +16,8 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import OracleCorpusSource, OracleReading
 from nexus.db.retries import retry_serializable
-from nexus.db.session import get_session_factory
 from nexus.errors import NotFoundError
-from nexus.jobs.queue import (
-    JobExecutionContext,
-    JobRow,
-    enqueue_job,
-    get_job,
-    lock_job,
-    lock_running_job_claim,
-)
+from nexus.jobs.queue import JobExecutionContext, enqueue_job, lock_running_job_claim
 from nexus.schemas.oracle import (
     OracleConcordanceOut,
     OracleFailureCode,
@@ -36,27 +28,12 @@ from nexus.schemas.oracle import (
     OracleReadingSummaryOut,
     OracleStoredPassage,
 )
-from nexus.schemas.presence import Present
 from nexus.schemas.resource_graph import CitationSnapshot
-from nexus.services import generation_policy, library_governance
-from nexus.services.durable_step_journal import (
-    Completed,
-    Uncertain,
-    read_step_states,
-    stable_generation_id,
-)
-from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
-from nexus.services.llm_execution import (
-    ExecutionRuntime,
-    GenerationAdmissionInputsChanged,
-    GenerationDispatchAborted,
-    GenerationUncertain,
-    JobGenerationJournal,
-    admit_job_generation,
-    execute_generation,
-    generation_has_local_recovery,
-)
-from nexus.services.llm_ledger import LlmCallOwner
+from nexus.services import library_governance
+from nexus.services.generation.contract import Owner
+from nexus.services.generation.run import generate
+from nexus.services.generation.runtime import Runtime, run_generation_job
+from nexus.services.generation.synthesis import strict
 from nexus.services.oracle import corpus, synthesis
 from nexus.services.oracle.synthesis import Candidate, Failure, Success
 from nexus.services.resource_graph.citations import (
@@ -67,9 +44,7 @@ from nexus.services.resource_graph.citations import (
 )
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.search.semantic import embed_text, nearest_chunks
-from nexus.tasks.llm_task import run_llm_task
 
-_STEP = "synthesis"
 _PASSAGES = TypeAdapter(list[OracleStoredPassage])
 
 
@@ -246,28 +221,17 @@ def _columns(reading: OracleReading) -> dict[str, Any]:
 
 
 def run_reading_job(*, reading_id: UUID, context: JobExecutionContext) -> dict[str, object]:
-    return run_llm_task(
+    return run_generation_job(
         "oracle_reading",
+        context,
         lambda db, runtime: _run(db, reading_id=reading_id, context=context, runtime=runtime),
     )
 
 
 async def _run(
-    db: Session, *, reading_id: UUID, context: JobExecutionContext, runtime: ExecutionRuntime
+    db: Session, *, reading_id: UUID, context: JobExecutionContext, runtime: Runtime
 ) -> dict[str, object]:
-    """Publish a journaled outcome, else prepare (or reuse) the snapshot and dispatch once."""
-    job = get_job(db, context.job_id)
-    assert job is not None  # the worker holds its claim
-    state = read_step_states(job).get(_STEP)
-    if state is not None and state.dispatch_phase is Completed:
-        assert isinstance(state.terminal_result, Present)
-        return _publish(
-            db, reading_id, context, synthesis.OUTCOME.validate_json(state.terminal_result.value)
-        )
-    if state is not None and state.dispatch_phase is Uncertain:
-        if not generation_has_local_recovery(db, state):
-            db.commit()
-            raise GenerationUncertain(f"oracle generation {state.generation_id} is unresolved")
+    """Prepare the snapshot, generate once, publish the outcome."""
     reading = db.get(OracleReading, reading_id)
     assert reading is not None  # readings are never deleted
     if reading.status != "pending":
@@ -275,58 +239,18 @@ async def _run(
         db.commit()
         return {"status": status, "noop": True}
     viewer_id, question = reading.user_id, reading.question_text
-
-    def lock_dispatch(dispatch_db: Session) -> JobRow | None:
-        pending = dispatch_db.execute(
-            text("SELECT 1 FROM oracle_readings WHERE id = :id AND status = 'pending' FOR UPDATE"),
-            {"id": reading_id},
-        ).scalar()
-        return lock_job(dispatch_db, context.job_id) if pending else None
-
-    journal = JobGenerationJournal(context=context, step_path=_STEP, lock_dispatch=lock_dispatch)
-    if state is None:
-        prepared = _prepare(db, viewer_id=viewer_id, question=question)
-        if isinstance(prepared, Failure):
-            return _publish(db, reading_id, context, prepared)
-        intent = synthesis.intent(prepared)
-    else:
-        admission = journal.read_admission(db)
-        assert admission is not None  # a journal state never exists without its admission
-        intent = admission[1]
-    snapshot = synthesis.snapshot_of(intent)
+    prepared = _prepare(db, viewer_id=viewer_id, question=question)
+    if isinstance(prepared, Failure):
+        return _publish(db, reading_id, context, prepared)
     db.commit()
-    revision = f"{generation_policy.operation_revision('oracle')}.{synthesis.REVISION}"
-    sessions = get_session_factory()
-    try:
-        request = await admit_job_generation(
-            owner=LlmCallOwner(kind="oracle_reading", id=reading_id),
-            user_id=viewer_id,
-            generation_id=stable_generation_id(reading_id, _STEP),
-            operation="oracle",
-            intent=intent,
-            prompt_template_revision=revision,
-            prompt_payload_ref=ImmutablePromptPayloadRef(
-                owner_kind="oracle_reading",
-                owner_id=str(reading_id),
-                revision=revision,
-                payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
-            ),
-            journal=journal,
-            session_factory=sessions,
-            runtime=runtime,
-        )
-        result = await execute_generation(
-            request,
-            session_factory=sessions,
-            runtime=runtime,
-            encode_terminal=lambda terminal: synthesis.encode_terminal(terminal, snapshot),
-            encode_failure=synthesis.encode_failure,
-        )
-    except (GenerationDispatchAborted, GenerationAdmissionInputsChanged):
-        return {"status": "pending", "noop": True}  # this attempt lost its claim
-    return _publish(
-        db, reading_id, context, synthesis.OUTCOME.validate_json(result.terminal_result)
+    terminal = await generate(
+        runtime,
+        owner=Owner("oracle_reading", reading_id, viewer_id, context),
+        operation="oracle",
+        intent=synthesis.intent(prepared),
+        decode=strict(synthesis.Output, lambda out: synthesis.accept(out, prepared)),
     )
+    return _publish(db, reading_id, context, synthesis.outcome(terminal))
 
 
 # The personal lane: the viewer's visible media and own notes, the oracle corpus excluded.

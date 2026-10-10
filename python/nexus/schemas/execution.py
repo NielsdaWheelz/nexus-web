@@ -1,10 +1,10 @@
-"""Strict wire shape for derived durable execution liveness."""
+"""Strict wire shape for derived chat execution liveness."""
 
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict
 
-from nexus.services.durable_step_journal import DurableExecutionPhase
+from nexus.jobs.queue import DurableExecutionPhase
 
 
 class ChatRunExecutionOut(BaseModel):

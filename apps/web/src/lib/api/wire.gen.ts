@@ -3598,7 +3598,7 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "E_MESSAGE_TOO_LONG" | "E_CATALOG_DEFINITION_STALE" | "E_INVALID_GENERATION_SELECTION" | "E_GENERATION_SELECTION_UNAVAILABLE" | "E_INVALID_REQUEST" | "E_BRANCH_PATH_INVALID" | "E_BRANCH_ANCHOR_INVALID" | "E_FORBIDDEN" | "E_NOT_FOUND" | "E_CONVERSATION_NOT_FOUND" | "E_MESSAGE_NOT_FOUND" | "E_READER_SELECTION_STALE" | "E_READER_SELECTION_NOT_FOUND" | "E_READER_SELECTION_FORBIDDEN" | "E_READER_SELECTION_GEOMETRY_ONLY" | "E_READER_SELECTION_TOO_LARGE" | "E_CONVERSATION_NO_LONGER_EMPTY" | "E_GENERATION_CONTEXT_TOO_LARGE";
+            code: "E_MESSAGE_TOO_LONG" | "E_INVALID_GENERATION_SELECTION" | "E_GENERATION_SELECTION_UNAVAILABLE" | "E_INVALID_REQUEST" | "E_BRANCH_PATH_INVALID" | "E_BRANCH_ANCHOR_INVALID" | "E_FORBIDDEN" | "E_NOT_FOUND" | "E_CONVERSATION_NOT_FOUND" | "E_MESSAGE_NOT_FOUND" | "E_READER_SELECTION_STALE" | "E_READER_SELECTION_NOT_FOUND" | "E_READER_SELECTION_FORBIDDEN" | "E_READER_SELECTION_GEOMETRY_ONLY" | "E_READER_SELECTION_TOO_LARGE" | "E_CONVERSATION_NO_LONGER_EMPTY" | "E_GENERATION_CONTEXT_TOO_LARGE";
         };
         /** ChatCreationRecord */
         ChatCreationRecord: {
@@ -3725,8 +3725,6 @@ export interface components {
          *     the locked Highlight and never accepts client quote text.
          */
         ChatRunCreateRequest: {
-            /** Catalog Definition Revision */
-            catalog_definition_revision: string;
             /** Content */
             content: string;
             /** Destination */
@@ -3856,8 +3854,6 @@ export interface components {
          * @description Exact selection for rerun/regenerate.
          */
         ChatRunRepeatRequest: {
-            /** Catalog Definition Revision */
-            catalog_definition_revision: string;
             /** Selection */
             selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
         };
@@ -4011,8 +4007,6 @@ export interface components {
         };
         /** ChatSeed */
         ChatSeed: {
-            /** Policy Revision */
-            policy_revision: string;
             presentation: components["schemas"]["SelectionPresentation"];
             /** Selection */
             selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
@@ -5664,7 +5658,7 @@ export interface components {
          * DossierFailureCode
          * @enum {string}
          */
-        DossierFailureCode: "NoSourceMaterial" | "InputsChanged" | "DependencyProjectionFailed" | "ContextTooLarge" | "Auth" | "Quota" | "Timeout" | "OutputLimit" | "InvalidOutput" | "PolicyViolation" | "RuntimeUnavailable" | "CapacityUnavailable" | "DocumentValidationFailed" | "CitationValidationFailed";
+        DossierFailureCode: "NoSourceMaterial" | "InputsChanged" | "DependencyProjectionFailed" | "ContextTooLarge" | "Auth" | "Quota" | "Timeout" | "OutputLimit" | "InvalidOutput" | "PolicyViolation" | "RuntimeUnavailable" | "DocumentValidationFailed" | "CitationValidationFailed";
         /** DossierGenerateRequest */
         DossierGenerateRequest: {
             instruction: components["schemas"]["Presence_str_-Input"];
@@ -5729,7 +5723,7 @@ export interface components {
         };
         /**
          * DurableExecutionPhase
-         * @description Advisory liveness projected from one live durable queue job.
+         * @description Advisory liveness projected from one live queue job.
          * @enum {string}
          */
         DurableExecutionPhase: "Queued" | "Running" | "Recovering" | "Suspended";
@@ -6280,8 +6274,6 @@ export interface components {
         /** GenerationCatalog */
         GenerationCatalog: {
             chat_seed: components["schemas"]["ChatSeed"];
-            /** Definition Revision */
-            definition_revision: string;
             /**
              * Observed At
              * Format: date-time
@@ -8124,7 +8116,7 @@ export interface components {
             status: "failed";
         };
         /** @enum {string} */
-        MetadataFailureCode: "catalog_unavailable" | "configuration_error" | "model_unavailable" | "authentication_failed" | "quota_unavailable" | "research_timeout" | "invalid_output" | "input_too_large" | "output_limit" | "stale_input" | "no_longer_eligible" | "access_revoked" | "cancelled" | "policy_violation" | "worker_interrupted" | "execution_failed";
+        MetadataFailureCode: "model_unavailable" | "authentication_failed" | "quota_unavailable" | "research_timeout" | "invalid_output" | "input_too_large" | "output_limit" | "stale_input" | "no_longer_eligible" | "access_revoked" | "cancelled" | "policy_violation" | "worker_interrupted" | "execution_failed";
         /** @enum {string} */
         MetadataField: "title" | "contributors" | "original_published_date" | "edition_published_date" | "edition_isbn" | "publisher" | "language" | "description";
         /** MetadataNoFindingsOperation */
@@ -8153,7 +8145,7 @@ export interface components {
              */
             status: "no_findings";
         };
-        MetadataOperationOut: components["schemas"]["MetadataQueuedOperation"] | components["schemas"]["MetadataRunningOperation"] | components["schemas"]["MetadataRecoveringOperation"] | components["schemas"]["MetadataUncertainOperation"] | components["schemas"]["MetadataWaitingOperation"] | components["schemas"]["MetadataCompletedOperation"] | components["schemas"]["MetadataNoFindingsOperation"] | components["schemas"]["MetadataFailedOperation"];
+        MetadataOperationOut: components["schemas"]["MetadataQueuedOperation"] | components["schemas"]["MetadataRunningOperation"] | components["schemas"]["MetadataRecoveringOperation"] | components["schemas"]["MetadataWaitingOperation"] | components["schemas"]["MetadataCompletedOperation"] | components["schemas"]["MetadataNoFindingsOperation"] | components["schemas"]["MetadataFailedOperation"];
         /** MetadataQueuedOperation */
         MetadataQueuedOperation: {
             /**
@@ -8212,7 +8204,7 @@ export interface components {
              * Reason
              * @enum {string}
              */
-            reason: "not_creator" | "not_eligible" | "active" | "uncertain";
+            reason: "not_creator" | "not_eligible" | "active";
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -8248,27 +8240,6 @@ export interface components {
             provider: string;
             /** Reasoning */
             reasoning: string;
-        };
-        /** MetadataUncertainOperation */
-        MetadataUncertainOperation: {
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            generation_id: components["schemas"]["Presence_UUID_-Output"];
-            /**
-             * Job Id
-             * Format: uuid
-             */
-            job_id: string;
-            selection: components["schemas"]["Presence_MetadataSelection_"];
-            started_at: components["schemas"]["Presence_AwareDatetime_"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            status: "uncertain";
         };
         /** MetadataWaitingOperation */
         MetadataWaitingOperation: {
@@ -8633,7 +8604,7 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "catalog_refresh_failed" | "codex_host_unavailable" | "credential_unavailable" | "required_tool_unavailable";
+            code: "codex_host_unavailable" | "required_tool_unavailable";
             /** Explanation */
             explanation: string;
             /**
@@ -8682,7 +8653,7 @@ export interface components {
             shared_theme: boolean;
         };
         /** @enum {string} */
-        OracleFailureCode: "auth" | "quota" | "timeout" | "output_limit" | "invalid_output" | "policy_violation" | "runtime_unavailable" | "capacity_unavailable" | "context_too_large" | "cancelled" | "E_ORACLE_CORPUS_NOT_READY" | "E_APP_SEARCH_FAILED" | "E_GENERATION_SOURCE_CHANGED";
+        OracleFailureCode: "auth" | "quota" | "timeout" | "output_limit" | "invalid_output" | "policy_violation" | "runtime_unavailable" | "context_too_large" | "cancelled" | "E_ORACLE_CORPUS_NOT_READY" | "E_APP_SEARCH_FAILED" | "E_GENERATION_SOURCE_CHANGED";
         /**
          * OraclePassageOut
          * @description One phase's passage; ``citation`` is its current navigation, null when the
@@ -12453,13 +12424,9 @@ export interface components {
         };
         /** RunSelectionOut */
         RunSelectionOut: {
-            /** Catalog Definition Revision */
-            catalog_definition_revision: string;
             display_at_dispatch: components["schemas"]["SelectionPresentation"];
             /** Selection */
             selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
-            /** Source Catalog Definition Revision */
-            source_catalog_definition_revision: string;
             /**
              * Tool Authority
              * @enum {string}
@@ -13619,7 +13586,7 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "catalog_refresh_failed" | "codex_host_unavailable" | "credential_unavailable" | "required_tool_unavailable";
+            code: "codex_host_unavailable" | "required_tool_unavailable";
             /** Explanation */
             explanation: string;
             /**

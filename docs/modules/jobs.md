@@ -13,8 +13,8 @@ internals.
 
 Backend owners: `python/nexus/jobs/` (`queue.py`, `worker.py`, `registry.py`),
 the task handlers under `python/nexus/tasks/`, and
-`python/nexus/db/retries.py`. The LLM task envelope (`run_llm_task`) is owned by
-[llms.md](llms.md); deploy-time allowlist operations live in
+`python/nexus/db/retries.py`. The generation job envelope (`run_generation_job`)
+is owned by [llms.md](llms.md); deploy-time allowlist operations live in
 [deployment.md](../../deployment.md).
 
 ## The worker envelope
@@ -106,7 +106,7 @@ typed `UUID` to `services/oracle/readings.run_reading_job`.
 
 `connection_discovery_scan` has no `tasks/` wrapper: its adapter hands the payload
 `{user_id, ref, reason}` to `services/connection_discovery.py:connection_discovery_scan_job`, which runs
-the scan inside `run_llm_task` and returns `{status, error_code, ref}`. it
+the scan inside `run_generation_job` and returns `{status, error_code, ref}`. it
 declares no `failed_result_statuses`; a terminal model failure is a succeeded
 row whose result status is `terminal_failed` ([connections.md](connections.md)).
 
@@ -283,62 +283,65 @@ commit on each call. There is no explicit row locking on top of SERIALIZABLE
 SERIALIZABLE site, including the worker's scheduler loop, bootstrap, identity
 writes, notes, and Dossier head/build mutations.
 
-## The Codex generation harness inside the worker
+## The generation envelope inside the worker
 
-Every generation-capable job runs its body inside the shared `run_llm_task`
-envelope ([llms.md](llms.md)), not a hand-rolled event loop. The envelope owns
-only one DB session, one fresh event loop, and construction of the production
-`CodexGenerationClient`. The queue contract stays inside the existing
-claim/lease/heartbeat/dead-letter machinery.
+Every generation-capable job runs its body inside the shared `run_generation_job`
+envelope (`services/generation/runtime.py`, [llms.md](llms.md)): one DB session,
+one fresh event loop, one http client, and the tool, catalog and provider runtime
+built on it. The queue contract stays inside the existing claim/lease/heartbeat/
+dead-letter machinery.
 
-Every generation goes through
-`services/llm_execution.py:execute_generation`. That boundary preflights host
-identity before dispatch is armed; stages the `llm_calls` start beside the
-durable `Uncertain` checkpoint; streams one v2 generation; and stages the
-terminal beside `Completed`. It owns capacity wait/reschedule, accepted-loss
-uncertainty, replay, and the normalized failure boundary. This is the only
-generation execution boundary, and jobs have no local retry policy.
+Every generation is one `generate` call: it writes one `llm_calls` row carrying
+the job id, watches the owner's stop, the job claim and the operation deadline,
+and returns a terminal value. Nothing is journaled in the job payload and nothing
+replays: each attempt runs inside `run_generation_job`, which first closes its
+job's open rows `interrupted` (only a dead attempt leaves one), so a retry after
+a dead worker generates again from scratch (repaying the call). The `Generation`
+dead-letter projection closes a dead job's open row (`enrich_metadata`,
+`media_unit_build`, `oracle_reading_generate`, `connection_discovery_scan`,
+`dossier_build`), and `revoke_jobs_by_dedupe_keys` closes a revoked job's. The
+domain row of a dead background job is not touched by that projection
+([ticket](../tickets/dead-background-jobs-leave-domain-rows-pending.md)). A
+background generation that never reached its model (a refused selection, a
+Codex session that did not open, a turn Codex did not submit) raises
+`RouteUnavailable` (`E_GENERATION_RUNTIME_UNAVAILABLE`) while its job has
+attempts left, so the kind's retry backoff absorbs a Codex restart; the last
+attempt settles the domain row `runtime_unavailable`.
 
-Each task supplies only its stable operation identity, bounded intent, durable
-owner/step identity, lease-fenced row-validation callback, and semantic result
-decoder. Model, effort, capability, timeouts, and stream bounds come from
-`generation_policy.py`. `enrich_metadata` now uses this same command, client,
-journal, and `llm_calls` path.
+Each task supplies only its operation, its owner, the intent it built, and a
+decode that accepts or rejects the output. Model, effort, timeout and input bound
+come from `services/generation/policy.py`.
 
 metadata research uses an explicit requester and the generation owner's admitted
-codex authority. its research prompt requests four read/search tools; prompt
-instructions do not narrow the current account-wide codex shell grant. see
+codex authority. its research prompt requests four read/search tools. see
 [media metadata](media-metadata.md) for domain acceptance, date ownership and
 source-only maintenance.
 
 `dossier_build` is one generic kind for Media, Conversation, Library, Podcast,
 Contributor, Page, Note, and internal Idea subjects; its payload is the build id.
 One attempt (`services/dossier/run.py`) reads the active build, fails it
-`InputsChanged` if the requester can no longer see the subject, then replays a
-Completed `synthesis` step or runs: ensure media intelligence (Media and the
-aggregates reschedule every 5 s while a projection is pending), collect inputs
-(the Idea gathers research and reschedules while a page ingests, at most 10
-minutes per page), synthesize, publish or fail. A build that is no longer
-active makes the attempt a no-op. A document that fails HTML acceptance or
-citation grounding is a modeled build failure the user regenerates from.
+`InputsChanged` if the requester can no longer see the subject, then ensures
+media intelligence (Media and the aggregates reschedule every 5 s while a
+projection is pending), collects inputs (the Idea gathers research and
+reschedules while a page ingests, at most 10 minutes per page), synthesizes, and
+publishes or fails. A build that is no longer active makes the attempt a no-op. A
+document that fails HTML acceptance or citation grounding is a modeled build
+failure (the generation's decode rejection) the user regenerates from.
 
-The `synthesis` step is the shared generation journal
-(`services/durable_step_journal.py` codec, `llm_execution` admission and
-execution); its Completed memo is the dossier's `Published | Failed | Stopped`
-outcome. Stopped fails the build `RuntimeUnavailable` unless a cancel or purge
-settled it first, so no active build outlives its job. An Uncertain step without the native host's recovery evidence is never
-dispatched again: the attempt raises, the job dead-letters, and the build reads
-Suspended until cancelled or purged. Idea research journals only `research/web`
-(Uncertain, three searches, Completed with the picks), the one billed call;
-Uncertain on entry is never searched again. Nexus search reruns per attempt and
-page acceptance is idempotent by key. Dead `dossier_build` rows are never pruned.
+The synthesis outcome is `Published | Failed | Stopped`. A cancel or purge stops
+the running generation through its stop poll. Stopped fails the build
+`RuntimeUnavailable` unless a cancel or purge settled it first, so no active
+build outlives its job. Idea research keeps its one billed call, the three web
+searches, as `payload.web_picks`, so the build's reschedules never search again;
+a crash before the picks are kept searches again. Nexus search reruns per
+attempt and page acceptance is idempotent by key. Dead `dossier_build` rows are
+never pruned.
 
-`chat_run` uses that kernel for preparation, every generation and API tool turn,
-and final publication. Dead chat jobs are retained because their payload is the in-flight
-recovery record. Code defects retry without terminalizing `ChatRun`; exhausted
-attempts project `Suspended`. Operator repair requeues the same row with a fresh
-attempt budget while preserving its prior `error_code`; that queue history makes
-both the repaired pending row and its first new claim project `Recovering`.
-Cancellation uses the same requeue only to fold the requested terminal outcome,
-conversation teardown deletes the row, and terminal folds clear coordination
-before the worker returns.
+`chat_run` runs its run's one generation and the final publication. An attempt
+that finds its run's generation already started knows an earlier attempt died:
+it fails the run `interrupted` (or `cancelled` when a stop was asked) and never
+reruns it. A dead chat job ends its run the same way through the `ChatRun`
+dead-letter projection; a cancel that finds the dead job ends the run
+`cancelled`. That attempt starts only once the dead attempt's 1,200 s lease
+expires ([ticket](../tickets/worker-death-surfaces-after-job-lease.md)).
+Dead chat jobs are retained; conversation teardown deletes the row.

@@ -74,11 +74,18 @@ async def _embed_async(
     missing platform key propagate unwrapped: ``search.service`` is the sole
     catcher of the former for its lexical fallback.
     """
-    from provider_runtime import Credentials, EmbeddingCall, Present, ProviderRuntime
+    from provider_runtime import (
+        Credentials,
+        EmbeddingCall,
+        Present,
+        ProviderCredential,
+        ProviderRuntime,
+    )
+    from provider_runtime.errors import CredentialMissing
 
-    from nexus.services.llm_credentials import embedding_credential
-
-    credential = embedding_credential(settings)
+    if settings.openai_api_key is None:
+        raise CredentialMissing(message="no openai credential configured")
+    credential = ProviderCredential(provider="openai", key=settings.openai_api_key)
     runtime = ProviderRuntime(Credentials(openai=credential.key), http_client=http_client)
     vectors: list[list[float]] = []
     for start in range(0, len(texts), _EMBEDDING_BATCH_SIZE):
