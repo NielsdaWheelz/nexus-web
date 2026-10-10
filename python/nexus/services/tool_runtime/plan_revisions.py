@@ -15,6 +15,8 @@ TOOL_PLAN_AUTHORITY_REVISIONS: Final[MappingProxyType[str, str]] = MappingProxyT
         "MetadataResearch": "a042a8026212be785e5a23c34308844b9c8d6f6fc2abc32c37621868fa68f1e4",
         "NoModelTools": "f1ec4334cd09255df2f1ba43b9b82e2c55a8c93a2026c4ba1309e445d08568ed",
         "ChatReadAdditiveWrite": "78a9d21800fec6cd2a003ecd23b59b9fee2b9fa54f836fb821c9256f503ae3f4",
+        "ChatMemoryRead": "199c3cb1fe79ea11e46f6cb20aa6c53e397cf364b6a8b76694e16159196cf40c",
+        "ChatMemoryReadSave": "f4ce8cb8565426d25d33265d39d5ac033f54e7f1ff7fab557233c59719f111dd",
     }
 )
 

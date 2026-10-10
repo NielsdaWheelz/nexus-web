@@ -267,9 +267,14 @@ async def execute_chat_run(
     set_flow_id(str(run_id))
     try:
         return await _execute(db, run_id=run_id, steps=steps, session_factory=session_factory)
-    except Exception:
+    except Exception as error:
         db.rollback()
-        logger.exception("chat_run.attempt_failed", run_id=str(run_id), job_id=str(job.id))
+        logger.error(
+            "chat_run.attempt_failed",
+            run_id=str(run_id),
+            job_id=str(job.id),
+            error_type=type(error).__name__,
+        )
         raise
     finally:
         set_flow_id(None)

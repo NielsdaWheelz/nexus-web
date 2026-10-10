@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import LLMCall, LLMModelTurn, LLMModelTurnContinuation, LLMToolPosition
 from nexus.schemas.presence import Absent, Presence, Present
+from nexus.services.generation_backend import GenerationBackendDefect
 from nexus.services.generation_continuations import (
     GenerationContinuationCipher,
     GenerationContinuationContext,
@@ -62,6 +63,22 @@ _OPERATION_OWNER_KINDS: dict[str, LlmCallOwnerKind] = {
     "chat": "chat_run",
 }
 _TERMINAL_KINDS = frozenset({"Succeeded", "Failed", "Cancelled"})
+
+
+def generation_evidence_contains_nul(value: object) -> bool:
+    """Check decoded JSON strings and keys before generation evidence enters JSONB."""
+
+    pending = [value]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, str) and "\x00" in current:
+            return True
+        if isinstance(current, Mapping):
+            for key, item in cast(Mapping[str, object], current).items():
+                pending.extend((key, item))
+        elif isinstance(current, list | tuple):
+            pending.extend(cast(list[object] | tuple[object, ...], current))
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -373,9 +390,11 @@ def complete_model_turn_in_current_transaction(
 ) -> None:
     """Atomically commit child terminal facts and its sealed successor."""
 
+    terminal = dict(completion.terminal)
+    if generation_evidence_contains_nul(terminal):
+        raise GenerationBackendDefect("model-turn evidence contains nul")
     call = _lock_generation_by_id(db, generation_id)
     turn = _lock_model_turn(db, generation_id=generation_id, model_turn_id=model_turn_id)
-    terminal = dict(completion.terminal)
     usage = _nullable(completion.usage)
     billability = _nullable(completion.billability)
     accepted_at = (

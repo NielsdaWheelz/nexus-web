@@ -12,8 +12,11 @@ WORKDIR /app
 
 COPY python/pyproject.toml python/uv.lock python/README.md ./
 COPY python/nexus ./nexus
-RUN chmod -R u=rwX,go=rX /app/nexus \
-    && uv sync --frozen --no-dev --no-editable
+COPY --chmod=0555 scripts/with-memory-git /usr/local/bin/with-memory-git
+RUN --mount=type=secret,id=universal_memory_read_token,required=true \
+    chmod -R u=rwX,go=rX /app/nexus \
+    && UNIVERSAL_MEMORY_READ_TOKEN_FILE=/run/secrets/universal_memory_read_token \
+       with-memory-git uv sync --frozen --no-dev --no-editable
 
 
 # The subscription-authenticated host is part of the worker release identity,
@@ -21,7 +24,9 @@ RUN chmod -R u=rwX,go=rX /app/nexus \
 # base environment so an API compromise cannot read or use Codex credentials.
 FROM python-builder AS worker-python-builder
 
-RUN uv sync --frozen --no-dev --no-editable --extra codex-agent
+RUN --mount=type=secret,id=universal_memory_read_token,required=true \
+    UNIVERSAL_MEMORY_READ_TOKEN_FILE=/run/secrets/universal_memory_read_token \
+    with-memory-git uv sync --frozen --no-dev --no-editable --extra codex-agent
 
 
 FROM python-builder AS release-metadata

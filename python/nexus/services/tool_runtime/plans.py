@@ -29,6 +29,7 @@ from llm_tools import (
     ToolSpec,
     canonical_json_bytes,
 )
+from universal_memory.tools import MEMORY_READ_IDS, MEMORY_READ_SPECS, MEMORY_SAVE_NOTE_SPEC
 
 from nexus.services.tool_runtime.declarations import NEXUS_TOOL_DECLARATIONS
 from nexus.services.tool_runtime.plan_revisions import TOOL_PLAN_AUTHORITY_REVISIONS
@@ -58,7 +59,13 @@ _NEXUS_ADDITIVE_WRITE_TOOL_IDS: Final[tuple[ToolId, ...]] = tuple(
 
 
 def _closed_tool_specs() -> MappingProxyType[ToolId, ToolSpec[Any, Any, Any]]:
-    specs = (WEB_SEARCH_SPEC, WEB_READ_SPEC, *(entry.spec for entry in NEXUS_TOOL_DECLARATIONS))
+    specs = (
+        WEB_SEARCH_SPEC,
+        WEB_READ_SPEC,
+        *(entry.spec for entry in NEXUS_TOOL_DECLARATIONS),
+        *MEMORY_READ_SPECS,
+        MEMORY_SAVE_NOTE_SPEC,
+    )
     if len({spec.id for spec in specs}) != len(specs):
         raise ValueError("model-tool declarations contain a duplicate canonical id")
     return MappingProxyType({spec.id: spec for spec in specs})
@@ -187,6 +194,35 @@ CHAT_READ_ADDITIVE_WRITE_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definitio
     exposure="Native",
     max_live_writes=8,
 )
+CHAT_MEMORY_READ_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
+    "ChatMemoryRead",
+    "chat_memory_read",
+    (
+        WEB_SEARCH_SPEC.id,
+        WEB_READ_SPEC.id,
+        *_NEXUS_READ_TOOL_IDS,
+        *_NEXUS_ADDITIVE_WRITE_TOOL_IDS,
+        *MEMORY_READ_IDS,
+    ),
+    _NATIVE_RUN_LIMITS,
+    exposure="Native",
+    max_live_writes=8,
+)
+CHAT_MEMORY_READ_SAVE_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
+    "ChatMemoryReadSave",
+    "chat_memory_read_save",
+    (
+        WEB_SEARCH_SPEC.id,
+        WEB_READ_SPEC.id,
+        *_NEXUS_READ_TOOL_IDS,
+        *_NEXUS_ADDITIVE_WRITE_TOOL_IDS,
+        *MEMORY_READ_IDS,
+        MEMORY_SAVE_NOTE_SPEC.id,
+    ),
+    _NATIVE_RUN_LIMITS,
+    exposure="Native",
+    max_live_writes=8,
+)
 METADATA_RESEARCH_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
     "MetadataResearch",
     "metadata_research",
@@ -211,6 +247,8 @@ TOOL_PLAN_DEFINITIONS: Final[tuple[ToolPlanDefinition, ...]] = (
     METADATA_RESEARCH_TOOL_DEFINITION,
     NO_MODEL_TOOLS_DEFINITION,
     CHAT_READ_ADDITIVE_WRITE_TOOL_DEFINITION,
+    CHAT_MEMORY_READ_TOOL_DEFINITION,
+    CHAT_MEMORY_READ_SAVE_TOOL_DEFINITION,
 )
 _computed_authority_revisions = {
     definition.plan_id: definition.authority_revision for definition in TOOL_PLAN_DEFINITIONS
@@ -232,6 +270,8 @@ __all__ = [
     "METADATA_RESEARCH_TOOL_DEFINITION",
     "NO_MODEL_TOOLS_DEFINITION",
     "CHAT_READ_ADDITIVE_WRITE_TOOL_DEFINITION",
+    "CHAT_MEMORY_READ_TOOL_DEFINITION",
+    "CHAT_MEMORY_READ_SAVE_TOOL_DEFINITION",
     "TOOL_PLAN_DEFINITIONS",
     "TOOL_PLAN_DEFINITIONS_BY_ID",
     "ToolPlanDefinition",

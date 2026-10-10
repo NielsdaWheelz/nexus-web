@@ -25,6 +25,14 @@ from llm_tools import (
     canonical_json_bytes,
 )
 from pydantic import BaseModel, ConfigDict, Field
+from universal_memory.tools import (
+    MEMORY_DATE_SPEC,
+    MEMORY_OPEN_SPEC,
+    MEMORY_SAVE_NOTE_SPEC,
+    MEMORY_SEARCH_SPEC,
+    MEMORY_VIEW_SPEC,
+    MEMORY_ZOOM_SPEC,
+)
 
 from nexus.db.models import MediaKind
 from nexus.schemas.highlights import HIGHLIGHT_COLORS
@@ -621,6 +629,12 @@ CHAT_TOOL_DECLARATIONS: tuple[PresentedToolDeclaration, ...] = (
         activity_label="Reading a web page",
     ),
     *NEXUS_TOOL_DECLARATIONS,
+    PresentedToolDeclaration(MEMORY_SEARCH_SPEC, "retrieval", "Searching shared memory"),
+    PresentedToolDeclaration(MEMORY_OPEN_SPEC, "navigation", "Opening historical evidence"),
+    PresentedToolDeclaration(MEMORY_VIEW_SPEC, "navigation", "Reading shared memory"),
+    PresentedToolDeclaration(MEMORY_ZOOM_SPEC, "navigation", "Inspecting memory sources"),
+    PresentedToolDeclaration(MEMORY_DATE_SPEC, "navigation", "Checking source dates"),
+    PresentedToolDeclaration(MEMORY_SAVE_NOTE_SPEC, "mutation", "Saving a memory note"),
 )
 CHAT_TOOL_DECLARATIONS_BY_ID: Mapping[str, PresentedToolDeclaration] = MappingProxyType(
     {str(entry.spec.id): entry for entry in CHAT_TOOL_DECLARATIONS}

@@ -91,6 +91,8 @@ class OperationWorkflowSpec:
 class ChatPolicy:
     seed: GenerationSelectionSpec
     workflow: OperationWorkflowSpec
+    memory_read_workflow: OperationWorkflowSpec
+    memory_save_workflow: OperationWorkflowSpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,20 +262,29 @@ _BACKGROUND_OPERATIONS: dict[BackgroundOperationKey, BackgroundOperationPolicy] 
     ) in _BACKGROUND_ROWS
 }
 
-_CHAT = ChatPolicy(
-    seed=_codex("gpt-6-sol", "medium"),
-    workflow=_workflow(
+
+def _chat_workflow(
+    plan_id: Literal["ChatReadAdditiveWrite", "ChatMemoryRead", "ChatMemoryReadSave"],
+) -> OperationWorkflowSpec:
+    return _workflow(
         "chat",
         bounds=_bounds(input_max_bytes=512 * 1024, turn_timeout_seconds=900, stream=_CHAT_STREAM),
         request_budget=RequestBudget(max_context_tokens=400_000, max_output_tokens=32_000),
         output_contract="Text",
         model_tool_policy=ExactModelTools(
-            "ChatReadAdditiveWrite",
-            _tool_authority_revision("ChatReadAdditiveWrite"),
+            plan_id,
+            _tool_authority_revision(plan_id),
             "AdditiveWrites",
             "ChatAdmittedContext",
         ),
-    ),
+    )
+
+
+_CHAT = ChatPolicy(
+    seed=_codex("gpt-6-sol", "medium"),
+    workflow=_chat_workflow("ChatReadAdditiveWrite"),
+    memory_read_workflow=_chat_workflow("ChatMemoryRead"),
+    memory_save_workflow=_chat_workflow("ChatMemoryReadSave"),
 )
 _IMMUTABLE_BACKGROUND_OPERATIONS = MappingProxyType(_BACKGROUND_OPERATIONS)
 _POLICY_DIGEST = hashlib.sha256(

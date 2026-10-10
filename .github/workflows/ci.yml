@@ -33,10 +33,11 @@ jobs:
         shell: bash
         env:
           CI: "true"
+          UNIVERSAL_MEMORY_READ_TOKEN: ${{ secrets.UNIVERSAL_MEMORY_READ_TOKEN }}
         run: |
           set -euo pipefail
           test "$(bun --version)" = "$(cat .bun-version)"
-          uv sync --extra dev --extra codex-agent --locked --directory python
+          scripts/with-memory-git uv sync --extra dev --extra codex-agent --locked --directory python
           bun install --frozen-lockfile --cwd apps/web
           bun install --frozen-lockfile --cwd node/ingest
 

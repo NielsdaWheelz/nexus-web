@@ -6,6 +6,7 @@ import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
+from uuid import UUID
 
 from nexus.schemas.llm import OperatorActionRequired, Ready
 from nexus.schemas.presence import Absent, Presence, Present
@@ -81,6 +82,7 @@ class GenerationService:
         *,
         catalog_definition_revision: str,
         pair: ResolvedCatalogPair,
+        owner_user_id: UUID,
         scope: FrozenToolScope,
         intent: GenerationIntent,
         prompt_template_revision: str,
@@ -91,6 +93,15 @@ class GenerationService:
         if len(catalog_definition_revision) != 64:
             raise ValueError("Chat catalog definition revision must be SHA-256")
         workflow = self._policy.chat.workflow
+        memory = self._tools.memory_config
+        if isinstance(memory, Present) and memory.value.allows(
+            owner_user_id, pair.presentation.processor_chain.processors
+        ):
+            workflow = (
+                self._policy.chat.memory_save_workflow
+                if memory.value.admit
+                else self._policy.chat.memory_read_workflow
+            )
         policy = workflow.model_tool_policy
         if not isinstance(policy, ExactModelTools):
             raise GenerationConfigurationDefect("Chat lacks its exact model-tool plan")
@@ -228,6 +239,18 @@ class GenerationService:
             raise GenerationConfigurationDefect(
                 "frozen model-tool plan is not executable by this runtime"
             )
+        if snapshot.value.plan_id in ("ChatMemoryRead", "ChatMemoryReadSave"):
+            memory = self._tools.memory_config
+            if (
+                spec.operation != "chat"
+                or not isinstance(memory, Present)
+                or not memory.value.allows(
+                    memory.value.owner_user_id,
+                    spec.display_at_dispatch.processor_chain.processors,
+                )
+                or (snapshot.value.plan_id == "ChatMemoryReadSave" and not memory.value.admit)
+            ):
+                raise GenerationOperationUnavailable("chat", "shared memory grant is revoked")
         return operation
 
     def _required_tool_operation(

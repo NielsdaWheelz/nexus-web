@@ -117,7 +117,9 @@ function WriteTrail({ trail }: { trail: Trail }) {
             <span>
               <em>{target}</em>
               <span className={styles.code}>
-                {authorship
+                {tool.canonical_tool_id === "memory.save_note"
+                  ? "Saved in shared memory"
+                  : authorship
                   ? `Assistant-created · ${authorship.position_path}`
                   : "No new target created"}
               </span>

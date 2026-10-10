@@ -8,7 +8,9 @@ This document covers the top-level runtime and tooling stack.
 
 - Web app: Next.js (React), TypeScript.
 - Android shell: Kotlin, Android SDK, WebView, Custom Tabs.
-- Backend: FastAPI, Python, SQLAlchemy, Pydantic.
+- Backend: FastAPI, Python >=3.12.13,<3.13, SQLAlchemy, Pydantic. the shared-memory
+  dependency adopts the existing digest-pinned production Python 3.12.13
+  runtime; this source compatibility declaration upgrades no deployed runtime.
 - Database: PostgreSQL with pgvector (standalone Docker Postgres for local development, Hetzner Postgres in production).
 - Auth: Supabase Auth (JWKS token verification).
 - Object storage: Cloudflare R2 in production, MinIO for local development through the R2-compatible client path.

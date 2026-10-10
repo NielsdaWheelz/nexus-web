@@ -70,6 +70,7 @@ from nexus.runtime_health import get_runtime_identity
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.generation_catalog import build_generation_catalog_service
 from nexus.services.generation_policy import validate_policy
+from nexus.services.memory_client import load_memory_client_config
 from nexus.services.tool_runtime.catalog import (
     compose_configured_web_search_provider,
     compose_tool_runtime,
@@ -143,6 +144,7 @@ async def lifespan(app: FastAPI):
     get_runtime_identity()
 
     validate_policy()
+    memory_config = load_memory_client_config(settings.memory_client_config_path)
 
     # Create shared HTTP client for outbound calls (web search).
     app.state.httpx_client = httpx.AsyncClient(
@@ -156,7 +158,9 @@ async def lifespan(app: FastAPI):
         settings=settings,
     )
     app.state.tool_runtime = compose_tool_runtime(
-        app.state.web_search_provider, embedding_available=bool(settings.openai_api_key)
+        app.state.web_search_provider,
+        embedding_available=bool(settings.openai_api_key),
+        memory_config=memory_config,
     )
     app.state.generation_catalog_service = build_generation_catalog_service(
         settings, tool_runtime=app.state.tool_runtime

@@ -28,6 +28,7 @@ from llm_agent_kernel.definitions import (
 from llm_agent_kernel.native import run_native
 from llm_agent_kernel.native_contract import (
     InvocationRecord,
+    NativeDefect,
     NativeDefinition,
     NativeDelivery,
     NativeInvocationProposal,
@@ -101,6 +102,7 @@ from nexus.services.generation_terminal import GenerationToolUse
 from nexus.services.llm_ledger import (
     ModelTurnCompletion,
     complete_model_turn_in_current_transaction,
+    generation_evidence_contains_nul,
     lock_generation_owner_in_current_transaction,
 )
 from nexus.services.tool_authority import (
@@ -455,6 +457,9 @@ class _NexusNativeJournal:
             await database.run_sync(persist)
 
     async def record_invocation(self, proposal: NativeInvocationProposal) -> InvocationRecord:
+        raw = thaw_json_value(proposal.arguments)
+        if generation_evidence_contains_nul(raw):
+            raise NativeDefect("native callback evidence contains nul")
         binding = self._operation.plan.catalog_view.binding(proposal.tool_id)
         if (
             proposal.plan_revision,
@@ -494,7 +499,6 @@ class _NexusNativeJournal:
                 operation=self._operation,
                 projection=projection,
             )
-        raw = thaw_json_value(proposal.arguments)
         record = await self._authority.prepare_position(
             transport_kind="NativeCallback",
             model_turn_seq=1,

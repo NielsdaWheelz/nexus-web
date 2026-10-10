@@ -3,10 +3,10 @@
 #
 #   deploy/hetzner/sync-env.sh
 #
-# Writes /etc/nexus/config/<sha256>.env and /etc/nexus/backup-config/<sha256>.env
-# and repoints /etc/nexus/current.env and /etc/nexus/backup.env at them with an
-# atomic rename. The next release picks them up; nothing restarts here.
+# Publishes private content-addressed memory JSON, application and backup env.
+# The next release picks up their captured paths; nothing restarts here.
 set -euo pipefail
+umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ROOT_DIR
@@ -17,6 +17,7 @@ SHARED_ENV="${NEXUS_SHARED_ENV:-${ROOT_DIR}/deploy/env/env-prod}"
 BACKEND_ENV="${NEXUS_BACKEND_ENV:-${ROOT_DIR}/deploy/env/env-prod-backend}"
 WORKER_ENV="${NEXUS_WORKER_ENV:-${ROOT_DIR}/deploy/env/env-prod-worker}"
 BACKUP_ENV="${NEXUS_BACKUP_ENV:-${ROOT_DIR}/deploy/env/env-prod-backup}"
+MEMORY_CONFIG="${NEXUS_MEMORY_CLIENT_CONFIG:-}"
 
 # The keys the running backend requires. Compose fails closed on the few it
 # interpolates itself (POSTGRES_*, CADDY_*); the rest are read by the app.
@@ -59,21 +60,24 @@ require_shape() {
 }
 
 publish() {
-  local file="$1" directory="$2" pointer="$3" digest staged
+  local file="$1" directory="$2" pointer="$3" suffix="$4" group="$5" digest staged remote_install
   digest="$(sha256sum "$file" | cut -d' ' -f1)"
-  staged="${REMOTE_DIRECTORY}/${digest}.env"
+  staged="${REMOTE_DIRECTORY}/${digest}.${suffix}"
   timeout --foreground 2m scp "${SSH_OPTIONS[@]}" "$file" "${SSH_TARGET}:${staged}"
-  timeout --foreground 1m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
-    "sudo install -D -o root -g root -m 0440 ${staged} ${directory}/${digest}.env \
-     && sudo ln -sfn ${directory}/${digest}.env ${pointer}.staged \
-     && sudo mv -T ${pointer}.staged ${pointer}"
-  printf '%s -> %s/%s.env\n' "$pointer" "$directory" "$digest"
+  remote_install="sudo install -D -o root -g ${group} -m 0440 ${staged} ${directory}/${digest}.${suffix}"
+  if [ -n "$pointer" ]; then
+    remote_install+=" && sudo ln -sfn ${directory}/${digest}.${suffix} ${pointer}.staged"
+    remote_install+=" && sudo mv -T ${pointer}.staged ${pointer}"
+  fi
+  timeout --foreground 1m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" "$remote_install"
+  printf 'published %s/%s.%s\n' "$directory" "$digest" "$suffix"
 }
 
 [ "$#" = 0 ] || die "usage: deploy/hetzner/sync-env.sh"
 for command in scp sha256sum ssh timeout; do
   command -v "$command" >/dev/null 2>&1 || die "$command is not installed"
 done
+[ -x "${ROOT_DIR}/python/.venv/bin/python" ] || die "install the locked backend environment first"
 for file in "$SHARED_ENV" "$BACKEND_ENV" "$WORKER_ENV" "$BACKUP_ENV"; do
   [ -f "$file" ] || die "missing env file: $file"
 done
@@ -102,6 +106,9 @@ readonly APPLICATION="${TEMPORARY}/application.env"
 
 require_shape "$APPLICATION" "the application env" "$REQUIRED_KEYS"
 require_shape "$BACKUP_ENV" "the backup env" "$BACKUP_KEYS"
+if grep -Eq '^(MEMORY_CLIENT_CONFIG_PATH|NEXUS_MEMORY_CLIENT_CONFIG_FILE)=' "$APPLICATION"; then
+  die "Compose and the publisher own memory configuration paths"
+fi
 for key in $BACKUP_KEYS; do
   grep -Eq "^${key}=" "$APPLICATION" && \
     die "backup credentials must not enter the application config"
@@ -115,11 +122,37 @@ done
 [[ "$(value_of R2_BACKUP_S3_API_ORIGIN "$BACKUP_ENV")" =~ ^https://[0-9a-f]{32}\.r2\.cloudflarestorage\.com$ ]] || \
   die "R2_BACKUP_S3_API_ORIGIN must be the account's R2 S3 API origin"
 
+readonly MEMORY="${TEMPORARY}/memory.json"
+PYTHONPATH="${ROOT_DIR}/python${PYTHONPATH:+:${PYTHONPATH}}" \
+  "${ROOT_DIR}/python/.venv/bin/python" - "$MEMORY_CONFIG" "$MEMORY" <<'PY'
+from pathlib import Path
+import sys
+
+from nexus.schemas.presence import Absent
+from nexus.services.memory_client import load_memory_client_config
+from universal_memory.policy import canonical_json
+
+config = load_memory_client_config(Path(sys.argv[1]) if sys.argv[1] else None)
+if isinstance(config, Absent):
+    value = {"kind": "Absent"}
+else:
+    value = {
+        "kind": "Present",
+        "value": config.value.model_dump(mode="json")
+        | {"bearer": config.value.bearer.get_secret_value()},
+    }
+Path(sys.argv[2]).write_text(canonical_json(value) + "\n")
+PY
+memory_digest="$(sha256sum "$MEMORY" | cut -d' ' -f1)"
+printf '\nNEXUS_MEMORY_CLIENT_CONFIG_FILE=/etc/nexus/memory-config/%s.json\n' \
+  "$memory_digest" >>"$APPLICATION"
+
 REMOTE_DIRECTORY="$(
   timeout --foreground 30s ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
     mktemp -d /tmp/nexus-config.XXXXXXXX
 )"
 [[ "$REMOTE_DIRECTORY" =~ ^/tmp/nexus-config\.[A-Za-z0-9]{8}$ ]] || \
   die "the host returned an invalid config transfer path"
-publish "$APPLICATION" /etc/nexus/config /etc/nexus/current.env
-publish "$BACKUP_ENV" /etc/nexus/backup-config /etc/nexus/backup.env
+publish "$MEMORY" /etc/nexus/memory-config "" json 10001
+publish "$APPLICATION" /etc/nexus/config /etc/nexus/current.env env root
+publish "$BACKUP_ENV" /etc/nexus/backup-config /etc/nexus/backup.env env root

@@ -3,7 +3,7 @@ name = "nexus"
 version = "0.1.0"
 description = "Nexus backend API - a reading and notes platform"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12.13,<3.13"
 dependencies = [
     "fastapi>=0.115.0",
     "anyio>=4.12.1",
@@ -13,6 +13,8 @@ dependencies = [
     "pydantic-settings>=2.6.0",
     "PyJWT[crypto]>=2.15.1",
     "httpx>=0.28.0",
+    "mcp==2.3.0",
+    "universal-memory==0.1.0",
     "structlog>=24.1.0",
     "lxml>=5.0.0",
     "defusedxml>=0.7.1",
@@ -50,9 +52,10 @@ build-backend = "hatchling.build"
 packages = ["nexus"]
 
 [tool.uv.sources]
-provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "e1498d8382f192ae664ae9790b682a8e8a8b0d38" }
-llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "9d57e8945be5b26397c5a3942612f81a190f8db4" }
-llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "2adb9790fc7a54de5342effaca9391c2f3d24ff9" }
+universal-memory = { git = "https://github.com/NielsdaWheelz/universal-memory.git", rev = "d824d33df9c136952f1d01f7c4a4ad389df42ef1" }
+provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "d9550d9c53af3d7b608250d9a0db131d78dccf64" }
+llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "e1bec2731ec35aa8c07f2eb277d8993332a7490c" }
+llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "73056dfb23733e68bd32b6765cc34880f69674bd" }
 
 [tool.ruff]
 target-version = "py312"

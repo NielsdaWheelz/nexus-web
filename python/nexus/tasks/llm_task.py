@@ -38,6 +38,7 @@ def run_llm_task[R](
 
         from nexus.services.generation_catalog import build_generation_catalog_service
         from nexus.services.generation_runtime import compose_generation_execution_runtime
+        from nexus.services.memory_client import load_memory_client_config
         from nexus.services.tool_runtime.catalog import (
             compose_configured_web_search_provider,
             compose_tool_runtime,
@@ -52,6 +53,7 @@ def run_llm_task[R](
             tools = compose_tool_runtime(
                 compose_configured_web_search_provider(http_client, settings=settings),
                 embedding_available=bool(settings.openai_api_key),
+                memory_config=load_memory_client_config(settings.memory_client_config_path),
             )
             return await handler(
                 db,

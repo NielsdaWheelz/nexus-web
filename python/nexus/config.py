@@ -406,6 +406,7 @@ class Settings(BaseSettings):
         default=Path("/tmp/codex-daemon-10001/app-server.sock"),
         alias="NEXUS_CODEX_NATIVE_SOCKET",
     )
+    memory_client_config_path: Path | None = Field(default=None, alias="MEMORY_CLIENT_CONFIG_PATH")
 
     # CONNECTION_DISCOVERY_ENABLED=false makes every connection scan trigger a no-op.
     connection_discovery_enabled: bool = Field(default=True, alias="CONNECTION_DISCOVERY_ENABLED")
