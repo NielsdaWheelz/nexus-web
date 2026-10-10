@@ -1,7 +1,7 @@
 """The Chat view below the canonical generation tool-position ledger.
 
 One tool call produces, in the position recorder's own transaction, the
-``message_tool_calls`` row, its ``tool_call_start``/``tool_call_done`` and
+``message_tool_calls`` row, then its ``tool_call_start``/``tool_call_done`` and
 ``tool_result`` events, its ``message_retrievals`` rows, and — for
 ``web.search`` — one ``resource_external_snapshots`` row per hit. The model's
 output is the same result rendered with its numbered citations.
@@ -10,7 +10,7 @@ output is the same result rendered with its numbered citations.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
@@ -33,25 +33,14 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
-from nexus.schemas.conversation import ChatRunToolResultEventPayload, StoredToolProjection
-from nexus.schemas.retrieval import RetrievalResultRef
-from nexus.services.chat_run_citations import (
-    CitationCandidateNumbering,
-    number_tool_citation_candidates,
+from nexus.schemas.conversation import (
+    ChatRunToolCallDoneEventOut,
+    ChatRunToolCallStartEventOut,
+    ChatRunToolResultEventOut,
 )
-from nexus.services.chat_run_event_store import (
-    ChatRunEventEmitter,
-    append_run_event,
-    lock_chat_run_for_update,
-)
-from nexus.services.chat_run_tools import (
-    RecordKind,
-    bind_provider_tool_call_events,
-    current_tool_record_identity,
-    persist_current_tool_record,
-    persist_tool_call_start,
-)
-from nexus.services.retrieval_citation import RetrievalCitation, insert_retrieval_row
+from nexus.services.chat import events, tool_calls
+from nexus.services.chat.citations import Numbered, number_candidates
+from nexus.services.chat.retrievals import RetrievalCitation, insert_retrieval
 from nexus.services.tool_authority import (
     ToolAuditProjection,
     ToolAuthority,
@@ -70,14 +59,9 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class ChatToolExecutionProjection:
-    """Bind one Chat run and the citation ordinal its assistant message starts at."""
+    """Bind one Chat run; its citation numbering continues after the answer's last [N]."""
 
     run_id: UUID
-    initial_citation_ordinal: int
-
-    def __post_init__(self) -> None:
-        if self.initial_citation_ordinal < 1:
-            raise ValueError("Chat citation ordinal must be positive")
 
     @property
     def scope_label(self) -> str:
@@ -86,7 +70,7 @@ class ChatToolExecutionProjection:
     def lock_owner(self, db: Session, *, user_id: UUID, owner: Owner) -> None:
         if owner.kind != "chat_run" or owner.id != self.run_id:
             raise ToolAuthorityRefused("Chat projection differs from generation owner")
-        run = lock_chat_run_for_update(db, self.run_id)
+        run = events.lock_run(db, self.run_id)
         if (
             run is None
             or run.owner_user_id != user_id
@@ -107,41 +91,16 @@ class ChatToolExecutionProjection:
         run = self._run(db, authority=authority)
         declaration = CHAT_TOOL_DECLARATIONS_BY_ID[position.canonical_tool_id]
         effect = declaration.spec.effect
-        common = {
-            **StoredToolProjection(
-                record_kind=RecordKind.current_execution.value,
-                canonical_tool_id=position.canonical_tool_id,
-                provider_wire_name=provider_wire_name,
-                effect=effect,
-                result_kind=declaration.result_kind,
-                activity_label=declaration.activity_label,
-                error_type=None,
-                canonical_input_sha256=position.canonical_input_digest,
-                tool_contract_revision=position.tool_contract_revision,
-                binding_policy_revision=position.binding_revision,
-            ).model_dump(mode="json"),
-            "tool_call_id": None,
-            "assistant_message_id": str(run.assistant_message_id),
-            "tool_call_index": position.position,
-            "provider_tool_call_id": position.transport_call_id,
-            # The canonical position is the route-neutral observation order;
-            # provider/host sequence remains child transport evidence.
-            "provider_event_seq_start": position.position,
-            "provider_event_seq_end": position.position,
-        }
-        append_run_event(db, run, "tool_call_start", common)
-        append_run_event(db, run, "tool_call_done", {**common, "input": dict(arguments)})
-        tool_call_id = persist_tool_call_start(
+        tool_call_id = tool_calls.start(
             db,
             run=run,
-            tool_call_index=position.position,
-            tool_position_id=position.id,
-            identity=current_tool_record_identity(
-                canonical_tool_id=position.canonical_tool_id,
-                canonical_input_sha256=position.canonical_input_digest,
-                binding_policy_revision=position.binding_revision,
-            ),
-            provider_wire_name=provider_wire_name,
+            index=position.position,
+            position_id=position.id,
+            canonical_tool_id=position.canonical_tool_id,
+            input_sha256=position.canonical_input_digest,
+            contract_revision=declaration.spec.tool_contract_revision,
+            binding_revision=position.binding_revision,
+            wire_name=provider_wire_name,
             scope=(
                 "assistant_write"
                 if effect is ToolEffect.Write
@@ -149,14 +108,21 @@ class ChatToolExecutionProjection:
                 if position.canonical_tool_id.startswith("web.")
                 else "conversation_context"
             ),
-            requested_types=[],
         )
-        bind_provider_tool_call_events(
-            db,
-            run=run,
-            tool_call_index=position.position,
+        started = ChatRunToolCallStartEventOut(
+            record_kind="current_execution",
+            canonical_tool_id=position.canonical_tool_id,
+            provider_wire_name=provider_wire_name,
+            effect=effect,
+            result_kind=declaration.result_kind,
+            activity_label=declaration.activity_label,
+            error_type=None,
             tool_call_id=tool_call_id,
+            tool_call_index=position.position,
         )
+        events.append(db, run, started)
+        done = ChatRunToolCallDoneEventOut(**started.model_dump(), input=dict(arguments))
+        events.append(db, run, done)
 
     def stage_terminal(
         self,
@@ -169,7 +135,6 @@ class ChatToolExecutionProjection:
     ) -> None:
         run = self._run(db, authority=authority, execution=False)
         declaration = CHAT_TOOL_DECLARATIONS_BY_ID[position.canonical_tool_id]
-        provider_wire_name = _provider_wire_name(db, run=run, tool_call_index=position.position)
         if position.canonical_tool_id == "web.search":
             audit = _build_web_search_audit(
                 db,
@@ -179,19 +144,11 @@ class ChatToolExecutionProjection:
             )
         is_error = result["type"] == "Failure"
         error_code = str(cast("dict[str, object]", result["error"])["type"]) if is_error else None
-        tool_call_id = persist_current_tool_record(
+        tool_call_id, provider_wire_name = tool_calls.finish(
             db,
-            conversation_id=run.conversation_id,
-            user_message_id=run.user_message_id,
             assistant_message_id=run.assistant_message_id,
-            tool_call_index=position.position,
-            tool_position_id=position.id,
-            identity=current_tool_record_identity(
-                canonical_tool_id=position.canonical_tool_id,
-                canonical_input_sha256=position.canonical_input_digest,
-                binding_policy_revision=position.binding_revision,
-            ),
-            provider_wire_name=provider_wire_name,
+            index=position.position,
+            error_code=error_code,
             search_query_fingerprint=audit.search_query_fingerprint,
             scope=audit.scope,
             requested_types=audit.requested_types,
@@ -203,12 +160,9 @@ class ChatToolExecutionProjection:
             selected_context_refs=[citation.context_ref for citation in audit.selected_citations],
             provider_request_ids=audit.provider_request_ids,
             latency_ms=audit.latency_ms,
-            status="error" if is_error else "complete",
-            error_code=error_code,
-            clear_reverted=declaration.spec.effect is ToolEffect.Write,
         )
         for ordinal, citation in enumerate(audit.citations):
-            insert_retrieval_row(
+            insert_retrieval(
                 db,
                 tool_call_id=tool_call_id,
                 ordinal=ordinal,
@@ -217,36 +171,19 @@ class ChatToolExecutionProjection:
                 scope=audit.scope,
                 retrieval_status="retrieved",
             )
-        ChatRunEventEmitter(db, run).tool_result(
-            ChatRunToolResultEventPayload(
-                record_kind=RecordKind.current_execution.value,
-                canonical_tool_id=position.canonical_tool_id,
-                provider_wire_name=provider_wire_name,
-                effect=declaration.spec.effect,
-                result_kind=declaration.result_kind,
-                activity_label=declaration.activity_label,
-                error_type=error_code,
-                canonical_input_sha256=position.canonical_input_digest,
-                tool_contract_revision=position.tool_contract_revision,
-                binding_policy_revision=position.binding_revision,
-                tool_call_id=tool_call_id,
-                assistant_message_id=run.assistant_message_id,
-                tool_call_index=position.position,
-                status="error" if is_error else "complete",
-                scope=audit.scope,
-                types=audit.requested_types,
-                filters=audit.filters,
-                error_code=error_code,
-                result_count=len(audit.citations),
-                selected_count=len(audit.selected_citations),
-                latency_ms=audit.latency_ms,
-                provider_request_ids=audit.provider_request_ids,
-                results=[
-                    TypeAdapter(RetrievalResultRef).validate_python(citation.result_ref_json())
-                    for citation in audit.citations
-                ],
-            )
+        finished = ChatRunToolResultEventOut(
+            record_kind="current_execution",
+            canonical_tool_id=position.canonical_tool_id,
+            provider_wire_name=provider_wire_name,
+            effect=declaration.spec.effect,
+            result_kind=declaration.result_kind,
+            activity_label=declaration.activity_label,
+            error_type=error_code,
+            tool_call_id=tool_call_id,
+            tool_call_index=position.position,
+            status="error" if is_error else "complete",
         )
+        events.append(db, run, finished)
 
     def render_output(
         self,
@@ -257,39 +194,22 @@ class ChatToolExecutionProjection:
         result: ToolResult,
     ) -> str:
         run = self._run(db, authority=authority, execution=False)
-        tool_call_id = db.execute(
-            text(
-                """
-                SELECT id
-                FROM message_tool_calls
-                WHERE assistant_message_id = :assistant_message_id
-                  AND tool_call_index = :tool_call_index
-                """
-            ),
-            {
-                "assistant_message_id": run.assistant_message_id,
-                "tool_call_index": position.position,
-            },
-        ).scalar_one()
-        numbering = number_tool_citation_candidates(
-            db,
-            tool_call_id=tool_call_id,
-            start_ordinal=self._starting_citation_ordinal(db, run=run, position=position.position),
+        numbered = number_candidates(
+            db, assistant_message_id=run.assistant_message_id, tool_call_index=position.position
         )
-        return _render_chat_tool_result(result, numbering)
+        return _render_chat_tool_result(result, numbered)
 
     def live_write_count(self, db: Session, *, authority: ToolAuthority) -> int:
-        from nexus.services.chat_run_tools import assistant_write_tool_call_count
         from nexus.services.tool_runtime.catalog import write_tool_ids
 
-        return assistant_write_tool_call_count(
+        return tool_calls.live_write_count(
             db,
             assistant_message_id=self._run(db, authority=authority).assistant_message_id,
-            canonical_tool_ids=write_tool_ids(),
+            tool_ids=write_tool_ids(),
         )
 
     def _run(self, db: Session, *, authority: ToolAuthority, execution: bool = True) -> ChatRun:
-        run = lock_chat_run_for_update(db, self.run_id)
+        run = events.lock_run(db, self.run_id)
         if (
             run is None
             or authority.owner.kind != "chat_run"
@@ -300,42 +220,6 @@ class ChatToolExecutionProjection:
         ):
             raise ToolAuthorityRefused("Chat projection owner is not live")
         return run
-
-    def _starting_citation_ordinal(self, db: Session, *, run: ChatRun, position: int) -> int:
-        previous = db.scalar(
-            text(
-                """
-                SELECT max(retrieval.citation_candidate_ordinal)
-                FROM message_retrievals AS retrieval
-                JOIN message_tool_calls AS tool_call ON tool_call.id = retrieval.tool_call_id
-                WHERE tool_call.assistant_message_id = :assistant_message_id
-                  AND tool_call.tool_call_index < :tool_call_index
-                """
-            ),
-            {"assistant_message_id": run.assistant_message_id, "tool_call_index": position},
-        )
-        if previous is None:
-            return self.initial_citation_ordinal
-        if type(previous) is not int or previous < self.initial_citation_ordinal:
-            raise AssertionError("Chat citation candidate cursor is malformed")
-        return previous + 1
-
-
-def _provider_wire_name(db: Session, *, run: ChatRun, tool_call_index: int) -> str:
-    name = db.execute(
-        text(
-            """
-            SELECT provider_wire_name
-            FROM message_tool_calls
-            WHERE assistant_message_id = :assistant_message_id
-              AND tool_call_index = :tool_call_index
-            """
-        ),
-        {"assistant_message_id": run.assistant_message_id, "tool_call_index": tool_call_index},
-    ).scalar_one()
-    if not isinstance(name, str) or not name:
-        raise AssertionError("Chat tool projection lost its provider wire name")
-    return name
 
 
 def _provider_arguments(db: Session, *, run: ChatRun, tool_call_index: int) -> object:
@@ -477,8 +361,8 @@ def _selected_web_result_indexes(raw_hits: list[object]) -> frozenset[int]:
     return frozenset(selected)
 
 
-def _render_chat_tool_result(result: ToolResult, numbering: CitationCandidateNumbering) -> str:
-    citable_rows = tuple(row for row in numbering.rows if row.candidate_ordinal is not None)
+def _render_chat_tool_result(result: ToolResult, numbered: Sequence[Numbered]) -> str:
+    citable_rows = tuple(row for row in numbered if row.candidate_ordinal is not None)
     if not citable_rows:
         return canonical_json_bytes(result).decode("utf-8")
     sections = [

@@ -35,12 +35,11 @@ from nexus.api.routes._sse import (
 from nexus.db.session import get_repeatable_read_db, get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.schemas.execution import EXECUTION_ADVISORY_EVENT_TYPE
-from nexus.services import chat_runs as chat_runs_service
+from nexus.schemas.conversation import EXECUTION_ADVISORY_EVENT_TYPE
 from nexus.services import media as media_service
 from nexus.services import metadata_operations
-from nexus.services.chat_run_event_store import CHAT_RUN_EVENTS_CHANNEL, read_run_events
-from nexus.services.chat_run_execution import chat_run_execution
+from nexus.services.chat import events as chat_events
+from nexus.services.chat import reads as chat_reads
 from nexus.services.dossier import engine as dossier_engine
 from nexus.services.oracle import readings as oracle_readings
 from nexus.services.podcasts import subscriptions as podcast_subscription_service
@@ -83,19 +82,19 @@ async def stream_chat_run_events(
     # session before every replay/tail read, so a terminal event never crosses
     # the stream after ownership or visibility is revoked.
     def assert_viewer(db: Session) -> None:
-        chat_runs_service.assert_chat_run_owner(db, viewer_id=viewer_id, run_id=run_id)
+        chat_reads.require_run(db, viewer_id=viewer_id, run_id=run_id)
 
     def read_after(after: int) -> tuple[Sequence[Any], bool]:
         with get_session_factory()() as db:
             get_repeatable_read_db(db)
             assert_viewer(db)
-            return read_run_events(db, run_id, after)
+            return chat_events.read_after(db, run_id, after)
 
     def read_advisory() -> tuple[str, dict[str, Any]] | None:
         with get_session_factory()() as db:
             get_repeatable_read_db(db)
             assert_viewer(db)
-            advisory = chat_run_execution(db, run_id=run_id)
+            advisory = chat_reads.advisory(db, run_id=run_id)
             if advisory is None:
                 return None
             return EXECUTION_ADVISORY_EVENT_TYPE, advisory.model_dump(mode="json")
@@ -105,7 +104,7 @@ async def stream_chat_run_events(
             assert_viewer(db)
 
     await run_in_threadpool(assert_viewer_once)
-    listener = await open_sse_listener(CHAT_RUN_EVENTS_CHANNEL, str(run_id))
+    listener = await open_sse_listener(chat_events.CHANNEL, str(run_id))
     return StreamingResponse(
         tail_cursor_stream(
             request=request,

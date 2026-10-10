@@ -46,9 +46,9 @@ from sqlalchemy.orm import Session, sessionmaker
 from nexus.db.async_session import open_async_session
 from nexus.db.models import LLMToolPosition
 from nexus.jobs.queue import lock_running_job_claim
+from nexus.services.chat.retrievals import RetrievalCitation
 from nexus.services.generation.contract import Owner
 from nexus.services.generation.ledger import lock_open_generation
-from nexus.services.retrieval_citation import RetrievalCitation
 from nexus.services.tool_runtime.catalog import FrozenToolOperation
 
 if TYPE_CHECKING:

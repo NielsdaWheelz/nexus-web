@@ -334,7 +334,7 @@ def _run_enrich_metadata(*, payload: Payload, context: Context) -> JobResult:
 
 
 def _run_chat_run(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.tasks.chat_run import chat_run
+    from nexus.services.chat.worker import chat_run
 
     return chat_run(run_id=str(payload["run_id"]), context=context)
 

@@ -1694,17 +1694,17 @@ class MessageToolCall(Base):
     )
     conversation_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("conversations.id"),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
         nullable=False,
     )
     user_message_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("messages.id"),
+        ForeignKey("messages.id", ondelete="CASCADE"),
         nullable=False,
     )
     assistant_message_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("messages.id"),
+        ForeignKey("messages.id", ondelete="CASCADE"),
         nullable=False,
     )
     canonical_tool_id: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -1840,7 +1840,7 @@ class MessageRetrieval(Base):
     )
     tool_call_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("message_tool_calls.id"),
+        ForeignKey("message_tool_calls.id", ondelete="CASCADE"),
         nullable=False,
     )
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -1864,8 +1864,6 @@ class MessageRetrieval(Base):
     source_title: Mapped[str | None] = mapped_column(Text, nullable=True)
     section_label: Mapped[str | None] = mapped_column(Text, nullable=True)
     exact_snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
-    snippet_prefix: Mapped[str | None] = mapped_column(Text, nullable=True)
-    snippet_suffix: Mapped[str | None] = mapped_column(Text, nullable=True)
     locator: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     retrieval_status: Mapped[str] = mapped_column(
         Text,
@@ -1908,20 +1906,25 @@ class ChatRun(Base):
     )
     conversation_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("conversations.id"),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
         nullable=False,
     )
     user_message_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("messages.id"),
+        ForeignKey("messages.id", ondelete="CASCADE"),
         nullable=False,
     )
     assistant_message_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("messages.id"),
+        ForeignKey("messages.id", ondelete="CASCADE"),
         nullable=False,
     )
     generation_spec: Mapped[dict[str, object]] = mapped_column(
+        JSONB(none_as_null=True),
+        nullable=False,
+    )
+    # The frozen prompt (``GenerationIntent``) the worker runs; never re-read live.
+    generation_intent: Mapped[dict[str, object]] = mapped_column(
         JSONB(none_as_null=True),
         nullable=False,
     )
@@ -1961,74 +1964,6 @@ class ChatRun(Base):
     )
 
 
-class ChatRunTurnContext(Base):
-    """Durable answer-determining turn anchors for one chat run."""
-
-    __tablename__ = "chat_run_turn_contexts"
-
-    chat_run_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("chat_runs.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    requested_subject_scheme: Mapped[str | None] = mapped_column(Text, nullable=True)
-    requested_subject_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
-    subject_scheme: Mapped[str | None] = mapped_column(Text, nullable=True)
-    subject_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
-    subject_context_edge_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("resource_edges.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    chat_run: Mapped["ChatRun"] = relationship("ChatRun")
-
-
-class ChatPromptAssembly(Base):
-    """Prompt assembly ledger persisted before generation execution."""
-
-    __tablename__ = "chat_prompt_assemblies"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    chat_run_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("chat_runs.id"),
-        nullable=False,
-    )
-    conversation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("conversations.id"),
-        nullable=False,
-    )
-    assistant_message_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id"),
-        nullable=False,
-    )
-    generation_intent: Mapped[dict[str, object]] = mapped_column(
-        JSONB(none_as_null=True),
-        nullable=False,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    chat_run: Mapped["ChatRun"] = relationship("ChatRun")
-    conversation: Mapped["Conversation"] = relationship("Conversation")
-    assistant_message: Mapped["Message"] = relationship("Message")
-
-
 class ChatRunEvent(Base):
     """Append-only replay event for a chat run."""
 
@@ -2041,7 +1976,7 @@ class ChatRunEvent(Base):
     )
     run_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("chat_runs.id"),
+        ForeignKey("chat_runs.id", ondelete="CASCADE"),
         nullable=False,
     )
     seq: Mapped[int] = mapped_column(Integer, nullable=False)

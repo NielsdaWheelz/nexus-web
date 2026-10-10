@@ -502,9 +502,9 @@ one transaction.
 **Conversations / chat** — `conversations` (carries the owner's
 `active_leaf_message_id`), `messages` (the message tree with branch pointers;
 a user turn may carry a `fork_title`); plus the **chat-run** machinery: `chat_runs`
-(carries its admitted `generation_spec` and `support_id`;
-execution provenance lives in its `llm_calls` row),
-`chat_run_events` (append-only SSE log), `chat_prompt_assemblies`; and the
+(carries its admitted `generation_spec`, its frozen prompt `generation_intent`
+and `support_id`; execution provenance lives in its `llm_calls` row),
+`chat_run_events` (append-only SSE log); and the
 **retrieval/citation** ledger: `message_tool_calls`, `message_retrievals` — the
 sole durable per-result record (telemetry; carries `cited_edge_id` pointing
 back at the citation edge). Candidate generation and rerank/selection are
@@ -876,7 +876,7 @@ its row contract. Durable resource reopening and visibility belong to
   selected under a context-char budget; candidate/rerank/selection is a transient in-memory
   pass and `message_retrievals` is the sole durable per-result record. Selected rows become
   `message_retrievals` telemetry rows via the single validated writer
-  `retrieval_citation.insert_retrieval_row` (the cited ones link back to their
+  `services/chat/retrievals.insert_retrieval` (the cited ones link back to their
   citation edge through `cited_edge_id`, §7.7).
 - **The `ResourceRef` grammar** (`services/resource_graph/refs.py`): a
   `<scheme>:<uuid>` ref over a closed scheme set (`media`, `library`,
@@ -1236,8 +1236,9 @@ The contract is
 
 ### 8.3 Chat & conversations
 
-The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
-`services/chat_runs.py` + the `chat_run_*` modules + `context_assembler.py`.
+The AI chat: durable, branchable, streamed, RAG-grounded. Backend: the
+`services/chat/` package (admit, context, quotes, citations, retrievals,
+tool_calls, events, worker, reads, conversations) behind `api/routes/chat.py`.
 
 - **Conversation = message tree.** Each "send" creates a user message plus a
   _pending assistant_ message; replying under an existing assistant forks a
@@ -1247,7 +1248,7 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
 - **One send = one immutable admission decision.** HTTP never calls the provider.
   `POST /chat-runs` serializes by viewer and normalized `Idempotency-Key`, then
   replays or commits one `ResourceMutation(scope="chat:admission")` receipt.
-  Accepted run/messages/event/job and receipt are atomic; a modeled rejection
+  Accepted chat/messages/run/job and receipt are atomic; a modeled rejection
   commits only the receipt. The small Accepted receipt names conversation, run,
   and assistant IDs; the browser keeps the exact command in its draft until a
   receipt or a definite rejection, then reads `GET /chat-runs/{id}`. The **worker** executes accepted work: assemble
@@ -1255,13 +1256,13 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
   tool plan → append route-neutral events → finalize. The client merely
   tails `chat_run_events` over SSE and reconciles through bounded repeatable-read
   `GET /chat-runs/{id}` snapshots.
-- **Context assembly** (`context_assembler.py`): a
-  context-admitted, lane-ordered plan (system → scope → attached context → retrieved
-  evidence → web evidence → history → current user). The prompt ledger
-  (`chat_prompt_assemblies`) stores only the frozen generation intent: no budget
-  counts, inclusion manifests, prompt hashes or remote cache key. Attached references render as numbered `<resources>`;
-  the transient `<reader_selection>` (a highlight the user is asking about) is
-  bind-only and never numbered.
+- **Context assembly** (`services/chat/context.py`): the instructions are the
+  fixed system prompt; the input carries the turn's context (quote subject and
+  `<reader_selection>`, a fork's selected answer text, the chat's numbered
+  `<resources>`), then the active path's history newest first and contiguous
+  within the token budget and chat's 512 KiB input bound, then the turn. The run
+  stores only the frozen generation intent (`chat_runs.generation_intent`): no
+  budget counts, inclusion manifests, prompt hashes or remote cache key.
 - **No crash replay**: a chat job attempt that finds its run's generation
   already started fails the run `interrupted` (or `cancelled` when a stop was
   asked) and never reruns it; a dead chat job ends its run the same way. Code
@@ -2220,9 +2221,9 @@ The things most likely to bite you, distilled:
 | Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_fact_revisions.py`, `web_article.py`, `x_ingest.py`, `youtube.py`, `remote_file.py`, `media_processing_state.py` |
 | Imports workspace (query owner, history, pane)                    | `python/nexus/services/{imports,import_history}.py`, `python/nexus/api/routes/imports.py`, `apps/web/src/lib/imports/`, `apps/web/src/components/imports/`, `apps/web/src/app/(authenticated)/imports/`                                              |
 | Reader/highlights backend                                         | `python/nexus/services/{reader_profile,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote}.py`                                                                        |
-| Chat / conversations                                              | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |
+| Chat / conversations                                              | `python/nexus/services/chat/`, `python/nexus/api/routes/chat.py`, `python/nexus/schemas/conversation.py`                                                                                              |
 | Oracle                                                            | `python/nexus/services/oracle/` (`corpus.py`, `corpus.json`, `synthesis.py`, `readings.py`), `python/nexus/services/atlas.py`                                                                          |
-| Search / retrieval / indexing / resource target/openable search   | `python/nexus/services/search/` (`sources`, `semantic`, `scope`, `project`, `service`, `pickers`), `python/nexus/services/{content_indexing,semantic_chunks,retrieval_citation}.py`   |
+| Search / retrieval / indexing / resource target/openable search   | `python/nexus/services/search/` (`sources`, `semantic`, `scope`, `project`, `service`, `pickers`), `python/nexus/services/{content_indexing,semantic_chunks}.py`, `services/chat/retrievals.py`   |
 | Resource graph (edges, refs, citations, connections, links) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `links`, `connections`, `context`, `citations`, `reader_targets`, `cleanup`)                                                     |
 | Universal Dossiers / Media Intelligence                           | `python/nexus/services/dossier/`, `python/nexus/services/media_intelligence.py`, `python/nexus/api/routes/dossiers.py`                                                                               |
 | Agent tools                                                       | `python/nexus/services/agent_tools/`                                                                                                                                                                   |

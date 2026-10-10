@@ -22,18 +22,15 @@ from pydantic.fields import FieldInfo
 
 from nexus.api.routes import create_api_router
 from nexus.schemas.conversation import (
-    ChatRunAssistantActivityEventPayload,
     ChatRunAssistantTextDeltaEventPayload,
-    ChatRunCitationIndexEventPayload,
     ChatRunContextRefAddedEventPayload,
     ChatRunDoneEventPayload,
-    ChatRunMetaEventPayload,
+    ChatRunExecutionOut,
     ChatRunToolCallDoneEventOut,
     ChatRunToolCallStartEventOut,
     ChatRunToolResultEventOut,
 )
 from nexus.schemas.dossier import DossierBuildOut
-from nexus.schemas.execution import ChatRunExecutionOut
 from nexus.schemas.media import MediaProcessingSnapshotOut
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.podcast import PodcastSubscriptionLifecycleSnapshotOut
@@ -44,14 +41,11 @@ from nexus.schemas.podcast import PodcastSubscriptionLifecycleSnapshotOut
 SSE_PAYLOADS_BY_NAME = (
     MediaProcessingSnapshotOut,
     MetadataEnrichmentView,
-    ChatRunMetaEventPayload,
     ChatRunToolCallDoneEventOut,
     ChatRunToolCallStartEventOut,
     ChatRunToolResultEventOut,
-    ChatRunAssistantActivityEventPayload,
     ChatRunAssistantTextDeltaEventPayload,
     ChatRunDoneEventPayload,
-    ChatRunCitationIndexEventPayload,
     ChatRunContextRefAddedEventPayload,
     ChatRunExecutionOut,
     DossierBuildOut,

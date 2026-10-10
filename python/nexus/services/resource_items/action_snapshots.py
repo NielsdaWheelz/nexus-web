@@ -60,7 +60,8 @@ from nexus.schemas.resource_action_snapshots import (
     TranscriptResourceActionCapabilityOut,
 )
 from nexus.schemas.resource_items import ResourceActivationOut
-from nexus.services import conversations, highlights, library_governance, reader_apparatus
+from nexus.services import highlights, library_governance, reader_apparatus
+from nexus.services.chat import conversations
 from nexus.services.consumption import lectern, projection
 from nexus.services.dossier import engine as dossier_engine
 from nexus.services.media import (
@@ -282,7 +283,7 @@ class _ResolvedFacts:
             viewer_id=viewer_id,
             library_ids=[*ids("library"), *nested_library_ids],
         )
-        visible_conversation_ids = conversations.visible_conversation_ids(
+        visible_conversation_ids = conversations.owned_conversation_ids(
             db,
             viewer_id=viewer_id,
             conversation_ids=[*ids("conversation"), *nested_conversation_ids],

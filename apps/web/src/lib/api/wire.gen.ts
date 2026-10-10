@@ -475,18 +475,18 @@ export interface paths {
         };
         /**
          * List Conversations
-         * @description List conversations: the finite index, with optional literal ``title_search``.
+         * @description The chats index: four views, a literal ``title_search``, revision-bound paging.
          *
          *     Errors:
-         *         E_INVALID_REQUEST (400): a view state outside the advertised inventory, an
-         *             unknown query key, or title search over its length bound.
+         *         E_INVALID_REQUEST (400): a view outside the advertised four, an unknown query
+         *             key, or a title search over 200 characters.
          *         E_INVALID_CURSOR (400): the cursor is malformed or unparseable.
          */
         get: operations["list_conversations_conversations_get"];
         put?: never;
         /**
          * Create Conversation
-         * @description Create an empty private conversation, with its initial context refs.
+         * @description An empty chat with its initial context refs (a resource's "chat" action).
          */
         post: operations["create_conversation_conversations_post"];
         delete?: never;
@@ -505,10 +505,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /**
-         * Delete Conversation
-         * @description Delete a conversation and every row it owns; return the index revision.
-         */
+        /** Delete Conversation */
         delete: operations["delete_conversation_conversations__conversation_id__delete"];
         options?: never;
         head?: never;
@@ -560,7 +557,7 @@ export interface paths {
         put?: never;
         /**
          * Undo Tool Call
-         * @description Revert one assistant write tool call's created refs. Idempotent.
+         * @description Revert one assistant write's created refs. Idempotent.
          */
         post: operations["undo_tool_call_conversations__conversation_id__tool_calls__tool_call_id__undo_post"];
         delete?: never;
@@ -2039,7 +2036,7 @@ export interface paths {
         post?: never;
         /**
          * Delete Message
-         * @description Delete a message; the conversation too when it was the last one.
+         * @description Delete a message and its subtree; the conversation too when it was the last.
          */
         delete: operations["delete_message_messages__message_id__delete"];
         options?: never;
@@ -3172,51 +3169,6 @@ export interface components {
              */
             kind: "After";
         };
-        /** ArtifactRetrievalResultRef */
-        ArtifactRetrievalResultRef: {
-            /** Citation Target */
-            citation_target?: string | null;
-            context_ref: components["schemas"]["RetrievalContextRef"];
-            /** Deep Link */
-            deep_link: string;
-            /** Id */
-            id: string;
-            /** Locator */
-            locator?: null;
-            /** Media Id */
-            media_id?: null;
-            /** Media Kind */
-            media_kind?: null;
-            /**
-             * Result Type
-             * @constant
-             */
-            result_type: "artifact";
-            /** Revision Id */
-            revision_id: string;
-            /** Score */
-            score?: number | null;
-            /**
-             * Selected
-             * @default false
-             */
-            selected: boolean;
-            /** Snippet */
-            snippet: string;
-            /** Source Id */
-            source_id: string;
-            /** Source Label */
-            source_label?: string | null;
-            /** Subject Ref */
-            subject_ref: string;
-            /** Title */
-            title: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "artifact";
-        };
         /** AssistantMessageBranchAnchorRequest */
         AssistantMessageBranchAnchorRequest: {
             /**
@@ -3230,12 +3182,13 @@ export interface components {
              */
             message_id: string;
         };
-        /** AssistantSelectionBranchAnchorRequest */
+        /**
+         * AssistantSelectionBranchAnchorRequest
+         * @description Selected answer text; the browser never maps it to offsets.
+         */
         AssistantSelectionBranchAnchorRequest: {
             /** Client Selection Id */
             client_selection_id: string;
-            /** End Offset */
-            end_offset?: number | null;
             /** Exact */
             exact: string;
             /**
@@ -3250,25 +3203,16 @@ export interface components {
             message_id: string;
             /**
              * Offset Status
-             * @enum {string}
+             * @constant
              */
-            offset_status: "mapped" | "unmapped";
+            offset_status: "unmapped";
             /** Prefix */
             prefix?: string | null;
-            /** Start Offset */
-            start_offset?: number | null;
             /** Suffix */
             suffix?: string | null;
         };
         /** AssistantTrustTrailOut */
         AssistantTrustTrailOut: {
-            /**
-             * Assistant Message Id
-             * Format: uuid
-             */
-            assistant_message_id: string;
-            /** Chat Run Id */
-            chat_run_id: string | null;
             /** Citations */
             citations: components["schemas"]["TrustCitationOut"][];
             /** Context Refs Added */
@@ -3278,32 +3222,9 @@ export interface components {
              * Format: uuid
              */
             conversation_id: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Integrity Notices */
-            integrity_notices: components["schemas"]["TrustIntegrityNoticeOut"][];
             run: components["schemas"]["TrustRunOut"] | null;
-            /**
-             * Schema Version
-             * @default assistant_trust_trail.v1
-             * @constant
-             */
-            schema_version: "assistant_trust_trail.v1";
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "pending" | "running" | "complete" | "error" | "cancelled";
             /** Tool Calls */
             tool_calls: components["schemas"]["TrustToolCallOut"][];
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
         };
         /** AssistantUnavailableChatFailure */
         AssistantUnavailableChatFailure: {
@@ -3545,7 +3466,7 @@ export interface components {
         };
         /**
          * ChatAdmissionReceipt
-         * @description Immutable committed send decision, independent of run presentation.
+         * @description One committed decision per (viewer, key), replayed verbatim from its memo.
          */
         ChatAdmissionReceipt: {
             /** Idempotency Key */
@@ -3593,76 +3514,16 @@ export interface components {
              */
             code: "CitationsUnavailable";
         };
-        /** ChatRunAssistantActivityEventPayload */
-        ChatRunAssistantActivityEventPayload: {
-            /**
-             * Assistant Message Id
-             * Format: uuid
-             */
-            assistant_message_id: string;
-            /** Label */
-            label?: string | null;
-            /**
-             * Phase
-             * @enum {string}
-             */
-            phase: "queued" | "thinking" | "writing" | "tool_calling" | "waiting" | "retrying" | "cancelling";
-            /** Provider Event Seq End */
-            provider_event_seq_end?: number | null;
-            /** Provider Event Seq Start */
-            provider_event_seq_start?: number | null;
-        };
         /** ChatRunAssistantTextDeltaEventPayload */
         ChatRunAssistantTextDeltaEventPayload: {
-            /**
-             * Assistant Message Id
-             * Format: uuid
-             */
-            assistant_message_id: string;
-            /** Provider Event Seq End */
-            provider_event_seq_end: number;
-            /** Provider Event Seq Start */
-            provider_event_seq_start: number;
             /** Text */
             text: string;
         };
-        /** ChatRunCitationIndexEventPayload */
-        ChatRunCitationIndexEventPayload: {
-            /**
-             * Assistant Message Id
-             * Format: uuid
-             */
-            assistant_message_id: string;
-            /** Citations */
-            citations: components["schemas"]["ChatRunCitationIndexItem"][];
-        };
-        /** ChatRunCitationIndexItem */
-        ChatRunCitationIndexItem: {
-            citation: components["schemas"]["CitationOut"];
-            /**
-             * Citation Edge Id
-             * Format: uuid
-             */
-            citation_edge_id: string;
-        };
         /**
          * ChatRunContextRefAddedEventPayload
-         * @description Strict SSE payload for a citation-materialized context edge (ContextRefOut shape).
+         * @description A resource a published citation added to the chat's context.
          */
         ChatRunContextRefAddedEventPayload: {
-            activation: components["schemas"]["ResourceActivationOut"];
-            /** Citation Edge Id */
-            citation_edge_id: string | null;
-            /**
-             * Conversation Id
-             * Format: uuid
-             */
-            conversation_id: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
             /**
              * Id
              * Format: uuid
@@ -3674,16 +3535,10 @@ export interface components {
             missing: boolean;
             /** Resource Ref */
             resource_ref: string;
-            /** Summary */
-            summary: string;
         };
         /**
          * ChatRunCreateRequest
-         * @description Request schema for creating a durable chat run.
-         *
-         *     The reader quote is a durable ``ReaderSelectionKey`` plus a compare-on-send
-         *     ``revision`` only — the server derives subject/companion/exact/locator from
-         *     the locked Highlight and never accepts client quote text.
+         * @description The quote is a key plus a compare-on-send revision; the server snapshots the text.
          */
         ChatRunCreateRequest: {
             /** Content */
@@ -3694,22 +3549,16 @@ export interface components {
             /** Selection */
             selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
         };
-        /** ChatRunDoneEventPayload */
+        /**
+         * ChatRunDoneEventPayload
+         * @description The run's one terminal frame; the browser then re-reads the saved answer.
+         */
         ChatRunDoneEventPayload: {
-            /** Cancelled */
-            cancelled: boolean;
-            error_code: components["schemas"]["Presence_str_-Output"];
-            /** Final Chars */
-            final_chars: number | null;
-            /** Last Provider Event Seq */
-            last_provider_event_seq: number | null;
-            publication_warning: components["schemas"]["Presence_ChatPublicationWarning_"];
             /**
              * Status
              * @enum {string}
              */
             status: "complete" | "error" | "cancelled";
-            support_id: components["schemas"]["Presence_str_-Output"];
             /** Usage */
             usage: {
                 [key: string]: unknown;
@@ -3717,103 +3566,14 @@ export interface components {
         };
         /**
          * ChatRunExecutionOut
-         * @description The queue phase and the run's durable stop intent in one observation.
+         * @description The live run's queue phase and stop intent, in one observation.
          */
         ChatRunExecutionOut: {
             /** Cancel Requested */
             cancel_requested: boolean;
             phase: components["schemas"]["DurableExecutionPhase"];
         };
-        /** ChatRunMetaEventPayload */
-        ChatRunMetaEventPayload: {
-            /**
-             * Assistant Message Id
-             * Format: uuid
-             */
-            assistant_message_id: string;
-            chat_subject: components["schemas"]["ChatRunMetaSubjectPayload"] | null;
-            /**
-             * Conversation Id
-             * Format: uuid
-             */
-            conversation_id: string;
-            /**
-             * Run Id
-             * Format: uuid
-             */
-            run_id: string;
-            run_selection: components["schemas"]["RunSelectionOut"];
-            /**
-             * User Message Id
-             * Format: uuid
-             */
-            user_message_id: string;
-        };
-        /** ChatRunMetaSubjectPayload */
-        ChatRunMetaSubjectPayload: {
-            /** Companions */
-            companions?: string[];
-            /** Context Edge Id */
-            context_edge_id?: string | null;
-            /** Requested Resource Ref */
-            requested_resource_ref: string;
-            /** Resource Ref */
-            resource_ref: string;
-        };
-        /** ChatRunOut */
-        ChatRunOut: {
-            /**
-             * Assistant Message Id
-             * Format: uuid
-             */
-            assistant_message_id: string;
-            /** Completed At */
-            completed_at: string | null;
-            /**
-             * Conversation Id
-             * Format: uuid
-             */
-            conversation_id: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Error Code */
-            error_code: string | null;
-            execution: components["schemas"]["Presence_ChatRunExecutionOut_"];
-            /** Failure */
-            failure: (components["schemas"]["CancelledChatFailure"] | components["schemas"]["ContextTooLargeChatFailure"] | components["schemas"]["InvalidOutputChatFailure"] | components["schemas"]["IncompleteChatFailure"] | components["schemas"]["AssistantUnavailableChatFailure"] | components["schemas"]["OperatorDefectChatFailure"]) | null;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            publication_warning: components["schemas"]["Presence_ChatPublicationWarning_"];
-            run_selection: components["schemas"]["RunSelectionOut"];
-            /** Started At */
-            started_at: string | null;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "queued" | "running" | "complete" | "error" | "cancelled";
-            support_id: components["schemas"]["Presence_str_-Output"];
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-            /**
-             * User Message Id
-             * Format: uuid
-             */
-            user_message_id: string;
-        };
-        /**
-         * ChatRunRepeatRequest
-         * @description Exact selection for rerun/regenerate.
-         */
+        /** ChatRunRepeatRequest */
         ChatRunRepeatRequest: {
             /** Selection */
             selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
@@ -3822,18 +3582,12 @@ export interface components {
         ChatRunResponse: {
             assistant_message: components["schemas"]["MessageOut"];
             conversation: components["schemas"]["ConversationOut"];
-            run: components["schemas"]["ChatRunOut"];
             user_message: components["schemas"]["MessageOut"];
         };
         /** ChatRunToolCallDoneEventOut */
         ChatRunToolCallDoneEventOut: {
             /** Activity Label */
             activity_label: string;
-            /**
-             * Assistant Message Id
-             * Format: uuid
-             */
-            assistant_message_id: string;
             /** Canonical Tool Id */
             canonical_tool_id: string | null;
             effect: components["schemas"]["ToolEffect"] | null;
@@ -3846,12 +3600,6 @@ export interface components {
             input: {
                 [key: string]: unknown;
             };
-            /** Provider Event Seq End */
-            provider_event_seq_end: number;
-            /** Provider Event Seq Start */
-            provider_event_seq_start: number;
-            /** Provider Tool Call Id */
-            provider_tool_call_id?: string | null;
             /** Provider Wire Name */
             provider_wire_name: string | null;
             /**
@@ -3864,8 +3612,11 @@ export interface components {
              * @enum {string}
              */
             result_kind: "attached_context" | "mutation" | "navigation" | "retrieval";
-            /** Tool Call Id */
-            tool_call_id?: string | null;
+            /**
+             * Tool Call Id
+             * Format: uuid
+             */
+            tool_call_id: string;
             /** Tool Call Index */
             tool_call_index: number;
         };
@@ -3873,11 +3624,6 @@ export interface components {
         ChatRunToolCallStartEventOut: {
             /** Activity Label */
             activity_label: string;
-            /**
-             * Assistant Message Id
-             * Format: uuid
-             */
-            assistant_message_id: string;
             /** Canonical Tool Id */
             canonical_tool_id: string | null;
             effect: components["schemas"]["ToolEffect"] | null;
@@ -3886,12 +3632,6 @@ export interface components {
              * @enum {unknown}
              */
             error_type: "BudgetExceeded" | "Conflict" | "DeadlineExceeded" | "InvalidCursor" | "InvalidInput" | "InvalidUpstreamResponse" | "InvalidUrl" | "MemoryFailure" | "QuoteAmbiguous" | "QuoteNotFound" | "RateLimited" | "ResourceUnavailable" | "StaleCursor" | "TargetAmbiguous" | "TooLarge" | "ToolUnavailable" | "Uninspectable" | "Unreadable" | "UnsafeDestination" | "UnsupportedContent" | "UpstreamUnavailable" | "WriteCapReached" | null;
-            /** Provider Event Seq End */
-            provider_event_seq_end: number;
-            /** Provider Event Seq Start */
-            provider_event_seq_start: number;
-            /** Provider Tool Call Id */
-            provider_tool_call_id?: string | null;
             /** Provider Wire Name */
             provider_wire_name: string | null;
             /**
@@ -3904,8 +3644,11 @@ export interface components {
              * @enum {string}
              */
             result_kind: "attached_context" | "mutation" | "navigation" | "retrieval";
-            /** Tool Call Id */
-            tool_call_id?: string | null;
+            /**
+             * Tool Call Id
+             * Format: uuid
+             */
+            tool_call_id: string;
             /** Tool Call Index */
             tool_call_index: number;
         };
@@ -3913,11 +3656,6 @@ export interface components {
         ChatRunToolResultEventOut: {
             /** Activity Label */
             activity_label: string;
-            /**
-             * Assistant Message Id
-             * Format: uuid
-             */
-            assistant_message_id: string;
             /** Canonical Tool Id */
             canonical_tool_id: string | null;
             effect: components["schemas"]["ToolEffect"] | null;
@@ -3926,14 +3664,6 @@ export interface components {
              * @enum {unknown}
              */
             error_type: "BudgetExceeded" | "Conflict" | "DeadlineExceeded" | "InvalidCursor" | "InvalidInput" | "InvalidUpstreamResponse" | "InvalidUrl" | "MemoryFailure" | "QuoteAmbiguous" | "QuoteNotFound" | "RateLimited" | "ResourceUnavailable" | "StaleCursor" | "TargetAmbiguous" | "TooLarge" | "ToolUnavailable" | "Uninspectable" | "Unreadable" | "UnsafeDestination" | "UnsupportedContent" | "UpstreamUnavailable" | "WriteCapReached" | null;
-            /** Filters */
-            filters: {
-                [key: string]: unknown;
-            };
-            /** Latency Ms */
-            latency_ms?: number | null;
-            /** Provider Request Ids */
-            provider_request_ids?: string[];
             /** Provider Wire Name */
             provider_wire_name: string | null;
             /**
@@ -3941,30 +3671,23 @@ export interface components {
              * @enum {string}
              */
             record_kind: "attached_context" | "current_execution" | "historical_execution";
-            /** Result Count */
-            result_count?: number | null;
             /**
              * Result Kind
              * @enum {string}
              */
             result_kind: "attached_context" | "mutation" | "navigation" | "retrieval";
-            /** Results */
-            results: (components["schemas"]["MediaRetrievalResultRef"] | components["schemas"]["PodcastRetrievalResultRef"] | components["schemas"]["EpisodeRetrievalResultRef"] | components["schemas"]["VideoRetrievalResultRef"] | components["schemas"]["ContentChunkRetrievalResultRef"] | components["schemas"]["FragmentRetrievalResultRef"] | components["schemas"]["ContributorRetrievalResultRef"] | components["schemas"]["PageRetrievalResultRef"] | components["schemas"]["NoteBlockRetrievalResultRef"] | components["schemas"]["HighlightRetrievalResultRef"] | components["schemas"]["MessageRetrievalResultRef"] | components["schemas"]["WebRetrievalResultRef"] | components["schemas"]["EvidenceSpanRetrievalResultRef"] | components["schemas"]["ReaderApparatusItemRetrievalResultRef"] | components["schemas"]["ConversationRetrievalResultRef"] | components["schemas"]["ArtifactRetrievalResultRef"])[];
-            /** Scope */
-            scope: string;
-            /** Selected Count */
-            selected_count?: number | null;
             /**
              * Status
              * @enum {string}
              */
             status: "pending" | "running" | "complete" | "error" | "cancelled";
-            /** Tool Call Id */
-            tool_call_id?: string | null;
+            /**
+             * Tool Call Id
+             * Format: uuid
+             */
+            tool_call_id: string;
             /** Tool Call Index */
             tool_call_index: number;
-            /** Types */
-            types: string[];
         };
         /** ChatSeed */
         ChatSeed: {
@@ -4343,55 +4066,6 @@ export interface components {
             completion: components["schemas"]["CompletionStatsSectionOut"];
             retainedArtifacts: components["schemas"]["RetainedArtifactsOut"];
         };
-        /** ContentChunkRetrievalResultRef */
-        ContentChunkRetrievalResultRef: {
-            /** Citation Label */
-            citation_label: string;
-            /** Citation Target */
-            citation_target?: string | null;
-            context_ref: components["schemas"]["RetrievalContextRef"];
-            /** Deep Link */
-            deep_link: string;
-            /** Evidence Span Id */
-            evidence_span_id?: string | null;
-            /** Evidence Span Ids */
-            evidence_span_ids?: (string)[];
-            /** Id */
-            id: string;
-            /** Locator */
-            locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
-            /** Media Id */
-            media_id?: string | null;
-            /** Media Kind */
-            media_kind?: string | null;
-            /**
-             * Result Type
-             * @constant
-             */
-            result_type: "content_chunk";
-            /** Score */
-            score?: number | null;
-            /**
-             * Selected
-             * @default false
-             */
-            selected: boolean;
-            /** Snippet */
-            snippet: string;
-            /** Source Id */
-            source_id: string;
-            /** Source Kind */
-            source_kind: string;
-            /** Source Label */
-            source_label?: string | null;
-            /** Title */
-            title: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "content_chunk";
-        };
         /** ContextTooLargeChatFailure */
         ContextTooLargeChatFailure: {
             /**
@@ -4477,49 +4151,6 @@ export interface components {
              * @enum {string}
              */
             kind: "contributor_handle";
-        };
-        /** ContributorRetrievalResultRef */
-        ContributorRetrievalResultRef: {
-            /** Citation Target */
-            citation_target?: string | null;
-            context_ref: components["schemas"]["RetrievalContextRef"];
-            /** Contributor Handle */
-            contributor_handle: string;
-            /** Deep Link */
-            deep_link: string;
-            /** Id */
-            id: string;
-            /** Locator */
-            locator?: null;
-            /** Media Id */
-            media_id?: null;
-            /** Media Kind */
-            media_kind?: null;
-            /**
-             * Result Type
-             * @constant
-             */
-            result_type: "contributor";
-            /** Score */
-            score?: number | null;
-            /**
-             * Selected
-             * @default false
-             */
-            selected: boolean;
-            /** Snippet */
-            snippet: string;
-            /** Source Id */
-            source_id: string;
-            /** Source Label */
-            source_label?: string | null;
-            /** Title */
-            title: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "contributor";
         };
         /** ContributorRoleFactOut */
         ContributorRoleFactOut: {
@@ -4627,76 +4258,16 @@ export interface components {
         /** ConversationOut */
         ConversationOut: {
             /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /**
              * Id
              * Format: uuid
              */
             id: string;
-            /** Is Owner */
-            is_owner: boolean;
-            /** Message Count */
-            message_count: number;
-            /**
-             * Owner User Id
-             * Format: uuid
-             */
-            owner_user_id: string;
             /** Title */
             title: string;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-        };
-        /** ConversationRetrievalResultRef */
-        ConversationRetrievalResultRef: {
-            /** Citation Target */
-            citation_target?: string | null;
-            context_ref: components["schemas"]["RetrievalContextRef"];
-            /** Deep Link */
-            deep_link: string;
-            /** Id */
-            id: string;
-            /** Locator */
-            locator?: null;
-            /** Media Id */
-            media_id?: null;
-            /** Media Kind */
-            media_kind?: null;
-            /**
-             * Result Type
-             * @constant
-             */
-            result_type: "conversation";
-            /** Score */
-            score?: number | null;
-            /**
-             * Selected
-             * @default false
-             */
-            selected: boolean;
-            /** Snippet */
-            snippet: string;
-            /** Source Id */
-            source_id: string;
-            /** Source Label */
-            source_label?: string | null;
-            /** Title */
-            title: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "conversation";
         };
         /**
          * ConversationTreeOut
-         * @description Every user/assistant message once, in seq order, and the active leaf.
+         * @description Every message once, in seq order, and the active leaf.
          */
         ConversationTreeOut: {
             /** Active Leaf Message Id */
@@ -5689,11 +5260,7 @@ export interface components {
         DurableExecutionPhase: "Queued" | "Running" | "Recovering" | "Suspended";
         /**
          * EmptyInsertion
-         * @description Insert the first root message into a still-empty conversation.
-         *
-         *     Exists only because the retained generic resource-context picker creates a
-         *     context-bearing conversation before its first message; the server locks and
-         *     linearizes it against concurrent message creation.
+         * @description The first turn of a context-bearing chat made by ``POST /conversations``.
          */
         EmptyInsertion: {
             /**
@@ -5773,47 +5340,6 @@ export interface components {
             podcastRef: string;
             /** Podcasttitle */
             podcastTitle: string;
-        };
-        /** EpisodeRetrievalResultRef */
-        EpisodeRetrievalResultRef: {
-            /** Citation Target */
-            citation_target?: string | null;
-            context_ref: components["schemas"]["RetrievalContextRef"];
-            /** Deep Link */
-            deep_link: string;
-            /** Id */
-            id: string;
-            /** Locator */
-            locator?: null;
-            /** Media Id */
-            media_id?: string | null;
-            /** Media Kind */
-            media_kind?: string | null;
-            /**
-             * Result Type
-             * @constant
-             */
-            result_type: "episode";
-            /** Score */
-            score?: number | null;
-            /**
-             * Selected
-             * @default false
-             */
-            selected: boolean;
-            /** Snippet */
-            snippet: string;
-            /** Source Id */
-            source_id: string;
-            /** Source Label */
-            source_label?: string | null;
-            /** Title */
-            title: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "episode";
         };
         /** EpubCandidate */
         EpubCandidate: {
@@ -5918,51 +5444,6 @@ export interface components {
             locations: components["schemas"]["ReaderTextLocations"];
             target: components["schemas"]["ReaderEpubTarget-Output"];
             text: components["schemas"]["ReaderQuoteContext"];
-        };
-        /** EvidenceSpanRetrievalResultRef */
-        EvidenceSpanRetrievalResultRef: {
-            /** Citation Label */
-            citation_label: string;
-            /** Citation Target */
-            citation_target?: string | null;
-            context_ref: components["schemas"]["RetrievalContextRef"];
-            /** Deep Link */
-            deep_link: string;
-            /** Evidence Span Id */
-            evidence_span_id: string;
-            /** Id */
-            id: string;
-            /** Locator */
-            locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
-            /** Media Id */
-            media_id: string;
-            /** Media Kind */
-            media_kind?: string | null;
-            /**
-             * Result Type
-             * @constant
-             */
-            result_type: "evidence_span";
-            /** Score */
-            score?: number | null;
-            /**
-             * Selected
-             * @default false
-             */
-            selected: boolean;
-            /** Snippet */
-            snippet: string;
-            /** Source Id */
-            source_id: string;
-            /** Source Label */
-            source_label?: string | null;
-            /** Title */
-            title: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "evidence_span";
         };
         /** ExcludeActivityIn */
         ExcludeActivityIn: {
@@ -6139,49 +5620,6 @@ export interface components {
             /** Start Offset */
             start_offset: number;
         };
-        /** FragmentRetrievalResultRef */
-        FragmentRetrievalResultRef: {
-            /** Citation Label */
-            citation_label?: string | null;
-            /** Citation Target */
-            citation_target?: string | null;
-            context_ref: components["schemas"]["RetrievalContextRef"];
-            /** Deep Link */
-            deep_link: string;
-            /** Id */
-            id: string;
-            /** Locator */
-            locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
-            /** Media Id */
-            media_id?: string | null;
-            /** Media Kind */
-            media_kind?: string | null;
-            /**
-             * Result Type
-             * @constant
-             */
-            result_type: "fragment";
-            /** Score */
-            score?: number | null;
-            /**
-             * Selected
-             * @default false
-             */
-            selected: boolean;
-            /** Snippet */
-            snippet: string;
-            /** Source Id */
-            source_id: string;
-            /** Source Label */
-            source_label?: string | null;
-            /** Title */
-            title: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "fragment";
-        };
         /** FromUrlRequest */
         FromUrlRequest: {
             /** Library Ids */
@@ -6350,53 +5788,6 @@ export interface components {
             state: "Present";
         };
         HighlightNoteResourceActionCapabilityOut: components["schemas"]["HighlightNoteAbsentOut"] | components["schemas"]["HighlightNotePresentOut"];
-        /** HighlightRetrievalResultRef */
-        HighlightRetrievalResultRef: {
-            /** Citation Label */
-            citation_label?: string | null;
-            /** Citation Target */
-            citation_target?: string | null;
-            /** Color */
-            color: string;
-            context_ref: components["schemas"]["RetrievalContextRef"];
-            /** Deep Link */
-            deep_link: string;
-            /** Exact */
-            exact: string;
-            /** Id */
-            id: string;
-            /** Locator */
-            locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
-            /** Media Id */
-            media_id?: string | null;
-            /** Media Kind */
-            media_kind?: string | null;
-            /**
-             * Result Type
-             * @constant
-             */
-            result_type: "highlight";
-            /** Score */
-            score?: number | null;
-            /**
-             * Selected
-             * @default false
-             */
-            selected: boolean;
-            /** Snippet */
-            snippet: string;
-            /** Source Id */
-            source_id: string;
-            /** Source Label */
-            source_label?: string | null;
-            /** Title */
-            title: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "highlight";
-        };
         /** HighlightTargetPdfQuadOut */
         HighlightTargetPdfQuadOut: {
             /** X1 */
@@ -7779,47 +7170,6 @@ export interface components {
             /** Readercursor */
             readerCursor: components["schemas"]["ReaderCursorEmpty"] | components["schemas"]["ReaderCursorPositioned"];
         };
-        /** MediaRetrievalResultRef */
-        MediaRetrievalResultRef: {
-            /** Citation Target */
-            citation_target?: string | null;
-            context_ref: components["schemas"]["RetrievalContextRef"];
-            /** Deep Link */
-            deep_link: string;
-            /** Id */
-            id: string;
-            /** Locator */
-            locator?: null;
-            /** Media Id */
-            media_id?: string | null;
-            /** Media Kind */
-            media_kind?: string | null;
-            /**
-             * Result Type
-             * @constant
-             */
-            result_type: "media";
-            /** Score */
-            score?: number | null;
-            /**
-             * Selected
-             * @default false
-             */
-            selected: boolean;
-            /** Snippet */
-            snippet: string;
-            /** Source Id */
-            source_id: string;
-            /** Source Label */
-            source_label?: string | null;
-            /** Title */
-            title: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "media";
-        };
         /** MediaSuggestionTargetOut */
         MediaSuggestionTargetOut: {
             /** Href */
@@ -7942,51 +7292,6 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
-        };
-        /** MessageRetrievalResultRef */
-        MessageRetrievalResultRef: {
-            /** Citation Target */
-            citation_target?: string | null;
-            context_ref: components["schemas"]["RetrievalContextRef"];
-            /** Conversation Id */
-            conversation_id: string;
-            /** Deep Link */
-            deep_link: string;
-            /** Id */
-            id: string;
-            /** Locator */
-            locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
-            /** Media Id */
-            media_id?: null;
-            /** Media Kind */
-            media_kind?: null;
-            /**
-             * Result Type
-             * @constant
-             */
-            result_type: "message";
-            /** Score */
-            score?: number | null;
-            /**
-             * Selected
-             * @default false
-             */
-            selected: boolean;
-            /** Seq */
-            seq: number;
-            /** Snippet */
-            snippet: string;
-            /** Source Id */
-            source_id: string;
-            /** Source Label */
-            source_label?: string | null;
-            /** Title */
-            title: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "message";
         };
         /** MetadataCompletedOperation */
         MetadataCompletedOperation: {
@@ -8315,7 +7620,7 @@ export interface components {
         };
         /**
          * NewChatDestination
-         * @description Create a fresh conversation atomically with this send — no pre-create.
+         * @description A fresh conversation created atomically with this send.
          */
         NewChatDestination: {
             /**
@@ -8428,51 +7733,6 @@ export interface components {
             versionByLane: {
                 [key: string]: number;
             };
-        };
-        /** NoteBlockRetrievalResultRef */
-        NoteBlockRetrievalResultRef: {
-            /** Body Text */
-            body_text: string;
-            /** Citation Target */
-            citation_target?: string | null;
-            context_ref: components["schemas"]["RetrievalContextRef"];
-            /** Deep Link */
-            deep_link: string;
-            /** Highlight Excerpt */
-            highlight_excerpt?: string | null;
-            /** Id */
-            id: string;
-            /** Locator */
-            locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
-            /** Media Id */
-            media_id?: null;
-            /** Media Kind */
-            media_kind?: null;
-            /**
-             * Result Type
-             * @constant
-             */
-            result_type: "note_block";
-            /** Score */
-            score?: number | null;
-            /**
-             * Selected
-             * @default false
-             */
-            selected: boolean;
-            /** Snippet */
-            snippet: string;
-            /** Source Id */
-            source_id: string;
-            /** Source Label */
-            source_label?: string | null;
-            /** Title */
-            title: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "note_block";
         };
         /** NoteBodySurfaceContent */
         NoteBodySurfaceContent: {
@@ -8787,47 +8047,6 @@ export interface components {
              * @constant
              */
             source: "Nexus";
-        };
-        /** PageRetrievalResultRef */
-        PageRetrievalResultRef: {
-            /** Citation Target */
-            citation_target?: string | null;
-            context_ref: components["schemas"]["RetrievalContextRef"];
-            /** Deep Link */
-            deep_link: string;
-            /** Id */
-            id: string;
-            /** Locator */
-            locator?: null;
-            /** Media Id */
-            media_id?: null;
-            /** Media Kind */
-            media_kind?: null;
-            /**
-             * Result Type
-             * @constant
-             */
-            result_type: "page";
-            /** Score */
-            score?: number | null;
-            /**
-             * Selected
-             * @default false
-             */
-            selected: boolean;
-            /** Snippet */
-            snippet: string;
-            /** Source Id */
-            source_id: string;
-            /** Source Label */
-            source_label?: string | null;
-            /** Title */
-            title: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "page";
         };
         /** PageTitleSurfaceContent */
         PageTitleSurfaceContent: {
@@ -9498,51 +8717,6 @@ export interface components {
         PodcastReplacementConfirmation: {
             /** Conflictfingerprint */
             conflictFingerprint: string;
-        };
-        /** PodcastRetrievalResultRef */
-        PodcastRetrievalResultRef: {
-            /** Citation Target */
-            citation_target?: string | null;
-            context_ref: components["schemas"]["RetrievalContextRef"];
-            /** Contributors */
-            contributors?: {
-                [key: string]: unknown;
-            }[];
-            /** Deep Link */
-            deep_link: string;
-            /** Id */
-            id: string;
-            /** Locator */
-            locator?: null;
-            /** Media Id */
-            media_id?: null;
-            /** Media Kind */
-            media_kind?: null;
-            /**
-             * Result Type
-             * @constant
-             */
-            result_type: "podcast";
-            /** Score */
-            score?: number | null;
-            /**
-             * Selected
-             * @default false
-             */
-            selected: boolean;
-            /** Snippet */
-            snippet: string;
-            /** Source Id */
-            source_id: string;
-            /** Source Label */
-            source_label?: string | null;
-            /** Title */
-            title: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "podcast";
         };
         /** PodcastSubscribeOut */
         PodcastSubscribeOut: {
@@ -10604,49 +9778,6 @@ export interface components {
              */
             kind: "Readable";
         };
-        /** ReaderApparatusItemRetrievalResultRef */
-        ReaderApparatusItemRetrievalResultRef: {
-            /** Apparatus Kind */
-            apparatus_kind: string;
-            /** Citation Target */
-            citation_target?: string | null;
-            context_ref: components["schemas"]["RetrievalContextRef"];
-            /** Deep Link */
-            deep_link: string;
-            /** Id */
-            id: string;
-            /** Locator */
-            locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
-            /** Media Id */
-            media_id: string;
-            /** Media Kind */
-            media_kind?: string | null;
-            /**
-             * Result Type
-             * @constant
-             */
-            result_type: "reader_apparatus_item";
-            /** Score */
-            score?: number | null;
-            /**
-             * Selected
-             * @default false
-             */
-            selected: boolean;
-            /** Snippet */
-            snippet: string;
-            /** Source Id */
-            source_id: string;
-            /** Source Label */
-            source_label?: string | null;
-            /** Title */
-            title: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "reader_apparatus_item";
-        };
         /**
          * ReaderCursorEmpty
          * @description No positioned cursor: an absent row is revision 0, a tombstone is >= 1.
@@ -11257,7 +10388,7 @@ export interface components {
         };
         /**
          * ReaderSelectionInput
-         * @description The reader-selection piece of a chat-run request: key plus precondition.
+         * @description A send's quote: the durable key plus the compare-on-send revision, never text.
          */
         ReaderSelectionInput: {
             key: components["schemas"]["ReaderSelectionKey"];
@@ -12163,18 +11294,6 @@ export interface components {
             neutralLinks: number;
             /** Noteblocks */
             noteBlocks: number;
-        };
-        /** RetrievalContextRef */
-        RetrievalContextRef: {
-            /** Evidence Span Ids */
-            evidence_span_ids?: (string)[];
-            /** Id */
-            id: string;
-            /**
-             * Type
-             * @enum {string}
-             */
-            type: "media" | "podcast" | "episode" | "video" | "content_chunk" | "fragment" | "contributor" | "page" | "note_block" | "highlight" | "message" | "evidence_span" | "conversation" | "artifact" | "web_result" | "reader_apparatus_item";
         };
         /** RetryMetadataResourceActionCapabilityOut */
         RetryMetadataResourceActionCapabilityOut: {
@@ -13643,34 +12762,11 @@ export interface components {
             citation_edge_id: string;
             /** Ordinal */
             ordinal: number;
-            /** Retrieval Id */
-            retrieval_id: string | null;
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "context" | "supports" | "contradicts";
-            target_ref: components["schemas"]["CitationTargetRef"];
-            /** Tool Call Id */
-            tool_call_id: string | null;
         };
         /** TrustContextRefAddedOut */
         TrustContextRefAddedOut: {
-            activation: components["schemas"]["ResourceActivationOut"];
             /** Chat Run Event Seq */
             chat_run_event_seq: number;
-            /** Citation Edge Id */
-            citation_edge_id: string | null;
-            /**
-             * Conversation Id
-             * Format: uuid
-             */
-            conversation_id: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
             /**
              * Id
              * Format: uuid
@@ -13682,105 +12778,32 @@ export interface components {
             missing: boolean;
             /** Resource Ref */
             resource_ref: string;
-            /** Summary */
-            summary: string;
-        };
-        /** TrustIntegrityNoticeOut */
-        TrustIntegrityNoticeOut: {
-            /** Code */
-            code: string;
-            /** Message */
-            message: string;
         };
         /** TrustRetrievalOut */
         TrustRetrievalOut: {
-            citation_candidate_ordinal: components["schemas"]["Presence_int_"];
-            /** Citation Number */
-            citation_number: number | null;
-            /** Citation Role */
-            citation_role: ("context" | "supports" | "contradicts") | null;
             /** Cited Edge Id */
             cited_edge_id: string | null;
-            context_ref: components["schemas"]["RetrievalContextRef"];
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Deep Link */
-            deep_link: string | null;
-            /** Evidence Span Id */
-            evidence_span_id: string | null;
-            /** Exact Snippet */
-            exact_snippet: string | null;
             /**
              * Id
              * Format: uuid
              */
             id: string;
-            /**
-             * Included In Prompt
-             * @default false
-             */
+            /** Included In Prompt */
             included_in_prompt: boolean;
-            /**
-             * Included In Prompt Source
-             * @default retrieval
-             * @enum {string}
-             */
-            included_in_prompt_source: "retrieval" | "prompt_assembly" | "none";
-            /** Locator */
-            locator: (components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"]) | null;
-            /** Media Id */
-            media_id: string | null;
-            /** Ordinal */
-            ordinal: number;
-            /** Result Ref */
-            result_ref: components["schemas"]["MediaRetrievalResultRef"] | components["schemas"]["PodcastRetrievalResultRef"] | components["schemas"]["EpisodeRetrievalResultRef"] | components["schemas"]["VideoRetrievalResultRef"] | components["schemas"]["ContentChunkRetrievalResultRef"] | components["schemas"]["FragmentRetrievalResultRef"] | components["schemas"]["ContributorRetrievalResultRef"] | components["schemas"]["PageRetrievalResultRef"] | components["schemas"]["NoteBlockRetrievalResultRef"] | components["schemas"]["HighlightRetrievalResultRef"] | components["schemas"]["MessageRetrievalResultRef"] | components["schemas"]["WebRetrievalResultRef"] | components["schemas"]["EvidenceSpanRetrievalResultRef"] | components["schemas"]["ReaderApparatusItemRetrievalResultRef"] | components["schemas"]["ConversationRetrievalResultRef"] | components["schemas"]["ArtifactRetrievalResultRef"];
-            /**
-             * Result Type
-             * @enum {string}
-             */
-            result_type: "media" | "podcast" | "episode" | "video" | "content_chunk" | "fragment" | "contributor" | "page" | "note_block" | "highlight" | "message" | "evidence_span" | "conversation" | "artifact" | "web_result" | "reader_apparatus_item";
-            /**
-             * Retrieval Status
-             * @default retrieved
-             * @enum {string}
-             */
-            retrieval_status: "attached_context" | "retrieved" | "selected" | "included_in_prompt" | "excluded_by_budget" | "excluded_by_scope" | "web_result";
-            /** Scope */
-            scope: string;
-            /** Score */
-            score: number | null;
-            /** Section Label */
-            section_label: string | null;
             /** Selected */
             selected: boolean;
-            /** Snippet Prefix */
-            snippet_prefix: string | null;
-            /** Snippet Suffix */
-            snippet_suffix: string | null;
             /** Source Id */
             source_id: string;
             /** Source Title */
             source_title: string | null;
-            /**
-             * Tool Call Id
-             * Format: uuid
-             */
-            tool_call_id: string;
         };
         /** TrustRunOut */
         TrustRunOut: {
-            /** Completed At */
-            completed_at: string | null;
             /** Error Code */
             error_code: string | null;
             execution: components["schemas"]["Presence_ChatRunExecutionOut_"];
             /** Failure */
             failure: (components["schemas"]["CancelledChatFailure"] | components["schemas"]["ContextTooLargeChatFailure"] | components["schemas"]["InvalidOutputChatFailure"] | components["schemas"]["IncompleteChatFailure"] | components["schemas"]["AssistantUnavailableChatFailure"] | components["schemas"]["OperatorDefectChatFailure"]) | null;
-            /** Final Chars */
-            final_chars: number | null;
             publication_warning: components["schemas"]["Presence_ChatPublicationWarning_"];
             /**
              * Run Id
@@ -13788,8 +12811,6 @@ export interface components {
              */
             run_id: string;
             run_selection: components["schemas"]["RunSelectionOut"];
-            /** Started At */
-            started_at: string | null;
             /**
              * Status
              * @enum {string}
@@ -13807,11 +12828,6 @@ export interface components {
             activity_label: string;
             /** Canonical Tool Id */
             canonical_tool_id: string | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
             effect: components["schemas"]["ToolEffect"] | null;
             /**
              * Error Type
@@ -13823,12 +12839,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            /** Latency Ms */
-            latency_ms: number | null;
             /** Machine Authorships */
             machine_authorships: components["schemas"]["MachineAuthorshipOut"][];
-            /** Provider Request Ids */
-            provider_request_ids: string[];
             /** Provider Wire Name */
             provider_wire_name: string | null;
             /**
@@ -13836,10 +12848,6 @@ export interface components {
              * @enum {string}
              */
             record_kind: "attached_context" | "current_execution" | "historical_execution";
-            /** Requested Types */
-            requested_types: string[];
-            /** Result Count */
-            result_count: number;
             /**
              * Result Kind
              * @enum {string}
@@ -13853,14 +12861,6 @@ export interface components {
             retrievals: components["schemas"]["TrustRetrievalOut"][];
             /** Reverted At */
             reverted_at: string | null;
-            /** Scope */
-            scope: string;
-            /** Selected Context Refs */
-            selected_context_refs: {
-                [key: string]: unknown;
-            }[];
-            /** Selected Count */
-            selected_count: number;
             /**
              * Status
              * @enum {string}
@@ -13868,11 +12868,6 @@ export interface components {
             status: "pending" | "running" | "complete" | "error" | "cancelled";
             /** Tool Call Index */
             tool_call_index: number;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
         };
         /** TypedHighlightOut */
         TypedHighlightOut: {
@@ -14428,47 +13423,6 @@ export interface components {
             /** Videoref */
             videoRef: string;
         };
-        /** VideoRetrievalResultRef */
-        VideoRetrievalResultRef: {
-            /** Citation Target */
-            citation_target?: string | null;
-            context_ref: components["schemas"]["RetrievalContextRef"];
-            /** Deep Link */
-            deep_link: string;
-            /** Id */
-            id: string;
-            /** Locator */
-            locator?: null;
-            /** Media Id */
-            media_id?: string | null;
-            /** Media Kind */
-            media_kind?: string | null;
-            /**
-             * Result Type
-             * @constant
-             */
-            result_type: "video";
-            /** Score */
-            score?: number | null;
-            /**
-             * Selected
-             * @default false
-             */
-            selected: boolean;
-            /** Snippet */
-            snippet: string;
-            /** Source Id */
-            source_id: string;
-            /** Source Label */
-            source_label?: string | null;
-            /** Title */
-            title: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "video";
-        };
         /** ViewerLibraryInvitationOut */
         ViewerLibraryInvitationOut: {
             /**
@@ -14598,71 +13552,6 @@ export interface components {
             locations: components["schemas"]["ReaderTextLocations"];
             target: components["schemas"]["ReaderFragmentTarget"];
             text: components["schemas"]["ReaderQuoteContext"];
-        };
-        /** WebRetrievalResultRef */
-        WebRetrievalResultRef: {
-            /** Citation Target */
-            citation_target?: string | null;
-            context_ref: components["schemas"]["RetrievalContextRef"];
-            /** Deep Link */
-            deep_link: string;
-            /** Display Url */
-            display_url?: string | null;
-            /** Extra Snippets */
-            extra_snippets?: string[];
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Locator */
-            locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
-            /** Media Id */
-            media_id?: null;
-            /** Media Kind */
-            media_kind?: null;
-            /** Provider */
-            provider?: string | null;
-            /** Provider Request Id */
-            provider_request_id?: string | null;
-            /** Published At */
-            published_at?: string | null;
-            /** Rank */
-            rank?: number | null;
-            /** Result Ref */
-            result_ref: string;
-            /**
-             * Result Type
-             * @constant
-             */
-            result_type: "web_result";
-            /** Score */
-            score?: number | null;
-            /**
-             * Selected
-             * @default false
-             */
-            selected: boolean;
-            /** Snippet */
-            snippet: string;
-            /**
-             * Source Id
-             * Format: uuid
-             */
-            source_id: string;
-            /** Source Label */
-            source_label?: string | null;
-            /** Source Name */
-            source_name?: string | null;
-            /** Title */
-            title: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "web_result";
-            /** Url */
-            url: string;
         };
         /** WebTextOffsetsLocator */
         WebTextOffsetsLocator: {

@@ -8,13 +8,10 @@ import type { Execution } from "./wire";
 // text and trust trail change only when a server read replaces it.
 
 type Events = {
-  meta: Schema<"ChatRunMetaEventPayload">;
-  assistant_activity: Schema<"ChatRunAssistantActivityEventPayload">;
   assistant_text_delta: Schema<"ChatRunAssistantTextDeltaEventPayload">;
   tool_call_start: Schema<"ChatRunToolCallStartEventOut">;
   tool_call_done: Schema<"ChatRunToolCallDoneEventOut">;
   tool_result: Schema<"ChatRunToolResultEventOut">;
-  citation_index: Schema<"ChatRunCitationIndexEventPayload">;
   context_ref_added: Schema<"ChatRunContextRefAddedEventPayload">;
   done: Schema<"ChatRunDoneEventPayload">;
   ExecutionAdvisory: Execution;
@@ -38,13 +35,10 @@ export type Live = Readonly<{
 }>;
 
 const TYPES = new Set<string>([
-  "meta",
-  "assistant_activity",
   "assistant_text_delta",
   "tool_call_start",
   "tool_call_done",
   "tool_result",
-  "citation_index",
   "context_ref_added",
   "done",
   "ExecutionAdvisory",
@@ -61,7 +55,7 @@ export function emptyLive(runId: string): Live {
   };
 }
 
-/** Meta, citation_index and context_ref_added change nothing: the terminal read carries them. */
+/** context_ref_added changes nothing: the terminal read carries it. */
 export function foldLive(live: Live, event: ChatEvent): Live {
   if (event.seq > 0 && event.seq <= live.lastSeq) return live;
   const next = { ...live, lastSeq: Math.max(live.lastSeq, event.seq) };

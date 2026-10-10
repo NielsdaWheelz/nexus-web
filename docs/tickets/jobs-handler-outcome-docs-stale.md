@@ -1,7 +1,7 @@
-# jobs module describes retired handler outcomes
+# jobs module describes a retired media-unit outcome
 
 status: open. origin: 2026-10-04 backend owner audit at `bbfd1df4`; area: jobs documentation. priority: p3.
 
-`docs/modules/jobs.md:150-178` says `media_unit_build` declares `failed_result_statuses` and `execute_chat_run` returns a `Published | Degraded | Failed | Cancelled | Skipped` outcome serialized by `tasks/chat_run.py`, with its kind logged by the worker. current `jobs/registry.py:157,253` declares `failed_result_statuses` only for podcast backfill and synapse scan. `chat_run_worker.py:275-410` returns `None` for handled terminal paths; `tasks/chat_run.py:22-43` forwards it. these are stale descriptions, not observed product failures. current media-unit handler stores its domain outcome within an outer successful queue result.
+`docs/modules/jobs.md` says `media_unit_build` declares `failed_result_statuses`. current `jobs/registry.py` declares `failed_result_statuses` only for podcast backfill and synapse scan; the media-unit handler stores its domain outcome within an outer successful queue result. a stale description, not an observed product failure. (the chat half of this ticket, the retired `execute_chat_run` outcome union and its `tasks/chat_run.py` serializer, was fixed by the 2026-10-10 chat rewrite, which rewrote that paragraph.)
 
-update only the affected jobs module paragraphs from current registry/task/worker source. acceptance: no retired chat outcome union, serializer or media-unit failed-result declaration remains in that doc; describe the actual queue versus domain result boundary. no runtime change is implied.
+update only the affected jobs module paragraph from current registry/task source. acceptance: no media-unit failed-result declaration remains in that doc; it describes the actual queue versus domain result boundary. no runtime change is implied.

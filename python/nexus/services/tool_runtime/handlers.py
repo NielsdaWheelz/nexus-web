@@ -35,7 +35,7 @@ from nexus.services.agent_tools.app_search import (
     APP_SEARCH_LIMIT,
     APP_SEARCH_SELECTED_LIMIT,
 )
-from nexus.services.retrieval_citation import RetrievalCitation
+from nexus.services.chat.retrievals import RetrievalCitation
 from nexus.services.tool_authority import (
     ToolAuditProjection,
     ToolPositionRecorder,
@@ -201,7 +201,7 @@ def _citation_for_ref(
 ) -> RetrievalCitation | None:
     if result_type is None:
         return None
-    from nexus.services.retrieval_citation import citation_from_search_result
+    from nexus.services.chat.retrievals import citation_from_search_result
     from nexus.services.search.service import get_search_result
 
     try:
@@ -246,8 +246,8 @@ async def _run_search(
 ) -> HandlerSuccess[tool_declarations.NexusSearchSuccess]:
     from dataclasses import replace
 
+    from nexus.services.chat.retrievals import citation_from_search_result
     from nexus.services.resource_items.capabilities import resource_can_be_app_search_scope
-    from nexus.services.retrieval_citation import citation_from_search_result
     from nexus.services.search.query import (
         SearchQuery,
         SearchScope,
@@ -382,7 +382,7 @@ async def _run_document_search(
     value: tool_declarations.DocumentSearchInput,
     context: ExecutionContext,
 ) -> HandlerSuccess[tool_declarations.DocumentSearchSuccess]:
-    from nexus.services.retrieval_citation import citation_from_search_result
+    from nexus.services.chat.retrievals import citation_from_search_result
     from nexus.services.search.query import SearchQuery, build_search_query, scope_from_uri
     from nexus.services.search.service import search_scopes_async
 

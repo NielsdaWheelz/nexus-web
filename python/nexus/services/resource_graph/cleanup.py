@@ -15,8 +15,22 @@ from __future__ import annotations
 from collections.abc import Iterable
 from uuid import UUID
 
-from sqlalchemy import String, and_, cast, delete, exists, or_, select, tuple_
-from sqlalchemy.orm import Session
+from sqlalchemy import (
+    ColumnElement,
+    String,
+    and_,
+    any_,
+    cast,
+    delete,
+    exists,
+    literal,
+    or_,
+    select,
+    tuple_,
+)
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from nexus.db.models import (
     MessageRetrieval,
@@ -35,11 +49,26 @@ def delete_edges_for_deleted_resource(db: Session, *, ref: ResourceRef) -> None:
 
 
 def delete_edges_for_deleted_resources(db: Session, *, refs: Iterable[ResourceRef]) -> None:
-    dead = [(ref.scheme, ref.id) for ref in refs]
+    dead: dict[str, set[UUID]] = {}
+    for ref in refs:
+        dead.setdefault(ref.scheme, set()).add(ref.id)
     if not dead:
         return
-    at_source = tuple_(ResourceEdge.source_scheme, ResourceEdge.source_id).in_(dead)
-    at_target = tuple_(ResourceEdge.target_scheme, ResourceEdge.target_id).in_(dead)
+
+    def at(
+        scheme: InstrumentedAttribute[str], id_: InstrumentedAttribute[UUID]
+    ) -> ColumnElement[bool]:
+        # One uuid[] per scheme keeps the statement one size for any number of refs;
+        # a row-value IN list grows with them and overflows postgres's stack near 7,500.
+        return or_(
+            *(
+                and_(scheme == name, id_ == any_(literal(list(ids), ARRAY(PG_UUID(as_uuid=True)))))
+                for name, ids in dead.items()
+            )
+        )
+
+    at_source = at(ResourceEdge.source_scheme, ResourceEdge.source_id)
+    at_target = at(ResourceEdge.target_scheme, ResourceEdge.target_id)
     for user_id, *ends in db.execute(
         select(
             ResourceEdge.user_id,
@@ -50,7 +79,7 @@ def delete_edges_for_deleted_resources(db: Session, *, refs: Iterable[ResourceRe
         ).where(ResourceEdge.origin == "user", or_(at_source, at_target))
     ):
         for scheme, id_ in (ends[:2], ends[2:]):
-            if (scheme, id_) not in dead:
+            if id_ not in dead.get(scheme, ()):
                 ref = assert_resource_ref(f"{scheme}:{id_}")
                 versions.bump_version(db, viewer_id=user_id, ref=ref, lane="links")
     motif_notes = select(ResourceEdge.source_id).where(

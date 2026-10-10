@@ -85,7 +85,7 @@ def execute_read_resource(
         return ReadRefusal("invalid_uri")
 
     if parsed.scheme in ("conversation", "message"):
-        from nexus.services.conversations import ConversationReadRefusal, read_message_page
+        from nexus.services.chat.conversations import ConversationReadRefusal, read_message_page
 
         page = read_message_page(db, viewer_id=viewer_id, ref=parsed, cursor=cursor)
         if isinstance(page, ConversationReadRefusal):
