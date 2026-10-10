@@ -46,9 +46,9 @@ oracle_reading, artifact, contributor, podcast, passage_anchor),
 oracle_passage_anchor, reader_apparatus_item: confirmation creates a durable
 `passage_anchors` row) or `none` (artifact_revision, external_snapshot).
 relationship ids are never targets. a link grants no ownership or edit right.
-`resource_items/targets.py` alone owns target admission, visibility,
-exclusion, dedupe, refill and cursors; a selected passage is never replaced by
-its whole document or a nearby match.
+`search/pickers.py` alone owns target admission, visibility,
+exclusion, dedupe and cursors (one bounded pass, see [search](search.md)); a
+selected passage is never replaced by its whole document or a nearby match.
 
 `ConnectionOut.mutation` names only what the owning operation can do: `unlink`,
 `dismiss_discovery`, `detach_context`, `undo_assistant_chat` or

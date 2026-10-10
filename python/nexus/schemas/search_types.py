@@ -1,4 +1,4 @@
-"""Canonical public search-result discriminants."""
+"""The public search-result discriminants, shared by search, chat citations and their wire."""
 
 from __future__ import annotations
 
@@ -22,8 +22,5 @@ SEARCH_RESULT_TYPES = Literal[
     "web_result",
     "reader_apparatus_item",
 ]
-
-# Runtime views derive from the Literal so validation, dispatch and union
-# completeness share one authority.
 ALL_RESULT_TYPES: tuple[str, ...] = get_args(SEARCH_RESULT_TYPES)
 VALID_RESULT_TYPES: frozenset[str] = frozenset(ALL_RESULT_TYPES)

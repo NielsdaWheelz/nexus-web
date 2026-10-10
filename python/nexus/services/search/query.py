@@ -1,13 +1,12 @@
-"""The search request vocabulary: kinds, formats, the typed query, and the cursor."""
+"""The search request vocabulary: kinds, formats, scopes, the typed query and the cursor codec."""
 
 from __future__ import annotations
 
 import base64
 import hashlib
 import json
-from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal, TypeGuard, get_args
 from uuid import UUID
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
@@ -18,33 +17,16 @@ from nexus.services.resource_graph.refs import ResourceRef
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 50
 MIN_QUERY_LENGTH = 2
-# Candidates fetched per result type before cross-type ranking.
-CANDIDATES_PER_TYPE = 200
+MAX_OFFSET = 1000  # the deepest page start a cursor names; it bounds every family's k
 
 SearchKind = Literal["documents", "notes", "highlights", "conversations", "people", "web"]
 MediaFormat = Literal["article", "pdf", "epub", "video", "episode", "podcast"]
 ScopeKind = Literal["all", "media", "library", "conversation"]
 
-SEARCH_KINDS: tuple[SearchKind, ...] = (
-    "documents",
-    "notes",
-    "highlights",
-    "conversations",
-    "people",
-    "web",
-)
-SEARCH_FORMATS: tuple[MediaFormat, ...] = (
-    "article",
-    "pdf",
-    "epub",
-    "video",
-    "episode",
-    "podcast",
-)
-ALL_KINDS: frozenset[SearchKind] = frozenset(SEARCH_KINDS)
+SEARCH_KINDS: tuple[SearchKind, ...] = get_args(SearchKind)
+SEARCH_FORMATS: tuple[MediaFormat, ...] = get_args(MediaFormat)
 
-# The one kind → internal result type fold. Exactly one kind owns each result
-# type; the chat tool asserts that 1:1 property when it labels a citation.
+# Exactly one kind owns each result type; the chat tool asserts it.
 KIND_TO_RESULT_TYPES: dict[SearchKind, tuple[str, ...]] = {
     "documents": (
         "media",
@@ -61,10 +43,8 @@ KIND_TO_RESULT_TYPES: dict[SearchKind, tuple[str, ...]] = {
     "people": ("contributor",),
     "web": ("web_result",),
 }
-
-# Public format → the media.kind / podcast storage value retrievers filter on.
-# Podcasts are a separate table keyed by the sentinel "podcast".
-FORMAT_TO_STORAGE: dict[MediaFormat, str] = {
+# Public format -> the media.kind value (podcasts are their own table).
+FORMAT_STORAGE: dict[MediaFormat, str] = {
     "article": "web_article",
     "pdf": "pdf",
     "epub": "epub",
@@ -73,21 +53,10 @@ FORMAT_TO_STORAGE: dict[MediaFormat, str] = {
     "podcast": "podcast",
 }
 
-# Result types the one query embedding serves.
-SEMANTIC_RESULT_TYPES = ("content_chunk", "note_block")
-
-# Implied kinds: a format filter narrows to Documents, an author/role filter to
-# Documents+People, both to Documents only.
-FORMAT_KINDS: frozenset[SearchKind] = frozenset({"documents"})
-CREDIT_KINDS: frozenset[SearchKind] = frozenset({"documents", "people"})
-
-_KIND_VOCAB: dict[str, SearchKind] = {kind: kind for kind in SEARCH_KINDS}
-_FORMAT_VOCAB: dict[str, MediaFormat] = {fmt: fmt for fmt in SEARCH_FORMATS}
-
 
 @dataclass(frozen=True, slots=True)
 class SearchScope:
-    """A parsed, validated search scope. ``id`` is None iff ``kind == "all"``."""
+    """``id`` is None iff ``kind == "all"``."""
 
     kind: ScopeKind
     id: UUID | None = None
@@ -95,10 +64,9 @@ class SearchScope:
 
 @dataclass(frozen=True, slots=True)
 class SearchQuery:
-    """The sole input to ``search()``.
+    """The input to search. ``requested_kinds`` None means all kinds; empty means none.
 
-    ``requested_kinds`` is None when the param was omitted (⇒ all kinds) and an
-    empty frozenset when explicitly cleared (⇒ no results).
+    ``frozen_context_refs`` turns the "all" scope into exactly those refs (chat).
     """
 
     text: str
@@ -113,30 +81,29 @@ class SearchQuery:
 
     @property
     def effective_kinds(self) -> frozenset[SearchKind]:
-        kinds = ALL_KINDS if self.requested_kinds is None else self.requested_kinds
+        """A format narrows to documents; an author or role to documents and people."""
+        kinds = frozenset(SEARCH_KINDS) if self.requested_kinds is None else self.requested_kinds
         if self.formats:
-            kinds = kinds & FORMAT_KINDS
+            kinds &= {"documents"}
         if self.authors or self.roles:
-            kinds = kinds & CREDIT_KINDS
+            kinds &= {"documents", "people"}
         return kinds
 
     @property
     def effective_result_types(self) -> tuple[str, ...]:
-        wanted: set[str] = set()
-        for kind in self.effective_kinds:
-            wanted.update(KIND_TO_RESULT_TYPES[kind])
-        return tuple(result_type for result_type in ALL_RESULT_TYPES if result_type in wanted)
-
-    @property
-    def content_kinds(self) -> list[str]:
-        """Storage-kind values the retrievers filter on, from the public formats."""
-        return [FORMAT_TO_STORAGE[fmt] for fmt in self.formats]
+        wanted = {t for kind in self.effective_kinds for t in KIND_TO_RESULT_TYPES[kind]}
+        return tuple(t for t in ALL_RESULT_TYPES if t in wanted)
 
     @property
     def highlight_notes_only(self) -> bool:
-        """Highlights without Notes also retrieves the attached highlight notes."""
-        kinds = self.effective_kinds
-        return "highlights" in kinds and "notes" not in kinds
+        """Highlights without notes also finds the notes hanging off readable highlights."""
+        return "highlights" in self.effective_kinds and "notes" not in self.effective_kinds
+
+    @property
+    def terms(self) -> str:
+        """The text to match, or "" when it is too short (a filter-only query)."""
+        text = self.text.strip()
+        return text if len(text) >= MIN_QUERY_LENGTH else ""
 
 
 def build_search_query(
@@ -150,83 +117,81 @@ def build_search_query(
     cursor: str | None,
     limit: int,
 ) -> SearchQuery:
-    """Parse and strictly validate transport tokens into a SearchQuery."""
+    """Strictly validate transport tokens; the first occurrence of a repeated token wins."""
     return SearchQuery(
         text=text,
-        requested_kinds=(
-            None if raw_kinds is None else frozenset(_validated(raw_kinds, _kind, "kind"))
-        ),
-        formats=_validated(raw_formats, _format, "format"),
-        authors=tuple(
-            dict.fromkeys(t for t in (str(v or "").strip() for v in raw_authors or ()) if t)
-        ),
-        roles=_validated(raw_roles, _role, "role"),
+        requested_kinds=None
+        if raw_kinds is None
+        else frozenset(_tokens(raw_kinds, SEARCH_KINDS, "kind")),
+        formats=_tokens(raw_formats, SEARCH_FORMATS, "format"),
+        authors=tuple(dict.fromkeys(a.strip() for a in raw_authors or () if a.strip())),
+        roles=_tokens(raw_roles, tuple(CONTRIBUTOR_ROLE_SET), "role"),
         scope=scope,
         cursor=cursor,
         limit=limit,
     )
 
 
-def _validated[T](
-    raw: list[str] | None, normalize: Callable[[str], T | None], label: str
-) -> tuple[T, ...]:
-    """Normalize each token in order, keeping first occurrences; reject out-of-vocab."""
-    out: list[T] = []
+def _tokens[T: str](raw: list[str] | None, vocabulary: tuple[T, ...], label: str) -> tuple[T, ...]:
+    by_name: dict[str, T] = {token: token for token in vocabulary}
+    out: dict[T, None] = {}
     for token in raw or ():
-        value = normalize(token)
+        value = by_name.get(token.strip().lower())
         if value is None:
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_REQUEST, f"Invalid search {label}: {token}"
             )
-        if value not in out:
-            out.append(value)
+        out[value] = None
     return tuple(out)
 
 
-def _kind(token: str) -> SearchKind | None:
-    return _KIND_VOCAB.get(token.strip().lower())
-
-
-def _format(token: str) -> MediaFormat | None:
-    return _FORMAT_VOCAB.get(token.strip().lower())
-
-
-def _role(token: str) -> str | None:
-    role = str(token or "").strip().lower()
-    return role if role in CONTRIBUTOR_ROLE_SET else None
-
-
-def encode_search_cursor(offset: int) -> str:
-    """Encode ``{"offset": n}`` as unpadded base64url."""
-    return (
-        base64.urlsafe_b64encode(json.dumps({"offset": offset}).encode("utf-8"))
-        .decode("ascii")
-        .rstrip("=")
-    )
-
-
-def decode_search_cursor(cursor: str) -> int:
-    """Decode an offset cursor, or raise E_INVALID_CURSOR."""
+def scope_from_uri(scope: str) -> SearchScope:
+    """Parse ``all``, ``media:<id>``, ``library:<id>`` or ``conversation:<id>``."""
+    if scope == "all":
+        return SearchScope("all")
+    kind, _, raw_id = scope.partition(":")
+    if kind not in ("media", "library", "conversation"):
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
     try:
-        padding = 4 - len(cursor) % 4
-        if padding != 4:
-            cursor += "=" * padding
-        payload = json.loads(base64.urlsafe_b64decode(cursor).decode("utf-8"))
-        if not isinstance(payload, dict):
-            raise ValueError("Cursor payload must be an object")
-        offset = payload["offset"]
-        if type(offset) is not int:
-            raise ValueError("Cursor offset must be an integer")
-        if offset < 0:
-            raise ValueError("Offset must be non-negative")
-        return offset
-    except (KeyError, ValueError):
-        # justify-ignore-error: malformed cursor decode path. ValueError covers
-        # binascii.Error, json.JSONDecodeError, UnicodeDecodeError, and the
-        # explicit shape raises; KeyError covers a missing offset key.
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+        return SearchScope(kind, UUID(raw_id))
+    except ValueError:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, f"Invalid {kind} ID in scope"
+        ) from None
 
 
 def hash_query(q: str) -> str:
     """Privacy-safe query fingerprint used by citation records."""
     return hashlib.sha256(q.strip().lower().encode("utf-8")).hexdigest()[:16]
+
+
+def encode_cursor(payload: dict[str, Any]) -> str:
+    """An opaque page position: unpadded base64url of compact, key-sorted JSON."""
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def decode_cursor(cursor: str) -> dict[str, Any]:
+    """The payload of an encoded cursor (padded or not), or E_INVALID_CURSOR."""
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+    except ValueError:  # binascii, json and unicode decode errors are all ValueErrors
+        payload = None
+    if not isinstance(payload, dict):
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor")
+    return payload
+
+
+def is_offset(value: object) -> TypeGuard[int]:
+    """A page start a cursor may carry: an int in [0, MAX_OFFSET]. No cursor is issued past it."""
+    return type(value) is int and 0 <= value <= MAX_OFFSET
+
+
+def decode_offset(cursor: str | None) -> int:
+    """The offset of an ``{"offset": n}`` cursor; 0 without a cursor."""
+    if cursor is None:
+        return 0
+    offset = decode_cursor(cursor).get("offset")
+    if not is_offset(offset):
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor")
+    return offset

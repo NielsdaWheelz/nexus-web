@@ -9,8 +9,12 @@ the retained db0229 clone has about705k content chunks and708k embeddings.
 this is clone evidence; production search has not been measured after the
 import fix. private receipt: `pillow-69583dc3-semantic-overlay-retry/`.
 
-the owner is `search/retrievers/content_chunks.py`, using the shared hybrid
-tail in `search/sql.py`. its multiply-read eligible-chunks CTE can materialize
+the owner (since the 2026-10-10 search reauthor) is the `content_chunk` family in
+`search/sources.py` with `search/semantic.py::nearest_chunks`; the old hybrid tail
+and its eligible-chunks CTE are gone, the ANN query can use ivfflat (see
+`semantic-ranking-still-scans-embedding-corpus.md`), and a page now ranks only
+`offset + limit + 1` rows per family instead of 200-row pools. the paragraphs below
+describe the old engine (`search/retrievers/content_chunks.py`, `search/sql.py`). its multiply-read eligible-chunks CTE can materialize
 the full visible corpus before filtering. obtain the actual plan and preserve
 visibility, ordering, candidate bounds and result semantics when fixing it.
 do not raise the deadline or disable semantic retrieval to hide the failure.

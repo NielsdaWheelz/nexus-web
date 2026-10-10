@@ -272,7 +272,8 @@ async def _scan(
         candidates = _Input.model_validate_json(intent.input).candidates
     else:
         dossier = _dossier(db, user_id=user_id, ref=ref)
-        db.commit()
+        excluded = set() if dossier is None else _excluded(db, user_id=user_id, ref=ref)
+        db.commit()  # search() embeds first: it needs a session without a transaction
         if dossier is None:
             return "skipped", None
         source_text, kin = dossier
@@ -285,11 +286,7 @@ async def _scan(
                 limit=_MAX_CANDIDATES * 4,
             ),
         )
-        excluded = _excluded(db, user_id=user_id, ref=ref) | kin
-        candidates = _candidates(response.results, excluded=excluded)
-        # search() leaves its read-only snapshot open. Ending it here is what
-        # lets every later write open its own read-write transaction.
-        db.rollback()
+        candidates = _candidates(response.results, excluded=excluded | kin)
         if not candidates:
             return _publish(db, user_id=user_id, ref=ref, context=context, picks=[])
         source = _Input(source_ref=ref.uri, source_text=source_text, candidates=candidates)

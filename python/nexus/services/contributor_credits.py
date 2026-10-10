@@ -123,12 +123,10 @@ def contributor_fts_text_sql() -> str:
     """
 
 
-def contributor_credits_rollup_cte_sql(
-    owner_column: Literal["media_id", "podcast_id"], *, owner_predicate: str = "TRUE"
-) -> str:
+def contributor_credits_rollup_cte_sql(owner_column: Literal["media_id", "podcast_id"]) -> str:
     """Per-owner ``(owner_id, contributor_credits jsonb, contributor_search_text)``.
 
-    ``owner_column``/``owner_predicate`` are fixed internal SQL literals, never user input.
+    ``owner_column`` is a fixed internal SQL literal, never user input.
     The search text composes credited name, display name and aliases, never external keys.
     """
     return f"""
@@ -163,7 +161,6 @@ def contributor_credits_rollup_cte_sql(
             GROUP BY contributor_id
         ) alias_text ON alias_text.contributor_id = c.id
         WHERE cc.{owner_column} IS NOT NULL
-          AND {owner_predicate}
         GROUP BY cc.{owner_column}
     """
 

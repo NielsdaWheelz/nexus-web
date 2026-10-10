@@ -1,283 +1,129 @@
-"""Public search orchestration: gates, retrieval, paging, projection, reopen."""
+"""Search entry points: discovery pages, multi-scope chat search and reopen by identity.
+
+The transaction law lives in ``read_snapshot``: the query embedding is computed first,
+outside any transaction, then one REPEATABLE READ, READ ONLY snapshot is opened, read and
+ended. A caller arriving with an open transaction gets a RuntimeError, never lost writes.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass, replace
+import asyncio
+from collections.abc import Callable, Sequence
 from uuid import UUID
 
-from provider_runtime.errors import NonGenerationCallFailed
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from nexus.db.session import get_repeatable_read_db
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
-from nexus.logging import get_logger
+from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.search import SearchPageInfo, SearchResponse, SearchResultOut
 from nexus.schemas.search_types import VALID_RESULT_TYPES
 from nexus.services.contributors import resolve_contributor_ids_by_handles
-from nexus.services.search.chunks import (
-    resolve_content_chunk,
-    resolve_evidence_span_result,
-    resolve_note_block,
-    search_note_chunks,
-)
-from nexus.services.search.projection import _result_to_out
+from nexus.services.search.project import family_of, project
 from nexus.services.search.query import (
-    CANDIDATES_PER_TYPE,
+    FORMAT_STORAGE,
     MAX_LIMIT,
-    MIN_QUERY_LENGTH,
-    SEMANTIC_RESULT_TYPES,
     SearchQuery,
     SearchScope,
-    decode_search_cursor,
-    encode_search_cursor,
+    decode_offset,
+    encode_cursor,
+    is_offset,
 )
-from nexus.services.search.results import (
-    InternalSearchResult,
-    _RankedMediaResult,
-    _SearchScore,
-    rank_candidates,
-)
-from nexus.services.search.retrievers import reopen, retrieve
 from nexus.services.search.scope import authorize_scope
-from nexus.services.semantic_chunks import (
-    build_text_embedding,
-    build_text_embedding_async,
-    transcript_embedding_dimensions,
-)
+from nexus.services.search.semantic import Embedding, embed_text
+from nexus.services.search.sources import Hit, Retrieval, merge, rank
 
-logger = get_logger(__name__)
+_SEMANTIC = frozenset({"content_chunk", "note_block"})
 
 
-@dataclass(frozen=True, slots=True)
-class PreparedSearchEmbedding:
-    """A completed external query preparation, including a classified failure."""
-
-    query: str
-    value: tuple[str, list[float]] | None
-
-
-def _query_has_full_text_terms(db: Session, q: str) -> bool:
-    return bool(
-        db.scalar(text("SELECT numnode(websearch_to_tsquery('english', :query)) > 0"), {"query": q})
-    )
-
-
-def _checked_embedding(embedding: tuple[str, list[float]]) -> tuple[str, list[float]]:
-    if len(embedding[1]) != transcript_embedding_dimensions():
-        raise ApiError(
-            ApiErrorCode.E_APP_SEARCH_FAILED, "Embedding provider returned an invalid response."
-        )
-    return embedding
-
-
-def _lexical_fallback(exc: NonGenerationCallFailed, result_types: Sequence[str]) -> None:
-    logger.warning(
-        "search_semantic_embedding_unavailable_lexical_fallback",
-        error=type(exc.failure).__name__,
-        result_types=",".join(result_types),
-    )
-
-
-async def prepare_search_embedding(q: str, result_types: list[str]) -> PreparedSearchEmbedding:
-    """Await query preparation outside any retrieval transaction."""
+def read_snapshot[T](db: Session, read: Callable[[Session], T]) -> T:
+    """``read`` inside one strict read-only snapshot that is ended before returning."""
+    get_repeatable_read_db(db)  # raises on a session that already holds a transaction
     try:
-        embedding = await build_text_embedding_async(q)
-    except NonGenerationCallFailed as exc:
-        _lexical_fallback(exc, result_types)
-        return PreparedSearchEmbedding(q, None)
-    return PreparedSearchEmbedding(q, _checked_embedding(embedding))
-
-
-def build_query_embedding(
-    db: Session, q: str, result_types: list[str], *, transaction_active_at_entry: bool
-) -> tuple[str, list[float]] | None:
-    """Build the one query embedding, or None for lexical-only retrieval.
-
-    Rolls back a transaction this call did not open so the embedding HTTP call
-    never holds one. An expected provider failure degrades to lexical-only with
-    one warning; a wrong-dimension response or missing credential stays fatal.
-    """
-    if not transaction_active_at_entry and db.in_transaction():
+        return read(db)
+    finally:
         db.rollback()
-    try:
-        embedding = build_text_embedding(q)
-    except NonGenerationCallFailed as exc:
-        _lexical_fallback(exc, result_types)
+
+
+def _families(query: SearchQuery) -> list[str] | None:
+    """The families serving the query; None when it has neither usable text nor a filter."""
+    if not (query.terms or query.formats or query.authors or query.roles):
         return None
-    return _checked_embedding(embedding)
+    families = {family_of(result_type) for result_type in query.effective_result_types}
+    return sorted(families | ({"note_block"} if query.highlight_notes_only else set()))
 
 
-def search(
+def _page(
     db: Session,
     viewer_id: UUID,
     query: SearchQuery,
-    *,
-    prepared_embedding: PreparedSearchEmbedding | None = None,
-) -> SearchResponse:
-    """Hybrid search across everything the viewer may see, as one ranked page.
-
-    Raises NotFoundError for a scope the viewer cannot read (404, never 403, so
-    existence does not leak) and InvalidRequestError for a malformed cursor.
-    """
-    transaction_active_at_entry = db.in_transaction()
-    limit = min(max(1, query.limit), MAX_LIMIT)
-    q = query.text.strip()
-    offset = decode_search_cursor(query.cursor) if query.cursor else 0
-    result_types = query.effective_result_types
-    content_kinds = query.content_kinds
-
-    has_query = len(q) >= MIN_QUERY_LENGTH
-    if not has_query and not (query.authors or query.roles or content_kinds):
-        return SearchResponse(results=[], page=SearchPageInfo(next_cursor=None))
-    authorize_scope(db, viewer_id, query.scope.kind, query.scope.id)
-    if not result_types:
-        return SearchResponse(results=[], page=SearchPageInfo(next_cursor=None))
-    if has_query and not _query_has_full_text_terms(db, q):
-        return SearchResponse(results=[], page=SearchPageInfo(next_cursor=None))
-
-    # Hybrid retrieval is an invariant: the embedding is built once for any
-    # semantic-capable kind, independent of the structured filters.
-    semantic_types = list(result_types)
-    if query.highlight_notes_only and "note_block" not in semantic_types:
-        semantic_types.append("note_block")
-    embedding: tuple[str, list[float]] | None = None
-    if prepared_embedding is not None:
-        if prepared_embedding.query != q:
-            raise ValueError("prepared search embedding belongs to another query")
-        embedding = prepared_embedding.value
-    elif has_query and any(kind in SEMANTIC_RESULT_TYPES for kind in semantic_types):
-        embedding = build_query_embedding(
-            db, q, semantic_types, transaction_active_at_entry=transaction_active_at_entry
-        )
-
-    if db.in_transaction():
-        db.rollback()
-    get_repeatable_read_db(db)
-    authorize_scope(db, viewer_id, query.scope.kind, query.scope.id)
-
-    # None = no contributor filter; an empty list = requested handles resolved to
-    # nothing, which matches nothing.
-    contributor_ids = (
-        list(resolve_contributor_ids_by_handles(db, list(query.authors)).values())
-        if query.authors
-        else None
-    )
-    candidates: list[InternalSearchResult] = []
-    for result_type in result_types:
-        candidates.extend(
-            retrieve(
-                db,
-                viewer_id,
-                result_type=result_type,
-                q=q,
-                has_query=has_query,
-                semantic_embedding=embedding,
-                scope_type=query.scope.kind,
-                scope_id=query.scope.id,
-                frozen_context_refs=query.frozen_context_refs,
-                contributor_ids=contributor_ids,
-                roles=query.roles,
-                content_kinds=content_kinds,
-                limit=CANDIDATES_PER_TYPE,
-            )
-        )
-    if query.highlight_notes_only:
-        # A highlight's attached note stays findable when Notes is not selected.
-        candidates.extend(
-            search_note_chunks(
-                db,
-                viewer_id,
-                q=q,
-                semantic_embedding=embedding,
-                scope_type=query.scope.kind,
-                scope_id=query.scope.id,
-                frozen_context_refs=query.frozen_context_refs,
-                limit=CANDIDATES_PER_TYPE,
-                highlight_notes_only=True,
-            )
-        )
-    rank_candidates(candidates)
-
-    page = candidates[offset : offset + limit + 1]
-    has_more = len(page) > limit
-    from nexus.services.media import list_collection_media_for_viewer_by_ids
-
-    summaries = {
-        media.id: media.summary
-        for media in list_collection_media_for_viewer_by_ids(
-            db,
-            viewer_id=viewer_id,
-            media_ids=[
-                result.id for result in page[:limit] if isinstance(result, _RankedMediaResult)
-            ],
-        )
-    }
-    return SearchResponse(
-        results=[_result_to_out(db, viewer_id, result, summaries) for result in page[:limit]],
-        page=SearchPageInfo(
-            has_more=has_more,
-            next_cursor=encode_search_cursor(offset + limit) if has_more else None,
-        ),
-    )
-
-
-def search_scopes(
-    db: Session,
-    viewer_id: UUID,
-    base: SearchQuery,
+    families: list[str],
     scopes: Sequence[SearchScope],
-    *,
-    prepared_embedding: PreparedSearchEmbedding | None = None,
-) -> SearchResponse:
-    """Run ``base`` against each scope; union, dedupe on (type, id), keep the max."""
-    merged: dict[tuple[str, str], SearchResultOut] = {}
+    embedding: Embedding | None,
+    offset: int,
+    limit: int,
+) -> tuple[list[SearchResultOut], bool]:
+    """One page of the merged order over the union of ``scopes`` (authorized even when no
+    family serves the query), and whether more follow."""
     for scope in scopes:
-        response = search(
-            db, viewer_id, replace(base, scope=scope), prepared_embedding=prepared_embedding
-        )
-        for result in response.results:
-            key = (result.type, str(result.id))
-            existing = merged.get(key)
-            if existing is None or result.score > existing.score:
-                merged[key] = result
-    ordered = sorted(merged.values(), key=lambda result: (-result.score, str(result.id)))
-    return SearchResponse(results=ordered[: base.limit], page=SearchPageInfo(next_cursor=None))
+        authorize_scope(db, viewer_id, scope)
+    authors = resolve_contributor_ids_by_handles(db, query.authors) if query.authors else None
+    r = Retrieval(
+        viewer_id=viewer_id,
+        terms=query.terms,
+        k=offset + limit + 1,
+        scopes=tuple(scopes),
+        frozen=query.frozen_context_refs,
+        content_kinds=tuple(FORMAT_STORAGE[f] for f in query.formats),
+        contributor_ids=None if authors is None else list(authors.values()),
+        roles=query.roles,
+        embedding=embedding,
+        highlight_notes_only=query.highlight_notes_only,
+    )
+    hits = merge(hit for family in families for hit in rank(db, r, family))
+    page = hits[offset : offset + limit + 1]
+    more = len(page) > limit and is_offset(offset + limit)
+    return project(db, viewer_id, page[:limit], r.terms), more
+
+
+def search(db: Session, viewer_id: UUID, query: SearchQuery) -> SearchResponse:
+    """One ranked page of everything the viewer may read in ``query.scope``.
+
+    Requires a session without an open transaction. 404 for an unreadable scope once the
+    query has text or a filter.
+    """
+    offset = decode_offset(query.cursor)
+    limit = min(query.limit, MAX_LIMIT)
+    families = _families(query)
+    if families is None:
+        return SearchResponse(results=[], page=SearchPageInfo(next_cursor=None))
+    embedding = embed_text(query.terms) if query.terms and _SEMANTIC & set(families) else None
+    results, more = read_snapshot(
+        db, lambda s: _page(s, viewer_id, query, families, (query.scope,), embedding, offset, limit)
+    )
+    cursor = encode_cursor({"offset": offset + limit}) if more else None
+    return SearchResponse(results=results, page=SearchPageInfo(has_more=more, next_cursor=cursor))
 
 
 async def search_scopes_async(
     database: AsyncSession, viewer_id: UUID, base: SearchQuery, scopes: Sequence[SearchScope]
 ) -> SearchResponse:
-    """The same authorized retrieval with the provider call between two syncs.
-
-    Authorization is checked before the provider call and again during
-    retrieval; no transaction or connection survives the network await.
-    """
-    query = base.text.strip()
-    result_types = list(base.effective_result_types)
-    if base.highlight_notes_only and "note_block" not in result_types:
-        result_types.append("note_block")
-
-    def requires_embedding(db: Session) -> bool:
-        with db.begin():
-            for scope in scopes:
-                authorize_scope(db, viewer_id, scope.kind, scope.id)
-            return (
-                len(query) >= MIN_QUERY_LENGTH
-                and any(kind in SEMANTIC_RESULT_TYPES for kind in result_types)
-                and _query_has_full_text_terms(db, query)
-            )
-
-    prepared = (
-        await prepare_search_embedding(query, result_types)
-        if await database.run_sync(requires_embedding)
-        else PreparedSearchEmbedding(query, None)
+    """The first page over the union of ``scopes`` in one pass; ``has_more`` is real."""
+    families = _families(base)
+    if families is None:
+        return SearchResponse(results=[], page=SearchPageInfo(next_cursor=None))
+    embedding = (
+        await asyncio.to_thread(embed_text, base.terms)
+        if base.terms and _SEMANTIC & set(families)
+        else None
     )
-    return await database.run_sync(
-        lambda db: search_scopes(db, viewer_id, base, scopes, prepared_embedding=prepared)
+    limit = min(base.limit, MAX_LIMIT)
+    results, more = await database.run_sync(
+        lambda db: read_snapshot(
+            db, lambda s: _page(s, viewer_id, base, families, scopes, embedding, 0, limit)
+        )
     )
+    return SearchResponse(results=results, page=SearchPageInfo(has_more=more, next_cursor=None))
 
 
 def get_search_result(
@@ -287,45 +133,23 @@ def get_search_result(
     result_id: str,
     evidence_span_ids: list[UUID] | None = None,
 ) -> SearchResultOut:
-    """Reopen one visible search result from its durable object reference."""
+    """Reopen one visible row by durable identity, in the caller's transaction.
+
+    Every type reopens through its family; a media id reopens as media, episode or video
+    by its kind, whatever was asked.
+    """
     if result_type not in VALID_RESULT_TYPES:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, f"Invalid search type: {result_type}"
         )
     try:
         identity = UUID(result_id)
-    except ValueError as exc:
+    except ValueError:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "Invalid search result id"
-        ) from exc
-
-    score = _SearchScore(raw=1.0, normalized=1.0)
-    if result_type == "content_chunk":
-        result = resolve_content_chunk(
-            db,
-            viewer_id=viewer_id,
-            result_id=identity,
-            score=score,
-            evidence_span_ids=evidence_span_ids,
-        )
-    elif result_type == "note_block":
-        result = resolve_note_block(db, viewer_id=viewer_id, result_id=identity, score=score)
-    elif result_type == "evidence_span":
-        result = resolve_evidence_span_result(
-            db, viewer_id=viewer_id, result_id=identity, score=score
-        )
-    else:
-        # podcast, contributor, conversation and artifact are discovery-only:
-        # they carry no id_column and fall out of `reopen` as 404.
-        result = reopen(db, viewer_id, result_type=result_type, result_id=identity, score=score)
-    from nexus.services.media import list_collection_media_for_viewer_by_ids
-
-    summaries = {
-        media.id: media.summary
-        for media in list_collection_media_for_viewer_by_ids(
-            db,
-            viewer_id=viewer_id,
-            media_ids=[result.id] if isinstance(result, _RankedMediaResult) else [],
-        )
-    }
-    return _result_to_out(db, viewer_id, result, summaries)
+        ) from None
+    hit = Hit(result_type, identity, "", 1.0)
+    found = project(db, viewer_id, [hit], "", evidence_span_ids=evidence_span_ids)
+    if not found:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
+    return found[0]

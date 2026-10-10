@@ -33,7 +33,6 @@ EDGE_KINDS: tuple[EdgeKind, ...] = get_args(EdgeKind)
 EDGE_ORIGINS: tuple[EdgeOrigin, ...] = get_args(EdgeOrigin)
 ConnectionDirection = Literal["incoming", "outgoing", "both"]
 
-SEARCH_SCOPE_EDGE_KIND: EdgeKind = "context"
 CONNECTION_DISCOVERY_SOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
     "media",
     "page",

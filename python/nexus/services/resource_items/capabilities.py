@@ -17,7 +17,6 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import highlight_visibility_filter
 from nexus.db.models import Highlight
 from nexus.services.resource_graph.refs import RESOURCE_SCHEMES, ResourceRef, ResourceScheme
-from nexus.services.resource_graph.schemas import EdgeOrigin
 
 ResourceChatSubjectMode = Literal["none", "label", "scope", "readable", "quote", "generated_output"]
 ResourceReadMode = Literal["none", "scope", "body", "media"]
@@ -689,12 +688,6 @@ def _child_refs(
     if viewer_id is not None:
         params["viewer_id"] = viewer_id
     return tuple(ResourceRef(scheme=scheme, id=row[0]) for row in db.execute(text(sql), params))
-
-
-NOTE_MEDIA_SEARCH_EDGE_ORIGINS: tuple[EdgeOrigin, ...] = (
-    "user",
-    "highlight_note",
-)
 
 
 _PAGE_NOTE_BLOCKS_SQL = """

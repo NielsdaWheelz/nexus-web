@@ -28,18 +28,20 @@ from nexus.schemas.resource_items import (
     ResourceTitleMutationOut,
     ResourceTitleMutationRequest,
 )
-from nexus.schemas.resource_openables import (
+from nexus.schemas.resource_search import (
     ResourceOpenableSearchRequest,
     ResourceOpenableSearchResponse,
+    ResourceTargetSearchRequest,
+    ResourceTargetSearchResponse,
 )
-from nexus.schemas.resource_targets import ResourceTargetSearchRequest, ResourceTargetSearchResponse
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
     parse_resource_ref,
 )
-from nexus.services.resource_items import action_snapshots, mutations, openables, surfaces, targets
+from nexus.services.resource_items import action_snapshots, mutations, surfaces
 from nexus.services.resource_items import locators as locator_service
+from nexus.services.search import pickers
 
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 
@@ -84,7 +86,7 @@ def resolve_resource_locators(
 def search_resource_targets(
     request: ResourceTargetSearchRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[ResourceTargetSearchResponse]:
-    return Data(data=targets.search_targets(db, viewer_id=viewer.user_id, request=request))
+    return Data(data=pickers.search_targets(db, viewer_id=viewer.user_id, request=request))
 
 
 @router.post("/openables/search")
@@ -92,7 +94,7 @@ def search_openable_resources(
     request: ResourceOpenableSearchRequest, response: Response, viewer: ViewerDep, db: DbSession
 ) -> Data[ResourceOpenableSearchResponse]:
     started_at = time.monotonic()
-    result = openables.search_openable_resources(db, viewer_id=viewer.user_id, request=request)
+    result = pickers.search_openables(db, viewer_id=viewer.user_id, request=request)
     duration_ms = (time.monotonic() - started_at) * 1000
     response.headers.append("Server-Timing", f"nexus_openables;dur={duration_ms:.2f}")
     return Data(data=result)

@@ -1,168 +1,88 @@
-"""Strict Browse and non-mutating Preview wire contract."""
+"""Browse and non-mutating Preview wire contract, with its enums."""
 
 from __future__ import annotations
 
-import re
-import unicodedata
-from collections.abc import Iterable
 from datetime import datetime
+from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field
 
-from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.presence import Presence
-from nexus.services.browse.models import (
-    BrowseKind,
-    BrowsePreviewQuery,
-    BrowseQuery,
-    BrowseSort,
-    BrowseSource,
-)
 from nexus.services.sealed_handles import DiscoveryTargetHandle
 
-_OUT = ConfigDict(
-    extra="forbid",
-    populate_by_name=True,
-    strict=True,
-    json_schema_serialization_defaults_required=True,
-)
-_LIMIT = re.compile(r"[1-9][0-9]*\Z", re.ASCII)
-_CURSOR = re.compile(r"[A-Za-z0-9_-]+\Z", re.ASCII)
-_TARGET_ADAPTER = TypeAdapter(DiscoveryTargetHandle)
-_BROWSE_KEYS = frozenset({"q", "kind", "source", "sort", "limit", "cursor"})
-_PREVIEW_KEYS = frozenset({"target", "limit", "cursor"})
-_VALID_SOURCES = {
-    BrowseKind.Pdf: frozenset({BrowseSource.Nexus}),
-    BrowseKind.Epub: frozenset({BrowseSource.Nexus, BrowseSource.ProjectGutenberg}),
-    BrowseKind.WebArticle: frozenset({BrowseSource.Nexus, BrowseSource.Brave}),
-    BrowseKind.Video: frozenset({BrowseSource.Nexus, BrowseSource.YouTube}),
-    BrowseKind.Podcast: frozenset({BrowseSource.PodcastIndex}),
-}
 
-
-def _invalid_browse_query() -> InvalidRequestError:
-    return InvalidRequestError(
-        ApiErrorCode.E_INVALID_BROWSE_QUERY,
-        "Invalid Browse query",
+class _Out(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+        strict=True,
+        json_schema_serialization_defaults_required=True,
     )
 
 
-def _invalid_preview_query() -> InvalidRequestError:
-    return InvalidRequestError(
-        ApiErrorCode.E_INVALID_DISCOVERY_TARGET,
-        "Invalid discovery target",
-    )
+class BrowseKind(StrEnum):
+    Pdf = "Pdf"
+    Epub = "Epub"
+    WebArticle = "WebArticle"
+    Video = "Video"
+    Podcast = "Podcast"
 
 
-def _exact_parameters(
-    query_items: Iterable[tuple[str, str]],
-    *,
-    allowed: frozenset[str],
-    invalid: InvalidRequestError,
-) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for key, value in query_items:
-        if key not in allowed or key in values:
-            raise invalid
-        values[key] = value
-    return values
+class BrowseSource(StrEnum):
+    Nexus = "Nexus"
+    ProjectGutenberg = "ProjectGutenberg"
+    Brave = "Brave"
+    YouTube = "YouTube"
+    PodcastIndex = "PodcastIndex"
 
 
-def _parse_limit(raw: str, *, invalid: InvalidRequestError) -> int:
-    if not _LIMIT.fullmatch(raw):
-        raise invalid
-    limit = int(raw)
-    if limit > 20:
-        raise invalid
-    return limit
+class BrowseSort(StrEnum):
+    Relevance = "Relevance"
+    Newest = "Newest"
 
 
-def _parse_cursor(raw: str | None, *, invalid: InvalidRequestError) -> str | None:
-    if raw is None:
-        return None
-    if len(raw) > 16_384 or not _CURSOR.fullmatch(raw):
-        raise invalid
-    return raw
+class BrowseQuery(BaseModel):
+    """``GET /browse`` query parameters; unknown keys are refused."""
+
+    q: str = Field(min_length=1, max_length=200)
+    kind: BrowseKind
+    source: BrowseSource
+    limit: int = Field(ge=1, le=20)
+    sort: BrowseSort | None = None
+    cursor: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
 
 
-def parse_browse_query(query_items: Iterable[tuple[str, str]]) -> BrowseQuery:
-    invalid = _invalid_browse_query()
-    values = _exact_parameters(query_items, allowed=_BROWSE_KEYS, invalid=invalid)
-    if not {"q", "kind", "source", "limit"} <= values.keys():
-        raise invalid
-    query = values["q"]
-    if (
-        query != query.strip()
-        or query != unicodedata.normalize("NFC", query)
-        or not 1 <= len(query) <= 200
-        or any(ord(character) < 32 or 127 <= ord(character) <= 159 for character in query)
-    ):
-        raise invalid
-    try:
-        kind = BrowseKind(values["kind"])
-        source = BrowseSource(values["source"])
-        sort = BrowseSort(values["sort"]) if "sort" in values else None
-    except ValueError as exc:
-        raise invalid from exc
-    if source not in _VALID_SOURCES[kind]:
-        raise invalid
-    if sort is not None and not (
-        kind is BrowseKind.Video and source is BrowseSource.YouTube and sort is BrowseSort.Newest
-    ):
-        raise invalid
-    return BrowseQuery(
-        query=query,
-        kind=kind,
-        source=source,
-        sort=sort,
-        limit=_parse_limit(values["limit"], invalid=invalid),
-        cursor=_parse_cursor(values.get("cursor"), invalid=invalid),
-    )
+class BrowsePreviewQuery(BaseModel):
+    """``GET /browse/preview`` query parameters; ``cursor`` pages a podcast's episodes."""
+
+    target: str
+    limit: int = Field(ge=1, le=20)
+    cursor: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
 
 
-def parse_browse_preview_query(
-    query_items: Iterable[tuple[str, str]],
-) -> BrowsePreviewQuery:
-    invalid = _invalid_preview_query()
-    values = _exact_parameters(query_items, allowed=_PREVIEW_KEYS, invalid=invalid)
-    if not {"target", "limit"} <= values.keys():
-        raise invalid
-    try:
-        target = _TARGET_ADAPTER.validate_python(values["target"], strict=True)
-    except ValidationError as exc:
-        raise invalid from exc
-    return BrowsePreviewQuery(
-        target=target,
-        limit=_parse_limit(values["limit"], invalid=invalid),
-        cursor=_parse_cursor(values.get("cursor"), invalid=invalid),
-    )
-
-
-class InNexusMediaResolution(BaseModel):
+class InNexusMediaResolution(_Out):
     kind: Literal["InNexusMedia"] = "InNexusMedia"
     href: str
     action_subject_ref: str = Field(serialization_alias="actionSubjectRef")
     media_summary: MediaSummaryOut = Field(serialization_alias="mediaSummary")
 
-    model_config = _OUT
 
-
-class InNexusPodcastResolution(BaseModel):
+class InNexusPodcastResolution(_Out):
     kind: Literal["InNexusPodcast"] = "InNexusPodcast"
     href: str
     action_subject_ref: str = Field(serialization_alias="actionSubjectRef")
 
-    model_config = _OUT
 
-
-class PreviewResolution(BaseModel):
+class PreviewResolution(_Out):
     kind: Literal["Preview"] = "Preview"
     target: DiscoveryTargetHandle
-
-    model_config = _OUT
 
 
 type BrowseResolution = Annotated[
@@ -171,32 +91,24 @@ type BrowseResolution = Annotated[
 ]
 
 
-class EpubFacts(BaseModel):
+class EpubFacts(_Out):
     ebook_ref: Presence[str] = Field(serialization_alias="ebookRef")
 
-    model_config = _OUT
 
-
-class WebArticleFacts(BaseModel):
+class WebArticleFacts(_Out):
     site_name: Presence[str] = Field(serialization_alias="siteName")
 
-    model_config = _OUT
 
-
-class VideoFacts(BaseModel):
+class VideoFacts(_Out):
     video_ref: Presence[str] = Field(serialization_alias="videoRef")
     channel_title: Presence[str] = Field(serialization_alias="channelTitle")
 
-    model_config = _OUT
 
-
-class PodcastFacts(BaseModel):
+class PodcastFacts(_Out):
     podcast_ref: str = Field(serialization_alias="podcastRef")
 
-    model_config = _OUT
 
-
-class _Candidate[Source: BrowseSource](BaseModel):
+class _Candidate[Source: BrowseSource](_Out):
     source: Source
     resolution: BrowseResolution
     title: str
@@ -204,8 +116,6 @@ class _Candidate[Source: BrowseSource](BaseModel):
     description: Presence[str]
     published_at: Presence[datetime] = Field(serialization_alias="publishedAt")
     image: Presence[str]
-
-    model_config = _OUT
 
 
 class EpubCandidate(_Candidate[Literal[BrowseSource.ProjectGutenberg]]):
@@ -232,14 +142,12 @@ class PodcastCandidate(_Candidate[Literal[BrowseSource.PodcastIndex]]):
     kind_facts: PodcastFacts = Field(serialization_alias="kindFacts")
 
 
-class OwnedMediaCandidate(BaseModel):
+class OwnedMediaCandidate(_Out):
     kind: Literal["OwnedMedia"] = "OwnedMedia"
     source: Literal[BrowseSource.Nexus] = BrowseSource.Nexus
     resolution: InNexusMediaResolution
     description: Presence[str]
     image: Presence[str]
-
-    model_config = _OUT
 
 
 type BrowseCandidate = Annotated[
@@ -248,7 +156,7 @@ type BrowseCandidate = Annotated[
 ]
 
 
-class BrowsePage(BaseModel):
+class BrowsePage(_Out):
     query: str
     kind: BrowseKind
     source: BrowseSource
@@ -256,50 +164,38 @@ class BrowsePage(BaseModel):
     items: list[BrowseCandidate]
     next_cursor: Presence[str] = Field(serialization_alias="nextCursor")
 
-    model_config = _OUT
 
-
-class EpubPreviewFacts(BaseModel):
+class EpubPreviewFacts(_Out):
     ebook_ref: str = Field(serialization_alias="ebookRef")
     import_href: str = Field(serialization_alias="importHref")
 
-    model_config = _OUT
 
-
-class WebArticlePreviewFacts(BaseModel):
+class WebArticlePreviewFacts(_Out):
     canonical_url: str = Field(serialization_alias="canonicalUrl")
     site_name: Presence[str] = Field(serialization_alias="siteName")
 
-    model_config = _OUT
 
-
-class VideoPreviewFacts(BaseModel):
+class VideoPreviewFacts(_Out):
     video_ref: str = Field(serialization_alias="videoRef")
     channel_title: Presence[str] = Field(serialization_alias="channelTitle")
     embed_href: str = Field(serialization_alias="embedHref")
 
-    model_config = _OUT
 
-
-class PodcastPreviewFacts(BaseModel):
+class PodcastPreviewFacts(_Out):
     podcast_ref: str = Field(serialization_alias="podcastRef")
     feed_href: str = Field(serialization_alias="feedHref")
     website_href: Presence[str] = Field(serialization_alias="websiteHref")
 
-    model_config = _OUT
 
-
-class EpisodePreviewFacts(BaseModel):
+class EpisodePreviewFacts(_Out):
     podcast_ref: str = Field(serialization_alias="podcastRef")
     episode_ref: str = Field(serialization_alias="episodeRef")
     podcast_title: str = Field(serialization_alias="podcastTitle")
     audio_href: str = Field(serialization_alias="audioHref")
     duration_seconds: Presence[int] = Field(serialization_alias="durationSeconds")
 
-    model_config = _OUT
 
-
-class PodcastPreviewEpisode(BaseModel):
+class PodcastPreviewEpisode(_Out):
     target: DiscoveryTargetHandle
     title: str
     contributors: list[ContributorCreditOut]
@@ -308,17 +204,13 @@ class PodcastPreviewEpisode(BaseModel):
     image: Presence[str]
     kind_facts: EpisodePreviewFacts = Field(serialization_alias="kindFacts")
 
-    model_config = _OUT
 
-
-class PodcastPreviewEpisodePage(BaseModel):
+class PodcastPreviewEpisodePage(_Out):
     items: list[PodcastPreviewEpisode]
     next_cursor: Presence[str] = Field(serialization_alias="nextCursor")
 
-    model_config = _OUT
 
-
-class _Preview(BaseModel):
+class _Preview(_Out):
     target: DiscoveryTargetHandle
     title: str
     contributors: list[ContributorCreditOut]
@@ -327,8 +219,6 @@ class _Preview(BaseModel):
     image: Presence[str]
     source_href: str = Field(serialization_alias="sourceHref")
     resolution: BrowseResolution
-
-    model_config = _OUT
 
 
 class EpubPreview(_Preview):
@@ -366,23 +256,3 @@ type BrowsePreview = Annotated[
     EpubPreview | WebArticlePreview | VideoPreview | PodcastPreview | EpisodePreview,
     Field(discriminator="kind"),
 ]
-
-
-class UnavailableFailure(BaseModel):
-    kind: Literal["Unavailable"] = "Unavailable"
-
-    model_config = _OUT
-
-
-class RateLimitedFailure(BaseModel):
-    kind: Literal["RateLimited"] = "RateLimited"
-    retry_at: Presence[datetime] = Field(serialization_alias="retryAt")
-
-    model_config = _OUT
-
-
-class QuotaExhaustedFailure(BaseModel):
-    kind: Literal["QuotaExhausted"] = "QuotaExhausted"
-    reset_at: Presence[datetime] = Field(serialization_alias="resetAt")
-
-    model_config = _OUT

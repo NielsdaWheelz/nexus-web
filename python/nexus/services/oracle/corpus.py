@@ -31,7 +31,7 @@ from nexus.services.media_source_ingest import (
     repair_source_for_system_media,
 )
 from nexus.services.oracle.synthesis import Candidate
-from nexus.services.search.chunks import score_content_chunks
+from nexus.services.search.semantic import Embedding, nearest_chunks
 from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     current_transcript_embedding_provider,
@@ -153,9 +153,7 @@ def refresh_anchors(db: Session) -> None:
         )
 
 
-def rank_passages(
-    db: Session, *, question: str, query_embedding: tuple[str, list[float]]
-) -> list[Candidate]:
+def rank_passages(db: Session, *, question: str, query_embedding: Embedding) -> list[Candidate]:
     """Up to six resolved passages, one per work, by similarity plus two per shared tag."""
     rows = db.execute(
         text(
@@ -168,9 +166,11 @@ def rank_passages(
             """
         )
     ).all()
-    similarity = score_content_chunks(
-        db, query_embedding=query_embedding, chunk_ids=[row[5] for row in rows]
+    ids = [row[5] for row in rows]
+    near = nearest_chunks(
+        db, query_embedding, owner="cc.id = ANY(:ids)", params={"ids": ids}, limit=len(ids)
     )
+    similarity = dict(near)
     words = set(TOKEN.findall(question.lower()))
     scored = sorted(
         (

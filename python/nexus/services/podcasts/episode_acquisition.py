@@ -19,7 +19,7 @@ from nexus.schemas.podcast import (
     PodcastSourceFacts,
 )
 from nexus.services import library_entries
-from nexus.services.browse.models import ResolvedEpisode
+from nexus.services.browse.targets import ResolvedEpisode
 from nexus.services.collection_revisions import CollectionFamily, read_collection_revision
 from nexus.services.resource_mutation_replay import lookup_replay, record_replay
 
