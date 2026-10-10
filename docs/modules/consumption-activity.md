@@ -8,7 +8,7 @@ exact-session exclusion and restore; first observed canonical completion facts; 
 session reads. It does not own
 the reader cursor, current reader engagement, audio heartbeat state, explicit
 consumption state, or user-authored time. The implementing cutover is
-[`observed-consumption-activity-hard-cutover.md`](../cutovers/observed-consumption-activity-hard-cutover.md).
+`docs/cutovers/observed-consumption-activity-hard-cutover.md` at `ebd648197`.
 
 ## Facts and semantics
 

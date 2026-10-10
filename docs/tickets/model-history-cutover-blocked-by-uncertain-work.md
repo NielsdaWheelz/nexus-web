@@ -41,7 +41,7 @@ the controlled owner fixture adds one open parent/job: its 55 null parents and
 earlier `617baf70e/0256` and old-graph proofs remain historical. other current
 installed/consumer/controller preparation receipts are recorded in
 [the release ticket](production-release-pending-since-7dc68929b.md) and
-[verification](../metadata-enrichment-verification.md#release-preparation).
+`docs/metadata-enrichment-verification.md` §release preparation at `407fcc735`.
 no original uncertainty gained a terminal, seal or redispatch authority.
 
 prerequisites: separate production authorization, stopped writers/native host,

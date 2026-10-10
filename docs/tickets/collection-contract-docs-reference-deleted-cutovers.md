@@ -26,6 +26,10 @@ original-publication cutover and rewrote the affected workspace and pane-search
 contracts. those completed changes do not resolve the remaining delegated
 player and library contracts.
 
+2026-10-09 docs-history purge: module-doc cutover links now point to the
+current owner ([connections](../modules/connections.md)) or are pinned at
+`ebd648197`; the `library_destinations:v2` drift remains.
+
 ## prerequisites and proposed fix
 
 check which decisions survive reauthoring. document current constraints in their

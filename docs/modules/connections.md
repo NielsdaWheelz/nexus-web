@@ -17,8 +17,7 @@ it stores no recommendation and owns no destination membership.
 | web `components/collections/SuggestionsSection.tsx` | destination-owned add, stable survivors and bounded refill |
 
 python paths are relative to `python/nexus/`; web paths to `apps/web/src/`.
-[the cutover plan](../connections-plan.md) owns admission, writing and migration
-details; [the receipt](../connections-verification.md) records observations.
+link commands and their outputs are in [resource graph](resource-graph.md).
 
 ## relationships
 
@@ -37,6 +36,34 @@ chat membership combines incident user links and outgoing citation/system
 context facts. citations and context attachments remain distinct. new turns use
 current membership; admitted turns retain frozen scope. a linked chat exposes
 completed branches through bounded reads, without traversing its attachments.
+
+## admission and actions
+
+`resource_items/capabilities.py` gives each scheme one symmetric `link_mode`:
+`direct` (media, library, highlight, page, note_block, conversation, message,
+oracle_reading, artifact, contributor, podcast, passage_anchor),
+`materialize_passage` (content_chunk, evidence_span, fragment,
+oracle_passage_anchor, reader_apparatus_item: confirmation creates a durable
+`passage_anchors` row) or `none` (artifact_revision, external_snapshot).
+relationship ids are never targets. a link grants no ownership or edit right.
+`resource_items/targets.py` alone owns target admission, visibility,
+exclusion, dedupe, refill and cursors; a selected passage is never replaced by
+its whole document or a nearby match.
+
+`ConnectionOut.mutation` names only what the owning operation can do: `unlink`,
+`dismiss_discovery`, `detach_context`, `undo_assistant_chat` or
+`undo_assistant_generation`. `creation` is null without a verified authorship
+receipt. citations, embeds and link-note attachments have no generic unlink;
+detaching a context fact never erases the citation occurrence.
+
+chat attachment ranks come from one allocator in `edges.py`: reuse the target's
+earliest rank or append, under the conversation row lock (two chats lock in id
+order). each chat endpoint ranks independently; removing one reason never
+reorders a still-attached resource. `nexus.resource.read` pages a linked
+conversation's completed messages across branches in `(seq,id)` order, labelled
+per segment and bounded by `READ_DOCUMENT_MAX_CHARS`; a changed source makes the
+cursor stale. old stance/synapse/resonance vocabulary survives only in
+migration inputs and immutable history, never as an active alias.
 
 ## discovery
 

@@ -51,7 +51,7 @@ stable accessibility hierarchy (`could not get idle state`); spoken output and
 linear focus order were not observed. this is bounded interaction evidence, not
 screen-reader acceptance. these checks used the pre-rebase feature commit
 `16099bdd84f4a20c443b6f066f23bc2a2334056e`. its installed apk and navigation receipts are in
-[the reader verification](../reader-source-notes-verification.md).
+`docs/reader-source-notes-verification.md` at `407fcc735`.
 the same installed artifact passed a post-freeze hosted compact touch
 check 3/3: complete ordered source bodies opened, dismissal focused the exact
 marker, and canonical cursor revision stayed unchanged. this still does not

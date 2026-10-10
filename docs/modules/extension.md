@@ -2,7 +2,8 @@
 
 One Firefox (≥ 153, manifest v2) extension saves the current article, or a
 right-clicked PDF/EPUB link, into the viewer's own Nexus through the upload
-lifecycle the web app already uses. Contract: `docs/extension-firefox-v1-plan.md`.
+lifecycle the web app already uses. The server half of the upload lifecycle
+is in [storage](storage.md).
 Sources: `apps/web/src/extension/`, manifest `apps/extension/manifest.json`,
 build `apps/web/scripts/build-extension.mjs` → `apps/extension/dist`.
 
@@ -224,6 +225,31 @@ leaves the draft resumable.
 Failures retain the target; after `prepared` they retain the exact bytes and
 key. Terminal codes (invalid type, too large, integrity, conflict, forbidden,
 page gone, account mismatch) offer discard only; everything else offers retry.
+
+## server api
+
+Every call goes through the web app's `/api/extension/...` proxy; the
+extension token authorizes exactly these routes. Capture operations load the
+session by `created_by_user_id` and `input_origin.kind = "BrowserCapture"`
+(provenance, not the http `Origin`).
+
+| backend route | contract |
+| --- | --- |
+| `GET`, `DELETE /auth/extension-sessions/current` | account and byte limits; revocation |
+| `GET /extension/library-destinations?q&cursor&limit` | the shared writable-destination search; no create authority |
+| `POST /extension/captures` | strict intent (`kind`, `source_url`, `filename`, `content_type`, `size_bytes`, `sha256`, `library_ids`) plus `Idempotency-Key`; creates or replays an upload session |
+| `GET /extension/captures/{handle}` | read-only status; an expired capability reads `NeedsAttention` |
+| `POST /extension/captures/{handle}/confirm`, `/retry`, `/transport-failure` | the shared upload-session commands |
+| `DELETE /extension/captures/{handle}` | removes an unpublished session, never published media |
+
+The article packet is one immutable utf-8 json object of at most 4 MiB
+(`content_html` within the web-article limit, `source_html` at most 64 KiB);
+the server revalidates and sanitizes it and owns canonical text. Reuse is the
+account's oldest readable media of the same kind whose
+`media.browser_capture_sha256` (packet or file digest) matches; a changed
+snapshot is new media and existing content is never replaced. Out of scope:
+other browsers, private/container windows, autosave, remembered destinations,
+library creation, server scraping and fallback sources after a failure.
 
 ## ui and build
 

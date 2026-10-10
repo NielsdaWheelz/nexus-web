@@ -4,7 +4,7 @@ status: deferred by owner · origin: 2026-09-27 latest-model cutover · area: pr
 
 ## problem and evidence
 
-the provider library's 20 anthropic configuration cells returned usable native terminals, but the nexus browser/api/worker cells were not run. the owner declined the required acknowledgement of anthropic's standard retention terms. see `docs/codex-shell-cutover-verification.md`; do not infer nexus integration from library results.
+the provider library's 20 anthropic configuration cells returned usable native terminals, but the nexus browser/api/worker cells were not run. the owner declined the required acknowledgement of anthropic's standard retention terms. see `docs/codex-shell-cutover-verification.md` at `407fcc735`; do not infer nexus integration from library results.
 
 ## prerequisite and acceptance
 

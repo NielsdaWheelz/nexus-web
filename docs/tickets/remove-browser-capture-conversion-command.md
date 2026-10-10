@@ -18,7 +18,7 @@ production prerequisite (2026-09-23 handoff review, pr #377 at `5087d9e5f`):
 quiesce upload/capture requests and affected source jobs/retries before migration;
 keep them stopped through conversion and its zero-work second run, then resume.
 the pr body's “deploy; migrate; convert” sequence omits this boundary, required
-by `docs/extension-firefox-v1-plan.md:252`. the conversion module's opening
+by `docs/extension-firefox-v1-plan.md:252` at `407fcc735`. the conversion module's opening
 contract also requires conversion before enabling captures; the new adapter
 accepts packet inputs only. retain verified database/source backups and the
 legacy blobs through rollback. do not interpret deployment as permission to

@@ -166,7 +166,7 @@ Every INSERT/UPDATE/DELETE on `library_entries` goes through
   `services/dossier/inputs.py`. `services/object_refs.py` is deleted;
   its former note/@-mention reads are superseded by `services/resource_items/
   targets.py` (target search) and the shared frontend target controller — see
-  [universal-link-authoring-hard-cutover.md](../cutovers/universal-link-authoring-hard-cutover.md).
+  [connections](connections.md).
   Visibility itself remains the boolean predicates in `auth/permissions.py`;
   `services/highlights.py` reuses `permissions.highlight_library_intersection_exists`
   rather than re-implementing the intersection.
@@ -364,7 +364,10 @@ items / show finished.
   durable reader-cursor saves, and reading-activity installs. an acknowledged
   teardown save still publishes after its reader unmounts. the account-scoped
   `MediaSummaryProvider` patches retained facts without changing occurrence
-  order, pagination or focus. mounted In progress, Unfinished, and Remaining
+  order, pagination or focus. it refreshes through
+  `POST /media/summaries/resolve` (1–100 unique `mediaIds`; one result per id in
+  request order; missing and invisible both read absent), one batch in flight,
+  no per-row requests and no timers. mounted In progress, Unfinished, and Remaining
   time views independently reconcile the whole retained prefix, including
   inactive and empty panes; restored views revalidate on return. ordinary fact
   updates preserve list geometry. duration calculation remains server-owned.
@@ -409,8 +412,7 @@ focused chip disappears. pane search focuses its input. a query-key row change
 bypasses the collection View Transition, while domain commits and mutations
 retain the existing transition and requested/committed lifecycle.
 
-See
-[library-entry-view-continuity-hard-cutover.md](../cutovers/library-entry-view-continuity-hard-cutover.md).
+History: `docs/cutovers/library-entry-view-continuity-hard-cutover.md` at `ebd648197`.
 
 ## suggestions
 

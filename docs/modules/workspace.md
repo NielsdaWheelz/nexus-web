@@ -306,9 +306,10 @@ stale completion events.
 The provider resets fully shown when the active `(paneId, routeKey)`, semantic
 reader source, EPUB unit, or mobile mode changes. Reflow, lazy media, zoom,
 IME, rotation, and safe-area changes retain that source identity and only
-rebaseline live geometry. App-owned reader positioning passes through the
-single locked `paneScroll.ts` boundary, so a programmatic jump cannot become
-the next reading delta.
+rebaseline live geometry. App-owned reader positioning holds the chrome lock
+(`lib/documentReader/runtime.ts` through the host's `holdChrome`), and
+`lib/documentReader/scrollport.ts` counts only genuine input as reading movement,
+so a programmatic jump cannot become the next reading delta.
 
 The provider pins chrome fully visible at the document top, for reduced motion,
 and while reader restore, positioning, Find, selection, navigation,

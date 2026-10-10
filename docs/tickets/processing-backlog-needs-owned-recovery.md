@@ -6,7 +6,7 @@ area: source processing operations
 
 the current imports owner reports 24 attention items on production
 `7dc68929b4d5ddfd77eb1a50228d477fa0148b5d` / database `0241`.
-[the review](../processing-failures-review.md) inventories every item and
+the review (`docs/processing-failures-review.md` at `407fcc735`) inventories every item and
 separates retained-source defects, historical failures, indexing repair and
 current remote access denials. all seven uploaded originals were read and
 matched stored sha256/size. no production attempt was retried or changed.

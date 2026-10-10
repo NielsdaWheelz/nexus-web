@@ -11,7 +11,7 @@ metadata jobs: *mere christianity* 1952, *of other worlds* 1966 and standalone
 *weight of glory* 1941-11. receipt `803fb8061934` qualifies original stock
 `gpt-6-luna/xhigh`, strict schema, useful four-tool research, supported precision,
 edition separation and contributor identities/roles. the earlier `bcdaf51de`
-cohort is historical. see [verification](../metadata-enrichment-verification.md).
+cohort is historical. see `docs/metadata-enrichment-verification.md` at `407fcc735`.
 these isolated jobs do not correct saved production items.
 
 problem: saved lewis items may retain dates produced under the old meaning or

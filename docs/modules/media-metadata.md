@@ -3,8 +3,7 @@
 `services/metadata_enrichment.py` owns bibliographic meaning, bounded input and
 strict generated-output acceptance. `tasks/enrich_metadata.py` composes it with
 the contributor owner and generation service. `services/metadata_operations.py`
-projects the existing jobs; it stores no shadow activity state. the implementation
-contract is [metadata-enrichment-plan.md](../metadata-enrichment-plan.md).
+projects the existing jobs; it stores no shadow activity state.
 
 ## bibliography
 
@@ -198,7 +197,7 @@ qualified immutable pins and genuine exact-model four-tool research are
 delivered. metadata's installed job and bibliographic acceptance are separate
 from that capability proof. production release additionally requires the
 historical uncertainty disposition and actual starting-revision effect/undo
-restore proof in [the plan](../metadata-enrichment-plan.md#9-hard-cutover-and-verification).
+restore proof in `docs/metadata-enrichment-plan.md` §9 at `407fcc735`.
 
 `python/scripts/repair_epub_contributors.py` previews by default and applies only
 explicitly requested source-observation repair. it uses retained originals,

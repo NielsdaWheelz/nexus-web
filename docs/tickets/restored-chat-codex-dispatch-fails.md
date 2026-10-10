@@ -21,7 +21,7 @@ this product path. no successful tool use or leave/reopen recovery is claimed.
 the successor at remote main `fbd08ba68` replaces frozen mcp with the approved
 codex shell and private generation api. an isolated pre-merge cohort completed
 browser chat and model-originated create/read/undo; see
-`docs/codex-shell-cutover-verification.md`. the final merged tree is not
+`docs/codex-shell-cutover-verification.md` at `407fcc735`. the final merged tree is not
 live-qualified and production still pointed to
 `7dc68929b4d5ddfd77eb1a50228d477fa0148b5d` in the 2026-09-27 read-only
 check. these successor results do not identify the original `invalid_request`

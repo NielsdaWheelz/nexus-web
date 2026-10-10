@@ -412,7 +412,7 @@ class ResourceExternalSnapshot(Base):
 class PassageAnchor(Base):
     """User-owned durable passage identity within one owner (media or
     note_block), materialized when a link targets a derived passage
-    (connections-plan.md, owners and schemas). Owner,
+    (docs/modules/connections.md). Owner,
     normalized quote, and key are immutable; only the selector's locator_hint
     is replaceable. ``id`` is application-generated. ``owner_id`` is
     polymorphic and deliberately has no FK; owner visibility and explicit

@@ -8,10 +8,10 @@ presentations plus the modal lifecycle they share. Owners live under
 stylesheets, `apps/web/src/components/ui/useMobileModalLifecycle.ts`, and
 `apps/web/src/lib/ui/{useDialogOverlay,useModalLayer,useEscapeKey,useBodyOverflowLock,useHistoryDismiss,useKeyboardInset}.ts`.
 
-Established by `docs/cutovers/mobile-sheet-keyboard-unification-hard-cutover.md`.
-The current mobile Nexus projection is defined by
+Established by `docs/cutovers/mobile-sheet-keyboard-unification-hard-cutover.md`;
+the mobile Nexus projection came from
 `docs/cutovers/mobile-nexus-full-screen-task-hard-cutover.md` and
-`docs/cutovers/daily-pages-quick-capture-hard-cutover.md`.
+`docs/cutovers/daily-pages-quick-capture-hard-cutover.md` (all at `ebd648197`).
 
 ## MobileSheet Capability Contract
 
