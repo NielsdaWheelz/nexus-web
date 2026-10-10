@@ -24,8 +24,8 @@ import Input from "@/components/ui/Input";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import CollectionView from "@/components/collections/CollectionView";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
 import ContributorFilter, { useContributorFilterLabels } from "@/components/contributors/ContributorFilter";
 import type { ContributorSearchItem } from "@/lib/contributors/api";
 import KindChips from "@/components/search/KindChips";
@@ -715,7 +715,7 @@ export default function SearchPaneBody() {
     () => ({ label: "Search controls", content: toolbar, focusInput }),
     [focusInput, toolbar],
   );
-  usePanePrimaryChrome({
+  usePaneChrome({
     collection,
     header: {
       kind: "Section",

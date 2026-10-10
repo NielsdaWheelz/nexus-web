@@ -10,7 +10,7 @@ import {
 } from "@/components/feedback/Feedback";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import { usePaneChrome, type PaneFilterRowsSearch } from "@/lib/panes/paneChrome";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { consumePendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
@@ -35,7 +35,6 @@ import type { ResourceSurface } from "@/lib/resources/resourceItems";
 import { useResourceSurfaceFilterRows } from "@/components/resource-surface/useResourceSurfaceFilterRows";
 import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
-import type { PaneReadySearchPublication } from "@/lib/panes/paneSearch";
 import {
   notifyPageActionIntentOwnerReady,
   usePageActionIntentOwner,
@@ -412,7 +411,7 @@ function PageChrome({
   viewActions,
 }: {
   page: PageView | null;
-  search: PaneReadySearchPublication;
+  search: PaneFilterRowsSearch;
   viewActions: ActionDescriptor[];
 }) {
   return page ? (
@@ -426,8 +425,8 @@ function PageChrome({
   );
 }
 
-function LatentPageChrome({ search }: { search: PaneReadySearchPublication }) {
-  usePanePrimaryChrome({ search });
+function LatentPageChrome({ search }: { search: PaneFilterRowsSearch }) {
+  usePaneChrome({ search });
   return null;
 }
 
@@ -437,7 +436,7 @@ function MaterializedPageChrome({
   viewActions,
 }: {
   page: PageView;
-  search: PaneReadySearchPublication;
+  search: PaneFilterRowsSearch;
   viewActions: ActionDescriptor[];
 }) {
   const connections = useMemo(
@@ -448,14 +447,13 @@ function MaterializedPageChrome({
     ),
     [page.id],
   );
-  const { companionAction } = useResourceInspector({
+  useResourceInspector({
     scheme: "page",
     handle: page.id,
     bodies: { linkedItems: connections },
   });
-  usePanePrimaryChrome({
+  usePaneChrome({
     search,
-    companionAction: companionAction ?? undefined,
     actionSubject: page.actionSubject,
     menuActions: viewActions,
   });

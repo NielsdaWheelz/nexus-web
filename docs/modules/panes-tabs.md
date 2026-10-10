@@ -27,8 +27,10 @@ panes.
 
 ## refresh
 
-`usePaneRefresh` owns the refresh command, gesture, source cancellation, and
-settled announcement. `useResource` owns fetch identity and retries. Collection
+`usePaneRefresh` owns the refresh command, gesture, indicator and settled
+announcement. One execution runs at a time; it belongs to the fence (route and
+the publication's source key) that started it, and a new fence aborts it, so a
+result lands only where it was asked for. `useResource` owns fetch identity and retries. Collection
 panes use `useRevalidationSettlement` to own one pending promise and its abort
 listener. Each pane keeps its source checks, committed-result marker, and
 cancellation restoration; it resolves the promise only after its matching

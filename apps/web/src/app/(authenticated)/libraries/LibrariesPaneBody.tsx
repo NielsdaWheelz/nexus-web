@@ -31,9 +31,9 @@ import Input from "@/components/ui/Input";
 import SelectField from "@/components/ui/SelectField";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
 import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
-import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
+import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
 import { presentLibrary } from "@/lib/collections/presenters/library";
 import {
   CANONICAL_LIBRARIES_INDEX_VIEW,
@@ -72,9 +72,11 @@ import {
   usePaneScrollRetention,
   usePaneVisitData,
 } from "@/lib/workspace/paneReturnMemento";
-import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
-import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
-import type { PaneRefreshExecute } from "@/lib/panes/panePublications";
+import {
+  matchesPaneFilterQuery,
+  usePaneFilterRows,
+} from "@/lib/panes/paneFilterRows";
+import type { PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import {
   acceptLibraryInvite,
   declineLibraryInvite,
@@ -662,7 +664,7 @@ export default function LibrariesPaneBody() {
     },
     [revalidateLibraries],
   );
-  usePanePrimaryChrome({
+  usePaneChrome({
     collection,
     refresh: {
       kind: "Refreshable",

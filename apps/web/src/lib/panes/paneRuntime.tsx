@@ -14,10 +14,7 @@ import {
 } from "react";
 import { preloadPane } from "@/lib/panes/paneRenderRegistry";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
-import type {
-  PaneTransientSecondarySurfaceId,
-  WorkspaceSecondarySurfaceId,
-} from "@/lib/panes/paneSecondaryModel";
+import type { WorkspaceSecondarySurfaceId } from "@/lib/panes/paneSecondaryModel";
 import {
   clearMediaReaderViewTransition,
   startSameDocumentViewTransition,
@@ -28,7 +25,6 @@ import type {
   WorkspaceSecondaryPane,
 } from "@/lib/workspace/model";
 import { PaneReturnVisitScope } from "@/lib/workspace/paneReturnMemento";
-import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import type {
   PaneDailyPage,
@@ -55,9 +51,6 @@ export interface PaneScopedRouter {
   back(): void;
   forward(): void;
 }
-export interface PaneSecondarySurfaceRequestOptions {
-  readonly returnFocusTo?: HTMLElement | null;
-}
 
 /** What a body knows that its href alone does not say, and what it may do. */
 export type PaneRuntimeContextValue = PaneRuntimeFacts & PaneRuntimeCommands;
@@ -74,11 +67,8 @@ interface PaneRuntimeFacts {
   hash: string;
   /** The route's own resource ref (`media:<id>` …); null for authors. */
   resourceRef: string | null;
+  /** The pane's stored Companion, as the store holds it. */
   secondaryPane: WorkspaceSecondaryPane | null;
-  transientSecondarySurface: {
-    id: PaneTransientSecondarySurfaceId;
-    expanded: boolean;
-  } | null;
   paneEntryDelivery: PaneEntryDelivery | null;
 }
 interface PaneRuntimeCommands {
@@ -90,28 +80,19 @@ interface PaneRuntimeCommands {
   setPaneLabel(label: string | null): void;
   setPaneDailyPage(page: PaneDailyPage | null): void;
   acknowledgePaneEntryDelivery(delivery: PaneEntryDelivery): void;
-  // host-owned, bound to this pane by the host:
-  setPaneLayout(layout: PaneRuntimeLayout | null): void;
+  // the pane shell's Companion commands; null opens the remembered tab while
+  // published, else the default.
   requestSecondarySurface(
-    surfaceId: WorkspaceSecondarySurfaceId,
-    options?: PaneSecondarySurfaceRequestOptions,
+    surfaceId: WorkspaceSecondarySurfaceId | null,
+    options?: { readonly returnFocusTo?: HTMLElement | null },
   ): void;
   closeSecondaryPane(options?: { focusAfterClose?: HTMLElement | null }): void;
-  requestTransientSecondarySurface(
-    surfaceId: PaneTransientSecondarySurfaceId,
-    options?: PaneSecondarySurfaceRequestOptions,
-  ): void;
-  closeTransientSecondarySurface(): void;
-  previewTransientSecondaryResult(): void;
+  /** The Inspector action's toggle. */
+  toggleSecondaryPane(): void;
 }
 export type PaneHostCommands = Pick<
   PaneRuntimeCommands,
-  | "setPaneLayout"
-  | "requestSecondarySurface"
-  | "closeSecondaryPane"
-  | "requestTransientSecondarySurface"
-  | "closeTransientSecondarySurface"
-  | "previewTransientSecondaryResult"
+  "requestSecondarySurface" | "closeSecondaryPane" | "toggleSecondaryPane"
 >;
 
 const RuntimeContext = createContext<PaneRuntimeContextValue | null>(null);
@@ -120,8 +101,6 @@ const ActiveContext = createContext<boolean | null>(null);
 export function PaneRuntimeProvider(props: {
   pane: WorkspacePane;
   isActive: boolean;
-  secondaryPane: WorkspaceSecondaryPane | null;
-  transientSecondarySurface: PaneRuntimeContextValue["transientSecondarySurface"];
   host: PaneHostCommands;
   children: ReactNode;
 }) {
@@ -134,14 +113,8 @@ export function PaneRuntimeProvider(props: {
   const searchParams = useMemo(() => new URLSearchParams(search), [search]);
   const pending = store.pendingPaneEntryDeliveryByPaneId.get(pane.id);
   const delivery = pending?.visitId === visitId ? pending : null;
-  // The host re-mints the Inspector projection; keep it while it is equal.
-  const secondaryRef = useRef(props.secondaryPane);
-  if (JSON.stringify(secondaryRef.current) !== JSON.stringify(props.secondaryPane)) {
-    secondaryRef.current = props.secondaryPane;
-  }
-  const secondaryPane = secondaryRef.current;
-  const latest = useRef({ pane, route, secondaryPane, store, host });
-  latest.current = { pane, route, secondaryPane, store, host };
+  const latest = useRef({ pane, route, store, host });
+  latest.current = { pane, route, store, host };
 
   const commands = useMemo(() => {
     const now = () => latest.current;
@@ -184,22 +157,14 @@ export function PaneRuntimeProvider(props: {
         now().store.publishPaneDailyPage(pane.id, routeKey(), page),
       acknowledgePaneEntryDelivery: (delivery) =>
         now().store.acknowledgePaneEntryDelivery(delivery),
-      setPaneLayout: (layout) => now().host.setPaneLayout(layout),
       requestSecondarySurface: (surfaceId, options) =>
         now().host.requestSecondarySurface(surfaceId, options),
       closeSecondaryPane: (options) => now().host.closeSecondaryPane(options),
-      requestTransientSecondarySurface: (surfaceId, options) =>
-        now().host.requestTransientSecondarySurface(surfaceId, options),
-      closeTransientSecondarySurface: () =>
-        now().host.closeTransientSecondarySurface(),
-      previewTransientSecondaryResult: () =>
-        now().host.previewTransientSecondaryResult(),
+      toggleSecondaryPane: () => now().host.toggleSecondaryPane(),
     };
     return commands;
   }, [pane.id]);
 
-  const transientId = props.transientSecondarySurface?.id ?? null;
-  const transientExpanded = props.transientSecondarySurface?.expanded ?? false;
   const hash = url?.hash ?? "";
   const value = useMemo<PaneRuntimeContextValue>(
     () => ({
@@ -215,10 +180,7 @@ export function PaneRuntimeProvider(props: {
       hash,
       resourceRef:
         route.locator?.kind === "resource_ref" ? route.locator.ref : null,
-      secondaryPane,
-      transientSecondarySurface: transientId
-        ? { id: transientId, expanded: transientExpanded }
-        : null,
+      secondaryPane: pane.secondary,
       paneEntryDelivery: delivery,
     }),
     [
@@ -229,9 +191,7 @@ export function PaneRuntimeProvider(props: {
       route,
       searchParams,
       hash,
-      secondaryPane,
-      transientId,
-      transientExpanded,
+      pane.secondary,
       delivery,
     ],
   );

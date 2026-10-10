@@ -9,7 +9,7 @@ import AppliedFilters from "@/components/ui/AppliedFilters";
 import SelectField from "@/components/ui/SelectField";
 import CollectionFilterEditor from "@/components/workspace/CollectionFilterEditor";
 import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
-import type usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import type { usePaneFilterRows } from "@/lib/panes/paneFilterRows";
 
 /** One url-owned view parameter, shown as a select. */
 export interface ViewChoice {

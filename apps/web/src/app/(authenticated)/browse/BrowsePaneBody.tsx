@@ -21,8 +21,8 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import PaneSurface from "@/components/ui/PaneSurface";
 import PaneToolbar from "@/components/ui/PaneToolbar";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
 import { isInvalidViewError, type ApiError } from "@/lib/api/client";
 import type { Presence } from "@/lib/api/presence";
 import { requestWithRetry } from "@/lib/api/retryPolicy";
@@ -446,7 +446,7 @@ export default function BrowsePaneBody() {
           },
     [focusInput, inputRef, onQuery, query, summary],
   );
-  usePanePrimaryChrome({
+  usePaneChrome({
     collection,
     header: { kind: "Section", meta: { kind: "None" } },
   });

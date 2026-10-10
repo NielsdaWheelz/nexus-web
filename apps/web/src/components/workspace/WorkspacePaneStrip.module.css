@@ -66,24 +66,24 @@
 }
 
 /* --- states --- */
-.tab:hover:not(.active) {
+.tab:hover:not([data-active]) {
   background: var(--surface-hover);
 }
 
-.tab:hover:not(.active) .title {
+.tab:hover:not([data-active]) .title {
   color: var(--ink);
 }
 
-.active {
+.tab[data-active] {
   background: var(--surface-active);
   box-shadow: var(--shadow-1);
 }
 
-.active .title {
+.tab[data-active] .title {
   color: var(--ink);
 }
 
-.active .icon {
+.tab[data-active] .icon {
   color: var(--accent);
 }
 
@@ -102,19 +102,19 @@
   transition: opacity var(--duration-base) var(--ease-bloom);
 }
 
-.inView::after {
+.tab[data-in-view]::after {
   opacity: 1;
 }
 
-.minimized {
+.tab[data-minimized] {
   background: var(--surface-sunken);
 }
 
-.minimized .title {
+.tab[data-minimized] .title {
   color: var(--ink-faint);
 }
 
-.minimized .icon {
+.tab[data-minimized] .icon {
   opacity: 0.5;
 }
 
@@ -136,7 +136,7 @@
 
 .tab:hover .actions,
 .tab:focus-within .actions,
-.active .actions {
+.tab[data-active] .actions {
   opacity: 1;
 }
 
@@ -177,8 +177,13 @@
 }
 
 @keyframes pane-tab-skeleton-pulse {
-  0%, 100% { opacity: 0.4; }
-  50%      { opacity: 0.7; }
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.7;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

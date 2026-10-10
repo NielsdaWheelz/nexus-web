@@ -17,12 +17,6 @@ interface PaneHeaderIdentityProps {
   readonly projection: PaneHeaderProjection;
 }
 
-const SHORT_DATE_FORMAT: Intl.DateTimeFormatOptions = {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-};
-
 function pluralize(unit: string, value: number): string {
   if (value === 1) return unit;
   if (/(s|x|z|ch|sh)$/.test(unit)) return `${unit}es`;
@@ -37,15 +31,6 @@ function formatMeta(meta: PaneHeaderMeta): string | null {
       return null;
     case "Count":
       return `${meta.value.toLocaleString()} ${pluralize(meta.unit, meta.value)}`;
-    case "Date": {
-      // `resolvePaneHeaderModel` already proved this is a real calendar day, so
-      // the component-wise read cannot fail — and it fixes the day as a *local*
-      // one, which `new Date(iso)` would drift by a time zone.
-      const [year, month, day] = meta.iso.split("-").map(Number);
-      return new Intl.DateTimeFormat(undefined, SHORT_DATE_FORMAT).format(
-        new Date(year, month - 1, day),
-      );
-    }
   }
 }
 

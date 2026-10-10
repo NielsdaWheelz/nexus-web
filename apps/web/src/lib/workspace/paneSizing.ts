@@ -1,118 +1,36 @@
-import type { PaneWidthContract } from "@/lib/panes/paneRouteModel";
 import type { ReaderProfile } from "@/lib/reader/ReaderContext";
 
-// First-paint reader-column width estimate: column_width_ch glyphs at ~0.5em advance plus
-// --space-4 (1rem = 16px) inline padding on both sides. It seeds the shell's column probe
-// (AuthenticatedShell), so the server render and the first client paint agree; the probe
-// refines it to the measured width before paint.
+// First-paint reader-column estimate: column_width_ch glyphs at ~0.5em plus
+// 1rem inline padding each side. It seeds the shell's column probe
+// (AuthenticatedShell), so the server render and the first client paint agree.
 export function estimatePrimaryWidthPx(profile: ReaderProfile): number {
   return Math.ceil(
     profile.column_width_ch * profile.font_size_px * 0.5 + 2 * 16,
   );
 }
 
-export type PaneRuntimePrimaryWidth =
-  { kind: "workspace" } | { kind: "intrinsic"; widthPx: number };
-
-export interface PaneRuntimeLayout {
-  primaryWidth: PaneRuntimePrimaryWidth;
-}
-
-export interface EffectivePaneSizing {
-  primaryWidthPx: number;
-  primaryMinWidthPx: number;
-  primaryMaxWidthPx: number;
-  renderedPrimarySlotWidthPx: number;
-  renderedPrimarySlotMinWidthPx: number;
-  renderedPrimarySlotMaxWidthPx: number;
-  fixedChromeWidthPx: number;
-  storedWidthCorrectionPx: number | null;
-}
-
-export const DEFAULT_PANE_RUNTIME_LAYOUT: PaneRuntimeLayout = {
-  primaryWidth: { kind: "workspace" },
-};
-
-export function normalizePaneRuntimeLayout(
-  layout: PaneRuntimeLayout,
-): PaneRuntimeLayout {
-  let primaryWidth: PaneRuntimePrimaryWidth;
-  switch (layout.primaryWidth.kind) {
-    case "workspace":
-      primaryWidth = { kind: "workspace" };
-      break;
-    case "intrinsic":
-      if (
-        !Number.isFinite(layout.primaryWidth.widthPx) ||
-        layout.primaryWidth.widthPx <= 0
-      ) {
-        throw new Error("Pane runtime intrinsic width must be positive.");
-      }
-      primaryWidth = {
-        kind: "intrinsic",
-        widthPx: Math.ceil(layout.primaryWidth.widthPx),
-      };
-      break;
-    default: {
-      const exhaustive: never = layout.primaryWidth;
-      throw new Error(`Unhandled pane runtime primary width: ${exhaustive}`);
-    }
-  }
+/**
+ * The stored width (null follows the column) clamped to [min, max]: min is a
+ * reader's intrinsic width once it publishes one, else the column; max is the
+ * route's, never below min. Clamping is render-only: the store keeps what the
+ * user chose, so a narrower column gives the user's width back.
+ */
+export function primaryWidth(input: {
+  readonly storedPx: number | null;
+  readonly columnPx: number;
+  readonly routeMaxPx: number;
+  readonly intrinsicPx: number | null;
+}): {
+  readonly widthPx: number;
+  readonly minWidthPx: number;
+  readonly maxWidthPx: number;
+} {
+  const minWidthPx = Math.ceil(input.intrinsicPx ?? input.columnPx);
+  const maxWidthPx = Math.max(input.routeMaxPx, minWidthPx);
+  const stored = Math.round(input.storedPx ?? Math.ceil(input.columnPx));
   return {
-    primaryWidth,
-  };
-}
-
-export function resolveEffectivePaneSizing(input: {
-  storedWidthPx: number;
-  columnWidthPx: number;
-  routeWidth: PaneWidthContract;
-  runtimeLayout: PaneRuntimeLayout;
-  runtimeLayoutResolved: boolean;
-  fixedChromeWidthPx: number;
-  isMobile: boolean;
-}): EffectivePaneSizing {
-  const runtimeLayout = input.isMobile
-    ? DEFAULT_PANE_RUNTIME_LAYOUT
-    : normalizePaneRuntimeLayout(input.runtimeLayout);
-  const workspaceMinWidthPx = Math.ceil(input.columnWidthPx);
-  const intrinsicWidthPx =
-    !input.isMobile &&
-    input.routeWidth.allowsIntrinsicPrimaryWidth &&
-    runtimeLayout.primaryWidth.kind === "intrinsic"
-      ? runtimeLayout.primaryWidth.widthPx
-      : null;
-  const primaryMinWidthPx = intrinsicWidthPx ?? workspaceMinWidthPx;
-  const primaryMaxWidthPx = Math.max(
-    input.routeWidth.maxWidthPx,
-    primaryMinWidthPx,
-  );
-  const storedWidthPx = Number.isFinite(input.storedWidthPx)
-    ? Math.round(input.storedWidthPx)
-    : workspaceMinWidthPx;
-  const primaryWidthPx = Math.min(
-    primaryMaxWidthPx,
-    Math.max(primaryMinWidthPx, storedWidthPx),
-  );
-  const fixedChromeWidthPx =
-    input.isMobile || !Number.isFinite(input.fixedChromeWidthPx)
-      ? 0
-      : Math.max(0, Math.ceil(input.fixedChromeWidthPx));
-
-  return {
-    primaryWidthPx,
-    primaryMinWidthPx,
-    primaryMaxWidthPx,
-    renderedPrimarySlotWidthPx: primaryWidthPx + fixedChromeWidthPx,
-    renderedPrimarySlotMinWidthPx: primaryMinWidthPx + fixedChromeWidthPx,
-    renderedPrimarySlotMaxWidthPx: primaryMaxWidthPx + fixedChromeWidthPx,
-    fixedChromeWidthPx,
-    storedWidthCorrectionPx:
-      !input.isMobile &&
-      (!input.routeWidth.allowsIntrinsicPrimaryWidth ||
-        input.runtimeLayoutResolved) &&
-      storedWidthPx < primaryMinWidthPx
-        ? primaryMinWidthPx
-        : null,
+    widthPx: Math.min(maxWidthPx, Math.max(minWidthPx, stored)),
+    minWidthPx,
+    maxWidthPx,
   };
 }

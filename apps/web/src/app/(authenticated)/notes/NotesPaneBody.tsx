@@ -11,9 +11,9 @@ import {
 } from "@/components/feedback/Feedback";
 import CollectionView from "@/components/collections/CollectionView";
 import SelectField from "@/components/ui/SelectField";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
 import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
-import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
+import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
 import { notePagesResource } from "@/lib/api/resource";
 import {
   isApiError,
@@ -53,8 +53,10 @@ import {
 } from "@/lib/notes/pageContract";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { useResource } from "@/lib/api/useResource";
-import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
-import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import {
+  matchesPaneFilterQuery,
+  usePaneFilterRows,
+} from "@/lib/panes/paneFilterRows";
 import { presentNote } from "@/lib/collections/presenters/note";
 import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
 import styles from "./notes.module.css";
@@ -379,7 +381,7 @@ export default function NotesPaneBody() {
   );
 
   useSetPaneLabel("Notes");
-  usePanePrimaryChrome({
+  usePaneChrome({
     collection,
     header: {
       kind: "Section",

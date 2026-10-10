@@ -2,9 +2,6 @@
 
 import { useMemo, useRef } from "react";
 import DossierSurface from "@/components/dossier/DossierSurface";
-import { FindResults } from "@/components/find/FindBar";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import { dispatchReaderSourceActivation } from "@/lib/resourceGraph/citations";
 import { useDossier } from "@/lib/dossiers/useDossier";
 import {
@@ -13,6 +10,7 @@ import {
   type FindSource,
 } from "@/lib/find/find";
 import { useFind } from "@/lib/find/useFind";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { buildDomTextCursor } from "@/lib/canonicalText/domTextCursor";
 import { resolveDomTextRanges } from "@/lib/canonicalText/domTextRanges";
 import {
@@ -21,7 +19,6 @@ import {
   usePaneRuntime,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
-import type { PaneSecondaryPublication } from "@/lib/panes/panePublications";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { activateResource } from "@/lib/resources/activation";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
@@ -85,21 +82,7 @@ export default function ArtifactPaneBody() {
     [revisionRef],
   );
   const find = useFind(source);
-  usePaneSecondary(
-    useMemo<PaneSecondaryPublication | null>(
-      () =>
-        find && {
-          groupId: "resource-inspector",
-          surfaces: [],
-          defaultSurfaceId: null,
-          transientSurfaces: [
-            { id: "resource-search", body: <FindResults find={find} /> },
-          ],
-        },
-      [find],
-    ),
-  );
-  usePanePrimaryChrome({
+  usePaneChrome({
     header: head
       ? { kind: "Resource", resource: { status: "Ready", creditGroups: [] } }
       : dossier.head.kind === "Failed"

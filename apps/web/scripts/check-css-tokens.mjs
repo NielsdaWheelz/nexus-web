@@ -92,7 +92,7 @@ const runtimeCustomPropertyOwners = new Map([
   // out of the Study and the Press.
   ["--grain-seed", "src/components/theme/SolarEffects.tsx"],
   ["--moon", "src/components/theme/SolarEffects.tsx"],
-  ["--pane-refresh-offset", "src/components/workspace/PaneShell.tsx"],
+  ["--pane-refresh-offset", "src/components/workspace/usePaneRefresh.tsx"],
 ]);
 
 // Direction §5 — the absence lint. No Tengwar webfont ships, ever: the

@@ -6,13 +6,10 @@
 // a pdf asks for, and the reader's keys (g chords, focus mode).
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { Activity, ChevronLeft, ChevronRight } from "lucide-react";
-import { FindResults } from "@/components/find/FindBar";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import Select from "@/components/ui/Select";
-import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/credits";
 import { MapRail, type RailMarker } from "@/lib/documentReader/chrome/MapRail";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
@@ -20,7 +17,11 @@ import { PDF_ZOOM } from "@/lib/documentReader/model";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import type { FindController } from "@/lib/find/useFind";
 import type { MediaDetail } from "@/lib/media/mediaDetail";
-import { PANE_COMMAND_RESOLVING_REASON } from "@/lib/panes/panePublications";
+import {
+  PANE_COMMAND_RESOLVING_REASON,
+  usePaneChrome,
+  usePaneLayout,
+} from "@/lib/panes/paneChrome";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
@@ -149,7 +150,7 @@ export function useReaderChrome(input: {
 }): void {
   const { media, reader, find, readable, isMobile, paneActive } = input;
   const runtime = requirePaneRuntime(usePaneRuntime(), "useReaderChrome");
-  const { activateTarget, requestSecondarySurface, paneId } = runtime;
+  const { activateTarget, requestSecondarySurface, toggleSecondaryPane, paneId } = runtime;
   const { profile, setTheme, setFocusMode } = useReaderContext();
   const kind = useReaderState(reader, (s) => (s.document.status === "ready" ? s.document.doc.kind : null));
   const sectioned = useReaderState(reader, (s) => s.document.status === "ready" && s.document.doc.kind === "text" && s.document.doc.sections.length > 0);
@@ -157,15 +158,11 @@ export function useReaderChrome(input: {
   const id = media?.id ?? runtime.pathParams.id;
   const pdf = media?.kind === "pdf";
 
-  const inspector = useResourceInspector({
+  useResourceInspector({
     scheme: "media",
     handle: id,
     bodies: { contents: input.contents, linkedItems: input.evidence },
-    searchResults: useMemo(() => (find ? <FindResults find={find} /> : undefined), [find]),
   });
-  const commands = useRef(inspector);
-  commands.current = inspector;
-
   const instrument = useMemo(
     () =>
       !readable
@@ -218,7 +215,7 @@ export function useReaderChrome(input: {
   const authors = media
     ? groupContributorCredits(selectMediaAuthors(media.contributors)).find((group) => group.role === "author")
     : undefined;
-  usePanePrimaryChrome(
+  usePaneChrome(
     useMemo(
       () => ({
         header: media
@@ -238,42 +235,32 @@ export function useReaderChrome(input: {
           : media === null || (readable && media.kind !== "podcast_episode" && media.kind !== "video")
             ? { kind: "Resolving" as const, control: "Find" as const }
             : undefined,
-        companionAction: inspector.companionAction ?? undefined,
         actionSubject: { ref: canonicalResourceRef({ scheme: "media", id }) },
         menuActions,
       }),
-      [authors, find, id, input.failed, inspector.companionAction, instrument, media, menuActions, readable],
+      [authors, find, id, input.failed, instrument, media, menuActions, readable],
     ),
   );
-  usePaneFixedChrome(
+  // a pdf's own width is the pane's minimum; the map rail sits beside the body.
+  usePaneLayout(
     useMemo(
-      () =>
-        readable && !isMobile
-          ? {
-              id: "reader-document-map-overview-rail" as const,
-              widthPx: 52,
-              body: (
-                <section aria-label="Document Map overview" className={styles.rail}>
-                  <MapRail reader={reader} markers={input.markers} onMarker={input.onMarker} />
-                </section>
-              ),
-            }
-          : null,
-      [input.markers, input.onMarker, isMobile, readable, reader],
+      () => ({
+        intrinsicWidthPx: pdf ? widthPx : null,
+        rail:
+          readable && !isMobile
+            ? {
+                widthPx: 52,
+                body: (
+                  <section aria-label="Document Map overview" className={styles.rail}>
+                    <MapRail reader={reader} markers={input.markers} onMarker={input.onMarker} />
+                  </section>
+                ),
+              }
+            : null,
+      }),
+      [input.markers, input.onMarker, isMobile, pdf, readable, reader, widthPx],
     ),
   );
-
-  const { setPaneLayout } = runtime;
-  useEffect(() => {
-    setPaneLayout(
-      pdf
-        ? widthPx
-          ? { primaryWidth: { kind: "intrinsic", widthPx } }
-          : null
-        : { primaryWidth: { kind: "workspace" } },
-    );
-    return () => setPaneLayout(null);
-  }, [pdf, setPaneLayout, widthPx]);
 
   // Keys: g (inspector), g e (evidence), g c or shift+G (chat), cmd/ctrl+shift+F
   // (cycle focus mode), shift+Esc (focus off), Esc (drop the active target).
@@ -281,9 +268,8 @@ export function useReaderChrome(input: {
   dismiss.current = input.onDismissTarget;
   useEffect(() => {
     if (!paneActive) return;
-    const region = paneSecondaryRegionId(paneId, "resource-inspector");
+    const region = paneSecondaryRegionId(paneId);
     let pending: number | null = null;
-    const openInspector = () => commands.current.companionAction?.onSelect({ triggerEl: null });
     const chat = () =>
       void executeResourceChat({
         ref: canonicalResourceRef({ scheme: "media", id }),
@@ -311,14 +297,14 @@ export function useReaderChrome(input: {
         pending = null;
         if (event.key === "e") requestSecondarySurface("resource-connections");
         else if (event.key === "c") chat();
-        else return openInspector();
+        else return toggleSecondaryPane();
         event.preventDefault();
       } else if (event.key.toLowerCase() === "g") {
         event.preventDefault();
         if (event.shiftKey) return chat();
         pending = window.setTimeout(() => {
           pending = null;
-          openInspector();
+          toggleSecondaryPane();
         }, 500);
       }
     };
@@ -327,5 +313,5 @@ export function useReaderChrome(input: {
       if (pending !== null) window.clearTimeout(pending);
       document.removeEventListener("keydown", keydown);
     };
-  }, [activateTarget, id, paneActive, paneId, profile.focus_mode, requestSecondarySurface, setFocusMode]);
+  }, [activateTarget, id, paneActive, paneId, profile.focus_mode, requestSecondarySurface, setFocusMode, toggleSecondaryPane]);
 }

@@ -1914,15 +1914,15 @@ open over Resume and never become panes.
   is fenced by the route identity and clears before a different pane or route is
   rendered through that stable host.
   A pane is identified by a stable pane id; its resolved `routeKey` gates
-  route-scoped labels, layout, secondary/fixed chrome, primary-chrome
-  publication, and return data so stale cleanup cannot mutate a newer route
-  instance. The store separately owns a bounded page-lifetime recently-closed
+  route-scoped labels and return data so stale cleanup cannot mutate a newer
+  route instance. Pane chrome needs no key: a body publishes into the store
+  its pane shell made for that mount, and withdraws by unmounting. The store separately owns a bounded page-lifetime recently-closed
   stack; it is not persisted.
   Routes resolve via one table (`paneRouteModel.ts`) bound to lazy React bodies
   (`paneRenderRegistry.tsx`). Bodies talk
   to the shell only through `paneRuntime.tsx` hooks (`usePaneRouter`, `usePaneParam`,
-  `useSetPaneLabel`, `usePaneSecondary`) and route-keyed
-  `usePanePrimaryChrome`; `usePaneRuntime().isActive` exposes the
+  `useSetPaneLabel`) and the `paneChrome.tsx` publication hooks
+  (`usePaneChrome`, `usePaneCompanion`, `usePaneLayout`); `usePaneRuntime().isActive` exposes the
   host's pane-activity capability, which reader progress uses for
   adoption-versus-handoff arbitration. `MobileViewportProvider`
   (`lib/mobileShell/viewport.tsx`) resolves mobile bottom geometry in one
@@ -2008,9 +2008,9 @@ open over Resume and never become panes.
   right panes. `useWorkspaceSession` saves 1 s after a change and flushes with keepalive
   on page hide; the BFF `PUT /api/me/workspace-session` forwards the body and puts the
   device id from the cookie in the query — the client never reads or sends it. Column
-  **widths** resolve on the client at render via `resolveEffectivePaneSizing`; a null
-  width is the reader column, whose first-paint estimate (`estimatePrimaryWidthPx`) the
-  shell's probe refines. The URL-hash fold navigates the active pane (preserving the
+  **widths** are clamped on the client at render only (`primaryWidth`), never written
+  back; a null width is the reader column, whose first-paint estimate
+  (`estimatePrimaryWidthPx`) the shell's probe refines. The URL-hash fold navigates the active pane (preserving the
   restored layout) rather than resetting state. The canonical `/lectern` request is
   explicit home intent: restore preserves the saved layout, then reuses or appends and
   activates Lectern; it is not a neutral alias for the previously active pane.

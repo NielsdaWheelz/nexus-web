@@ -11,7 +11,6 @@ import { absent, present } from "@/lib/api/presence";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { FIND_LIMIT } from "@/lib/find/find";
 import type { FindController, FindResult } from "@/lib/find/useFind";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import styles from "./Find.module.css";
 
@@ -41,18 +40,24 @@ function status(result: FindResult): string {
   }
 }
 
-/** The pane's find row. PaneShell mounts it while find is expanded; onClose ends the session. */
+/**
+ * The pane's find row. PaneShell mounts it while find is expanded; onClose
+ * ends the session, and Results shows every match in the pane's Companion.
+ */
 const FindBar = forwardRef<
   HTMLInputElement,
-  { readonly find: FindController; readonly onClose: () => void }
->(function FindBar({ find, onClose }, ref) {
+  {
+    readonly find: FindController;
+    readonly onClose: () => void;
+    readonly resultsExpanded: boolean;
+    readonly onShowResults: (opener: HTMLElement) => void;
+  }
+>(function FindBar({ find, onClose, resultsExpanded, onShowResults }, ref) {
   const statusId = useId();
-  const runtime = usePaneRuntime();
   // Mobile chrome stays pinned while the bar is in it.
   useMobileChromeHold(true);
   const { result } = find;
   const count = result.kind === "Rows" ? result.rows.length : 0;
-  const results = runtime?.transientSecondarySurface;
   const text = status(result);
   const icon = (
     label: string,
@@ -179,14 +184,8 @@ const FindBar = forwardRef<
               size="sm"
               disabled={count === 0}
               leadingIcon={<List size={15} aria-hidden="true" />}
-              aria-expanded={
-                results?.id === "resource-search" && results.expanded
-              }
-              onClick={(event) =>
-                runtime?.requestTransientSecondarySurface("resource-search", {
-                  returnFocusTo: event.currentTarget,
-                })
-              }
+              aria-expanded={resultsExpanded}
+              onClick={(event) => onShowResults(event.currentTarget)}
             >
               Results
             </Button>
@@ -212,9 +211,15 @@ const FindBar = forwardRef<
 });
 export default FindBar;
 
-/** Every match with its context: the body of the pane's transient `resource-search` surface. */
-export function FindResults({ find }: { readonly find: FindController }) {
-  const runtime = usePaneRuntime();
+/** Every match with its context: the Companion's transient "Search results" tab. */
+export function FindResults({
+  find,
+  onPreviewed,
+}: {
+  readonly find: FindController;
+  /** A match was shown in the pane (mobile hides the sheet). */
+  readonly onPreviewed: () => void;
+}) {
   const { result } = find;
   if (result.kind !== "Rows" || result.rows.length === 0) {
     return (
@@ -245,11 +250,7 @@ export function FindResults({ find }: { readonly find: FindController }) {
         kind: "button",
         label: label.filter(Boolean).join(": "),
         onActivate: () =>
-          void find
-            .activate(index)
-            .then(
-              (shown) => shown && runtime?.previewTransientSecondaryResult(),
-            ),
+          void find.activate(index).then((shown) => shown && onPreviewed()),
       },
       title: { text, segments: row.snippet },
       context:

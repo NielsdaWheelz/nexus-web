@@ -2,8 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
-import { FindResults } from "@/components/find/FindBar";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { parseReaderSelectionHash } from "@/lib/chat/readerIntent";
 import { chatView, type BranchDraft } from "@/lib/chat/tree";
 import type { AcceptedReceipt } from "@/lib/chat/wire";
@@ -166,32 +165,37 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     }),
     [conversationId, contextVersion, view, store, router],
   );
-  const inspector = useResourceInspector({
+  useResourceInspector({
     scheme: "conversation",
     handle: conversationId,
     bodies,
-    searchResults: useMemo(() => find && <FindResults find={find} />, [find]),
     onCitationActivate: follow,
   });
-  usePanePrimaryChrome({
-    search: !conversationId
-      ? undefined
-      : history === "Loading"
-        ? { kind: "Resolving", control: "Find" }
-        : ready && find
-          ? { kind: "Find", find }
-          : undefined,
-    companionAction: inspector.companionAction ?? undefined,
-    actionSubject:
-      conversationId && ready
-        ? {
-            ref: canonicalResourceRef({
-              scheme: "conversation",
-              id: conversationId,
-            }),
-          }
-        : undefined,
-  });
+  // streaming re-renders this body often; publish only what changed.
+  const loading = history === "Loading";
+  usePaneChrome(
+    useMemo(
+      () => ({
+        search: !conversationId
+          ? undefined
+          : loading
+            ? { kind: "Resolving" as const, control: "Find" as const }
+            : ready && find
+              ? { kind: "Find" as const, find }
+              : undefined,
+        actionSubject:
+          conversationId && ready
+            ? {
+                ref: canonicalResourceRef({
+                  scheme: "conversation",
+                  id: conversationId,
+                }),
+              }
+            : undefined,
+      }),
+      [conversationId, find, loading, ready],
+    ),
+  );
 
   const pathOnly = `/conversations/${conversationId ?? "new"}`;
   const onAccepted = (receipt: AcceptedReceipt) => {

@@ -81,7 +81,38 @@
 }
 
 .body {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.body[data-body-mode="standard"] {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.body[data-pane-refresh-eligible] {
+  overscroll-behavior-y: contain;
+  touch-action: pan-x pan-up;
+}
+
+/* the route's own content: the return memento's anchor root. */
+.routeContent {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+}
+
+.body[data-body-mode="document"] > .routeContent {
+  min-height: 0;
+}
+
+.body[data-body-mode="contained"] > .routeContent {
+  height: 100%;
   min-height: 0;
 }
 
@@ -118,9 +149,7 @@
   color: var(--ink-muted);
   font-size: var(--text-xs);
   opacity: 1;
-  transform: translateY(
-    calc(-100% + var(--pane-refresh-offset))
-  );
+  transform: translateY(calc(-100% + var(--pane-refresh-offset)));
   transition:
     opacity var(--duration-fast) var(--ease-glide),
     transform var(--duration-fast) var(--ease-glide);
@@ -147,7 +176,7 @@
   min-height: 0;
 }
 
-.fixedChrome {
+.rail {
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -155,7 +184,7 @@
   background: var(--surface-canvas);
 }
 
-.fixedChrome::after {
+.rail::after {
   position: absolute;
   inset-block: 0;
   inset-inline-start: 0;
@@ -165,16 +194,12 @@
   pointer-events: none;
 }
 
-.resizeHandle {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: var(--resize-handle-width);
-  height: 100%;
-  cursor: col-resize;
-}
-
 /* ── Mobile (driven by isMobile prop via data attribute) ── */
+
+.paneShell[data-mobile="true"],
+.paneShell[data-mobile="true"] .primaryPane {
+  width: 100%;
+}
 
 .paneShell[data-mobile="true"] {
   border-right: none;
@@ -220,7 +245,10 @@
   transform: translateY(
     calc(
       -1 * var(--mobile-chrome-collapse) *
-        (var(--viewport-safe-top) + var(--pane-chrome-header-height) + var(--mobile-pane-chrome-height))
+        (
+          var(--viewport-safe-top) + var(--pane-chrome-header-height) +
+            var(--mobile-pane-chrome-height)
+        )
     )
   );
   will-change: transform;
@@ -231,6 +259,7 @@
 }
 
 .paneShell[data-mobile="true"] .body {
+  overscroll-behavior: contain;
   padding-right: var(--viewport-safe-right);
   padding-left: var(--viewport-safe-left);
 }
@@ -263,7 +292,7 @@
 }
 
 @media (forced-colors: active) {
-  .fixedChrome::after {
+  .rail::after {
     forced-color-adjust: none;
     background: CanvasText;
   }

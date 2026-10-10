@@ -24,3 +24,9 @@
   line-height: var(--leading-snug);
   overflow-wrap: anywhere;
 }
+
+/* the filter row (PaneSearchBar) */
+.bar {
+  inline-size: 100%;
+  min-inline-size: 0;
+}

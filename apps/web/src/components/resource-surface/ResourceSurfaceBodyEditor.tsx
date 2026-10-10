@@ -16,7 +16,7 @@ import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
-import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
+import { matchesPaneFilterQuery } from "@/lib/panes/paneFilterRows";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { resourceSurfaceFilterFields } from "./resourceSurfaceFilterFields";
 import styles from "./ResourceSurfaceBodyEditor.module.css";

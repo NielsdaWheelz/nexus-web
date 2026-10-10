@@ -4,10 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ImportInspector from "@/components/imports/ImportInspector";
 import ImportsList from "@/components/imports/ImportsList";
-import { companionAction } from "@/components/resource-inspector/companionAction";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import type { ImportItem, ImportsView } from "@/lib/imports/api";
 import { loadFailure } from "@/lib/imports/copy";
@@ -20,12 +17,8 @@ import {
   type ImportsUrlState,
 } from "@/lib/imports/query";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
-import {
-  normalizePaneSecondaryPublication,
-  type PaneSecondaryPublication,
-} from "@/lib/panes/panePublications";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
-import { paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
+import { usePaneCompanion, type PaneCompanion } from "@/lib/panes/paneChrome";
+import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 
@@ -38,14 +31,17 @@ const CODEC = {
 /**
  * The Imports pane (docs/modules/imports.md): the url owns the view, the
  * filters and the selection; the counts choose the first view once; the
- * selected import is the pane's one secondary surface (desktop: resizable
- * inspector, mobile: sheet with Back), toggled from the header companion.
+ * selected import is the pane's Companion (desktop: resizable column,
+ * mobile: sheet), toggled from the header Inspector.
  */
 export default function ImportsPaneBody() {
   const { state, setState } = usePaneUrlState(CODEC);
   const { summary, setPaneOpen, refresh } = useImports();
   const { displayTimeZone } = useRenderEnvironment();
-  const runtime = usePaneRuntime();
+  const { requestSecondarySurface } = requirePaneRuntime(
+    usePaneRuntime(),
+    "ImportsPaneBody",
+  );
   const today = useCallback(
     () => formatLocalDateInTimeZone(new Date(), displayTimeZone),
     [displayTimeZone],
@@ -77,71 +73,50 @@ export default function ImportsPaneBody() {
   const [matched, setMatched] = useState<ImportItem["matched_event"]>({
     kind: "Absent",
   });
-  const publication = useMemo<PaneSecondaryPublication | null>(
-    () =>
-      selected === null
-        ? null
-        : normalizePaneSecondaryPublication({
-            groupId: "imports-inspector",
-            surfaces: [
-              {
-                id: "import-detail",
-                body: (
-                  <ImportInspector importRef={selected} matched={matched} />
-                ),
-              },
-            ],
-            defaultSurfaceId: "import-detail",
-          }),
-    [matched, selected],
+  usePaneCompanion(
+    useMemo<PaneCompanion | null>(
+      () =>
+        selected === null
+          ? null
+          : {
+              groupId: "imports-inspector",
+              surfaces: [
+                {
+                  id: "import-detail",
+                  body: (
+                    <ImportInspector importRef={selected} matched={matched} />
+                  ),
+                },
+              ],
+              defaultSurfaceId: "import-detail",
+            },
+      [matched, selected],
+    ),
   );
-  const requestSurface = usePaneSecondary(publication);
   // A newly selected import opens its inspector; a dismissed inspector keeps
   // the selection and reopens from the header.
   useEffect(() => {
-    if (selected !== null) requestSurface("import-detail");
-  }, [requestSurface, selected]);
-
-  const paneId = runtime?.paneId ?? null;
-  const expanded =
-    runtime?.secondaryPane?.groupId === "imports-inspector" &&
-    runtime.secondaryPane.visibility === "visible";
-  const closeSecondaryPane = runtime?.closeSecondaryPane;
-  const companion = useMemo(
-    () =>
-      publication === null || paneId === null
-        ? null
-        : companionAction({
-            expanded,
-            regionId: paneSecondaryRegionId(paneId, "imports-inspector"),
-            onOpen: (trigger) =>
-              requestSurface("import-detail", { returnFocusTo: trigger }),
-            onClose: () => closeSecondaryPane?.(),
-          }),
-    [closeSecondaryPane, expanded, paneId, publication, requestSurface],
-  );
+    if (selected !== null) requestSecondarySurface("import-detail");
+  }, [requestSecondarySurface, selected]);
   const onSelect = useCallback(
     (ref: string | null) => {
       setState({ ...state, selected: ref ?? undefined });
-      if (ref !== null) requestSurface("import-detail");
+      if (ref !== null) requestSecondarySurface("import-detail");
     },
-    [requestSurface, setState, state],
+    [requestSecondarySurface, setState, state],
   );
 
   // This route restores shell scroll once its list is as tall as it will get.
   const [listSettled, setListSettled] = useState(false);
   usePaneReturnReady(view === null ? summary.status === "failed" : listSettled);
 
-  if (view === null) {
-    return <Unresolved companion={companion} refresh={refresh} />;
-  }
+  if (view === null) return <Unresolved refresh={refresh} />;
   return (
     <ImportsList
       view={view}
       state={state}
       setState={setState}
       today={today}
-      companion={companion}
       onMatched={setMatched}
       onSelect={onSelect}
       onSettled={setListSettled}
@@ -151,22 +126,10 @@ export default function ImportsPaneBody() {
 
 /**
  * Before the counts choose a view there is no view to publish controls for:
- * the pane loads, or says the summary failed and keeps the inspector toggle.
+ * the pane loads, or says the summary failed.
  */
-function Unresolved({
-  companion,
-  refresh,
-}: {
-  readonly companion: ReturnType<typeof companionAction> | null;
-  readonly refresh: () => void;
-}) {
+function Unresolved({ refresh }: { readonly refresh: () => void }) {
   const { summary } = useImports();
-  usePanePrimaryChrome(
-    useMemo(
-      () => (companion === null ? null : { companionAction: companion }),
-      [companion],
-    ),
-  );
   return summary.status === "failed" ? (
     <FeedbackNotice
       content={loadFailure(summary.error)}

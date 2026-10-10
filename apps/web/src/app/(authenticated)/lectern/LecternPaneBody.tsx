@@ -17,9 +17,9 @@ import {
 import Button from "@/components/ui/Button";
 import PaneSurface from "@/components/ui/PaneSurface";
 import SelectField from "@/components/ui/SelectField";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
 import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
-import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
+import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
 import {
   apiTransportFeedback,
   isApiError,
@@ -51,8 +51,10 @@ import {
 } from "@/lib/lectern/view";
 import { usePlayerCommands } from "@/lib/player/playerRuntime";
 import { usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
-import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
-import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import {
+  matchesPaneFilterQuery,
+  usePaneFilterRows,
+} from "@/lib/panes/paneFilterRows";
 import { suggestionTargetId } from "@/lib/suggestions";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./LecternPaneBody.module.css";
@@ -231,7 +233,7 @@ export default function LecternPaneBody() {
       view,
     ],
   );
-  usePanePrimaryChrome({
+  usePaneChrome({
     collection,
     // The count is the whole Lectern, never the filtered subset.
     header: {

@@ -1,684 +1,378 @@
 "use client";
 
-import { RefreshCw, RotateCcw, Search, Share2 } from "lucide-react";
+import { RotateCcw, Search, Share2 } from "lucide-react";
 import {
   useCallback,
+  useEffect,
   useId,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 import FindBar from "@/components/find/FindBar";
+import SurfaceHeader from "@/components/ui/SurfaceHeader";
+import Companion, {
+  companionAction,
+  companionExpanded,
+  createCompanionController,
+  type CompanionController,
+} from "@/components/workspace/Companion";
+import PaneRouteBoundary from "@/components/workspace/PaneRouteBoundary";
 import PaneSearchBar from "@/components/workspace/PaneSearchBar";
-import SurfaceHeader, {
-  type SurfaceHeaderNavigation,
-} from "@/components/ui/SurfaceHeader";
-import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
-import SecondaryPaneShell from "@/components/workspace/SecondaryPaneShell";
-import { useResizeHandle } from "@/components/workspace/useResizeHandle";
+import ResizeHandle from "@/components/workspace/ResizeHandle";
 import { usePaneRefresh } from "@/components/workspace/usePaneRefresh";
+import { present } from "@/lib/api/presence";
+import { matchesKeyEvent } from "@/lib/keybindings";
+import { useKeybindings } from "@/lib/keybindingsProvider";
+import {
+  useMobileChrome,
+  useMobileChromeSurface,
+  usePublishMobilePaneChrome,
+} from "@/lib/mobileShell/chrome";
+import { useMobileViewport } from "@/lib/mobileShell/viewport";
+import {
+  createPaneChromeStore,
+  PANE_COMMAND_RESOLVING_REASON,
+  PaneChromeContext,
+  usePaneChromeState,
+  type PaneChromeStore,
+  type PaneSearch,
+} from "@/lib/panes/paneChrome";
 import {
   paneHeaderAccessibleName,
   resolvePaneHeaderModel,
 } from "@/lib/panes/paneHeaderModel";
 import {
-  usePaneRouter,
+  resolvePaneRouteShareIdentity,
+  type ResolvedPaneRouteModel,
+} from "@/lib/panes/paneRouteModel";
+import {
+  PaneRuntimeProvider,
+  requirePaneRuntime,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
-import {
-  activateTargetAnchor,
-  type TargetLinkMouseEvent,
-} from "@/lib/panes/targetLinkActivation";
-import {
-  arePanePrimaryChromePublicationsEqual,
-  panePrimaryChromeSourceKey,
-  PANE_COMMAND_RESOLVING_REASON,
-  secondaryPublicationIncludesSurface,
-  type PaneFixedChromePublication,
-  type PanePrimaryChromePublication,
-  type PanePrimaryChromePublicationUpdate,
-  type PaneSecondaryPublication,
-} from "@/lib/panes/panePublications";
-import type {
-  PaneBodyMode,
-  PaneRouteHeaderContract,
-  PaneRouteShareIdentity,
-} from "@/lib/panes/paneRouteModel";
+import { activateTargetAnchor } from "@/lib/panes/targetLinkActivation";
 import { useShareController } from "@/lib/sharing/controller";
-import { present } from "@/lib/api/presence";
-import { usePaneSearchRequested } from "@/lib/panes/paneSearchEvents";
-import type { PaneReadySearchPublication } from "@/lib/panes/paneSearch";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { hasActiveInteractionOwner } from "@/lib/ui/useEscapeKey";
+import type { WorkspacePane } from "@/lib/workspace/model";
 import {
-  useMobileChrome,
-  useMobileChromeSurface,
-  usePublishMobilePaneChrome,
-  type MobilePaneChrome,
-} from "@/lib/mobileShell/chrome";
-import { useMobileViewport } from "@/lib/mobileShell/viewport";
-import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
-import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
-import {
-  isPaneSecondaryRegionId,
-  paneSecondaryRegionId,
-  type WorkspaceSecondarySizing,
-  type WorkspaceSecondarySurfaceId,
-} from "@/lib/panes/paneSecondaryModel";
-import type { WorkspaceSecondaryPane } from "@/lib/workspace/model";
-import {
+  findPaneChromeFocusTarget,
   findPaneLandmarkFocusTarget,
-  findPaneSearchFocusTarget,
 } from "@/lib/workspace/paneDom";
+import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
+import { primaryWidth } from "@/lib/workspace/paneSizing";
+import { useWorkspaceStore } from "@/lib/workspace/store";
 import styles from "./PaneShell.module.css";
 
-const EMPTY_ACTIONS: readonly ActionDescriptor[] = [];
-type PaneShellStyle = CSSProperties & {
-  "--mobile-pane-chrome-height"?: string;
-};
-
-type PaneRefreshIndicatorStyle = CSSProperties & {
-  "--pane-refresh-offset": string;
-};
-
 interface PaneShellProps {
-  paneId: string;
-  routeKey: string;
-  routeHeader: PaneRouteHeaderContract;
-  routeShareIdentity: PaneRouteShareIdentity | null;
-  label: string;
-  labelPending: boolean;
-  returnMementoEnabled: boolean;
-  queryNavigation: "in-place" | null;
-  sizing: EffectivePaneSizing;
-  bodyMode: PaneBodyMode;
-  secondaryPane: WorkspaceSecondaryPane | null;
-  secondarySizing: WorkspaceSecondarySizing | null;
-  secondaryPublication: PaneSecondaryPublication | null;
-  fixedChromePublication: PaneFixedChromePublication | null;
-  onResizePrimaryPane: (paneId: string, widthPx: number) => void;
-  onResizeSecondaryPane: (secondaryPaneId: string, widthPx: number) => void;
-  onCloseSecondaryPane: (secondaryPaneId: string) => void;
-  onSetSecondarySurface: (
-    secondaryPaneId: string,
-    surfaceId: WorkspaceSecondarySurfaceId,
-  ) => void;
-  onChromeMouseDown: (event: React.MouseEvent<HTMLElement>) => void;
-  isActive: boolean;
-  isMobile: boolean;
-  responsiveSearchHandoff: {
-    readonly id: number;
-    readonly onConsumed: (id: number) => void;
-  } | null;
-  children: React.ReactNode;
+  readonly pane: WorkspacePane;
+  /** The mounted body's identity (`paneMountKey`): its chrome store lives as long as it does. */
+  readonly bodyKey: string;
+  readonly route: ResolvedPaneRouteModel;
+  readonly label: string;
+  readonly labelPending: boolean;
+  readonly isActive: boolean;
+  readonly isMobile: boolean;
+  readonly columnWidthPx: number;
+  readonly onChromeMouseDown: (event: React.MouseEvent<HTMLElement>) => void;
+  readonly children: ReactNode;
 }
 
-export default function PaneShell({
-  paneId,
-  routeKey,
-  routeHeader,
-  routeShareIdentity,
+/**
+ * One pane: its runtime, the store its body's chrome lands in, its Companion
+ * commands, and the shell every pane shares around the body. The store belongs
+ * to the mounted body: a body that remounts gets a fresh one in the same
+ * render, so the shell never shows the previous body's chrome, even while the
+ * new body suspends.
+ */
+export default function PaneShell(props: PaneShellProps) {
+  const { pane, bodyKey, isActive, isMobile } = props;
+  const { requestSecondarySurface, updateSecondaryPane } = useWorkspaceStore();
+  const [body, setBody] = useState(() => ({
+    key: bodyKey,
+    chrome: createPaneChromeStore(),
+  }));
+  if (body.key !== bodyKey)
+    setBody({ key: bodyKey, chrome: createPaneChromeStore() });
+  const { chrome } = body;
+  const latest = useRef({ secondary: pane.secondary, isMobile });
+  latest.current = { secondary: pane.secondary, isMobile };
+  const controller = useMemo(
+    () =>
+      createCompanionController({
+        paneId: pane.id,
+        chrome,
+        latest: () => latest.current,
+        requestSecondarySurface,
+        updateSecondaryPane,
+      }),
+    [chrome, pane.id, requestSecondarySurface, updateSecondaryPane],
+  );
+  return (
+    <PaneRuntimeProvider pane={pane} isActive={isActive} host={controller}>
+      <PaneChromeContext value={chrome}>
+        <PaneRouteBoundary>
+          <PaneView {...props} chrome={chrome} controller={controller} />
+        </PaneRouteBoundary>
+      </PaneChromeContext>
+    </PaneRuntimeProvider>
+  );
+}
+
+/** The shell's presentation; the body is `children` and never re-renders with it. */
+function PaneView({
+  pane,
+  route,
   label,
   labelPending,
-  returnMementoEnabled,
-  queryNavigation,
-  sizing,
-  bodyMode,
-  secondaryPane,
-  secondarySizing,
-  secondaryPublication,
-  fixedChromePublication,
-  onResizePrimaryPane,
-  onResizeSecondaryPane,
-  onCloseSecondaryPane,
-  onSetSecondarySurface,
-  onChromeMouseDown,
   isActive,
   isMobile,
-  responsiveSearchHandoff,
+  columnWidthPx,
+  onChromeMouseDown,
+  chrome,
+  controller,
   children,
-}: PaneShellProps) {
-  if (returnMementoEnabled && bodyMode !== "standard") {
-    throw new Error("ShellScroll PaneShell must use bodyMode standard");
-  }
-  const paneRouter = usePaneRouter();
-  const paneRuntime = usePaneRuntime();
-  if (!paneRuntime) {
-    // justify-defect: PaneShell execution requires pane-scoped navigation.
-    throw new Error("PaneShell must be used inside PaneRuntimeProvider");
-  }
-  const activateTarget = paneRuntime.activateTarget;
-  const activateChromeAnchor = useCallback(
-    (event: TargetLinkMouseEvent, anchor: HTMLAnchorElement) => {
-      activateTargetAnchor({ event, runtime: { activateTarget }, anchor });
-    },
-    [activateTarget],
-  );
-  const canGoBack = paneRouter.canGoBack;
-  const canGoForward = paneRouter.canGoForward;
-  const navigation = useMemo<SurfaceHeaderNavigation>(
-    () => ({
-      canGoBack,
-      canGoForward,
-      onBack: () => paneRouter.back(),
-      onForward: () => paneRouter.forward(),
-    }),
-    [canGoBack, canGoForward, paneRouter],
-  );
-  const { handleResizeMouseDown, handleResizeKeyDown } = useResizeHandle({
-    id: paneId,
-    widthPx: sizing.primaryWidthPx,
-    minWidthPx: sizing.primaryMinWidthPx,
-    maxWidthPx: sizing.primaryMaxWidthPx,
-    onResize: onResizePrimaryPane,
-  });
-  const chromeRef = useRef<HTMLDivElement>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const contentSurfaceActive = isMobile && isActive;
+}: PaneShellProps & {
+  readonly chrome: PaneChromeStore;
+  readonly controller: CompanionController;
+}) {
+  const runtime = requirePaneRuntime(usePaneRuntime(), "PaneShell");
+  const { paneId, router } = runtime;
+  const { resizePrimaryPane } = useWorkspaceStore();
+  const state = usePaneChromeState(chrome);
+  const body = state.chrome;
+  const mobileChrome = useMobileChrome();
   const mobileViewport = useMobileViewport();
-  const sourceContinuityKey = panePrimaryChromeSourceKey(paneRuntime);
-  usePaneReturnScrollport({
-    enabled: returnMementoEnabled,
-    scrollportRef: bodyRef,
-    continuityKey:
-      queryNavigation === "in-place"
-        ? `${paneRuntime.visitId}:${paneRuntime.routeId}:${paneRuntime.pathname}`
-        : null,
-  });
   const { openShare } = useShareController();
-  const currentRouteKeyRef = useRef(routeKey);
-  currentRouteKeyRef.current = routeKey;
-  const currentSourceContinuityKeyRef = useRef(sourceContinuityKey);
-  currentSourceContinuityKeyRef.current = sourceContinuityKey;
-  const [mobileChromeHeight, setMobileChromeHeight] = useState(0);
-  const [primaryChromeRecord, setPrimaryChromeRecord] = useState<{
-    readonly routeKey: string;
-    readonly sourceContinuityKey: string;
-    readonly publication: PanePrimaryChromePublication;
-  } | null>(null);
-  const chrome = useMobileChrome();
+  const searchCombo = useKeybindings()["Pane.Search"];
   const identityId = useId();
   const landmarkLabelId = useId();
+  const chromeRef = useRef<HTMLDivElement>(null);
+  const scrollportRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const source = `${runtime.visitId}:${runtime.routeId}:${runtime.pathname}`;
+  const rowId = `${paneId}-pane-search`;
+  const bodyId = `${paneId}-body`;
 
-  const publishPrimaryChrome = useCallback(
-    (update: PanePrimaryChromePublicationUpdate) => {
-      setPrimaryChromeRecord((current) => {
-        if (
-          update.routeKey !== currentRouteKeyRef.current ||
-          update.sourceKey !== currentSourceContinuityKeyRef.current
-        ) return current;
-        if (
-          update.publication?.collection &&
-          (update.publication.search || update.publication.instrument)
-        ) {
-          throw new Error(
-            "Pane collection cannot coexist with search or instrument chrome.",
-          );
-        }
-        if (!update.publication) {
-          return null;
-        }
-        if (
-          current?.routeKey === update.routeKey &&
-          current.sourceContinuityKey === update.sourceKey &&
-          arePanePrimaryChromePublicationsEqual(
-            current.publication,
-            update.publication,
-          )
-        ) {
-          return current;
-        }
-        return {
-          routeKey: update.routeKey,
-          sourceContinuityKey: update.sourceKey,
-          publication: update.publication,
-        };
-      });
-    },
+  // ---- search: one expansion per source (visit, route, path) ---------------
+  const search = body?.search;
+  const ready = search?.kind === "Resolving" ? undefined : search;
+  const find = ready?.kind === "Find" ? ready.find : null;
+  const [expandedFor, setExpandedFor] = useState<string | null>(null);
+  const searchOpen = ready !== undefined && expandedFor === source;
+  // a query refinement keeps the row; every end dismisses what it expanded.
+  const expanded = useRef<PaneSearch | undefined>(undefined);
+  if (searchOpen) expanded.current = ready;
+  const dismissSearch = useCallback(() => {
+    const ended = expanded.current;
+    expanded.current = undefined;
+    setExpandedFor(null);
+    if (ended?.kind === "Find") ended.find.close();
+    else if (ended?.kind === "FilterRows") ended.onDismiss();
+    chrome.set({ results: null });
+  }, [chrome]);
+  useLayoutEffect(() => dismissSearch, [dismissSearch, source]);
+  const focusInputSoon = useCallback(
+    () =>
+      requestAnimationFrame(() => {
+        inputRef.current?.focus({ preventScroll: true });
+        inputRef.current?.select();
+      }),
     [],
   );
+  // the row can commit after the request's frame during a viewport reflow.
+  useLayoutEffect(() => {
+    if (searchOpen) focusInputSoon();
+  }, [focusInputSoon, searchOpen]);
+  const openSearch = (): boolean => {
+    if (body?.collection) return body.collection.focusInput();
+    if (!ready) return false;
+    if (searchOpen) focusInputSoon();
+    else {
+      if (ready.kind === "Find") ready.find.open();
+      setExpandedFor(source);
+    }
+    return true;
+  };
+  const closeSearch = () => {
+    dismissSearch();
+    if (isMobile) return mobileChrome.focusPaneChrome(paneId);
+    const trigger = triggerRef.current;
+    requestAnimationFrame(() => {
+      const usable = trigger?.isConnected && !trigger.closest("[inert]");
+      const target = usable ? trigger : findPaneChromeFocusTarget(paneId);
+      target?.focus({ preventScroll: true });
+    });
+  };
+  // Pane.Search belongs to the active pane, never under an open overlay, and
+  // suppresses the browser's find only when a pane search took it.
+  const openSearchRef = useRef(openSearch);
+  openSearchRef.current = openSearch;
+  useEffect(() => {
+    if (!isActive || !searchCombo) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        !matchesKeyEvent(searchCombo, event) ||
+        hasActiveInteractionOwner()
+      )
+        return;
+      if (openSearchRef.current()) event.preventDefault();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isActive, searchCombo]);
 
-  // The search row stays expanded for one source (pane, visit, route, path),
-  // not one query string: a reader consuming its own deep link keeps its find.
-  // Every end of an expansion dismisses the search it expanded, so a body that
-  // outlives the source (media and chat mount by resource) keeps no live find.
-  const [expandedSearchSource, setExpandedSearchSource] = useState<
-    string | null
-  >(null);
-  const expandedSearchRef = useRef<PaneReadySearchPublication | undefined>(
-    undefined,
-  );
-  const dismissExpandedSearch = useCallback(() => {
-    const search = expandedSearchRef.current;
-    expandedSearchRef.current = undefined;
-    setExpandedSearchSource(null);
-    if (search?.kind === "Find") search.find.close();
-    else search?.onDismiss();
-  }, []);
-  useLayoutEffect(
-    () => dismissExpandedSearch,
-    [dismissExpandedSearch, sourceContinuityKey],
-  );
-  const acceptedPrimaryChrome =
-    primaryChromeRecord !== null &&
-    primaryChromeRecord.routeKey === routeKey &&
-    primaryChromeRecord.sourceContinuityKey === sourceContinuityKey
-      ? primaryChromeRecord.publication
-      : null;
-  const acceptedCollection =
-    acceptedPrimaryChrome?.collection ??
-    (queryNavigation === "in-place" &&
-    primaryChromeRecord?.routeKey !== routeKey &&
-    primaryChromeRecord?.sourceContinuityKey === sourceContinuityKey
-      ? primaryChromeRecord.publication.collection
-      : undefined);
-  const acceptedRefresh = acceptedPrimaryChrome?.refresh;
-  const pullRefreshEligible =
+  // ---- refresh, header, actions ------------------------------------------
+  const pull =
     isActive &&
     isMobile &&
-    bodyMode === "standard" &&
-    acceptedRefresh?.kind === "Refreshable";
-  const {
-    state: refreshState,
-    start: startPaneRefresh,
-    feedback: refreshFeedback,
-    offsetPx: refreshIndicatorOffsetPx,
-    announcement: refreshAnnouncement,
-  } = usePaneRefresh({
-    publication: acceptedRefresh,
-    routeKey,
-    pullEnabled: pullRefreshEligible,
-    scrollportRef: bodyRef,
+    route.bodyMode === "standard" &&
+    body?.refresh?.kind === "Refreshable";
+  const refresh = usePaneRefresh({
+    refresh: body?.refresh,
+    routeKey: route.routeKey,
+    pull,
+    scrollportRef,
   });
-  // Across a query-only route change the body republishes under the new route
-  // key; until then its find (the same mounted controller) stays accepted.
-  const continuingFind =
-    primaryChromeRecord?.sourceContinuityKey === sourceContinuityKey &&
-    primaryChromeRecord.publication.search?.kind === "Find"
-      ? primaryChromeRecord.publication.search
-      : undefined;
-  const acceptedSearch =
-    acceptedCollection !== undefined
-      ? undefined
-      : (acceptedPrimaryChrome?.search ?? continuingFind);
-  // A resolving publication carries no row, no query, and no dismissal, so it
-  // reaches the descriptor and nothing else: every expansion, focus, and
-  // gesture path below sees only a search that can actually run.
-  const readySearch =
-    acceptedSearch?.kind === "Resolving" ? undefined : acceptedSearch;
-  const acceptedSearchRef = useRef<PaneReadySearchPublication | undefined>(
-    readySearch,
-  );
-  const acceptedCollectionRef = useRef(acceptedCollection);
-  const isActiveRef = useRef(isActive);
-  acceptedSearchRef.current = readySearch;
-  acceptedCollectionRef.current = acceptedCollection;
-  isActiveRef.current = isActive;
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const searchTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const searchRowId = `${paneId}-pane-search`;
-  const searchExpanded =
-    readySearch !== undefined && expandedSearchSource === sourceContinuityKey;
-  const searchExpandedRef = useRef(searchExpanded);
-  searchExpandedRef.current = searchExpanded;
-  if (searchExpanded) expandedSearchRef.current = readySearch;
-  const focusSearchInput = useCallback(() => {
-    window.requestAnimationFrame(() => {
-      searchInputRef.current?.focus({ preventScroll: true });
-      searchInputRef.current?.select();
-    });
-  }, []);
-  // The request frame can precede the row commit during a viewport reflow.
-  useLayoutEffect(() => {
-    if (searchExpanded) {
-      focusSearchInput();
-    }
-  }, [focusSearchInput, searchExpanded]);
-  const openSearch = useCallback(() => {
-    if (!isActiveRef.current) return false;
-    const collection = acceptedCollectionRef.current;
-    if (collection) return collection.focusInput();
-    const publication = acceptedSearchRef.current;
-    if (!publication) return false;
-    if (!searchExpandedRef.current) {
-      if (publication.kind === "Find") publication.find.open();
-      searchExpandedRef.current = true;
-      setExpandedSearchSource(currentSourceContinuityKeyRef.current);
-    }
-    focusSearchInput();
-    return true;
-  }, [focusSearchInput]);
-  usePaneSearchRequested(openSearch);
-  const consumedSearchRequestIdRef = useRef<number | null>(null);
-  // A browser resize can lead the React projection by one input event. Consume
-  // the route-fenced host handoff only after this shell has republished Search.
-  useLayoutEffect(() => {
-    if (
-      responsiveSearchHandoff === null ||
-      consumedSearchRequestIdRef.current === responsiveSearchHandoff.id ||
-      !openSearch()
-    ) {
-      return;
-    }
-    consumedSearchRequestIdRef.current = responsiveSearchHandoff.id;
-    responsiveSearchHandoff.onConsumed(responsiveSearchHandoff.id);
-  }, [acceptedCollection, acceptedSearch, openSearch, responsiveSearchHandoff]);
-  const closeFindResults =
-    paneRuntime.transientSecondarySurface?.id === "resource-search"
-      ? paneRuntime.closeTransientSecondarySurface
-      : null;
-  const closeSearch = useCallback(() => {
-    searchExpandedRef.current = false;
-    dismissExpandedSearch();
-    closeFindResults?.();
-    if (isMobile) {
-      chrome.focusPaneChrome(paneId);
-      return;
-    }
-    window.requestAnimationFrame(() => {
-      const retainedTrigger = searchTriggerRef.current;
-      const mountedAction =
-        chromeRef.current?.querySelector<HTMLButtonElement>(
-          '[data-action-id="Pane.Search"]',
-        ) ?? null;
-      const trigger = [retainedTrigger, mountedAction].find(
-        (candidate) =>
-          candidate?.isConnected && candidate.closest("[inert]") === null,
-      );
-      const focusTarget = trigger ?? findPaneSearchFocusTarget(paneId);
-      focusTarget?.focus({ preventScroll: true });
-    });
-  }, [
-    chrome,
-    closeFindResults,
-    dismissExpandedSearch,
-    isMobile,
-    paneId,
-  ]);
-  const header = useMemo(
-    () =>
-      resolvePaneHeaderModel({
-        currentRouteKey: routeKey,
-        routeHeader,
-        paneLabel: label,
-        paneLabelPending: labelPending,
-        publication: primaryChromeRecord
-          ? {
-              routeKey: primaryChromeRecord.routeKey,
-              header: primaryChromeRecord.publication.header,
-            }
-          : null,
-      }),
-    [label, labelPending, primaryChromeRecord, routeHeader, routeKey],
-  );
-  const accessibleName = paneHeaderAccessibleName(header);
-  const effectiveInstrument = acceptedPrimaryChrome?.instrument;
-  const effectiveContextualRow =
-    searchExpanded && readySearch
-      ? { kind: "Search" as const, publication: readySearch }
-      : effectiveInstrument
-        ? { kind: "Instrument" as const, publication: effectiveInstrument }
-        : null;
-  const hasMobileContextualSurface =
-    isMobile && effectiveContextualRow !== null;
-  useMobileChromeSurface(chromeRef, isActive && hasMobileContextualSurface);
-  const effectiveCompanionAction = acceptedPrimaryChrome?.companionAction;
-  const effectiveActionSubject = acceptedPrimaryChrome?.actionSubject;
-  const effectiveMenuActions =
-    acceptedPrimaryChrome?.menuActions ?? EMPTY_ACTIONS;
-  const resolvePaneReturnFocusFallback = useCallback(
-    () => findPaneLandmarkFocusTarget(paneId),
-    [paneId],
-  );
-  const secondaryPresentation =
-    secondaryPane &&
-    secondaryPublication?.groupId === secondaryPane.groupId &&
-    secondaryPublicationIncludesSurface(
-      secondaryPublication,
-      secondaryPane.activeSurfaceId,
-    )
-      ? { state: secondaryPane, publication: secondaryPublication }
-      : null;
-  const secondaryRegionId = secondaryPresentation
-    ? paneSecondaryRegionId(paneId, secondaryPresentation.publication.groupId)
-    : null;
-  const actionsWithSearch = useMemo<readonly ActionDescriptor[]>(() => {
-    if (!acceptedSearch) return EMPTY_ACTIONS;
-    const resolving = acceptedSearch.kind === "Resolving";
-    // A resolving pane names the control it will become, so the entry never
-    // changes its verb when the source lands.
-    const searchLabel =
-      acceptedSearch.kind === "Resolving"
-        ? acceptedSearch.control
-        : acceptedSearch.kind === "FilterRows"
+  const header = resolvePaneHeaderModel({
+    route: route.header,
+    title: label,
+    titlePending: labelPending,
+    publication: body?.header,
+  });
+  const inspector = state.companion
+    ? companionAction(
+        controller,
+        paneId,
+        companionExpanded(state, pane.secondary),
+      )
+    : undefined;
+  const paneActions: ActionDescriptor[] = [];
+  if (search) {
+    // a resolving pane names the control it will become, so More keeps its verb.
+    const verb =
+      search.kind === "Resolving"
+        ? search.control
+        : search.kind === "FilterRows"
           ? "Filter"
           : "Find";
-    const actions: ActionDescriptor[] = [
-      {
-        kind: "command",
-        id: "Pane.Search",
-        label: searchLabel,
-        disabled: resolving || undefined,
-        disabledReason: resolving
-          ? PANE_COMMAND_RESOLVING_REASON
-          : undefined,
-        icon: <Search size={16} aria-hidden="true" />,
-        state: searchExpanded
-          ? {
-              kind: "disclosure",
-              expanded: true,
-              controls: searchRowId,
-              menuLabels: {
-                collapsed: searchLabel,
-                expanded: `Close ${searchLabel.toLowerCase()}`,
-              },
-            }
-          : {
-              kind: "disclosure",
-              expanded: false,
-              menuLabels: {
-                collapsed: searchLabel,
-                expanded: `Close ${searchLabel.toLowerCase()}`,
-              },
-            },
-        onSelect: ({ triggerEl }) => {
-          searchTriggerRef.current = triggerEl;
-          if (searchExpanded) {
-            closeSearch();
-            return;
-          }
-          openSearch();
-        },
-      },
-    ];
-    if (acceptedSearch.kind === "Find" && acceptedSearch.find.returnable) {
-      actions.push({
-        kind: "command",
-        id: "Pane.SearchReturn",
-        label: "Go back to reading position",
-        icon: <RotateCcw size={16} aria-hidden="true" />,
-        onSelect: acceptedSearch.find.goBack,
-      });
-    }
-    return actions;
-  }, [
-    acceptedSearch,
-    closeSearch,
-    openSearch,
-    searchExpanded,
-    searchRowId,
-  ]);
-  const reconciledPaneActions = useMemo(
-    () =>
-      actionsWithSearch.filter((action) => {
-        if (
-          action.kind !== "command" ||
-          action.state?.kind !== "disclosure" ||
-          !action.state.expanded ||
-          !isPaneSecondaryRegionId(paneId, action.state.controls)
-        ) {
-          return true;
-        }
-        return action.state.controls === secondaryRegionId;
-      }),
-    [actionsWithSearch, paneId, secondaryRegionId],
-  );
-
-  // The active mobile pane body is the content surface every reader, list, and
-  // chat scroll owner inside it inherits its terminal clearance from.
-  useLayoutEffect(() => {
-    const element = bodyRef.current;
-    if (!contentSurfaceActive || !element) return;
-    return mobileViewport.registerContentSurface(element);
-  }, [contentSurfaceActive, mobileViewport]);
-
-  useLayoutEffect(() => {
-    if (!isMobile || !chromeRef.current) {
-      setMobileChromeHeight(0);
-      return;
-    }
-    const node = chromeRef.current;
-    const update = () => {
-      setMobileChromeHeight(Math.max(0, node.getBoundingClientRect().height));
+    const menuLabels = {
+      collapsed: verb,
+      expanded: `Close ${verb.toLowerCase()}`,
     };
-    update();
-    const observer = new ResizeObserver(update);
+    paneActions.push({
+      kind: "command",
+      id: "Pane.Search",
+      label: verb,
+      icon: <Search size={16} aria-hidden="true" />,
+      disabled: search.kind === "Resolving" || undefined,
+      disabledReason:
+        search.kind === "Resolving" ? PANE_COMMAND_RESOLVING_REASON : undefined,
+      state: searchOpen
+        ? { kind: "disclosure", expanded: true, controls: rowId, menuLabels }
+        : { kind: "disclosure", expanded: false, menuLabels },
+      onSelect: ({ triggerEl }) => {
+        triggerRef.current = triggerEl;
+        if (searchOpen) closeSearch();
+        else openSearch();
+      },
+    });
+  }
+  if (find?.returnable) {
+    paneActions.push({
+      kind: "command",
+      id: "Pane.SearchReturn",
+      label: "Go back to reading position",
+      icon: <RotateCcw size={16} aria-hidden="true" />,
+      onSelect: find.goBack,
+    });
+  }
+  if (refresh.command) paneActions.push(refresh.command);
+  const share = resolvePaneRouteShareIdentity(route, label);
+  if (share && !body?.actionSubject) {
+    paneActions.push({
+      kind: "command",
+      id: "RouteAction.Share",
+      label: "Share…",
+      icon: <Share2 size={16} aria-hidden="true" />,
+      onSelect: ({ triggerEl }) =>
+        openShare(share, {
+          returnFocusTo: () => triggerEl,
+          returnFocusFallback: present(() =>
+            findPaneLandmarkFocusTarget(paneId),
+          ),
+        }),
+    });
+  }
+  const navigation = {
+    canGoBack: router.canGoBack,
+    canGoForward: router.canGoForward,
+    onBack: router.back,
+    onForward: router.forward,
+  };
+
+  // ---- mobile: the top bar shows this pane; its row rides under the bar ----
+  const row = searchOpen ? "Search" : body?.instrument ? "Instrument" : null;
+  usePublishMobilePaneChrome(
+    isMobile
+      ? {
+          paneId,
+          identityId,
+          header,
+          activateChromeAnchor: (event, anchor) =>
+            activateTargetAnchor({ event, runtime, anchor }),
+          navigation,
+          companionAction: inspector,
+          paneActions,
+          menuActions: body?.menuActions ?? [],
+          actionSubject: body?.actionSubject,
+        }
+      : null,
+  );
+  useMobileChromeSurface(chromeRef, isActive && isMobile && row !== null);
+  // the active mobile body is the surface readers and lists take clearance from.
+  useLayoutEffect(() => {
+    const element = scrollportRef.current;
+    if (!isMobile || !isActive || !element) return;
+    return mobileViewport.registerContentSurface(element);
+  }, [isActive, isMobile, mobileViewport]);
+  const [rowHeight, setRowHeight] = useState(0);
+  useLayoutEffect(() => {
+    const node = chromeRef.current;
+    if (!isMobile || !node) return setRowHeight(0);
+    const measure = () => setRowHeight(node.getBoundingClientRect().height);
+    measure();
+    const observer = new ResizeObserver(measure);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [effectiveInstrument, isMobile, searchExpanded]);
+  }, [isMobile, row]);
+  usePaneReturnScrollport({
+    enabled: route.returnKind === "ShellScroll",
+    scrollportRef,
+    contentRef,
+    continuityKey: route.queryNavigation === "in-place" ? source : null,
+  });
 
-  const paneActions = useMemo<readonly ActionDescriptor[]>(() => {
-    const actions = [...reconciledPaneActions];
-    if (acceptedRefresh) {
-      const resolving = acceptedRefresh.kind === "Resolving";
-      actions.push({
-        kind: "command",
-        id: "Pane.Refresh",
-        label: "Refresh",
-        icon: <RefreshCw size={16} aria-hidden="true" />,
-        disabled: resolving || refreshState.kind === "Refreshing",
-        disabledReason: resolving
-          ? PANE_COMMAND_RESOLVING_REASON
-          : undefined,
-        onSelect: () => startPaneRefresh(),
-      });
-    }
-    if (routeShareIdentity && !effectiveActionSubject) {
-      actions.push({
-        kind: "command",
-        id: "RouteAction.Share",
-        label: "Share…",
-        icon: <Share2 size={16} aria-hidden="true" />,
-        onSelect: ({ triggerEl }) => {
-          openShare(routeShareIdentity, {
-            returnFocusTo: () => triggerEl,
-            returnFocusFallback: present(resolvePaneReturnFocusFallback),
-          });
-        },
-      });
-    }
-    return actions;
-  }, [
-    acceptedRefresh,
-    openShare,
-    reconciledPaneActions,
-    refreshState.kind,
-    resolvePaneReturnFocusFallback,
-    effectiveActionSubject,
-    routeShareIdentity,
-    startPaneRefresh,
-  ]);
-  // Mobile renders only the active pane, which publishes its chrome for the top bar.
-  const mobilePaneChrome = useMemo<MobilePaneChrome>(
-    () => ({
-      paneId,
-      identityId,
-      header,
-      activateChromeAnchor,
-      navigation,
-      companionAction: effectiveCompanionAction,
-      paneActions,
-      menuActions: effectiveMenuActions,
-      actionSubject: effectiveActionSubject,
-    }),
-    [
-      activateChromeAnchor,
-      header,
-      identityId,
-      navigation,
-      paneId,
-      effectiveCompanionAction,
-      paneActions,
-      effectiveMenuActions,
-      effectiveActionSubject,
-    ],
-  );
-  usePublishMobilePaneChrome(isMobile ? mobilePaneChrome : null);
-
-  const bodyId = `${paneId}-body`;
-  const expandedActionRetainsSecondary = reconciledPaneActions.some(
-    (action) =>
-      action.kind === "command" &&
-      action.state?.kind === "disclosure" &&
-      action.state.expanded &&
-      action.state.controls === secondaryRegionId,
-  );
-  const visibleSecondary =
-    !isMobile &&
-    secondaryPresentation &&
-    (secondaryPresentation.state.visibility === "visible" ||
-      expandedActionRetainsSecondary) &&
-    secondarySizing
-      ? {
-          state: secondaryPresentation.state,
-          sizing: secondarySizing,
-          publication: secondaryPresentation.publication,
-        }
-      : null;
-  const visibleSecondaryWidthPx = visibleSecondary?.sizing.widthPx ?? 0;
-  const visibleFixedChrome = !isMobile ? fixedChromePublication : null;
-  const shellStyle: PaneShellStyle = isMobile
-    ? { width: "100%", minWidth: "100%", maxWidth: "100%" }
-    : {
-        width: `${sizing.renderedPrimarySlotWidthPx + visibleSecondaryWidthPx}px`,
-        minWidth: `${sizing.renderedPrimarySlotMinWidthPx + visibleSecondaryWidthPx}px`,
-        maxWidth: `${sizing.renderedPrimarySlotMaxWidthPx + visibleSecondaryWidthPx}px`,
-      };
-  if (isMobile && mobileChromeHeight > 0) {
-    shellStyle["--mobile-pane-chrome-height"] = `${mobileChromeHeight}px`;
-  }
-
-  let bodyStyle: CSSProperties;
-  switch (bodyMode) {
-    case "standard":
-      bodyStyle = {
-        display: "flex",
-        flexDirection: "column",
-        minHeight: 0,
-        overflowY: "auto",
-        overflowX: "hidden",
-        ...(isMobile && { overscrollBehavior: "contain" }),
-        ...(pullRefreshEligible && {
-          touchAction: "pan-x pan-up",
-          overscrollBehaviorY: "contain",
-        }),
-      };
-      break;
-    case "document":
-    case "contained":
-      bodyStyle = {
-        display: "flex",
-        flexDirection: "column",
-        minHeight: 0,
-        overflow: "hidden",
-        ...(isMobile && { overscrollBehavior: "contain" }),
-      };
-      break;
-  }
-  const refreshIndicatorStyle: PaneRefreshIndicatorStyle = {
-    "--pane-refresh-offset": `${refreshIndicatorOffsetPx}px`,
-  };
+  // ---- geometry: desktop only; clamping is render-only ---------------------
+  const layout = isMobile ? null : state.layout;
+  const width = primaryWidth({
+    storedPx: pane.primaryWidthPx,
+    columnPx: columnWidthPx,
+    routeMaxPx: route.width.maxWidthPx,
+    intrinsicPx: route.width.allowsIntrinsicPrimaryWidth
+      ? (layout?.intrinsicWidthPx ?? null)
+      : null,
+  });
+  const rail = layout?.rail ?? null;
+  const railPx = rail ? Math.ceil(rail.widthPx) : 0;
+  const instrument = row === "Instrument" ? body?.instrument : undefined;
 
   return (
     <section
@@ -686,86 +380,71 @@ export default function PaneShell({
       aria-labelledby={landmarkLabelId}
       data-pane-shell="true"
       data-pane-focus-landmark="true"
-      data-active={isActive ? "true" : "false"}
-      data-mobile={isMobile ? "true" : "false"}
+      data-active={isActive}
+      data-mobile={isMobile}
       tabIndex={-1}
-      style={shellStyle}
+      style={
+        rowHeight > 0
+          ? ({
+              "--mobile-pane-chrome-height": `${rowHeight}px`,
+            } as CSSProperties)
+          : undefined
+      }
     >
       <span id={landmarkLabelId} className="sr-only">
-        {accessibleName}
+        {paneHeaderAccessibleName(header)}
       </span>
       <div
         className={styles.primaryPane}
-        style={{
-          width: isMobile ? "100%" : `${sizing.renderedPrimarySlotWidthPx}px`,
-          minWidth: isMobile
-            ? "100%"
-            : `${sizing.renderedPrimarySlotMinWidthPx}px`,
-          maxWidth: isMobile
-            ? "100%"
-            : `${sizing.renderedPrimarySlotMaxWidthPx}px`,
-        }}
+        style={isMobile ? undefined : { width: width.widthPx + railPx }}
       >
         <div
           ref={chromeRef}
           className={styles.chrome}
-          data-pane-chrome-focus={!isMobile ? "true" : undefined}
+          data-pane-chrome-focus={isMobile ? undefined : "true"}
           tabIndex={-1}
           onMouseDown={onChromeMouseDown}
         >
-          {!isMobile ? (
+          {isMobile ? null : (
             <SurfaceHeader
               header={header}
               identityId={identityId}
-              companionAction={effectiveCompanionAction}
+              companionAction={inspector}
               paneActions={paneActions}
-              menuActions={effectiveMenuActions}
-              actionSubject={effectiveActionSubject}
+              menuActions={body?.menuActions}
+              actionSubject={body?.actionSubject}
               navigation={navigation}
             />
-          ) : null}
-          {effectiveContextualRow ? (
+          )}
+          {row ? (
             <div
-              id={
-                effectiveContextualRow.kind === "Search"
-                  ? searchRowId
-                  : undefined
-              }
+              id={row === "Search" ? rowId : undefined}
               className={styles.contextualRow}
               data-contextual-row-variant={
-                effectiveContextualRow.kind === "Search" &&
-                effectiveContextualRow.publication.kind === "FilterRows"
+                row === "Search" && ready?.kind === "FilterRows"
                   ? "Refinement"
                   : "Instrument"
               }
-              role={
-                effectiveContextualRow.kind === "Instrument"
-                  ? "group"
-                  : undefined
-              }
-              aria-label={
-                effectiveContextualRow.kind === "Instrument"
-                  ? effectiveContextualRow.publication.label
-                  : undefined
-              }
+              role={instrument ? "group" : undefined}
+              aria-label={instrument?.label}
             >
-              {effectiveContextualRow.kind === "Search" ? (
-                effectiveContextualRow.publication.kind === "Find" ? (
-                  <FindBar
-                    ref={searchInputRef}
-                    find={effectiveContextualRow.publication.find}
-                    onClose={closeSearch}
-                  />
-                ) : (
-                  <PaneSearchBar
-                    ref={searchInputRef}
-                    publication={effectiveContextualRow.publication}
-                    onClose={closeSearch}
-                  />
-                )
-              ) : (
-                effectiveContextualRow.publication.content
-              )}
+              {instrument ? (
+                instrument.content
+              ) : find ? (
+                <FindBar
+                  ref={inputRef}
+                  find={find}
+                  onClose={closeSearch}
+                  resultsExpanded={state.results?.expanded ?? false}
+                  onShowResults={controller.showResults}
+                />
+              ) : ready?.kind === "FilterRows" ? (
+                <PaneSearchBar
+                  ref={inputRef}
+                  search={ready}
+                  onClose={closeSearch}
+                />
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -774,114 +453,55 @@ export default function PaneShell({
           style={{
             gridTemplateColumns: isMobile
               ? "minmax(0, 1fr)"
-              : visibleFixedChrome
-                ? `${sizing.primaryWidthPx}px ${visibleFixedChrome.widthPx}px`
-                : `${sizing.primaryWidthPx}px`,
+              : `${width.widthPx}px${rail ? ` ${railPx}px` : ""}`,
           }}
         >
           <div
-            ref={bodyRef}
-            className={styles.body}
+            ref={scrollportRef}
             id={bodyId}
-            data-body-mode={bodyMode}
+            className={styles.body}
+            data-body-mode={route.bodyMode}
             data-pane-content="true"
-            data-pane-refresh-eligible={
-              pullRefreshEligible ? "true" : undefined
-            }
-            style={bodyStyle}
+            data-pane-refresh-eligible={pull || undefined}
           >
-            {acceptedCollection ? (
+            {body?.collection ? (
               <div
                 className={styles.collectionRow}
                 role="group"
-                aria-label={acceptedCollection.label}
+                aria-label={body.collection.label}
                 data-pane-collection-controls="true"
               >
-                {acceptedCollection.content}
+                {body.collection.content}
               </div>
             ) : null}
-            <PanePrimaryChromeProvider publish={publishPrimaryChrome}>
+            <div ref={contentRef} className={styles.routeContent}>
               {children}
-            </PanePrimaryChromeProvider>
-            <div
-              className={styles.refreshIndicator}
-              data-refresh-state={refreshState.kind}
-              style={refreshIndicatorStyle}
-              role={refreshState.kind === "Refreshing" ? "progressbar" : undefined}
-              aria-label={
-                refreshState.kind === "Refreshing"
-                  ? (refreshFeedback ?? "Refreshing")
-                  : undefined
-              }
-              aria-hidden={
-                refreshState.kind === "Refreshing" ? undefined : "true"
-              }
-              aria-valuemin={
-                refreshState.kind === "Refreshing" &&
-                refreshState.progress.kind === "Determinate"
-                  ? 0
-                  : undefined
-              }
-              aria-valuemax={
-                refreshState.kind === "Refreshing" &&
-                refreshState.progress.kind === "Determinate"
-                  ? refreshState.progress.requestedCount
-                  : undefined
-              }
-              aria-valuenow={
-                refreshState.kind === "Refreshing" &&
-                refreshState.progress.kind === "Determinate"
-                  ? refreshState.progress.finishedCount
-                  : undefined
-              }
-            >
-              <span className={styles.refreshIndicatorContent}>
-                <RefreshCw
-                  className={styles.refreshIndicatorIcon}
-                  size={14}
-                  aria-hidden="true"
-                />
-                {refreshFeedback}
-              </span>
             </div>
+            {refresh.indicator}
           </div>
-          {visibleFixedChrome ? (
-            <div className={styles.fixedChrome}>
-              {visibleFixedChrome.body}
-            </div>
-          ) : null}
+          {rail ? <div className={styles.rail}>{rail.body}</div> : null}
         </div>
-        {!isMobile ? (
-          <div
-            className={styles.resizeHandle}
-            role="separator"
-            aria-label={`Resize pane ${label}`}
-            aria-controls={bodyId}
-            aria-orientation="vertical"
-            aria-valuemin={sizing.primaryMinWidthPx}
-            aria-valuemax={sizing.primaryMaxWidthPx}
-            aria-valuenow={sizing.primaryWidthPx}
-            tabIndex={0}
-            onMouseDown={handleResizeMouseDown}
-            onKeyDown={handleResizeKeyDown}
+        {isMobile ? null : (
+          <ResizeHandle
+            label={`Resize pane ${label}`}
+            controls={bodyId}
+            widthPx={width.widthPx}
+            minWidthPx={width.minWidthPx}
+            maxWidthPx={width.maxWidthPx}
+            onResize={(widthPx) => resizePrimaryPane(paneId, widthPx)}
           />
-        ) : null}
+        )}
       </div>
-      <span className="sr-only" aria-live="polite" aria-atomic="true">
-        {refreshAnnouncement}
-      </span>
-      {visibleSecondary ? (
-        <SecondaryPaneShell
-          primaryPaneId={paneId}
-          secondaryPaneId={visibleSecondary.state.id}
-          publication={visibleSecondary.publication}
-          state={visibleSecondary.state}
-          sizing={visibleSecondary.sizing}
-          onActiveSurfaceChange={onSetSecondarySurface}
-          onClose={onCloseSecondaryPane}
-          onResize={onResizeSecondaryPane}
-        />
-      ) : null}
+      {refresh.announcement}
+      <Companion
+        paneId={paneId}
+        isMobile={isMobile}
+        chrome={chrome}
+        controller={controller}
+        secondary={pane.secondary}
+        find={find}
+        actionSubject={body?.actionSubject}
+      />
     </section>
   );
 }

@@ -6,26 +6,20 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
-import type { PaneFilterRowsPublication } from "@/lib/panes/paneSearch";
-import styles from "./PaneSearchBar.module.css";
+import type { PaneFilterRowsSearch } from "@/lib/panes/paneChrome";
+import styles from "./PaneCollectionBar.module.css";
 
-/** The pane's filter row. Find has its own bar (components/find/FindBar). */
+/** The pane's filter row (Find has FindBar); its input names its status. Esc or ✕ closes it. */
 const PaneSearchBar = forwardRef<
   HTMLInputElement,
-  {
-    readonly publication: PaneFilterRowsPublication;
-    readonly onClose: () => void;
-  }
->(function PaneSearchBar({ publication, onClose }, ref) {
+  { readonly search: PaneFilterRowsSearch; readonly onClose: () => void }
+>(function PaneSearchBar({ search, onClose }, ref) {
   const statusId = useId();
-
   return (
     <div
       className={styles.bar}
       onKeyDown={(event) => {
-        if (event.key !== "Escape" || event.defaultPrevented) {
-          return;
-        }
+        if (event.key !== "Escape" || event.defaultPrevented) return;
         event.preventDefault();
         event.stopPropagation();
         onClose();
@@ -38,23 +32,24 @@ const PaneSearchBar = forwardRef<
             ref={ref}
             type="search"
             size="sm"
-            value={publication.query}
-            aria-label={publication.inputLabel}
+            value={search.query}
+            aria-label={search.inputLabel}
+            aria-describedby={statusId}
             aria-keyshortcuts="Escape"
-            placeholder={publication.placeholder}
+            placeholder={search.placeholder}
             autoComplete="off"
             autoCapitalize="none"
             spellCheck={false}
             data-pane-search-input="true"
-            onChange={(event) => publication.onQueryChange(event.target.value)}
+            onChange={(event) => search.onQueryChange(event.target.value)}
           />
         }
         controls={
           <>
             <PaneFilterRowsStatus
               id={statusId}
-              status={publication.rowStatus}
-              query={publication.query}
+              status={search.rowStatus}
+              query={search.query}
               visible={false}
             />
             <Button

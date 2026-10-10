@@ -24,9 +24,7 @@ import {
 } from "@/lib/panes/paneRouteModel";
 import {
   getSecondaryGroupForSurface,
-  getSecondaryWidthPolicy,
-  resolveEffectiveSecondarySizing,
-  type WorkspaceSecondaryGroupId,
+  companionWidthPx,
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
 import {
@@ -97,12 +95,6 @@ function updatePane(
 ): WorkspaceState {
   const panes = state.panes.map((p) => (p.id === paneId ? change(p) : p));
   return { ...state, panes };
-}
-
-function secondaryWidth(groupId: WorkspaceSecondaryGroupId, widthPx: number) {
-  const policy = getSecondaryWidthPolicy(groupId);
-  return resolveEffectiveSecondarySizing({ storedWidthPx: widthPx, policy })
-    .widthPx;
 }
 
 /** I4: all panes' history <= 48, dropping oldest first, inactive panes first. */
@@ -282,7 +274,7 @@ function createWorkspaceStore(
         id: kept?.id ?? createRandomId("secondary-pane"),
         groupId,
         activeSurfaceId: surfaceId,
-        widthPx: secondaryWidth(groupId, kept?.widthPx ?? Number.NaN),
+        widthPx: companionWidthPx(kept?.widthPx ?? null),
         visibility: "visible",
       };
       return { ...pane, secondary };
@@ -499,7 +491,7 @@ function createWorkspaceStore(
         if (getSecondaryGroupForSurface(next.activeSurfaceId) !== next.groupId) {
           return;
         }
-        secondary = { ...next, widthPx: secondaryWidth(next.groupId, next.widthPx) };
+        secondary = { ...next, widthPx: companionWidthPx(next.widthPx) };
       }
       commit(updatePane(data.state, pane.id, (p) => ({ ...p, secondary })));
     },

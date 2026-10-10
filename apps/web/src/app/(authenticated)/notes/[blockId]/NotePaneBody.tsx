@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import ResourceSurfaceEditor from "@/components/resource-surface/ResourceSurfaceEditor";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { consumePendingNoteActivation } from "@/lib/reader/pendingNoteActivation";
 import {
@@ -136,7 +136,7 @@ export default function NotePaneBody() {
     ),
     [blockId],
   );
-  const { companionAction } = useResourceInspector({
+  useResourceInspector({
     scheme: "note_block",
     handle: blockId,
     bodies: { linkedItems: connections },
@@ -150,9 +150,8 @@ export default function NotePaneBody() {
     },
     [acceptSurface],
   );
-  usePanePrimaryChrome({
+  usePaneChrome({
     search,
-    companionAction: companionAction ?? undefined,
     // The pane's canonical identity is its route key, never a fact of the
     // filter-row state it happened to be gated on. The snapshot owns missing.
     actionSubject: {

@@ -29,7 +29,6 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
-- [open] workspace / pane return · 2026-10-10 authors reauthor · p3 · a quick Back restores the raw offset because the scrollport's anchor search starts at the collection bar: [ticket](tickets/pane-return-anchor-searches-the-collection-bar.md).
 - [open] contributors / editor · 2026-10-10 authors reauthor · p3 · the editor's name key lowercases instead of casefolding, so "Straße"/"STRASSE" pass its duplicate-create guard: [ticket](tickets/contributor-name-key-casefold-gap.md).
 - [open] libraries / wire · 2026-10-10 authors reauthor · p3 · `LibraryEntryMediaOut.author_mode` reaches the web and nothing reads it: [ticket](tickets/library-entry-author-mode-unread.md).
 - [open] podcasts, browse / reauthoring · 2026-10-10 podcasts/browse rewrite · 4,163 formatted lines against a 3,000 cap; no behaviour cut for budget: [ticket](tickets/podcasts-reauthor-over-line-budget.md).
@@ -131,8 +130,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [deferred] epub / apparatus · 2026-09-27 pr #398 review · row 232's second false backlink awaits a deletion-scope decision: [ticket](tickets/reader-epub-row232-backlink-classification.md).
 - [open] epub / parser bound · 2026-09-27 corpus census · two backlink indexes exceed the bounded extractor: [ticket](tickets/reader-epub-backlink-index-exhaustion.md).
 - [open] api / operations · 2026-09-27 release preflight · a read-only live source-hash probe exited 137 and restarted the api once: [ticket](tickets/live-api-source-hash-probe-restarted-container.md).
-- [open] workspace / geometry · 2026-09-24 reader-inspector-controls · pdf inspector overflows the viewport at the pane minimum: [ticket](tickets/pdf-inspector-overflows-viewport-at-pane-minimum.md).
-- [open] workspace / copy · 2026-09-24 reader-inspector-controls · secondary tab close label case differs from pane close: [ticket](tickets/secondary-tab-close-label-case.md).
 - [open] epub ingest · 2026-09-26 fragment-only nav fix review · unsafe authored nav hrefs lack source issues: [ticket](tickets/epub-unsafe-nav-targets-have-no-source-issue.md).
 - [open] worker / indexing · 2026-09-24 reader-inspector-controls · a missing indexing credential is classified as a child defect: [ticket](tickets/indexing-without-credential-is-a-child-defect.md).
 - [open] local development · 2026-09-24 reader-inspector-controls · worker overlay memory bound fails the lane check: [ticket](tickets/local-worker-overlay-memory-bound-fails-lane-check.md).
@@ -410,3 +407,8 @@ unexpected timeouts. See
 - [open] api / typed wire · 2026-10-10 imports reauthor · `POST /media/{id}/refresh` returns an untyped body: [ticket](tickets/media-refresh-route-has-no-model.md).
 - [open] imports / inspector · 2026-10-10 imports reauthor · a failed "Load earlier events" read shows no notice and no retry: [ticket](tickets/import-history-load-more-failure-is-silent.md).
 - [open] imports / verification · 2026-10-10 imports reauthor · the imports harness does not drive browse preview Add or note-body attachments: [ticket](tickets/imports-harness-lacks-browse-and-note-attachment-journeys.md).
+- [open] resource actions / web · 2026-10-10 workspace host reauthor · a resource's More menu opens with every canonical action blocked ("Actions are refreshing.") for one snapshot round trip: [ticket](tickets/resource-menu-opens-with-actions-blocked.md).
+- [open] workspace / pane return · 2026-10-10 authors reauthor · p3 · the quick-Back anchor fix landed (route content is the anchor root); acceptance waits on authors harness X8: [ticket](tickets/pane-return-anchor-searches-the-collection-bar.md).
+- [open] workspace / verification · 2026-10-10 workspace host reauthor · artifact find results and the podcast Inspector are not driven live (no fixtures): [ticket](tickets/host-companion-artifact-and-podcast-unverified.md).
+- [open] workspace / host canvas · 2026-10-10 workspace host reauthor · p2 · a resume aims the active pane once, before the panes left of it finish growing, so it ends partly or wholly off-screen: [ticket](tickets/resume-scroll-misses-late-pane-growth.md).
+- [open] imports / web · 2026-10-10 workspace host reauthor · p3 · a dismissed imports Inspector reopens whenever the pane remounts (resume, breakpoint round trip): [ticket](tickets/imports-inspector-reopens-on-every-mount.md).
