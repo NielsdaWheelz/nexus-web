@@ -17,9 +17,8 @@ from nexus.db.models import ChatRun
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.execution import ChatRunExecutionOut
 from nexus.schemas.presence import Presence, absent, present
+from nexus.services.chat_run_event_store import TERMINAL_RUN_STATUSES
 from nexus.services.durable_step_journal import project_execution_phase
-
-_TERMINAL_RUN_STATUSES = frozenset({"complete", "error", "cancelled"})
 
 
 def project_chat_run_executions(
@@ -36,7 +35,7 @@ def project_chat_run_executions(
     out: dict[UUID, Presence[ChatRunExecutionOut]] = {}
     live_by_key: dict[str, ChatRun] = {}
     for run in runs:
-        if run.status in _TERMINAL_RUN_STATUSES:
+        if run.status in TERMINAL_RUN_STATUSES:
             out[run.id] = absent()
             continue
         live_by_key[f"chat_run:{run.id}"] = run

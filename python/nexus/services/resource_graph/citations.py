@@ -29,7 +29,7 @@ from nexus.schemas.citation import CitationSnapshot as CitationSnapshotOut
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import RetrievalLocator
 from nexus.services.media_intelligence import read_batch
-from nexus.services.resource_graph.edges import create_edge, replace_edges_for_origin
+from nexus.services.resource_graph.edges import replace_edges_for_origin
 from nexus.services.resource_graph.reader_targets import (
     ReaderTarget,
     reader_target_for_citation_target,
@@ -38,7 +38,6 @@ from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.resolve import resolve_refs
 from nexus.services.resource_graph.schemas import (
     CitationInput,
-    CitationSnapshot,
     CitationTargetProjection,
     EdgeCreate,
     EdgeKind,
@@ -56,31 +55,6 @@ class GeneratedMarkdownCitationMarker:
     start: int
     end: int
     linked: bool
-
-
-def record_citation(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    source: ResourceRef,
-    target: ResourceRef,
-    ordinal: int,
-    kind: EdgeKind,
-    snapshot: CitationSnapshot,
-) -> EdgeOut:
-    """Write one citation edge inside the caller's transaction."""
-    return create_edge(
-        db,
-        viewer_id=viewer_id,
-        input=EdgeCreate(
-            source=source,
-            target=target,
-            kind=kind,
-            origin="citation",
-            ordinal=ordinal,
-            snapshot=snapshot,
-        ),
-    )
 
 
 def replace_citations_for_output(

@@ -14,7 +14,6 @@ from typing import Annotated, Any, Literal, Self, get_origin
 
 from pydantic import (
     BaseModel,
-    BeforeValidator,
     ConfigDict,
     Field,
     StringConstraints,
@@ -272,12 +271,6 @@ class ImmutablePromptPayloadRef(_FrozenModel):
     payload_digest: Sha256
 
 
-class FrozenHostToolPlanSnapshot(_FrozenModel):
-    plan_id: BoundedText
-    authority_revision: BoundedText
-    facts: dict[str, JsonValue]
-
-
 class FrozenScopePredicate(_FrozenModel):
     kind: BoundedText
     arguments: dict[str, JsonValue]
@@ -362,8 +355,9 @@ class GenerationSpecFacts(_FrozenModel):
     output_contract: OutputContractSnapshot
     output_contract_fingerprint: Sha256
     display_at_dispatch: SelectionPresentation
-    host_tool_plan_snapshot: Presence[FrozenHostToolPlanSnapshot]
-    host_evidence_revision: Presence[BoundedText]
+    # no workflow admits host tools; stored specs and their fingerprints keep these slots.
+    host_tool_plan_snapshot: Absent
+    host_evidence_revision: Absent
     authority: GenerationAuthority
     catalog_definition_revision: Sha256
     policy_revision: BoundedText
@@ -411,10 +405,6 @@ class GenerationSpecFacts(_FrozenModel):
             self.effective_output_budget_tokens > self.source_max_output_tokens.value
         ):
             raise ValueError("effective output budget exceeds source capacity")
-        if isinstance(self.host_tool_plan_snapshot, Present) != isinstance(
-            self.host_evidence_revision, Present
-        ):
-            raise ValueError("host tool plan and evidence revision must share Presence")
         if self.output_contract_fingerprint != _digest(
             self.output_contract.model_dump(mode="json", by_alias=True)
         ):
@@ -457,9 +447,6 @@ def decode_generation_spec_document(value: object) -> GenerationSpec:
     except (TypeError, ValueError) as error:
         raise ValueError("GenerationSpec wire value must be canonical JSON data") from error
     return GenerationSpec.model_validate_json(encoded)
-
-
-GenerationSpecWire = Annotated[GenerationSpec, BeforeValidator(decode_generation_spec_document)]
 
 
 class ToolPlanIdentity(BaseModel):

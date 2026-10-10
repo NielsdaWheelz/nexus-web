@@ -88,7 +88,6 @@ from nexus.services.generation_continuations import (
 from nexus.services.generation_spec import (
     BackgroundOperationKey,
     CodexCallbacks,
-    FrozenHostToolPlanSnapshot,
     GenerationIntent,
     GenerationSpec,
     ImmutablePromptPayloadRef,
@@ -135,24 +134,10 @@ type ResolveTerminal = Callable[[Session, BackendTerminal], "EncodedGenerationTe
 _MODEL_TURN_COMPONENT = "nexus-generation-model-turn.v1"
 
 
-class ExecutionRuntime(Protocol):
+@dataclass(frozen=True, slots=True)
+class ExecutionRuntime:
     """Fully composed backend plus shared admission and continuation authorities."""
 
-    @property
-    def backend(self) -> GenerationBackend: ...
-
-    @property
-    def native(self) -> NativeGenerationBackend: ...
-
-    @property
-    def continuation_cipher(self) -> GenerationContinuationCipher: ...
-
-    @property
-    def admission(self) -> GenerationService: ...
-
-
-@dataclass(frozen=True, slots=True)
-class ComposedExecutionRuntime:
     backend: GenerationBackend
     native: NativeGenerationBackend
     continuation_cipher: GenerationContinuationCipher = field(repr=False)
@@ -165,36 +150,12 @@ class CancellationSignal(Protocol):
     def is_set(self) -> bool: ...
 
 
-class GenerationAdmissionJournal(Protocol):
-    """Domain replay journal owning prompt/spec admission beside replay state.
-
-    Implemented by ``JobGenerationJournal`` over ``background_jobs.payload``.
-    Implementations never commit or roll back.
-    """
-
-    @property
-    def context(self) -> JobExecutionContext: ...
-
-    def read(self, db: Session) -> StepReplayState | None: ...
-
-    def arm(
-        self, db: Session, *, expected: StepReplayState, next_state: StepReplayState
-    ) -> bool: ...
-
-    def complete(
-        self, db: Session, *, expected: StepReplayState, next_state: StepReplayState
-    ) -> bool: ...
-
-    def read_admission(self, db: Session) -> tuple[GenerationSpec, GenerationIntent] | None: ...
-
-    def prepare_admission(
-        self, db: Session, *, generation_id: UUID, spec: GenerationSpec, intent: GenerationIntent
-    ) -> tuple[GenerationSpec, GenerationIntent]: ...
-
-
 @dataclass(frozen=True, slots=True)
 class JobGenerationJournal:
-    """Lease-fenced generation journal stored in ``background_jobs.payload``."""
+    """Lease-fenced generation journal stored in ``background_jobs.payload``.
+
+    It owns prompt/spec admission beside replay state and never commits or rolls back.
+    """
 
     context: JobExecutionContext
     step_path: str
@@ -313,7 +274,7 @@ class GenerationExecutionRequest:
     generation_id: UUID
     spec: GenerationSpec
     intent: GenerationIntent = field(repr=False)
-    journal: GenerationAdmissionJournal
+    journal: JobGenerationJournal
     tool_executor: BackendToolExecutor | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
@@ -387,11 +348,9 @@ async def admit_job_generation(
     intent: GenerationIntent,
     prompt_template_revision: str,
     prompt_payload_ref: ImmutablePromptPayloadRef,
-    journal: GenerationAdmissionJournal,
+    journal: JobGenerationJournal,
     session_factory: sessionmaker[Session],
     runtime: ExecutionRuntime,
-    host_plan: FrozenHostToolPlanSnapshot | None = None,
-    host_evidence_revision: str | None = None,
 ) -> GenerationExecutionRequest:
     """Freeze and persist one background admission before any backend I/O.
 
@@ -408,8 +367,6 @@ async def admit_job_generation(
             intent=intent,
             prompt_template_revision=prompt_template_revision,
             prompt_payload_ref=prompt_payload_ref,
-            host_plan=host_plan,
-            host_evidence_revision=host_evidence_revision,
         )
         with session_factory() as db:
             lock_generation_owner_in_current_transaction(db, owner)

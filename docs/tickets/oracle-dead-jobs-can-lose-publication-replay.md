@@ -8,7 +8,7 @@ three-attempt default, and nothing settles a reading whose job dies: an uncertai
 dispatch (`readings._run` raises `GenerationUncertain`), an expired lease or a handler
 defect leaves the row `pending`. the pane then shows skeletons for good and the
 stream stays open on keepalives. the dead row carries the journal (a `Completed`
-outcome can still be replayed by requeueing it), but `tasks/prune_background_jobs.py`
+outcome can still be replayed by requeueing it), but `jobs/registry._run_prune_background_jobs`
 deletes dead rows after the configured retention (default 30 days).
 
 a stored `streaming` reading has no owner either: its job no-ops, as under main and

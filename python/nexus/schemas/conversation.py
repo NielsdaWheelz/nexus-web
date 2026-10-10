@@ -490,17 +490,6 @@ def chat_run_public_event_payload(event_type: str, payload: dict[str, Any]) -> d
 # =============================================================================
 
 
-class TrustPromptAssemblyOut(BaseModel):
-    reserved_output_tokens: int
-    input_budget_tokens: int
-    estimated_input_tokens: int
-    included_message_ids: list[str]
-    included_context_refs: list[dict[str, Any]]
-    dropped_items: list[dict[str, Any]]
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class TrustRunOut(BaseModel):
     run_id: UUID
     run_selection: RunSelectionOut
@@ -590,7 +579,6 @@ class AssistantTrustTrailOut(BaseModel):
     chat_run_id: UUID | None = None
     status: Literal["pending", "running", "complete", "error", "cancelled"]
     run: TrustRunOut | None = None
-    prompt: TrustPromptAssemblyOut | None = None
     tool_calls: list[TrustToolCallOut] = Field(default_factory=list)
     citations: list[TrustCitationOut] = Field(default_factory=list)
     context_refs_added: list[TrustContextRefAddedOut] = Field(default_factory=list)

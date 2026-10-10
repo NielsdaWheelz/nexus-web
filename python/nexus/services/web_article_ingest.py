@@ -25,7 +25,6 @@ from nexus.services.document_embeds import DocumentEmbedLockSetChanged
 from nexus.services.node_ingest import (
     IngestError,
     IngestResult,
-    node_ingest_command,
     run_node_ingest,
 )
 from nexus.services.reader_publication import ReplaceSourceIssues, replace_reader_publication
@@ -72,9 +71,7 @@ def materialize_web_article_source(
     finally:
         snapshot.close()
 
-    ingest_result = run_node_ingest(
-        url, command=node_ingest_command(get_settings().node_ingest_script)
-    )
+    ingest_result = run_node_ingest(url, script=get_settings().node_ingest_script)
     if isinstance(ingest_result, IngestError):
         logger.warning(
             "node_ingest_failed",

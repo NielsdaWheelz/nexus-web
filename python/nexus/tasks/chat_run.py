@@ -13,11 +13,9 @@ from nexus.jobs.queue import JobExecutionContext, JobRow, get_job
 from nexus.logging import get_logger
 from nexus.services.chat_run_worker import execute_chat_run, settle_cancelled_dead_chat_run
 from nexus.services.llm_execution import ExecutionRuntime
-from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
+from nexus.tasks.llm_task import run_llm_task
 
 logger = get_logger(__name__)
-
-_CHAT_RUN_SPEC = LlmTaskSpec(label="chat_run")
 
 
 def chat_run(run_id: str, *, context: JobExecutionContext) -> None:
@@ -40,7 +38,7 @@ def chat_run(run_id: str, *, context: JobExecutionContext) -> None:
             runtime=runtime,
         )
 
-    run_llm_task(_CHAT_RUN_SPEC, handler)
+    run_llm_task("chat_run", handler)
 
 
 def record_dead_lettered_chat_run(db: Session, job: JobRow) -> None:

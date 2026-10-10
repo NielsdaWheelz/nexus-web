@@ -660,9 +660,9 @@ def _run_relations_list(
             if item.snapshot and item.snapshot.excerpt
             else None,
             source_label=item.source.label[:150] if item.source.label else None,
-            source_uri=item.source_ref.uri,
+            source_uri=item.source.ref.uri,
             target_label=item.target.label[:150] if item.target.label else None,
-            target_uri=item.target_ref.uri,
+            target_uri=item.target.ref.uri,
         )
         for item in page.items
     ]

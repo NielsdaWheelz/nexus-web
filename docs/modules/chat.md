@@ -20,9 +20,8 @@ lifecycle + numbered Provider API tool-output rendering), and the
 `ChatRunEventEmitter` in `chat_run_event_store` — the single durable run-event
 append owner (typed streaming methods commit inline for SSE visibility; batch
 tool-result/citation/context events defer to the executor's transaction). The
-cross-surface run-tail query + terminal check are `run_kit.get_run_events` /
-`run_kit.is_run_terminal`; viewer scoping stays in each `/stream/*` route's `assert_viewer`,
-never in the query.
+run-tail query + terminal check is `chat_run_event_store.read_run_events`; viewer
+scoping stays in the `/stream/chat-runs` route's ownership assert, never in the query.
 
 Web owners: `apps/web/src/lib/chat/*` (wire names, tree derivations, selection,
 drafts, run tails, quote intents, index, message intents) and
@@ -510,7 +509,7 @@ at its final citation edge through `cited_edge_id`. Candidate ordinal lives on
 the telemetry row; final reader ordinal lives on the edge.
 
 Assistant messages also carry a backend-built `trust_trail`: the durable
-inspector read model over `chat_runs`, prompt assemblies, tool calls, retrieval
+inspector read model over `chat_runs`, tool calls, retrieval
 rows, citation edges, and context-ref-added events. Its tool calls are checked
 on the way out: counts equal their arrays, targets are unique, one effect
 identity, and each authorship's `position_path` is

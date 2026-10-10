@@ -67,10 +67,9 @@ from nexus.services.structured_synthesis import (
     ground_indices,
     outcome_failure_facts,
 )
-from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
+from nexus.tasks.llm_task import run_llm_task
 
 _STEP_PATH = "synthesis"
-_TASK = LlmTaskSpec(label="media_unit_build")
 
 
 class MediaUnitClaimOut(BaseModel):
@@ -158,7 +157,7 @@ def media_unit_build(
         # infrastructure failure.
         return {"status": "ok", "outcome": outcome, "media_id": media_id}
 
-    return run_llm_task(_TASK, handler)
+    return run_llm_task("media_unit_build", handler)
 
 
 async def _build(

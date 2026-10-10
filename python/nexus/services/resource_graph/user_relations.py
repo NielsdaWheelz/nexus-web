@@ -39,7 +39,7 @@ from nexus.services.resource_graph.resolve import assert_ref_visible, resolve_re
 from nexus.services.resource_graph.schemas import (
     EdgeCreate,
     EdgeOut,
-    is_neutral_link_shape,
+    is_neutral_link,
 )
 from nexus.services.resource_items import versions
 from nexus.services.resource_items.capabilities import resource_link_mode
@@ -63,7 +63,7 @@ def count_retained_neutral_links(
     links = [
         edge
         for edge in db.scalars(select(ResourceEdge).where(*predicates).order_by(ResourceEdge.id))
-        if _is_neutral_link(edge)
+        if is_neutral_link(edge)
     ]
     resolved = resolve_refs(
         db,
@@ -150,7 +150,7 @@ def delete_link(db: Session, *, viewer_id: UUID, link_id: UUID) -> None:
             raise ForbiddenError(
                 ApiErrorCode.E_FORBIDDEN, "Only user relations can be removed here"
             )
-        if not _is_neutral_link(edge):
+        if not is_neutral_link(edge):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Link not found")
         cleanup.detach_link_note_motif(db, viewer_id=viewer_id, a=edge.source, b=edge.target)
         edges.delete_edge(db, viewer_id=viewer_id, edge_id=link_id)
@@ -359,18 +359,8 @@ def _parse_ref(raw: str) -> ResourceRef:
     )
 
 
-def _is_neutral_link(edge: EdgeOut | ResourceEdge) -> bool:
-    return is_neutral_link_shape(
-        origin=edge.origin,
-        kind=edge.kind,
-        ordinal=edge.ordinal,
-        snapshot=edge.snapshot,
-        source_order_key=edge.source_order_key,
-    )
-
-
 def _neutral_link(db: Session, *, viewer_id: UUID, link_id: UUID) -> EdgeOut:
     edge = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=link_id)
-    if edge is None or not _is_neutral_link(edge):
+    if edge is None or not is_neutral_link(edge):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Link not found")
     return edge

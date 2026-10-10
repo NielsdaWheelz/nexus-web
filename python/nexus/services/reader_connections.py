@@ -105,16 +105,16 @@ def list_reader_connections(
             # the reader emits one row per local endpoint, each activating the other.
             source_anchor = target_anchor = None
             if connection.direction == "undirected":
-                source_anchor = anchor_for(connection, connection.source_ref)
-                target_anchor = anchor_for(connection, connection.target_ref)
+                source_anchor = anchor_for(connection, connection.source.ref)
+                target_anchor = anchor_for(connection, connection.target.ref)
             if source_anchor is not None and target_anchor is not None:
                 rows.append(_row(replace(connection, other=connection.target), source_anchor))
                 rows.append(_row(replace(connection, other=connection.source), target_anchor))
                 continue
             local_ref = (
-                connection.source_ref
-                if connection.other.ref == connection.target_ref
-                else connection.target_ref
+                connection.source.ref
+                if connection.other.ref == connection.target.ref
+                else connection.target.ref
             )
             rows.append(_row(connection, anchor_for(connection, local_ref)))
         if page.next_cursor is None:
@@ -158,7 +158,7 @@ def _anchor_for_ref(
     citation = connection.citation
     if (
         citation is not None
-        and connection.target_ref == ref
+        and connection.target.ref == ref
         and citation.target_media_id == media_id
         and citation.target_locator is not None
     ):

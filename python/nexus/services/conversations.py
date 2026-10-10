@@ -250,15 +250,6 @@ def get_conversation_for_visible_read_or_404(
     return conversation
 
 
-def get_conversation_for_owner_write_or_404(
-    db: Session, viewer_id: UUID, conversation_id: UUID
-) -> Conversation:
-    conversation = db.get(Conversation, conversation_id)
-    if conversation is None or conversation.owner_user_id != viewer_id:
-        raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
-    return conversation
-
-
 def get_message_count(db: Session, conversation_id: UUID) -> int:
     return (
         db.scalar(

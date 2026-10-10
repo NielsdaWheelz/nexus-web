@@ -7,12 +7,15 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Literal, get_args
+from typing import TYPE_CHECKING, Literal, get_args
 from uuid import UUID
 
 from nexus.schemas.machine_authorship import MachineAuthorshipOut
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
+
+if TYPE_CHECKING:
+    from nexus.db.models import ResourceEdge
 
 EdgeKind = Literal["context", "supports", "contradicts"]
 EdgeOrigin = Literal[
@@ -95,25 +98,18 @@ class EdgeOut:
     created_at: datetime
 
 
-def is_neutral_link_shape(
-    *,
-    origin: str,
-    kind: str,
-    ordinal: int | None,
-    snapshot: object | None,
-    source_order_key: str | None,
-) -> bool:
+def is_neutral_link(edge: EdgeCreate | EdgeOut | ResourceEdge) -> bool:
     """The canonical neutral user-Link shape, independent of storage orientation.
 
     The writer, the delete gate and the "is this undirected?" read all share it, so the
     neutral-Link shape cannot drift between them. Source-owned context facts are excluded.
     """
     return (
-        origin == "user"
-        and kind == "context"
-        and ordinal is None
-        and snapshot is None
-        and source_order_key is None
+        edge.origin == "user"
+        and edge.kind == "context"
+        and edge.ordinal is None
+        and edge.snapshot is None
+        and edge.source_order_key is None
     )
 
 
@@ -253,8 +249,6 @@ class Connection:
     snapshot: CitationSnapshot | None
     source_order_key: str | None
     ordinal: int | None
-    source_ref: ResourceRef
-    target_ref: ResourceRef
     source: ConnectionEndpoint
     target: ConnectionEndpoint
     other: ConnectionEndpoint

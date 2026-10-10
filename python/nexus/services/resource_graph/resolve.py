@@ -81,7 +81,6 @@ class ResolvedResource:
     fetch_hint: str = ""
     quote: ResolvedQuote | None = None
     missing: bool = False
-    resolved_revision_ref: str | None = None
     body: str | None = None
     title: str | None = None
     message_role: str | None = None
@@ -382,7 +381,6 @@ def _dossier(
     subject: str,
     content: str | None,
     library_id: UUID | None,
-    revision_id: UUID | None,
 ) -> ResolvedResource:
     body = content or ""
     library_search = (
@@ -396,9 +394,6 @@ def _dossier(
         summary=_first_line(body) or f"Dossier for {subject}",
         inline_body=body if body and len(body) < INLINE_THRESHOLD_CHARS else None,
         fetch_hint=f'nexus__resource__read("{ref.uri}") for the full synthesis{library_search}',
-        resolved_revision_ref=(
-            f"artifact_revision:{revision_id}" if revision_id is not None else None
-        ),
         body=content,
         title=subject,
     )
@@ -415,17 +410,15 @@ def _load_artifact(
             ref,
             label=f"Dossier — {subject}",
             subject=subject,
-            content=row[5],
+            content=row[4],
             library_id=row[2] if row[1] == "library" else None,
-            revision_id=row[4],
         )
 
     return _load(
         db,
         items,
         f"""
-        SELECT a.id, a.subject_scheme, a.subject_id, {_SUBJECT_TITLE_SQL},
-               a.revision_id, a.content_text
+        SELECT a.id, a.subject_scheme, a.subject_id, {_SUBJECT_TITLE_SQL}, a.content_text
         FROM artifacts a
         {_SUBJECT_JOINS_SQL}
         WHERE a.id = ANY(:ids) AND {head_visible_sql("a")}
@@ -448,7 +441,6 @@ def _load_artifact_revision(
             subject=subject,
             content=row[5],
             library_id=row[3] if row[2] == "library" else None,
-            revision_id=row[0],
         )
 
     return _load(

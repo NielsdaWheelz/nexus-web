@@ -691,7 +691,6 @@ def _child_refs(
     return tuple(ResourceRef(scheme=scheme, id=row[0]) for row in db.execute(text(sql), params))
 
 
-CONVERSATION_CONTEXT_EDGE_ORIGINS: tuple[EdgeOrigin, ...] = ("user", "citation", "system")
 NOTE_MEDIA_SEARCH_EDGE_ORIGINS: tuple[EdgeOrigin, ...] = (
     "user",
     "highlight_note",

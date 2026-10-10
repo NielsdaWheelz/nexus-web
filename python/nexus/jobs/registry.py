@@ -1,4 +1,8 @@
-"""Background job registry: one policy record and one handler adapter per kind."""
+"""Background job registry: one policy record and one handler per kind.
+
+A handler path names either a task that already takes ``(payload, context)`` or a
+``_run_*`` adapter here that parses the payload and calls the owning service.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +11,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import UUID
 
 from nexus.config import get_settings
@@ -20,6 +24,11 @@ from nexus.jobs.queue import (
     JobResult,
 )
 from nexus.services.podcasts.types import PODCAST_SYNC_JOB_LEASE_SECONDS
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from nexus.services.llm_execution import ExecutionRuntime
 
 type Payload = Mapping[str, Any]
 type ResourceFailureProjection = Literal["Job", "SourceAttemptMedia"]
@@ -95,7 +104,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         ),
         "media_content_reindex_job": JobDefinition(
             kind="media_content_reindex_job",
-            handler_path="nexus.jobs.registry:_run_media_content_reindex",
+            handler_path="nexus.tasks.media_content_reindex:media_content_reindex_job",
             resource_class="Heavy",
             max_attempts=3,
             retry_delays_seconds=(60, 300),
@@ -261,7 +270,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         ),
         "media_teardown": JobDefinition(
             kind="media_teardown",
-            handler_path="nexus.jobs.registry:_run_media_teardown",
+            handler_path="nexus.tasks.media_teardown:media_teardown",
             resource_class="Light",
             max_attempts=5,
             retry_delays_seconds=(60, 300, 900, 3600, 21600),
@@ -271,7 +280,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         ),
         "storage_object_cleanup": JobDefinition(
             kind="storage_object_cleanup",
-            handler_path="nexus.jobs.registry:_run_storage_object_cleanup",
+            handler_path="nexus.tasks.storage_object_cleanup:storage_object_cleanup",
             resource_class="Light",
             max_attempts=5,
             retry_delays_seconds=(60, 300, 900, 3600, 21600),
@@ -292,21 +301,26 @@ def _build_default_registry() -> dict[str, JobDefinition]:
 
 
 def _run_ingest_media_source(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.tasks.ingest_media_source import ingest_media_source
+    from nexus.db.session import get_session_factory
+    from nexus.logging import get_logger
+    from nexus.services.media_source_ingest import run_source_attempt
 
-    return ingest_media_source(
-        media_id=str(payload["media_id"]),
-        attempt_id=str(payload["attempt_id"]),
-        actor_user_id=str(payload["actor_user_id"]),
+    result = run_source_attempt(
+        session_factory=get_session_factory(),
+        media_id=UUID(str(payload["media_id"])),
+        attempt_id=UUID(str(payload["attempt_id"])),
+        actor_user_id=UUID(str(payload["actor_user_id"])),
         request_id=payload.get("request_id"),
         context=context,
     )
-
-
-def _run_media_content_reindex(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.tasks.media_content_reindex import media_content_reindex_job
-
-    return media_content_reindex_job(payload=payload, context=context)
+    get_logger(__name__).info(
+        "ingest_media_source_completed",
+        media_id=str(payload["media_id"]),
+        attempt_id=str(payload["attempt_id"]),
+        result=result,
+        request_id=payload.get("request_id"),
+    )
+    return result
 
 
 def _run_enrich_metadata(*, payload: Payload, context: Context) -> JobResult:
@@ -327,21 +341,57 @@ def _run_chat_run(*, payload: Payload, context: Context) -> JobResult:
 
 
 def _run_dossier_build(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.tasks.dossier_build import dossier_build
+    """Compose the web search provider and run one build attempt.
 
-    return dossier_build(payload=payload, context=context)
+    ``run.run_build`` owns every terminal write; an unexpected exception goes to
+    the queue's retry and dead-letter policy, which the head reads as Suspended.
+    """
+    import httpx
+
+    from nexus.services.dossier.run import run_build
+    from nexus.services.tool_runtime.catalog import compose_configured_web_search_provider
+    from nexus.tasks.llm_task import run_llm_task
+
+    build_id = UUID(str(payload["build_id"]))
+
+    async def handler(db: Session, runtime: ExecutionRuntime) -> JobResult:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(120.0, connect=10.0), trust_env=False
+        ) as client:
+            web = compose_configured_web_search_provider(client, settings=get_settings())
+            reschedule = await run_build(
+                db, build_id=build_id, ctx=context, runtime=runtime, web=web
+            )
+        return reschedule or {"status": "ok", "build_id": str(build_id)}
+
+    return run_llm_task("dossier_build", handler)
 
 
 def _run_podcast_sync_subscription(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.tasks.podcast_sync_subscription import podcast_sync_subscription_job
+    from dataclasses import asdict
 
-    return podcast_sync_subscription_job(payload=payload, context=context)
+    from nexus.db.session import get_session_factory
+    from nexus.logging import get_logger
+    from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
+
+    with get_session_factory()() as db:
+        result = asdict(run_podcast_subscription_sync_now(db, payload=payload, context=context))
+    get_logger(__name__).info(
+        "podcast_sync_task_completed",
+        job_id=str(context.job_id),
+        attempt_no=context.attempt_no,
+        subscription_id=str(payload.get("subscription_id")),
+        result=result,
+    )
+    return result
 
 
 def _run_podcast_backfill_subscription(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.tasks.podcast_backfill_subscription import podcast_backfill_subscription
+    from nexus.db.session import get_session_factory
+    from nexus.services.podcasts.backfill import run_backfill_step
 
-    return podcast_backfill_subscription(payload=payload, context=context)
+    with get_session_factory()() as db:
+        return run_backfill_step(db, payload=payload, context=context)
 
 
 def _run_podcast_reindex_semantic(*, payload: Payload, context: Context) -> JobResult:
@@ -356,19 +406,53 @@ def _run_podcast_reindex_semantic(*, payload: Payload, context: Context) -> JobR
 
 
 def _run_note_reindex(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.tasks.note_reindex import note_reindex_job
+    from nexus.db.models import NoteBlock
+    from nexus.db.session import get_session_factory
+    from nexus.logging import get_logger
+    from nexus.services import connection_discovery
+    from nexus.services.note_indexing import rebuild_note_content_index
+    from nexus.services.resource_graph.refs import ResourceRef
 
-    return note_reindex_job(
-        note_block_id=str(payload["note_block_id"]),
-        reason=str(payload["reason"]),
-        context=context,
-    )
+    block_id = UUID(str(payload["note_block_id"]))
+    reason = str(payload["reason"])
+    with get_session_factory()() as db:
+        try:
+            index_result = rebuild_note_content_index(db, note_block_id=block_id, reason=reason)
+            block = db.get(NoteBlock, block_id)
+            if block is not None:
+                connection_discovery.queue_connection_discovery_scan(
+                    db,
+                    user_id=block.user_id,
+                    ref=ResourceRef(scheme="note_block", id=block_id),
+                    reason="note_reindex",
+                )
+            db.commit()
+        except Exception:
+            db.rollback()
+            get_logger(__name__).exception(
+                "note_reindex_task_failed",
+                note_block_id=str(block_id),
+                reason=reason,
+                job_id=str(context.job_id),
+            )
+            raise
+    return {
+        "owner": {"kind": index_result.owner.kind, "id": str(index_result.owner.id)},
+        "status": index_result.status,
+        "chunk_count": index_result.chunk_count,
+    }
 
 
 def _run_podcast_refresh_due(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.tasks.podcast_refresh_due import podcast_refresh_due_job
+    from nexus.db.session import get_session_factory
+    from nexus.services.podcasts.refresh import admit_due_subscriptions
 
-    return podcast_refresh_due_job()
+    with get_session_factory()() as db:
+        return {
+            "subscription_count": admit_due_subscriptions(
+                db, limit=get_settings().podcast_refresh_due_limit
+            )
+        }
 
 
 def _run_reconcile_stale_ingest_media(*, payload: Payload, context: Context) -> JobResult:
@@ -378,24 +462,56 @@ def _run_reconcile_stale_ingest_media(*, payload: Payload, context: Context) -> 
 
 
 def _run_sync_gutenberg_catalog(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.tasks.sync_gutenberg_catalog import sync_gutenberg_catalog_job
+    from nexus.db.session import get_session_factory
+    from nexus.logging import get_logger
+    from nexus.services.gutenberg import sync_project_gutenberg_catalog
 
-    return sync_gutenberg_catalog_job(
+    with get_session_factory()() as db:
+        result = sync_project_gutenberg_catalog(db)
+    get_logger(__name__).info(
+        "gutenberg_catalog_sync_completed",
         request_id=str(payload["request_id"]),
         scheduler_identity=str(payload["scheduler_identity"]),
+        result=result,
     )
+    return result
 
 
 def _run_prune_background_jobs(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.tasks.prune_background_jobs import prune_background_jobs_job
+    from nexus.db.session import get_session_factory
+    from nexus.jobs.queue import prune_terminal_jobs
+    from nexus.logging import get_logger
 
-    return prune_background_jobs_job(request_id=str(payload["request_id"]))
+    settings = get_settings()
+    definitions = get_default_registry().values()
+    with get_session_factory()() as db:
+        deleted = prune_terminal_jobs(
+            db,
+            succeeded_after_days=settings.background_job_prune_succeeded_after_days,
+            dead_after_days=settings.background_job_prune_dead_after_days,
+            limit=settings.background_job_prune_batch_size,
+            excluded_dead_kinds={d.kind for d in definitions if d.never_prune_dead},
+            excluded_succeeded_kinds={d.kind for d in definitions if d.never_prune_succeeded},
+        )
+        db.commit()
+    get_logger(__name__).info(
+        "background_jobs_pruned", deleted_count=deleted, request_id=str(payload["request_id"])
+    )
+    return {"deleted_count": deleted}
 
 
 def _run_purge_expired_auth_handoff_codes(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.tasks.purge_expired_auth_handoff_codes import purge_expired_auth_handoff_codes_job
+    from nexus.db.session import get_session_factory
+    from nexus.logging import get_logger
+    from nexus.services.auth_handoff_codes import purge_expired_auth_handoff_codes
 
-    return purge_expired_auth_handoff_codes_job(request_id=str(payload["request_id"]))
+    with get_session_factory()() as db:
+        deleted = purge_expired_auth_handoff_codes(db)
+        db.commit()
+    get_logger(__name__).info(
+        "auth_handoff_codes_purged", deleted_count=deleted, request_id=str(payload["request_id"])
+    )
+    return {"deleted_count": deleted}
 
 
 def _run_oracle_reading_generate(*, payload: Payload, context: Context) -> JobResult:
@@ -424,18 +540,6 @@ def _run_atlas_project(*, payload: Payload, context: Context) -> JobResult:
     from nexus.services.atlas import atlas_project_job
 
     return atlas_project_job()
-
-
-def _run_media_teardown(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.tasks.media_teardown import media_teardown
-
-    return media_teardown(payload=payload, context=context)
-
-
-def _run_storage_object_cleanup(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.tasks.storage_object_cleanup import storage_object_cleanup
-
-    return storage_object_cleanup(payload=payload, context=context)
 
 
 def _run_storage_orphan_sweep(*, payload: Payload, context: Context) -> JobResult:

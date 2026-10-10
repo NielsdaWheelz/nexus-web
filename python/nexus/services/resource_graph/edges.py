@@ -32,7 +32,7 @@ from nexus.services.resource_graph.schemas import (
     EdgeKind,
     EdgeOrigin,
     EdgeOut,
-    is_neutral_link_shape,
+    is_neutral_link,
     snapshot_from_jsonb,
     snapshot_to_jsonb,
 )
@@ -156,11 +156,11 @@ def _allows_source_order(edge: EdgeCreate) -> bool:
 
 def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
     """Validate and insert one edge; a duplicate neutral Link returns the existing row."""
-    if _is_neutral_link(input):
+    if is_neutral_link(input):
         a, b = sorted((input.source, input.target), key=lambda ref: ref.uri)
         input = replace(input, source=a, target=b)
     _validate_edge_input(db, viewer_id=viewer_id, edge=input)
-    if _is_neutral_link(input):
+    if is_neutral_link(input):
         existing = _existing_link_pair(db, viewer_id=viewer_id, a=input.source, b=input.target)
         if existing is not None:
             return _edge_out(existing)
@@ -195,7 +195,7 @@ def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
         ),
     ):
         _invalid(f"Citation ordinal {input.ordinal} already exists for {input.source.uri}")
-    if _is_neutral_link(input):
+    if is_neutral_link(input):
         # Chat-chat links allocate independent ranks under a consistent lock order.
         chat_ids = sorted(
             ref.id for ref in (input.source, input.target) if ref.scheme == "conversation"
@@ -210,7 +210,7 @@ def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
     row = _row_from_input(viewer_id, input)
     db.add(row)
     db.flush()
-    if _is_neutral_link(input):
+    if is_neutral_link(input):
         for endpoint, other in ((input.source, input.target), (input.target, input.source)):
             versions.bump_version(db, viewer_id=viewer_id, ref=endpoint, lane="links")
             if endpoint.scheme == "conversation" or resource_can_own_ordered_adjacency(endpoint):
@@ -391,13 +391,7 @@ def delete_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
     ).scalar_one_or_none()
     if row is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Edge not found")
-    if is_neutral_link_shape(
-        origin=row.origin,
-        kind=row.kind,
-        ordinal=row.ordinal,
-        snapshot=row.snapshot,
-        source_order_key=row.source_order_key,
-    ):
+    if is_neutral_link(row):
         require_unannotated_link(db, viewer_id=viewer_id, edge=row)
         for scheme, resource_id in (
             (row.source_scheme, row.source_id),
@@ -506,19 +500,9 @@ def _scalar(db: Session, query) -> bool:
     return db.execute(query).scalar_one_or_none() is not None
 
 
-def _is_neutral_link(edge: EdgeCreate) -> bool:
-    return is_neutral_link_shape(
-        origin=edge.origin,
-        kind=edge.kind,
-        ordinal=edge.ordinal,
-        snapshot=edge.snapshot,
-        source_order_key=edge.source_order_key,
-    )
-
-
 def _validate_edge_input(db: Session, *, viewer_id: UUID, edge: EdgeCreate) -> None:
     validate_edge_shape(edge)
-    if _is_neutral_link(edge) and (
+    if is_neutral_link(edge) and (
         resource_link_mode(edge.source) != "direct" or resource_link_mode(edge.target) != "direct"
     ):
         _invalid("Resource cannot be linked")

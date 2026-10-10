@@ -21,10 +21,8 @@ from nexus.services.generation_catalog import (
 )
 from nexus.services.generation_policy import (
     EffectMode,
-    ExactHostToolPlan,
     ExactModelTools,
     GenerationPolicy,
-    NoHostToolPlan,
     OperationWorkflowSpec,
 )
 from nexus.services.generation_spec import (
@@ -32,7 +30,6 @@ from nexus.services.generation_spec import (
     CodexCallbacks,
     CodexDispatchTargetSnapshot,
     CodexPersonalSelection,
-    FrozenHostToolPlanSnapshot,
     FrozenToolScope,
     GenerationIntent,
     GenerationOperation,
@@ -124,8 +121,6 @@ class GenerationService:
             intent=intent,
             prompt_template_revision=prompt_template_revision,
             prompt_payload_ref=prompt_payload_ref,
-            host_plan=None,
-            host_evidence_revision=None,
             model_tools=model_tools,
         )
         _require_transport_capability(spec, pair)
@@ -138,8 +133,6 @@ class GenerationService:
         intent: GenerationIntent,
         prompt_template_revision: str,
         prompt_payload_ref: ImmutablePromptPayloadRef,
-        host_plan: FrozenHostToolPlanSnapshot | None = None,
-        host_evidence_revision: str | None = None,
         model_tool_scope: FrozenToolScope | None = None,
     ) -> GenerationSpec:
         snapshot = await self._catalog.read_for_admission()
@@ -155,7 +148,6 @@ class GenerationService:
             raise GenerationConfigurationDefect(
                 f"background operation {operation!r} must use Codex Personal"
             )
-        _validate_host_policy(entry.workflow, host_plan, host_evidence_revision)
         model_tools = None
         policy = entry.workflow.model_tool_policy
         if isinstance(policy, ExactModelTools):
@@ -185,8 +177,6 @@ class GenerationService:
             intent=intent,
             prompt_template_revision=prompt_template_revision,
             prompt_payload_ref=prompt_payload_ref,
-            host_plan=host_plan,
-            host_evidence_revision=host_evidence_revision,
             model_tools=model_tools,
         )
         _require_transport_capability(spec, pair)
@@ -292,29 +282,6 @@ def _require_available_bindings(operation: FrozenToolOperation, *, owner: str) -
         )
 
 
-def _validate_host_policy(
-    workflow: OperationWorkflowSpec,
-    host_plan: FrozenHostToolPlanSnapshot | None,
-    host_evidence_revision: str | None,
-) -> None:
-    policy = workflow.host_tool_plan
-    if (host_plan is None) != (host_evidence_revision is None):
-        raise ValueError("host-tool evidence requires both a plan and a revision")
-    if isinstance(policy, NoHostToolPlan):
-        if host_plan is not None:
-            raise ValueError("NoHostToolPlan admission received host evidence")
-        return
-    if not isinstance(policy, ExactHostToolPlan):
-        raise GenerationConfigurationDefect("unknown host-tool policy arm")
-    if host_plan is None:
-        raise ValueError("exact host-tool policy requires frozen evidence")
-    if (host_plan.plan_id, host_plan.authority_revision) != (
-        policy.plan_id,
-        policy.authority_revision,
-    ):
-        raise ValueError("frozen host-tool evidence differs from policy")
-
-
 def _freeze_spec(
     *,
     operation: GenerationOperation,
@@ -326,8 +293,6 @@ def _freeze_spec(
     intent: GenerationIntent,
     prompt_template_revision: str,
     prompt_payload_ref: ImmutablePromptPayloadRef,
-    host_plan: FrozenHostToolPlanSnapshot | None,
-    host_evidence_revision: str | None,
     model_tools: ModelToolAdmission | None,
 ) -> GenerationSpec:
     validate_intent_bounds(
@@ -369,10 +334,8 @@ def _freeze_spec(
             output.model_dump(mode="json", by_alias=True)
         ),
         display_at_dispatch=pair.presentation,
-        host_tool_plan_snapshot=(Absent() if host_plan is None else Present(value=host_plan)),
-        host_evidence_revision=(
-            Absent() if host_evidence_revision is None else Present(value=host_evidence_revision)
-        ),
+        host_tool_plan_snapshot=Absent(),
+        host_evidence_revision=Absent(),
         authority=(
             CodexCallbacks
             if isinstance(pair.selection, CodexPersonalSelection)

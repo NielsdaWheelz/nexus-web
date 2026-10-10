@@ -15,26 +15,27 @@ from nexus.config import get_settings
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import NotFoundError
+from nexus.services import media_source_types as source_types
 from nexus.services.content_indexing import ensure_media_content_reindex_job
 from nexus.services.media_source_ingest import ensure_stale_source_attempt_job
 from nexus.services.transcripts.semantic import request_transcript_semantic_repair
 
 _BATCH_LIMIT = 25
 
-_STALE_SOURCE_ATTEMPTS = """
+
+def _sql_in(values: frozenset[str]) -> str:
+    return ", ".join(f"'{value}'" for value in sorted(values))
+
+
+_STALE_SOURCE_ATTEMPTS = f"""
     SELECT msa.id AS attempt_id, msa.media_id
     FROM media_source_attempts msa
     JOIN media m ON m.id = msa.media_id
     WHERE msa.status IN ('accepted', 'queued', 'running')
       AND (
           (msa.status = 'accepted' AND msa.job_id IS NULL AND (
-              msa.source_type NOT IN (
-                  'uploaded_pdf_file', 'uploaded_epub_file',
-                  'browser_pdf_capture', 'browser_epub_capture',
-                  'browser_article_capture', 'email_message')
-              OR (msa.source_type IN (
-                  'uploaded_pdf_file', 'uploaded_epub_file',
-                  'browser_pdf_capture', 'browser_epub_capture')
+              msa.source_type NOT IN ({_sql_in(source_types.NON_REACQUIRABLE_ARTIFACT_SOURCE_TYPES)})
+              OR (msa.source_type IN ({_sql_in(source_types.LOCAL_FILE_SOURCE_TYPES)})
                   AND EXISTS (SELECT 1 FROM media_file mf WHERE mf.media_id = msa.media_id))
               OR (msa.source_type = 'browser_article_capture'
                   AND EXISTS (SELECT 1 FROM media_upload_sessions mus

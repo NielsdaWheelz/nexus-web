@@ -650,22 +650,6 @@ def read_latest_generations_for_owners(
     return {record.owner: record for record in records}
 
 
-def read_latest_generation_for_owner(
-    db: Session, *, owner: LlmCallOwner
-) -> GenerationRecord[GenerationHistory] | None:
-    call = db.scalar(
-        select(LLMCall)
-        .where(LLMCall.owner_kind == owner.kind, LLMCall.owner_id == owner.id)
-        .order_by(LLMCall.generation_seq.desc())
-        .limit(1)
-    )
-    return (
-        None
-        if call is None
-        else _generation_record(call, read_generation_history(call.generation_spec))
-    )
-
-
 def lock_generation_for_authority_in_current_transaction(
     db: Session, *, owner: LlmCallOwner, generation_id: UUID
 ) -> GenerationRecord[GenerationSpec] | None:

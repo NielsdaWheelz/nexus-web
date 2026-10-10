@@ -1693,11 +1693,6 @@ class LLMToolPosition(Base):
         JSONB(none_as_null=True),
         nullable=True,
     )
-    replay_of_position_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("llm_tool_positions.id"),
-        nullable=True,
-    )
     reservation: Mapped[dict[str, object] | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )
@@ -2119,24 +2114,6 @@ class ChatPromptAssembly(Base):
         JSONB(none_as_null=True),
         nullable=False,
     )
-    reserved_output_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
-    input_budget_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
-    estimated_input_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
-    included_message_ids: Mapped[list[str]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'[]'::jsonb"),
-    )
-    included_context_refs: Mapped[list[dict[str, object]]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'[]'::jsonb"),
-    )
-    dropped_items: Mapped[list[dict[str, object]]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'[]'::jsonb"),
-    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -2479,46 +2456,6 @@ class ReaderProfile(Base):
     )
 
     # Relationships
-    user: Mapped["User"] = relationship("User")
-
-
-class NexusUsage(Base):
-    """Per-user Nexus usage history."""
-
-    __tablename__ = "nexus_usages"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    query_normalized: Mapped[str] = mapped_column(Text, nullable=False)
-    target_href: Mapped[str] = mapped_column(Text, nullable=False)
-    label_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
-    source: Mapped[str] = mapped_column(Text, nullable=False)
-    use_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
-    visit_timestamps: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
-    last_used_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
     user: Mapped["User"] = relationship("User")
 
 

@@ -60,7 +60,7 @@ from nexus.services.resource_graph.schemas import (
 from nexus.services.resource_items.capabilities import expand_owned_child_refs
 from nexus.services.search.query import SearchQuery
 from nexus.services.search.service import search
-from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
+from nexus.tasks.llm_task import run_llm_task
 
 logger = get_logger(__name__)
 
@@ -241,7 +241,7 @@ def connection_discovery_scan_job(
         )
         return {"status": status, "error_code": error_code, "ref": ref.uri}
 
-    return run_llm_task(LlmTaskSpec(label="connection_discovery_scan"), handle)
+    return run_llm_task("connection_discovery_scan", handle)
 
 
 async def _scan(

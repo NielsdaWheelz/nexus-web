@@ -5,10 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import UUID
 
@@ -367,44 +366,21 @@ class ToolAuthority:
 
 
 class _PositionBudgetState:
+    """Live-write reservation only: no Nexus tool plan carries an elapsed budget."""
+
     def __init__(self, recorder: ToolPositionRecorder, limits: RunLimits) -> None:
+        if limits.max_elapsed_seconds is not None:
+            raise ValueError("Nexus tool plans carry no elapsed budget")
         self._recorder = recorder
         self._limits = limits
-        self.deadline = 0.0
 
     @property
     def limits(self) -> RunLimits:
         return self._limits
 
     @property
-    def remaining_elapsed_seconds(self) -> float | None:
-        return (
-            None
-            if self._limits.max_elapsed_seconds is None
-            else max(0.0, self.deadline - time.monotonic())
-        )
-
-    async def refresh(self) -> None:
-        if self._limits.max_elapsed_seconds is None:
-            return
-        observed_at = time.monotonic()
-        remaining = await self._recorder.database.run_sync(self._remaining_at_database_clock)
-        self.deadline = observed_at + remaining
-
-    def _remaining_at_database_clock(self, db: Session) -> float:
-        maximum = self._limits.max_elapsed_seconds
-        if maximum is None:
-            raise AssertionError("an unlimited budget has no elapsed deadline")
-        with db.begin():
-            _generation, _spec, job = self._recorder.authority.lock_in_current_transaction(db)
-            database_now = db.scalar(func.clock_timestamp())
-            if not isinstance(database_now, datetime):
-                raise AssertionError("database clock did not return a timestamp")
-            started_at = job.started_at or job.created_at
-            if started_at.tzinfo is None:
-                started_at = started_at.replace(tzinfo=UTC)
-            elapsed = (database_now - started_at).total_seconds()
-        return max(0.0, maximum - elapsed)
+    def remaining_elapsed_seconds(self) -> None:
+        return None
 
     async def reserve(self, position: InvocationPosition, reservation: Reservation) -> bool:
         del position
@@ -934,7 +910,6 @@ class GenerationToolExecutor:
         )
         async with open_async_session(self.authority.session_factory) as db:
             recorder = ToolPositionRecorder(db=db, authority=self.authority, position=record)
-            await recorder.budgets.refresh()
             cancellation = _AuthorityCancellation(self.authority)
             await cancellation.refresh(db)
             binding = self.authority.operation.plan.catalog_view.binding(tool_id)
@@ -1078,18 +1053,6 @@ class DeferredGenerationToolExecutor:
     ) -> BackendToolExecutionResult:
         executor = await self.open()
         return await executor.execute(request)
-
-
-def read_tool_positions(db: Session, *, generation_id: UUID) -> tuple[ToolPositionRecord, ...]:
-    generation = db.get(LLMCall, generation_id)
-    if generation is None:
-        return ()
-    rows = db.scalars(
-        select(LLMToolPosition)
-        .where(LLMToolPosition.generation_id == generation_id)
-        .order_by(LLMToolPosition.position)
-    ).all()
-    return tuple(_position_record(row, generation_seq=generation.generation_seq) for row in rows)
 
 
 def require_native_turn_in_current_transaction(
@@ -1266,5 +1229,4 @@ __all__ = [
     "ToolPositionRecorder",
     "ToolReplayStatus",
     "ToolTransportKind",
-    "read_tool_positions",
 ]

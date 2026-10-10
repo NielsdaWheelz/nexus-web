@@ -56,40 +56,26 @@ class IngestError:
     message: str
 
 
-@dataclass(frozen=True, slots=True)
-class NodeIngestCommand:
-    executable: str
-    script: Path
-
-
 class NodeIngestProtocolDefect(RuntimeError):
     """The owned Node process violated its closed result contract."""
 
 
-def node_ingest_command(script: Path) -> NodeIngestCommand:
-    """Compose the executable on the runtime's PATH with its declared script."""
+def run_node_ingest(
+    url: str,
+    *,
+    script: Path,
+    timeout_ms: int = DEFAULT_NODE_TIMEOUT_MS,
+) -> IngestResult | IngestError:
+    """Run the Node ingress script with the executable on the runtime's PATH."""
     executable = shutil.which("node")
     if executable is None:
         raise NodeIngestProtocolDefect("Node.js executable is unavailable")
-    return NodeIngestCommand(
-        executable=Path(executable).resolve(strict=True).as_posix(),
-        script=script,
-    )
-
-
-def run_node_ingest(
-    url: str,
-    timeout_ms: int = DEFAULT_NODE_TIMEOUT_MS,
-    *,
-    command: NodeIngestCommand,
-) -> IngestResult | IngestError:
-    """Run the explicitly composed ingress command."""
-    if not command.script.is_file():
+    if not script.is_file():
         raise NodeIngestProtocolDefect("Node ingest script is unavailable")
     request = json.dumps({"url": url, "timeout_ms": timeout_ms}).encode("utf-8")
     try:
         proc = subprocess.Popen(
-            [command.executable, str(command.script)],
+            [Path(executable).resolve(strict=True).as_posix(), str(script)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

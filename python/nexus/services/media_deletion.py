@@ -315,8 +315,10 @@ def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> 
 
 def delete_duplicate_document_media(
     db: Session, *, loser_media_id: UUID, winner_media_id: UUID
-) -> list[str]:
+) -> None:
     """Claim a duplicate document row for teardown once its replacement is reachable.
+
+    The teardown job owns the loser's storage objects.
 
     Direct grants follow the canonical winner first. Exact grants on loser-owned
     highlights cannot be repointed — highlight identity is exact to its source —
@@ -333,7 +335,7 @@ def delete_duplicate_document_media(
         text("SELECT kind FROM media WHERE id = :media_id FOR UPDATE"), {"media_id": loser_media_id}
     ).fetchone()
     if media is None or media[0] not in _DOCUMENT_KINDS:
-        return []
+        return
 
     library_governance.lock_library_rows_in_order(
         db, library_entries.library_ids_for_media(db, loser_media_id)
@@ -346,8 +348,6 @@ def delete_duplicate_document_media(
             db, families=(CollectionFamily.AuthorWorks, CollectionFamily.LibraryEntries)
         )
     claim_media_teardown(db, loser_media_id)
-    # The teardown job owns this media's storage objects from here.
-    return []
 
 
 def enumerate_media_storage_paths(db: Session, media_id: UUID) -> list[str]:

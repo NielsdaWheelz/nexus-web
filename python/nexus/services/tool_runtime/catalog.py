@@ -15,8 +15,6 @@ from llm_tools import (
     BraveSearchProvider,
     FrozenCapabilityProfile,
     FrozenToolPlan,
-    HostTable,
-    Native,
     ReplayPolicy,
     SafeWebReader,
     ToolBinding,
@@ -188,8 +186,6 @@ def compose_provider_model_tools(operation: FrozenToolOperation) -> ProviderMode
 
     from nexus.services.provider_generation_contract import ProviderModelTools
 
-    if not isinstance(operation.plan.exposure, Native):
-        raise ValueError("only Native model-tool plans can be provider-published")
     publication = lower_tools(ToolPublication(plan=operation.plan, revealed_targets=()))
     return ProviderModelTools(
         snapshot=freeze_tool_plan_snapshot(operation),
@@ -200,12 +196,6 @@ def compose_provider_model_tools(operation: FrozenToolOperation) -> ProviderMode
 def freeze_tool_plan_snapshot(operation: FrozenToolOperation) -> FrozenToolPlanSnapshot:
     """Encode the exact immutable semantic authority used by one tool run."""
 
-    if isinstance(operation.plan.exposure, HostTable):
-        exposure = FrozenToolExposureSnapshot(type="HostTable")
-    elif isinstance(operation.plan.exposure, Native):
-        exposure = FrozenToolExposureSnapshot(type="Native")
-    else:
-        raise ValueError("operation uses an unsupported tool exposure")
     profile = operation.profile
     if operation.plan.profile is not profile:
         raise ValueError("operation plan and profile do not share one frozen value")
@@ -225,7 +215,7 @@ def freeze_tool_plan_snapshot(operation: FrozenToolOperation) -> FrozenToolPlanS
             )
         )
     return FrozenToolPlanSnapshot(
-        exposure=exposure,
+        exposure=FrozenToolExposureSnapshot(type="Native"),
         grants=tuple(grants),
         max_live_writes=operation.definition.max_live_writes,
         plan_id=operation.definition.plan_id,

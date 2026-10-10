@@ -319,25 +319,6 @@ MediaDeleteResult = Annotated[
 ]
 
 
-class FragmentOut(BaseModel):
-    id: UUID
-    media_id: UUID
-    idx: int
-    html_sanitized: str
-    canonical_text: str
-    word_count: int
-    document_word_start: int
-    t_start_ms: int | None = None
-    t_end_ms: int | None = None
-    speaker_label: str | None = None
-    document_embeds: list[DocumentEmbedOut] = Field(default_factory=list)
-    created_at: datetime
-
-    model_config = ConfigDict(
-        from_attributes=True, json_schema_serialization_defaults_required=True
-    )
-
-
 class CreateUploadSessionRequest(_Strict):
     kind: Literal["Pdf", "Epub"]
     filename: str = Field(min_length=1, max_length=255)

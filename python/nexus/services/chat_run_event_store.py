@@ -1,30 +1,31 @@
 """The durable chat-run event log: append, emit, and the one terminal fold.
 
 ``chat_run_events`` is the replay log the browser reconnects to: append-only,
-monotonic ``seq`` per run, exactly one ``done`` written by ``finalize_run``.
-The generic seq/append/terminal mechanics live in ``run_kit``; this module owns
-the chat payload contract and the chat run-state transitions.
+monotonic ``seq`` per run, exactly one ``done`` written by ``finalize_run``. An
+AFTER trigger ``pg_notify``s ``CHAT_RUN_EVENTS_CHANNEL`` with the run id on each
+append; the SSE tail re-reads ``read_run_events`` on each notification.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun, Message
+from nexus.db.models import ChatRun, ChatRunEvent, Message
 from nexus.schemas.conversation import (
+    ChatRunEventOut,
     ChatRunToolResultEventPayload,
     chat_publication_warning_from_nullable,
     chat_run_event_payload_json,
 )
 from nexus.schemas.presence import presence_from_nullable
-from nexus.services import run_kit
 
-TERMINAL_RUN_STATUSES = run_kit.terminal_statuses(run_kit.RunStreamKind.ChatRun)
+TERMINAL_RUN_STATUSES = frozenset({"complete", "error", "cancelled"})
+CHAT_RUN_EVENTS_CHANNEL = "chat_run_events"
 
 type TerminalStatus = Literal["complete", "error", "cancelled"]
 
@@ -56,12 +57,50 @@ def lock_chat_run_for_update(db: Session, run_id: UUID) -> ChatRun | None:
 
 
 def append_run_event(db: Session, run: ChatRun, event_type: str, payload: dict[str, Any]) -> None:
-    run_kit.append_event(
-        db,
-        parent=run,
-        event_type=event_type,
-        payload=chat_run_event_payload_json(event_type, payload),
+    """Append one event at the run's next monotonic ``seq`` and bump the run.
+
+    Flushes; does not commit — the caller owns the transaction boundary.
+    """
+    seq = int(
+        db.execute(
+            text("SELECT COALESCE(MAX(seq), 0) + 1 FROM chat_run_events WHERE run_id = :run_id"),
+            {"run_id": run.id},
+        ).scalar_one()
     )
+    db.add(
+        ChatRunEvent(
+            run_id=run.id,
+            seq=seq,
+            event_type=event_type,
+            payload=chat_run_event_payload_json(event_type, payload),
+        )
+    )
+    run.updated_at = func.now()
+    db.flush()
+
+
+def read_run_events(db: Session, run_id: UUID, after: int) -> tuple[list[ChatRunEventOut], bool]:
+    """Events with ``seq > after`` plus whether the run is terminal.
+
+    A missing run counts as terminal, so a run deleted mid-stream ends the SSE
+    tail. Viewer scoping belongs to the caller.
+    """
+    rows = db.scalars(
+        select(ChatRunEvent)
+        .where(ChatRunEvent.run_id == run_id, ChatRunEvent.seq > after)
+        .order_by(ChatRunEvent.seq.asc())
+    ).all()
+    events = [
+        ChatRunEventOut(
+            seq=row.seq,
+            event_type=cast(Any, row.event_type),
+            payload=row.payload,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+    status = db.execute(select(ChatRun.status).where(ChatRun.id == run_id)).scalar_one_or_none()
+    return events, status is None or status in TERMINAL_RUN_STATUSES
 
 
 def append_and_commit(
@@ -218,24 +257,22 @@ def finalize_run(
 
     run.support_id = support_id
     run.publication_warning_code = publication_warning_code
-    run_kit.mark_terminal(
+    run.status = status
+    run.completed_at = func.now()
+    if error_code is not None:
+        run.error_code = error_code
+    append_run_event(
         db,
-        parent=run,
-        status=status,
-        done_payload=chat_run_event_payload_json(
-            "done",
-            {
-                "status": status,
-                "error_code": presence_from_nullable(error_code),
-                "support_id": presence_from_nullable(support_id),
-                "publication_warning": chat_publication_warning_from_nullable(
-                    publication_warning_code
-                ),
-                "usage": usage,
-                "final_chars": len(assistant_content) if status == "complete" else None,
-                "last_provider_event_seq": last_provider_event_seq,
-                "cancelled": status == "cancelled",
-            },
-        ),
-        error_code=error_code,
+        run,
+        "done",
+        {
+            "status": status,
+            "error_code": presence_from_nullable(error_code),
+            "support_id": presence_from_nullable(support_id),
+            "publication_warning": chat_publication_warning_from_nullable(publication_warning_code),
+            "usage": usage,
+            "final_chars": len(assistant_content) if status == "complete" else None,
+            "last_provider_event_seq": last_provider_event_seq,
+            "cancelled": status == "cancelled",
+        },
     )

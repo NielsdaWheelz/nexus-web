@@ -12,7 +12,7 @@ from nexus.services.generation_policy import GENERATION_POLICY
 from nexus.services.generation_service import GenerationService
 from nexus.services.generation_spec import GenerationSpec, ProviderFunctions
 from nexus.services.llm_credentials import generation_continuation_cipher
-from nexus.services.llm_execution import ComposedExecutionRuntime
+from nexus.services.llm_execution import ExecutionRuntime
 from nexus.services.native_generation import NativeGenerationBackend
 from nexus.services.provider_generation_backend import build_provider_generation_backend
 from nexus.services.provider_generation_contract import ProviderModelTools
@@ -29,7 +29,7 @@ def compose_generation_execution_runtime(
     http_client: httpx.AsyncClient,
     catalog: GenerationCatalogService,
     tools: ComposedToolRuntime,
-) -> ComposedExecutionRuntime:
+) -> ExecutionRuntime:
     """Compose one runtime from process-owned dependencies without mutable routing."""
 
     def resolve_provider_tools(spec: GenerationSpec) -> ProviderModelTools | None:
@@ -51,7 +51,7 @@ def compose_generation_execution_runtime(
             )
         return compose_provider_model_tools(operation)
 
-    return ComposedExecutionRuntime(
+    return ExecutionRuntime(
         backend=GenerationBackend(
             provider=build_provider_generation_backend(settings, http_client),
             provider_tools=resolve_provider_tools,
