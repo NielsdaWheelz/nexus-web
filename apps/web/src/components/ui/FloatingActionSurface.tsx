@@ -1,569 +1,125 @@
 "use client";
 
 import {
-  useCallback,
   useLayoutEffect,
   useRef,
-  useState,
   type CSSProperties,
   type ReactNode,
-  type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
-import { clamp } from "@/lib/clamp";
-import { readMobileCssLength, useMobileViewport } from "@/lib/mobileShell/viewport";
 import { cx } from "@/lib/ui/cx";
-import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
-import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { readViewportSafeBounds } from "@/lib/ui/viewportSafeArea";
+import { useOverlay, useOverlayContainer } from "@/lib/ui/overlay";
+import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import styles from "./FloatingActionSurface.module.css";
 
-export type FloatingActionDismissReason = "outside-click" | "escape" | "scroll";
-
-type FloatingActionPlacement = "above" | "below" | "right" | "left" | "edge";
-
-type FloatingActionStyle = CSSProperties & {
-  "--floating-action-caret-inline-offset"?: string;
-  "--floating-action-content-max-width"?: string;
-  "--floating-action-content-max-height"?: string;
-};
-
-interface FloatingActionPosition {
-  style: FloatingActionStyle;
-  placement: FloatingActionPlacement;
-}
-
-const CARET_SIZE_PX = 6;
-const CARET_EDGE_INSET_PX = CARET_SIZE_PX * 2;
-const GAP_PX = 8;
-const VIEWPORT_PADDING_PX = 8;
-
+/**
+ * The non-modal action surface for text selections, clicked highlights,
+ * composers and action-bar popovers. Escape (and, inside a modal, Back) and a
+ * press outside the surface and its anchor element dismiss it. It follows its
+ * anchor through scroll, resize and the mobile bottom chrome.
+ */
 export default function FloatingActionSurface({
   open,
   anchor,
   strategy = "anchor",
   lineRects,
-  placement = "below",
   align = "center",
   flip = false,
-  scrollBehavior = "reposition",
   preservePointerSelection = false,
-  dismissIgnore = false,
-  additionalDismissRefs = [],
   role,
   label,
   className,
   onDismiss,
   children,
 }: {
-  open: boolean;
-  anchor: HTMLElement | DOMRect | null;
-  strategy?: "anchor" | "text-selection";
-  lineRects?: DOMRect[];
-  placement?: "below" | "above" | "left" | "right";
-  align?: "start" | "center" | "end";
-  flip?: boolean;
-  scrollBehavior?: "reposition" | "dismiss";
-  preservePointerSelection?: boolean;
-  dismissIgnore?: boolean;
-  additionalDismissRefs?: Array<RefObject<HTMLElement | null>>;
-  role?: "group" | "toolbar" | "dialog";
-  label?: string;
-  className?: string;
-  onDismiss: (reason: FloatingActionDismissReason) => void;
-  children: ReactNode;
+  readonly open: boolean;
+  readonly anchor: HTMLElement | DOMRect | null;
+  /** "text-selection": above the first selected line, with a caret. */
+  readonly strategy?: "anchor" | "text-selection";
+  readonly lineRects?: readonly DOMRect[];
+  readonly align?: "start" | "center" | "end";
+  /** Below the anchor, or above it when below does not fit. */
+  readonly flip?: boolean;
+  /** A press inside does not collapse the live text selection. */
+  readonly preservePointerSelection?: boolean;
+  readonly role?: "group" | "toolbar" | "dialog";
+  readonly label?: string;
+  readonly className?: string;
+  /** Back inside a modal reports "escape". */
+  readonly onDismiss: (reason: "outside-click" | "escape") => void;
+  readonly children: ReactNode;
 }) {
-  const isMobileViewport = useIsMobileViewport();
-  const mobileViewport = useMobileViewport();
-  const surfaceRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState<FloatingActionPosition>({
-    style: { position: "fixed", visibility: "hidden" },
-    placement: "below",
+  const shown = open && anchor !== null;
+  const position = useAnchoredPosition<HTMLDivElement>(anchor, {
+    enabled: shown,
+    align,
+    gap: 8,
+    flip,
+    lines: strategy === "text-selection" ? (lineRects ?? []) : undefined,
+    clearContent: true,
+  });
+  const container = useOverlayContainer();
+  const dismiss = useRef(onDismiss);
+  dismiss.current = onDismiss;
+  useOverlay(shown, {
+    kind: "transient",
+    onDismiss: (reason) =>
+      dismiss.current(reason === "outside" ? "outside-click" : "escape"),
+    inside: () => [
+      position.ref.current,
+      anchor instanceof HTMLElement ? anchor : null,
+    ],
   });
 
-  const updatePosition = useCallback(() => {
-    const surface = surfaceRef.current;
-    const anchorRect = resolveRect(anchor);
-    if (!open || !surface || !anchorRect) return;
-
-    const bounds = viewportBounds(isMobileViewport, VIEWPORT_PADDING_PX);
-    const maxWidth = Math.max(0, bounds.maxLeft - bounds.minLeft);
-    const maxHeight = Math.max(0, bounds.maxTop - bounds.minTop);
-    surface.style.maxWidth = `${maxWidth}px`;
-    surface.style.maxHeight = `${maxHeight}px`;
-    const computedSurface = window.getComputedStyle(surface);
-    const contentMaxWidth = Math.max(
-      0,
-      maxWidth -
-        readPx(computedSurface.paddingLeft) -
-        readPx(computedSurface.paddingRight) -
-        readPx(computedSurface.borderLeftWidth) -
-        readPx(computedSurface.borderRightWidth),
-    );
-    const contentMaxHeight = Math.max(
-      0,
-      maxHeight -
-        readPx(computedSurface.paddingTop) -
-        readPx(computedSurface.paddingBottom) -
-        readPx(computedSurface.borderTopWidth) -
-        readPx(computedSurface.borderBottomWidth),
-    );
+  // Children shrink to the clamped box, net of the surface's padding and border.
+  const { maxWidth, maxHeight } = position.style;
+  useLayoutEffect(() => {
+    const surface = position.ref.current;
+    if (!surface || typeof maxWidth !== "number") return;
+    if (typeof maxHeight !== "number") return;
+    const computed = getComputedStyle(surface);
+    const px = (value: string) => Number.parseFloat(value) || 0;
+    const inline =
+      px(computed.paddingLeft) +
+      px(computed.paddingRight) +
+      px(computed.borderLeftWidth) +
+      px(computed.borderRightWidth);
+    const block =
+      px(computed.paddingTop) +
+      px(computed.paddingBottom) +
+      px(computed.borderTopWidth) +
+      px(computed.borderBottomWidth);
     surface.style.setProperty(
       "--floating-action-content-max-width",
-      `${contentMaxWidth}px`,
+      `${Math.max(0, maxWidth - inline)}px`,
     );
     surface.style.setProperty(
       "--floating-action-content-max-height",
-      `${contentMaxHeight}px`,
+      `${Math.max(0, maxHeight - block)}px`,
     );
-    const surfaceRect = DOMRect.fromRect({
-      width: surface.offsetWidth,
-      height: surface.offsetHeight,
-    });
-    const constrain = (
-      next: FloatingActionPosition,
-    ): FloatingActionPosition => ({
-      ...next,
-      style: {
-        ...next.style,
-        maxWidth,
-        maxHeight,
-        "--floating-action-content-max-width": `${contentMaxWidth}px`,
-        "--floating-action-content-max-height": `${contentMaxHeight}px`,
-      },
-    });
-    const clampLeft = (value: number) =>
-      clamp(
-        value,
-        bounds.minLeft,
-        Math.max(bounds.minLeft, bounds.maxLeft - surfaceRect.width),
-      );
-    const clampTop = (value: number) =>
-      clamp(
-        value,
-        bounds.minTop,
-        Math.max(bounds.minTop, bounds.maxTop - surfaceRect.height),
-      );
+  }, [position.ref, maxWidth, maxHeight]);
 
-    if (strategy === "text-selection") {
-      setPosition(
-        constrain(
-          textSelectionPosition({
-            anchorRect,
-            lineRects,
-            surfaceRect,
-            bounds,
-            clampLeft,
-            clampTop,
-            gap: GAP_PX,
-            isMobileViewport,
-          }),
-        ),
-      );
-      return;
-    }
-
-    setPosition(
-      constrain(
-        anchoredPosition({
-          anchorRect,
-          surfaceRect,
-          bounds,
-          clampLeft,
-          clampTop,
-          placement,
-          align,
-          flip,
-          gap: GAP_PX,
-        }),
-      ),
-    );
-  }, [
-    align,
-    anchor,
-    flip,
-    isMobileViewport,
-    lineRects,
-    open,
-    placement,
-    strategy,
-  ]);
-
-  useLayoutEffect(() => {
-    if (!open) {
-      setPosition({
-        style: { position: "fixed", visibility: "hidden" },
-        placement: "below",
-      });
-      return;
-    }
-
-    updatePosition();
-    const visualViewport = window.visualViewport;
-    let resizeFrame: number | null = null;
-    let disposed = false;
-    const scheduleResizePositionUpdate = () => {
-      if (disposed || resizeFrame !== null) return;
-      resizeFrame = window.requestAnimationFrame(() => {
-        resizeFrame = null;
-        if (!disposed) updatePosition();
-      });
-    };
-    const resizeObserver = new ResizeObserver(scheduleResizePositionUpdate);
-    const surface = surfaceRef.current;
-    if (surface) resizeObserver.observe(surface);
-    const unsubscribeContentBottomClearance = isMobileViewport
-      ? mobileViewport.subscribeContentBottomClearance(
-          scheduleResizePositionUpdate,
-        )
-      : undefined;
-    const handleScroll =
-      scrollBehavior === "dismiss" ? () => onDismiss("scroll") : updatePosition;
-    window.addEventListener("resize", updatePosition, { passive: true });
-    window.addEventListener("scroll", handleScroll, true);
-    visualViewport?.addEventListener?.("resize", updatePosition);
-    visualViewport?.addEventListener?.("scroll", handleScroll);
-    return () => {
-      disposed = true;
-      resizeObserver.disconnect();
-      unsubscribeContentBottomClearance?.();
-      if (resizeFrame !== null) {
-        window.cancelAnimationFrame(resizeFrame);
-      }
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", handleScroll, true);
-      visualViewport?.removeEventListener?.("resize", updatePosition);
-      visualViewport?.removeEventListener?.("scroll", handleScroll);
-    };
-  }, [
-    isMobileViewport,
-    mobileViewport,
-    onDismiss,
-    open,
-    scrollBehavior,
-    updatePosition,
-  ]);
-
-  useDismissOnOutsideOrEscape({
-    enabled: open && Boolean(anchor),
-    refs: [surfaceRef, ...additionalDismissRefs],
-    onDismiss,
-  });
-
-  if (!open || !anchor || typeof document === "undefined") return null;
-
-  const positioned = position.style.visibility !== "hidden";
-
+  if (!shown || !container) return null;
+  const caret =
+    position.caretX === null
+      ? undefined
+      : { "--floating-action-caret-inline-offset": `${position.caretX}px` };
   return createPortal(
     <div
-      ref={surfaceRef}
+      ref={position.ref}
       className={cx(styles.surface, className)}
-      style={position.style}
+      style={{ ...position.style, ...caret } as CSSProperties}
       role={role}
       aria-label={label}
-      data-dismiss-ignore={dismissIgnore ? "true" : undefined}
-      data-placement={position.placement}
-      data-positioned={positioned ? "true" : "false"}
+      data-placement={position.side}
+      data-positioned={position.placed ? "true" : "false"}
       data-strategy={strategy}
       onPointerDown={(event) => {
-        if (preservePointerSelection) {
-          event.preventDefault();
-        }
+        if (preservePointerSelection) event.preventDefault();
       }}
     >
       {children}
     </div>,
-    document.body,
+    container,
   );
-}
-
-function textSelectionPosition({
-  anchorRect,
-  lineRects,
-  surfaceRect,
-  bounds,
-  clampLeft,
-  clampTop,
-  gap,
-  isMobileViewport,
-}: {
-  anchorRect: DOMRect;
-  lineRects?: DOMRect[];
-  surfaceRect: DOMRect;
-  bounds: ViewportBounds;
-  clampLeft: (value: number) => number;
-  clampTop: (value: number) => number;
-  gap: number;
-  isMobileViewport: boolean;
-}): FloatingActionPosition {
-  const lines = visibleSelectionLines(lineRects, anchorRect, bounds);
-  const firstLineRect = lines[0] ?? anchorRect;
-  const lastLineRect = lines[lines.length - 1] ?? anchorRect;
-  const visibleSelectionRect =
-    unionRects(lines) ?? clippedRect(anchorRect, bounds) ?? anchorRect;
-  const aboveTop = firstLineRect.top - surfaceRect.height - gap;
-  const belowTop = lastLineRect.bottom + gap;
-  const fitsAbove = aboveTop >= bounds.minTop;
-  const fitsBelow = belowTop + surfaceRect.height <= bounds.maxTop;
-
-  const verticalPlacements: Array<"above" | "below"> = isMobileViewport
-    ? ["below", "above"]
-    : ["above", "below"];
-  for (const candidate of verticalPlacements) {
-    if (
-      (candidate === "above" && !fitsAbove) ||
-      (candidate === "below" && !fitsBelow)
-    ) {
-      continue;
-    }
-    const lineRect = candidate === "above" ? firstLineRect : lastLineRect;
-    const top = candidate === "above" ? aboveTop : belowTop;
-    const selectionCenterX = anchorRect.left + anchorRect.width / 2;
-    const targetX = clamp(selectionCenterX, lineRect.left, lineRect.right);
-    const left = clampLeft(targetX - surfaceRect.width / 2);
-    return {
-      style: selectionSurfaceStyle(top, left, targetX, surfaceRect.width),
-      placement: candidate,
-    };
-  }
-
-  const selectionCenterX =
-    visibleSelectionRect.left + visibleSelectionRect.width / 2;
-  const selectionCenterY =
-    visibleSelectionRect.top + visibleSelectionRect.height / 2;
-  const sideTop = clampTop(selectionCenterY - surfaceRect.height / 2);
-  const rightLeft = visibleSelectionRect.right + gap;
-  if (rightLeft + surfaceRect.width <= bounds.maxLeft) {
-    return {
-      style: { position: "fixed", top: sideTop, left: rightLeft },
-      placement: "right",
-    };
-  }
-
-  const leftLeft = visibleSelectionRect.left - surfaceRect.width - gap;
-  if (leftLeft >= bounds.minLeft) {
-    return {
-      style: { position: "fixed", top: sideTop, left: leftLeft },
-      placement: "left",
-    };
-  }
-
-  let top = clampTop(selectionCenterY - surfaceRect.height / 2);
-  let left = clampLeft(selectionCenterX - surfaceRect.width / 2);
-  const bottomDistance = Math.abs(bounds.maxTop - visibleSelectionRect.bottom);
-  const topDistance = Math.abs(visibleSelectionRect.top - bounds.minTop);
-  const rightDistance = Math.abs(bounds.maxLeft - visibleSelectionRect.right);
-  const leftDistance = Math.abs(visibleSelectionRect.left - bounds.minLeft);
-
-  if (
-    bottomDistance <= topDistance &&
-    bottomDistance <= rightDistance &&
-    bottomDistance <= leftDistance
-  ) {
-    top = Math.max(bounds.minTop, bounds.maxTop - surfaceRect.height);
-  } else if (topDistance <= rightDistance && topDistance <= leftDistance) {
-    top = bounds.minTop;
-  } else if (rightDistance <= leftDistance) {
-    left = Math.max(bounds.minLeft, bounds.maxLeft - surfaceRect.width);
-  } else {
-    left = bounds.minLeft;
-  }
-
-  return {
-    style: { position: "fixed", top, left },
-    placement: "edge",
-  };
-}
-
-function visibleSelectionLines(
-  lineRects: DOMRect[] | undefined,
-  anchorRect: DOMRect,
-  bounds: ViewportBounds,
-): DOMRect[] {
-  const validLines = (lineRects ?? []).filter(
-    (rect) => rect.width > 0 && rect.height > 0,
-  );
-  const visibleLines = validLines
-    .map((rect) => clippedRect(rect, bounds))
-    .filter((rect): rect is DOMRect => rect !== null);
-  const fallback = clippedRect(anchorRect, bounds) ?? anchorRect;
-  const lines = visibleLines.length > 0 ? visibleLines : [fallback];
-
-  return lines.sort((leftRect, rightRect) => {
-    if (leftRect.top !== rightRect.top) {
-      return leftRect.top - rightRect.top;
-    }
-    return leftRect.left - rightRect.left;
-  });
-}
-
-function clippedRect(rect: DOMRect, bounds: ViewportBounds): DOMRect | null {
-  const left = Math.max(rect.left, bounds.minLeft);
-  const top = Math.max(rect.top, bounds.minTop);
-  const right = Math.min(rect.right, bounds.maxLeft);
-  const bottom = Math.min(rect.bottom, bounds.maxTop);
-  if (right <= left || bottom <= top) return null;
-  return new DOMRect(left, top, right - left, bottom - top);
-}
-
-function unionRects(rects: DOMRect[]): DOMRect | null {
-  if (rects.length === 0) return null;
-  const left = Math.min(...rects.map((rect) => rect.left));
-  const top = Math.min(...rects.map((rect) => rect.top));
-  const right = Math.max(...rects.map((rect) => rect.right));
-  const bottom = Math.max(...rects.map((rect) => rect.bottom));
-  return new DOMRect(left, top, right - left, bottom - top);
-}
-
-function selectionSurfaceStyle(
-  top: number,
-  left: number,
-  targetX: number,
-  surfaceWidth: number,
-): FloatingActionStyle {
-  const caretInset = Math.min(CARET_EDGE_INSET_PX, surfaceWidth / 2);
-  const caretOffset = clamp(
-    targetX - left,
-    caretInset,
-    surfaceWidth - caretInset,
-  );
-  return {
-    position: "fixed",
-    top,
-    left,
-    "--floating-action-caret-inline-offset": `${caretOffset}px`,
-  };
-}
-
-function anchoredPosition({
-  anchorRect,
-  surfaceRect,
-  bounds,
-  clampLeft,
-  clampTop,
-  placement,
-  align,
-  flip,
-  gap,
-}: {
-  anchorRect: DOMRect;
-  surfaceRect: DOMRect;
-  bounds: ViewportBounds;
-  clampLeft: (value: number) => number;
-  clampTop: (value: number) => number;
-  placement: "below" | "above" | "left" | "right";
-  align: "start" | "center" | "end";
-  flip: boolean;
-  gap: number;
-}): FloatingActionPosition {
-  let actualPlacement = placement;
-  if (placement === "below") {
-    const below = anchorRect.bottom + gap;
-    const above = anchorRect.top - surfaceRect.height - gap;
-    if (
-      flip &&
-      below + surfaceRect.height > bounds.maxTop &&
-      above >= bounds.minTop
-    ) {
-      actualPlacement = "above";
-    }
-  } else if (placement === "above") {
-    const below = anchorRect.bottom + gap;
-    const above = anchorRect.top - surfaceRect.height - gap;
-    if (
-      flip &&
-      above < bounds.minTop &&
-      below + surfaceRect.height <= bounds.maxTop
-    ) {
-      actualPlacement = "below";
-    }
-  } else if (placement === "right") {
-    const right = anchorRect.right + gap;
-    const left = anchorRect.left - surfaceRect.width - gap;
-    if (
-      flip &&
-      right + surfaceRect.width > bounds.maxLeft &&
-      left >= bounds.minLeft
-    ) {
-      actualPlacement = "left";
-    }
-  } else {
-    const right = anchorRect.right + gap;
-    const left = anchorRect.left - surfaceRect.width - gap;
-    if (
-      flip &&
-      left < bounds.minLeft &&
-      right + surfaceRect.width <= bounds.maxLeft
-    ) {
-      actualPlacement = "right";
-    }
-  }
-
-  const horizontal = actualPlacement === "left" || actualPlacement === "right";
-  const top = horizontal
-    ? align === "start"
-      ? anchorRect.top
-      : align === "end"
-        ? anchorRect.bottom - surfaceRect.height
-        : anchorRect.top + anchorRect.height / 2 - surfaceRect.height / 2
-    : actualPlacement === "below"
-      ? anchorRect.bottom + gap
-      : anchorRect.top - surfaceRect.height - gap;
-  const left = horizontal
-    ? actualPlacement === "right"
-      ? anchorRect.right + gap
-      : anchorRect.left - surfaceRect.width - gap
-    : align === "start"
-      ? anchorRect.left
-      : align === "end"
-        ? anchorRect.right - surfaceRect.width
-        : anchorRect.left + anchorRect.width / 2 - surfaceRect.width / 2;
-
-  return {
-    style: { position: "fixed", top: clampTop(top), left: clampLeft(left) },
-    placement: actualPlacement,
-  };
-}
-
-function resolveRect(
-  anchor: HTMLElement | DOMRect | null | undefined,
-): DOMRect | null {
-  if (!anchor) return null;
-  return anchor instanceof HTMLElement
-    ? anchor.getBoundingClientRect()
-    : anchor;
-}
-
-interface ViewportBounds {
-  minLeft: number;
-  minTop: number;
-  maxLeft: number;
-  maxTop: number;
-}
-
-function viewportBounds(
-  isMobileViewport: boolean,
-  viewportPadding: number,
-): ViewportBounds {
-  const safeBounds = isMobileViewport
-    ? readViewportSafeBounds({
-        viewportPadding,
-        bottomClearance: readMobileCssLength(
-          "var(--mobile-content-bottom-clearance)",
-        ),
-      })
-    : readViewportSafeBounds({ viewportPadding });
-
-  return {
-    minLeft: safeBounds.left,
-    minTop: safeBounds.top,
-    maxLeft: safeBounds.right,
-    maxTop: safeBounds.bottom,
-  };
-}
-
-function readPx(rawValue: string | null | undefined): number {
-  if (!rawValue) return 0;
-  const parsed = Number.parseFloat(rawValue);
-  return Number.isFinite(parsed) ? parsed : 0;
 }

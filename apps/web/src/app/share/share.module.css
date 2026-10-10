@@ -1,7 +1,8 @@
+/* The whole page, not a layer: no z-index, so the library chooser and its
+   sheet (overlay stack) paint above it. */
 .backdrop {
   position: fixed;
   inset: 0;
-  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;

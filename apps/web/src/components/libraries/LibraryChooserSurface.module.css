@@ -15,5 +15,5 @@
   border: 1px solid var(--edge-subtle);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-3);
-  z-index: 1200;
+  z-index: var(--z-popover);
 }

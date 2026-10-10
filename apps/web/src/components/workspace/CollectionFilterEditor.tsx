@@ -122,12 +122,10 @@ export default function CollectionFilterEditor(props: {
       <FloatingActionSurface
         open={open && !isMobile}
         anchor={triggerRef.current}
-        placement="below"
         align="end"
         flip
         role="dialog"
         label="Filters"
-        additionalDismissRefs={[triggerRef]}
         onDismiss={(reason) => close(reason === "escape")}
       >
         {isMobile ? null : content}

@@ -408,7 +408,6 @@ export default function Companion(props: {
         panelId={paneSecondaryRegionId(paneId)}
         onDismiss={close}
         ariaLabel={title(activeId)}
-        layer="overlay"
         scrim="soft"
         initialFocus={(container) =>
           container.querySelector<HTMLElement>(

@@ -1,32 +1,27 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import MobileSheet from "@/components/ui/MobileSheet";
-import { resolveTransientPortalContainer } from "@/lib/ui/transientPortalContainer";
-import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
-import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
-import { useHistoryDismiss } from "@/lib/ui/useHistoryDismiss";
-import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
-  useContainingModalLayer,
-  useIsModalLayerTopmost,
-} from "@/lib/ui/useModalLayer";
-import { useReturnFocus, type ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
+  useOverlay,
+  useOverlayContainer,
+  type ReturnFocusTarget,
+} from "@/lib/ui/overlay";
+import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
+import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./LibraryChooserSurface.module.css";
 
 export interface LibraryChooserSurfaceProps {
-  /** Render/behavior gate. Keep the component mounted; drive it with this. */
+  /** Render/behaviour gate. */
   active: boolean;
   onClose: () => void;
-  /** Mobile sheet layer token + desktop stacking. No default/inference. */
-  layer: "modal" | "palette";
   /** Anchor element for positioning AND primary return focus. */
   anchor: ReturnFocusTarget;
   returnFocusFallback?: ReturnFocusTarget;
-  /** Accessible name (mobile sheet aria-label; desktop panel aria-label). */
+  /** Accessible name (mobile sheet and desktop panel). */
   title: string;
-  /** Forwarded to MobileSheet (re-focus on session change). */
+  /** Re-focus on session change (mobile sheet). */
   focusKey?: unknown;
   panelId?: string;
   /** The LibraryChooser. */
@@ -34,18 +29,14 @@ export interface LibraryChooserSurfaceProps {
 }
 
 /**
- * The responsive placement/portal/dismissal/focus owner for the library
- * chooser. Desktop mirrors
- * the ActionMenu anchored-popover trio (useAnchoredPosition +
- * useDismissOnOutsideOrEscape + useHistoryDismiss/useReturnFocus, portaled via the
- * shared transient-portal-container rule); mobile reuses the existing MobileSheet.
- * It owns no chooser content — `children` (the LibraryChooser) renders the
- * combobox/listbox and keeps DOM focus on the search input.
+ * The library chooser's presentation: on desktop an anchored panel below its
+ * anchor (a transient layer: Escape, an outside press and, inside a modal,
+ * Back close it); on phones the shared MobileSheet. Owns no chooser content:
+ * the LibraryChooser child renders the combobox and keeps focus in it.
  */
 export default function LibraryChooserSurface({
   active,
   onClose,
-  layer,
   anchor,
   returnFocusFallback,
   title,
@@ -54,92 +45,61 @@ export default function LibraryChooserSurface({
   children,
 }: LibraryChooserSurfaceProps) {
   const isMobile = useIsMobileViewport();
-  const modalToken = useContainingModalLayer();
-  const modalIsTopmost = useIsModalLayerTopmost(modalToken);
-  const desktopActive = active && !isMobile;
-
-  // The live anchor element, resolved each render, drives both positioning and
-  // the dismiss refs (a pointerdown on the trigger must not read as "outside").
-  const focusAnchor = desktopActive ? anchor() : null;
-  const anchorEl = focusAnchor !== null && !(focusAnchor instanceof HTMLElement)
-    ? focusAnchor.element : focusAnchor;
-  const anchorRef = useRef<HTMLElement | null>(null);
-  anchorRef.current = anchorEl;
-
-  const {
-    ref: panelRef,
-    style,
-    anchorRect,
-  } = useAnchoredPosition<HTMLDivElement>(anchorEl, {
-    enabled: desktopActive,
+  const desktop = active && !isMobile;
+  const target = desktop ? anchor() : null;
+  const anchorEl =
+    target === null || target instanceof HTMLElement ? target : target.element;
+  const panel = useAnchoredPosition<HTMLDivElement>(anchorEl, {
+    enabled: desktop,
     placement: "below",
     align: "start",
-    gap: 4,
     flip: true,
   });
-
-  useDismissOnOutsideOrEscape({
-    enabled: desktopActive,
-    refs: [panelRef, anchorRef],
-    onDismiss: () => onClose(),
-  });
-
-  // History entry only for a modal-contained desktop chooser; a base-page desktop
-  // chooser adds none (spec §3). MobileSheet owns mobile Back on its own.
-  useHistoryDismiss(
-    desktopActive && modalToken !== null,
-    () => {
-      onClose();
-      return "accepted";
-    },
-    { isTopmost: modalIsTopmost },
-  );
-
-  useReturnFocus(desktopActive, {
+  const container = useOverlayContainer();
+  useOverlay(desktop, {
+    kind: "transient",
+    onDismiss: onClose,
+    inside: () => [panel.ref.current, anchorEl],
+    returnFocus: true,
     returnFocusTo: anchor,
     returnFocusFallback,
   });
 
-  // Focus search on open, once positioned (anchorRect is set after the first
-  // measure). The child LibraryChooser renders the combobox.
+  // Focus the search once placed.
   useEffect(() => {
-    if (!desktopActive || !anchorRect) return;
-    requestAnimationFrame(() => {
-      panelRef.current
+    if (!panel.placed) return;
+    const frame = requestAnimationFrame(() =>
+      panel.ref.current
         ?.querySelector<HTMLElement>('[role="combobox"]')
-        ?.focus();
-    });
-  }, [desktopActive, anchorRect, panelRef]);
-
-  const desktopPanel =
-    desktopActive && anchorEl && typeof document !== "undefined"
-      ? createPortal(
-          <div
-            id={panelId}
-            ref={panelRef}
-            role="dialog"
-            className={styles.surface}
-            style={style}
-            data-layer={layer}
-            aria-label={title}
-          >
-            {children}
-          </div>,
-          resolveTransientPortalContainer(anchorEl, modalToken !== null),
-        )
-      : null;
+        ?.focus(),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [panel.placed, panel.ref]);
 
   return (
     <>
-      {desktopPanel}
+      {desktop && anchorEl && container
+        ? createPortal(
+            <div
+              id={panelId}
+              ref={panel.ref}
+              role="dialog"
+              className={styles.surface}
+              style={panel.style}
+              aria-label={title}
+            >
+              {children}
+            </div>,
+            container,
+          )
+        : null}
       <MobileSheet
         active={active && isMobile}
         onDismiss={onClose}
-        layer={layer}
         ariaLabel={title}
         focusKey={focusKey}
         panelId={panelId}
-        initialFocus={(container) => container}
+        initialFocus={(sheet) => sheet}
         returnFocusTo={anchor}
         returnFocusFallback={returnFocusFallback}
       >

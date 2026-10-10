@@ -1,58 +1,33 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useLayoutEffect, useSyncExternalStore } from "react";
+import { useMobileViewport } from "@/lib/mobileShell/viewport";
 
-/**
- * The visual-viewport geometry a mobile modal needs while the on-screen
- * keyboard is open. This is the iOS keyboard shim: Android and Firefox resize
- * the layout viewport via `interactive-widget=resizes-content`, so the
- * measured bottom inset is ~0 there and only iOS Safari carries a real value.
- *
- * Bottom values below the threshold report 0: browser-chrome geometry noise
- * and the iOS 26.0 stale-`visualViewport` regression (~24 px residue after
- * keyboard close, WebKit bug 297779) must not leave modal surfaces floating
- * above the bottom edge. The raw nonnegative top offset is deliberately not
- * thresholded: full-screen tasks need iOS viewport-pan compensation even when
- * no keyboard bottom inset is present. SSR/no-viewport → {0, 0}.
- */
-export const KEYBOARD_INSET_THRESHOLD_PX = 60;
+// The iOS keyboard shim. Android and Firefox resize the layout viewport
+// (interactive-widget=resizes-content), so the bottom inset reads ~0 there.
+// Insets under 60px read 0: browser-chrome noise and the iOS 26.0 stale
+// visualViewport residue (WebKit 297779) must not float a surface above the
+// bottom edge. The top is the raw nonnegative visual-viewport offset: a
+// full-screen task follows the iOS viewport pan even with no keyboard.
+const THRESHOLD_PX = 60;
+const ZERO = { keyboardBottomInsetPx: 0, visualViewportTopPx: 0 };
+let last = ZERO;
 
-export interface KeyboardViewportGeometry {
-  readonly keyboardBottomInsetPx: number;
-  readonly visualViewportTopPx: number;
-}
-
-const ZERO_GEOMETRY: KeyboardViewportGeometry = {
-  keyboardBottomInsetPx: 0,
-  visualViewportTopPx: 0,
-};
-let lastGeometry = ZERO_GEOMETRY;
-
-function readGeometry(): KeyboardViewportGeometry {
-  const viewport = typeof window === "undefined" ? null : window.visualViewport;
-  if (!viewport) return ZERO_GEOMETRY;
-
-  const visualViewportTopPx =
-    Number.isFinite(viewport.offsetTop) && viewport.offsetTop >= 0
-      ? viewport.offsetTop
-      : 0;
-  const measuredBottomInsetPx = Math.max(
-    0,
-    window.innerHeight - viewport.height - visualViewportTopPx,
-  );
-  const keyboardBottomInsetPx =
-    measuredBottomInsetPx < KEYBOARD_INSET_THRESHOLD_PX
-      ? 0
-      : measuredBottomInsetPx;
-
+function read(): typeof ZERO {
+  const viewport = window.visualViewport;
+  if (!viewport) return ZERO;
+  const top = Number.isFinite(viewport.offsetTop)
+    ? Math.max(0, viewport.offsetTop)
+    : 0;
+  const measured = Math.max(0, window.innerHeight - viewport.height - top);
+  const bottom = measured < THRESHOLD_PX ? 0 : measured;
   if (
-    lastGeometry.keyboardBottomInsetPx === keyboardBottomInsetPx &&
-    lastGeometry.visualViewportTopPx === visualViewportTopPx
+    last.keyboardBottomInsetPx !== bottom ||
+    last.visualViewportTopPx !== top
   ) {
-    return lastGeometry;
+    last = { keyboardBottomInsetPx: bottom, visualViewportTopPx: top };
   }
-  lastGeometry = { keyboardBottomInsetPx, visualViewportTopPx };
-  return lastGeometry;
+  return last;
 }
 
 function subscribe(onChange: () => void): () => void {
@@ -67,6 +42,16 @@ function subscribe(onChange: () => void): () => void {
   };
 }
 
-export function useKeyboardInset(): KeyboardViewportGeometry {
-  return useSyncExternalStore(subscribe, readGeometry, () => ZERO_GEOMETRY);
+export function useKeyboardInset(): typeof ZERO {
+  return useSyncExternalStore(subscribe, read, () => ZERO);
+}
+
+/** While active, the newest report owns --mobile-overlay-keyboard-inset. */
+export function useKeyboardReport(active: boolean): void {
+  const { keyboardBottomInsetPx } = useKeyboardInset();
+  const viewport = useMobileViewport();
+  useLayoutEffect(() => {
+    if (!active) return;
+    return viewport.reportMobileOverlayKeyboardInset(keyboardBottomInsetPx);
+  }, [active, keyboardBottomInsetPx, viewport]);
 }

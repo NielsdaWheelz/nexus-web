@@ -98,7 +98,7 @@ function SettingsForm({
       title="Subscription settings"
       onDismissRequest={() => (busy ? "blocked" : "accepted")}
       initialFocus={(card) =>
-        card.querySelector<HTMLElement>("[data-playback-rate-range]")
+        card.querySelector<HTMLElement>('input[type="range"]')
       }
     >
       <div className={styles.form}>

@@ -14,8 +14,7 @@ import {
   type ContributorSearchItem,
 } from "@/lib/contributors/api";
 import { contributorNameKey } from "@/lib/contributors/credits";
-import { useEscapeKey } from "@/lib/ui/useEscapeKey";
-import { useContainingModalLayer } from "@/lib/ui/useModalLayer";
+import { useOverlay } from "@/lib/ui/overlay";
 import styles from "./MediaAuthorsEditor.module.css";
 
 const MAX_NAME_CODE_POINTS = 200;
@@ -64,7 +63,6 @@ export default function AuthorSearchField({
   const [open, setOpen] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
-  const modalToken = useContainingModalLayer();
   const trimmed = query.trim();
   const overLength = [...trimmed].length > MAX_NAME_CODE_POINTS;
   const searchable = trimmed !== "" && !overLength;
@@ -130,20 +128,17 @@ export default function AuthorSearchField({
     else onCreateNew(trimmed);
   }
 
-  useEscapeKey(
-    true,
-    () => {
+  // A transient of the editor: Escape and Back close the list, then abandon
+  // the search, while focus is inside the field.
+  useOverlay(true, {
+    kind: "transient",
+    eligible: () => rootRef.current?.contains(document.activeElement) ?? false,
+    onDismiss: () => {
       if (composing.current) return;
       if (listVisible) setOpen(false);
       else onDismiss();
     },
-    {
-      layer: "transient",
-      modalToken,
-      isEligible: () =>
-        rootRef.current?.contains(document.activeElement) ?? false,
-    },
-  );
+  });
 
   function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     if (composing.current) return;

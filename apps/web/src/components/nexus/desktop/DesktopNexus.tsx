@@ -4,12 +4,10 @@
 // DOM focus stays in the input; the active cell is virtual (aria-activedescendant).
 import { MoreHorizontal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import Input from "@/components/ui/Input";
+import ModalFrame from "@/components/ui/ModalFrame";
 import type { NexusRow } from "@/lib/nexus/model";
 import { rowFacts } from "@/lib/nexus/rows";
-import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
-import { ModalLayerProvider, modalBackdropProjection } from "@/lib/ui/useModalLayer";
 import { NexusRowBody, NexusRowMenu, NexusSourceFailures, useNexusRowMenus } from "../NexusRow";
 import NexusPages from "../NexusPages";
 import type { NexusController } from "../useNexusController";
@@ -27,22 +25,12 @@ function count(n: number, noun: string): string {
 }
 
 export default function DesktopNexus({ controller }: { controller: NexusController }) {
-  const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
   const openMenuKey = useRef<string | null>(null);
   const [cell, setCell] = useState<Cell>("Primary");
   const registerMenu = useNexusRowMenus(controller.menuRequest);
-  const overlay = useDialogOverlay({
-    ref: panelRef,
-    active: controller.open,
-    onDismiss: controller.escape,
-    initialFocus: controller.initialFocus,
-    skipReturnFocus: controller.suppressReturnFocus,
-    focusKey: controller.focusKey,
-    layerScope: "nexus",
-  });
   const rows = controller.groups.flatMap((group) => group.rows);
   const index = rows.findIndex((row) => row.key === controller.activeKey);
   const active = rows[index];
@@ -245,26 +233,25 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
     </>
   );
 
-  return createPortal(
-    <ModalLayerProvider token={overlay.layerToken}>
-      <div className={styles.backdrop} {...modalBackdropProjection(overlay.isTopmost)} role="presentation" onClick={controller.escape}>
-        <div
-          ref={panelRef}
-          role="dialog"
-          aria-label={controller.dialogLabel}
-          className={styles.surface}
-          onClick={(event) => event.stopPropagation()}
-        >
-          {controller.page.kind === "Root" ? (
-            root
-          ) : (
-            <div className={styles.workflow}>
-              <NexusPages controller={controller} mobile={false} />
-            </div>
-          )}
+  // Escape, Back and the scrim all take one step back: a page, the query, then the palette.
+  return (
+    <ModalFrame
+      open
+      onDismiss={controller.escape}
+      label={controller.dialogLabel}
+      initialFocus={controller.initialFocus}
+      skipReturnFocus={controller.suppressReturnFocus}
+      focusKey={controller.focusKey}
+      backdropClassName={styles.backdrop}
+      className={styles.surface}
+    >
+      {controller.page.kind === "Root" ? (
+        root
+      ) : (
+        <div className={styles.workflow}>
+          <NexusPages controller={controller} mobile={false} />
         </div>
-      </div>
-    </ModalLayerProvider>,
-    document.body,
+      )}
+    </ModalFrame>
   );
 }
