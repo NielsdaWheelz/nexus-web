@@ -29,17 +29,33 @@ jobs:
         with:
           bun-version-file: .bun-version
 
+      - name: write the private memory deploy key
+        shell: bash
+        env:
+          UNIVERSAL_MEMORY_DEPLOY_KEY: ${{ secrets.UNIVERSAL_MEMORY_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$UNIVERSAL_MEMORY_DEPLOY_KEY"
+          umask 077
+          # gh secret set strips the final newline; OpenSSH 9.2 refuses the key without it.
+          printf '%s\n' "$UNIVERSAL_MEMORY_DEPLOY_KEY" >"$RUNNER_TEMP/universal-memory-deploy-key"
+
       - name: install locked dependencies
         shell: bash
         env:
           CI: "true"
-          UNIVERSAL_MEMORY_READ_TOKEN: ${{ secrets.UNIVERSAL_MEMORY_READ_TOKEN }}
+          UNIVERSAL_MEMORY_DEPLOY_KEY_FILE: ${{ runner.temp }}/universal-memory-deploy-key
         run: |
           set -euo pipefail
           test "$(bun --version)" = "$(cat .bun-version)"
           scripts/with-memory-git uv sync --extra dev --extra codex-agent --locked --directory python
           bun install --frozen-lockfile --cwd apps/web
           bun install --frozen-lockfile --cwd node/ingest
+
+      - name: remove the private memory deploy key
+        if: ${{ always() }}
+        shell: bash
+        run: rm -f -- "$RUNNER_TEMP/universal-memory-deploy-key"
 
       - name: check
         run: ./scripts/test

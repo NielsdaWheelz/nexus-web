@@ -44,9 +44,11 @@ the read-only release preparation of 2026-10-10 (plan and production reads in
 outside the repo) found eight blockers for `7dc68929b`/0241 -> main. its phases 0-7
 are the owner steps, in order.
 
-- B1 (owner): no backend candidate since 2026-10-08. `backend-images.yml` fails on
-  the missing repo secret `UNIVERSAL_MEMORY_READ_TOKEN`. provision it; the first main
-  commit after it whose first image run succeeds is the target `T`. freeze main at `T`.
+- B1 (owner): no backend candidate since 2026-10-08. `backend-images.yml` failed for
+  want of a private memory build credential, a repo secret that never existed. the
+  credential is now the read-only deploy key `UNIVERSAL_MEMORY_DEPLOY_KEY`, set
+  2026-10-10 (`deployment.md`). merge that change; the first main commit after it
+  whose first image run succeeds is the target `T`. freeze main at `T`.
 - B2 (fixed, cleanup/release-blockers): `ModelCutoverRestore.target_revision` was
   pinned to `^0258$` while release and archive cli require the candidate head.
 - B3 (owner): production `current.env` lacks `NEXUS_MEMORY_CLIENT_CONFIG_FILE`;

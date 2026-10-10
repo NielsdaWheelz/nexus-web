@@ -147,11 +147,11 @@ remain separate.
 
 the library's git repository is private. the owner approved distributing its
 installed python source in nexus's existing public backend images; anonymous
-digest access remains required. ci and image builders use the contents-read-only
-`UNIVERSAL_MEMORY_READ_TOKEN` secret only while fetching that exact repository.
-the process-scoped git helper never persists credentials or embeds them in urls,
-build arguments, caches or runtime images. ordinary local dependency installs
-use authenticated git.
+digest access remains required. ci and image builders fetch that exact
+repository over ssh with the read-only deploy key `UNIVERSAL_MEMORY_DEPLOY_KEY`
+(`deployment.md`). the process-scoped git helper never persists the key or
+embeds it in urls, build arguments, caches or runtime images. ordinary local
+dependency installs use authenticated git.
 
 ## Backend composition
 

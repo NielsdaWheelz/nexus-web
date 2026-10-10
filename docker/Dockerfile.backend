@@ -5,7 +5,7 @@ FROM python:3.12.13-slim-bookworm@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e2631
 COPY --from=ghcr.io/astral-sh/uv:0.9.30@sha256:538e0b39736e7feae937a65983e49d2ab75e1559d35041f9878b7b7e51de91e4 /uv /uvx /usr/local/bin/
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates git \
+    && apt-get install -y --no-install-recommends ca-certificates git openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -13,9 +13,10 @@ WORKDIR /app
 COPY python/pyproject.toml python/uv.lock python/README.md ./
 COPY python/nexus ./nexus
 COPY --chmod=0555 scripts/with-memory-git /usr/local/bin/with-memory-git
-RUN --mount=type=secret,id=universal_memory_read_token,required=true \
+COPY --chmod=0444 scripts/github-known-hosts /usr/local/bin/github-known-hosts
+RUN --mount=type=secret,id=universal_memory_deploy_key,required=true \
     chmod -R u=rwX,go=rX /app/nexus \
-    && UNIVERSAL_MEMORY_READ_TOKEN_FILE=/run/secrets/universal_memory_read_token \
+    && UNIVERSAL_MEMORY_DEPLOY_KEY_FILE=/run/secrets/universal_memory_deploy_key \
        with-memory-git uv sync --frozen --no-dev --no-editable
 
 
@@ -24,8 +25,8 @@ RUN --mount=type=secret,id=universal_memory_read_token,required=true \
 # base environment so an API compromise cannot read or use Codex credentials.
 FROM python-builder AS worker-python-builder
 
-RUN --mount=type=secret,id=universal_memory_read_token,required=true \
-    UNIVERSAL_MEMORY_READ_TOKEN_FILE=/run/secrets/universal_memory_read_token \
+RUN --mount=type=secret,id=universal_memory_deploy_key,required=true \
+    UNIVERSAL_MEMORY_DEPLOY_KEY_FILE=/run/secrets/universal_memory_deploy_key \
     with-memory-git uv sync --frozen --no-dev --no-editable --extra codex-agent
 
 

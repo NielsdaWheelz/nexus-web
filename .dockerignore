@@ -14,6 +14,7 @@
 
 !scripts/
 !scripts/with-memory-git
+!scripts/github-known-hosts
 
 !migrations/
 !migrations/**
