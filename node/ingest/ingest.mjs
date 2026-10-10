@@ -1,75 +1,93 @@
 #!/usr/bin/env node
-// One JSON request on stdin; one versioned result on stdout. Source failures
-// are modeled results; invocation errors and defects use stderr and exit 1.
-import { JSDOM } from 'jsdom';
-import { fetchAcceptedHtml, MAX_ACCEPTED_URL_TIMEOUT_MS, MAX_HTML_BYTES } from './accepted_url_egress.mjs';
-import { extractArticle } from './article_extraction.mjs';
+// Readability filter, protocol 2. argv: the page's final URL and its raw
+// Content-Type header; stdin: the page bytes, already fetched and bounded by the
+// Python egress. stdout: one JSON result. Defects use stderr and a nonzero exit.
+import { JSDOM } from "jsdom";
+import { extractArticle } from "./article_extraction.mjs";
 
-async function ingest(url, timeoutMs) {
-    const fetched = await fetchAcceptedHtml({ url, timeoutMs });
-    if (fetched.tag === 'Failure') return fetched;
-    const dom = new JSDOM(fetched.source_html, { url: fetched.final_url });
-    const baseUrl = dom.window.document.baseURI;
-    const article = extractArticle(dom.window.document);
-    if (!article || typeof article.content !== 'string' || article.content.length === 0) {
-        return { tag: 'Failure', failure: { tag: 'Readability' } };
-    }
-    if (Buffer.byteLength(article.content, 'utf8') > MAX_HTML_BYTES) {
-        return { tag: 'Failure', failure: { tag: 'TooLarge', limit: 'source' } };
-    }
-    const metadata = [article.title, article.byline, article.excerpt, article.siteName, article.publishedTime];
-    if (metadata.some((value) => value != null && typeof value !== 'string')) {
-        return { tag: 'Failure', failure: { tag: 'Readability' } };
-    }
-    return {
-        tag: 'Success',
-        final_url: fetched.final_url,
-        base_url: baseUrl,
-        title: boundedText(article.title, 1000),
-        content_html: article.content,
-        source_html: fetched.source_html,
-        byline: boundedText(article.byline, 1000),
-        excerpt: boundedText(article.excerpt, 2000),
-        site_name: boundedText(article.siteName, 255),
-        published_time: boundedText(article.publishedTime, 64),
-    };
+const MAX_HTML_BYTES = 10 * 1024 * 1024;
+const CHARSET_ALIASES = {
+  latin1: "iso-8859-1",
+  "latin-1": "iso-8859-1",
+  iso8859_1: "iso-8859-1",
+  "iso8859-1": "iso-8859-1",
+  cp1252: "windows-1252",
+  win1252: "windows-1252",
+  "win-1252": "windows-1252",
+};
+
+function normalizeCharset(charset) {
+  const cleaned = charset
+    ?.trim()
+    .toLowerCase()
+    .replace(/^["']|["']$/g, "");
+  return cleaned ? CHARSET_ALIASES[cleaned] || cleaned : null;
 }
 
-function boundedText(value, limit) {
-    let result = '';
-    let count = 0;
-    for (const codePoint of value ?? '') {
-        if (count++ === limit) break;
-        result += codePoint;
-    }
-    return result;
+function contentTypeCharset(contentType) {
+  return normalizeCharset(
+    contentType.match(/charset\s*=\s*"?([^";,\s]+)"?/i)?.[1],
+  );
 }
 
-async function main() {
+// A <meta> declaration in the first 2048 bytes, as a browser's prescan finds it.
+function metaCharset(bytes) {
+  const head = new TextDecoder("ascii").decode(bytes.subarray(0, 2048));
+  for (const tag of head.match(/<meta\b[^>]*>/gi) || []) {
+    const charset = normalizeCharset(
+      tag.match(/charset\s*=\s*["']?\s*([^"'>\s/;]+)/i)?.[1],
+    );
+    if (charset) return charset;
+    if (!/http-equiv\s*=\s*["']?\s*content-type\s*["']?/i.test(tag)) continue;
+    const content =
+      tag.match(/content\s*=\s*["']([^"']*)["']/i) ||
+      tag.match(/content\s*=\s*([^>\s]+)/i);
+    const declared = content && contentTypeCharset(content[1]);
+    if (declared) return declared;
+  }
+  return null;
+}
+
+// Header charset, then <meta>, then UTF-8 (WHATWG labels); an unknown label falls through.
+function decode(bytes, contentType) {
+  for (const charset of [contentTypeCharset(contentType), metaCharset(bytes)]) {
+    if (!charset) continue;
     try {
-        const chunks = [];
-        for await (const chunk of process.stdin) chunks.push(chunk);
-        const input = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
-        if (!input || typeof input !== 'object' || Array.isArray(input)
-            || Object.keys(input).length !== 2
-            || !Object.hasOwn(input, 'url') || !Object.hasOwn(input, 'timeout_ms')) {
-            throw new Error('Input must contain exactly url and timeout_ms');
-        }
-        const { url, timeout_ms: timeoutMs } = input;
-        if (!url || typeof url !== 'string') throw new Error('Missing required field: url');
-        if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_ACCEPTED_URL_TIMEOUT_MS) {
-            throw new Error(
-                `Invalid timeout_ms: ${timeoutMs}. Expected integer in range 1-${MAX_ACCEPTED_URL_TIMEOUT_MS}`,
-            );
-        }
-        const result = await ingest(url, timeoutMs);
-        process.stdout.write(JSON.stringify({ version: 1, ...result }) + '\n');
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        process.stderr.write(JSON.stringify({ error: message }) + '\n');
-        // Let piped stdout/stderr flush before the process exits.
-        process.exitCode = 1;
+      return new TextDecoder(charset).decode(bytes);
+    } catch {
+      // An unsupported declaration leaves the next declaration or UTF-8.
     }
+  }
+  return new TextDecoder("utf-8").decode(bytes);
 }
 
-main();
+function extract(bytes, url, contentType) {
+  const html = decode(bytes, contentType);
+  if (Buffer.byteLength(html, "utf8") > MAX_HTML_BYTES) {
+    return { tag: "Failure", failure: "TooLarge" };
+  }
+  const { document } = new JSDOM(html, { url }).window;
+  const article = extractArticle(document);
+  if (!article?.content) return { tag: "Failure", failure: "Readability" };
+  if (Buffer.byteLength(article.content, "utf8") > MAX_HTML_BYTES) {
+    return { tag: "Failure", failure: "TooLarge" };
+  }
+  return {
+    tag: "Success",
+    final_url: document.URL,
+    base_url: document.baseURI,
+    title: article.title ?? "",
+    content_html: article.content,
+    source_html: html,
+    byline: article.byline ?? "",
+    excerpt: article.excerpt ?? "",
+    site_name: article.siteName ?? "",
+    published_time: article.publishedTime ?? "",
+  };
+}
+
+const [url, contentType] = process.argv.slice(2);
+const chunks = [];
+for await (const chunk of process.stdin) chunks.push(chunk);
+const result = extract(Buffer.concat(chunks), url, contentType ?? "");
+process.stdout.write(JSON.stringify({ version: 2, ...result }) + "\n");

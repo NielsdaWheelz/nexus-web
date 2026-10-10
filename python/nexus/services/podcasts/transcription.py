@@ -47,7 +47,7 @@ from nexus.services.transcripts.state import (
     ensure_media_transcript_state_row,
     set_media_transcript_state,
 )
-from nexus.services.youtube_transcripts import fetch_youtube_transcript
+from nexus.services.youtube import fetch_youtube_transcript
 
 from .deepgram_adapter import get_deepgram_client
 from .episodes import episode_selection_fingerprint, resolve_episode_selection_ids

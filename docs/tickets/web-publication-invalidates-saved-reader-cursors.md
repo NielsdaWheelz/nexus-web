@@ -5,8 +5,8 @@
 - priority: p2
 - origin: 2026-09-15 restoration rehearsal, main `f75a7aa0d77a`
 
-Web refresh (`web_article_ingest.py:231`) and browser recapture
-(`media_source_ingest.py:3427`) replace fragments without reconciling saved reader
+Web refresh and browser recapture (`web_article.py:177`, `publish_article` through
+`replace_article_fragments` at `:269`) replace fragments without reconciling saved reader
 positions. `reader_publication.py:222` advances generation without cursor repair;
 `reader_cursor.py:82` loads schema-valid stale references. New writes are
 validated, but `DocumentReaderSession.ts:86` cannot select the deleted fragment.

@@ -4,7 +4,7 @@ Video ingest is source-owned.
 
 `media_source_ingest.py` classifies supported YouTube URLs, creates or reuses
 canonical video media, records the source attempt, and enqueues
-`ingest_media_source`. `youtube_video_ingest.py` owns YouTube materialization
+`ingest_media_source`. `youtube.py` owns YouTube materialization
 once the source attempt is running; it is not a separate source-acquisition queue
 lane.
 
@@ -29,7 +29,9 @@ iframe only after explicit click-to-load. Browse and Preview create no Media,
 source attempt, transcript state, playback progress, or activity fact.
 
 Add passes the server-resolved canonical YouTube URL to `/media/from_url`, which
-reuses the normal source-attempt owner above. `youtube_video_ingest.py`
-materializes playable metadata only. Captions are fetched only by an explicit
-canonical Video Transcribe command through `youtube_transcripts.py`; Add never
-starts transcript work.
+reuses the normal source-attempt owner above. `youtube.py` materializes
+playable metadata only (data api through `net/http_retry`; a video the api
+answers with no item fails as `E_SOURCE_GONE`; the title replaces only the
+`youtube_identity.placeholder_title`). Captions are fetched only by an explicit
+canonical Video Transcribe command through `youtube.fetch_youtube_transcript`;
+Add never starts transcript work.

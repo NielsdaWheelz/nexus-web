@@ -31,7 +31,7 @@ reachable states fall outside that and raise `AssertionError` instead:
 A quote reaches either state independently of its parent thread: embedded children
 are enqueued and run on their own (`document_embeds.py:151-181`,
 `media_source_ingest.py:3428-3435`), and `accept_embedded_source` returns the
-existing in-flight attempt, which `x_ingest.py:390-397` then completes. In both
+existing in-flight attempt, which `x_ingest.py:230-257` (`_publish`) then completes. In both
 states the consequence is the same: the parent thread's handler dies on the
 assertion and retries to dead, so the parent X thread can never be re-ingested until
 the quote's attempt settles.

@@ -21,7 +21,7 @@ later phase locks the loser, that phase deterministically raises
 `media_identity_changed`; the runner returns `status=superseded` (`1987-1988`).
 winner credits, index requests, embed synchronization and terminal settlement
 after that boundary are skipped. an x-thread winner carries an actual winner
-author observation and additional index targets (`x_ingest.py:250-277`).
+author observation and additional index targets (`x_ingest.py:135-145`).
 
 bounded reproduction: pause a real claimed canonical source after its
 supersession commit, advance that loser's exact teardown job through prepare

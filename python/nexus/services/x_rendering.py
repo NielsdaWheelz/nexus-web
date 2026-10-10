@@ -1,4 +1,8 @@
-"""Stored HTML, titles and descriptions for official X snapshots."""
+"""Stored HTML, titles and descriptions for X snapshots.
+
+The HTML is conservation material: canonical text, quote placeholders and their
+offsets derive from it, so every byte is deliberate.
+"""
 
 from __future__ import annotations
 
@@ -6,174 +10,126 @@ import html as html_lib
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from nexus.services.x_identity import classify_x_url
-from nexus.services.x_types import (
-    XAuthorThreadSnapshot,
-    XMediaSnapshot,
-    XPostSnapshot,
-    XQuoteReference,
-    XResolvedQuoteReference,
-    XUrlEntity,
-    XUserSnapshot,
-    canonical_x_post_url,
-)
+from nexus.services.x_client import XMedia, XPost, XThread, XUrlEntity, XUser
+from nexus.services.x_identity import canonical_x_post_url, classify_x_url
 
 
 @dataclass(frozen=True, slots=True)
-class RenderedXQuoteOccurrence:
-    ordinal: int
+class RenderedQuote:
+    ordinal: int  # across the whole thread
     occurrence_key: str
     post_id: str
     placeholder_text: str
-    reference: XQuoteReference
 
 
 @dataclass(frozen=True, slots=True)
-class RenderedXFragment:
-    post: XPostSnapshot
+class RenderedPost:
+    post: XPost
     html: str
-    quote_occurrences: tuple[RenderedXQuoteOccurrence, ...]
+    quotes: tuple[RenderedQuote, ...]
 
 
-def render_author_thread_fragment_html(
-    snapshot: XAuthorThreadSnapshot,
-) -> list[RenderedXFragment]:
-    """One fragment per thread post, each carrying its embedded quote marker."""
-    rendered: list[RenderedXFragment] = []
-    quote_ordinal = 0
-    for ordinal, post in enumerate(snapshot.posts, start=1):
-        occurrences: list[RenderedXQuoteOccurrence] = []
-        for quoted_id in post.quoted_post_ids:
-            reference = snapshot.quote_references[quoted_id]
-            occurrences.append(
-                RenderedXQuoteOccurrence(
-                    ordinal=quote_ordinal,
-                    occurrence_key=f"x-quote:{post.id}:{quoted_id}",
-                    post_id=quoted_id,
-                    placeholder_text=_placeholder_text(snapshot, reference),
-                    reference=reference,
-                )
+def render_thread(thread: XThread) -> list[RenderedPost]:
+    """One fragment per thread post, each carrying its quote placeholders."""
+    rendered: list[RenderedPost] = []
+    ordinal = 0
+    for number, post in enumerate(thread.posts, start=1):
+        quotes: list[RenderedQuote] = []
+        for quote_id in post.quoted_post_ids:
+            quoted = thread.quotes[quote_id]
+            handle = thread.users[quoted.author_id].username if quoted is not None else None
+            placeholder = (
+                f"Quoted X post by @{handle} \N{EM DASH} Open in Nexus"
+                if handle is not None
+                else "Quoted X post unavailable \N{EM DASH} Open on X"
             )
-            quote_ordinal += 1
-        rendered.append(
-            RenderedXFragment(
-                post=post,
-                html=_render_post_article(
-                    post,
-                    users=snapshot.users,
-                    media=snapshot.media,
-                    quote_occurrences=tuple(occurrences),
-                    external_quotes=False,
-                    ordinal=ordinal,
-                ),
-                quote_occurrences=tuple(occurrences),
+            quotes.append(
+                RenderedQuote(ordinal, f"x-quote:{post.id}:{quote_id}", quote_id, placeholder)
             )
-        )
+            ordinal += 1
+        html = _article(post, thread.users, thread.media, number=number, quotes=tuple(quotes))
+        rendered.append(RenderedPost(post, html, tuple(quotes)))
     return rendered
 
 
-def render_single_post_html(
-    post: XPostSnapshot,
-    *,
-    users: Mapping[str, XUserSnapshot],
-    media: Mapping[str, XMediaSnapshot],
-) -> str:
-    return _render_post_article(
-        post, users=users, media=media, quote_occurrences=(), external_quotes=True, ordinal=1
-    )
+def render_post(post: XPost, users: Mapping[str, XUser], media: Mapping[str, XMedia]) -> str:
+    """A standalone post; its quotes link out to X."""
+    return _article(post, users, media, number=1, quotes=None)
 
 
-def thread_title(snapshot: XAuthorThreadSnapshot) -> str:
-    return f"X thread by {snapshot.author.name or '@' + snapshot.author.username}".strip()
+def thread_title(thread: XThread) -> str:
+    return f"X thread by {thread.author.name or '@' + thread.author.username}".strip()
 
 
-def post_title(post: XPostSnapshot, users: Mapping[str, XUserSnapshot]) -> str:
+def post_title(post: XPost, users: Mapping[str, XUser]) -> str:
     author = users.get(post.author_id)
     if author is None:
         return f"X post {post.id}"
     return f"X post by {author.name}" if author.name else f"X post by @{author.username}"
 
 
-def thread_description(snapshot: XAuthorThreadSnapshot) -> str:
-    return "\n\n".join(
-        text for post in snapshot.posts if (text := _text_without_quote_urls(post))
-    ).strip()[:2000]
+def thread_description(thread: XThread) -> str:
+    texts = (_text_without_quote_urls(post) for post in thread.posts)
+    return "\n\n".join(text for text in texts if text).strip()[:2000]
 
 
-def post_description(post: XPostSnapshot) -> str:
+def post_description(post: XPost) -> str:
     return _text_without_quote_urls(post)[:2000]
 
 
-def _placeholder_text(snapshot: XAuthorThreadSnapshot, reference: XQuoteReference) -> str:
-    if isinstance(reference, XResolvedQuoteReference):
-        author = snapshot.users[reference.post.author_id]
-        return f"Quoted X post by @{author.username} \N{EM DASH} Open in Nexus"
-    return "Quoted X post unavailable \N{EM DASH} Open on X"
-
-
-def _render_post_article(
-    post: XPostSnapshot,
+def _article(
+    post: XPost,
+    users: Mapping[str, XUser],
+    media: Mapping[str, XMedia],
     *,
-    users: Mapping[str, XUserSnapshot],
-    media: Mapping[str, XMediaSnapshot],
-    quote_occurrences: tuple[RenderedXQuoteOccurrence, ...],
-    external_quotes: bool,
-    ordinal: int,
+    number: int,
+    quotes: tuple[RenderedQuote, ...] | None,
 ) -> str:
     author = users.get(post.author_id)
-    username = author.username if author is not None else ""
     parts = [
-        "<article>",
-        f"<h2>Post {ordinal}</h2>",
-        "<p>",
+        f"<article><h2>Post {number}</h2><p>",
         f"<strong>{_esc(author.name if author is not None else 'Unknown author')}</strong>",
     ]
-    if username:
-        parts.append(f' <a href="https://x.com/{_attr(username)}">@{_esc(username)}</a>')
+    if author is not None and author.username:
+        parts.append(
+            f' <a href="https://x.com/{_attr(author.username)}">@{_esc(author.username)}</a>'
+        )
     if post.created_at:
         parts.append(f" - {_esc(post.created_at)}")
-    parts.append(f' - <a href="{_attr(post.permalink)}">Open on X</a>')
-    parts.append("</p>")
-    parts.append(_paragraph(_text_without_quote_urls(post)))
+    parts.append(f' - <a href="{_attr(canonical_x_post_url(post.id))}">Open on X</a></p>')
+    text = _text_without_quote_urls(post)
+    parts.append(f"<p>{'<br>'.join(_esc(line) for line in text.splitlines())}</p>")
     for entity in post.urls:
-        if _is_quote_url(post, entity):
-            continue
-        href = entity.expanded_url or entity.url
-        parts.append(
-            f'<p><a href="{_attr(href)}">{_esc(entity.display_url or entity.title or href)}</a></p>'
-        )
-    for media_key in post.media_keys:
-        item = media.get(media_key)
+        if not _is_quote_url(post, entity):
+            href = entity.expanded_url or entity.url
+            label = entity.display_url or entity.title or href
+            parts.append(f'<p><a href="{_attr(href)}">{_esc(label)}</a></p>')
+    for key in post.media_keys:
+        item = media.get(key)
         image_url = (item.url or item.preview_image_url) if item is not None else None
         if item is not None and image_url:
             parts.append(
-                "<figure>"
-                f'<img src="{_attr(image_url)}" alt="{_attr(item.alt_text or item.type)}">'
-                f"<figcaption>{_esc(item.type)}</figcaption>"
-                "</figure>"
+                f'<figure><img src="{_attr(image_url)}" alt="{_attr(item.alt_text or item.type)}">'
+                f"<figcaption>{_esc(item.type)}</figcaption></figure>"
             )
-    if external_quotes:
+    if quotes is None:
         parts.extend(
-            '<p class="x-quote-reference">'
-            f'<a href="{_attr(canonical_x_post_url(quoted_id))}">'
-            f"Quotes another X post \N{EM DASH} Open on X"
-            "</a></p>"
-            for quoted_id in post.quoted_post_ids
+            f'<p class="x-quote-reference"><a href="{_attr(canonical_x_post_url(quote_id))}">'
+            "Quotes another X post \N{EM DASH} Open on X</a></p>"
+            for quote_id in post.quoted_post_ids
         )
     else:
         parts.extend(
-            '<figure class="x-quote-reference" '
-            f'data-nexus-document-embed-id="{_attr(occurrence.occurrence_key)}" '
-            'data-nexus-document-embed-kind="x_post">'
-            f"<figcaption>{_esc(occurrence.placeholder_text)}</figcaption>"
-            "</figure>"
-            for occurrence in quote_occurrences
+            f'<figure class="x-quote-reference" data-nexus-document-embed-id='
+            f'"{_attr(quote.occurrence_key)}" data-nexus-document-embed-kind="x_post">'
+            f"<figcaption>{_esc(quote.placeholder_text)}</figcaption></figure>"
+            for quote in quotes
         )
     parts.append("</article>")
     return "".join(parts)
 
 
-def _text_without_quote_urls(post: XPostSnapshot) -> str:
+def _text_without_quote_urls(post: XPost) -> str:
     text = post.text
     for entity in post.urls:
         if _is_quote_url(post, entity):
@@ -181,21 +137,13 @@ def _text_without_quote_urls(post: XPostSnapshot) -> str:
     return text.strip()
 
 
-def _is_quote_url(post: XPostSnapshot, entity: XUrlEntity) -> bool:
-    quoted_post_ids = set(post.quoted_post_ids)
-    if not quoted_post_ids:
-        return False
-    for url in (entity.expanded_url, entity.url):
-        identity = classify_x_url(url) if url is not None else None
-        if identity is not None and identity.provider_id in quoted_post_ids:
-            return True
-    return False
-
-
-def _paragraph(text: str) -> str:
-    if not text.strip():
-        return "<p></p>"
-    return f"<p>{'<br>'.join(_esc(line) for line in text.splitlines())}</p>"
+def _is_quote_url(post: XPost, entity: XUrlEntity) -> bool:
+    quoted = set(post.quoted_post_ids)
+    return any(
+        (identity := classify_x_url(url)) is not None and identity.provider_id in quoted
+        for url in (entity.expanded_url, entity.url)
+        if url is not None
+    )
 
 
 def _esc(value: str) -> str:

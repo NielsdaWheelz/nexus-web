@@ -8,7 +8,7 @@ production `7dc68929b4d5ddfd77eb1a50228d477fa0148b5d`, database `0241`:
 media `08d23b86-7042-4c72-bfe6-7faa5a696bee` failed on
 `https://www.gutenberg.org/ebooks/38145.epub3.images` as `generic_web_url`,
 kind `web_article`, with `E_INGEST_FAILED` on 2026-07-03.
-`services/remote_file_ingest.py:15-22,33-40` now recognizes this epub suffix,
+`services/remote_file.py:24-31,42-47` now recognizes this epub suffix,
 but `services/media_source_ingest.py:610-634` clones the old source type and
 payload on retry. the offered retry therefore preserves the wrong adapter.
 

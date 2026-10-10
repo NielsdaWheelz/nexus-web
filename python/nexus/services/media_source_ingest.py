@@ -91,7 +91,7 @@ from nexus.services.media_processing_state import (
     require_media_failure_stage,
 )
 from nexus.services.metadata_dispatch import try_enqueue_metadata_enrichment
-from nexus.services.remote_file_ingest import remote_file_kind_from_url
+from nexus.services.remote_file import remote_file_kind_from_url
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
     lookup_replay,
@@ -119,7 +119,11 @@ from nexus.services.transcripts.request_reason import (
 from nexus.services.transcripts.semantic import enqueue_transcript_semantic_job
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 from nexus.services.x_identity import classify_x_url, is_x_url
-from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url
+from nexus.services.youtube_identity import (
+    classify_youtube_url,
+    is_youtube_url,
+    placeholder_title,
+)
 from nexus.storage.client import StorageError, get_storage_client
 from nexus.storage.paths import get_file_extension
 
@@ -136,8 +140,9 @@ IN_FLIGHT_STATUSES = frozenset({ACCEPTED, QUEUED, RUNNING})
 _NON_REACQUIRABLE_FILE_ERROR_CODES = frozenset("E_SIGN_UPLOAD_FAILED E_STORAGE_MISSING".split())
 # Only these settle the attempt; every other failure re-raises to the queue.
 _TERMINAL_SOURCE_FAILURE_CODES = frozenset(
-    """E_SOURCE_ACCESS_DENIED E_SOURCE_INTEGRITY E_SOURCE_TOO_LARGE E_SOURCE_NOT_READABLE
-    E_SSRF_BLOCKED E_INVALID_FILE_TYPE E_INVALID_CONTENT_TYPE E_FILE_TOO_LARGE
+    """E_SOURCE_ACCESS_DENIED E_SOURCE_GONE E_SOURCE_INTEGRITY E_SOURCE_TOO_LARGE
+    E_SOURCE_NOT_READABLE E_SANITIZATION_FAILED E_SSRF_BLOCKED E_INVALID_FILE_TYPE
+    E_INVALID_CONTENT_TYPE E_FILE_TOO_LARGE
     E_CAPTURE_TOO_LARGE E_ARCHIVE_UNSAFE E_INVALID_REQUEST E_PDF_PASSWORD_REQUIRED
     E_TRANSCRIPT_UNAVAILABLE E_X_POST_UNAVAILABLE E_X_PROVIDER_CREDITS_DEPLETED
     E_X_PROVIDER_AUTH_REJECTED E_REPAIR_NOT_ALLOWED""".split()
@@ -300,7 +305,7 @@ def url_source_spec(url: str) -> UrlSourceSpec:
         return UrlSourceSpec(
             source_type=source_types.YOUTUBE_VIDEO,
             kind=MediaKind.video.value,
-            title=f"YouTube Video {youtube.provider_video_id}",
+            title=placeholder_title(youtube.provider_video_id),
             canonical_url=youtube.watch_url,
             canonical_source_url=youtube.watch_url,
             external_playback_url=youtube.watch_url,
@@ -2004,7 +2009,7 @@ def _run_fenced_attempt(
     except SourcePublicationSuperseded:
         raise
     except Exception as exc:
-        if not _is_terminal_source_failure(exc, source_type=attempt.source_type):
+        if not _is_terminal_source_failure(exc):
             raise
         return _publish_terminal_failure(
             session_factory, media_id=media_id, attempt_id=attempt_id, exc=exc, fence=fence
@@ -2374,16 +2379,9 @@ def _source_error_fields(exc: Exception) -> tuple[str, str]:
     return ApiErrorCode.E_INGEST_FAILED.value, str(exc)
 
 
-def _is_terminal_source_failure(exc: Exception, *, source_type: str) -> bool:
+def _is_terminal_source_failure(exc: Exception) -> bool:
     """Only a terminal code settles the attempt; everything else re-raises to the queue."""
-    if not isinstance(exc, ApiError):
-        return False
-    if (
-        source_type == source_types.GENERIC_WEB_URL
-        and exc.code is ApiErrorCode.E_SOURCE_FETCH_FAILED
-    ):
-        return exc.message in {"HTTP error: 404", "HTTP error: 410"}
-    return exc.code.value in _TERMINAL_SOURCE_FAILURE_CODES
+    return isinstance(exc, ApiError) and exc.code.value in _TERMINAL_SOURCE_FAILURE_CODES
 
 
 def _remote_file_name(url: str, kind: str) -> str:

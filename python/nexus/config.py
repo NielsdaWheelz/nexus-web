@@ -351,10 +351,6 @@ class Settings(BaseSettings):
         default=8.0,
         alias="BRAVE_SEARCH_TIMEOUT_SECONDS",
     )
-    outbound_http_proxy_url: str | None = Field(
-        default=None,
-        alias="OUTBOUND_HTTP_PROXY_URL",
-    )
 
     # Transcript semantic embedding settings
     transcript_embedding_model_openai: str = Field(

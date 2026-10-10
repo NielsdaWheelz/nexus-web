@@ -1028,20 +1028,27 @@ capability-owned:
   mutation; `_run_claimed_source_attempt` composes supersession, failure,
   authorship, terminal, and post-success phases rather than embedding provider
   dispatch, contributor-failure fallback, or terminal mutation bodies.
+- `web_article.py`: generic web URL acquisition (python egress, then the node
+  readability filter) and the one article publisher for fetched pages, browser
+  captures and emails.
 - `x_identity.py`, `x_client.py`, `x_rendering.py`, `x_ingest.py`: official-API
   X/Twitter same-author thread capture. Identity comes from provider author ID
   plus conversation ID; quote posts are separate `post:<post_id>` media; provider
-  billing/auth/rate-limit/timeout failures are typed and surface as their mapped
-  API error plus an `x_provider_failure` warning log. There is no scraping,
+  billing/auth/rate-limit/timeout failures become their `E_X_*` API error in the
+  client, with an `x_provider_failure` warning log. There is no scraping,
   oEmbed, or generic article fallback for X URLs.
-- `youtube_video_ingest.py`: playable YouTube metadata materialization for
-  queued source attempts using the YouTube Data API. Add never initializes or
-  fetches a transcript. The explicit canonical Transcribe command separately
-  composes `youtube_transcripts.py`; caption acquisition may require
+- `youtube_identity.py`, `youtube.py`: YouTube URL identity and placeholder title;
+  playable metadata materialization for queued source attempts using the YouTube
+  Data API, and caption fetching. Add never initializes or fetches a transcript.
+  The explicit canonical Transcribe command composes
+  `youtube.fetch_youtube_transcript`; caption acquisition may require
   `YOUTUBE_TRANSCRIPT_PROXY_URL` from datacenter hosts.
-- `remote_file_client.py`: PDF/EPUB URL outbound policy, SSRF-safe streaming to
-  storage, byte-size accounting, and signature validation for queued source
-  attempts.
+- `remote_file.py`: PDF/EPUB URL classification, bounded download through the
+  egress into storage, byte-size accounting, and signature validation for queued
+  source attempts.
+- `net/safe_fetch.py`, `net/http_retry.py`, `url_normalize.py`: the one pinned
+  untrusted egress, trusted provider json with bounded retry, and the public-URL
+  policy and address predicate.
 - `epub_assets.py`: private EPUB resource asset authorization and byte-size
   checked reads.
 - `api/routes/playback.py`: the player read (`GET /media/{id}/player`), the
@@ -2208,7 +2215,7 @@ The things most likely to bite you, distilled:
 | The schema                                                        | `migrations/alembic/versions/0236_baseline_schema.sql` (the squashed baseline) + the revisions after it + the live database (`pg_dump --schema-only`); `python/nexus/db/models.py` is the ORM-mapped classes only                                                               |
 | Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
 | Generation backends                                               | `python/nexus/services/generation/`, `python/nexus/services/tool_authority.py`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md)                                                                                                    |
-| Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_fact_revisions.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
+| Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_fact_revisions.py`, `web_article.py`, `x_ingest.py`, `youtube.py`, `remote_file.py`, `media_processing_state.py` |
 | Imports workspace (query owner, history, pane)                    | `python/nexus/services/{imports,import_history}.py`, `python/nexus/api/routes/imports.py`, `apps/web/src/lib/imports/`, `apps/web/src/components/imports/`, `apps/web/src/app/(authenticated)/imports/`                                              |
 | Reader/highlights backend                                         | `python/nexus/services/{reader_profile,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote}.py`                                                                        |
 | Chat / conversations                                              | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |

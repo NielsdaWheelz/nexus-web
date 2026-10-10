@@ -12,7 +12,7 @@ transcript chunk indexing is owned by `content_indexing`.
 
 Backend owners live under `python/nexus/services/podcasts/*`, the media-level
 `python/nexus/services/transcripts/*`, the YouTube transcript owner
-`python/nexus/services/youtube_transcripts.py`, and the egress helpers under
+`python/nexus/services/youtube.py` (`fetch_youtube_transcript`), and the egress helpers under
 `python/nexus/services/net/*`. Terminal transcript failure lives in
 `podcasts/transcription_failure.py`, which does not import the provider adapter
 on the background supervisor path. Frontend pane composition lives under
@@ -176,12 +176,15 @@ that matter:
 
 - **Feed-controlled fetches — `net.safe_fetch.safe_get`.** Every fetch of a feed-controlled
   URL (RSS feed pages, Podcasting 2.0 chapter JSON, transcript sidecars) goes through one
-  SSRF-safe chokepoint: scheme allow-list, DNS-resolve + private/loopback/link-local/metadata
-  rejection re-checked on each redirect hop, a streamed body read that aborts past a byte cap,
-  and an optional content-type allow-list. First-party provider APIs (Podcast Index) are
-  trusted and use `net.http_retry.get_json_with_retry` instead — deliberately separate (no
-  SSRF guard, honors `Retry-After`). Residual hardening: pin-to-resolved-IP (a custom httpx
-  transport closing the DNS-rebinding TOCTOU) is not yet wired.
+  SSRF-safe chokepoint: per redirect hop the URL policy, one DNS resolution whose every
+  answer must be public (`url_normalize.is_public_ip`), and a request dialed to those vetted
+  addresses (Host header and TLS server name carry the hostname), so DNS rebinding cannot
+  redirect it; a streamed body read that aborts past a byte cap (wire and decoded bytes);
+  and one deadline that ends every socket read (`timeout_s` is a total: feed pages 60 s for
+  up to 10 MiB, chapters 15 s, rss transcripts 30 s). No environment proxy is honoured. A 404/410 is `E_SOURCE_GONE`
+  (`SafeFetchNotFound`). First-party provider APIs (Podcast Index) are trusted and use
+  `net.http_retry.get_json_with_retry` instead — deliberately separate (no SSRF guard,
+  honors `Retry-After`).
 
 ## Sync Orchestration
 

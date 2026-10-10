@@ -1,7 +1,7 @@
-"""Bounded-retry JSON GET for TRUSTED first-party provider APIs.
+"""Bounded-retry JSON GET for trusted first-party provider APIs (no SSRF guard).
 
-No SSRF guard: these are our own provider endpoints, not feed-controlled URLs.
-Untrusted URLs go through ``net/safe_fetch.py`` instead.
+Untrusted URLs go through ``net.safe_fetch``. A failure raises ``ApiError(error_code)``
+whose ``__cause__`` is the last httpx error, so callers can read the final response.
 """
 
 from __future__ import annotations
@@ -32,63 +32,39 @@ def get_json_with_retry(
     provider_name: str,
     honor_retry_after: bool = False,
 ) -> dict[str, Any]:
-    """GET JSON from a trusted first-party API, retrying transient failures.
-
-    Retries on ``_RETRYABLE_STATUS`` and transport errors up to
-    ``len(backoff_seconds)`` times, then raises ``ApiError(error_code)``.
-    """
-    attempts = len(backoff_seconds) + 1
-    last_exc: Exception | None = None
+    """GET a JSON object, retrying retryable statuses and transport errors per backoff."""
     with httpx.Client(timeout=timeout_s, trust_env=False) as client:
-        for attempt_index in range(attempts):
+        for delay in (*backoff_seconds, None):
             try:
                 response = client.get(url, headers=dict(headers), params=dict(params))
-                if response.status_code in _RETRYABLE_STATUS and attempt_index < attempts - 1:
+                if response.status_code in _RETRYABLE_STATUS and delay is not None:
                     logger.warning(
                         "provider_retryable_http_error",
                         provider=provider_name,
                         status_code=response.status_code,
-                        attempt=attempt_index + 1,
                     )
-                    time.sleep(
-                        _retry_delay(attempt_index, backoff_seconds, response, honor_retry_after)
-                    )
+                    retry_after = response.headers.get("retry-after") if honor_retry_after else None
+                    wait = _retry_after(retry_after)
+                    time.sleep(delay if wait is None else wait)
                     continue
                 response.raise_for_status()
                 payload = response.json()
-                if not isinstance(payload, dict):
-                    raise ApiError(error_code, f"{provider_name} returned an invalid response")
-                return payload
-            except httpx.HTTPStatusError as exc:
-                last_exc = exc
-                break
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
-                last_exc = exc
-                if attempt_index >= attempts - 1:
-                    break
-                logger.warning(
-                    "provider_retryable_transport_error",
-                    provider=provider_name,
-                    attempt=attempt_index + 1,
-                    error=str(exc),
-                )
-                time.sleep(backoff_seconds[attempt_index])
+                if delay is None:
+                    raise ApiError(error_code, f"{provider_name} request failed") from exc
+                logger.warning("provider_retryable_transport_error", provider=provider_name)
+                time.sleep(delay)
+                continue
             except (httpx.HTTPError, ValueError) as exc:
-                last_exc = exc
-                break
-    raise ApiError(error_code, f"{provider_name} request failed") from last_exc
+                raise ApiError(error_code, f"{provider_name} request failed") from exc
+            if not isinstance(payload, dict):
+                raise ApiError(error_code, f"{provider_name} returned an invalid response")
+            return payload
+    raise AssertionError("the final attempt always returns or raises")
 
 
-def _retry_delay(
-    attempt_index: int,
-    backoff_seconds: tuple[float, ...],
-    response: httpx.Response,
-    honor_retry_after: bool,
-) -> float:
-    raw = response.headers.get("retry-after") if honor_retry_after else None
-    if raw:
-        try:
-            return min(float(raw), _RETRY_AFTER_CAP_SECONDS)
-        except ValueError:
-            pass
-    return backoff_seconds[attempt_index]
+def _retry_after(value: str | None) -> float | None:
+    try:
+        return min(float(value), _RETRY_AFTER_CAP_SECONDS) if value else None
+    except ValueError:
+        return None

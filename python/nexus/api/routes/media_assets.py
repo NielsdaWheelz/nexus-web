@@ -15,11 +15,7 @@ from starlette.types import Receive, Scope, Send
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_session_factory
 from nexus.services import epub_assets
-from nexus.services.image_validation import (
-    ValidatedImage,
-    create_http_client,
-    fetch_validated_image,
-)
+from nexus.services.image_validation import ValidatedImage, fetch_validated_image
 
 router = APIRouter(tags=["media"])
 
@@ -34,8 +30,7 @@ class _ProxiedImageResponse(Response):
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         def fetch() -> ValidatedImage:
-            with create_http_client() as client:
-                return fetch_validated_image(self.url, client)
+            return fetch_validated_image(self.url)
 
         # Hold the slot through transfer, including cancellation and send
         # failure, and validate before publishing any success headers.

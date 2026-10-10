@@ -1,28 +1,35 @@
-"""The one public-HTTP URL policy for ingest.
+"""The public-URL policy: which URLs and addresses ingest may reach, and their stored form.
 
-``validate_requested_url`` is the raising gate every user- or feed-supplied URL
-passes: http/https, at most ``MAX_URL_LENGTH`` characters, no userinfo, a host
-that is neither a denylisted internal name nor a private/reserved IP literal.
-``normalize_url_for_display`` is the canonical form stored on media and attempts,
-and ``parse_identity_url`` is the shared decomposition the provider classifiers
-(YouTube, X) match against.
+``validate_requested_url`` gates every user- or feed-supplied URL; ``is_public_ip``
+is the predicate the egress applies to every resolved address;
+``normalize_url_for_display`` is the stored form; ``parse_identity_url`` is the
+decomposition the provider classifiers (YouTube, X) match on.
 """
 
 from __future__ import annotations
 
-import ipaddress
 from dataclasses import dataclass
+from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
 from urllib.parse import urlparse, urlunparse
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.services.net.egress_policy import (
-    HOSTNAME_DENYLIST_EXACT,
-    HOSTNAME_DENYLIST_SUFFIXES,
-    is_private_ip,
-)
 
 MAX_URL_LENGTH = 2048
-ALLOWED_SCHEMES = frozenset({"http", "https"})
+_DENIED_HOSTS = frozenset({"localhost"})
+_DENIED_HOST_SUFFIXES = (".local", ".internal", ".lan", ".home")
+# IANA special-purpose blocks plus Azure's host endpoint, as data: ``is_global`` moves
+# between Python patch releases. An IPv6 address must also be global unicast.
+_DENIED_NETWORKS = tuple(
+    ip_network(network)
+    for network in (
+        "0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12"
+        " 168.63.129.16/32 192.0.0.0/24 192.0.2.0/24 192.88.99.0/24 192.168.0.0/16"
+        " 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4 ::/128"
+        " ::1/128 ::ffff:0:0/96 64:ff9b::/96 64:ff9b:1::/48 100::/64 2001::/23 2001:db8::/32"
+        " 2002::/16 3fff::/20 fc00::/7 fe80::/10 ff00::/8"
+    ).split()
+)
+_GLOBAL_UNICAST_V6 = ip_network("2000::/3")
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,75 +39,57 @@ class ParsedIdentityUrl:
     query: str
 
 
+def is_public_ip(ip: IPv4Address | IPv6Address) -> bool:
+    """Whether an untrusted fetch may connect to this address."""
+    if ip.version == 6 and ip not in _GLOBAL_UNICAST_V6:
+        return False
+    return not any(ip in net for net in _DENIED_NETWORKS if net.version == ip.version)
+
+
 def validate_requested_url(url: str) -> None:
     """Raise ``InvalidRequestError`` unless the URL is an absolute public http(s) URL."""
     if len(url) > MAX_URL_LENGTH:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"URL exceeds maximum length of {MAX_URL_LENGTH} characters",
-        )
+        raise _invalid(f"URL exceeds maximum length of {MAX_URL_LENGTH} characters")
     parsed = urlparse(url)
-    if parsed.scheme.lower() not in ALLOWED_SCHEMES:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"Invalid URL scheme '{parsed.scheme}'. Only http and https are allowed.",
-        )
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise _invalid(f"Invalid URL scheme '{parsed.scheme}'. Only http and https are allowed.")
     if parsed.username or parsed.password:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "URLs with credentials (user:pass@host) are not allowed",
-        )
-    if not parsed.hostname:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "URL must have a valid hostname",
-        )
-    if _is_blocked_hostname(parsed.hostname):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"URL hostname '{parsed.hostname}' is not allowed",
-        )
-    if not parsed.netloc:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "URL must be an absolute URL with scheme and host",
-        )
+        raise _invalid("URLs with credentials (user:pass@host) are not allowed")
+    host = parsed.hostname
+    if not host:
+        raise _invalid("URL must have a valid hostname")
+    if host in _DENIED_HOSTS or host.endswith(_DENIED_HOST_SUFFIXES) or not _public_literal(host):
+        raise _invalid(f"URL hostname '{host}' is not allowed")
 
 
 def normalize_url_for_display(url: str) -> str:
     """Lowercase scheme and host, drop the default port and the fragment."""
     parsed = urlparse(url)
     scheme = parsed.scheme.lower()
-    hostname = parsed.hostname.lower() if parsed.hostname else ""
+    host = parsed.hostname.lower() if parsed.hostname else ""
     port = parsed.port
-    default_port = 80 if scheme == "http" else 443
-    netloc = f"{hostname}:{port}" if port and port != default_port else hostname
+    netloc = f"{host}:{port}" if port and port != (80 if scheme == "http" else 443) else host
     return urlunparse((scheme, netloc, parsed.path or "/", parsed.params, parsed.query, ""))
 
 
-def normalize_host(hostname: str | None) -> str:
-    """Lowercase, strip trailing dots, and drop a leading ``www.``."""
-    if hostname is None:
-        return ""
-    host = hostname.strip().lower().rstrip(".")
-    return host[4:] if host.startswith("www.") else host
-
-
 def parse_identity_url(url: str) -> ParsedIdentityUrl:
-    """Decompose a URL into the parts a provider classifier matches on."""
+    """Host without ``www.`` or a trailing dot, non-empty path segments, and the query."""
     parsed = urlparse(url)
+    host = (parsed.hostname or "").strip().lower().rstrip(".")
     return ParsedIdentityUrl(
-        host=normalize_host(parsed.hostname),
+        host=host.removeprefix("www."),
         path_segments=tuple(segment for segment in parsed.path.split("/") if segment),
         query=parsed.query,
     )
 
 
-def _is_blocked_hostname(hostname: str) -> bool:
-    lowered = hostname.lower()
-    if lowered in HOSTNAME_DENYLIST_EXACT or lowered.endswith(HOSTNAME_DENYLIST_SUFFIXES):
-        return True
+def _public_literal(host: str) -> bool:
+    """A host that is not an IP literal passes; DNS answers are vetted at fetch time."""
     try:
-        return is_private_ip(ipaddress.ip_address(hostname))
+        return is_public_ip(ip_address(host))
     except ValueError:
-        return False
+        return True
+
+
+def _invalid(message: str) -> InvalidRequestError:
+    return InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, message)
