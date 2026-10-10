@@ -1,47 +1,75 @@
-"""Supervise one persistent stock app-server; account state stays on this host."""
+"""Serve the pinned codex app-server on the shared socket; this process lives and dies with it.
+
+Compose declares the rest: uid, read-only root, account bind, socket volume, the egress peer.
+"""
 
 from __future__ import annotations
 
-import asyncio
+import json
+import os
 import signal
+import stat
+import subprocess
+from pathlib import Path
 
-from apps.codex_agent.auth_environment import (
-    reject_ambient_codex_home,
-    reject_subscription_api_key_auth,
-)
-from apps.codex_agent.native_server import start_native_codex_server
-from apps.codex_agent.path_environment import required_absolute_path
-
-
-async def serve() -> None:
-    reject_subscription_api_key_auth()
-    reject_ambient_codex_home()
-    socket_path = required_absolute_path("NEXUS_CODEX_NATIVE_SOCKET")
-    credential_file = required_absolute_path("NEXUS_CODEX_CREDENTIAL_FILE")
-    stopping = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for signum in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(signum, stopping.set)
-    server = await start_native_codex_server(
-        socket_path=socket_path, credential_file=credential_file
-    )
-    stop_wait = asyncio.create_task(stopping.wait())
-    exited = asyncio.create_task(server.process.wait())
-    try:
-        done, _ = await asyncio.wait({stop_wait, exited}, return_when=asyncio.FIRST_COMPLETED)
-        if exited in done and not stopping.is_set():
-            raise RuntimeError("persistent Codex app-server exited")
-    finally:
-        stop_wait.cancel()
-        await asyncio.gather(stop_wait, return_exceptions=True)
-        await server.stop()
-        await exited
-        for signum in (signal.SIGINT, signal.SIGTERM):
-            loop.remove_signal_handler(signum)
+import codex_cli_bin
+from provider_runtime.agent_runtime import materialize_codex_containment_catalog
 
 
 def main() -> None:
-    asyncio.run(serve())
+    credential = Path(os.environ["NEXUS_CODEX_CREDENTIAL_FILE"])
+    socket = Path(os.environ["NEXUS_CODEX_NATIVE_SOCKET"])
+    if stat.S_IMODE(credential.stat().st_mode) != 0o600:
+        raise SystemExit(f"{credential} must be mode 0600")
+    account = credential.parent
+    for directory in (account / "home", account / "tmp", socket.parent / "cwds"):
+        directory.mkdir(mode=0o700, exist_ok=True)
+    cwd = socket.parent / "cwds" / "host"
+    cwd.mkdir(mode=0o500, exist_ok=True)
+    # A killed host leaves its socket on the volume; this container is its only server.
+    socket.unlink(missing_ok=True)
+    catalog = materialize_codex_containment_catalog(account)
+    process = subprocess.Popen(
+        (
+            codex_cli_bin.bundled_codex_path(),
+            "-c",
+            f"model_catalog_json={json.dumps(str(catalog))}",
+            "app-server",
+            "--listen",
+            f"unix://{socket}",
+            "--strict-config",
+        ),
+        cwd=cwd,
+        # Explicit, so no inherited *_API_KEY or CODEX_HOME can redirect subscription work.
+        env={
+            "CODEX_HOME": str(account),
+            "CODEX_EXEC_SERVER_URL": "none",
+            "HOME": str(account / "home"),
+            "TMPDIR": str(account / "tmp"),
+            "LANG": "C.UTF-8",
+            "LC_ALL": "C.UTF-8",
+            "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        },
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    stopping = False
+
+    def stop(signum: int, frame: object) -> None:
+        nonlocal stopping
+        stopping = True
+        process.terminate()
+        # codex drains running turns for up to 45 s, the same as docker's grace period,
+        # so cut the drain short and still exit 0 before docker kills the container.
+        signal.alarm(30)
+
+    signal.signal(signal.SIGALRM, lambda signum, frame: process.kill())
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    status = process.wait()
+    if not stopping:
+        raise SystemExit(f"codex app-server exited with status {status}")
 
 
 if __name__ == "__main__":

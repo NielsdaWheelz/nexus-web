@@ -1,3 +1,6 @@
+# Nexus never pairs a ChatGPT app with the host: no remote-control loop.
+allow_remote_control = false
+
 [features]
 apps = false
 chronicle = false

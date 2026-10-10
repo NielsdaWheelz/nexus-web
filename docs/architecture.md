@@ -142,7 +142,7 @@ dependencies.
 | Interactive worker     | `apps/worker/main.py` → `python/nexus/jobs` + `tasks` | **same Hetzner VPS**             | user-waiting queue work                    |
 | Background worker      | `apps/worker/main.py` → `python/nexus/jobs` + `tasks` | **same Hetzner VPS**             | indexing, repair, teardown, periodic work |
 | Codex generation host  | `apps/codex_agent`                                    | **same Hetzner VPS**             | isolated subscription-backed generation  |
-| Codex egress policy    | `apps/codex_agent/egress_policy.py`                   | **same Hetzner VPS**             | DNS/TLS-SNI allowlist for the Codex host  |
+| Codex egress policy    | `deploy/hetzner/docker-compose.yml` (nginx stream)    | **same Hetzner VPS**             | TLS-SNI allowlist (chatgpt.com, auth.openai.com) |
 | PostgreSQL (pgvector)  | —                                                     | **same Hetzner VPS**             | the single source of truth                |
 
 Managed/external: **Cloudflare R2** (object storage; MinIO locally), **Supabase**
