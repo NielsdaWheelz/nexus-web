@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useLayoutEffect, type RefObject } from "react";
-import { useActiveMobileViewport } from "@/lib/mobileViewport/MobileViewportProvider";
+import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import {
   useHistoryDismiss,
@@ -51,7 +51,7 @@ export function useMobileModalLifecycle({
   layerScope,
 }: MobileModalLifecycleInput): MobileModalLifecycle {
   const { keyboardBottomInsetPx, visualViewportTopPx } = useKeyboardInset();
-  const mobileViewport = useActiveMobileViewport(active);
+  const mobileViewport = useMobileViewport();
   const requestDismiss = useCallback((): DismissDecision => {
     const decision = onDismissRequest?.() ?? "accepted";
     if (decision === "accepted") {
@@ -76,7 +76,7 @@ export function useMobileModalLifecycle({
     onHistorySettled: overlay.restoreFocus,
   });
   useLayoutEffect(() => {
-    if (!active || !mobileViewport) {
+    if (!active) {
       return;
     }
     return mobileViewport.reportMobileOverlayKeyboardInset(

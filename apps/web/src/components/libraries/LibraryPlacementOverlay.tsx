@@ -25,14 +25,7 @@ import {
   libraryPlacementSnapshot,
   useLibraryPlacementRevision,
 } from "@/lib/libraries/placementRevision";
-import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { useMobileChromeVisibleLocks } from "@/lib/workspace/mobileChrome";
-
-function MobileChromeLock() {
-  const { acquire } = useMobileChromeVisibleLocks();
-  useEffect(() => acquire("library-picker"), [acquire]);
-  return null;
-}
+import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 
 export default function LibraryPlacementOverlay({
   session,
@@ -41,24 +34,21 @@ export default function LibraryPlacementOverlay({
   session: LibraryPlacementSession | null;
   onClose: () => void;
 }) {
-  const isMobile = useIsMobileViewport();
   const fallback = session?.options.returnFocusFallback;
+  useMobileChromeHold(session !== null);
 
   return (
-    <>
-      {session && isMobile ? <MobileChromeLock /> : null}
-      <LibraryChooserSurface
-        active={session !== null}
-        onClose={onClose}
-        layer="modal"
-        anchor={session ? session.options.anchor : () => null}
-        returnFocusFallback={fallback?.kind === "Present" ? fallback.value : undefined}
-        title="Libraries"
-        focusKey={session?.key}
-      >
-        {session ? <PlacementEditor key={session.key} session={session} /> : null}
-      </LibraryChooserSurface>
-    </>
+    <LibraryChooserSurface
+      active={session !== null}
+      onClose={onClose}
+      layer="modal"
+      anchor={session ? session.options.anchor : () => null}
+      returnFocusFallback={fallback?.kind === "Present" ? fallback.value : undefined}
+      title="Libraries"
+      focusKey={session?.key}
+    >
+      {session ? <PlacementEditor key={session.key} session={session} /> : null}
+    </LibraryChooserSurface>
   );
 }
 

@@ -21,6 +21,10 @@
   background: var(--surface-2);
 }
 
+.rail[data-collapsed] {
+  width: var(--navbar-collapsed-width);
+}
+
 @media (max-width: 768px) {
   .main {
     width: 100%;

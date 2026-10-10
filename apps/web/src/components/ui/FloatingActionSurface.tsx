@@ -11,8 +11,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { clamp } from "@/lib/clamp";
-import { useActiveMobileViewport } from "@/lib/mobileViewport/MobileViewportProvider";
-import { readMobileCssLength } from "@/lib/mobileViewport/readMobileCssLength";
+import { readMobileCssLength, useMobileViewport } from "@/lib/mobileShell/viewport";
 import { cx } from "@/lib/ui/cx";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -75,7 +74,7 @@ export default function FloatingActionSurface({
   children: ReactNode;
 }) {
   const isMobileViewport = useIsMobileViewport();
-  const mobileViewport = useActiveMobileViewport(open && isMobileViewport);
+  const mobileViewport = useMobileViewport();
   const surfaceRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<FloatingActionPosition>({
     style: { position: "fixed", visibility: "hidden" },
@@ -214,7 +213,7 @@ export default function FloatingActionSurface({
     const surface = surfaceRef.current;
     if (surface) resizeObserver.observe(surface);
     const unsubscribeContentBottomClearance = isMobileViewport
-      ? mobileViewport?.subscribeContentBottomClearance(
+      ? mobileViewport.subscribeContentBottomClearance(
           scheduleResizePositionUpdate,
         )
       : undefined;

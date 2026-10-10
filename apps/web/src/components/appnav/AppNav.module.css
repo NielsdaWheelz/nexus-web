@@ -1,15 +1,12 @@
-/* ============================================================
-   Unified app navigation — desktop rail, mobile top bar, sheet.
-   One accent, property-scoped transitions, transform-only motion.
-   ============================================================ */
+/* App navigation: the desktop rail and the mobile top bar. */
 
 /* ── Desktop rail ───────────────────────────────────────── */
 .rail {
-  position: relative;
   display: flex;
   flex-direction: column;
   width: var(--navbar-width);
   height: 100%;
+  overflow: hidden;
   background: linear-gradient(
     180deg,
     color-mix(in srgb, var(--surface-2) 96%, var(--ink) 4%),
@@ -18,21 +15,27 @@
   border-right: 1px solid var(--edge-subtle);
   box-shadow: inset -1px 0 0 color-mix(in srgb, var(--ink) 4%, transparent);
   transition: width var(--duration-base) var(--ease-glide);
-  overflow: hidden;
 }
 
 .rail.collapsed {
   width: var(--navbar-collapsed-width);
 }
 
+/* The server renders desktop; a phone must never paint the rail before hydration.
+   The query is MOBILE_QUERY in lib/renderEnvironment/provider.tsx (css cannot import it). */
+@media (max-width: 768px),
+  (max-width: 900px) and (orientation: landscape) and (pointer: coarse) {
+  .rail {
+    display: none;
+  }
+}
+
 .brand {
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  /* Left pad = scroll pad (space-2) + item pad (space-3) so the 20px mark box
-     lands on the nav icon column (center x=30) by construction. */
+  /* scroll pad + item pad: the mark sits on the icon column */
   padding: var(--space-4) var(--space-3) var(--space-4)
     calc(var(--space-2) + var(--space-3));
 }
@@ -54,38 +57,36 @@
   color: var(--accent);
 }
 
-.brandText {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.collapseButton {
+.collapseButton,
+.topBarButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--size-sm);
-  height: var(--size-sm);
   flex-shrink: 0;
   border: none;
-  border-radius: var(--radius-sm);
   background: transparent;
+  cursor: pointer;
+  transition:
+    opacity var(--duration-fast) var(--ease-glide),
+    background-color var(--duration-fast) var(--ease-glide),
+    color var(--duration-fast) var(--ease-glide);
+}
+
+.collapseButton {
+  width: var(--size-sm);
+  height: var(--size-sm);
+  border-radius: var(--radius-sm);
   color: var(--ink-faint);
   opacity: 0;
-  transition: opacity var(--duration-fast) var(--ease-glide),
-    background-color var(--duration-fast) var(--ease-glide);
 }
 
 .rail:hover .collapseButton,
-.collapseButton:focus-visible {
+.collapseButton:focus-visible,
+.collapsed .collapseButton {
   opacity: 1;
 }
 
-.collapseButton:hover {
-  background: var(--surface-hover);
-  color: var(--ink);
-}
-
+/* Collapsed, Home and Expand stack as separate hit targets: never overlap them. */
 .collapsed .brand {
   flex-direction: column;
   justify-content: center;
@@ -93,85 +94,46 @@
   padding: var(--space-3) var(--space-2) var(--space-2);
 }
 
-.collapsed .brandText {
-  display: none;
-}
-
-/* Collapsed: Home and Expand keep separate hit targets. Never overlay the
-   collapse control on the brand mark; doing so captures an apparent Home click. */
 .collapsed .brandLink {
-  align-items: center;
   justify-content: center;
   width: var(--size-sm);
   height: var(--size-sm);
 }
 
-.collapsed .collapseButton {
-  position: static;
-  margin: 0;
-  opacity: 1;
-  pointer-events: auto;
-}
-
-/* ── Command bar (rail + sheet) ─────────────────────────── */
-.commandWrap {
-  padding: 0 var(--space-2);
-}
-
-.commandBar {
+.command {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  width: 100%;
-  margin: 0 0 var(--space-2);
+  margin: 0 var(--space-2) var(--space-2);
   padding: var(--space-2) var(--space-3);
-  background: var(--surface-1);
   border: 1px solid var(--edge-subtle);
   border-radius: var(--radius-lg);
+  background: var(--surface-1);
   color: var(--ink-faint);
+  font-size: var(--text-sm);
   cursor: pointer;
-  transition: border-color var(--duration-fast) var(--ease-glide),
-    box-shadow var(--duration-fast) var(--ease-glide);
+  transition: border-color var(--duration-fast) var(--ease-glide);
 }
 
-.commandBar:hover {
+.command:hover {
   border-color: var(--edge);
-}
-
-.commandIcon {
-  display: flex;
-  flex-shrink: 0;
-  color: var(--ink-faint);
 }
 
 .commandText {
   flex: 1;
-  min-width: 0;
   text-align: left;
-  font-size: var(--text-sm);
-  color: var(--ink-faint);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
 .commandKbd {
   flex-shrink: 0;
   padding: 1px var(--space-1);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--ink-faint);
-  background: var(--surface-2);
   border: 1px solid var(--edge-subtle);
   border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
 }
 
-.commandBarCollapsed {
-  justify-content: center;
-  padding: var(--space-2);
-}
-
-/* ── Navigation items (rail + sheet) ────────────────────── */
 .scroll {
   position: relative;
   flex: 1;
@@ -180,7 +142,7 @@
   padding: 0 var(--space-2);
 }
 
-.navList {
+.list {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -189,6 +151,7 @@
   list-style: none;
 }
 
+/* Rail links, Add and the Account trigger. */
 .item {
   display: flex;
   align-items: center;
@@ -196,16 +159,22 @@
   width: 100%;
   min-height: var(--size-lg);
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border: none;
   border-radius: var(--radius-md);
+  background: transparent;
   color: var(--ink-muted);
+  font: inherit;
   font-weight: var(--weight-medium);
   text-decoration: none;
   cursor: pointer;
-  transition: background-color var(--duration-fast) var(--ease-glide),
+  transition:
+    background-color var(--duration-fast) var(--ease-glide),
     color var(--duration-fast) var(--ease-glide);
 }
 
-.item:hover {
+.collapseButton:hover,
+.item:hover,
+.topBarButton:hover {
   background: var(--surface-hover);
   color: var(--ink);
 }
@@ -221,110 +190,57 @@
   transition-duration: var(--duration-instant);
 }
 
-.itemIcon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
+.icon {
   flex-shrink: 0;
   transition: transform var(--duration-base) var(--ease-bloom);
 }
 
-.item:hover .itemIcon {
+.item:hover .icon {
   transform: translateY(-1px) scale(1.06);
 }
 
-.itemLabel {
+.brandText,
+.commandText,
+.label {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-.collapsed .item {
+.collapsed .item,
+.collapsed .command {
   justify-content: center;
   padding: var(--space-2);
 }
 
-.collapsed .itemLabel {
+.collapsed .label,
+.collapsed .brandText,
+.collapsed .commandText,
+.collapsed .commandKbd {
   display: none;
 }
 
-/* The footer utility link renders a label plus its own count badge. */
-.utilityLabel {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-/* Collapsed, the same link is icon-only, so its count paints as a chip rather
-   than beside a label that is no longer there. The collapsed rail is 48px wide
-   and the icon fills the link's content box, so a chip on the glyph is a smudge:
-   this one is anchored to the link's own top-right corner, above the icon. The
-   Pill's own tone is translucent and the chip sits on the link's hover and
-   active backgrounds, so the chip carries the rail's opaque ground, clipped to
-   the Pill's shape, under the Pill's hairline ring. */
-.utilityLink {
-  position: relative;
-}
-
-/* The chip is a count of the link it hangs on, so it is painted inside that
-   link's own box and is part of its hit target. The link carries the band:
-   one clearance, the chip's own height (its --text-2xs text box at
-   --leading-tight plus the 1px padding and 1px ring on each edge), and one
-   more clearance above the icon — wide enough that the rail's hover lift,
-   which raises a 20px glyph by 1.6px, cannot close it. The band is
-   unconditional: a band that appeared with the first count would move the
-   icon, the divider and every row above it under the reader's eye. */
-.collapsed .utilityLink {
-  padding-top: calc(
-    var(--space-1) * 2 + var(--text-2xs) * var(--leading-tight) + 4px
-  );
-}
-
-.utilityChip {
-  position: absolute;
-  /* Flex, so the painted chip is the badge's own box and not a line box. */
-  display: flex;
-  top: var(--space-1);
-  right: 0;
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-}
-
-/* Optional fixed-navigation accent, owned by APP_NAVIGATION. */
-.item[data-presentation="accent"] .itemIcon {
+.item[data-accent] .icon {
   filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 40%, transparent));
 }
 
-.item[data-presentation="accent"]:hover .itemIcon,
-.item[data-presentation="accent"].active .itemIcon {
+.item[data-accent]:hover .icon,
+.item[data-accent].active .icon {
   filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 60%, transparent));
 }
 
-/* ── Living active indicator (rail) ─────────────────────── */
 .indicator {
   position: absolute;
-  left: 2px;
   top: 0;
+  left: 2px;
   width: 2px;
   border-radius: var(--radius-full);
   background: var(--accent);
-  opacity: 0;
-  transition: transform var(--duration-base) var(--ease-bloom),
-    opacity var(--duration-fast) var(--ease-glide);
+  transition: transform var(--duration-base) var(--ease-bloom);
   pointer-events: none;
 }
 
-.indicator.visible {
-  opacity: 1;
-}
-
-/* ── Footer cluster (rail) ──────────────────────────────── */
 .footer {
   display: flex;
   flex-direction: column;
@@ -334,160 +250,104 @@
   border-top: 1px solid var(--edge-subtle);
 }
 
-.addButton {
+.imports {
+  position: relative;
+}
+
+.importsLabel {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  width: 100%;
-  min-height: var(--size-lg);
-  padding: var(--space-2) var(--space-3);
-  border: none;
-  border-radius: var(--radius-md);
+  gap: var(--space-2);
+}
+
+/* Collapsed, the count is a chip in the link's top-right corner, above the
+   icon and inside the link: the link always carries the band (one clearance,
+   the chip's height, one clearance), so a first count never moves the rail. */
+.collapsed .imports {
+  padding-top: calc(var(--space-1) * 2 + var(--text-2xs) * var(--leading-tight) + 4px);
+}
+
+.importsChip {
+  position: absolute;
+  top: var(--space-1);
+  right: 0;
+  display: flex;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+}
+
+.add {
   background: var(--accent-muted);
   color: var(--accent);
   font-weight: var(--weight-semibold);
-  cursor: pointer;
-  transition: background-color var(--duration-fast) var(--ease-glide),
-    color var(--duration-fast) var(--ease-glide);
 }
 
-.addButton:hover {
+.add:hover {
   background: var(--accent);
   color: var(--ink-on-accent);
 }
 
-.collapsed .addButton {
-  justify-content: center;
-  padding: var(--space-2);
-}
-
-/* ── Account avatar + menu (rail) ───────────────────────── */
 .account {
   position: relative;
   display: flex;
 }
 
-.collapsed .account {
-  justify-content: center;
-}
-
-.accountTrigger {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  width: 100%;
-  min-height: var(--size-lg);
-  padding: var(--space-2) var(--space-3);
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--ink-muted);
-  font-weight: var(--weight-medium);
-  cursor: pointer;
-  transition: background-color var(--duration-fast) var(--ease-glide),
-    color var(--duration-fast) var(--ease-glide);
-}
-
-.accountTrigger:hover {
-  background: var(--surface-hover);
-  color: var(--ink);
-}
-
-.accountTrigger.active {
-  background: var(--accent-muted);
-  color: var(--accent);
-}
-
-.collapsed .accountTrigger {
-  justify-content: center;
-  padding: var(--space-2);
-}
-
-.accountAvatar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
+/* The account menu's links, in ActionMenu's own item metrics. */
 .menuItem {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   width: 100%;
-  padding: var(--space-2) var(--space-3);
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
   color: var(--ink);
-  font: inherit;
-  text-align: left;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.menuItem:hover {
-  background: var(--surface-hover);
-}
-
-.menuForm {
-  display: contents;
-}
-
-.menuItemDanger {
-  color: var(--danger);
-}
-
-/* ── Collapsed-rail tooltip ─────────────────────────────── */
-.tooltip {
-  z-index: var(--z-modal);
-  padding: var(--space-1) var(--space-2);
   font-size: var(--text-sm);
-  color: var(--ink);
-  background: var(--surface-1);
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-2);
-  pointer-events: none;
+  text-decoration: none;
   white-space: nowrap;
 }
 
-@property --mobile-chrome-collapse {
-  syntax: "<number>";
-  inherits: false;
-  initial-value: 0;
+.menuItem:hover {
+  background: var(--surface-2);
 }
 
-/* ============================================================
-   Mobile top bar (fixed; no backdrop-filter on this persistent surface)
-   ============================================================ */
+@media (any-pointer: coarse) {
+  .menuItem {
+    min-height: var(--size-xl);
+  }
+}
+
+.tooltip {
+  position: fixed;
+  left: calc(var(--navbar-collapsed-width) + var(--space-2));
+  z-index: var(--z-modal);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-2);
+  color: var(--ink);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+/* ── Mobile top bar: fixed; moved only by lib/mobileShell/chrome ── */
 .topBar {
   --mobile-chrome-collapse: 0;
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
+  inset: 0 0 auto;
   z-index: var(--z-overlay);
   display: grid;
-  /* Stable Back/Forward and the optional More/inspector cluster size to their
-     exact 48px controls; the identity owns only the remaining track. */
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   block-size: calc(var(--pane-chrome-header-height) + var(--viewport-safe-top));
-  min-block-size: calc(var(--pane-chrome-header-height) + var(--viewport-safe-top));
-  padding-top: var(--viewport-safe-top);
-  padding-right: max(var(--space-2), var(--viewport-safe-right));
-  padding-bottom: 0;
-  padding-left: max(var(--space-2), var(--viewport-safe-left));
+  padding: var(--viewport-safe-top) max(var(--space-2), var(--viewport-safe-right)) 0
+    max(var(--space-2), var(--viewport-safe-left));
   background: var(--surface-2);
   border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
   transform: translateY(calc(-100% * var(--mobile-chrome-collapse)));
   will-change: transform;
-}
-
-.topBar[data-mobile-chrome-phase="Settling"] {
-  transition: --mobile-chrome-collapse var(--duration-fast) var(--ease-glide);
 }
 
 .topBarControls {
@@ -497,31 +357,22 @@
   min-width: 48px;
 }
 
+.topBarTitle {
+  display: flex;
+  align-self: stretch;
+  align-items: center;
+  min-width: 0;
+}
+
 .topBarButton {
   position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   inline-size: 48px;
   block-size: 48px;
-  flex-shrink: 0;
-  border: none;
   border-radius: var(--radius-md);
-  background: transparent;
   color: var(--ink-muted);
-  cursor: pointer;
-  transition: background-color var(--duration-fast) var(--ease-glide),
-    color var(--duration-fast) var(--ease-glide);
 }
 
-.topBarButton:hover {
-  background: var(--surface-hover);
-  color: var(--ink);
-}
-
-/* An open inspector keeps the desktop pane-chrome pressed treatment. Touch
-   browsers keep :hover on the tapped button, so this ties .topBarButton:hover
-   and wins by source order. */
+/* An open inspector stays pressed; ties :hover (sticky on touch) and wins by order. */
 .topBarButton.topBarButtonActive {
   background: var(--surface-active);
   color: var(--ink);
@@ -537,7 +388,7 @@
   outline-color: var(--ring);
 }
 
-.topBarStatusMarker {
+.statusMarker {
   position: absolute;
   top: calc(var(--space-3) - var(--stroke-hairline));
   right: calc(var(--space-3) - var(--stroke-hairline));
@@ -546,13 +397,6 @@
   border: var(--stroke-hairline) solid var(--surface-2);
   border-radius: 50%;
   background: var(--accent);
-}
-
-.topBarTitle {
-  display: flex;
-  align-self: stretch;
-  align-items: center;
-  min-width: 0;
 }
 
 @media (forced-colors: active) {
@@ -579,28 +423,16 @@
     outline-color: Highlight;
   }
 
-  .topBarStatusMarker {
+  .statusMarker {
     border-color: Canvas;
     background: Highlight;
     forced-color-adjust: none;
   }
 }
 
+/* Durations are already zero under reduced motion; only the hover lift remains. */
 @media (prefers-reduced-motion: reduce) {
-  .rail,
-  .collapseButton,
-  .commandBar,
-  .item,
-  .itemIcon,
-  .indicator,
-  .addButton,
-  .accountTrigger,
-  .topBar,
-  .topBarButton {
-    transition: none;
-  }
-
-  .item:hover .itemIcon {
+  .item:hover .icon {
     transform: none;
   }
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useEffect, useId, type ReactNode } from "react";
+import { forwardRef, useId, type ReactNode } from "react";
 import { ChevronDown, ChevronUp, List, RotateCcw, X } from "lucide-react";
 import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
@@ -12,7 +12,7 @@ import type { CollectionRowView } from "@/lib/collections/types";
 import { FIND_LIMIT } from "@/lib/find/find";
 import type { FindController, FindResult } from "@/lib/find/useFind";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
-import { useMobileChromeVisibleLocks } from "@/lib/workspace/mobileChrome";
+import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import styles from "./Find.module.css";
 
 function status(result: FindResult): string {
@@ -48,9 +48,8 @@ const FindBar = forwardRef<
 >(function FindBar({ find, onClose }, ref) {
   const statusId = useId();
   const runtime = usePaneRuntime();
-  const chromeLocks = useMobileChromeVisibleLocks();
   // Mobile chrome stays pinned while the bar is in it.
-  useEffect(() => chromeLocks.acquire("pane-find"), [chromeLocks]);
+  useMobileChromeHold(true);
   const { result } = find;
   const count = result.kind === "Rows" ? result.rows.length : 0;
   const results = runtime?.transientSecondarySurface;

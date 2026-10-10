@@ -24,8 +24,8 @@ Neither is a directory of every feature.
   Nexus, where it can scale without destabilizing spatial memory.
 
 On desktop, Imports, Add, Account and Nexus remain rail actions. Imports is a
-footer utility link beside Add and Account, registered through
-`APP_NAVIGATION.utilities`; it navigates the `/imports` workspace pane and
+footer utility link beside Add and Account (`NAV_IMPORTS` in `navModel.ts`); it
+navigates the `/imports` workspace pane and
 carries a real `Pill` badge counting only imports that need attention (zero
 hides it, an unloaded summary is not zero, the visible count caps at `99+`, and
 the accessible name keeps the exact count). The shared Account menu is exactly
@@ -56,7 +56,17 @@ no gesture vocabulary or command and always admits keyboard/assistive native
 activation.
 
 Compact presentation covers widths through 768 px and coarse-pointer landscape
-phones through 900 px. Fine-pointer short desktop windows remain desktop.
+phones through 900 px. Fine-pointer short desktop windows remain desktop. The
+server renders the desktop rail; the same media query hides it, so a phone never
+paints it before hydration.
+
+The rail's collapse is per browser, in the first-party cookie
+`nexus.nav.collapsed` (`"1"` collapsed, `"0"` expanded; `path=/`, one year,
+`samesite=lax`), written by the collapse control and read on the server into
+`RenderEnvironment.navCollapsed`, so the skeleton, the server render and the
+first client render already have the reader's width. During a session `AppNav`
+holds it above its mobile switch, so a resize or rotation across the
+breakpoint, which unmounts the rail, keeps the reader's latest choice.
 
 ## Nexus content grammar
 
@@ -107,14 +117,16 @@ meaning from copy or identifiers.
 | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | Authenticated home href                                           | `apps/web/src/lib/routes/defaults.ts`                                                                             |
 | Destination identity (`id`, label, href, keywords, optional icon) | `apps/web/src/lib/navigation/destinations.ts`                                                                     |
-| Fixed-nav membership, order, and decoration                       | `apps/web/src/components/appnav/navModel.ts`                                                                      |
+| Rail membership and order, accent, Imports, Account pair           | `NAV_RAIL`, `NAV_ACCENT`, `NAV_IMPORTS`, `NAV_STATS`/`NAV_SETTINGS` in `apps/web/src/components/appnav/navModel.ts` |
+| Rail collapse cookie name and its server read                     | `apps/web/src/lib/renderEnvironment/{types,server}.ts`                                                            |
 | Shared account membership and rendering                           | `apps/web/src/components/appnav/AccountMenu.tsx`                                                                  |
 | Imports badge count and its accessible name                       | `apps/web/src/components/imports/ImportsBadge.tsx` and `importsWorkspaceModel.ts`                                 |
 | Nexus commands and typed intent                                  | `apps/web/src/lib/nexus/query.ts`                                                                                  |
 | Nexus sections, Places projection, ranking, caps, and stability  | `apps/web/src/lib/nexus/rows.ts`                                                                                   |
 | Nexus retrieval, latency gate, and history writes                | `apps/web/src/lib/nexus/useNexusFind.ts`                                                                           |
 | Route-to-semantic-section ownership                               | section `header.destinationId`, or resource `sectionDestinationId`, in `apps/web/src/lib/panes/paneRouteModel.ts` |
-| Desktop rail projection and pane dispatch                         | `apps/web/src/components/appnav/AppNav.tsx`                                                                       |
+| The rail itself: activation, collapse, indicator, tooltip, commands | `apps/web/src/components/appnav/AppNav.tsx`                                                                     |
+| Mobile top bar                                                     | `apps/web/src/components/appnav/MobilePaneBar.tsx` over `lib/mobileShell/chrome.tsx`                            |
 | Internal-link gesture policy                                      | `apps/web/src/lib/panes/targetLinkActivation.ts`                                                                  |
 | Target selection, restoration, creation, and activation           | `activateWorkspaceTarget` in `apps/web/src/lib/workspace/store.tsx`                                               |
 | Server-restored deep-link merge                                   | `enterWorkspace` in `apps/web/src/lib/workspace/model.ts`                                                         |
@@ -171,10 +183,12 @@ The activation boundary returns an explicit focus-owner result, never a boolean:
 
 AppNav derives the focus owner from the workspace activation result. Only an
 unchanged or rejected activation retains source focus; navigation, restoration,
-and creation hand focus ownership to the destination.
+and creation hand focus ownership to the destination. A rail link keeps focus
+where the click left it; a choice from the Account menu, whose item is gone once
+the menu closes, focuses the landed pane's chrome target next frame.
 
 On mobile, destination focus lands on the active pane landmark, never the
-AppBar or pane toolbar. The landmark is stable while reader chrome retreats, so
+top bar or the contextual row. The landmark is stable while reader chrome retreats, so
 route activation cannot pin or strand transient controls. Desktop retains its
 explicit pane-chrome focus target.
 
@@ -225,13 +239,13 @@ explicit `/lectern` request.
 
 When adding or changing a destination:
 
-1. Change identity once in `DESTINATION_REGISTRY`.
-2. Change fixed, utility, or Account membership/order only in `APP_NAVIGATION`.
+1. Change identity once in the registry in `lib/navigation/destinations.ts`.
+2. Change rail, utility, or Account membership/order only in `navModel.ts`.
 3. Give a section route one `header.destinationId`; give a resource route one
    `sectionDestinationId`.
 4. Add a destination to mobile Places only through the closed projection in
-   `lib/nexus/rows.ts`; do not duplicate its identity outside
-   `DESTINATION_REGISTRY`. Nexus history accepts any relative href, so the
+   `lib/nexus/rows.ts`; do not duplicate its identity outside the registry.
+   Nexus history accepts any relative href, so the
    backend needs no change.
 5. Verify desktop and mobile projection membership separately, semantic
    detail-route activity, native modified clicks,

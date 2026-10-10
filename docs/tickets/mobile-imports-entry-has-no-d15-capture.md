@@ -11,15 +11,19 @@ visual/assistive review), 2026-09-09
 
 Contract D9 makes the shared `AccountMenu` item `Imports` (with a real `Pill`
 badge) the mobile entry to the pane, replacing the deleted `data-import-count`
-`::after` badge. The D15 artifact sets capture the desktop entry in both states
-(`rail-badge.png`, `rail-badge-collapsed.png`) but never open the account menu,
-so no set — `F-imports-review-4`, `-5` or `-6` — shows the mobile entry as
-pixels or as an accessibility tree. The three narrow captures record the mobile
-pane bar's `More` button but nothing behind it.
+`::after` badge. On mobile that menu is the Nexus switchboard's **Account**
+(`components/switchboard/SwitchboardTask.tsx`), not the pane bar's `More`. The
+D15 artifact sets capture the desktop entry in both states (`rail-badge.png`,
+`rail-badge-collapsed.png`) but never open the account menu, so no set —
+`F-imports-review-4`, `-5` or `-6` — shows the mobile entry as pixels.
 
-The item is proved by `NavRail.browser.test.tsx` (the shared Account menu's
-`Imports` item and its badge), so this is a gap in the human visual gate's
-coverage, not an unproved behavior.
+The accessibility-tree clause is closed: the c2nv nav harness journey
+`M11.mobile-account-menu` (2026-10-10, chromium and webkit at 390x844) opens
+Nexus → Account, asserts Stats, Imports (with the attention count in its name),
+Settings, Sign Out, and saves the menu's aria snapshot
+(`nexus-web-campaign-artifacts/2026-10-09/nav/harness/state/m11-account-menu-{chromium,webkit}.aria.yml`).
+The `NavRail.browser.test.tsx` this ticket used to cite no longer exists. What
+remains is the pixel capture for the human visual gate.
 
 ## Evidence
 
@@ -33,12 +37,12 @@ None.
 
 ## Proposed fix
 
-Add one `captureImportsReview` state at a narrow width that opens the account
-menu (the mobile pane bar's `More`) and waits for the `Imports` item before
-shooting, so the reviewer can read the item, its badge and their contrast.
+Add one `captureImportsReview` state at a narrow width that opens Nexus →
+Account and waits for the `Imports` item before shooting, so the reviewer can
+read the item, its badge and their contrast.
 
 ## Acceptance
 
-The next D15 artifact set contains a capture whose tree lists the account
-menu's `Imports` item with its count, and the reviewer reports D9's mobile entry
-from pixels rather than from the browser proof alone.
+The next D15 artifact set contains a narrow capture of the switchboard's
+Account menu with its `Imports` item and count, and the reviewer reports D9's
+mobile entry from pixels.

@@ -253,9 +253,9 @@ anything paints.
 ## around the reader
 
 - **mobile chrome.** the host's `ReaderHost.scrollport` registers the surface's
-  scroll element with `MobileChromeProvider`, which alone owns collapse and
-  reveal; programmatic positioning holds the provider's visible lock
-  (`holdChrome`). see [workspace.md](workspace.md#mobile-reader-chrome).
+  scroll element with the mobile chrome (`lib/mobileShell/chrome.tsx`), which
+  alone owns collapse and reveal; programmatic positioning takes one of its
+  holds (`holdChrome`). see [workspace.md](workspace.md#mobile-reader-chrome).
 - **consumption activity.** reading time accrues only while the pane is active,
   visible and focused, after genuine input within five minutes; reading viewports
   add the document fraction and word ordinal. inspection counts time only. see

@@ -1,176 +1,97 @@
 "use client";
 
-import { useState, type MouseEvent, type ReactNode } from "react";
+import { useRef, useState, type ComponentProps, type MouseEvent } from "react";
 import { Download, LogOut } from "lucide-react";
 import Link from "next/link";
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import ActionMenu from "@/components/ui/ActionMenu";
+import type { DestinationId } from "@/lib/navigation/destinations";
 import { offlineAvailable, offlineCall } from "@/lib/offline/bridge";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { NAV_ACCOUNT, NAV_IMPORTS, type NavItem } from "./navModel";
+import { NAV_IMPORTS, NAV_SETTINGS, NAV_STATS, type NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
 
-export default function AccountMenu({
-  activeId,
-  importsActive,
-  placement,
-  align,
-  renderTrigger,
-  onNavigate,
-}: {
-  activeId: NavItem["id"] | null;
-  /** Whether the workspace is on Imports, which is not an Account destination. */
+/** Stats, Imports, Downloads (Android), Settings, Sign Out: the rail's and mobile Nexus's. */
+export default function AccountMenu(props: {
+  activeId: DestinationId | null;
   importsActive: boolean;
   placement: "above" | "below";
   align: "start" | "center" | "end";
-  renderTrigger: Parameters<typeof ActionMenu>[0]["renderTrigger"];
-  onNavigate: (
-    event: MouseEvent<HTMLElement>,
-    destination: NavItem,
-  ) => AppNavActivationResult;
-}): ReactNode {
-  const { stats, settings } = NAV_ACCOUNT;
-  const StatsIcon = stats.icon;
-  const SettingsIcon = settings.icon;
+  renderTrigger: ComponentProps<typeof ActionMenu>["renderTrigger"];
+  onNavigate: (event: MouseEvent<HTMLElement>, item: NavItem) => AppNavActivationResult;
+}) {
+  const signOutForm = useRef<HTMLFormElement>(null);
   const [signOutError, setSignOutError] = useState<string | null>(null);
-  const ImportsIcon = NAV_IMPORTS.icon;
+
+  const link = (item: NavItem, current: boolean): ActionDescriptor => ({
+    kind: "custom",
+    id: item.id,
+    label: item.label,
+    render: ({ closeMenu, closeMenuWithoutFocus }) => (
+      <Link
+        href={item.href}
+        role="menuitem"
+        className={styles.menuItem}
+        aria-current={current ? "page" : undefined}
+        onClick={(event) => {
+          const result = props.onNavigate(event, item);
+          if (result === "handled-source-focus") closeMenu();
+          else if (result === "handled-destination-focus") closeMenuWithoutFocus();
+        }}
+      >
+        <item.icon size={16} aria-hidden="true" />
+        {item === NAV_IMPORTS ? <ImportsBadge label={item.label} labelVisible /> : item.label}
+      </Link>
+    ),
+  });
+
   const options: ActionDescriptor[] = [
+    link(NAV_STATS, props.activeId === "stats"),
+    link(NAV_IMPORTS, props.importsActive),
+    link(NAV_SETTINGS, props.activeId === "settings"),
     {
-      kind: "custom",
-      id: "stats",
-      label: stats.label,
-      render: ({ closeMenu, closeMenuWithoutFocus }) => (
-        <Link
-          href={stats.href}
-          role="menuitem"
-          className={styles.menuItem}
-          aria-current={activeId === stats.id ? "page" : undefined}
-          onClick={(event) => {
-            const result = onNavigate(event, stats);
-            if (result === "unhandled") return;
-            if (result === "handled-source-focus") closeMenu();
-            else closeMenuWithoutFocus();
-          }}
-        >
-          <StatsIcon size={16} aria-hidden="true" />
-          {stats.label}
-        </Link>
-      ),
-    },
-    {
-      kind: "custom",
-      id: "imports",
-      label: NAV_IMPORTS.label,
-      render: ({ closeMenu, closeMenuWithoutFocus }) => (
-        <Link
-          href={NAV_IMPORTS.href}
-          role="menuitem"
-          className={styles.menuItem}
-          aria-current={importsActive ? "page" : undefined}
-          onClick={(event) => {
-            const result = onNavigate(event, NAV_IMPORTS);
-            if (result === "unhandled") return;
-            if (result === "handled-source-focus") closeMenu();
-            else closeMenuWithoutFocus();
-          }}
-        >
-          <ImportsIcon size={16} aria-hidden="true" />
-          <ImportsBadge label={NAV_IMPORTS.label} labelVisible />
-        </Link>
-      ),
-    },
-  ];
-  // Downloads is Android's packaged shelf; the bridge loads it in place of the workspace.
-  if (offlineAvailable) {
-    options.push({
-      kind: "custom",
-      id: "downloads",
-      label: "Downloads",
-      render: ({ closeMenu }) => (
-        <button
-          type="button"
-          role="menuitem"
-          className={styles.menuItem}
-          onClick={() => {
-            closeMenu();
-            void offlineCall("showDownloads");
-          }}
-        >
-          <Download size={16} aria-hidden="true" />
-          Downloads
-        </button>
-      ),
-    });
-  }
-  options.push(
-    {
-      kind: "custom",
-      id: "settings",
-      label: settings.label,
-      render: ({ closeMenu, closeMenuWithoutFocus }) => (
-        <Link
-          href={settings.href}
-          role="menuitem"
-          className={styles.menuItem}
-          aria-current={activeId === settings.id ? "page" : undefined}
-          onClick={(event) => {
-            const result = onNavigate(event, settings);
-            if (result === "unhandled") return;
-            if (result === "handled-source-focus") closeMenu();
-            else closeMenuWithoutFocus();
-          }}
-        >
-          <SettingsIcon size={16} aria-hidden="true" />
-          {settings.label}
-        </Link>
-      ),
-    },
-    {
-      kind: "custom",
+      kind: "command",
       id: "signout",
       label: "Sign Out",
+      tone: "danger",
+      icon: <LogOut size={16} aria-hidden="true" />,
       separatorBefore: true,
-      // On Android the device's offline data goes first; the web post then
-      // revokes the session. Without the bridge it is the plain web post.
-      render: () => (
-        <form
-          action="/auth/signout"
-          method="post"
-          className={styles.menuForm}
-          onSubmit={offlineAvailable ? (event) => {
-            event.preventDefault();
-            const form = event.currentTarget;
-            setSignOutError(null);
-            void offlineCall("purge").then(
-              () => form.submit(),
-              () => setSignOutError("Sign out could not remove offline data. Try again."),
-            );
-          } : undefined}
-        >
-          <button
-            type="submit"
-            role="menuitem"
-            className={`${styles.menuItem} ${styles.menuItemDanger}`}
-          >
-            <LogOut size={16} aria-hidden="true" />
-            Sign Out
-          </button>
-        </form>
-      ),
+      // On Android the device's offline data goes first; the post then ends the session.
+      onSelect: () => {
+        const form = signOutForm.current!;
+        if (!offlineAvailable) return form.submit();
+        setSignOutError(null);
+        offlineCall("purge").then(
+          () => form.submit(),
+          () => setSignOutError("Sign out could not remove offline data. Try again."),
+        );
+      },
     },
-  );
+  ];
+  // Android's packaged shelf; the bridge loads it in place of the workspace.
+  if (offlineAvailable) {
+    options.splice(2, 0, {
+      kind: "command",
+      id: "downloads",
+      label: "Downloads",
+      icon: <Download size={16} aria-hidden="true" />,
+      onSelect: () => void offlineCall("showDownloads"),
+    });
+  }
+
   return (
     <>
-    <ActionMenu
-      className={styles.account}
-      label="Account"
-      placement={placement}
-      align={align}
-      renderTrigger={renderTrigger}
-      options={options}
-    />
-    {signOutError === null ? null : <p role="alert">{signOutError}</p>}
+      <ActionMenu
+        className={styles.account}
+        label="Account"
+        placement={props.placement}
+        align={props.align}
+        renderTrigger={props.renderTrigger}
+        options={options}
+      />
+      <form ref={signOutForm} action="/auth/signout" method="post" hidden />
+      {signOutError === null ? null : <p role="alert">{signOutError}</p>}
     </>
   );
 }

@@ -1373,8 +1373,6 @@ function WorkspaceHost() {
   );
 }
 
-// Not memo()'d: MobileChromeProvider owns the volatile chrome state and receives
-// this whole subtree as stable `children`, so its scroll/publish re-renders never
-// reconcile through here — only its context consumers (AppNav, PaneShell) re-render.
-// Wrapping a zero-prop component in memo() would also turn rerender() into a no-op.
+// Not memo()'d: the mobile chrome provider holds no state this host reconciles, and
+// memo() on a zero-prop component would also turn rerender() into a no-op.
 export default WorkspaceHost;

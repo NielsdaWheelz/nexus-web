@@ -18,7 +18,7 @@ import { formatClock } from "@/lib/formatClock";
 import {
   useMobileViewport,
   useRootTextEntryFocused,
-} from "@/lib/mobileViewport/MobileViewportProvider";
+} from "@/lib/mobileShell/viewport";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import * as Player from "@/lib/player/playerRuntime";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";

@@ -21,7 +21,7 @@ import {
   type SuggestionTarget,
 } from "@/lib/suggestions";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { usePaneChromeFocusReturn } from "@/lib/workspace/mobileChrome";
+import { useMobileChrome } from "@/lib/mobileShell/chrome";
 import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./SuggestionsSection.module.css";
@@ -112,7 +112,7 @@ export default function SuggestionsSection({
     ? "Suggestions"
     : `Suggestions for ${destination.name}`;
   const isMobile = useIsMobileViewport();
-  const { focus: focusPaneChrome } = usePaneChromeFocusReturn();
+  const chrome = useMobileChrome();
   const live = useRef(true);
   const activeRef = useRef(isActive);
   activeRef.current = isActive;
@@ -172,7 +172,7 @@ export default function SuggestionsSection({
     }
     if (!live.current) return;
     if (ownsFocus && activeRef.current && next.length === 0) {
-      if (isMobile) await focusPaneChrome(paneId);
+      if (isMobile) chrome.focusPaneChrome(paneId);
       else findPaneChromeFocusTarget(paneId)?.focus();
     } else if (ownsFocus) {
       focusRef.current = (next[index] ?? next.at(-1))?.target.ref ?? null;

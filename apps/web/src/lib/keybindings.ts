@@ -48,10 +48,11 @@ export function matchesKeyEvent(combo: string, event: KeyboardEvent): boolean {
 }
 
 export function loadStoredKeybindings(): Record<string, string> {
-  if (typeof localStorage === "undefined") {
-    return { ...DEFAULT_KEYBINDINGS };
-  }
+  // Inside the try: where storage is blocked, reading `localStorage` itself throws.
   try {
+    if (typeof localStorage === "undefined") {
+      return { ...DEFAULT_KEYBINDINGS };
+    }
     return {
       ...DEFAULT_KEYBINDINGS,
       ...parseStoredKeybindings(localStorage.getItem(STORAGE_KEY)),

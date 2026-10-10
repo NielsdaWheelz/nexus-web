@@ -25,18 +25,18 @@ export default async function AuthenticatedLayout() {
   const renderEnvironment = await loadRenderEnvironment();
   return (
     <AuthenticatedWorkspaceErrorBoundary>
-      <Suspense fallback={<Skeleton />}>
+      <Suspense fallback={<Skeleton collapsed={renderEnvironment.navCollapsed} />}>
         <Workspace renderEnvironment={renderEnvironment} />
       </Suspense>
     </AuthenticatedWorkspaceErrorBoundary>
   );
 }
 
-function Skeleton() {
+function Skeleton(props: { collapsed: boolean }) {
   return (
     <div className={styles.layout}>
       <title>Nexus</title>
-      <div className={styles.rail} aria-hidden />
+      <div className={styles.rail} data-collapsed={props.collapsed || undefined} aria-hidden />
       <main className={styles.main}>
         <PaneLoadingState label="Loading workspace…" announcement="None" />
       </main>

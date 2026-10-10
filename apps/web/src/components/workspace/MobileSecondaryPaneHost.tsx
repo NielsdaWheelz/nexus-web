@@ -21,7 +21,7 @@ import {
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
-import { useMobileChrome } from "@/lib/workspace/mobileChrome";
+import { useMobilePaneChrome } from "@/lib/mobileShell/chrome";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import styles from "./MobileSecondaryPaneHost.module.css";
 
@@ -65,7 +65,7 @@ export default function MobileSecondaryPaneHost({
   onSelectDurableFromTransient,
   returnFocusTo,
 }: MobileSecondaryPaneHostProps) {
-  const { paneChrome } = useMobileChrome();
+  const paneChrome = useMobilePaneChrome();
   const actionSubject =
     paneChrome?.paneId === primaryPaneId ? paneChrome.actionSubject : undefined;
   const baseId = useId();

@@ -54,8 +54,10 @@ import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import {
   useMobileChrome,
   useMobileChromeSurface,
-  usePaneChromeFocusReturn,
-} from "@/lib/workspace/mobileChrome";
+  usePublishMobilePaneChrome,
+  type MobilePaneChrome,
+} from "@/lib/mobileShell/chrome";
+import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
 import {
@@ -69,7 +71,6 @@ import {
   findPaneLandmarkFocusTarget,
   findPaneSearchFocusTarget,
 } from "@/lib/workspace/paneDom";
-import { useActiveMobileViewport } from "@/lib/mobileViewport/MobileViewportProvider";
 import styles from "./PaneShell.module.css";
 
 const EMPTY_ACTIONS: readonly ActionDescriptor[] = [];
@@ -175,7 +176,7 @@ export default function PaneShell({
   const chromeRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const contentSurfaceActive = isMobile && isActive;
-  const mobileViewport = useActiveMobileViewport(contentSurfaceActive);
+  const mobileViewport = useMobileViewport();
   const sourceContinuityKey = panePrimaryChromeSourceKey(paneRuntime);
   usePaneReturnScrollport({
     enabled: returnMementoEnabled,
@@ -196,8 +197,7 @@ export default function PaneShell({
     readonly sourceContinuityKey: string;
     readonly publication: PanePrimaryChromePublication;
   } | null>(null);
-  const { motionPhase, setPaneChrome } = useMobileChrome();
-  const paneChromeFocusReturn = usePaneChromeFocusReturn();
+  const chrome = useMobileChrome();
   const identityId = useId();
   const landmarkLabelId = useId();
 
@@ -373,7 +373,7 @@ export default function PaneShell({
     dismissExpandedSearch();
     closeFindResults?.();
     if (isMobile) {
-      void paneChromeFocusReturn.focus(paneId);
+      chrome.focusPaneChrome(paneId);
       return;
     }
     window.requestAnimationFrame(() => {
@@ -390,16 +390,12 @@ export default function PaneShell({
       focusTarget?.focus({ preventScroll: true });
     });
   }, [
+    chrome,
     closeFindResults,
     dismissExpandedSearch,
     isMobile,
-    paneChromeFocusReturn,
     paneId,
   ]);
-  // The mobile chrome provider re-renders active PaneShell consumers when a pane
-  // publishes. Keep this projection referentially stable across that feedback render;
-  // otherwise the publication effect below sees a new header, republishes, and can
-  // starve the lazy pane body behind its Suspense fallback.
   const header = useMemo(
     () =>
       resolvePaneHeaderModel({
@@ -426,19 +422,11 @@ export default function PaneShell({
         : null;
   const hasMobileContextualSurface =
     isMobile && effectiveContextualRow !== null;
-  useMobileChromeSurface(
-    chromeRef,
-    "PaneToolbar",
-    isActive && hasMobileContextualSurface,
-  );
+  useMobileChromeSurface(chromeRef, isActive && hasMobileContextualSurface);
   const effectiveCompanionAction = acceptedPrimaryChrome?.companionAction;
   const effectiveActionSubject = acceptedPrimaryChrome?.actionSubject;
   const effectiveMenuActions =
     acceptedPrimaryChrome?.menuActions ?? EMPTY_ACTIONS;
-  const contextualSurfaceInteractive =
-    motionPhase.kind === "Visible" || motionPhase.kind === "Pinned";
-  const contextualSurfaceUnavailable =
-    hasMobileContextualSurface && !contextualSurfaceInteractive;
   const resolvePaneReturnFocusFallback = useCallback(
     () => findPaneLandmarkFocusTarget(paneId),
     [paneId],
@@ -541,7 +529,7 @@ export default function PaneShell({
   // chat scroll owner inside it inherits its terminal clearance from.
   useLayoutEffect(() => {
     const element = bodyRef.current;
-    if (!contentSurfaceActive || !mobileViewport || !element) return;
+    if (!contentSurfaceActive || !element) return;
     return mobileViewport.registerContentSurface(element);
   }, [contentSurfaceActive, mobileViewport]);
 
@@ -601,18 +589,10 @@ export default function PaneShell({
     routeShareIdentity,
     startPaneRefresh,
   ]);
-  // Route ownership and chrome publication have different lifecycles. A
-  // routine header/action update must not briefly withdraw the active route:
-  // doing so rebaselines reader motion while trusted scrolling is in flight.
-  useLayoutEffect(() => {
-    if (!isMobile) return;
-    return () => setPaneChrome(null);
-  }, [identityId, isMobile, paneId, routeKey, setPaneChrome]);
-  useLayoutEffect(() => {
-    if (!isMobile) return;
-    setPaneChrome({
+  // Mobile renders only the active pane, which publishes its chrome for the top bar.
+  const mobilePaneChrome = useMemo<MobilePaneChrome>(
+    () => ({
       paneId,
-      routeKey,
       identityId,
       header,
       activateChromeAnchor,
@@ -621,21 +601,20 @@ export default function PaneShell({
       paneActions,
       menuActions: effectiveMenuActions,
       actionSubject: effectiveActionSubject,
-    });
-  }, [
-    activateChromeAnchor,
-    header,
-    identityId,
-    isMobile,
-    navigation,
-    paneId,
-    routeKey,
-    effectiveCompanionAction,
-    paneActions,
-    effectiveMenuActions,
-    effectiveActionSubject,
-    setPaneChrome,
-  ]);
+    }),
+    [
+      activateChromeAnchor,
+      header,
+      identityId,
+      navigation,
+      paneId,
+      effectiveCompanionAction,
+      paneActions,
+      effectiveMenuActions,
+      effectiveActionSubject,
+    ],
+  );
+  usePublishMobilePaneChrome(isMobile ? mobilePaneChrome : null);
 
   const bodyId = `${paneId}-body`;
   const expandedActionRetainsSecondary = reconciledPaneActions.some(
@@ -731,13 +710,7 @@ export default function PaneShell({
           ref={chromeRef}
           className={styles.chrome}
           data-pane-chrome-focus={!isMobile ? "true" : undefined}
-          data-mobile-chrome-phase={motionPhase.kind}
-          aria-hidden={contextualSurfaceUnavailable || undefined}
-          inert={contextualSurfaceUnavailable || undefined}
           tabIndex={-1}
-          style={{
-            pointerEvents: contextualSurfaceUnavailable ? "none" : undefined,
-          }}
           onMouseDown={onChromeMouseDown}
         >
           {!isMobile ? (
