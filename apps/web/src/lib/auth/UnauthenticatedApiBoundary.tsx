@@ -1,38 +1,30 @@
 "use client";
-
-import {
-  createContext,
-  useContext,
-  useEffect,
-  type ReactNode,
-} from "react";
+// the one browser-runtime latch that turns a 401 E_UNAUTHENTICATED into
+// exactly one login navigation (docs/modules/browser-session-recovery.md).
+import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { isUnauthenticatedApiError } from "@/lib/api/client";
-import { redirectToLoginForCurrentLocation } from "@/lib/auth/client-return-target";
+import { loginPath, parseReturnTarget } from "@/lib/auth/urls";
 
-const UnauthenticatedApiContext = createContext<(error: unknown) => boolean>(
-  () => false
-);
-
-let unauthenticatedApiRedirectStarted = false;
+let redirectStarted = false;
 
 export function handleUnauthenticatedApiError(error: unknown): boolean {
-  if (!isUnauthenticatedApiError(error)) {
+  if (!isUnauthenticatedApiError(error)) return false;
+  if (redirectStarted) return true;
+  if (typeof window === "undefined" || window.location.pathname === "/login") {
     return false;
   }
-
-  if (unauthenticatedApiRedirectStarted) {
-    return true;
-  }
-
-  if (redirectToLoginForCurrentLocation()) {
-    unauthenticatedApiRedirectStarted = true;
-    return true;
-  }
-  return false;
+  const { pathname, search } = window.location;
+  window.location.assign(loginPath(parseReturnTarget(`${pathname}${search}`)));
+  redirectStarted = true;
+  return true;
 }
 
+// outside the authenticated shell the handler is a no-op: share capture
+// relies on it.
+const Context = createContext<(error: unknown) => boolean>(() => false);
+
 export function useUnauthenticatedApiHandler(): (error: unknown) => boolean {
-  return useContext(UnauthenticatedApiContext);
+  return useContext(Context);
 }
 
 export default function UnauthenticatedApiBoundary({
@@ -41,20 +33,15 @@ export default function UnauthenticatedApiBoundary({
   children: ReactNode;
 }) {
   useEffect(() => {
-    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
-      if (handleUnauthenticatedApiError(event.reason)) {
-        event.preventDefault();
-      }
+    const onRejection = (event: PromiseRejectionEvent) => {
+      if (handleUnauthenticatedApiError(event.reason)) event.preventDefault();
     };
-    window.addEventListener("unhandledrejection", onUnhandledRejection);
-    return () => {
-      window.removeEventListener("unhandledrejection", onUnhandledRejection);
-    };
+    window.addEventListener("unhandledrejection", onRejection);
+    return () => window.removeEventListener("unhandledrejection", onRejection);
   }, []);
-
   return (
-    <UnauthenticatedApiContext.Provider value={handleUnauthenticatedApiError}>
+    <Context.Provider value={handleUnauthenticatedApiError}>
       {children}
-    </UnauthenticatedApiContext.Provider>
+    </Context.Provider>
   );
 }

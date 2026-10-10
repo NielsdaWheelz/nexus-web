@@ -49,9 +49,8 @@ Primary variables for this app:
 - `CSP_MEDIA_ORIGINS` (optional comma-separated media origins; HTTPS-only when deployed)
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `AUTH_ALLOWED_REDIRECT_ORIGINS`
-- `AUTH_TRUSTED_PROXY_ORIGINS` (only when auth callbacks receive trusted proxy headers)
-- `NEXUS_EXTENSION_REDIRECT_ORIGINS`
+- `APP_PUBLIC_URL` (the one public origin; required outside local/test, default `http://localhost:3000`)
+- `NEXUS_EXTENSION_REDIRECT_ORIGINS` (the firefox extension's one redirect origin)
 - `NEXUS_INTERNAL_SECRET` (required outside local/test)
 
 `make web` loads the live local auth settings written by `make dev` to `.dev-ports`.

@@ -51,13 +51,17 @@ interface ResolvedEnv {
     readonly url: string;
     readonly anonKey: string;
   };
-  /** Canonical browser origin used for absolute metadata URLs. */
+  /**
+   * The one browser origin (APP_PUBLIC_URL): every absolute auth redirect, every
+   * Origin check, the auth cookies' Secure flag and absolute metadata URLs.
+   */
   readonly appPublicOrigin: string;
   /** FastAPI/SSE origin + presigned R2 origin. Origin-only, deduped, validated. */
   readonly connectOrigins: readonly string[];
   /** Explicit browser media origins beyond the default same-origin/HTTPS policy. */
   readonly mediaOrigins: readonly string[];
-  readonly serverActionAllowedOrigins: readonly string[];
+  /** The firefox extension's identity redirect origin; null disables connect. */
+  readonly extensionRedirectOrigin: string | null;
   readonly internalApi: {
     readonly fastApiBaseUrl: string;
     readonly internalSecret: string;
@@ -79,8 +83,7 @@ export function getEnv(): ResolvedEnv {
 
   const connectOrigins = resolveConnectOrigins(deployed);
   const mediaOrigins = resolveMediaOrigins(deployed);
-  validateAuthRedirectOrigins(deployed);
-  const serverActionAllowedOrigins = resolveServerActionAllowedOrigins(deployed);
+  const extensionRedirectOrigin = resolveExtensionRedirectOrigin(deployed);
 
   const internalSecret = process.env.NEXUS_INTERNAL_SECRET?.trim() ?? "";
   if (deployed && !internalSecret) {
@@ -103,7 +106,7 @@ export function getEnv(): ResolvedEnv {
     appPublicOrigin,
     connectOrigins,
     mediaOrigins,
-    serverActionAllowedOrigins,
+    extensionRedirectOrigin,
     internalApi: Object.freeze({ fastApiBaseUrl, internalSecret }),
   });
   return resolved;
@@ -189,92 +192,16 @@ function resolveConnectOrigins(deployed: boolean): readonly string[] {
   return [...origins];
 }
 
-function validateAuthRedirectOrigins(deployed: boolean): void {
-  resolveOriginEnv(
-    "AUTH_ALLOWED_REDIRECT_ORIGINS",
-    process.env.AUTH_ALLOWED_REDIRECT_ORIGINS,
-    deployed,
-    deployed
-  );
-  resolveOriginEnv(
-    "AUTH_TRUSTED_PROXY_ORIGINS",
-    process.env.AUTH_TRUSTED_PROXY_ORIGINS,
-    deployed,
-    false
-  );
-  resolveOriginEnv(
-    "NEXUS_EXTENSION_REDIRECT_ORIGINS",
-    process.env.NEXUS_EXTENSION_REDIRECT_ORIGINS,
-    deployed,
-    false
-  );
-
-  if (
-    deployed &&
-    process.env.AUTH_TRUSTED_PROXY_ORIGINS?.trim() &&
-    !process.env.SERVER_ACTION_ALLOWED_ORIGINS?.trim()
-  ) {
+// NEXUS_EXTENSION_REDIRECT_ORIGINS keeps its plural name and holds exactly one
+// origin (browser.identity.getRedirectURL()'s), https when deployed.
+function resolveExtensionRedirectOrigin(deployed: boolean): string | null {
+  const rawValue = process.env.NEXUS_EXTENSION_REDIRECT_ORIGINS?.trim();
+  if (!rawValue) return null;
+  const origin = parseWebOrigin(rawValue);
+  if (!origin || (deployed && origin.protocol !== "https:")) {
     throw new Error(
-      "SERVER_ACTION_ALLOWED_ORIGINS is required when AUTH_TRUSTED_PROXY_ORIGINS is set in staging/prod"
+      `NEXUS_EXTENSION_REDIRECT_ORIGINS must be one ${deployed ? "https " : ""}origin: ${rawValue}`,
     );
   }
-}
-
-function resolveOriginEnv(
-  name: string,
-  rawValue: string | undefined,
-  deployed: boolean,
-  required: boolean
-): string[] {
-  const origins = new Set<string>();
-  const entries = (rawValue ?? "")
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-
-  if (required && entries.length === 0) {
-    throw new Error(`${name} is required in staging/prod`);
-  }
-
-  for (const entry of entries) {
-    const origin = parseWebOrigin(entry);
-    if (!origin) throw new Error(`Invalid ${name}: ${entry}`);
-    if (deployed && origin.protocol !== "https:") {
-      throw new Error(`${name} must use HTTPS origins in staging/prod: ${entry}`);
-    }
-    origins.add(origin.origin);
-  }
-
-  return [...origins];
-}
-
-function resolveServerActionAllowedOrigins(deployed: boolean): string[] {
-  const values = new Set<string>();
-
-  for (const rawEntry of (process.env.SERVER_ACTION_ALLOWED_ORIGINS ?? "").split(",")) {
-    const entry = rawEntry.trim().toLowerCase();
-    if (!entry) continue;
-    if (!isServerActionOriginPattern(entry)) {
-      throw new Error(`Invalid SERVER_ACTION_ALLOWED_ORIGINS entry: ${rawEntry.trim()}`);
-    }
-    if (deployed && (entry.includes("localhost") || entry.includes("127.0.0.1"))) {
-      throw new Error("SERVER_ACTION_ALLOWED_ORIGINS must not contain localhost in staging/prod");
-    }
-    values.add(entry);
-  }
-
-  return [...values];
-}
-
-function isServerActionOriginPattern(value: string): boolean {
-  const domain = value.startsWith("*.") ? value.slice(2) : value;
-  if (!domain || value === "*" || value.includes("://")) return false;
-  if (domain.includes("/") || domain.includes(":") || domain.includes("*")) return false;
-  if (domain.startsWith(".") || domain.endsWith(".")) return false;
-  const labels = domain.split(".");
-  if (value.startsWith("*.") && labels.length < 3) return false;
-  return (
-    labels.length >= 2 &&
-    labels.every((label) => /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(label))
-  );
+  return origin.origin;
 }

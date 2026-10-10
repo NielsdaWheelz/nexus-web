@@ -1,53 +1,27 @@
-import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
-import { resolveCallbackRedirectOrigin } from "@/lib/auth/callback-origin";
-import { finalizeSessionResponse } from "@/lib/auth/session-response";
-import {
-  getSupabaseAuthCookieNames,
-  readSupabaseSessionCookie,
-} from "@/lib/auth/session-cookie";
-import { getEnv } from "@/lib/env";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { finish, liveSession, redirectTo } from "@/lib/auth/session";
+import { revoke } from "@/lib/supabase/auth";
+import { authCookieNames } from "@/lib/supabase/cookie";
 
-export async function POST(request: Request) {
-  const redirectOrigin = resolveCallbackRedirectOrigin(request);
-  const requestCookies = (await cookies()).getAll();
-  const cookieNames = getSupabaseAuthCookieNames(requestCookies);
-  const session = readSupabaseSessionCookie(requestCookies);
-
-  if (session.state === "active") {
-    const { url, anonKey } = getEnv().supabase;
-    try {
-      const signOutResponse = await boundedAuthFetch(
-        `${url.replace(/\/$/, "")}/auth/v1/logout?scope=local`,
-        {
-          method: "POST",
-          headers: {
-            apikey: anonKey,
-            Authorization: `Bearer ${session.accessToken}`,
-          },
-        },
-      );
-      if (
-        !signOutResponse.ok &&
-        ![401, 403, 404].includes(signOutResponse.status)
-      ) {
-        console.error("Supabase sign-out failed:", signOutResponse.status);
-      }
-    } catch (error) {
-      if (!(error instanceof Error)) {
-        throw error;
-      }
-      console.error("Supabase sign-out failed:", error);
+// revoke this browser's session at the provider (refreshing first when the
+// access token is near expiry, so the refresh token dies too), then clear it
+// here. the provider's answer never blocks sign-out: failures are logged.
+export async function POST(): Promise<NextResponse> {
+  const names = authCookieNames((await cookies()).getAll());
+  try {
+    const live = await liveSession();
+    if (live.kind === "Live") {
+      names.push(...live.cookieNames);
+      await revoke(live.accessToken);
     }
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    console.error("auth_signout_revoke_failed", error);
   }
-
-  const response = NextResponse.redirect(`${redirectOrigin}/login`, {
-    status: 302,
-  });
-  return finalizeSessionResponse(response, {
+  return finish(redirectTo("/login", 302), {
     kind: "Clear",
-    cookieNames,
+    cookieNames: [...new Set(names)],
     feedback: false,
   });
 }

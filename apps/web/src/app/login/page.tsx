@@ -2,88 +2,53 @@ import type { Metadata } from "next";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { isAndroidShellUserAgent } from "@/lib/androidShell";
-import {
-  getSessionVerification,
-  type SessionVerification,
-} from "@/lib/auth/dal";
-import { AuthDependencyError } from "@/lib/auth/session-response";
-import {
-  buildAuthSessionRecoveryUrl,
-  getFirstSearchParamValue,
-  parseAuthReturnTarget,
-} from "@/lib/auth/redirects";
-import {
-  AUTH_ENDED_FEEDBACK_COOKIE,
-  readPublicAuthFeedback,
-  SESSION_ENDED_MESSAGE,
-} from "@/lib/auth/messages";
-import { getEnv } from "@/lib/env";
+import { ENDED_FEEDBACK_COOKIE, getVerification } from "@/lib/auth/session";
+import { firstParam, parseReturnTarget, recoverPath } from "@/lib/auth/urls";
+import { AuthUnavailable } from "@/lib/supabase/auth";
 import LoginPageClient from "./LoginPageClient";
-
-interface LoginPageProps {
-  searchParams: Promise<{
-    error?: string | string[];
-    error_description?: string | string[];
-    next?: string | string[];
-  }>;
-}
 
 export const metadata: Metadata = {
   title: "Sign in · Nexus",
   robots: { index: false, follow: false },
 };
 
-export default async function LoginPage({ searchParams }: LoginPageProps) {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{
+    error?: string | string[];
+    next?: string | string[];
+  }>;
+}) {
   const params = await searchParams;
-  const nextPath = parseAuthReturnTarget(getFirstSearchParamValue(params.next));
-  const recover = (): never => {
-    const recoveryUrl = buildAuthSessionRecoveryUrl(
-      getEnv().appPublicOrigin,
-      nextPath,
-    );
-    redirect(`${recoveryUrl.pathname}${recoveryUrl.search}`);
-  };
-
-  let verification: SessionVerification;
+  const nextPath = parseReturnTarget(firstParam(params.next));
+  // a viewer with a session never sees the form: verified goes on, anything
+  // unresolved goes through the resolver (which clears an ended session).
+  let kind;
   try {
-    verification = await getSessionVerification();
+    kind = (await getVerification()).kind;
   } catch (error) {
-    if (!(error instanceof AuthDependencyError)) {
-      throw error;
-    }
-    return recover();
+    if (!(error instanceof AuthUnavailable)) throw error;
+    kind = "RefreshRequired";
   }
+  if (kind === "Verified") redirect(nextPath);
+  if (kind !== "Anonymous") redirect(recoverPath(nextPath));
 
-  switch (verification.kind) {
-    case "Verified":
-      redirect(nextPath);
-    case "RefreshRequired":
-    case "SessionEnded":
-      recover();
-    case "Anonymous":
-      break;
-    default:
-      verification satisfies never;
-  }
-
-  const cookieStore = await cookies();
-  const sessionEndedFeedbackCookie =
-    cookieStore.get(AUTH_ENDED_FEEDBACK_COOKIE)?.value === "1";
-  const initialFeedbackMessage = readPublicAuthFeedback(
-    getFirstSearchParamValue(params.error_description) ??
-      getFirstSearchParamValue(params.error) ??
-      (sessionEndedFeedbackCookie ? SESSION_ENDED_MESSAGE : null),
-  );
-
-  const isShell = isAndroidShellUserAgent(
-    (await headers()).get("user-agent") ?? "",
-  );
-
+  const error = firstParam(params.error);
+  const ended = (await cookies()).get(ENDED_FEEDBACK_COOKIE)?.value === "1";
   return (
     <LoginPageClient
-      initialFeedbackMessage={initialFeedbackMessage}
+      feedback={
+        error === "oauth_start_failed" || error === "sign_in_failed"
+          ? error
+          : ended
+            ? "session_ended"
+            : null
+      }
       nextPath={nextPath}
-      isShell={isShell}
+      isShell={isAndroidShellUserAgent(
+        (await headers()).get("user-agent") ?? "",
+      )}
     />
   );
 }

@@ -19,7 +19,7 @@ nexus and storage origins (`NEXUS_EXTENSION_NEXUS_ORIGIN`,
 fix: sign an unlisted build (`web-ext sign --channel unlisted` or the AMO api)
 from the production-origin package, keep the id stable so the identity redirect
 host `https://1ddcf81c2e8737ef7e045031d91fb2c3d6b899ae.extensions.allizom.org`
-stays allowlisted in `NEXUS_EXTENSION_REDIRECT_ORIGINS`, install the signed xpi
+stays the one origin in `NEXUS_EXTENSION_REDIRECT_ORIGINS`, install the signed xpi
 persistently and complete one login and one capture with it. confirm the data
 declaration categories against the current mozilla list at signing time.
 

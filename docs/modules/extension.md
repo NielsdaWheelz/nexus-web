@@ -318,10 +318,10 @@ any manifest reference the build did not produce. Firefox API types come from
 `@types/firefox-webext-browser`, with the 153 additions declared in
 `articleExtraction.d.ts`.
 
-The hosted login accepts only redirect origins listed in
-`NEXUS_EXTENSION_REDIRECT_ORIGINS`: the origin of
-`browser.identity.getRedirectURL()`, `https://<sha-1 hex of the gecko
-id>.extensions.allizom.org`.
+The hosted login accepts exactly one redirect origin,
+`NEXUS_EXTENSION_REDIRECT_ORIGINS` (one https origin; a list fails the web
+build): the origin of `browser.identity.getRedirectURL()`, `https://<sha-1 hex
+of the gecko id>.extensions.allizom.org`.
 
 **Gate.** `./scripts/test` runs `bun run build:extension` in the `apps/web`
 block before `lint:css-tokens`, `lint` and `typecheck`, so the package, its

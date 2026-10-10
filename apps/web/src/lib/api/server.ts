@@ -3,8 +3,8 @@ import "server-only";
 import { cookies } from "next/headers";
 import { ApiError } from "@/lib/api/client";
 import { getEnv } from "@/lib/env";
-import { readSupabaseSessionCookie } from "@/lib/auth/session-cookie";
 import { createRandomId } from "@/lib/createRandomId";
+import { readSession } from "@/lib/supabase/cookie";
 import { isRecord } from "@/lib/validation";
 
 const FASTAPI_FETCH_TIMEOUT_MS = 30_000;
@@ -40,7 +40,7 @@ export async function callFastAPI<T>(
   options?: { timeoutMs?: number },
 ): Promise<T> {
   const cookieStore = await cookies();
-  const session = readSupabaseSessionCookie(cookieStore.getAll());
+  const session = readSession(cookieStore.getAll());
   if (session.state !== "active") {
     throw new ApiError(401, "E_UNAUTHENTICATED", "Authentication required");
   }

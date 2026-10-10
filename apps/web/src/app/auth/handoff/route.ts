@@ -1,169 +1,46 @@
-import { getEnv } from "@/lib/env";
-import { resolveCallbackRedirectOrigin } from "@/lib/auth/callback-origin";
-import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
-import { internalAuthHeaders } from "@/lib/auth/internal-auth-headers";
-import { finalizeSessionResponse } from "@/lib/auth/session-response";
-import {
-  AUTH_CALLBACK_CANCELLED_MESSAGE,
-  AUTH_CALLBACK_FAILURE_MESSAGE,
-} from "@/lib/auth/messages";
-import {
-  buildAuthReturnTargetUrl,
-  buildLoginUrl,
-  parseAuthReturnTarget,
-} from "@/lib/auth/redirects";
-import { createSessionEstablishmentClient } from "@/lib/supabase/route-handler";
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { consumeHandoffCode } from "@/lib/auth/internal";
+import { abandoned, finish, redirectTo } from "@/lib/auth/session";
+import { loginPath, parseReturnTarget } from "@/lib/auth/urls";
+import { installSession } from "@/lib/supabase/auth";
 
 export const runtime = "nodejs";
 
-const TEMPORARY_REDIRECT = 307;
-
-function preserve(response: NextResponse): NextResponse {
-  return finalizeSessionResponse(response, { kind: "Preserve" });
-}
-
-// Error codes produced by `/auth/callback` in handoff mode.
-// This route owns the public copy because no other surface renders it.
-function publicErrorMessage(errorCode: string): string {
-  switch (errorCode) {
-    case "oauth_user_cancelled":
-      return AUTH_CALLBACK_CANCELLED_MESSAGE;
-    case "oauth_provider_error":
-    case "oauth_callback_missing_code":
-    case "handoff_mint_failed":
-    case "native_google_signin_failed":
-      return AUTH_CALLBACK_FAILURE_MESSAGE;
-    default:
-      return AUTH_CALLBACK_FAILURE_MESSAGE;
-  }
-}
-
-// The Custom Tab (Flow B) or the native Google controller (Flow C) lands the
-// shell on this route after an OAuth handshake completed in an external
-// user-agent. The route consumes the single-use handoff code against the
-// native-held verifier, then `setSession`s the returned token pair so the
-// WebView gets a first-party `HttpOnly` session cookie.
+// the android webview lands here after a custom-tab oauth or a native google
+// sign-in: consume the code with the native-held verifier and install the
+// session as this webview's own cookie.
 export async function GET(request: Request): Promise<NextResponse> {
+  const params = new URL(request.url).searchParams;
+  const target = parseReturnTarget(params.get("next"));
+  const error = params.get("error");
+  if (error === "oauth_user_cancelled") {
+    return finish(redirectTo(loginPath(target)));
+  }
+  const failed = redirectTo(loginPath(target, "sign_in_failed"));
+  const code = params.get("code");
+  const verifier = params.get("hv");
+  const tokens =
+    !error && code && verifier
+      ? await consumeHandoffCode(code, verifier)
+      : null;
+  if (!tokens) return finish(failed);
+
+  const presented = (await cookies()).getAll();
   try {
-    const requestUrl = new URL(request.url);
-    const code = requestUrl.searchParams.get("code");
-    const hv = requestUrl.searchParams.get("hv");
-    const errorCode = requestUrl.searchParams.get("error");
-    const target = parseAuthReturnTarget(requestUrl.searchParams.get("next"));
-    const redirectOrigin = resolveCallbackRedirectOrigin(request);
-
-    if (errorCode) {
-      return preserve(
-        NextResponse.redirect(
-          buildLoginUrl(redirectOrigin, target, {
-            errorDescription: publicErrorMessage(errorCode),
-          }),
-          { status: TEMPORARY_REDIRECT }
-        )
-      );
+    const installed = await installSession(presented, tokens);
+    if (!installed.tokens) {
+      return finish(failed, abandoned(presented, installed.writes));
     }
-
-    if (!code || !hv) {
-      return preserve(
-        NextResponse.redirect(
-          buildLoginUrl(redirectOrigin, target, {
-            errorDescription: AUTH_CALLBACK_FAILURE_MESSAGE,
-          }),
-          { status: TEMPORARY_REDIRECT }
-        )
-      );
-    }
-
-    const { fastApiBaseUrl } = getEnv().internalApi;
-
-    let consumeResponse: Response;
-    try {
-      consumeResponse = await boundedAuthFetch(
-        `${fastApiBaseUrl}/auth/handoff-codes/consume`,
-        {
-          method: "POST",
-          headers: internalAuthHeaders({ json: true }),
-          body: JSON.stringify({ code, verifier: hv }),
-        },
-      );
-    } catch (error) {
-      if (!(error instanceof Error)) {
-        throw error;
-      }
-      // justify-ignore-error: a timed-out or failed handoff consume collapses
-      // into the same public failure as a non-2xx response — by design, so the
-      // route doesn't leak which of expired/used/wrong-verifier occurred.
-      return preserve(
-        NextResponse.redirect(
-          buildLoginUrl(redirectOrigin, target, {
-            errorDescription: AUTH_CALLBACK_FAILURE_MESSAGE,
-          }),
-          { status: TEMPORARY_REDIRECT }
-        )
-      );
-    }
-
-    if (!consumeResponse.ok) {
-      return preserve(
-        NextResponse.redirect(
-          buildLoginUrl(redirectOrigin, target, {
-            errorDescription: AUTH_CALLBACK_FAILURE_MESSAGE,
-          }),
-          { status: TEMPORARY_REDIRECT }
-        )
-      );
-    }
-
-    const body = await consumeResponse.json();
-    const accessToken = body?.data?.access_token;
-    const refreshToken = body?.data?.refresh_token;
-    if (typeof accessToken !== "string" || typeof refreshToken !== "string") {
-      return preserve(
-        NextResponse.redirect(
-          buildLoginUrl(redirectOrigin, target, {
-            errorDescription: AUTH_CALLBACK_FAILURE_MESSAGE,
-          }),
-          { status: TEMPORARY_REDIRECT }
-        )
-      );
-    }
-
-    const auth = await createSessionEstablishmentClient();
-    try {
-      const { data, error } = await auth.supabase.auth.setSession({
-        access_token: accessToken,
-        refresh_token: refreshToken,
-      });
-      if (error || !data.session) {
-        return auth.clearSession(
-          NextResponse.redirect(
-            buildLoginUrl(redirectOrigin, target, {
-              errorDescription: AUTH_CALLBACK_FAILURE_MESSAGE,
-            }),
-            { status: TEMPORARY_REDIRECT },
-          ),
-        );
-      }
-
-      return auth.applyCookies(
-        NextResponse.redirect(buildAuthReturnTargetUrl(redirectOrigin, target), {
-          status: TEMPORARY_REDIRECT,
-        }),
-      );
-    } catch {
-      // justify-defect: an attempted installation must terminate with local
-      // cleanup even when the SDK throws a non-Error value.
-      return auth.clearSession(
-        new NextResponse(AUTH_CALLBACK_FAILURE_MESSAGE, { status: 500 }),
-      );
-    }
-  } catch (error) {
-    if (!(error instanceof Error)) {
-      throw error;
-    }
-    return preserve(
-      new NextResponse(AUTH_CALLBACK_FAILURE_MESSAGE, { status: 500 })
+    return finish(redirectTo(target), {
+      kind: "Write",
+      writes: installed.writes,
+    });
+  } catch (cause) {
+    console.error("auth_handoff_install_defect", cause);
+    return finish(
+      new NextResponse(null, { status: 500 }),
+      abandoned(presented, []),
     );
   }
 }

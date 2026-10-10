@@ -1,208 +1,52 @@
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { resolveCallbackRedirectOrigin } from "@/lib/auth/callback-origin";
-import { getSessionVerification } from "@/lib/auth/dal";
-import {
-  authFormFailure,
-  readSameOriginAuthForm,
-} from "@/lib/auth/form-response";
-import { parsePasswordUpdateForm } from "@/lib/auth/form-fields";
-import { updatePasswordFlow } from "@/lib/auth/password-flow";
-import { refreshSession } from "@/lib/auth/refresh";
-import {
-  isDefaultAuthReturnTarget,
-  parseAuthReturnTarget,
-} from "@/lib/auth/redirects";
-import {
-  AuthDependencyError,
-  finalizeSessionResponse,
-  type SessionEffect,
-} from "@/lib/auth/session-response";
-import { getSupabaseAuthCookieNames } from "@/lib/auth/session-cookie";
-import { createCurrentSessionClient } from "@/lib/supabase/route-handler";
+import { formFailure, readAuthForm } from "@/lib/auth/form";
+import { ended, finish, liveSession, redirectTo } from "@/lib/auth/session";
+import { parseReturnTarget, savedPasswordPath } from "@/lib/auth/urls";
+import { AuthUnavailable, updatePassword } from "@/lib/supabase/auth";
 
 export const runtime = "nodejs";
 
-function buildPasswordSurfaceUrl(
-  origin: string,
-  target: ReturnType<typeof parseAuthReturnTarget>,
-  saved: boolean,
-): URL {
-  const url = new URL("/account/password", origin);
-  if (saved) {
-    url.searchParams.set("saved", "1");
-  }
-  if (!isDefaultAuthReturnTarget(target)) {
-    url.searchParams.set("next", target);
-  }
-  return url;
-}
-
-function sessionEndedResponse(effect: SessionEffect): NextResponse {
-  return finalizeSessionResponse(
-    NextResponse.json({ kind: "SessionEnded" }, { status: 401 }),
-    effect,
-  );
-}
-
-function internalResponse(): NextResponse {
-  return NextResponse.json(
-    { error: { code: "E_INTERNAL", message: "Password update failed" } },
-    { status: 500 },
-  );
-}
-
+// the viewer sets or replaces the password of the account email. the session
+// is refreshed inline when needed; the provider verifies the token as part of
+// the write. 303 to /account/password?saved=1[&next].
 export async function POST(request: Request): Promise<NextResponse> {
-  const origin = resolveCallbackRedirectOrigin(request);
-  if (request.headers.get("origin") !== origin) {
-    return authFormFailure({
-      body: { kind: "Forbidden" },
-      status: 403,
-    });
-  }
+  const form = await readAuthForm(request, ["password"], ["next"]);
+  if (form instanceof NextResponse) return form;
+  // the provider enforces the same minimum (supabase minimum_password_length).
+  if (form.password.length < 15) return formFailure("PolicyRejected");
 
-  const requestCookieNames = getSupabaseAuthCookieNames(
-    (await cookies()).getAll(),
-  );
-  let sessionEffect: SessionEffect = { kind: "Preserve" };
-  let verification: Awaited<ReturnType<typeof getSessionVerification>>;
+  let live;
   try {
-    verification = await getSessionVerification();
+    live = await liveSession();
   } catch (error) {
-    if (error instanceof AuthDependencyError) {
-      return finalizeSessionResponse(
-        authFormFailure({ body: { kind: "ServiceUnavailable" }, status: 503 }),
-        sessionEffect,
-      );
-    }
-    return finalizeSessionResponse(internalResponse(), sessionEffect);
+    if (!(error instanceof AuthUnavailable)) throw error;
+    return formFailure("ServiceUnavailable");
+  }
+  if (live.kind === "Anonymous") return formFailure("SessionEnded");
+  if (live.kind === "Ended") {
+    return formFailure("SessionEnded", ended(live.cookieNames));
   }
 
-  switch (verification.kind) {
-    case "Verified":
-      break;
-    case "Anonymous":
-      return sessionEndedResponse(sessionEffect);
-    case "SessionEnded":
-      return sessionEndedResponse({
-        kind: "Clear",
-        cookieNames: verification.cookieNames,
-        feedback: true,
-      });
-    case "RefreshRequired": {
-      let refreshed: Awaited<ReturnType<typeof refreshSession>>;
-      try {
-        refreshed = await refreshSession();
-      } catch (error) {
-        if (error instanceof AuthDependencyError) {
-          return finalizeSessionResponse(
-            authFormFailure({ body: { kind: "ServiceUnavailable" }, status: 503 }),
-            sessionEffect,
-          );
-        }
-        return finalizeSessionResponse(internalResponse(), sessionEffect);
-      }
-      switch (refreshed.kind) {
-        case "SessionEnded":
-          return sessionEndedResponse({
-            kind: "Clear",
-            cookieNames: [
-              ...new Set([
-                ...requestCookieNames,
-                ...refreshed.cookieNames,
-              ]),
-            ],
-            feedback: true,
-          });
-        case "Refreshed":
-          sessionEffect = {
-            kind: "Rotate",
-            cookiesToSet: refreshed.cookiesToSet,
-          };
-          break;
-      }
-      break;
-    }
-  }
-
-  const requestForm = await readSameOriginAuthForm(request);
-  if (requestForm.kind === "Rejected") {
-    return finalizeSessionResponse(requestForm.response, sessionEffect);
-  }
-
-  const form = parsePasswordUpdateForm(requestForm.formData);
-  if (!form || !form.password) {
-    return finalizeSessionResponse(
-      authFormFailure({ body: { kind: "InvalidRequest" }, status: 400 }),
-      sessionEffect,
-    );
-  }
-
-  if (form.password.length < 15) {
-    return finalizeSessionResponse(
-      authFormFailure({
-        body: { kind: "PolicyRejected", reasons: ["length"] },
-        status: 400,
-      }),
-      sessionEffect,
-    );
-  }
-
-  const target = parseAuthReturnTarget(form.next);
-  const auth = await createCurrentSessionClient(
-    sessionEffect.kind === "Rotate" ? sessionEffect.cookiesToSet : [],
-  );
-  let outcome: Awaited<ReturnType<typeof updatePasswordFlow>>;
+  let result;
   try {
-    outcome = await updatePasswordFlow({
-      supabase: auth.supabase,
-      password: form.password,
-    });
-  } catch {
-    return auth.applyCookies(internalResponse(), sessionEffect);
+    result = await updatePassword(live.cookies, form.password);
+  } catch (error) {
+    // justify-defect: logged and answered 500, but a refresh token already
+    // spent must still reach the browser.
+    console.error("auth_password_update_defect", error);
+    return finish(
+      NextResponse.json({ error: { code: "E_INTERNAL" } }, { status: 500 }),
+      { kind: "Write", writes: live.writes },
+    );
   }
-
-  switch (outcome.kind) {
-    case "Saved":
-      return auth.applyCookies(
-        NextResponse.redirect(
-          buildPasswordSurfaceUrl(requestForm.origin, target, true),
-          { status: 303 },
-        ),
-        sessionEffect,
-      );
-    case "PolicyRejected":
-      return auth.applyCookies(
-        authFormFailure({ body: outcome, status: 400 }),
-        sessionEffect,
-      );
-    case "SessionEnded":
-      return auth.applyCookies(
-        NextResponse.json({ kind: "SessionEnded" }, { status: 401 }),
-        {
-          kind: "Clear",
-          cookieNames: [
-            ...new Set([
-              ...requestCookieNames,
-              ...(sessionEffect.kind === "Rotate"
-                ? sessionEffect.cookiesToSet.map(({ name }) => name)
-                : []),
-            ]),
-          ],
-          feedback: true,
-        },
-      );
-    case "RateLimited":
-      return auth.applyCookies(
-        authFormFailure({ body: outcome, status: 429 }),
-        sessionEffect,
-      );
-    case "ServiceUnavailable":
-      return auth.applyCookies(
-        authFormFailure({ body: outcome, status: 503 }),
-        sessionEffect,
-      );
+  const writes = [...live.writes, ...result.writes];
+  if (result.outcome === "SessionEnded") {
+    const names = [...live.cookieNames, ...result.writes.map((w) => w.name)];
+    return formFailure("SessionEnded", ended(names));
   }
-
-  outcome satisfies never;
+  if (result.outcome !== "Saved") {
+    return formFailure(result.outcome, { kind: "Write", writes });
+  }
+  const saved = savedPasswordPath(parseReturnTarget(form.next));
+  return finish(redirectTo(saved, 303), { kind: "Write", writes });
 }

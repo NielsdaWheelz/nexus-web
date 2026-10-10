@@ -1,33 +1,17 @@
-/**
- * Content-Security-Policy source of truth for the Next.js document responses.
- *
- * The policy is defined here as data and assembled by `buildContentSecurityPolicy`.
- * It is applied per-request in `middleware.ts` (the nonce and connect origins are
- * dynamic); the static header suite lives in `./headers.ts`. Nothing else may inline a
- * CSP string.
- *
- * Runtime-agnostic: no Node-only APIs (Web Crypto + btoa only), so it runs in both the
- * edge and node runtimes.
- *
- * Dossier articles render in the app document (a shadow root), so their script safety
- * rests on this policy plus two grammar walks: never add `'unsafe-inline'` without a
- * nonce, or `'unsafe-hashes'`, to `script-src`.
- */
-
+// the per-request content security policies, built by middleware.ts (the
+// static header suite is ./headers.ts). runtime-agnostic: web crypto and btoa
+// only, so it runs on the edge. dossier articles render in the app document
+// (a shadow root): never add 'unsafe-inline' without a nonce, or
+// 'unsafe-hashes', to script-src.
 import { YOUTUBE_EMBED_ORIGINS } from "./youtube";
 
-const NONCE_PLACEHOLDER = "{NONCE}";
+type Directives = Record<string, readonly string[]>;
 
-/**
- * Static directive map. Dynamic slots are applied by `buildContentSecurityPolicy`:
- * - `script-src`: `{NONCE}` is substituted; `'unsafe-eval'` is added iff `isDev`.
- * - `connect-src`: external connect origins (+ dev websocket origins) are appended.
- * - `upgrade-insecure-requests`: emitted only for HTTPS document requests (handled in
- *   the builder, not stored here).
- */
-export const CSP_DIRECTIVES = {
+// directive order is emission order. script-src gains the nonce first and
+// 'unsafe-eval' under next dev; connect-src gains next dev's hmr socket.
+const APP: Directives = {
   "default-src": ["'self'"],
-  "script-src": [`'nonce-${NONCE_PLACEHOLDER}'`, "'strict-dynamic'"],
+  "script-src": ["'strict-dynamic'"],
   "style-src": ["'self'", "'unsafe-inline'"],
   "img-src": ["'self'", "data:"],
   "font-src": ["'self'"],
@@ -35,153 +19,72 @@ export const CSP_DIRECTIVES = {
   "media-src": ["'self'", "https:"],
   "worker-src": ["'self'"],
   "manifest-src": ["'self'"],
-  "frame-src": [...YOUTUBE_EMBED_ORIGINS],
+  "frame-src": YOUTUBE_EMBED_ORIGINS,
   "object-src": ["'none'"],
   "base-uri": ["'none'"],
   "form-action": ["'self'"],
   "frame-ancestors": ["'none'"],
-} as const satisfies Record<string, readonly string[]>;
+};
 
-export const PUBLIC_READER_CSP_DIRECTIVES = {
-  "default-src": ["'self'"],
-  "script-src": [`'nonce-${NONCE_PLACEHOLDER}'`, "'strict-dynamic'"],
-  "style-src": ["'self'", "'unsafe-inline'"],
+// the public reader (/s): no forms, no frames, blob media and workers.
+const PUBLIC_READER: Directives = {
+  ...APP,
   "img-src": ["'self'", "data:", "blob:"],
-  "font-src": ["'self'"],
-  "connect-src": ["'self'"],
   "media-src": ["'self'", "blob:"],
   "worker-src": ["'self'", "blob:"],
-  "manifest-src": ["'self'"],
   "frame-src": ["'none'"],
-  "object-src": ["'none'"],
-  "base-uri": ["'none'"],
   "form-action": ["'none'"],
-  "frame-ancestors": ["'none'"],
-} as const satisfies Record<string, readonly string[]>;
+};
 
-export const PUBLIC_API_CONTENT_SECURITY_POLICY =
+// the public share api answers data, never documents.
+export const PUBLIC_API_CSP =
   "default-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
-/** Deterministic emission order. `upgrade-insecure-requests` is value-less. */
-const DIRECTIVE_ORDER = [
-  "default-src",
-  "script-src",
-  "style-src",
-  "img-src",
-  "font-src",
-  "connect-src",
-  "media-src",
-  "worker-src",
-  "manifest-src",
-  "frame-src",
-  "object-src",
-  "base-uri",
-  "form-action",
-  "frame-ancestors",
-  "upgrade-insecure-requests",
-] as const;
-
-export interface CspBuildOptions {
-  /** Fresh per-request nonce. */
-  nonce: string;
-  /** Adds `'unsafe-eval'` to script-src (React dev stacks / HMR) and dev websocket origins. */
-  isDev: boolean;
-  /** Adds `upgrade-insecure-requests` only for HTTPS document requests. */
-  isHttpsRequest: boolean;
-  /** External browser-connect origins (FastAPI/SSE + presigned storage). */
-  connectOrigins: readonly string[];
-  /** Explicit browser media origins not covered by the production HTTPS policy. */
-  mediaOrigins?: readonly string[];
-  /** Dev-only HMR websocket origins; included only when `isDev`. */
-  devWebSocketOrigins?: readonly string[];
+interface PolicyRequest {
+  readonly nonce: string;
+  readonly dev: boolean;
+  readonly https: boolean;
+  readonly ws: readonly string[];
 }
 
-/**
- * Serialize `CSP_DIRECTIVES` into a header string with the nonce/dev/connect values
- * applied. Pure and deterministic given its options.
- */
-export function buildContentSecurityPolicy(opts: CspBuildOptions): string {
-  const {
-    nonce,
-    isDev,
-    isHttpsRequest,
-    connectOrigins,
-    mediaOrigins = [],
-    devWebSocketOrigins = [],
-  } = opts;
-
-  const values: Record<string, string[]> = {};
-  for (const [name, sources] of Object.entries(CSP_DIRECTIVES)) {
-    values[name] = [...sources];
-  }
-
-  values["script-src"] = values["script-src"].map((source) =>
-    source.replace(NONCE_PLACEHOLDER, nonce),
-  );
-  if (isDev) {
-    values["script-src"].push("'unsafe-eval'");
-  }
-
-  values["connect-src"].push(...connectOrigins);
-  values["media-src"].push(...mediaOrigins);
-  if (isDev) {
-    values["connect-src"].push(...devWebSocketOrigins);
-  }
-
-  // Value-less directive; only meaningful for HTTPS documents (omitting it locally keeps
-  // http://localhost SSE/connect from being upgraded to https).
-  if (isHttpsRequest) {
-    values["upgrade-insecure-requests"] = [];
-  }
-
-  const serialized: string[] = [];
-  for (const name of DIRECTIVE_ORDER) {
-    if (!(name in values)) continue;
-    const sources = values[name];
-    serialized.push(sources.length > 0 ? `${name} ${sources.join(" ")}` : name);
-  }
-  return serialized.join("; ");
-}
-
-export function buildPublicReaderContentSecurityPolicy(
-  opts: Pick<CspBuildOptions, "nonce" | "isDev" | "isHttpsRequest"> & {
-    devWebSocketOrigins?: readonly string[];
-  },
+function serialize(
+  base: Directives,
+  request: PolicyRequest,
+  extra: Directives = {},
 ): string {
-  const values: Record<string, string[]> = {};
-  for (const [name, sources] of Object.entries(PUBLIC_READER_CSP_DIRECTIVES)) {
-    values[name] = [...sources];
-  }
-  values["script-src"] = values["script-src"].map((source) =>
-    source.replace(NONCE_PLACEHOLDER, opts.nonce),
+  const policy = Object.entries(base).map(([name, sources]) => {
+    let all = [...sources, ...(extra[name] ?? [])];
+    if (name === "script-src") {
+      all = [`'nonce-${request.nonce}'`, ...all];
+      if (request.dev) all.push("'unsafe-eval'");
+    }
+    if (name === "connect-src" && request.dev) all.push(...request.ws);
+    return `${name} ${all.join(" ")}`;
+  });
+  // https documents only: locally it would upgrade http://localhost connects.
+  if (request.https) policy.push("upgrade-insecure-requests");
+  return policy.join("; ");
+}
+
+// connect: the fastapi/sse and presigned storage origins; media: explicit
+// media origins beyond https:.
+export const appCsp = (
+  request: PolicyRequest & {
+    readonly connect: readonly string[];
+    readonly media: readonly string[];
+  },
+) =>
+  serialize(APP, request, {
+    "connect-src": request.connect,
+    "media-src": request.media,
+  });
+
+export const publicReaderCsp = (request: PolicyRequest) =>
+  serialize(PUBLIC_READER, request);
+
+// 16 random bytes, base64.
+export function cspNonce(): string {
+  return btoa(
+    String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))),
   );
-  if (opts.isDev) {
-    values["script-src"].push("'unsafe-eval'");
-    values["connect-src"].push(...(opts.devWebSocketOrigins ?? []));
-  }
-  if (opts.isHttpsRequest) {
-    values["upgrade-insecure-requests"] = [];
-  }
-  const serialized: string[] = [];
-  for (const name of DIRECTIVE_ORDER) {
-    if (!(name in values)) continue;
-    const sources = values[name];
-    serialized.push(sources.length > 0 ? `${name} ${sources.join(" ")}` : name);
-  }
-  return serialized.join("; ");
-}
-
-export function buildPublicApiContentSecurityPolicy(): string {
-  return PUBLIC_API_CONTENT_SECURITY_POLICY;
-}
-
-/** 16 random bytes, base64. Web Crypto + btoa only (edge + node safe). */
-export function generateNonce(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary);
 }

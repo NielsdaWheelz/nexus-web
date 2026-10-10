@@ -174,16 +174,16 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
 - `NEXUS_INTERNAL_SECRET` must be **identical** on Vercel and the VPS — it is the
   shared secret the BFF attaches as `X-Nexus-Internal` so FastAPI knows a request
   came through the trusted proxy.
-- Auth redirect origins are enforced in layers: Next.js admits Server Action
-  POSTs before app code; `apps/web/src/lib/auth/callback-origin.ts` resolves one
-  safe app origin from request metadata; `apps/web/src/lib/auth/redirects.ts`
-  builds `/auth/callback` URLs; hosted Supabase Auth must have exact callback
-  redirect URLs, reviewed in the Supabase dashboard when auth settings change.
-- Direct Vercel custom-domain frontend deploys leave
-  `SERVER_ACTION_ALLOWED_ORIGINS` empty. A host-rewriting frontend proxy must set
-  a minimal Next.js domain-pattern list and matching trusted-proxy auth origins.
-  Browser-extension redirect origins are frontend-only and stay out of the VPS
-  runtime env.
+- The web app has one public origin, `APP_PUBLIC_URL`: every absolute auth
+  redirect, every Origin check (auth forms, session resolve, the BFF) and the
+  auth cookies' Secure flag come from it. Other hosts (the Vercel default
+  domain, an alias) cannot sign in, so sessions exist only on it. Server
+  Actions keep Next.js's own check, same-host only: the Origin host must equal
+  the request host, whichever host that is. Hosted Supabase Auth must have
+  `${APP_PUBLIC_URL}/auth/callback` as an exact redirect URL, reviewed in the
+  Supabase dashboard when auth settings change. The firefox extension's one
+  redirect origin (`NEXUS_EXTENSION_REDIRECT_ORIGINS`) is frontend-only and
+  stays out of the VPS runtime env.
 - Local dev runs the same shape via Docker Compose (Postgres on `54320`, MinIO on
   `9000`) plus Supabase-local for Auth, started by `make dev`.
 
@@ -198,8 +198,9 @@ orientation summary.
 **Layering & ownership** ([`rules/layers.md`](rules/layers.md),
 [`rules/codebase.md`](rules/codebase.md), [`rules/cleanliness.md`](rules/cleanliness.md)).
 Top to bottom: Next middleware (network-free session classification + CSP) →
-Data Access Layer (`apps/web/src/lib/auth/dal.ts`, the _only_ verified-session
-authorization boundary) → Next `/api/*` routes (dumb proxy, no business logic) →
+the session protocol (`apps/web/src/lib/auth/session.ts`, the _only_
+verified-session authorization boundary, over the one Supabase boundary
+`apps/web/src/lib/supabase/`) → Next `/api/*` routes (dumb proxy, no business logic) →
 FastAPI middleware (JWT verify, request-id, viewer injection) → FastAPI route
 handlers (validate input, call one service, shape the response) → **services**
 (`python/nexus/services/`, all business logic, no HTTP/framework types,
@@ -260,7 +261,7 @@ deviation from a rule is explicit, see [`rules/overrides.md`](rules/overrides.md
 1. A client component calls `apiFetch<T>("/api/...")` (`lib/api/client.ts`). All
    product reads/writes go to **same-origin** `/api/*`; GETs are de-duplicated
    in-flight; a `401 E_UNAUTHENTICATED` hard-redirects to `/login`.
-2. **Next middleware** (`middleware.ts` → `lib/supabase/middleware.ts`) attaches a
+2. **Next middleware** (`middleware.ts`, with `lib/supabase/cookie.ts`) attaches a
    per-request CSP nonce and classifies the Supabase session cookie _without any
    network I/O_ into `active | refreshable | ended | anonymous`. `/api/*` is
    passed straight through — the proxy owns its own auth. Protected page and
@@ -771,30 +772,31 @@ Identities projects only Google and GitHub; an OAuth identity can be unlinked
 only while another supported OAuth identity remains, so unlink safety never
 depends on inferred password presence.
 
-web auth clients expose the credential capability their operation needs.
-`createSessionEstablishmentClient` retains incoming cookie names for chunk
-removal and the pkce verifier, while withholding old session values;
-`createCurrentSessionClient` supplies the effective current session for password
-update and identity linking. each command awaits its own sdk completion before
-the response adapter publishes ordered cookies and headers; no timer poll or
-extra session pre-read establishes readiness. explicit refresh receives the
-decoded refresh credential and requests one grant. the read-only verifier has
-empty storage and verifies its explicit access token; writable server actions
-retain their distinct cookie-store capability. response finalization preserves
-clear precedence and private, no-store headers. sdk retry/backoff can outlast
-the fetch budget; these capabilities do not add a full-operation deadline.
+web auth has one supabase boundary, `apps/web/src/lib/supabase/`: `cookie.ts`
+(edge-safe) owns the session cookie grammar and its network-free
+classification; `auth.ts` builds one sdk client per operation over an in-memory
+jar seeded from the caller's cookies, collects the cookie writes the caller
+publishes, and bounds the whole operation (requests, bodies, sdk retry/backoff)
+with one 5 s deadline. establishing operations keep incoming cookie names for
+chunk removal and the pkce verifier while withholding old session values;
+`refresh()` is the only place a refresh token is spent (one in-flight refresh
+per presented cookie per process). a session is `active` only with more than
+120 s left, beyond auth-js's own 90 s self-refresh margin plus the deadline, so
+the sdk never refreshes a live session itself. `lib/auth/session.ts` owns
+verification (read-only, for server components), liveness (refresh inline,
+for response owners) and the one cookie-effect adapter: `finish()` on route
+responses and `withActionSession()` for server actions, both with native
+deletion so expiry survives next's mutable-cookie merge, clear precedence and
+private, no-store headers. a session the provider reports ended, at refresh or
+under an operation (signed out or revoked elsewhere, a rejected token), is
+cleared with the one-minute "Your session ended." feedback.
 
-native handoff delivery owns local session failure cleanup. a successful token
-consume is followed by a checked session installation; any failed attempted
-installation clears local auth cookies, including an old session. failed mint
-after native google or oauth handoff establishment also clears them. validation
-and consume failures before installation preserve the prior jar. the response
-adapter owns complete old/new base and chunk deletion; the callback owns its
-execution and response publication. canonical clear and sdk removal writes use
-native cookie deletion so expiry survives next's mutable-cookie merge, including
-obsolete chunks and verifier removal on successful delivery. this is local
-cleanup, without restoring an old session, revoking provider credentials or
-recovering a consumed code.
+native handoff delivery owns local session failure cleanup: the user agent that
+minted a handoff code (the custom tab, the native http client) keeps no
+session, and any failed attempted installation clears old and new local auth
+names. validation and consume failures before installation preserve the prior
+jar. this is local cleanup, without restoring an old session, revoking provider
+credentials or recovering a consumed code.
 
 Other identity surfaces:
 
@@ -2027,9 +2029,12 @@ open over Resume and never become panes.
   `nexus_openables`, `nexus_api`, and `nexus_bff` Server-Timing phases separate
   auth, service, remaining API, and BFF time during manual diagnosis.
 - **BFF / proxy / auth / SSE** (`lib/api/*`, `lib/auth/*`, `lib/supabase/*`): covered
-  in §5. The browser holds **no** Supabase client and no tokens; `lib/auth/dal.ts`
-  `verifySession()` is the one verified-session boundary for protected pages/
-  actions; the SSE client mints a fresh stream token per connect.
+  in §5. The browser holds **no** Supabase client and no tokens; every
+  Supabase call is behind `lib/supabase/` (`cookie.ts` edge-safe, `auth.ts`
+  server); `lib/auth/session.ts` `verifySession()` is the one verified-session
+  boundary for protected pages, `liveSession()`/`withActionSession()` the one
+  refresh path for response owners; the SSE client mints a fresh stream token
+  per connect.
 - **Surfaces** (`components/*`, `app/(authenticated)/**/*PaneBody.tsx`): reader,
   chat, player, notes editor, Nexus, search, contributors, libraries/
   items, settings — all rendered as pane bodies. UI primitives live in

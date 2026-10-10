@@ -11,9 +11,11 @@ outside the current consolidation and is not malformed or unknown wire.
 
 evidence at main `104851703db7f445143bb0fff79ec8a6a3d84bf3`: all three POSTs
 use `apps/web/src/app/api/[...path]/route.ts:63-70`; no explicit override exists.
-`apps/web/src/lib/api/proxy.ts:164-169` emits auth503 when refresh raises
-`AuthDependencyError` (`lib/auth/refresh.ts:95-106`, dependency classification
-`lib/auth/session-response.ts:16-30`). active bearer verification independently
+`apps/web/src/lib/api/proxy.ts` `proxySession` emits auth503 when
+`lib/auth/session.ts` `liveSession` throws `AuthUnavailable` from the one
+refresh owner (`lib/supabase/auth.ts` `refresh`, dependency classification
+`isDependencyFailure` and the operation deadline; paths since the 2026-10-10
+auth reauthor). active bearer verification independently
 emits auth503 on JWKS failure (`python/nexus/auth/verifier.py:123-136`,
 `python/nexus/errors.py:218`, `python/nexus/auth/middleware.py:181-184`), forwarded
 unchanged by proxy `:95-109`. client `lib/api/client.ts:312-320` preserves the

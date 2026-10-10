@@ -1,20 +1,15 @@
 "use server";
 
-import { headers } from "next/headers";
+import { withActionSession } from "@/lib/auth/session";
+import { callbackPath, parseReturnTarget } from "@/lib/auth/urls";
+import { getEnv } from "@/lib/env";
+import { changeEmail } from "@/lib/supabase/auth";
 
-import { resolveServerActionRedirectOrigin } from "@/lib/auth/callback-origin";
-import {
-  EMAIL_CHANGE_FAILURE_MESSAGE,
-  projectEmailChangeError,
-} from "@/lib/auth/messages";
-import {
-  buildAuthCallbackUrl,
-  parseAuthReturnTarget,
-} from "@/lib/auth/redirects";
-import { createClient } from "@/lib/supabase/server";
+const EMAIL_CHANGE_FAILURE = "We couldn't update your email. Please try again.";
+const EMAIL_IN_USE = "An account with that email already exists.";
 
-const SETTINGS_ACCOUNT_RETURN_TARGET = parseAuthReturnTarget("/settings/account");
-
+// the confirmation link returns through /auth/callback (flow=email) to the
+// account pane; the pkce verifier it needs is published with the action.
 export async function changeEmailAction({
   email,
 }: {
@@ -22,40 +17,19 @@ export async function changeEmailAction({
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const normalized = email.trim().toLowerCase();
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized)) {
-    return { ok: false, error: EMAIL_CHANGE_FAILURE_MESSAGE };
+    return { ok: false, error: EMAIL_CHANGE_FAILURE };
   }
-
-  let redirectOrigin: string;
-  try {
-    redirectOrigin = resolveServerActionRedirectOrigin(await headers());
-  } catch (error) {
-    if (!(error instanceof Error)) {
-      throw error;
-    }
-    // justify-ignore-error: a misconfigured allowlist or a spoofed Host must
-    // fail closed as the public failure message — no confirmation link is minted
-    // and the raw resolver error (which names env vars) never reaches the client.
-    console.error("auth_email_change_origin_rejected", {
-      reason: error.message,
-    });
-    return { ok: false, error: EMAIL_CHANGE_FAILURE_MESSAGE };
-  }
-
-  const supabase = await createClient();
-  const { error } = await supabase.auth.updateUser(
-    { email: normalized },
-    {
-      emailRedirectTo: buildAuthCallbackUrl(
-        redirectOrigin,
-        SETTINGS_ACCOUNT_RETURN_TARGET
-      ),
-    }
+  const callback = callbackPath(
+    parseReturnTarget("/settings/account"),
+    "email",
   );
-  if (error) {
-    return {
-      ok: false,
-      error: projectEmailChangeError(error.code),
-    };
-  }
-  return { ok: true };
+  const redirectTo = new URL(callback, getEnv().appPublicOrigin).toString();
+  const result = await withActionSession((cookies) =>
+    changeEmail(cookies, normalized, redirectTo),
+  );
+  if (result?.outcome === "Sent") return { ok: true };
+  return {
+    ok: false,
+    error: result?.outcome === "InUse" ? EMAIL_IN_USE : EMAIL_CHANGE_FAILURE,
+  };
 }

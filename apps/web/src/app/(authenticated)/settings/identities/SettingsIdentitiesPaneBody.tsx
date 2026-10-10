@@ -12,12 +12,12 @@ import PaneSurface from "@/components/ui/PaneSurface";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { useResource } from "@/lib/api/useResource";
 import {
-  formatIdentityProvider,
-  getConnectableProviders,
-  mayUnlinkIdentity,
-  type LinkedIdentity,
+  OAUTH_PROVIDERS,
+  oauthPath,
+  PROVIDER_NAMES,
   type OAuthProvider,
-} from "@/lib/auth/identities";
+} from "@/lib/auth/urls";
+import type { LinkedIdentity } from "@/lib/supabase/auth";
 import {
   loadLinkedIdentities,
   unlinkLinkedIdentity,
@@ -50,11 +50,10 @@ function linkedDate(identity: LinkedIdentity, display: RenderEnvironment): strin
 // refused. role="button" keeps the control's accessible role. The browser never
 // holds a Supabase client.
 function ConnectProviderLink({ provider }: { provider: OAuthProvider }) {
-  const query = new URLSearchParams({ mode: "link", provider });
   return (
     <Button asChild variant="pill">
-      <a href={`/auth/oauth?${query}`} role="button">
-        {`Connect ${formatIdentityProvider(provider)}`}
+      <a href={oauthPath(provider, "link")} role="button">
+        {`Connect ${PROVIDER_NAMES[provider]}`}
       </a>
     </Button>
   );
@@ -113,13 +112,18 @@ export default function SettingsIdentitiesPaneBody() {
   }, [initialIdentities]);
 
   const connectableProviders = useMemo(
-    () => getConnectableProviders(identities),
+    () =>
+      OAUTH_PROVIDERS.filter(
+        (provider) => !identities.some((i) => i.provider === provider),
+      ),
     [identities]
   );
+  // the provider keeps the last identity: unlink only while two remain.
+  const mayUnlink = identities.length > 1;
 
   const handleUnlinkIdentity = useCallback(
     async (identity: LinkedIdentity) => {
-      if (!mayUnlinkIdentity(identities, identity.id)) {
+      if (!mayUnlink) {
         setError({ tone: "Danger", title: KEEP_ONE_IDENTITY_MESSAGE });
         setLoadFailure(false);
         return;
@@ -147,7 +151,7 @@ export default function SettingsIdentitiesPaneBody() {
         setUnlinkingIdentityId(null);
       }
     },
-    [identities, loadIdentities]
+    [mayUnlink, loadIdentities]
   );
 
   if (initialIdentities.status === "error") throw initialIdentities.error;
@@ -191,14 +195,13 @@ export default function SettingsIdentitiesPaneBody() {
           <CollectionView
             returnScope="Settings.Identities.Linked"
             rows={identities.map((identity) => {
-              const canUnlink = mayUnlinkIdentity(identities, identity.id);
               const pendingUnlink = unlinkingIdentityId === identity.id;
               return presentSettingsRow({
                 id: identity.id,
-                title: formatIdentityProvider(identity.provider),
+                title: PROVIDER_NAMES[identity.provider],
                 description: identity.email ?? "provider did not return an email",
                 meta: linkedDate(identity, display),
-                actions: canUnlink
+                actions: mayUnlink
                   ? [
                       {
                         kind: "command",
@@ -218,7 +221,7 @@ export default function SettingsIdentitiesPaneBody() {
           />
         )}
 
-        {loadFailure ? null : connectableProviders.length === 0 ? (
+        {loading || loadFailure ? null : connectableProviders.length === 0 ? (
           <FeedbackNotice
             content={{
               tone: "Neutral",
