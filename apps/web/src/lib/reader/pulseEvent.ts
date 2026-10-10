@@ -1,6 +1,6 @@
 "use client";
 
-import type { RetrievalLocator } from "@/lib/api/sse/locators";
+import type { RetrievalLocator } from "@/lib/resourceGraph/citationOut";
 import { createWindowEventChannel } from "@/lib/windowEventChannel";
 
 export const READER_PULSE_HIGHLIGHT = "nexus:reader-pulse-highlight";

@@ -1,6 +1,5 @@
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import type { ContextEdgeActionKind } from "@/lib/actions/contextEdgeActions";
 import { dismissDiscoveryLink } from "@/lib/connectionDiscovery";
 import { undoToolCall } from "@/lib/chat/toolCallUndo";
 import type { ConnectionOut } from "./connections";
@@ -8,16 +7,6 @@ import { removeContextRef } from "./contextRefs";
 import { deleteLink } from "./links";
 
 export type ConnectionMutation = NonNullable<ConnectionOut["mutation"]>;
-
-export function connectionMutationAction(mutation: ConnectionMutation): ContextEdgeActionKind {
-  switch (mutation.kind) {
-    case "unlink": return "Unlink";
-    case "dismiss_discovery": return "Dismiss";
-    case "detach_context": return "RemoveFromContext";
-    case "undo_assistant_chat":
-    case "undo_assistant_generation": return "UndoAssistant";
-  }
-}
 
 /** The server names the owning command; provenance alone never authorizes removal. */
 export async function mutateConnection(edgeId: string, mutation: ConnectionMutation): Promise<void> {

@@ -4,8 +4,7 @@
   padding: clamp(1rem, 3vw, 2.5rem);
   color: var(--ink);
 }
-.header,
-.health {
+.header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -21,7 +20,6 @@
 .scope,
 .busy,
 .state p,
-.health span,
 .pane thead th,
 .summary dt,
 .summary small,
@@ -38,8 +36,7 @@
 .timeZone {
   margin: 0.35rem 0 0;
 }
-.controls,
-.healthActions {
+.controls {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
@@ -56,24 +53,11 @@
   display: flex;
   gap: 0.25rem;
 }
-.health,
 .summary > div {
   padding: 0.8rem 1rem;
   border: 1px solid var(--edge-subtle);
   border-radius: 0.65rem;
   background: var(--surface-1);
-}
-.health {
-  align-items: center;
-  margin-top: 1rem;
-}
-.health h2 {
-  margin: 0;
-  font-size: 0.8rem;
-}
-.health strong,
-.health span {
-  margin-left: 0.6rem;
 }
 .summary,
 .artifacts {
@@ -257,12 +241,10 @@
   }
 }
 @container (max-width: 720px) {
-  .header,
-  .health {
+  .header {
     display: block;
   }
-  .controls,
-  .healthActions {
+  .controls {
     justify-content: start;
     margin-top: 1rem;
   }

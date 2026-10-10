@@ -34,8 +34,8 @@ export interface LibraryChooserSurfaceProps {
 }
 
 /**
- * The responsive placement/portal/dismissal/focus owner for the library chooser
- * (docs/cutovers/library-chooser-interaction-hard-cutover.md §6). Desktop mirrors
+ * The responsive placement/portal/dismissal/focus owner for the library
+ * chooser. Desktop mirrors
  * the ActionMenu anchored-popover trio (useAnchoredPosition +
  * useDismissOnOutsideOrEscape + useHistoryDismiss/useReturnFocus, portaled via the
  * shared transient-portal-container rule); mobile reuses the existing MobileSheet.

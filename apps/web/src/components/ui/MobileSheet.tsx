@@ -48,8 +48,7 @@ interface MobileSheetProps {
 }
 
 /**
- * The single mobile bottom-sheet owner (docs/cutovers/mobile-sheet-keyboard-
- * unification-hard-cutover.md): portal, scrim, grabber + drag-to-dismiss,
+ * The single mobile bottom-sheet owner: portal, scrim, grabber + drag-to-dismiss,
  * keyboard avoidance (shrink + lift via --keyboard-inset), safe-area padding,
  * and shared mobile modal lifecycle.
  *

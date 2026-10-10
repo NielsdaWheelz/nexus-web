@@ -1,7 +1,6 @@
 // The podcast episode-list view: the closed state/sort type, a strict total
 // URLSearchParams <-> PodcastEpisodeView codec, the unchanged episodes API
-// query, and the exact control inventories. See
-// docs/cutovers/collection-refinement-capability-hard-cutover.md.
+// query, and the exact control inventories.
 
 import { assertNever } from "@/lib/assertNever";
 

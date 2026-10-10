@@ -54,8 +54,6 @@ import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivatio
 import "prosemirror-view/style/prosemirror.css";
 import styles from "./NoteBodyEditor.module.css";
 
-export type NoteBodyChange = NoteBodyValue;
-
 export interface NoteBodySelection {
   anchor: number;
   head: number;

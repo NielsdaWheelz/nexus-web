@@ -63,7 +63,7 @@ adapter; inherited wire fields remain nullable. delete the reconstruction decode
 handwritten wire union and custom contract-error class. SSE owns its exhaustive
 runtime tag census checked against generated tags. core source: 1,429→735 lines.
 search first-page/continuation and nexus consume this boundary; collection/nexus
-keep its retained row contract. `ResourceTargetListbox` keeps `parseSnippetSegments`.
+keep its retained row contract. `LinkTargetDialog` keeps `parseSnippetSegments`.
 
 ## verification and trade-offs
 

@@ -1,6 +1,5 @@
 // Single owner of the Default -> "All" display alias. No component derives the
-// Default display name independently. See
-// docs/cutovers/library-all-and-smart-views-hard-cutover.md ("Presentation").
+// Default display name independently.
 
 export interface LibraryPresentation {
   name: string;

@@ -4,7 +4,7 @@
  * Reads a `text/event-stream` body, splits it into events per the SSE spec
  * (blank-line-separated, `event:` and `data:` fields), parses each event's
  * `data:` payload as JSON, and dispatches it. Knows nothing about the
- * application's event shapes — that lives in sse.ts's `toChatSSEEvent`.
+ * application's event shapes; each stream's caller decodes its own events.
  *
  * Framing rules:
  * 1. Only `event:` + `data:` lines are interpreted; `id:` and `retry:` are also honored.

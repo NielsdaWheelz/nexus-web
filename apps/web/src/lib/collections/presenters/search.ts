@@ -3,11 +3,10 @@
 import { absent, present } from "@/lib/api/presence";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import type { CollectionRowView } from "@/lib/collections/types";
-import { hrefForResourceActivation } from "@/lib/resources/activation";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
 
 export function presentSearchResult(vm: SearchResultRowViewModel): CollectionRowView {
-  const href = hrefForResourceActivation(vm.activation);
+  const href = vm.activation.href;
   if (!href) {
     throw new Error("Search result missing activation href");
   }

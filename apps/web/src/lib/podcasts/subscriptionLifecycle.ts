@@ -1,5 +1,4 @@
 import { sseClientDirect } from "@/lib/api/sse-client";
-import { fetchStreamToken } from "@/lib/api/streamToken";
 import type { Schema } from "@/lib/api/wire";
 import type {
   PodcastBackfillState,
@@ -96,13 +95,7 @@ export function observePodcastSubscriptionLifecycle(
     PodcastSubscriptionLifecycleEvent,
     PodcastSubscriptionLifecycleSnapshot
   >({
-    initialConnection: async () => {
-      const connection = await fetchStreamToken();
-      return {
-        url: `${connection.stream_base_url}/stream/podcast-subscriptions/${encodeURIComponent(podcastId)}/events`,
-        token: connection.token,
-      };
-    },
+    path: `/stream/podcast-subscriptions/${encodeURIComponent(podcastId)}/events`,
     signal: options.signal,
     decode: (type, data) =>
       decodePodcastSubscriptionLifecycleEvent(type, data, podcastId),

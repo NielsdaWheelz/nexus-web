@@ -1,4 +1,4 @@
-// SearchQuery ↔ URLSearchParams (search cutover §7.1). Preserves the omitted-vs-empty
+// SearchQuery ↔ URLSearchParams. Preserves the omitted-vs-empty
 // `kinds` distinction: requestedKinds === null omits the param (⇒ all); an empty set
 // emits `kinds=` (⇒ no results).
 

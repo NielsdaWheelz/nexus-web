@@ -6,10 +6,6 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function isPositiveFinite(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0;
-}
-
 export function expectExactRecord(
   raw: unknown,
   keys: readonly string[],
@@ -24,17 +20,6 @@ export function expectExactRecord(
     throw new TypeError(`${name} must contain exactly [${keys.join(", ")}]`);
   }
   return value;
-}
-
-export function hasExactKeys(
-  record: Record<string, unknown>,
-  expected: readonly string[],
-): boolean {
-  const actual = Object.keys(record);
-  return (
-    actual.length === expected.length &&
-    actual.every((key) => expected.includes(key))
-  );
 }
 
 export function expectRecord(
@@ -83,15 +68,6 @@ const CANONICAL_RFC_UUID_RE =
 
 export function isCanonicalUuid(raw: unknown): raw is string {
   return typeof raw === "string" && CANONICAL_UUID_RE.test(raw);
-}
-
-/** Strict decoder for canonical lowercase UUID wire values. */
-export function expectCanonicalUuid(raw: unknown, name: string): string {
-  const value = expectString(raw, name);
-  if (!isCanonicalUuid(value)) {
-    throw new TypeError(`${name} must be a canonical lowercase UUID`);
-  }
-  return value;
 }
 
 function isCanonicalRfcUuid(raw: unknown): raw is string {
@@ -183,19 +159,6 @@ export function expectInteger(raw: unknown, name: string): number {
   return raw;
 }
 
-export function expectBoundedInteger(
-  raw: unknown,
-  name: string,
-  minimum: number,
-  maximum: number,
-): number {
-  const value = expectInteger(raw, name);
-  if (value < minimum || value > maximum) {
-    throw new TypeError(`${name} is outside its supported range`);
-  }
-  return value;
-}
-
 export function expectNonnegativeInteger(raw: unknown, name: string): number {
   if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
     throw new TypeError(`${name} must be a nonnegative integer`);
@@ -206,26 +169,5 @@ export function expectNonnegativeInteger(raw: unknown, name: string): number {
 export function expectPositiveInteger(raw: unknown, name: string): number {
   const value = expectNonnegativeInteger(raw, name);
   if (value === 0) throw new TypeError(`${name} must be positive`);
-  return value;
-}
-
-export function expectNullableInteger(
-  raw: unknown,
-  name: string,
-): number | null {
-  if (raw === null) {
-    return null;
-  }
-  return expectInteger(raw, name);
-}
-
-export function expectNullableNonnegativeInteger(
-  raw: unknown,
-  name: string,
-): number | null {
-  const value = expectNullableInteger(raw, name);
-  if (value !== null && value < 0) {
-    throw new TypeError(`${name} must be nonnegative or null`);
-  }
   return value;
 }

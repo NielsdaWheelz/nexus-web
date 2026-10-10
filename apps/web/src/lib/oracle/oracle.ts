@@ -2,7 +2,6 @@
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { sseClientDirect } from "@/lib/api/sse-client";
-import { fetchStreamToken } from "@/lib/api/streamToken";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 
 export type OracleReading = Schema<"OracleReadingOut">;
@@ -49,13 +48,7 @@ export function watchReading(
   onLost: () => void,
 ): () => void {
   return sseClientDirect<OracleReading, OracleReading>({
-    initialConnection: async () => {
-      const connection = await fetchStreamToken();
-      return {
-        url: `${connection.stream_base_url}/stream/oracle-readings/${encodeURIComponent(id)}/events`,
-        token: connection.token,
-      };
-    },
+    path: `/stream/oracle-readings/${encodeURIComponent(id)}/events`,
     decode: (type, reading) => {
       if (type !== "state" && type !== "done")
         throw new Error(`Unknown SSE event type: ${type}`);

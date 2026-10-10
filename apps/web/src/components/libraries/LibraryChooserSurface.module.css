@@ -1,6 +1,5 @@
 /*
- * Desktop anchored-popover shell only (library-chooser-interaction-hard-cutover.md
- * §3 + chooser-content-contract §2.0/§2.1). Position comes from the inline
+ * Desktop anchored-popover shell only. Position comes from the inline
  * `useAnchoredPosition` style (position: fixed); this file never sets position.
  * The mobile surface is the shared MobileSheet and is not restyled here.
  */

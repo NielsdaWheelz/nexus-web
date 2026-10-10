@@ -688,7 +688,7 @@ function ImportsWorkspaceView({
               {/* The sentence the reader sees is the one an assistive reader
                   hears: one element, so browsing the pane linearly meets it
                   once, and a count that changes under a settled list is spoken
-                  politely where it is read (contract §6). */}
+                  politely where it is read. */}
               <p role="status" aria-live="polite" aria-atomic="true">
                 {summary === null || page.status !== "ready"
                   ? ""

@@ -4,7 +4,6 @@ import { useCallback, useSyncExternalStore } from "react";
 import { apiFetch } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { sseClientDirect } from "@/lib/api/sse-client";
-import { fetchStreamToken } from "@/lib/api/streamToken";
 
 export type MetadataEnrichmentView = Schema<"MetadataEnrichmentView">;
 export type MetadataOperation = Schema<"MetadataOperationOut">;
@@ -51,13 +50,7 @@ function publish(entry: Entry, snapshot: Observation): void {
 
 function connect(mediaId: string, entry: Entry): void {
   entry.stop = sseClientDirect<MetadataEnrichmentView>({
-    initialConnection: async () => {
-      const connection = await fetchStreamToken();
-      return {
-        url: `${connection.stream_base_url}/stream/media/${encodeURIComponent(mediaId)}/metadata/events`,
-        token: connection.token,
-      };
-    },
+    path: `/stream/media/${encodeURIComponent(mediaId)}/metadata/events`,
     decode: (type, data) => {
       if (type !== "state") {
         // justify-defect: this same-deploy endpoint has one registered event type.

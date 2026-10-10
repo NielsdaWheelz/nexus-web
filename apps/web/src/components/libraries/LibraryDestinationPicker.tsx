@@ -51,8 +51,8 @@ function toItem(
 }
 
 /**
- * The writable-destination adapter (docs/cutovers/library-chooser-interaction-
- * hard-cutover.md §4). It runs the shared destination search over the web
+ * The writable-destination adapter. It runs the shared destination search over
+ * the web
  * transport, edits a parent-owned local selection, offers create, and renders
  * the shared chooser inside the responsive surface. It is always mounted by
  * LibraryDestinationField, so query and last-good results survive a close and

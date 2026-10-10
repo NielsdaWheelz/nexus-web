@@ -44,7 +44,6 @@ export default function FloatingActionSurface({
   anchor,
   strategy = "anchor",
   lineRects,
-  boundary,
   placement = "below",
   align = "center",
   flip = false,
@@ -62,7 +61,6 @@ export default function FloatingActionSurface({
   anchor: HTMLElement | DOMRect | null;
   strategy?: "anchor" | "text-selection";
   lineRects?: DOMRect[];
-  boundary?: HTMLElement | DOMRect | null;
   placement?: "below" | "above" | "left" | "right";
   align?: "start" | "center" | "end";
   flip?: boolean;
@@ -154,7 +152,6 @@ export default function FloatingActionSurface({
           textSelectionPosition({
             anchorRect,
             lineRects,
-            boundary,
             surfaceRect,
             bounds,
             clampLeft,
@@ -185,7 +182,6 @@ export default function FloatingActionSurface({
   }, [
     align,
     anchor,
-    boundary,
     flip,
     isMobileViewport,
     lineRects,
@@ -285,7 +281,6 @@ export default function FloatingActionSurface({
 function textSelectionPosition({
   anchorRect,
   lineRects,
-  boundary,
   surfaceRect,
   bounds,
   clampLeft,
@@ -295,7 +290,6 @@ function textSelectionPosition({
 }: {
   anchorRect: DOMRect;
   lineRects?: DOMRect[];
-  boundary?: HTMLElement | DOMRect | null;
   surfaceRect: DOMRect;
   bounds: ViewportBounds;
   clampLeft: (value: number) => number;
@@ -303,7 +297,7 @@ function textSelectionPosition({
   gap: number;
   isMobileViewport: boolean;
 }): FloatingActionPosition {
-  const lines = visibleSelectionLines(lineRects, anchorRect, boundary, bounds);
+  const lines = visibleSelectionLines(lineRects, anchorRect, bounds);
   const firstLineRect = lines[0] ?? anchorRect;
   const lastLineRect = lines[lines.length - 1] ?? anchorRect;
   const visibleSelectionRect =
@@ -385,25 +379,15 @@ function textSelectionPosition({
 function visibleSelectionLines(
   lineRects: DOMRect[] | undefined,
   anchorRect: DOMRect,
-  boundary: HTMLElement | DOMRect | null | undefined,
   bounds: ViewportBounds,
 ): DOMRect[] {
-  const boundaryRect = resolveRect(boundary);
-  const clippingBounds = boundaryRect
-    ? intersectBounds(bounds, {
-        minLeft: boundaryRect.left,
-        minTop: boundaryRect.top,
-        maxLeft: boundaryRect.right,
-        maxTop: boundaryRect.bottom,
-      })
-    : bounds;
   const validLines = (lineRects ?? []).filter(
     (rect) => rect.width > 0 && rect.height > 0,
   );
   const visibleLines = validLines
-    .map((rect) => clippedRect(rect, clippingBounds))
+    .map((rect) => clippedRect(rect, bounds))
     .filter((rect): rect is DOMRect => rect !== null);
-  const fallback = clippedRect(anchorRect, clippingBounds) ?? anchorRect;
+  const fallback = clippedRect(anchorRect, bounds) ?? anchorRect;
   const lines = visibleLines.length > 0 ? visibleLines : [fallback];
 
   return lines.sort((leftRect, rightRect) => {
@@ -412,18 +396,6 @@ function visibleSelectionLines(
     }
     return leftRect.left - rightRect.left;
   });
-}
-
-function intersectBounds(
-  left: ViewportBounds,
-  right: ViewportBounds,
-): ViewportBounds {
-  return {
-    minLeft: Math.max(left.minLeft, right.minLeft),
-    minTop: Math.max(left.minTop, right.minTop),
-    maxLeft: Math.min(left.maxLeft, right.maxLeft),
-    maxTop: Math.min(left.maxTop, right.maxTop),
-  };
 }
 
 function clippedRect(rect: DOMRect, bounds: ViewportBounds): DOMRect | null {

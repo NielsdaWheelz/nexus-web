@@ -85,7 +85,7 @@ export const DESTINATION_REGISTRY = {
     href: "/search",
     keywords: ["find", "query"],
   },
-  // No root Authors directory page or fixed nav item (author-dedup cutover §7).
+  // No root Authors directory page or fixed nav item.
   // The identity remains for the standing head, Nexus, and keybinding. It
   // opens Search with People selected, so it needs an explicit icon because the
   // deleted /authors root route cannot supply the route-icon fallback.

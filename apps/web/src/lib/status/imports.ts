@@ -3,8 +3,7 @@
  * `SafeFailureCode`, one record per stage, and the deterministic templates the
  * pane, the inspector, the navigation badge, the Add sheet and the capture
  * surfaces all render. Every string a reader sees about an import is composed
- * here from typed facts, so a code can never be explained two different ways
- * (spec "Target behavior and content", contract §6).
+ * here from typed facts, so a code can never be explained two different ways.
  */
 
 import type { FeedbackContent } from "@/components/feedback/Feedback";
@@ -766,7 +765,7 @@ function transportFailureLine(failure: UploadTransportFailure): string {
  * The short name of one recorded event: the label a filter match is explained
  * with, and the opening clause of the fuller attempt narration. A failure names
  * the stage that failed and nothing else, so `Matched: Extraction failed · Sep 6`
- * stays one clause (spec content rubric, contract §6).
+ * stays one clause.
  */
 function historyEventLabel(entry: HistoryEntry): string {
   const facts = entry.facts;
@@ -1043,8 +1042,8 @@ export function importsSummaryLine(summary: ImportSummary): string {
 
 /**
  * The brief's second line, in the order a reader reads it: how much this view
- * matched, then how old what they are looking at is (spec content rubric
- * "Freshness/conflict", contract §6). Only the segments this read actually has
+ * matched, then how old what they are looking at is. Only the segments this
+ * read actually has
  * are returned — a count the page has not answered yet, or an observation that
  * has not landed, takes its separator with it, so the line can never open with
  * one.

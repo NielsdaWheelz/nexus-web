@@ -36,7 +36,7 @@ import styles from "./ImportsWorkspace.module.css";
 /**
  * The inspected import, in the order a reader needs it: what this means for
  * them, what a recovery would reuse and repeat, the attempts that were actually
- * recorded, and the safe identifiers underneath (contract §6). It reads the
+ * recorded, and the safe identifiers underneath. It reads the
  * detail and the history itself, so the pane only has to name the selection and
  * the event the open view matched it on.
  */

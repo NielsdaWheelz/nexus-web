@@ -1,4 +1,4 @@
-import type { RetrievalLocator } from "@/lib/api/sse/locators";
+import type { RetrievalLocator } from "@/lib/resourceGraph/citationOut";
 
 /**
  * A citation activation target. Discriminated on `kind`:

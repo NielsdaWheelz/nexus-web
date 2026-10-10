@@ -1,5 +1,4 @@
-/* All mobile bottom-sheet geometry lives here and only here
-   (docs/cutovers/mobile-sheet-keyboard-unification-hard-cutover.md). */
+/* All mobile bottom-sheet geometry lives here and only here. */
 
 .backdrop {
   position: fixed;

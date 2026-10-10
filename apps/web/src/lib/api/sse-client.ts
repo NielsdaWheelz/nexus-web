@@ -20,12 +20,9 @@ const DEFAULT_BACKOFF: SseBackoffConfig = {
 
 export type SseReconnectDecision = "continue" | "stop" | { after: string };
 
-interface SseConnection {
-  url: string;
-  token: string;
-}
-
-interface SseClientDirectCommon<TEvent, TPayload> {
+interface SseClientDirectArgs<TEvent, TPayload = unknown> {
+  /** Stream path under the deployment-selected stream base URL. */
+  path: string;
   /** Browser-authored same-system contract headers for the direct request. */
   requestHeaders?: HeadersInit;
   decode: (type: string, data: TPayload, id: string) => TEvent;
@@ -37,29 +34,18 @@ interface SseClientDirectCommon<TEvent, TPayload> {
   onReconnect?: (attempt: number) => Promise<SseReconnectDecision>;
   signal?: AbortSignal;
   initialAfter?: string;
-  lastEventId?: string;
   maxReconnects?: number;
   backoff?: SseBackoffConfig;
 }
 
-/** Exactly one bootstrap mode: a known URL, or a lazy URL/token pair acquired
- * inside the reconnect loop. */
-export type SseClientDirectArgs<TEvent, TPayload = unknown> =
-  SseClientDirectCommon<TEvent, TPayload> &
-  (
-    | { url: string; initialConnection?: never }
-    | { url?: never; initialConnection: () => Promise<SseConnection> }
-  );
-
 /**
  * Generic browser→FastAPI SSE client. Owns connect/reconnect, the stream-token
  * flow, abort, content-type validation, and `Last-Event-ID` resumption. Caller
- * supplies the URL and a typed event decoder.
+ * supplies the stream path and a typed event decoder.
  *
  * Token flow: every connect mints a fresh stream token via `fetchStreamToken`
- * (tokens live 60s). Callers that need the deployment-selected stream base URL
- * use `initialConnection` so that first token mint is also covered by the
- * bounded reconnect loop.
+ * (tokens live 60s). The first mint also selects the stream base URL, so it is
+ * covered by the bounded reconnect loop.
  *
  * Reconnect policy: network failures, HTTP 401/5xx, mid-stream interruptions,
  * and a clean EOF without a terminal event all reconnect with backoff, capped
@@ -72,8 +58,7 @@ export function sseClientDirect<TEvent, TPayload = unknown>(
   args: SseClientDirectArgs<TEvent, TPayload>,
 ): () => void {
   const {
-    url,
-    initialConnection,
+    path,
     requestHeaders,
     decode,
     isTerminal,
@@ -83,7 +68,6 @@ export function sseClientDirect<TEvent, TPayload = unknown>(
     onReconnect,
     signal,
     initialAfter,
-    lastEventId: initialLastEventId,
     maxReconnects = 8,
     backoff = DEFAULT_BACKOFF,
   } = args;
@@ -93,20 +77,17 @@ export function sseClientDirect<TEvent, TPayload = unknown>(
     ? combineSignals(signal, controller.signal)
     : controller.signal;
 
-  let lastEventId = initialLastEventId ?? "";
+  let lastEventId = "";
   let nextAfter = initialAfter ?? "";
   let reconnectBaseMs = backoff.baseMs;
   let reconnectDelayMs = reconnectBaseMs;
   let reconnects = 0;
-  let streamUrl = url ?? null;
+  let streamUrl: string | null = null;
 
-  const nextConnection = async (): Promise<SseConnection> => {
-    if (streamUrl === null) {
-      const connection = await initialConnection!();
-      streamUrl = connection.url;
-      return connection;
-    }
-    return { url: streamUrl, token: (await fetchStreamToken()).token };
+  const nextConnection = async (): Promise<{ url: string; token: string }> => {
+    const { stream_base_url, token } = await fetchStreamToken();
+    streamUrl ??= `${stream_base_url}${path}`;
+    return { url: streamUrl, token };
   };
 
   (async () => {

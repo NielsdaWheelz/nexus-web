@@ -1,7 +1,7 @@
 "use client";
 
 // Per-pane "read filters/sort from the pane URL, write them back via the pane
-// router" pattern (CT-5), consolidated into one owner. The URL is the single
+// router" pattern, consolidated into one owner. The URL is the single
 // source of truth; `state` is derived from the pane search params and `setState`
 // re-encodes into a pane-router replace. Callers supply a value-object⇄
 // URLSearchParams codec (see lib/search/searchParams.ts for the precedent).

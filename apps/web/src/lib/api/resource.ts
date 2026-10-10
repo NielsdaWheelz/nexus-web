@@ -87,10 +87,6 @@ export interface NotePagesResourceParams {
   view?: UpdatedTitleIndexView;
 }
 
-interface NoteBlockResourceParams {
-  blockId: string;
-}
-
 function encoded(value: string): string {
   return encodeURIComponent(value);
 }
@@ -233,12 +229,6 @@ export const notePagesResource: ResourceDescriptor<NotePagesResourceParams> = {
   cacheKey: (params) => `notes:pages${notePagesQuery(params)}`,
   serverPath: (params) => `/notes/pages${notePagesQuery(params)}`,
   clientPath: (params) => `/api/notes/pages${notePagesQuery(params)}`,
-};
-
-export const noteBlockResource: ResourceDescriptor<NoteBlockResourceParams> = {
-  cacheKey: ({ blockId }) => `note-block:${blockId}`,
-  serverPath: ({ blockId }) => `/notes/blocks/${encoded(blockId)}`,
-  clientPath: ({ blockId }) => `/api/notes/blocks/${encoded(blockId)}`,
 };
 
 export const conversationsInitialResource: ResourceDescriptor<ConversationIndexResourceParams> =

@@ -21,8 +21,8 @@ export interface LibraryDestinationFieldProps {
 }
 
 /**
- * The compact destination field (docs/cutovers/library-chooser-interaction-hard-
- * cutover.md §4): the shared trigger + summary, which never expand in place, and
+ * The compact destination field: the shared trigger + summary, which never
+ * expand in place, and
  * the anchored picker. It owns `open` and always mounts the picker adapter (so
  * query/results survive close). An in-flight create is the only dismissal lock.
  */

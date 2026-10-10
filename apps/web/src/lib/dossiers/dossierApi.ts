@@ -3,7 +3,6 @@
 import { apiCommand204, apiFetch, type ApiPath } from "@/lib/api/client";
 import { absent, present } from "@/lib/api/presence";
 import { sseClientDirect } from "@/lib/api/sse-client";
-import { fetchStreamToken } from "@/lib/api/streamToken";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 
 export type DossierTarget =
@@ -92,13 +91,7 @@ export function watchDossierBuild(
   onLost: () => void,
 ): () => void {
   return sseClientDirect<DossierBuild, DossierBuild>({
-    initialConnection: async () => {
-      const connection = await fetchStreamToken();
-      return {
-        url: `${connection.stream_base_url}/stream/artifact-builds/${encodeURIComponent(buildHandle)}/events`,
-        token: connection.token,
-      };
-    },
+    path: `/stream/artifact-builds/${encodeURIComponent(buildHandle)}/events`,
     decode: (type, build) => {
       if (type !== "state" && type !== "done")
         throw new Error(`Unknown SSE event type: ${type}`);

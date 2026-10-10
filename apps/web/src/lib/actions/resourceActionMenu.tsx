@@ -24,10 +24,11 @@ import type { MountedActionRequest } from "@/lib/actions/mountedActionHandoff";
 import {
   executeResourceChat,
   executeResourceLibraryPlacement,
-  executeResourceOpen,
-  executeResourceShare,
 } from "@/lib/resources/resourceActionExecution";
-import type { ResourceActivation } from "@/lib/resources/activation";
+import {
+  activateResource,
+  type ResourceActivation,
+} from "@/lib/resources/activation";
 import type { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import {
@@ -39,6 +40,7 @@ import type { LecternCapability } from "@/lib/lectern/LecternProvider";
 import type { CompletionUndoInput } from "@/lib/lectern/useCompletionUndo";
 import { offlineCall } from "@/lib/offline/bridge";
 import type { useShareController } from "@/lib/sharing/controller";
+import { resourceShareTarget } from "@/lib/sharing/targets";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import { deleteMemberLibrary } from "@/lib/libraries/client";
@@ -157,18 +159,15 @@ function activate(
   ports: ResourceActionPorts,
   disposition: "Follow" | "Fork" = "Follow",
 ) {
-  executeResourceOpen({
-    activation,
-    resourceNavigation: {
-      disposition: { kind: disposition },
-      activateTarget: ({ target, disposition: targetDisposition }) => {
-        ports.workspace.activateWorkspaceTarget({
-          originPaneId: ports.activePaneId,
-          target,
-          disposition: targetDisposition,
-          modality: "Programmatic",
-        });
-      },
+  activateResource(activation, {
+    disposition: { kind: disposition },
+    activateTarget: ({ target, disposition: targetDisposition }) => {
+      ports.workspace.activateWorkspaceTarget({
+        originPaneId: ports.activePaneId,
+        target,
+        disposition: targetDisposition,
+        modality: "Programmatic",
+      });
     },
   });
 }
@@ -714,15 +713,11 @@ export function resourceActionDescriptors({
             document.activeElement instanceof HTMLElement
               ? document.activeElement
               : null;
-          executeResourceShare({
-            subject,
-            openShare: ports.openShare,
-            options: {
-              returnFocusTo: () => anchor,
-              returnFocusFallback: present(() =>
-                findPaneLandmarkFocusTarget(ports.activePaneId),
-              ),
-            },
+          ports.openShare(resourceShareTarget(subject.ref), {
+            returnFocusTo: () => anchor,
+            returnFocusFallback: present(() =>
+              findPaneLandmarkFocusTarget(ports.activePaneId),
+            ),
           });
         });
       case "DownloadOriginal":

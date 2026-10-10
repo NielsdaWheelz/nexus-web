@@ -205,7 +205,7 @@
 }
 
 /* Touch keeps every command at a full target while the desktop toolbar and rows
-   stay compact (contract §6: 44 px targets on mobile). A switch and a labelled
+   stay compact (44 px targets on mobile). A switch and a labelled
    select paint their target on the enclosing label, so labels are sized too and
    the switch's own checkbox — screen-reader-only, and never the box a finger
    lands on — is left alone. The inspector is published outside this subtree, so

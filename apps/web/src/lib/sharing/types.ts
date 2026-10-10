@@ -1,19 +1,12 @@
 import type { Presence } from "@/lib/api/presence";
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
 
-const SHARE_MODES = [
-  "None",
-  "CopyOnly",
-  "ResourceGrants",
-  "HighlightGrants",
-  "LibraryMembership",
-] as const;
-
-export type ShareMode = (typeof SHARE_MODES)[number];
-
-export function isShareMode(value: unknown): value is ShareMode {
-  return SHARE_MODES.includes(value as ShareMode);
-}
+export type ShareMode =
+  | "None"
+  | "CopyOnly"
+  | "ResourceGrants"
+  | "HighlightGrants"
+  | "LibraryMembership";
 
 declare const canonicalResourceRefBrand: unique symbol;
 export type CanonicalResourceRef = string & {

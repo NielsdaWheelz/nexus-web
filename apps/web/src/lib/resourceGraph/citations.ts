@@ -7,14 +7,12 @@
  * evidence all flow through here. The renderer's input type is unchanged.
  */
 
-import { isRetrievalLocator } from "@/lib/api/sse/locators";
 import type { CitationOut } from "@/lib/resourceGraph/citationOut";
-import { hrefForResourceActivation } from "@/lib/resources/activation";
 import type { ReaderCitationData } from "@/lib/resourceGraph/readerCitation";
 import { type ReaderSourceTarget } from "@/lib/resourceGraph/readerTarget";
 
 function readerTargetForCitation(c: CitationOut): ReaderSourceTarget | null {
-  if (!isRetrievalLocator(c.locator)) {
+  if (c.locator === null) {
     return null;
   }
   if (c.locator.type === "note_block_offsets") {
@@ -28,7 +26,7 @@ function readerTargetForCitation(c: CitationOut): ReaderSourceTarget | null {
       highlight_behavior: "pulse",
       focus_behavior: "scroll_into_view",
       label: c.snapshot?.title ?? undefined,
-      href: hrefForResourceActivation(c.activation),
+      href: c.activation.href,
       evidence_id: c.target_ref.id,
     };
   }
@@ -46,7 +44,7 @@ function readerTargetForCitation(c: CitationOut): ReaderSourceTarget | null {
     highlight_behavior: "pulse",
     focus_behavior: "scroll_into_view",
     label: c.snapshot?.title ?? undefined,
-    href: hrefForResourceActivation(c.activation),
+    href: c.activation.href,
     evidence_span_id,
   };
 }
