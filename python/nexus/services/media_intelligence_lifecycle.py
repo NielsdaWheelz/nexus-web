@@ -136,7 +136,6 @@ def ensure_media_unit_in_tx(db: Session, *, media_id: UUID) -> None:
             "media_id": str(media_id),
             "summary_id": str(summary_id),
             "content_fingerprint": fingerprint,
-            "coordination": {},
         },
     )
     db.flush()
@@ -164,10 +163,10 @@ def delete_media_unit(db: Session, *, media_id: UUID) -> None:
 
 
 def _media_unit_model_name() -> str:
-    from nexus.services import generation_policy
-    from nexus.services.generation_spec import CodexPersonalSelection
+    from nexus.schemas.llm import CodexPersonalSelection
+    from nexus.services.generation.policy import policy
 
-    selection = generation_policy.background_operation_policy(MEDIA_UNIT_OPERATION).selection
+    selection = policy(MEDIA_UNIT_OPERATION).selection
     if not isinstance(selection, CodexPersonalSelection):
         raise AssertionError("media summary must ship through Codex Personal")
     return selection.model

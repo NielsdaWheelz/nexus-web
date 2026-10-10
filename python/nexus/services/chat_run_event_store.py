@@ -276,3 +276,16 @@ def finalize_run(
             "cancelled": status == "cancelled",
         },
     )
+
+
+def finalize_dead_run(db: Session, run: ChatRun) -> None:
+    """End a locked run whose attempt died: ``cancelled`` if asked, else ``interrupted``."""
+
+    cancelled = run.cancel_requested_at is not None
+    finalize_run(
+        db,
+        run_id=run.id,
+        status="cancelled" if cancelled else "error",
+        assistant_content="",
+        error_code=None if cancelled else "interrupted",
+    )

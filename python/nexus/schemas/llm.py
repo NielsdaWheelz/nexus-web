@@ -1,4 +1,4 @@
-"""Strict product-facing generation catalog, selection, and failure schemas."""
+"""Generation wire: exact selections, route disclosure, readiness, the catalog, chat failures."""
 
 from __future__ import annotations
 
@@ -9,18 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from nexus.config import GenerationApiProvider
 from nexus.schemas.presence import Presence
-from nexus.services.generation_spec import (
-    BillingDisclosure,
-    GenerationSelectionSpec,
-    MeteredApiBilling,
-    PrivacyDisclosure,
-    ProcessorChain,
-    SelectionPresentation,
-    SubscriptionBilling,
-)
 
 
-class _StrictGenerationModel(BaseModel):
+class _Frozen(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
 
@@ -30,39 +21,87 @@ def _aware(value: datetime) -> datetime:
     return value
 
 
+ModelKey = Annotated[str, Field(min_length=1, max_length=256, pattern=r"^[^\s]+$")]
+ReasoningKey = Annotated[str, Field(pattern=r"^[!-~]{1,64}$")]
+
+
+class CodexPersonalSelection(_Frozen):
+    route: Literal["CodexPersonal"]
+    model: ModelKey
+    reasoning: ReasoningKey
+
+
+class ProviderApiSelection(_Frozen):
+    route: Literal["ProviderApi"]
+    model_ref: ModelKey
+    reasoning: ReasoningKey
+
+
+GenerationSelection = Annotated[
+    CodexPersonalSelection | ProviderApiSelection, Field(discriminator="route")
+]
+
+
+class SubscriptionBilling(_Frozen):
+    kind: Literal["Subscription"] = "Subscription"
+    label: Literal["Codex subscription"] = "Codex subscription"
+
+
+class MeteredApiBilling(_Frozen):
+    kind: Literal["MeteredApi"] = "MeteredApi"
+    label: Literal["Metered API"] = "Metered API"
+
+
+class PrivacyDisclosure(_Frozen):
+    summary: str = Field(min_length=1, max_length=1_000)
+    retention: str = Field(min_length=1, max_length=1_000)
+    training: str = Field(min_length=1, max_length=1_000)
+
+
+class ProcessorChain(_Frozen):
+    processors: tuple[str, ...] = Field(min_length=1, max_length=4)
+
+
+class SelectionPresentation(_Frozen):
+    route_label: str = Field(min_length=1, max_length=128)
+    model_label: str = Field(min_length=1, max_length=256)
+    reasoning_label: str = Field(min_length=1, max_length=128)
+    billing: Annotated[SubscriptionBilling | MeteredApiBilling, Field(discriminator="kind")]
+    privacy: PrivacyDisclosure
+    processor_chain: ProcessorChain
+
+
 ReadinessCode = Literal[
-    "catalog_refresh_failed",
     "codex_host_unavailable",
-    "credential_unavailable",
     "required_tool_unavailable",
 ]
 
 
-class Ready(_StrictGenerationModel):
+class Ready(_Frozen):
     kind: Literal["Ready"] = "Ready"
     last_checked: datetime
 
-    _last_checked_is_aware = field_validator("last_checked")(_aware)
+    _aware = field_validator("last_checked")(_aware)
 
 
-class OperatorActionRequired(_StrictGenerationModel):
+class OperatorActionRequired(_Frozen):
     kind: Literal["OperatorActionRequired"] = "OperatorActionRequired"
     code: ReadinessCode
     explanation: str = Field(min_length=1, max_length=1_000)
     action: str = Field(min_length=1, max_length=500)
     last_checked: datetime
 
-    _last_checked_is_aware = field_validator("last_checked")(_aware)
+    _aware = field_validator("last_checked")(_aware)
 
 
-class TemporarilyUnavailable(_StrictGenerationModel):
+class TemporarilyUnavailable(_Frozen):
     kind: Literal["TemporarilyUnavailable"] = "TemporarilyUnavailable"
     code: ReadinessCode
     explanation: str = Field(min_length=1, max_length=1_000)
     action: str = Field(min_length=1, max_length=500)
     last_checked: datetime
 
-    _last_checked_is_aware = field_validator("last_checked")(_aware)
+    _aware = field_validator("last_checked")(_aware)
 
 
 Readiness = Annotated[
@@ -70,11 +109,11 @@ Readiness = Annotated[
 ]
 
 
-class Selectable(_StrictGenerationModel):
+class Selectable(_Frozen):
     kind: Literal["Selectable"] = "Selectable"
 
 
-class Ineligible(_StrictGenerationModel):
+class Ineligible(_Frozen):
     kind: Literal["Ineligible"] = "Ineligible"
     code: Literal["unsupported_capability", "selection_not_configured"]
     explanation: str = Field(min_length=1, max_length=1_000)
@@ -89,27 +128,24 @@ SelectionState = Annotated[
 ]
 
 
-class CodexPersonalRoute(_StrictGenerationModel):
+class CodexPersonalRoute(_Frozen):
     kind: Literal["CodexPersonal"] = "CodexPersonal"
 
 
-class ProviderApiRoute(_StrictGenerationModel):
+class ProviderApiRoute(_Frozen):
     kind: Literal["ProviderApi"] = "ProviderApi"
     provider: GenerationApiProvider
 
 
-GenerationRoute = Annotated[CodexPersonalRoute | ProviderApiRoute, Field(discriminator="kind")]
-
-
-class GenerationReasoningRow(_StrictGenerationModel):
-    key: str = Field(pattern=r"^[!-~]{1,64}$")
+class GenerationReasoningRow(_Frozen):
+    key: ReasoningKey
     label: str = Field(min_length=1, max_length=256)
     readiness: Readiness
     chat_state: SelectionState
 
 
-class GenerationModelRow(_StrictGenerationModel):
-    key: str = Field(min_length=1, max_length=256, pattern=r"^[^\s]+$")
+class GenerationModelRow(_Frozen):
+    key: ModelKey
     label: str = Field(min_length=1, max_length=256)
     description: str = Field(min_length=1, max_length=1_000)
     source_context_window: Presence[int]
@@ -122,123 +158,88 @@ class GenerationModelRow(_StrictGenerationModel):
     reasoning: tuple[GenerationReasoningRow, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def _default_and_reasoning_are_closed(self) -> Self:
-        for capacity in (self.source_context_window, self.source_max_output_tokens):
-            if capacity.kind == "Present" and capacity.value <= 0:
-                raise ValueError("source model capacities must be positive when reported")
-        keys = tuple(row.key for row in self.reasoning)
+    def _default_names_one_row(self) -> Self:
+        keys = [row.key for row in self.reasoning]
         if len(set(keys)) != len(keys):
             raise ValueError("generation reasoning rows must be unique")
-        if self.source_default_reasoning.kind == "Present":
-            if keys.count(self.source_default_reasoning.value) != 1:
-                raise ValueError("source default must name exactly one reasoning row")
+        default = self.source_default_reasoning
+        if default.kind == "Present" and default.value not in keys:
+            raise ValueError("source default must name a reasoning row")
         return self
 
 
-class GenerationCatalogRoute(_StrictGenerationModel):
-    route: GenerationRoute
+class GenerationCatalogRoute(_Frozen):
+    route: Annotated[CodexPersonalRoute | ProviderApiRoute, Field(discriminator="kind")]
     label: str = Field(min_length=1, max_length=128)
     readiness: Readiness
-    billing: BillingDisclosure
+    billing: Annotated[SubscriptionBilling | MeteredApiBilling, Field(discriminator="kind")]
     privacy: PrivacyDisclosure
     processor_chain: ProcessorChain
     models: tuple[GenerationModelRow, ...] = Field(min_length=1)
 
 
-class ChatSeed(_StrictGenerationModel):
-    policy_revision: str = Field(min_length=1, max_length=128)
-    selection: GenerationSelectionSpec
+class ChatSeed(_Frozen):
+    selection: GenerationSelection
     state: SelectionState
     presentation: SelectionPresentation
 
 
-class RunSelectionOut(_StrictGenerationModel):
-    selection: GenerationSelectionSpec
-    catalog_definition_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
-    source_catalog_definition_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
-    display_at_dispatch: SelectionPresentation
-    tool_authority: Literal["ReadOnly", "AdditiveWrites"]
-
-
-class GenerationCatalog(_StrictGenerationModel):
-    definition_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+class GenerationCatalog(_Frozen):
     observed_at: datetime
     chat_seed: ChatSeed
     routes: tuple[GenerationCatalogRoute, ...] = Field(min_length=1)
 
-    _observed_at_is_aware = field_validator("observed_at")(_aware)
-
-    @model_validator(mode="after")
-    def _catalog_order_is_duplicate_free(self) -> Self:
-        route_keys: list[tuple[str, str]] = []
-        for route in self.routes:
-            route_keys.append(
-                (
-                    route.route.kind,
-                    route.route.provider if isinstance(route.route, ProviderApiRoute) else "",
-                )
-            )
-            model_keys = tuple(model.key for model in route.models)
-            if len(set(model_keys)) != len(model_keys):
-                raise ValueError("generation catalog models must be unique within a route")
-        if len(set(route_keys)) != len(route_keys):
-            raise ValueError("generation catalog routes must be unique")
-        return self
+    _aware = field_validator("observed_at")(_aware)
 
 
-class InvalidGenerationSelection(_StrictGenerationModel):
+class RunSelectionOut(_Frozen):
+    selection: GenerationSelection
+    display_at_dispatch: SelectionPresentation
+    tool_authority: Literal["ReadOnly", "AdditiveWrites"]
+
+
+class InvalidGenerationSelection(_Frozen):
     code: Literal["InvalidGenerationSelection"] = "InvalidGenerationSelection"
     field: Presence[str]
     explanation: str = Field(min_length=1, max_length=1_000)
 
 
-class GenerationSelectionUnavailable(_StrictGenerationModel):
+class GenerationSelectionUnavailable(_Frozen):
     code: Literal["GenerationSelectionUnavailable"] = "GenerationSelectionUnavailable"
-    selection: GenerationSelectionSpec
+    selection: GenerationSelection
     state: NonSelectableState
 
 
-class CatalogDefinitionStale(_StrictGenerationModel):
-    code: Literal["CatalogDefinitionStale"] = "CatalogDefinitionStale"
-    current_definition_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
-
-
-GenerationSelectionFailure = Annotated[
-    InvalidGenerationSelection | GenerationSelectionUnavailable | CatalogDefinitionStale,
-    Field(discriminator="code"),
-]
-
-
-class ExpectedChatFailureBase(BaseModel):
+class _ChatFailure(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class CancelledChatFailure(ExpectedChatFailureBase):
+class CancelledChatFailure(_ChatFailure):
     code: Literal["cancelled"] = "cancelled"
     can_rerun: bool
 
 
-class ContextTooLargeChatFailure(ExpectedChatFailureBase):
+class ContextTooLargeChatFailure(_ChatFailure):
     code: Literal["context_too_large"] = "context_too_large"
     can_rerun: Literal[False] = False
 
 
-class InvalidOutputChatFailure(ExpectedChatFailureBase):
+class InvalidOutputChatFailure(_ChatFailure):
     code: Literal["invalid_output"] = "invalid_output"
     can_rerun: Literal[False] = False
 
 
-class IncompleteChatFailure(ExpectedChatFailureBase):
+class IncompleteChatFailure(_ChatFailure):
     code: Literal["incomplete"] = "incomplete"
     can_rerun: bool
 
 
-class AssistantUnavailableChatFailure(ExpectedChatFailureBase):
+class AssistantUnavailableChatFailure(_ChatFailure):
     code: Literal["assistant_unavailable"] = "assistant_unavailable"
     can_rerun: bool
 
 
-class OperatorDefectChatFailure(ExpectedChatFailureBase):
+class OperatorDefectChatFailure(_ChatFailure):
     code: Literal["operator_defect"] = "operator_defect"
     can_rerun: Literal[False] = False
 
@@ -251,44 +252,4 @@ ExpectedChatFailure = Annotated[
     | AssistantUnavailableChatFailure
     | OperatorDefectChatFailure,
     Field(discriminator="code"),
-]
-
-
-__all__ = [
-    "AssistantUnavailableChatFailure",
-    "BillingDisclosure",
-    "CancelledChatFailure",
-    "CatalogDefinitionStale",
-    "ChatSeed",
-    "CodexPersonalRoute",
-    "ContextTooLargeChatFailure",
-    "ExpectedChatFailure",
-    "ExpectedChatFailureBase",
-    "GenerationCatalog",
-    "GenerationCatalogRoute",
-    "GenerationModelRow",
-    "GenerationReasoningRow",
-    "GenerationRoute",
-    "GenerationSelectionFailure",
-    "GenerationSelectionUnavailable",
-    "IncompleteChatFailure",
-    "Ineligible",
-    "InvalidGenerationSelection",
-    "InvalidOutputChatFailure",
-    "MeteredApiBilling",
-    "NonSelectableState",
-    "OperatorActionRequired",
-    "OperatorDefectChatFailure",
-    "PrivacyDisclosure",
-    "ProcessorChain",
-    "ProviderApiRoute",
-    "Readiness",
-    "ReadinessCode",
-    "Ready",
-    "RunSelectionOut",
-    "Selectable",
-    "SelectionPresentation",
-    "SelectionState",
-    "SubscriptionBilling",
-    "TemporarilyUnavailable",
 ]

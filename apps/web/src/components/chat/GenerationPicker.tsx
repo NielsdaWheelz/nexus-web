@@ -184,7 +184,7 @@ export function CandidatePicker({
   op: "rerun" | "regenerate";
   source: Selection;
   disabled: boolean;
-  onConfirm(selection: Selection, revision: string): Promise<boolean>;
+  onConfirm(selection: Selection): Promise<boolean>;
 }) {
   const verb = op === "rerun" ? "Rerun" : "Regenerate";
   const [draft, setDraft] = useState<SelectionDraft | null>(null);
@@ -237,10 +237,7 @@ export function CandidatePicker({
             onClick={async () => {
               if (draft.kind !== "Selected") return;
               setSubmitting(true);
-              const accepted = await onConfirm(
-                draft.selection,
-                catalog.definition_revision,
-              );
+              const accepted = await onConfirm(draft.selection);
               setSubmitting(false);
               if (accepted) setDraft(null);
               else refresh();

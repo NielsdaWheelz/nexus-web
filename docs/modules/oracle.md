@@ -70,14 +70,14 @@ per viewer), its job, and the viewer's membership in the corpus library (so ever
 asker's search and chips reach the corpus). The route acknowledges
 `{reading_id}`; the browser mints one key per press.
 
-The job (`oracle_reading_generate`) publishes a journaled outcome without
-dispatch; an uncertain dispatch without local recovery raises and the job
-dead-letters. Otherwise it prepares a snapshot — one query embedding, refreshed
-anchors, the public lane, the personal lane (the viewer's visible media and notes,
-corpus media excluded in SQL, four distinct owners), the plate — and dispatches it
-once through the durable generation contract; a replay decodes the snapshot from
-the frozen admission and never retrieves again. `synthesis.py` owns the prompt,
-the strict output and every reading rule (argument 80–180 chars beginning "Of ",
+The job (`oracle_reading_generate`) prepares a snapshot — one query embedding,
+refreshed anchors, the public lane, the personal lane (the viewer's visible media
+and notes, corpus media excluded in SQL, four distinct owners), the plate — and
+generates once (`generate`, [llms.md](llms.md)). Nothing replays: a dead job's
+generation closes `interrupted` and its reading stays pending
+([ticket](../tickets/dead-background-jobs-leave-domain-rows-pending.md)).
+`synthesis.py` owns the prompt, the strict output (`accept`, the decode) and every
+reading rule (argument 80–180 chars beginning "Of ",
 motto, gloss, one of the 24 themes, three distinct offered passages one per phase,
 a user passage when one was offered, no URLs, citation markers or four-word
 windows of an offered quote); any violation is `invalid_output` with no repair.

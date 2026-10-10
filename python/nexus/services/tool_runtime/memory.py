@@ -55,15 +55,8 @@ async def _execute(
         raise ExecutorConfigurationDefect("memory requires the generation position recorder")
     principal = UUID(str(context.principal))
     authority = recorder.authority
-    if (
-        principal != recorder.principal_id
-        or authority.spec.operation != "chat"
-        or authority.owner.kind != "chat_run"
-        or not config.allows(
-            principal, authority.spec.display_at_dispatch.processor_chain.processors
-        )
-        or (spec is MEMORY_SAVE_NOTE_SPEC and not config.admit)
-    ):
+    # generate checked the memory grant (owner, route processors, save) for this plan.
+    if principal != recorder.principal_id or authority.owner.kind != "chat_run":
         raise DeclaredToolFailure(MemoryToolFailure(code="forbidden"), actual_attempts=0)
 
     def authorize(db: Session) -> UUID:

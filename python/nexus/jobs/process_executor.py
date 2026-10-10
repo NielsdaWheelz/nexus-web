@@ -467,7 +467,7 @@ def _child_result(request: dict[str, Any]) -> dict[str, Any]:
 
     _raise_oom_score_adj(int(request["oom_score_adj"]))
     if request["runtime"] == "Llm":
-        from nexus.services.generation_policy import validate_policy
+        from nexus.services.generation.policy import validate_policy
 
         validate_policy()
     identity = request["context"]

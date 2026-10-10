@@ -31,8 +31,8 @@ Outbound client lifecycle:
 - httpx.AsyncClient is created at startup, stored in app.state, and shared by
   the Brave-backed Nexus tool runtime. Generation catalogs compose the private
   Codex UDS with configured API-provider rows.
-- validate_policy() runs at startup to fail fast on drift in the developer
-  plans, operation catalog, bounds, or eval pin (mirrors worker startup).
+- validate_policy() runs at startup to fail fast when the operation table is
+  not total or names a tool plan that does not exist (mirrors worker startup).
 - Client is closed gracefully at shutdown
 """
 
@@ -67,8 +67,8 @@ from nexus.responses import (
 )
 from nexus.runtime_health import get_runtime_identity
 from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.generation_catalog import build_generation_catalog_service
-from nexus.services.generation_policy import validate_policy
+from nexus.services.generation.catalog import Catalog
+from nexus.services.generation.policy import validate_policy
 from nexus.services.memory_client import load_memory_client_config
 from nexus.services.tool_runtime.catalog import (
     compose_configured_web_search_provider,
@@ -134,7 +134,7 @@ async def lifespan(app: FastAPI):
     """Manage application lifecycle resources.
 
     Lifecycle behavior:
-    - Fails fast on any drift in the developer generation policy; config.py
+    - Fails fast on an incomplete generation operation table; config.py
       separately enforces retained non-generation service credentials
     - Creates shared httpx.AsyncClient for connection pooling (web search)
     - Cleans up on shutdown
@@ -161,9 +161,7 @@ async def lifespan(app: FastAPI):
         embedding_available=bool(settings.openai_api_key),
         memory_config=memory_config,
     )
-    app.state.generation_catalog_service = build_generation_catalog_service(
-        settings, tool_runtime=app.state.tool_runtime
-    )
+    app.state.generation_catalog = Catalog(settings, app.state.tool_runtime)
     logger.info(
         "app_lifespan_started",
         web_search_provider="brave" if settings.brave_search_api_key else None,
@@ -231,7 +229,7 @@ def create_app() -> FastAPI:
             and any(
                 len(error.get("loc", ())) >= 2
                 and error["loc"][0] == "body"
-                and error["loc"][1] in {"selection", "catalog_definition_revision"}
+                and error["loc"][1] == "selection"
                 for error in exc.errors()
             )
         )

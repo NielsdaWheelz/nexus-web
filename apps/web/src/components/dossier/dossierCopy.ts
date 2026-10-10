@@ -22,7 +22,6 @@ export const FAILURE_COPY: Record<Schema<"DossierFailureCode">, string> = {
     "This dossier couldn't be generated under the current policy.",
   RuntimeUnavailable:
     "Dossier generation is temporarily unavailable. Try again later.",
-  CapacityUnavailable: "Dossier generation is busy. Try again shortly.",
   DocumentValidationFailed:
     "The generated dossier couldn't be validated. Try again.",
   CitationValidationFailed:

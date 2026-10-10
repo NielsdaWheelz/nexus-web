@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Header, Request
 from starlette.concurrency import run_in_threadpool
 
 from nexus.api.deps import (
-    get_generation_catalog_service,
+    get_generation_catalog,
     require_chat_contract_revision,
     require_tool_projection_revision,
 )
@@ -27,7 +27,7 @@ from nexus.schemas.conversation import (
 )
 from nexus.schemas.presence import Present
 from nexus.services import chat_runs as chat_runs_service
-from nexus.services.generation_catalog import GenerationCatalogService
+from nexus.services.generation.catalog import Catalog
 from nexus.services.tool_runtime.catalog import ComposedToolRuntime
 
 router = APIRouter(
@@ -51,7 +51,7 @@ async def create_chat_run(
     request: Request,
     body: ChatRunCreateRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
+    catalog: Annotated[Catalog, Depends(get_generation_catalog)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> Data[ChatAdmissionReceipt]:
     receipt = await chat_runs_service.create_chat_run(
@@ -61,7 +61,6 @@ async def create_chat_run(
             body.reader_selection.value if isinstance(body.reader_selection, Present) else None
         ),
         content=body.content,
-        catalog_definition_revision=body.catalog_definition_revision,
         selection=body.selection,
         idempotency_key=idempotency_key,
         catalog=catalog,
@@ -110,7 +109,7 @@ async def rerun_assistant_message(
     request: Request,
     body: ChatRunRepeatRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
+    catalog: Annotated[Catalog, Depends(get_generation_catalog)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> Data[ChatRunResponse]:
     return Data(
@@ -118,7 +117,6 @@ async def rerun_assistant_message(
             operation="rerun",
             viewer_id=viewer.user_id,
             assistant_message_id=assistant_message_id,
-            catalog_definition_revision=body.catalog_definition_revision,
             selection=body.selection,
             idempotency_key=idempotency_key,
             catalog=catalog,
@@ -133,7 +131,7 @@ async def regenerate_assistant_message(
     request: Request,
     body: ChatRunRepeatRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
+    catalog: Annotated[Catalog, Depends(get_generation_catalog)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> Data[ChatRunResponse]:
     return Data(
@@ -141,7 +139,6 @@ async def regenerate_assistant_message(
             operation="regenerate",
             viewer_id=viewer.user_id,
             assistant_message_id=assistant_message_id,
-            catalog_definition_revision=body.catalog_definition_revision,
             selection=body.selection,
             idempotency_key=idempotency_key,
             catalog=catalog,

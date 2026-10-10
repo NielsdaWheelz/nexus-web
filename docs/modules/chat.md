@@ -65,11 +65,10 @@ Invariants:
 
 ## Durable Execution And Recovery
 
-`chat_runs.py` claims the queued run and executes only its persisted generation
-admission. `llm_execution.py` and `llm_ledger.py` own the parent generation,
-independently accepted child calls, provider continuation, and replay.
+`chat_run_worker.py` runs the queued run's one generation (`generate`,
+[llms.md](llms.md)) from its admitted spec and prompt, then publishes it.
 `services/tool_runtime/` and `tool_authority.py` own the immutable declarations,
-grants, binding/replay policy, and one durable tool executor.
+grants, binding policy, and one durable tool executor.
 
 chat admission always freezes `ChatReadAdditiveWrite` with `AdditiveWrites`
 over `ChatAdmittedContext`. it publishes `web.search`, `nexus.search`, `nexus.resource.read`,
@@ -87,12 +86,13 @@ position ledger, evidence, citations, trust, and undo. host-owned authentication
 and the shared native adapter do not broaden the operation grant. see
 [backend composition](llms.md#backend-composition). provider-function positions
 use `generation/{generation_seq}/tool/{n}`; their one-based ordinal never
-restarts at an api child turn.
+restarts at an api turn.
 
-Completed child calls and tool positions are replay input, never cache hints.
-An accepted ambiguous model call, external read, or write is never blindly
-redispatched. Operator reconciliation or user cancellation acts on the same
-run; neither creates a compatibility run. Code defects emit no `done`.
+Nothing replays. A job attempt that finds its run's generation already started
+knows an earlier attempt died: the run fails `interrupted` (an
+`assistant_unavailable` card with Rerun) or ends `cancelled` when a stop was
+asked, and the user reruns. A dead chat job ends its run the same way. Writes
+made before a crash stay visible and undoable. Code defects emit no `done`.
 conversation deletion removes its chat projections and queue owners. completed
 write receipts and target authorship survive independently of generation
 history. account settings lists all owned completed assistant writes, including
@@ -272,8 +272,8 @@ The request:
   `{ kind: "Existing"; conversation_id; insertion }`, where `insertion` is
   `{ kind: "Empty" }` or `{ kind: "Reply"; parent_message_id; branch_anchor }`
 - `content`
-- `catalog_definition_revision`
-- `selection` — exact tagged route/model/reasoning
+- `selection` — exact tagged route/model/reasoning, validated against the
+  current catalog at admission
 - `reader_selection` — `Presence<{ key: ReaderSelectionKey; revision }>`
 
 The fork being composed wins over a plain reply; a plain reply is an
@@ -290,7 +290,7 @@ atomically, and admission sets the conversation's active leaf to the new
 assistant. A modeled rejection rolls provisional writes back to a savepoint and
 commits only its closed reason. The response is
 `{data:{idempotency_key,outcome:Accepted|Rejected}}`; it contains no run
-projection. Every chat route requires `X-Nexus-Chat-Contract: 2`; an older tab
+projection. Every chat route requires `X-Nexus-Chat-Contract: 3`; an older tab
 gets `409 E_CHAT_CONTRACT_RELOAD_REQUIRED` and the reload notice.
 
 ### Drafts
@@ -564,9 +564,8 @@ until the owner says otherwise.
    and count.
 8. The v4 draft-recovery panel and the "history cleared" notice are deleted.
 9. Passage forks are always `unmapped` (exact plus rendered prefix/suffix).
-10. A cancelled Codex answer keeps no partial text (L8, not fixed): Stop shows
-    "This response was cancelled." with Rerun, and the saved answer is empty.
-    See `docs/tickets/cancelled-codex-answer-keeps-no-text.md`.
+10. A cancelled Codex answer keeps the commentary it streamed, as a provider
+    answer keeps its streamed text; on success the sealed final answer replaces it.
 11. The existing-chat picker shows the 25 newest chats or a title search, with
     no paging.
 

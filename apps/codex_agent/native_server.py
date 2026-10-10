@@ -18,10 +18,7 @@ from provider_runtime.agent_runtime import (
     materialize_codex_containment_catalog,
 )
 
-from nexus.services.native_catalog_client import (
-    NativeCatalogClient,
-    NativeCatalogUnavailable,
-)
+from nexus.services.generation.catalog import CodexUnavailable, fetch_codex_catalog
 from nexus.services.native_health_contract import PINNED_CODEX_VERSION
 
 _START_SECONDS = 15.0
@@ -223,8 +220,8 @@ async def start_native_codex_server(
                 continue
             try:
                 async with asyncio.timeout(max(0.001, deadline - loop.time())):
-                    await NativeCatalogClient(server.socket_target).health()
-            except NativeCatalogUnavailable:
+                    await fetch_codex_catalog(server.socket_target)
+            except CodexUnavailable:
                 await asyncio.sleep(0.05)
                 continue
             os.chmod(server.socket_target, 0o660)

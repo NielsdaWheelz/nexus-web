@@ -28,12 +28,14 @@ _CONDITIONALLY_RERUNNABLE_CODES = frozenset({"incomplete", "cancelled", "assista
 _CODE_MAP = {
     "timeout": "incomplete",
     "output_limit": "incomplete",
-    "turn_limit": "incomplete",
+    "content_filtered": "incomplete",
     "auth": "assistant_unavailable",
     "quota": "assistant_unavailable",
-    "capacity_unavailable": "assistant_unavailable",
+    "rate_limited": "assistant_unavailable",
     "runtime_unavailable": "assistant_unavailable",
+    "interrupted": "assistant_unavailable",
     "policy_violation": "operator_defect",
+    "defect": "operator_defect",
 }
 
 _FAILURES = {

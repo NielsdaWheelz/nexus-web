@@ -28,7 +28,7 @@ from nexus.services.podcasts.types import PODCAST_SYNC_JOB_LEASE_SECONDS
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from nexus.services.llm_execution import ExecutionRuntime
+    from nexus.services.generation.runtime import Runtime
 
 type Payload = Mapping[str, Any]
 type ResourceFailureProjection = Literal["Job", "SourceAttemptMedia"]
@@ -119,6 +119,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=2,
             retry_delays_seconds=(0,),
             lease_seconds=300,
+            dead_letter_projection="Generation",
             never_prune_dead=True,
             never_prune_succeeded=True,
         ),
@@ -132,10 +133,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             dead_letter_projection="ChatRun",
             never_prune_dead=True,
         ),
-        # Paid and non-idempotent: the retry budget covers a crash before the
-        # per-step Uncertain checkpoint commits; once a step is Uncertain on
-        # replay the build refuses to re-dispatch and the job dead-letters into
-        # the Suspended advisory instead of retrying.
+        # Paid: a retry after a worker death reruns the synthesis from scratch.
         "dossier_build": JobDefinition(
             kind="dossier_build",
             handler_path="nexus.jobs.registry:_run_dossier_build",
@@ -143,6 +141,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=3,
             retry_delays_seconds=(30, 120, 300),
             lease_seconds=900,
+            dead_letter_projection="Generation",
             never_prune_dead=True,
         ),
         "podcast_sync_subscription_job": JobDefinition(
@@ -237,6 +236,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=1,
             retry_delays_seconds=(0,),
             lease_seconds=450,
+            dead_letter_projection="Generation",
         ),
         "media_unit_build": JobDefinition(
             kind="media_unit_build",
@@ -246,8 +246,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=450,
             child_runtime="Llm",
-            # Generation replay state lives in the payload; a dead uncertain
-            # transition stays operator-discoverable.
+            dead_letter_projection="Generation",
             never_prune_dead=True,
         ),
         "connection_discovery_scan": JobDefinition(
@@ -258,6 +257,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=300,
             child_runtime="Llm",
+            dead_letter_projection="Generation",
         ),
         "atlas_project_job": JobDefinition(
             kind="atlas_project_job",
@@ -349,12 +349,12 @@ def _run_dossier_build(*, payload: Payload, context: Context) -> JobResult:
     import httpx
 
     from nexus.services.dossier.run import run_build
+    from nexus.services.generation.runtime import run_generation_job
     from nexus.services.tool_runtime.catalog import compose_configured_web_search_provider
-    from nexus.tasks.llm_task import run_llm_task
 
     build_id = UUID(str(payload["build_id"]))
 
-    async def handler(db: Session, runtime: ExecutionRuntime) -> JobResult:
+    async def handler(db: Session, runtime: Runtime) -> JobResult:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(120.0, connect=10.0), trust_env=False
         ) as client:
@@ -364,7 +364,7 @@ def _run_dossier_build(*, payload: Payload, context: Context) -> JobResult:
             )
         return reschedule or {"status": "ok", "build_id": str(build_id)}
 
-    return run_llm_task("dossier_build", handler)
+    return run_generation_job("dossier_build", context, handler)
 
 
 def _run_podcast_sync_subscription(*, payload: Payload, context: Context) -> JobResult:

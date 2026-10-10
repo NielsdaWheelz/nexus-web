@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID
 
@@ -24,8 +25,6 @@ DEAD = "dead"
 TERMINAL_STATUSES = frozenset({SUCCEEDED, DEAD})
 
 type JobResourceClass = Literal["Light", "Heavy"]
-
-_CHAT_ADMISSION_LOCK_KEY = "codex-personal-generation-chat-admission.v1"
 
 # The one definition of "the Heavy lease is occupied", interpolated into the claim
 # candidate query and into the worker's idle wait. Constant, parameterless text.
@@ -145,12 +144,33 @@ class TerminalJobFailure:
 type JobResult = Mapping[str, Any] | RescheduleRequested | TerminalJobFailure | None
 
 
-def lock_chat_generation_admission_in_current_transaction(db: Session) -> None:
-    """Serialize Chat queue admission against new background generations."""
-    db.execute(
-        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
-        {"key": _CHAT_ADMISSION_LOCK_KEY},
-    )
+class DurableExecutionPhase(StrEnum):
+    """Advisory liveness projected from one live queue job."""
+
+    Queued = "Queued"
+    Running = "Running"
+    Recovering = "Recovering"
+    Suspended = "Suspended"
+
+
+def project_execution_phase(
+    *, job_status: str, attempts: int, error_code: str | None
+) -> DurableExecutionPhase:
+    """Project one non-succeeded job; ``Suspended`` is a dead job its owner did not end."""
+    recovering = error_code is not None
+    if job_status == PENDING:
+        return DurableExecutionPhase.Recovering if recovering else DurableExecutionPhase.Queued
+    if job_status == RUNNING:
+        return (
+            DurableExecutionPhase.Running
+            if attempts == 1 and not recovering
+            else DurableExecutionPhase.Recovering
+        )
+    if job_status == FAILED:
+        return DurableExecutionPhase.Recovering
+    if job_status == DEAD:
+        return DurableExecutionPhase.Suspended
+    raise AssertionError(f"job status {job_status!r} has no active execution phase")
 
 
 def _heavy_capacity_available(db: Session) -> bool:
@@ -220,8 +240,6 @@ def enqueue_job(
     created_at: datetime | None = None,
 ) -> JobRow:
     """Insert one background job row without forcing commit."""
-    if kind == "chat_run":
-        lock_chat_generation_admission_in_current_transaction(db)
     row = _fetch_one_job(
         db,
         """
@@ -811,13 +829,25 @@ def supersede_unclaimed_job(db: Session, *, job_id: UUID, kind: str) -> None:
 
 
 def revoke_jobs_by_dedupe_keys(db: Session, *, kind: str, dedupe_keys: Collection[str]) -> None:
-    """Delete owned queue rows and their payload-carried replay state.
+    """Delete owned queue rows, closing the generations their attempts left open.
 
     The caller invalidates the domain owner under its own lock first; a running
     worker then loses both its queue lease and its domain target.
     """
     if not dedupe_keys:
         return
+    from nexus.services.generation.ledger import interrupt_job_generations
+
+    # Generation rows first: the tool fence locks a generation before its job.
+    for job_id in (
+        db.execute(
+            text("SELECT id FROM background_jobs WHERE kind = :kind AND dedupe_key = ANY(:keys)"),
+            {"kind": kind, "keys": list(dedupe_keys)},
+        )
+        .scalars()
+        .all()
+    ):
+        interrupt_job_generations(db, job_id=job_id, detail="its job was revoked")
     targets = (
         db.execute(
             text(

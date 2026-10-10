@@ -2,29 +2,25 @@
 prompt, and the outcome; any broken reading rule is ``invalid_output``, no repair."""
 
 import re
-from typing import Annotated, Literal
+from typing import Literal, cast
 
 from llm_tools import canonical_json_bytes
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict
 
 from nexus.schemas.oracle import OracleFailureCode, OraclePhase, OracleSourceKind
-from nexus.services.generation_backend import BackendTerminal
-from nexus.services.generation_spec import GenerationIntent
-from nexus.services.llm_execution import (
-    AcceptedGenerationFailure,
-    EncodedGenerationTerminal,
-    codex_terminal_evidence,
+from nexus.services.generation.contract import (
+    Cancelled,
+    GenerationIntent,
+    InvalidOutput,
+    Succeeded,
+    Terminal,
 )
-from nexus.services.structured_synthesis import (
+from nexus.services.generation.synthesis import (
     INDEX_GROUNDING_RULE,
-    StructuredSynthesisError,
     build_synthesis_intent,
     build_synthesis_prompt,
-    decode_structured_synthesis,
-    outcome_failure_facts,
 )
 
-REVISION = "oracle-input.v2"
 PHASES: tuple[OraclePhase, OraclePhase, OraclePhase] = ("descent", "ordeal", "ascent")
 # Mirrors the ck_oracle_readings_theme CHECK.
 THEMES: tuple[str, ...] = (
@@ -111,10 +107,6 @@ class Failure(_Frozen):
     error_detail: str | None
 
 
-type Outcome = Annotated[Success | Failure, Field(discriminator="outcome")]
-OUTCOME: TypeAdapter[Outcome] = TypeAdapter(Outcome)
-
-
 class _Pick(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
@@ -123,7 +115,7 @@ class _Pick(BaseModel):
     marginalia: str
 
 
-class _Output(BaseModel):
+class Output(BaseModel):
     """The model's strict JSON; ``_violation`` owns every semantic rule."""
 
     model_config = ConfigDict(strict=True, extra="forbid")
@@ -141,30 +133,15 @@ def intent(snapshot: Snapshot) -> GenerationIntent:
     return build_synthesis_intent(
         system_prompt=_SYSTEM_PROMPT,
         user_content=canonical_json_bytes(snapshot.model_dump(mode="json")).decode(),
-        schema=_Output,
+        schema=Output,
     )
 
 
-def snapshot_of(frozen: GenerationIntent) -> Snapshot:
-    return Snapshot.model_validate_json(frozen.input)
-
-
-def encode_terminal(terminal: BackendTerminal, snapshot: Snapshot) -> EncodedGenerationTerminal:
-    native = codex_terminal_evidence(terminal)
-    if native.status != "succeeded":
-        return EncodedGenerationTerminal(
-            terminal_result=encode_failure(*outcome_failure_facts(native))
-        )
-    try:
-        out = decode_structured_synthesis(
-            native, schema=_Output, validate=lambda value: _violation(value, snapshot)
-        )
-    except StructuredSynthesisError as error:
-        failure = Failure(outcome="failure", error_code="invalid_output", error_detail=str(error))
-        return EncodedGenerationTerminal(
-            terminal_result=failure.model_dump_json(),
-            accepted_failure=AcceptedGenerationFailure(code="invalid_output", detail=str(error)),
-        )
+def accept(out: Output, snapshot: Snapshot) -> Success:
+    """The reading the model's output makes, or ``InvalidOutput`` naming the broken rule."""
+    violation = _violation(out, snapshot)
+    if violation is not None:
+        raise InvalidOutput(violation)
     picks = {pick.phase: pick for pick in out.passages}
     descent, ordeal, ascent = (
         Chosen(
@@ -176,7 +153,7 @@ def encode_terminal(terminal: BackendTerminal, snapshot: Snapshot) -> EncodedGen
     )
     first, second, third = (line.strip() for line in out.omens)
     gloss = out.folio_motto_gloss
-    success = Success(
+    return Success(
         outcome="success",
         folio_motto=out.folio_motto.strip(),
         folio_motto_gloss=None if gloss is None else gloss.strip(),
@@ -187,21 +164,25 @@ def encode_terminal(terminal: BackendTerminal, snapshot: Snapshot) -> EncodedGen
         plate_key=snapshot.plate.key,
         passages=(descent, ordeal, ascent),
     )
-    return EncodedGenerationTerminal(terminal_result=success.model_dump_json())
 
 
-def encode_failure(code: str, detail: str | None) -> str:
-    """A normalized generation failure; ``turn_limit`` reads as ``output_limit``."""
-    return Failure.model_validate(
-        {
-            "outcome": "failure",
-            "error_code": "output_limit" if code == "turn_limit" else code,
-            "error_detail": detail,
-        }
-    ).model_dump_json()
+def outcome(terminal: Terminal[Success]) -> Success | Failure:
+    """The reading's outcome; generation codes the reading has no copy for fold in."""
+    if isinstance(terminal, Succeeded):
+        return terminal.value
+    if isinstance(terminal, Cancelled):
+        return Failure(outcome="failure", error_code="cancelled", error_detail=None)
+    codes: dict[str, OracleFailureCode] = {
+        "rate_limited": "runtime_unavailable",
+        "content_filtered": "policy_violation",
+        "interrupted": "runtime_unavailable",
+        "defect": "runtime_unavailable",
+    }
+    code = codes.get(terminal.code, cast(OracleFailureCode, terminal.code))
+    return Failure(outcome="failure", error_code=code, error_detail=terminal.detail)
 
 
-def _violation(out: _Output, snapshot: Snapshot) -> str | None:
+def _violation(out: Output, snapshot: Snapshot) -> str | None:
     """The first reading rule the output breaks, or None."""
     argument = out.argument
     if not (argument == argument.strip() and 80 <= len(argument) <= 180) or "\n" in argument:

@@ -143,8 +143,6 @@ export const METADATA_FIELD_LABELS = {
 } satisfies Record<Schema<"MetadataField">, string>;
 
 export const METADATA_FAILURE_COPY = {
-  catalog_unavailable: "the model catalog is unavailable",
-  configuration_error: "metadata research is not configured",
   model_unavailable: "the selected model is unavailable",
   authentication_failed: "the provider needs authentication",
   quota_unavailable: "the provider has no available quota",
@@ -165,7 +163,6 @@ export const METADATA_RETRY_BLOCKED_COPY = {
   not_creator: "only the creator can re-enrich metadata",
   not_eligible: "this item is not eligible for metadata research",
   active: "metadata research is already in progress",
-  uncertain: "execution unresolved; retry unavailable",
 } satisfies Record<Schema<"MetadataRetryBlocked">["reason"], string>;
 
 export function metadataOperationSummary(operation: MetadataOperation): string {
@@ -173,7 +170,6 @@ export function metadataOperationSummary(operation: MetadataOperation): string {
     case "queued": return "queued";
     case "running": return "researching metadata";
     case "recovering": return "recovering metadata research";
-    case "uncertain": return "execution unresolved; retry unavailable";
     case "waiting": return "waiting to retry";
     case "no_findings": return "no metadata found";
     case "failed": return "metadata research failed";

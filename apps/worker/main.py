@@ -110,7 +110,7 @@ def create_worker(
     if process_executor is None:
         # Interactive and gated maintenance handlers run in-process, so this
         # process needs the runtime a background child installs for itself.
-        from nexus.services.generation_policy import validate_policy
+        from nexus.services.generation.policy import validate_policy
 
         validate_policy()
     return JobWorker(

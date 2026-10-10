@@ -145,7 +145,6 @@ export default function ChatComposer(props: {
                     },
             },
       content: draft.text.trim(),
-      catalog_definition_revision: catalog.definition_revision,
       selection: draft.selection.selection,
       reader_selection: quoted
         ? {

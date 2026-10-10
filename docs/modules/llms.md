@@ -2,8 +2,9 @@
 
 ## Scope
 
-Every Nexus text or structured-output generation runs through one Nexus
-`GenerationService`, backed only by the two separate `llm-calling` lanes:
+Every Nexus text or structured-output generation runs through one call,
+`generate` (`services/generation/run.py`), backed only by the two separate
+`llm-calling` lanes:
 
 - Codex Personal through `AgentRuntime` and the isolated Codex host;
 - configured metered APIs through `ProviderRuntime`.
@@ -16,24 +17,23 @@ surface, fallback, or compatibility route. Embeddings and transcription remain
 separate non-generation capabilities.
 
 The product owns intent, exact selection, operation policy, tool authority,
-durable coordination, and publication. `llm-calling` owns source catalog facts,
-route-local lowering, provider continuations, and provider/agent protocol
-events. Domain owners build prompts, accept generated output, and commit final
-domain writes.
+the ledger, and publication. `llm-calling` and `llm-agent-kernel` own source
+catalog facts, route-local lowering, provider continuations, loop order, and
+provider/agent protocol events. Domain owners build prompts, accept generated
+output (the `decode` they pass), and commit final domain writes.
 
-Primary owners:
+Primary owners (the first nine under `services/generation/`):
 
-- `generation_catalog.py`: composed configured catalog and readiness;
-- `generation_policy.py`: one reviewed Chat seed and the total background map;
-- `generation_service.py`: catalog validation, policy resolution, admission,
-  and route composition;
-- `generation_spec.py`: immutable admitted selection, budgets, output, and tool
-  authority;
-- `generation_backend.py`: route-neutral execution result;
-- `native_generation.py`: shared native supervisor and durable callback adapter;
-- `provider_generation_*`: ProviderRuntime adapter and continuation loop;
-- `llm_execution.py` and `llm_ledger.py`: parent/child/tool lifecycle and replay;
-- `tool_authority.py` and `tool_runtime/`: frozen provider-function/native-callback authority, domain handlers, and effect positions;
+- `contract.py`: intent, spec, owner, tools, events, terminals and the one failure vocabulary;
+- `policy.py`: the literal operation table (exact selection, timeout, input bound, tool plans);
+- `catalog.py`: codex and provider rows, readiness, the picker wire, the chat budget rule;
+- `run.py`: `generate` — resolve, open, watch, dispatch, decode, close;
+- `codex.py`: the kernel's transient native mode (kernel ADR 0012);
+- `provider.py`: ProviderRuntime on the kernel's `run_generation`, held in memory;
+- `ledger.py`: `llm_calls`, one row per generation;
+- `synthesis.py`: the strict-JSON prompt/intent/decode scaffold;
+- `runtime.py`: the process runtime and the one job envelope;
+- `tool_authority.py` and `tool_runtime/`: provider-function/native-callback authority, domain handlers, and one row per tool call;
 - `memory_client.py`: the private owner-chat client of Jarvis shared memory;
 - `apps/codex_agent/`: isolated subscription-backed Codex host.
 
@@ -57,9 +57,9 @@ CodexPersonalSelection(model_key, reasoning_key)
 ```
 
 The tag prevents same-named models on different routes from aliasing. The
-browser submits the exact selection plus the catalog-definition revision and
-never submits dispatch strings, credentials, capabilities, defaults, or
-fallback order. The developer-owned Codex Personal / GPT-6 Sol / medium
+browser submits the exact selection, validated against the current catalog at
+admission, and never submits dispatch strings, credentials, capabilities,
+defaults, or fallback order. The developer-owned Codex Personal / GPT-6 Sol / medium
 seed initializes a new composer only; it is not a saved user preference and
 does not override a causal or explicit per-run selection.
 
@@ -69,10 +69,12 @@ edit background generation policy.
 
 ## Operation and tool policy
 
-Every admitted run freezes one `GenerationSpec`: exact selection and dispatch
-target, source/catalog/policy/backend revisions, prompt reference, conservative
-budgets, output contract, timeout, host preparation, and model-tool authority.
-Workers execute that snapshot and never reread mutable process policy.
+A chat send stores one `GenerationSpec` on its run: operation, exact selection,
+the presentation shown at dispatch, tool plan and admitted scope, effect mode,
+and the context/output budgets it was assembled against. Every generation's
+`llm_calls` row records the same shape for the call it ran. A generation reads
+the catalog once more when it starts; a selection that is no longer runnable
+fails `runtime_unavailable` rather than running something else.
 
 Model selection does not grant tools. The operation policy independently
 resolves one of:
@@ -94,12 +96,13 @@ research tools above; no-model-tool helpers publish none. chat and dossiers reta
 their selected scope/effect policy. prompts cannot broaden an operation grant.
 
 both routes execute the canonical `GenerationToolExecutor`, authority, recorder,
-evidence, citation and undo boundaries. provider-function positions remain
-`generation/{generation_seq}/tool/{n}`. native callbacks retain original native
-turn/call identity and immutable arguments before entering an effect; their stable
-position/effect identity comes from the host. a duplicate callback replays its
-recorded model-facing projection and never repeats the handler. original result
-facts and cited model-facing text remain separate persisted values.
+evidence, citation and undo boundaries. every call that reaches dispatch writes
+one `llm_tool_positions` row at `generation/{generation_seq}/tool/{n}` before it
+runs and completes it in the transaction that commits its effects; a write's
+effect id is that row's id. nothing replays a recorded result: within one codex
+call the kernel answers a repeated native call id from memory, and a rerun
+generation is new work. codex invalid-argument rejections never reach the host
+and leave no row. budgets are counted in process memory per generation.
 
 Untrusted tool arguments or output cannot widen the frozen plan, principal,
 scope, limits, or effect authority. There is no tool-shaped text parser,
@@ -162,65 +165,59 @@ creation. inherited clock, CodeMode and native user-input are removed. declared
 callbacks, strict json and read-only/no-network session containment qualify together.
 see [the native host runbook](../runbooks/codex-personal-agent-host.md).
 
-completed commentary persists before bounded chat progress delivery. only the
-original sealed native final supplies product terminal output. control/fence/cleanup
-facts cannot become native seals or replace original failure/usage. invalid callback
-arguments remain raw rejected evidence, without handler entry.
-decoded nul (`U+0000`) in callback arguments, keys or model-turn evidence is the
-approved exception: postgres jsonb cannot preserve it. reject it before sql or
-tool entry with a content-free defect, leave the chat incomplete and retain no
-sanitized replacement or ordinary rejected-call receipt. recovery cannot infer
-a completed call from that absence. worker logs retain only the error class and
-closed code, without argument text, sql diagnostics or exception chains.
+codex runs on the kernel's transient native mode (`TransientNative`, kernel ADR
+0012): every in-process ordering guarantee, no durable journal and no recovery.
+commentary streams as answer text; the sealed native final replaces it on
+success, and a stop or failure keeps what streamed. a stop is a kernel preempt.
 
 Provider API execution uses `ProviderRuntime` with the selected configured
-credential. Each independently accepted provider call is a child model turn.
-Tool proposals are executed only after durable admission; the sealed,
-target-bound continuation advances only after the child terminal and tool
-result are persisted. Nexus stores the library's complete opaque native
-continuation rather than reconstructing assistant text or provider history.
-Unsupported strict-output-plus-tool combinations are
-ineligible at catalog qualification rather than silently losing strictness or
-tools.
+credential on the kernel's `run_generation` loop: proposals equal continuation
+calls, a stop is checked between tool calls, and a stop is never a synthetic
+provider terminal. its lifecycle hooks record nothing — this host is transient,
+as ADR 0012 states for native turns. one provider generation stops at 24 turns
+(`output_limit`) and at its operation timeout. provider routes are chat-only:
+text output with tools.
 
-Both lanes project into the route-neutral `GenerationEvent` family without
-importing one another. No cross-lane dispatcher shares credentials or protocol
-state.
+## Ledger, failures and no replay
 
-## Durable ownership and replay
+`generate` writes one `llm_calls` row per call: opened before dispatch with its
+spec and job id, closed once with `Succeeded | Failed | Cancelled`, one failure
+code, route evidence (never model text) and summed usage. it is an unreplayable
+multi-mutation: nothing survives a process. a worker that dies mid-generation
+leaves its row open until its job's next attempt starts (`run_generation_job`
+closes the job's open rows first), the job dies (dead-letter projection), the
+job is revoked, or migration 0269 closes it `interrupted`. chat never reruns a
+generation (the run fails `interrupted`; the user reruns); background jobs rerun
+from scratch, repaying the call. completed additive writes still commit effect
+receipts and target authorship with their row, so writes made before a crash
+stay visible and undoable. a tool call that never completes (a stop, a lost
+claim, a refused commit) keeps its row `Prepared` with no effect.
 
-One parent generation row records the frozen spec and terminal truth. One child
-row records each independently accepted model call: normally one for Codex and
-one per ProviderRuntime call in an API tool loop. tool positions belong to that
-execution ledger. completed additive writes also commit independent effect
-receipts and target authorship in the same transaction. receipts retain the
-original principal, effect identity, result and undo state after history reset
-or conversation deletion. credentials, raw
-prompts, and decrypted continuation bytes never enter catalog, history,
-evidence, or logs.
-
-Completed children and tool positions replay without redispatch. A provider
-loop may resume from its sealed next-child continuation; raw-api `ReDispatchable` tools may retry under their existing owner contract.
-an unresolved accepted native callback cannot be redispatched merely because it
-was a read. An unresolved external dispatch grants no retry
-authority and remains suspended/terminal according to its owner contract.
-There is no application entry point for resetting an uncertain generation or
-attaching an out-of-band terminal result.
-
-native recovery first reads the original frozen spec/intent and attempt facts,
-before provider/catalogue/current tools. only its own exact sealed terminal or
-authoritative original-attempt non-submission proof permits local settlement.
-parent terminal state beside an Uncertain journal is not recovery authority.
-local replay preserves original terminal/usage and performs no provider call;
-publication still rechecks current source, access, credits and job claim. metadata
-uses the public `generation_has_local_recovery` seam for its early guard.
+one watcher per generation polls every 0.25 s for the owner's stop (`Cancelled`),
+a lost job claim (`interrupted`) and the operation deadline (`timeout`). failure
+codes: auth, quota, rate_limited, timeout, output_limit, content_filtered,
+context_too_large, invalid_output, policy_violation, runtime_unavailable,
+interrupted, defect. a pre-dispatch refusal (catalog, readiness, tools, memory
+grant) is a `runtime_unavailable` row. for chat it is the terminal value (the
+user reruns); a background generation that never reached its model (refused, a
+Codex session that did not open, or a turn Codex did not submit) instead raises
+`RouteUnavailable` while its job has attempts left, so the queue retries it with
+the kind's backoff, and only the last attempt settles the domain row. a failed
+Codex catalog fetch is retried after 10 s (a good one is kept 60 s). a decode
+rejection is `invalid_output` in the same terminal write. a stop that the tool
+fence catches first is still `Cancelled`. anything unexpected closes the row
+`defect` and goes on to the queue's retry. each consumer owns its total map from
+these codes (chat failure, metadata, oracle, dossier).
 
 native cumulative usage limits and subscription `CapacityPaused` machinery are
 removed. nexus generation deadlines and per-operation bounds remain; 64,000/8,000
 are admitted context/output reservations, without native hard token enforcement.
 raw provider-api billing/admission keeps its existing contract.
 
-migration 0255 backfills original historical principals, retains original effect
+migration 0269 removes replay: it fails open runs and rows `interrupted`, closes
+unfinished tool positions as timed out, drops the turn and continuation tables,
+the step journals and the replay columns, and rewrites chat specs and retired
+failure codes. migration 0255 backfilled original historical principals, retains original effect
 and continuation bytes without invented seals, then deletes shell credentials.
 uncertain legacy shell work blocks migration. historical undo uses persisted
 principal/effect ownership. the single combined chain is
@@ -235,9 +232,9 @@ historical and do not qualify this final graph.
 
 ## Product API and reset boundary
 
-`POST /chat-runs`, rerun, and regenerate carry an explicit selection and
-`catalog_definition_revision`. requests reject the retired `tool_authority`
-field. policy owns new tool authority.
+`POST /chat-runs`, rerun, and regenerate carry an explicit selection; chat
+contract revision "3" turns a stale tab into a reload prompt. requests reject
+the retired `tool_authority` field. policy owns new tool authority.
 chat history, sse meta, and trust projections expose immutable dispatch
 selection and frozen authority derived from the saved generation spec, plus
 safe execution disclosure. saved run/tree/active-path and cancel reads do not
@@ -260,8 +257,8 @@ there is no legacy eligibility decoder or historical selection translation.
 
 - One configured catalog is the source of every selectable Chat pair.
 - One developer policy owns the Chat seed and all background selections.
-- One frozen `GenerationSpec` owns selection, budgets, output, and tool policy.
-- One parent/child ledger owns generation truth across both routes.
+- One `generate` call is one `llm_calls` row; no generation state survives a process.
+- One failure vocabulary covers both routes.
 - One canonical tool authority serves eligible Chat and background operations.
 - Domain owners alone accept model output and publish semantic results.
 - No user generation defaults, profiles, presets, fallback, or compatibility

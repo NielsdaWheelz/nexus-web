@@ -318,11 +318,8 @@ export default function AssistantMessage({
               op={failed ? "rerun" : "regenerate"}
               source={run.run_selection.selection}
               disabled={busy}
-              onConfirm={(selection, revision) =>
-                store.repeat(failed ? "rerun" : "regenerate", id, {
-                  selection,
-                  revision,
-                })
+              onConfirm={(selection) =>
+                store.repeat(failed ? "rerun" : "regenerate", id, selection)
               }
             />
           ) : null}

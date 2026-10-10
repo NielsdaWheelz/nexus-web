@@ -3,15 +3,12 @@
 An idea is the canonical form of highlighted text, so learning one phrase twice reaches
 one head. Research gathers, in order: the seed highlights, up to six Nexus sources for
 three queries, and up to six web pages (one per domain) from one web search step. That
-step is the only billed one and the only journaled one: Uncertain before the three
-searches, Completed with the picks after; Uncertain on entry is never searched again
-and counts as omitted. Pages go through the ordinary url ingest (filed into the user's
+step is the only billed one; its picks stay in the job payload so the build's reschedules
+never search again (a crash before they are kept searches again). Pages go through the ordinary url ingest (filed into the user's
 library) with one idempotency key per pick, and are read once ready, or omitted after
 ten minutes. Nexus search reruns on every attempt: before admission drift is harmless.
 """
 
-import hashlib
-import json
 import unicodedata
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
@@ -25,18 +22,9 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.async_session import open_async_session
 from nexus.errors import InvalidRequestError
-from nexus.jobs.queue import JobExecutionContext, JobRow
-from nexus.schemas.presence import Present, absent, present
+from nexus.jobs.queue import JobExecutionContext, JobRow, update_running_job_payload
+from nexus.schemas.presence import Present
 from nexus.services.dossier.inputs import Candidate, Collected, collect, offer
-from nexus.services.durable_step_journal import (
-    Completed,
-    StepReplayState,
-    Uncertain,
-    checkpoint_step_state,
-    decode_step_result,
-    read_step_states,
-    stable_generation_id,
-)
 from nexus.services.import_history import source_supersession_media_id
 from nexus.services.media_read_map import load_media_document
 from nexus.services.media_source_ingest import accept_url_source
@@ -51,7 +39,6 @@ SOURCE_CHARS = 120_000
 MAX_NEXUS = 6
 MAX_WEB = 6
 READY_WITHIN = timedelta(minutes=10)
-WEB_STEP = "research/web"
 _RECHECK = timedelta(seconds=5)
 _HEADING = "IDEA CONTEXTS AND RESEARCH SOURCES"
 _CONTEXT = (
@@ -121,7 +108,7 @@ async def gather(
     fresh = [(read, target) for target, read in nexus.items() if target not in seed_targets]
     picked += fresh[:MAX_NEXUS]
 
-    web_step = await _web_step(db, ctx, job, build_id, queries, web)
+    web_step = await _web_step(db, ctx, job, queries, web)
     omitted = 0 if web_step.ok else 1
     retry_at: datetime | None = None
     for index, url in enumerate(web_step.urls):
@@ -187,32 +174,21 @@ async def _web_step(
     db: Session,
     ctx: JobExecutionContext,
     job: JobRow,
-    build_id: UUID,
     queries: list[str],
     web: WebSearchProvider | None,
 ) -> WebPicks:
-    """The billed step: journaled Uncertain, three searches, journaled Completed; never twice."""
-    state = read_step_states(job).get(WEB_STEP)
-    if state is None and web is not None:
-        fingerprint = hashlib.sha256(json.dumps(queries).encode()).hexdigest()
-        state = StepReplayState(
-            generation_id=stable_generation_id(build_id, WEB_STEP),
-            dispatch_phase=Uncertain,
-            request_fingerprint=present(fingerprint),
-            terminal_result=absent(),
-        )
-        _checkpoint(db, ctx, job, state)
-        picks = await _search(web, queries)
-        state = state.model_copy(
-            update={
-                "dispatch_phase": Completed,
-                "terminal_result": present(picks.model_dump_json()),
-            }
-        )
-        _checkpoint(db, ctx, job, state)
-    if state is None or not isinstance(state.terminal_result, Present):
+    """The billed step: three searches once per build, kept in the job payload."""
+    stored = job.payload.get("web_picks")
+    if stored is not None:
+        return WebPicks.model_validate(stored)
+    if web is None:
         return WebPicks(ok=False, urls=[])
-    return decode_step_result(state.terminal_result.value, WebPicks)
+    picks = await _search(web, queries)
+    payload = {**job.payload, "web_picks": picks.model_dump(mode="json")}
+    if not update_running_job_payload(db, context=ctx, payload=payload):
+        raise RuntimeError("dossier research lost its job lease")
+    db.commit()
+    return picks
 
 
 async def _search(web: WebSearchProvider, queries: list[str]) -> WebPicks:
@@ -262,9 +238,3 @@ def _page(db: Session, user_id: UUID, key: str, url: str) -> ResourceRef | datet
     if status == "failed" or now >= deadline:
         return None
     return min(deadline, now + _RECHECK)
-
-
-def _checkpoint(db: Session, ctx: JobExecutionContext, job: JobRow, state: StepReplayState) -> None:
-    if not checkpoint_step_state(db, ctx=ctx, job=job, step_path=WEB_STEP, state=state):
-        raise RuntimeError("dossier research lost its job lease")
-    db.commit()

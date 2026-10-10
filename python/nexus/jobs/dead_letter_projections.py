@@ -3,9 +3,9 @@
 The ``dead`` transition fires exactly once and has no redrive, so a repair must
 land in the same transaction; it therefore cannot move to the child process.
 The background supervisor must never import a parser, provider or storage
-client, so module scope here stays SQLAlchemy + ``nexus.errors`` and the two
-interactive-lane repairs are imported inside their own branch. No projection
-ever commits.
+client, so module scope here stays SQLAlchemy + ``nexus.errors`` and the
+repairs that need an owner's module import it inside their own branch. No
+projection ever commits.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ type DeadLetterProjection = Literal[
     "MediaTeardownIntent",
     "PodcastBackfill",
     "ChatRun",
+    "Generation",
     "PodcastSubscriptionSync",
 ]
 """Closed set of repairs a dead-lettered job kind may declare."""
@@ -52,6 +53,11 @@ def apply_dead_letter_projection(
         from nexus.tasks.chat_run import record_dead_lettered_chat_run
 
         record_dead_lettered_chat_run(db, job)
+    elif projection == "Generation":
+        from nexus.services.generation.ledger import interrupt_job_generations
+
+        # Its domain row stays as is; a rerun of the operation starts from scratch.
+        interrupt_job_generations(db, job_id=job.id, detail="its job died")
     elif projection == "PodcastSubscriptionSync":
         from nexus.services.podcasts.sync import dead_letter_podcast_subscription_sync
 

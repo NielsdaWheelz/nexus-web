@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Final
+from typing import Any, Final
 
 import httpx
 from llm_tools import (
@@ -26,24 +26,12 @@ from llm_tools import (
     bind_web_read,
     web_family,
 )
-from provider_runtime.tool_adapter import ToolPublication, lower_tools
-from pydantic import ValidationError
 
 from nexus.config import Settings
 from nexus.schemas.presence import Presence
 from nexus.services.memory_client import MemoryClientConfig
 from nexus.services.tool_runtime.declarations import NEXUS_TOOL_DECLARATIONS
 from nexus.services.tool_runtime.plans import TOOL_PLAN_DEFINITIONS, ToolPlanDefinition
-from nexus.services.tool_runtime.snapshots import (
-    FrozenRunLimitsSnapshot,
-    FrozenToolExposureSnapshot,
-    FrozenToolGrantSnapshot,
-    FrozenToolLimitsSnapshot,
-    FrozenToolPlanSnapshot,
-)
-
-if TYPE_CHECKING:
-    from nexus.services.provider_generation_contract import ProviderModelTools
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,19 +46,6 @@ class ComposedToolRuntime:
     catalog: ToolCatalog
     operations: Mapping[str, FrozenToolOperation]
     memory_config: Presence[MemoryClientConfig]
-
-
-def required_tool_operation(
-    runtime: ComposedToolRuntime, *, plan_id: str, authority_revision: str
-) -> FrozenToolOperation:
-    """Resolve the reviewed plan shared by catalog and admission."""
-
-    operation = runtime.operations.get(plan_id)
-    if operation is None:
-        raise ValueError(f"unknown model-tool plan {plan_id!r}")
-    if operation.definition.authority_revision != authority_revision:
-        raise ValueError(f"model-tool plan {plan_id!r} authority drifted")
-    return operation
 
 
 def unavailable_tool_ids(operation: FrozenToolOperation) -> tuple[str, ...]:
@@ -181,72 +156,6 @@ def compose_configured_web_search_provider(
     )
 
 
-def compose_provider_model_tools(operation: FrozenToolOperation) -> ProviderModelTools:
-    """Bind provider publication and frozen authority into one route value."""
-
-    from nexus.services.provider_generation_contract import ProviderModelTools
-
-    publication = lower_tools(ToolPublication(plan=operation.plan, revealed_targets=()))
-    return ProviderModelTools(
-        snapshot=freeze_tool_plan_snapshot(operation),
-        publication=publication,
-    )
-
-
-def freeze_tool_plan_snapshot(operation: FrozenToolOperation) -> FrozenToolPlanSnapshot:
-    """Encode the exact immutable semantic authority used by one tool run."""
-
-    profile = operation.profile
-    if operation.plan.profile is not profile:
-        raise ValueError("operation plan and profile do not share one frozen value")
-    grants: list[FrozenToolGrantSnapshot] = []
-    for grant in profile.ordered_grants:
-        binding = operation.plan.catalog_view.binding(grant.id)
-        if binding.policy_revision != grant.policy_revision:
-            raise ValueError("frozen tool grant changed binding policy after freeze")
-        grants.append(
-            FrozenToolGrantSnapshot(
-                binding_policy_revision=grant.policy_revision,
-                id=str(grant.id),
-                implementation_revision=grant.implementation_revision,
-                limits=FrozenToolLimitsSnapshot.model_validate(grant.limits.json()),
-                replay_policy=binding.replay_policy.value,
-                tool_contract_revision=grant.tool_contract_revision,
-            )
-        )
-    return FrozenToolPlanSnapshot(
-        exposure=FrozenToolExposureSnapshot(type="Native"),
-        grants=tuple(grants),
-        max_live_writes=operation.definition.max_live_writes,
-        plan_id=operation.definition.plan_id,
-        plan_revision=operation.plan.plan_revision,
-        profile_id=str(profile.id),
-        profile_revision=profile.profile_revision,
-        run_limits=FrozenRunLimitsSnapshot.model_validate(profile.run_limits.json()),
-    )
-
-
-def encode_tool_plan_snapshot(operation: FrozenToolOperation) -> str:
-    return freeze_tool_plan_snapshot(operation).model_dump_json()
-
-
-def validate_tool_plan_snapshot(
-    raw: str,
-    *,
-    operation: FrozenToolOperation,
-) -> FrozenToolPlanSnapshot:
-    """Decode a durable snapshot and reject any semantic authority drift."""
-
-    try:
-        decoded = FrozenToolPlanSnapshot.model_validate_json(raw)
-    except ValidationError as exc:
-        raise ValueError("durable tool plan snapshot is malformed") from exc
-    expected = freeze_tool_plan_snapshot(operation)
-    if decoded != expected:
-        raise ValueError("durable tool plan snapshot differs from current authority")
-    return decoded
-
-
 def write_tool_ids() -> tuple[str, ...]:
     """The canonical ids of every additive-write Nexus tool."""
 
@@ -263,14 +172,8 @@ __all__ = [
     "WEB_SEARCH_SELECTED_RESULTS",
     "ComposedToolRuntime",
     "FrozenToolOperation",
-    "FrozenToolPlanSnapshot",
     "compose_configured_web_search_provider",
-    "compose_provider_model_tools",
     "compose_tool_runtime",
-    "encode_tool_plan_snapshot",
-    "freeze_tool_plan_snapshot",
-    "required_tool_operation",
     "unavailable_tool_ids",
-    "validate_tool_plan_snapshot",
     "write_tool_ids",
 ]

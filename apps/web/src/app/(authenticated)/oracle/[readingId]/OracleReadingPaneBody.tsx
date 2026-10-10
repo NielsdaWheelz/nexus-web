@@ -63,8 +63,6 @@ const FAILURE_COPY: Record<Schema<"OracleFailureCode">, string> = {
   invalid_output: `The reading could not be completed. ${START_AGAIN}`,
   policy_violation: `The reading could not be completed. ${START_AGAIN}`,
   runtime_unavailable: `The reading service is temporarily unavailable. ${RETRY_LATER}`,
-  capacity_unavailable:
-    "The reading service is busy. Please try again shortly.",
   context_too_large:
     "The reading could not be completed. Start a new reading with a simpler question.",
   cancelled: "Start a new reading when you’re ready.",

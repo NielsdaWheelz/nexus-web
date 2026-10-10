@@ -149,7 +149,6 @@ def admit_metadata_enrichment(
                 "not_creator": "only the creator can research metadata",
                 "not_eligible": "metadata research is unavailable for this media state",
                 "active": "metadata research is already in progress",
-                "uncertain": "execution unresolved; retry unavailable",
             }
             raise ConflictError(ApiErrorCode.E_RETRY_NOT_ALLOWED, messages[retry.reason])
         job = enqueue_metadata_enrichment(

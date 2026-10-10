@@ -18,7 +18,7 @@ from nexus.db.models import (
 from nexus.services.tool_runtime.catalog import write_tool_ids
 
 if TYPE_CHECKING:
-    from nexus.services.llm_ledger import LlmCallOwner
+    from nexus.services.generation.contract import Owner
     from nexus.services.tool_authority import ToolPositionRecord
 
 
@@ -33,7 +33,7 @@ def persist_generation_effect_receipt_in_current_transaction(
     db: Session,
     *,
     principal_user_id: UUID,
-    owner: LlmCallOwner,
+    owner: Owner,
     position: ToolPositionRecord,
 ) -> None:
     """Stage the original completed write and its successful target authorship."""

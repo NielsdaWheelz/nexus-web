@@ -1,62 +1,47 @@
-"""One dossier synthesis: prompt, strict schema, admission, execution, terminal outcome.
+"""One dossier synthesis: prompt, strict schema, one generation, its outcome.
 
-The step journal (``synthesis`` in the job payload) owns replay: Completed carries the
-decoded ``Outcome``; Uncertain without the native host's own recovery evidence is
-never dispatched again, it raises and the job dead-letters (the build reads
-Suspended). ``document.accept`` runs inside the terminal encoder, so a Completed
-journal already holds the compiled article or its rejection.
+``document.accept`` is the decode, so a rejected article is recorded on the
+generation itself; a dossier cancel or purge stops the stream through ``generate``.
 """
 
-import asyncio
 import hashlib
-from typing import Annotated, Final, Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.session import get_session_factory
-from nexus.jobs.queue import JobExecutionContext, JobRow, lock_job, running_job_claim_is_current
+from nexus.jobs.queue import JobExecutionContext
 from nexus.schemas.dossier import DossierFailureCode
-from nexus.schemas.presence import Present
 from nexus.services.dossier import document
 from nexus.services.dossier.inputs import Collected, Coverage
 from nexus.services.dossier.subjects import Binding
-from nexus.services.durable_step_journal import (
-    Completed,
-    Uncertain,
-    read_step_states,
-    stable_generation_id,
-)
-from nexus.services.generation_backend import BackendTerminal
-from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
-from nexus.services.llm_execution import (
-    AcceptedGenerationFailure,
-    EncodedGenerationTerminal,
-    ExecutionRuntime,
-    GenerationAdmissionInputsChanged,
-    GenerationDispatchAborted,
-    GenerationUncertain,
-    JobGenerationJournal,
-    admit_job_generation,
-    codex_terminal_evidence,
-    execute_generation,
-    generation_has_local_recovery,
-)
-from nexus.services.llm_ledger import LlmCallOwner
-from nexus.services.resource_graph.citations import CitationInput
-from nexus.services.structured_synthesis import (
-    StructuredSynthesisError,
+from nexus.services.generation.contract import Cancelled, FailureCode, Owner, Succeeded
+from nexus.services.generation.run import generate
+from nexus.services.generation.runtime import Runtime
+from nexus.services.generation.synthesis import (
     build_synthesis_intent,
     build_synthesis_prompt,
     build_synthesis_user_content,
-    decode_structured_synthesis,
-    outcome_failure_facts,
+    strict,
 )
+from nexus.services.resource_graph.citations import CitationInput
 
-SYNTHESIS_STEP: Final = "synthesis"
-_WATCH_SECONDS = 1.0
+_CODES: dict[FailureCode, DossierFailureCode] = {
+    "auth": DossierFailureCode.Auth,
+    "quota": DossierFailureCode.Quota,
+    "rate_limited": DossierFailureCode.RuntimeUnavailable,
+    "timeout": DossierFailureCode.Timeout,
+    "output_limit": DossierFailureCode.OutputLimit,
+    "content_filtered": DossierFailureCode.PolicyViolation,
+    "context_too_large": DossierFailureCode.ContextTooLarge,
+    "invalid_output": DossierFailureCode.InvalidOutput,
+    "policy_violation": DossierFailureCode.PolicyViolation,
+    "runtime_unavailable": DossierFailureCode.RuntimeUnavailable,
+    "interrupted": DossierFailureCode.RuntimeUnavailable,
+    "defect": DossierFailureCode.RuntimeUnavailable,
+}
 
 
 class Published(BaseModel):
@@ -74,30 +59,12 @@ class Failed(BaseModel):
 
 
 class Stopped(BaseModel):
-    """No result: a dossier cancel or purge, a lost claim, or the host's own cancel."""
+    """No result: a dossier cancel or purge, or the host's own cancel."""
 
     kind: Literal["Stopped"] = "Stopped"
 
 
 type Outcome = Annotated[Published | Failed | Stopped, Field(discriminator="kind")]
-_OUTCOME: TypeAdapter[Outcome] = TypeAdapter(Outcome)
-
-
-class SynthesisUncertain(RuntimeError):
-    """A dispatch may have happened and cannot be settled here; the job dead-letters."""
-
-
-def completed(job: JobRow, db: Session) -> Outcome | None:
-    """The journaled outcome; None when the synthesis must (re)run."""
-    state = read_step_states(job).get(SYNTHESIS_STEP)
-    if state is not None and state.dispatch_phase is Completed:
-        if not isinstance(state.terminal_result, Present):
-            raise AssertionError("a completed dossier synthesis has no outcome")
-        return _OUTCOME.validate_json(state.terminal_result.value)
-    if state is not None and state.dispatch_phase is Uncertain:
-        if not generation_has_local_recovery(db, state):
-            raise SynthesisUncertain(f"dossier synthesis {state.generation_id} is uncertain")
-    return None
 
 
 async def run(
@@ -108,122 +75,48 @@ async def run(
     collected: Collected,
     instruction: str | None,
     ctx: JobExecutionContext,
-    runtime: ExecutionRuntime,
+    runtime: Runtime,
 ) -> Outcome:
-    intent = build_synthesis_intent(
-        system_prompt=_prompt(binding.label),
-        user_content=_user_content(collected, instruction),
-        schema=document.Synthesis,
+    terminal = await generate(
+        runtime,
+        owner=Owner("artifact_build", build_id, requester_id, ctx),
+        operation=binding.operation,
+        intent=build_synthesis_intent(
+            system_prompt=_prompt(binding.label),
+            user_content=_user_content(collected, instruction),
+            schema=document.Synthesis,
+        ),
+        decode=strict(document.Synthesis, lambda out: document.accept(out, collected.candidates)),
+        stop=lambda db: not _active(db, build_id),
     )
-    revision = f"{binding.operation}.{SYNTHESIS_STEP}.prompt.v2"
-    sessions = get_session_factory()
-
-    def lock_dispatch(db: Session) -> JobRow | None:
-        active = db.execute(
-            text("SELECT 1 FROM artifact_builds WHERE id = :id AND status = 'active' FOR UPDATE"),
-            {"id": build_id},
-        ).scalar()
-        return lock_job(db, ctx.job_id) if active else None
-
-    def encode(terminal: BackendTerminal) -> EncodedGenerationTerminal:
-        native = codex_terminal_evidence(terminal)
-        if native.status != "succeeded":
-            return EncodedGenerationTerminal(
-                terminal_result=_failure(*outcome_failure_facts(native))
-            )
-        try:
-            synthesis = decode_structured_synthesis(native, schema=document.Synthesis)
-            article = document.accept(synthesis, collected.candidates)
-        except (StructuredSynthesisError, document.DocumentRejected) as error:
-            citation = isinstance(error, document.DocumentRejected) and error.kind == "Citation"
-            code = (
-                DossierFailureCode.CitationValidationFailed
-                if citation
-                else DossierFailureCode.DocumentValidationFailed
-            )
-            return EncodedGenerationTerminal(
-                terminal_result=Failed(code=code, detail=str(error)).model_dump_json(),
-                accepted_failure=AcceptedGenerationFailure(
-                    code="invalid_output", detail=str(error)
-                ),
-            )
-        published = Published(
+    if isinstance(terminal, Succeeded):
+        article = terminal.value
+        return Published(
             html=article.html,
             text=article.text,
             citations=list(article.citations),
             coverage=collected.coverage,
         )
-        return EncodedGenerationTerminal(terminal_result=published.model_dump_json())
-
-    stop = asyncio.Event()
-    watcher = asyncio.create_task(_watch(build_id, ctx, stop))
-    try:
-        request = await admit_job_generation(
-            owner=LlmCallOwner(kind="artifact_build", id=build_id),
-            user_id=requester_id,
-            generation_id=stable_generation_id(build_id, SYNTHESIS_STEP),
-            operation=binding.operation,
-            intent=intent,
-            prompt_template_revision=revision,
-            prompt_payload_ref=ImmutablePromptPayloadRef(
-                owner_kind="artifact_build",
-                owner_id=str(build_id),
-                revision=revision,
-                payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
-            ),
-            journal=JobGenerationJournal(
-                context=ctx, step_path=SYNTHESIS_STEP, lock_dispatch=lock_dispatch
-            ),
-            session_factory=sessions,
-            runtime=runtime,
-        )
-        result = await execute_generation(
-            request,
-            session_factory=sessions,
-            runtime=runtime,
-            encode_terminal=encode,
-            encode_failure=_failure,
-            cancel_signal=stop,
-        )
-    except GenerationAdmissionInputsChanged:
-        return Failed(
-            code=DossierFailureCode.InputsChanged, detail="inputs changed after admission"
-        )
-    except GenerationDispatchAborted:
+    if isinstance(terminal, Cancelled):
         return Stopped()
-    except GenerationUncertain as error:
-        raise SynthesisUncertain(str(error)) from error
-    finally:
-        watcher.cancel()
-        await asyncio.gather(watcher, return_exceptions=True)
-    return _OUTCOME.validate_json(result.terminal_result)
+    rejection = terminal.rejection
+    if rejection is not None:
+        citation = isinstance(rejection, document.DocumentRejected) and rejection.kind == "Citation"
+        return Failed(
+            code=DossierFailureCode.CitationValidationFailed
+            if citation
+            else DossierFailureCode.DocumentValidationFailed,
+            detail=terminal.detail,
+        )
+    return Failed(code=_CODES[terminal.code], detail=terminal.detail)
 
 
-async def _watch(build_id: UUID, ctx: JobExecutionContext, stop: asyncio.Event) -> None:
-    """Stop the model stream once the build is no longer active or this attempt lost its lease.
-
-    justify-polling: a cancel or purge commits in another process and the native stream
-    has no domain subscription; one indexed read per second, fresh session, for one stream.
-    """
-    while True:
-        with get_session_factory()() as db:
-            active = db.execute(
-                text("SELECT status = 'active' FROM artifact_builds WHERE id = :id"),
-                {"id": build_id},
-            ).scalar()
-            live = bool(active) and running_job_claim_is_current(db, context=ctx)
-        if not live:
-            stop.set()
-            return
-        await asyncio.sleep(_WATCH_SECONDS)
-
-
-def _failure(code: str, detail: str | None) -> str:
-    """A normalized failure code (``context_too_large``) names its dossier member."""
-    if code == "cancelled":
-        return Stopped().model_dump_json()
-    name = "OutputLimit" if code == "turn_limit" else code.title().replace("_", "")
-    return Failed(code=DossierFailureCode(name), detail=detail).model_dump_json()
+def _active(db: Session, build_id: UUID) -> bool:
+    return bool(
+        db.execute(
+            text("SELECT status = 'active' FROM artifact_builds WHERE id = :id"), {"id": build_id}
+        ).scalar()
+    )
 
 
 def _prompt(subject: str) -> str:

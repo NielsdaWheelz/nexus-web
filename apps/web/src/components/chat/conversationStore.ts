@@ -49,7 +49,7 @@ export type ChatState = Readonly<{
   contextVersion: number;
 }>;
 export type ChatStore = ReturnType<typeof createChatStore>;
-type RepeatBody = { catalog_definition_revision: string; selection: Selection };
+type RepeatBody = { selection: Selection };
 
 const runRead = (runId: string) =>
   apiFetch<ApiJson<"/chat-runs/{run_id}", "get">>(`/api/chat-runs/${runId}`);
@@ -278,7 +278,7 @@ export function createChatStore(conversationId: string | null) {
     async repeat(
       op: "rerun" | "regenerate",
       assistantId: string,
-      explicit?: { selection: Selection; revision: string },
+      explicit?: Selection,
     ): Promise<boolean> {
       if (state.busy.has(assistantId)) return false;
       set({ busy: new Set(state.busy).add(assistantId), error: null });
@@ -287,7 +287,7 @@ export function createChatStore(conversationId: string | null) {
       if (
         explicit &&
         command &&
-        !sameSelection(command.body.selection, explicit.selection)
+        !sameSelection(command.body.selection, explicit)
       )
         command = undefined;
       try {
@@ -295,17 +295,11 @@ export function createChatStore(conversationId: string | null) {
           const source = state.messages.get(assistantId)?.trust_trail?.run;
           const catalog = explicit ? null : await loadCatalog(true);
           const body = explicit
-            ? {
-                catalog_definition_revision: explicit.revision,
-                selection: explicit.selection,
-              }
+            ? { selection: explicit }
             : catalog &&
                 source &&
                 isSelectable(catalog, source.run_selection.selection)
-              ? {
-                  catalog_definition_revision: catalog.definition_revision,
-                  selection: source.run_selection.selection,
-                }
+              ? { selection: source.run_selection.selection }
               : null;
           if (!body) {
             const message =
