@@ -7,7 +7,6 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
-from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption import PauseShorteningMode, PlaybackRate
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaSummaryOut
@@ -118,28 +117,12 @@ class LibraryOut(_CamelRow):
     updated_at: datetime
 
 
-class LibraryRenameOut(_Camel):
-    library: LibraryOut
-    collection_revision: CollectionRevision
-
-
-class LibraryDeleteOut(_Camel):
-    library_id: UUID
-    collection_revision: CollectionRevision
-
-
-class LibraryEntryRemovalOut(_Camel):
-    library_entries_collection_revision: CollectionRevision
-
-
 class PodcastPlacementRemovalOut(_Camel):
     outcome: Literal["Removed", "AlreadyAbsent"]
-    library_entries_collection_revision: CollectionRevision
 
 
 class PodcastPlacementAdditionOut(_Camel):
     outcome: Literal["Added", "AlreadyPresent"]
-    library_entries_collection_revision: CollectionRevision
 
 
 class LibraryIdentityOut(_Camel):

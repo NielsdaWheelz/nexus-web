@@ -1,520 +1,268 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import {
-  type ApiError,
-  apiFetch,
-  isApiError,
-  isInvalidViewError,
-  isSameSystemApiDefect,
-} from "@/lib/api/client";
-import type { ApiJson } from "@/lib/api/wire";
-import {
-  NO_CURSOR,
-  ZERO_REVISION,
-  type CollectionCursor,
-  type CollectionPage,
-  type CollectionRevision,
-} from "@/lib/api/collectionPage";
-import type { Presence } from "@/lib/api/presence";
-import { requestWithRetry } from "@/lib/api/retryPolicy";
+// One library pane's server state (docs/modules/library.md): the library, the
+// URL's entry view, the entries list and drag reorder. The pane body remounts
+// per library id, so nothing here survives a change of library.
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { apiFetch, isInvalidViewError, type ApiError } from "@/lib/api/client";
+import { publishChange, useChangeStamp } from "@/lib/api/changes";
 import { libraryEntriesResource, libraryResource } from "@/lib/api/resource";
-import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
-import { useResource } from "@/lib/api/useResource";
-import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
+import { useResourceSeed } from "@/lib/api/resourceCache";
+import { useServerValue, type Visit } from "@/lib/api/serverState";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
+import {
+  useServerList,
+  type ListSnapshot,
+  type ServerList,
+} from "@/lib/api/useServerList";
+import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { isAbortError } from "@/lib/errors";
+import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { usePaneRouter } from "@/lib/panes/paneRuntime";
-import { paneResourceLoaders, type LibraryPaneSeed } from "@/lib/panes/paneResourceLoaders";
-import { useRevalidationSettlement } from "@/lib/panes/useRevalidationSettlement";
+import type { LibraryPaneSeed } from "@/lib/panes/paneResourceLoaders";
 import {
   definePaneVisitDataKey,
-  useClearAllPaneVisitData,
   usePaneReturnReady,
   usePaneScrollRetention,
-  usePaneVisitData,
 } from "@/lib/workspace/paneReturnMemento";
-import {
-  metadataCollectionSnapshot,
-  useMetadataCollectionRevision,
-} from "@/lib/media/mediaMetadataOperations";
-import {
-  consumptionProjectionSnapshot,
-  useConsumptionProjectionRevision,
-  type ConsumptionProjectionChange,
-} from "@/lib/consumption/projectionRevision";
-import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
+import { getMemberLibrary } from "./client";
 import type { LibraryOut } from "./contract";
-import { libraryEntryPageFromWire, type LibraryEntryListItem } from "./entryListItem";
 import {
+  libraryEntryPageFromWire,
+  libraryEntryTargetId,
+  type LibraryEntryListItem,
+} from "./entryListItem";
+import {
+  buildLibraryEntriesQuery,
   CANONICAL_LIBRARY_VIEW,
   completionOf,
   decodeLibraryView,
   encodeLibraryView,
   isInitialLibraryView,
+  type DecodedLibraryView,
   type LibraryEntryView,
 } from "./libraryView";
-import {
-  libraryPlacementAffectedSince,
-  libraryPlacementSnapshot,
-  publishLibraryPlacementChange,
-  useLibraryPlacementRevision,
-} from "./placementRevision";
-import { libraryRequestErrorMessage } from "./libraryRequestErrorMessage";
 
-interface Facts {
-  query: number;
-  metadata: number;
-  placement: number;
-  consumption: ConsumptionProjectionChange;
-}
-interface Snapshot {
-  library: LibraryOut;
-  entries: {
-    view: LibraryEntryView;
-    entries: readonly LibraryEntryListItem[];
-    collectionRevision: CollectionRevision;
-    nextCursor: Presence<CollectionCursor>;
-    revisions: Facts;
-  };
-}
-interface Replacement {
-  serial: number;
-  id: string;
-  view: LibraryEntryView;
-  reason: "View" | "Reconcile";
-  recovery: "Retry" | "RefreshList";
-  facts: Facts;
-  page?: CollectionPage<LibraryEntryListItem>;
-  error?: ApiError;
-}
-const VISIT_DATA = definePaneVisitDataKey<Snapshot>("Library.Entries");
-const targetId = (entry: LibraryEntryListItem) =>
-  entry.kind === "media" ? entry.media.id : entry.podcast.id;
+type Entry = LibraryEntryListItem;
+const DETAIL = definePaneVisitDataKey<Visit<LibraryOut>>("Library.Detail");
+const ENTRIES = definePaneVisitDataKey<ListSnapshot<Entry>>("Library.Entries");
+const LEGACY_KEYS = ["kind", "type", "types"];
+/** Views whose rows or order move with reading and listening progress. */
+const followsConsumption = (view: LibraryEntryView) =>
+  view.order.kind === "Remaining" ||
+  view.projection.kind === "InProgress" ||
+  completionOf(view) === "unfinished";
 
-export function useLibraryEntries({ id, active }: {
+export interface LibraryEntries {
+  readonly library: LibraryOut | null;
+  readonly libraryFailure: ApiError | null;
+  /** Members governance found the library gone: nothing more is read. */
+  readonly unavailable: boolean;
+  readonly view: DecodedLibraryView;
+  /** The view the shown rows were read under (the previous one while a new one loads). */
+  readonly shownView: LibraryEntryView | null;
+  readonly entries: ServerList<Entry>;
+  readonly invalid: boolean;
+  readonly setView: (next: LibraryEntryView) => void;
+  readonly resetView: () => void;
+  /** I7: a complete canonical view of a named library the viewer admins. */
+  readonly reorderable: boolean;
+  readonly reorderBusy: boolean;
+  /** Optimistic; rolls back and rethrows when the server refuses. */
+  readonly reorder: (next: readonly Entry[]) => Promise<void>;
+  readonly adoptLibrary: (next: LibraryOut | null) => void;
+  /** Repeats a failed library read and a failed entries read. */
+  readonly retry: () => void;
+  /** Rereads the library and the loaded entries; settles with the entries. */
+  readonly refresh: () => Promise<void>;
+}
+
+export function useLibraryEntries({
+  id,
+  active,
+}: {
   readonly id: string;
   readonly active: boolean;
-}) {
+}): LibraryEntries {
   const router = usePaneRouter();
-  const metadata = useMetadataCollectionRevision();
-  const placement = useLibraryPlacementRevision();
-  const consumption = useConsumptionProjectionRevision();
-  const queryRevision = useMediaQueryRevision();
-  const factsNow = useCallback((): Facts => ({
-    query: queryRevision,
-    metadata: metadataCollectionSnapshot(),
-    placement: libraryPlacementSnapshot().revision,
-    consumption: consumptionProjectionSnapshot(),
-  }), [queryRevision]);
-  const codec = useMemo(() => ({
-    basePath: `/libraries/${id}`,
-    decode: decodeLibraryView,
-    encode: (value: ReturnType<typeof decodeLibraryView>, params: URLSearchParams) => {
-      if (value.kind === "Valid") return encodeLibraryView(value.view, params);
-      const next = new URLSearchParams(params);
-      for (const key of ["sort", "direction", "completion", "projection", "entry_type", "kind", "type", "types"]) {
-        next.delete(key);
-      }
-      return next;
-    },
-  }), [id]);
-  const { state: view, setState: setUrlView } = usePaneUrlState(codec);
-  const captureRef = useRef<Snapshot | null>(null);
-  const capture = useCallback(() => captureRef.current, []);
-  const restored = usePaneVisitData(VISIT_DATA, capture);
-  const initial = useRef(restored).current;
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(initial);
-  const [unavailableId, setUnavailableId] = useState<string | null>(null);
-  const [request, setRequest] = useState<Replacement | null>(null);
-  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const [chain, setChain] = useState(0);
-  const [reorderBusy, setReorderBusy] = useState(false);
-  const serial = useRef(0);
-  const reorderGeneration = useRef(0);
-  const mounted = useRef(true);
-  const unknownPending = useRef(false);
-  const adoptSeed = useRef(initial === null);
-  const completedRefresh = useRef<number | null>(null);
-
-  const clearVisitData = useClearAllPaneVisitData();
-  const scroll = usePaneScrollRetention(snapshot);
-  const settlement = useRevalidationSettlement();
-  const bootstrap = useResource<LibraryPaneSeed, { id: string }>({
-    descriptor: libraryResource,
-    params: initial === null ? { id } : null,
-    load: (params, signal) =>
-      paneResourceLoaders.library!.load(clientResourceFetcher(signal), params) as Promise<LibraryPaneSeed>,
-  });
-  const library = snapshot?.library.id === id
-    ? snapshot.library
-    : unavailableId !== id && bootstrap.status === "ready" && bootstrap.data.library.id === id
-      ? bootstrap.data.library
-      : null;
-  const keyOf = useCallback((entryView: LibraryEntryView) => libraryEntriesResource.cacheKey({ id, view: entryView }), [id]);
-  const requestedKey = view.kind === "Valid" ? keyOf(view.view) : null;
-  const committedKey = snapshot?.library.id === id ? keyOf(snapshot.entries.view) : null;
-  const seedClaimable = adoptSeed.current &&
-    (view.kind === "Invalid" || isInitialLibraryView(view.view)) &&
-    metadata === 0 && placement.revision === 0 && consumption.revision === 0 && queryRevision === 0;
-  const ready = snapshot !== null && requestedKey !== null && requestedKey === committedKey &&
-    request?.reason !== "View";
-  const latest = useRef({ id, snapshot, request, library, requestedKey, ready });
-  latest.current = { id, snapshot, request, library, requestedKey, ready };
-  const invalidateCapture = useCallback(() => {
-    captureRef.current = null;
-    clearVisitData();
-    setChain(value => value + 1);
-  }, [clearVisitData]);
-  const begin = useCallback((
-    reason: Replacement["reason"],
-    entryView: LibraryEntryView,
-    recovery: Replacement["recovery"] = "Retry",
-  ) => {
-    settlement.reject(new DOMException("Library refresh was superseded.", "AbortError"));
-    completedRefresh.current = null;
-    if (reason === "View") scroll();
-    invalidateCapture();
-    if (reason === "View") {
-      reorderGeneration.current += 1;
-      setReorderBusy(false);
-    }
-    const next: Replacement = {
-      serial: ++serial.current, id, view: entryView, reason, recovery, facts: factsNow(),
-    };
-    latest.current.request = next;
-    setRequest(next);
-    return next.serial;
-  }, [id, invalidateCapture, scroll, settlement, factsNow]);
-  const stale = useCallback((facts: Facts, entryView: LibraryEntryView) => {
-    const now = factsNow();
-    return (now.placement !== facts.placement &&
-      (latest.current.library?.isDefault === true || libraryPlacementAffectedSince(facts.placement, id))) ||
-      (now.consumption.revision !== facts.consumption.revision &&
-        (entryView.order.kind === "Remaining" || entryView.projection.kind === "InProgress" || completionOf(entryView) === "unfinished")) ||
-      now.metadata !== facts.metadata || now.query !== facts.query;
-  }, [id, factsNow]);
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-      reorderGeneration.current += 1;
-    };
-  }, []);
-  useEffect(() => {
-    serial.current += 1;
-    reorderGeneration.current += 1;
-    unknownPending.current = false;
-    setRequest(null);
-    setChain(value => value + 1);
-    settlement.reject(new DOMException("Library refresh source was replaced.", "AbortError"));
-  }, [id, settlement]);
-  useEffect(() => {
-    if (bootstrap.status === "error") {
-      if (bootstrap.error.status === 404) router.push("/libraries");
-      setSnapshot(null);
-      return;
-    }
-    if (bootstrap.status !== "ready" || !adoptSeed.current) return;
-    adoptSeed.current = false;
-    if ((view.kind === "Invalid" || isInitialLibraryView(view.view)) &&
-      metadata === 0 && placement.revision === 0 && consumption.revision === 0 && queryRevision === 0) {
-      setSnapshot({
-        library: bootstrap.data.library, entries: {
-          view: view.kind === "Valid" ? view.view : CANONICAL_LIBRARY_VIEW,
-          entries: bootstrap.data.entries,
-          collectionRevision: bootstrap.data.collectionRevision,
-          nextCursor: bootstrap.data.nextCursor,
-          revisions: { query: 0, metadata: 0, placement: 0, consumption: { revision: 0, rowRevision: 0 } },
+  const codec = useMemo(
+    () => ({
+      basePath: `/libraries/${id}`,
+      decode: decodeLibraryView,
+      encode: (value: DecodedLibraryView, params: URLSearchParams) => {
+        if (value.kind === "Valid")
+          return encodeLibraryView(value.view, params);
+        const next = new URLSearchParams(params);
+        for (const key of [
+          "sort",
+          "direction",
+          "completion",
+          "projection",
+          "entry_type",
+          ...LEGACY_KEYS,
+        ]) {
+          next.delete(key);
         }
+        return next;
+      },
+    }),
+    [id],
+  );
+  const { state: url, setState: setUrl } = usePaneUrlState(codec);
+  const seed = useResourceSeed<LibraryPaneSeed>(
+    libraryResource.cacheKey({ id }),
+  );
+
+  const detail = useServerValue({
+    key: id,
+    stale: useChangeStamp("Libraries"),
+    visit: DETAIL,
+    load: (signal) => getMemberLibrary(id, signal),
+  });
+  const read = detail.status === "ready" ? detail.data : null;
+  const readRef = useRef(read);
+  readRef.current = read;
+  // Members governance reports a fresher library (or its loss) until the next read.
+  const [adopted, setAdopted] = useState<{
+    readonly base: LibraryOut | null;
+    readonly library: LibraryOut | null;
+  } | null>(null);
+  const library =
+    adopted !== null && adopted.base === read
+      ? adopted.library
+      : (read ?? seed?.library ?? null);
+  const unavailable =
+    adopted !== null && adopted.base === read && adopted.library === null;
+  const libraryFailure = detail.status === "failed" ? detail.error : null;
+  useEffect(() => {
+    if (libraryFailure?.status === 404) router.push("/libraries");
+  }, [libraryFailure, router]);
+
+  const view = url.kind === "Valid" ? url.view : null;
+  const consumption = useChangeStamp("Consumption");
+  const stale = [
+    useChangeStamp("Entries"),
+    view !== null && followsConsumption(view) ? consumption : "-",
+    useMediaQueryRevision(),
+  ].join("|");
+  const entries = useServerList<Entry>({
+    key:
+      view === null || unavailable
+        ? null
+        : `${id}${buildLibraryEntriesQuery(view)}`,
+    stale,
+    pageSize: 100,
+    drain: true,
+    active,
+    visit: ENTRIES,
+    seed: seed && { key: id, page: seed.entries },
+    id: libraryEntryTargetId,
+    fetchPage: async (cursor, limit, signal) => {
+      const path = libraryEntriesResource.clientPath({
+        id,
+        view: view ?? CANONICAL_LIBRARY_VIEW,
+        cursor: cursor ?? undefined,
+        limit,
       });
-    }
-  }, [bootstrap, router, view, metadata, placement.revision, consumption.revision, queryRevision]);
-  useEffect(() => {
-    if (view.kind === "Invalid" || unavailableId === id || seedClaimable) return;
-    const needsPage = snapshot === null
-      ? !isInitialLibraryView(view.view) || !adoptSeed.current || metadata !== 0 || placement.revision !== 0 || consumption.revision !== 0 || queryRevision !== 0
-      : requestedKey !== committedKey;
-    if (needsPage && !(request?.reason === "View" && request.id === id && keyOf(request.view) === requestedKey)) {
-      begin("View", view.view);
-    }
-  }, [id, view, snapshot, requestedKey, committedKey, request, metadata,
-    placement.revision, consumption.revision, begin, keyOf, unavailableId, seedClaimable, queryRevision]);
-  useEffect(() => {
-    if (request === null || request.error || request.page) return;
-    const current = request;
-    const controller = new AbortController();
-    const load = async (signal: AbortSignal) => {
-      const retained = current.reason === "Reconcile" ? latest.current.snapshot?.entries.entries.length ?? 0 : 0;
-      for (;;) {
-        try {
-          let page = libraryEntryPageFromWire((await apiFetch<ApiJson<"/libraries/{library_id}/entries", "get">>(
-            libraryEntriesResource.clientPath({ id: current.id, view: current.view,
-              limit: retained === 0 ? 100 : Math.min(100, retained) }), { signal },
-          )).data);
-          const items = [...page.items];
-          while (items.length < retained && page.nextCursor.kind === "Present") {
-            page = libraryEntryPageFromWire((await apiFetch<ApiJson<"/libraries/{library_id}/entries", "get">>(
-              libraryEntriesResource.clientPath({ id: current.id, view: current.view,
-                limit: Math.min(100, retained - items.length), cursor: page.nextCursor.value,
-                collectionRevision: page.collectionRevision }), { signal },
-            )).data);
-            items.push(...page.items);
-          }
-          return { ...page, items };
-        } catch (error) {
-          if (signal.aborted || !isApiError(error) || error.code !== "E_COLLECTION_CHANGED") throw error;
-        }
-      }
-    };
-    void (current.reason === "View" ? requestWithRetry(load, controller.signal) : load(controller.signal)).then(page => {
-      if (!controller.signal.aborted && serial.current === current.serial) {
-        setRequest(value => value?.serial === current.serial ? { ...value, page } : value);
-      }
-    }, error => {
-      if (controller.signal.aborted || isAbortError(error) || serial.current !== current.serial || handleUnauthenticatedApiError(error)) return;
-      try {
-        if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-        if (!(current.reason === "View" && isInvalidViewError(error))) {
-          libraryRequestErrorMessage(error, { title: "Library entries couldn’t be refreshed", request: "EntryRead" });
-        }
-        setRequest(value => value?.serial === current.serial ? { ...value, error } : value);
-        if (settlement.isPending(current.serial)) {
-          settlement.reject(error);
-          setRequest(null);
-          captureRef.current = latest.current.snapshot;
-        }
-      } catch (unexpected) {
-        setDefect({ error: unexpected });
-      }
-    });
-    return () => controller.abort();
-  }, [request, settlement]);
-  useEffect(() => {
-    if (!request?.page || request.serial !== serial.current || request.id !== id || keyOf(request.view) !== requestedKey || library === null) return;
-    if (stale(request.facts, request.view)) {
-      begin(request.reason, request.view, request.recovery);
-      return;
-    }
-    if (request.reason === "Reconcile" && committedKey !== requestedKey) return;
-    const next: Snapshot = {
-      library, entries: {
-        view: request.view,
-        entries: request.page.items,
-        collectionRevision: request.page.collectionRevision,
-        nextCursor: request.page.nextCursor,
-        revisions: request.reason === "View" ? factsNow() : request.facts,
-      }
-    };
-    latest.current.snapshot = next;
-    setSnapshot(next);
-    if (settlement.isPending(request.serial)) completedRefresh.current = request.serial;
-    setRequest(null);
-    setChain(value => value + 1);
-  }, [request, id, library, keyOf, requestedKey, committedKey, stale, begin, settlement, factsNow]);
-  // a stale captured reconciliation starts its followup before refresh settlement.
-  // beginning that request supersedes the waiter rather than announcing stale completion.
-  useEffect(() => {
-    if (!ready || snapshot === null || request !== null || latest.current.request !== null) return;
-    if (unknownPending.current || stale(snapshot.entries.revisions, snapshot.entries.view)) {
-      unknownPending.current = false;
-      begin("Reconcile", snapshot.entries.view);
-    }
-  }, [metadata, placement.revision, consumption, queryRevision, ready, snapshot, request, stale, begin]);
-  useLayoutEffect(() => {
-    captureRef.current = ready && request === null && snapshot !== null ? snapshot : null;
-  }, [ready, request, snapshot]);
-  useEffect(() => {
-    if (completedRefresh.current !== null && request === null && captureRef.current !== null) {
-      settlement.resolve(completedRefresh.current);
-      completedRefresh.current = null;
-    }
-  }, [snapshot, request, settlement]);
-  useEffect(() => () => {
-    settlement.reject(new DOMException("Library refresh source was replaced.", "AbortError"));
-    completedRefresh.current = null;
-  }, [requestedKey, settlement]);
-
-  const refreshList = useCallback(() => {
-    const current = latest.current;
-    if (current.snapshot !== null && current.ready) {
-      begin("Reconcile", current.snapshot.entries.view, "RefreshList");
-    }
-  }, [begin]);
-  const revalidate = useCallback((signal: AbortSignal): Promise<void> => {
-    if (signal.aborted) {
-      return Promise.reject(signal.reason ?? new DOMException("Library refresh was aborted.", "AbortError"));
-    }
-    const current = latest.current;
-    if (current.snapshot === null || !current.ready) {
-      return Promise.reject(new Error("Library refresh lost its exact committed view"));
-    }
-    const token = begin("Reconcile", current.snapshot.entries.view);
-    return settlement.wait({
-      requestId: token, signal,
-      onAbort: () => {
-        completedRefresh.current = null;
-        serial.current += 1;
-        setRequest(value => value?.serial === token ? null : value);
-        captureRef.current = latest.current.snapshot;
-      }
-    });
-  }, [begin, settlement]);
-  const loadPage = useCallback(async (cursor: CollectionCursor, collectionRevision: CollectionRevision, signal: AbortSignal) => {
-    const current = latest.current.snapshot;
-    if (current === null) throw new Error("Library continuation lost its committed view");
-    const page = libraryEntryPageFromWire((await apiFetch<ApiJson<"/libraries/{library_id}/entries", "get">>(
-      libraryEntriesResource.clientPath({ id, view: current.entries.view, cursor, collectionRevision, limit: 100 }),
-      { signal },
-    )).data);
-    if (latest.current.snapshot !== current || latest.current.request !== null ||
-      stale(current.entries.revisions, current.entries.view)) {
-      throw new DOMException("Library continuation was superseded.", "AbortError");
-    }
-    return page;
-  }, [id, stale]);
-  const commitPage = useCallback((page: CollectionPage<LibraryEntryListItem>) => {
-    const current = latest.current.snapshot;
-    if (current === null) throw new Error("Library continuation lost its committed view");
-    if (current.entries.collectionRevision !== page.collectionRevision) throw new Error("Library continuation revision mismatch");
-    const entries = [...current.entries.entries];
-    const ids = new Set(entries.map(targetId));
-    for (const entry of page.items) {
-      if (ids.has(targetId(entry))) continue;
-      ids.add(targetId(entry));
-      entries.push(entry);
-    }
-    const next = { ...current, entries: { ...current.entries, entries, nextCursor: page.nextCursor } };
-    latest.current.snapshot = next;
-    captureRef.current = next;
-    setSnapshot(next);
-    return entries.length;
-  }, []);
-  const exhaustion = useExhaustivePagination({
-    active: active && ready && snapshot !== null && request === null,
-    chainKey: `${id}:${requestedKey ?? "invalid"}:${committedKey ?? "uncommitted"}:${snapshot?.entries.collectionRevision ?? ZERO_REVISION}:${chain}`,
-    cursor: snapshot?.entries.nextCursor ?? NO_CURSOR,
-    collectionRevision: snapshot?.entries.collectionRevision ?? ZERO_REVISION,
-    itemCount: snapshot?.entries.entries.length ?? 0,
-    loadPage, commitPage,
-    refresh: refreshList,
+      type Body = ApiJson<"/libraries/{library_id}/entries", "get">;
+      return libraryEntryPageFromWire(
+        (await apiFetch<Body>(path, { signal })).data,
+      );
+    },
   });
-  const handledCollectionChange = useRef<unknown>(null);
-  useEffect(() => {
-    if (request !== null || exhaustion.kind !== "RefreshRequired" ||
-      exhaustion.reason !== "CollectionChanged" || handledCollectionChange.current === exhaustion.error) return;
-    handledCollectionChange.current = exhaustion.error;
-    refreshList();
-  }, [request, exhaustion, refreshList]);
-  const reorder = useCallback(async (entries: readonly LibraryEntryListItem[]) => {
-    const current = latest.current;
-    const saved = current.snapshot;
-    if (!current.ready || saved === null || saved.library.role !== "admin" ||
-      !saved.library.canEditEntries || saved.library.isDefault ||
-      saved.entries.view.order.kind !== "Canonical" ||
-      saved.entries.view.projection.kind !== "AllItems" ||
-      saved.entries.view.projection.completion !== "all" ||
-      saved.entries.view.entryType.kind !== "AllTypes" ||
-      saved.entries.nextCursor.kind !== "Absent" || exhaustion.kind !== "Complete") return;
-    const generation = ++reorderGeneration.current;
-    const capturedId = id;
-    const capturedKey = current.requestedKey;
-    const optimistic = { ...saved, entries: { ...saved.entries, entries } };
-    latest.current.snapshot = optimistic;
-    setSnapshot(optimistic);
+  const shown = entries.shownKey?.slice(id.length) ?? null;
+  const decodedShown =
+    shown === null ? null : decodeLibraryView(new URLSearchParams(shown));
+  const invalid =
+    url.kind === "Invalid" ||
+    (entries.failure?.op === "Load" &&
+      isInvalidViewError(entries.failure.error));
+  usePaneReturnReady(entries.current || entries.status === "failed" || invalid);
+
+  // The dragged order shows until the list commits again, or the save fails.
+  const [ordered, setOrdered] = useState<{
+    readonly base: readonly Entry[];
+    readonly items: readonly Entry[];
+  } | null>(null);
+  const [reorderBusy, setReorderBusy] = useState(false);
+  const items =
+    ordered !== null && ordered.base === entries.items
+      ? ordered.items
+      : entries.items;
+  const reorderable =
+    library !== null &&
+    library.role === "admin" &&
+    library.canEditEntries &&
+    !library.isDefault &&
+    view !== null &&
+    isInitialLibraryView(view) &&
+    entries.complete;
+  const reorder = async (next: readonly Entry[]) => {
+    if (!reorderable || reorderBusy) return;
+    const base = entries.items;
+    setOrdered({ base, items: next });
     setReorderBusy(true);
     try {
-      await apiFetch(`/api/libraries/${capturedId}/entries/reorder`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          entry_ids: entries.map(entry => {
-            if (entry.placement.kind !== "Present") throw new Error("Virtual Library rows cannot be reordered");
-            return entry.placement.value.libraryEntryId;
-          })
-        })
-      });
-      publishLibraryPlacementChange([capturedId]);
-      if (!mounted.current || generation !== reorderGeneration.current ||
-        latest.current.id !== capturedId || latest.current.requestedKey !== capturedKey) return;
-      clearVisitData();
-      const latestRequest = latest.current.request;
-      if (latest.current.ready && latest.current.snapshot !== null && latestRequest === null) {
-        begin("Reconcile", latest.current.snapshot.entries.view);
-      } else if (latestRequest === null || latestRequest.facts.placement < libraryPlacementSnapshot().revision) {
-        unknownPending.current = true;
-      }
+      await apiFetch(
+        `/api/libraries/${encodeURIComponent(id)}/entries/reorder`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            entry_ids: next.map((entry) => {
+              if (entry.placement.kind !== "Present") {
+                // justify-defect: a named library's rows are all physical entries.
+                throw new Error("Virtual Library rows cannot be reordered");
+              }
+              return entry.placement.value.libraryEntryId;
+            }),
+          }),
+        },
+      );
+      publishChange("Entries");
     } catch (error) {
-      if (!mounted.current || generation !== reorderGeneration.current ||
-        latest.current.id !== capturedId || latest.current.requestedKey !== capturedKey) return;
-      const currentSnapshot = latest.current.snapshot;
-      if (currentSnapshot !== null) {
-        const rollback = { ...currentSnapshot, entries: { ...currentSnapshot.entries, entries: saved.entries.entries } };
-        latest.current.snapshot = rollback;
-        setSnapshot(rollback);
-      }
+      setOrdered((current) => (current?.base === base ? null : current));
       if (!handleUnauthenticatedApiError(error)) throw error;
     } finally {
-      if (mounted.current && generation === reorderGeneration.current) setReorderBusy(false);
-    }
-  }, [id, exhaustion.kind, clearVisitData, begin]);
-  const setView = useCallback((next: LibraryEntryView) => {
-    setUrlView({ kind: "Valid", view: next });
-    const current = latest.current.snapshot;
-    if (current !== null && keyOf(current.entries.view) === keyOf(next)) {
-      serial.current += 1;
-      reorderGeneration.current += 1;
-      settlement.reject(new DOMException("Library refresh was superseded.", "AbortError"));
-      completedRefresh.current = null;
-      scroll();
-      invalidateCapture();
-      setRequest(null);
       setReorderBusy(false);
-    } else {
-      begin("View", next);
     }
-  }, [setUrlView, keyOf, settlement, scroll, invalidateCapture, begin]);
-  const adoptLibrary = useCallback((next: LibraryOut | null) => {
-    setUnavailableId(next === null ? id : null);
-    setSnapshot(current => current === null || next === null
-      ? null
-      : current.library.id === next.id || next.id === id ? { ...current, library: next } : current);
-  }, [id]);
-  const invalid = view.kind === "Invalid" || (request?.reason === "View" && isInvalidViewError(request.error));
-  const failure = request?.reason === "View" ? request.error : undefined;
-  const state = invalid ? { kind: "Invalid" } as const
-    : failure ? { kind: "Failed", request: "EntryRead", error: failure } as const
-    : bootstrap.status === "error" && snapshot === null
-      ? { kind: "Failed", request: "LibraryRead", error: bootstrap.error } as const
-      : ready ? { kind: "Ready" } as const
-      : snapshot !== null ? { kind: "Refreshing" } as const : { kind: "Loading" } as const;
-  usePaneReturnReady(state.kind === "Ready" || state.kind === "Failed" || state.kind === "Invalid");
-  if (defect !== null) throw defect.error;
+  };
+
+  const scroll = usePaneScrollRetention(entries.items);
+  const setView = useCallback(
+    (next: LibraryEntryView) => {
+      scroll();
+      setUrl({ kind: "Valid", view: next });
+    },
+    [scroll, setUrl],
+  );
+  const { refetch: refetchDetail } = detail;
+  const { refetch: refetchEntries } = entries;
   return {
     library,
-    committed: snapshot?.library.id === id ? {
-      library: snapshot.library,
-      view: snapshot.entries.view,
-      entries: snapshot.entries.entries,
-      collectionRevision: snapshot.entries.collectionRevision,
-      nextCursor: snapshot.entries.nextCursor,
-    } : null,
-    view, state,
-    reconciliation: request?.reason === "Reconcile" ? { recovery: request.recovery, error: request.error ?? null } : null,
-    exhaustion, reorderBusy, setView,
+    libraryFailure,
+    unavailable,
+    view: url,
+    shownView: decodedShown?.kind === "Valid" ? decodedShown.view : null,
+    entries: { ...entries, items },
+    invalid,
+    setView,
     resetView: () => setView(CANONICAL_LIBRARY_VIEW),
+    reorderable,
+    reorderBusy,
+    reorder,
+    adoptLibrary: useCallback(
+      (next: LibraryOut | null) =>
+        setAdopted({ base: readRef.current, library: next }),
+      [],
+    ),
     retry: () => {
-      if (request?.error) begin(request.reason, request.view, request.recovery);
-      else if (bootstrap.status === "error") bootstrap.retry();
+      if (detail.status === "failed") detail.refetch();
+      entries.retry();
     },
-    refreshList, revalidate, adoptLibrary, reorder,
-  } as const;
+    refresh: useCallback(() => {
+      refetchDetail();
+      return refetchEntries();
+    }, [refetchDetail, refetchEntries]),
+  };
 }

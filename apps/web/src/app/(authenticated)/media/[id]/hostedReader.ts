@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import type { RetrievalLocator } from "@/lib/resourceGraph/citations";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { publishConsumptionProjectionChange } from "@/lib/consumption/projectionRevision";
+import { publishChange } from "@/lib/api/changes";
 import type { Reader, ReaderEntry } from "@/lib/documentReader/DocumentReader";
 import type { TextRange } from "@/lib/documentReader/DocumentReader";
 import {
@@ -64,7 +64,7 @@ export function hostedProgress(mediaId: string): ReaderProgressPort {
           body: JSON.stringify({ locator, base_revision: base.revision }),
           keepalive: base.keepalive,
         });
-        publishConsumptionProjectionChange();
+        publishChange("Consumption");
         return { kind: "Canonical", snapshot: data };
       } catch (error) {
         if (!isApiError(error) || error.code !== "E_READER_STATE_CONFLICT")

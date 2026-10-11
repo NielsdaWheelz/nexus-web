@@ -21,10 +21,7 @@ import {
   type LibraryRequest,
 } from "@/lib/libraries/libraryRequestErrorMessage";
 import type { LibraryPlacementSession } from "@/lib/libraries/placementController";
-import {
-  libraryPlacementSnapshot,
-  useLibraryPlacementRevision,
-} from "@/lib/libraries/placementRevision";
+import { changeStamp, useChangeStamp } from "@/lib/api/changes";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 
 export default function LibraryPlacementOverlay({
@@ -66,9 +63,9 @@ function PlacementEditor({ session: { target, options } }: { session: LibraryPla
     onRetry: (() => void) | null;
   } | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const { revision } = useLibraryPlacementRevision();
-  // The placement bus revision when the rows' read was sent.
-  const readRevision = useRef(revision);
+  const stamp = useChangeStamp("Libraries", "Entries");
+  // The change stamp when the rows' read was sent.
+  const readStamp = useRef(stamp);
 
   // Shows why a step failed, or sends an unexpected error to the pane boundary, and says what
   // the failure means for the step. "Transport": the outcome is unknown, and Retry resends the
@@ -117,7 +114,7 @@ function PlacementEditor({ session: { target, options } }: { session: LibraryPla
 
   const reread = useCallback(
     async function reread() {
-      readRevision.current = libraryPlacementSnapshot().revision;
+      readStamp.current = changeStamp("Libraries", "Entries");
       try {
         setRows(await listLibraryPlacements(target));
         setPending(null);
@@ -140,10 +137,10 @@ function PlacementEditor({ session: { target, options } }: { session: LibraryPla
   // placements after the rows were read. Only an idle editor rereads: every step ends in a
   // read or a failure, and the step after a failure reads again.
   useEffect(() => {
-    if (pending !== null || failure !== null || revision <= readRevision.current) return;
+    if (pending !== null || failure !== null || stamp === readStamp.current) return;
     setPending("Load");
     void reread();
-  }, [pending, failure, revision, reread]);
+  }, [pending, failure, stamp, reread]);
 
   async function command(op: "Add" | "Remove", destination: LibraryPlacementDestination) {
     setPending(libraryPlacementDestinationKey(destination));
@@ -181,7 +178,7 @@ function PlacementEditor({ session: { target, options } }: { session: LibraryPla
       return;
     }
     let fresh: LibraryPlacementOption[];
-    readRevision.current = libraryPlacementSnapshot().revision;
+    readStamp.current = changeStamp("Libraries", "Entries");
     try {
       fresh = await listLibraryPlacements(target);
     } catch (error) {

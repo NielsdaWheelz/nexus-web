@@ -5,7 +5,8 @@
 // validates it; the text filter stays local. While the pane is active it loads
 // every page, so the filter and the "N works" count cover all works.
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
+import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
@@ -26,13 +27,14 @@ import {
   isSameSystemApiDefect,
 } from "@/lib/api/client";
 import { absent, present } from "@/lib/api/presence";
+import { useChangeStamp } from "@/lib/api/changes";
+import { useServerValue, type Visit } from "@/lib/api/serverState";
 import {
   listRowStatus,
+  pageQuery,
   useServerList,
-  useServerValue,
-  type ListData,
-  type Visit,
-} from "@/lib/api/serverState";
+  type ListSnapshot,
+} from "@/lib/api/useServerList";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import type { CollectionRowView } from "@/lib/collections/types";
 import {
@@ -62,7 +64,6 @@ import {
   matchesPaneFilterQuery,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
-import { usePodcastRevision } from "@/lib/podcasts/api";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import {
@@ -74,9 +75,7 @@ import styles from "./page.module.css";
 const DETAIL =
   definePaneVisitDataKey<Visit<ContributorDetail>>("Author.Detail");
 const WORKS =
-  definePaneVisitDataKey<Visit<ListData<ContributorWork>>>("Author.Works");
-
-const NO_WORKS: readonly ContributorWork[] = [];
+  definePaneVisitDataKey<ListSnapshot<ContributorWork>>("Author.Works");
 
 /** The four views; the first is the default and owns no url keys. */
 const SORTS = [
@@ -95,10 +94,6 @@ function authorError(error: unknown, title: string): FeedbackContent {
       title: "This author is no longer available",
       requestId,
     };
-  }
-  if (error.code === "E_COLLECTION_CHANGED") {
-    const message = "The works changed while loading.";
-    return { tone: "Danger", title, message, requestId };
   }
   const transport = apiTransportFeedback(error, title);
   if (transport === null) throw error;
@@ -157,6 +152,10 @@ function presentWork(work: ContributorWork): CollectionRowView {
 export default function AuthorPaneBody() {
   const handle = usePaneParam("handle");
   if (!handle) throw new Error("author route requires a handle");
+  return <AuthorPane key={handle} handle={handle} />;
+}
+
+function AuthorPane({ handle }: { readonly handle: string }) {
   const active = usePaneIsActive();
   const router = usePaneRouter();
   const params = usePaneSearchParams();
@@ -166,7 +165,7 @@ export default function AuthorPaneBody() {
     ...params.getAll("sort").map((value) => ["sort", value]),
     ...params.getAll("direction").map((value) => ["direction", value]),
   ]).toString();
-  const stale = `${useMediaQueryRevision()}:${usePodcastRevision()}`;
+  const stale = `${useMediaQueryRevision()}:${useChangeStamp("Podcasts")}`;
   const detail = useServerValue({
     key: handle,
     stale,
@@ -177,26 +176,14 @@ export default function AuthorPaneBody() {
     key: `${handle}?${view}`,
     stale,
     pageSize: 100,
+    drain: true,
+    active,
     visit: WORKS,
-    fetchPage: (page, signal) =>
-      listContributorWorks(
-        handle,
-        new URLSearchParams(`${view}&${page}`),
-        signal,
-      ),
+    id: (work) => work.href,
+    fetchPage: (cursor, limit, signal) =>
+      listContributorWorks(handle, pageQuery(view, cursor, limit), signal),
   });
-  // Drain while active: one page at a time, stopping at the first error.
-  const drain =
-    active &&
-    works.status === "ready" &&
-    !works.complete &&
-    !works.loadingMore &&
-    works.error === null;
-  useEffect(() => {
-    if (drain) works.loadMore();
-  });
-
-  const loaded = works.status === "ready" ? works.items : NO_WORKS;
+  const loaded = works.items;
   const summaries = useMediaSummaries(
     loaded.flatMap((work) =>
       work.kind === "Media" ? [work.mediaSummary] : [],
@@ -214,7 +201,7 @@ export default function AuthorPaneBody() {
       }),
     [loaded, summaries],
   );
-  const complete = works.status === "ready" && works.complete;
+  const complete = works.complete;
   const matches = useCallback(
     (text: string) =>
       rows.filter((row) =>
@@ -232,14 +219,11 @@ export default function AuthorPaneBody() {
     sourceKey: `Author.Works:${handle}`,
     getRowStatus: useCallback(
       (text: string) =>
-        listRowStatus(
-          works.status,
-          complete,
-          rows.length,
-          matches(text).length,
-          "work",
-        ),
-      [complete, matches, rows.length, works.status],
+        listRowStatus(works, rows.length, matches(text).length, {
+          singular: "work",
+          plural: "works",
+        }),
+      [matches, rows.length, works],
     ),
   });
   const text = filterRows.query.trim();
@@ -269,7 +253,7 @@ export default function AuthorPaneBody() {
   }, [clearQuery, setView]);
   const { inputRef, focusInput } = usePaneCollectionInput();
   const invalidView =
-    works.status === "failed" && works.error.code === "E_INVALID_REQUEST";
+    works.status === "failed" && works.failure?.error.code === "E_INVALID_REQUEST";
   const collection = useMemo(
     () =>
       invalidView
@@ -354,7 +338,8 @@ export default function AuthorPaneBody() {
   const { refetch: refetchWorks } = works;
   const refresh = useCallback(async () => {
     refetchDetail();
-    refetchWorks();
+    // a failed reread shows as the list's failure
+    refetchWorks().catch(() => {});
     return { kind: "Complete" as const, announcement: "Refreshing author" };
   }, [refetchDetail, refetchWorks]);
   usePaneChrome({
@@ -392,7 +377,7 @@ export default function AuthorPaneBody() {
     detail.status === "failed"
       ? detail.error
       : works.status === "failed"
-        ? works.error
+        ? (works.failure?.error ?? null)
         : null;
   if (failure !== null) {
     const retry = () => {
@@ -445,12 +430,14 @@ export default function AuthorPaneBody() {
             status={works.status === "loading" ? "loading" : "ready"}
             ariaLabel="Works"
             rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
-            collectionBusy={works.status === "ready" && works.loadingMore}
+            collectionBusy={works.running !== null}
             surface={false}
             notice={
-              works.status === "ready" && works.error !== null ? (
+              works.status === "ready" &&
+              works.failure !== null &&
+              works.failure.op !== "More" ? (
                 <FeedbackNotice
-                  content={authorError(works.error, "Works couldn’t be loaded")}
+                  content={authorError(works.failure.error, "Works couldn’t be loaded")}
                   announcement="Polite"
                   actions={[{ label: "Retry", onClick: works.retry }]}
                 />
@@ -461,6 +448,7 @@ export default function AuthorPaneBody() {
                 />
               )
             }
+            footer={<CollectionExhaustionNotice list={works} />}
             empty={
               text ? (
                 <FeedbackNotice

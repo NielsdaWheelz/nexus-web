@@ -19,37 +19,19 @@ from nexus.db.models import ChatRun, Conversation
 from nexus.db.retries import retry_read_committed
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.jobs.queue import revoke_jobs_by_dedupe_keys
-from nexus.schemas.collection_page import (
-    CollectionPage,
-    CollectionRevisionOut,
-    parse_collection_query,
-)
+from nexus.schemas.collection_page import CollectionPage, parse_collection_query
 from nexus.schemas.conversation import ConversationListItemOut, ConversationOut, MessageDeleteOut
-from nexus.schemas.presence import absent, present
+from nexus.schemas.presence import presence_from_nullable
 from nexus.schemas.resource_graph import LinkPassageEndpoint, LinkResourceEndpoint
 from nexus.services.chat import quotes, reads
 from nexus.services.collection_keyset import (
-    SortKey,
-    after_values,
-    expected_kinds,
-    keyset_clause,
-    keyset_params,
-    order_by_sql,
-    plan_json,
-)
-from nexus.services.collection_revisions import (
-    CollectionFamily,
-    bump_collection_revision,
-    read_collection_revision,
-    require_collection_revision,
-)
-from nexus.services.dossier import engine as dossier_engine
-from nexus.services.keyset_cursor import (
-    KeysetValue,
     KeysetValueKind,
+    SortKey,
     decode_keyset_cursor,
     encode_keyset_cursor,
+    keyset_page,
 )
+from nexus.services.dossier import engine as dossier_engine
 from nexus.services.media_read_map import READ_DOCUMENT_MAX_CHARS
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.citations import citation_counts_for_sources
@@ -63,9 +45,6 @@ from nexus.services.resource_graph.refs import (
 from nexus.services.resource_items.capabilities import resource_link_mode
 
 DEFAULT_TITLE = "Chat"
-_INDEX = CollectionFamily.ConversationIndex
-# Versioned: a cursor minted under the unordered index carried no plan or revision.
-_INDEX_CURSOR = f"{_INDEX.value}:v2"
 _DATE, _ID, _TEXT, _INT = (
     KeysetValueKind.DateTime,
     KeysetValueKind.Uuid,
@@ -115,7 +94,6 @@ def create(
             source=ResourceRef("conversation", conversation.id),
             target=materialize_link_endpoint(db, viewer_id=viewer_id, endpoint=endpoint),
         )
-    bump_collection_revision(db, viewer_id=viewer_id, family=_INDEX)
     db.commit()
     return ConversationOut(id=conversation.id, title=conversation.title)
 
@@ -123,7 +101,7 @@ def create(
 def index(
     db: Session, *, viewer_id: UUID, items: Sequence[tuple[str, str]]
 ) -> CollectionPage[ConversationListItemOut]:
-    """One revision-consistent page; its cursor binds viewer, plan, revision and search.
+    """One keyset page of the viewer's chats; the cursor binds viewer, view and search.
 
     Title search is a trimmed literal substring of at most 200 characters.
     """
@@ -136,58 +114,29 @@ def index(
             ApiErrorCode.E_INVALID_REQUEST,
             "Unsupported chat index view, or a title_search over 200 characters",
         )
-    revision = (
-        read_collection_revision(db, viewer_id=viewer_id, family=_INDEX)
-        if query.collection_revision is None
-        else require_collection_revision(
-            db, viewer_id=viewer_id, family=_INDEX, expected=query.collection_revision
-        )
-    )
-    binding: dict[str, object] = {
-        "family": _INDEX_CURSOR,
-        "plan": plan_json(plan),
-        "revision": revision,
-        "viewerId": str(viewer_id),
-    }
-    if search:
-        binding["titleSearch"] = search
-    params: dict[str, object] = {"viewer": viewer_id, "limit": query.limit + 1, "search": search}
-    keyset = ""
-    if query.cursor is not None:
-        keyset = keyset_clause(plan, alias="facts")
-        after = decode_keyset_cursor(
-            query.cursor, family=_INDEX_CURSOR, query=binding, expected_kinds=expected_kinds(plan)
-        )
-        params |= keyset_params(plan, after)
     # The DB CHECK keeps titles nonblank, so the presented title is the title itself.
-    rows = (
-        db.execute(
-            text(
-                f"""
-                WITH facts AS (
-                    SELECT c.id, c.title, c.updated_at, c.title AS presented_title,
-                        lower(c.title) AS title_key,
-                        (SELECT count(*) FROM messages m WHERE m.conversation_id = c.id)
-                            AS message_count
-                    FROM conversations c
-                    WHERE c.owner_user_id = :viewer
-                      AND (:search = '' OR strpos(lower(c.title), lower(:search)) > 0)
-                )
-                SELECT * FROM facts WHERE true {keyset}
-                ORDER BY {order_by_sql(plan, alias="facts")}
-                LIMIT :limit
-                """
-            ),
-            params,
-        )
-        .mappings()
-        .all()
+    rows, cursor = keyset_page(
+        db,
+        binding={"list": "Chats", "viewer": viewer_id, "titleSearch": search},
+        plan=plan,
+        cursor=query.cursor,
+        limit=query.limit,
+        params={"viewer": viewer_id, "search": search},
+        sql=lambda keyset, order: f"""
+            WITH facts AS (
+                SELECT c.id, c.title, c.updated_at, c.title AS presented_title,
+                    lower(c.title) AS title_key,
+                    (SELECT count(*) FROM messages m WHERE m.conversation_id = c.id)
+                        AS message_count
+                FROM conversations c
+                WHERE c.owner_user_id = :viewer
+                  AND (:search = '' OR strpos(lower(c.title), lower(:search)) > 0)
+            )
+            SELECT * FROM facts WHERE true {keyset}
+            ORDER BY {order}
+            LIMIT :limit
+        """,
     )
-    page = rows[: query.limit]
-    cursor = None
-    if len(rows) > query.limit and page:
-        after_page = after_values(plan, page[-1])
-        cursor = encode_keyset_cursor(family=_INDEX_CURSOR, query=binding, after=after_page)
     return CollectionPage[ConversationListItemOut](
         items=[
             ConversationListItemOut(
@@ -196,10 +145,9 @@ def index(
                 message_count=row["message_count"],
                 updated_at=row["updated_at"],
             )
-            for row in page
+            for row in rows
         ],
-        collectionRevision=revision,
-        nextCursor=present(cursor) if cursor is not None else absent(),
+        nextCursor=presence_from_nullable(cursor),
     )
 
 
@@ -247,17 +195,13 @@ def rename_fork(db: Session, *, viewer_id: UUID, message_id: UUID, title: str | 
     db.commit()
 
 
-def delete_conversation(
-    db: Session, *, viewer_id: UUID, conversation_id: UUID
-) -> CollectionRevisionOut:
-    def attempt() -> CollectionRevisionOut:
+def delete_conversation(db: Session, *, viewer_id: UUID, conversation_id: UUID) -> None:
+    def attempt() -> None:
         _lock_owned(db, viewer_id, conversation_id)
         _delete(db, conversation_id, None)
-        revision = bump_collection_revision(db, viewer_id=viewer_id, family=_INDEX)
         db.commit()
-        return CollectionRevisionOut(collectionRevision=revision)
 
-    return retry_read_committed(db, "delete_conversation", attempt)
+    retry_read_committed(db, "delete_conversation", attempt)
 
 
 def delete_message(db: Session, *, viewer_id: UUID, message_id: UUID) -> MessageDeleteOut:
@@ -277,13 +221,8 @@ def delete_message(db: Session, *, viewer_id: UUID, message_id: UUID) -> Message
         if conversation_id is None:
             raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
         deleted = _delete(db, conversation_id, message_id)
-        revision = bump_collection_revision(db, viewer_id=viewer_id, family=_INDEX)
         db.commit()
-        return MessageDeleteOut(
-            conversationId=conversation_id,
-            conversationDeleted=deleted,
-            collectionRevision=revision,
-        )
+        return MessageDeleteOut(conversationId=conversation_id, conversationDeleted=deleted)
 
     return retry_read_committed(db, "delete_message", attempt)
 
@@ -432,6 +371,15 @@ class ConversationReadRefusal:
     code: Literal["missing", "invalid_cursor", "stale_cursor"]
 
 
+# The read tool's cursor schema: the metadata revision, the (seq, id) position, the offset.
+_MESSAGE_CURSOR = (
+    SortKey("revision", "asc", _TEXT),
+    SortKey("seq", "asc", _INT),
+    SortKey("id", "asc", _ID),
+    SortKey("offset", "asc", _INT),
+)
+
+
 def read_message_page(
     db: Session, *, viewer_id: UUID, ref: ResourceRef, cursor: str | None
 ) -> ConversationReadPage | ConversationReadRefusal:
@@ -441,16 +389,11 @@ def read_message_page(
     or a late branch, makes it stale.
     """
 
-    binding = {"viewer_id": str(viewer_id), "uri": ref.uri}
+    binding = {"list": "CompletedMessages", "viewer": viewer_id, "uri": ref.uri}
     revision, after_seq, after_id, offset = None, -1, UUID(int=0), 0
     if cursor is not None:
         try:
-            values = decode_keyset_cursor(
-                cursor,
-                family="CompletedMessages",
-                query=binding,
-                expected_kinds=(_TEXT, _INT, _ID, _INT),
-            )
+            values = decode_keyset_cursor(cursor, binding, _MESSAGE_CURSOR)
         except InvalidRequestError:
             return ConversationReadRefusal("invalid_cursor")
         revision, after_seq, after_id, offset = cast(tuple[str, int, UUID, int], values)
@@ -538,14 +481,14 @@ def read_message_page(
         next_cursor = None
         if end < total or position + 1 < record["remaining"]:
             next_cursor = encode_keyset_cursor(
-                family="CompletedMessages",
-                query=binding,
-                after=(
-                    KeysetValue(_TEXT, record["revision"]),
-                    KeysetValue(_INT, message["seq"]),
-                    KeysetValue(_ID, UUID(message["id"])),
-                    KeysetValue(_INT, end if end < total else 0),
-                ),
+                binding,
+                _MESSAGE_CURSOR,
+                {
+                    "revision": record["revision"],
+                    "seq": message["seq"],
+                    "id": message["id"],
+                    "offset": end if end < total else 0,
+                },
             )
         if end < total:
             break

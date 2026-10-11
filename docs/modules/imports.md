@@ -13,7 +13,7 @@ every read is a pane-free `usePaneFreeServerValue` (`lib/api/serverState.ts`): i
 
 ## observation (`lib/imports/ImportsProvider.tsx`)
 
-- the summary read's `stale` is a wake counter. a wake is `visibilitychange` to visible, `focus` after a `blur`, `pageshow`, `online`, the pane opening, an in-tab `Imports.Invalidated` event, a library placement revision whose libraries became unknown, and Refresh.
+- the summary read's `stale` is a wake counter. a wake is `visibilitychange` to visible, `focus` after a `blur`, `pageshow`, `online`, the pane opening, an in-tab `Imports.Invalidated` event, an `Entries` change (architecture §8.12), and Refresh.
 - the server stamps `observed_at` on every read; the newest successful summary's stamp is the only observation token. the list and the inspector put it in their `stale`, so they reread exactly when an observation lands.
 - polling: every 5 s while the newest summary read succeeded, `active_count > 0`, the document is visible, and the pane is open or a wake happened within the last 15 minutes. a failed summary read stops polling until the next wake or Refresh; the stale notice and Try again show.
 - invalidation is in-tab only: other tabs catch up on their next wake or poll.

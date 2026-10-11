@@ -13,7 +13,6 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
-from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.presence import Absent, Presence
 from nexus.schemas.reader import ReaderCursorSnapshot
@@ -339,4 +338,3 @@ class ConsumptionResult(CamelOut):
     # the finish this command made (EnsureMediaFinished, Done), for UndoFinish
     finish_id: Presence[UUID]
     progress_state: Presence[MediaProgressState]
-    library_entries_collection_revision: CollectionRevision

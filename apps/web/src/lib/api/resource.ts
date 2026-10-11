@@ -20,20 +20,13 @@ export interface ResourceDescriptor<TParams> {
 
 export type NoResourceParams = Record<string, never>;
 
-export interface RefreshableResourceParams {
-  refreshVersion: number;
-}
-
-// The pagination keys every revisioned collection endpoint accepts.
+// The pagination keys every keyset collection endpoint accepts.
 interface CollectionPageParams {
   cursor?: string;
-  collectionRevision?: number;
   limit?: number;
 }
 
-export interface LibraryListResourceParams
-  extends RefreshableResourceParams,
-    CollectionPageParams {
+export interface LibraryListResourceParams extends CollectionPageParams {
   // The current Libraries index view. Canonical emits no sort/direction keys.
   view?: LibrariesIndexView;
 }
@@ -84,9 +77,6 @@ function encoded(value: string): string {
 function collectionPageQuery(params: CollectionPageParams, view = ""): string {
   const query = new URLSearchParams(view.replace(/^\?/, ""));
   if (params.cursor) query.set("cursor", params.cursor);
-  if (params.collectionRevision !== undefined) {
-    query.set("collection_revision", String(params.collectionRevision));
-  }
   if (params.limit !== undefined) query.set("limit", String(params.limit));
   const suffix = query.toString();
   return suffix ? `?${suffix}` : "";
@@ -131,8 +121,7 @@ function conversationIndexPageQuery(
 
 export const librariesResource: ResourceDescriptor<LibraryListResourceParams> =
   {
-    cacheKey: (params) =>
-      `libraries:${params.refreshVersion}${libraryListPageQuery(params)}`,
+    cacheKey: (params) => `libraries${libraryListPageQuery(params)}`,
     serverPath: (params) => `/libraries${libraryListPageQuery(params)}`,
     clientPath: (params) => `/api/libraries${libraryListPageQuery(params)}`,
   };

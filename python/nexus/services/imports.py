@@ -66,13 +66,11 @@ from nexus.schemas.media import MediaOut
 from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
 from nexus.schemas.source_issues import SOURCE_ISSUES
 from nexus.services.collection_keyset import (
+    KeysetValueKind,
     SortKey,
-    after_values,
-    expected_kinds,
-    keyset_clause,
-    keyset_params,
-    order_by_sql,
-    plan_json,
+    decode_keyset_cursor,
+    encode_keyset_cursor,
+    keyset_page,
 )
 from nexus.services.content_indexing import SearchRecoveryFacts, search_recovery
 from nexus.services.import_history import (
@@ -80,12 +78,6 @@ from nexus.services.import_history import (
     history_coverage,
     history_entry,
     read_history_page,
-)
-from nexus.services.keyset_cursor import (
-    KeysetValue,
-    KeysetValueKind,
-    decode_keyset_cursor,
-    encode_keyset_cursor,
 )
 from nexus.services.media import list_media_for_viewer_by_ids
 from nexus.services.media_source_ingest import (
@@ -99,8 +91,6 @@ from nexus.services.media_upload_sessions import (
 )
 from nexus.services.sealed_handles import seal_upload_session, unseal_upload_session
 from nexus.services.source_history import COUNTED_PROGRESS_SOURCE_TYPES
-
-_HISTORY_CURSOR_FAMILY = "imports:history"
 
 _ATTENTION_PLAN = [
     SortKey("stage_rank", "asc", KeysetValueKind.Int),
@@ -551,12 +541,6 @@ def read_import_page(db: Session, *, viewer_id: UUID, query: ImportListQuery) ->
             plan = _HISTORY_PLAN
     params = _base_params(viewer_id)
     filtered = _filtered_cte(query, params)
-    cursor_query = {
-        "viewerId": str(viewer_id),
-        **query.normalized(),
-        "plan": plan_json(plan),
-    }
-    family = f"imports:{query.view}"
     totals = (
         db.execute(
             text(
@@ -581,46 +565,20 @@ def read_import_page(db: Session, *, viewer_id: UUID, query: ImportListQuery) ->
         .one()
     )
 
-    keyset_sql = ""
-    if query.cursor is not None:
-        keyset_sql = keyset_clause(plan, alias="facts")
-        params.update(
-            keyset_params(
-                plan,
-                decode_keyset_cursor(
-                    query.cursor,
-                    family=family,
-                    query=cursor_query,
-                    expected_kinds=expected_kinds(plan),
-                ),
-            )
-        )
-    params["limit_plus_one"] = query.limit + 1
-    rows = (
-        db.execute(
-            text(
-                f"""{_IMPORTS_CTE}, {filtered}
-                SELECT *
-                FROM filtered facts
-                WHERE 1 = 1
-                  {keyset_sql}
-                ORDER BY {order_by_sql(plan, alias="facts")}
-                LIMIT :limit_plus_one
-                """
-            ),
-            params,
-        )
-        .mappings()
-        .all()
+    page, next_cursor = keyset_page(
+        db,
+        binding={"list": f"imports:{query.view}", "viewer": viewer_id, **query.normalized()},
+        plan=plan,
+        cursor=query.cursor,
+        limit=query.limit,
+        params=params,
+        sql=lambda keyset, order: f"""{_IMPORTS_CTE}, {filtered}
+            SELECT * FROM filtered facts
+            WHERE 1 = 1 {keyset}
+            ORDER BY {order}
+            LIMIT :limit
+        """,
     )
-    page = rows[: query.limit]
-    next_cursor: Absent | Present[str] = absent()
-    if len(rows) > query.limit and page:
-        next_cursor = present(
-            encode_keyset_cursor(
-                family=family, query=cursor_query, after=after_values(plan, page[-1])
-            )
-        )
     media = _hydrate_media(db, viewer_id=viewer_id, rows=page)
     stage_counts = cast(dict[str, int], totals["stage_counts"])
     return ImportPage(
@@ -653,7 +611,7 @@ def read_import_page(db: Session, *, viewer_id: UUID, query: ImportListQuery) ->
             )
             for row in page
         ],
-        next_cursor=next_cursor,
+        next_cursor=presence_from_nullable(next_cursor),
     )
 
 
@@ -719,35 +677,17 @@ def read_import_history(
 ) -> HistoryPage:
     """This import's recorded events, newest first, under the detail's visibility."""
     row = _import_row(db, viewer_id=viewer_id, ref=ref)
-    cursor_query = {
-        "viewerId": str(viewer_id),
-        "ref": str(format_import_ref(ref)),
-        "plan": plan_json(_EVENT_PAGE_PLAN),
-    }
+    binding = {"list": "imports:history", "viewer": viewer_id, "ref": format_import_ref(ref)}
     before: Absent | Present[tuple[datetime, UUID]] = absent()
     if cursor is not None:
-        occurred_at, event_id = decode_keyset_cursor(
-            cursor,
-            family=_HISTORY_CURSOR_FAMILY,
-            query=cursor_query,
-            expected_kinds=expected_kinds(_EVENT_PAGE_PLAN),
-        )
+        occurred_at, event_id = decode_keyset_cursor(cursor, binding, _EVENT_PAGE_PLAN)
         before = present((cast(datetime, occurred_at), cast(UUID, event_id)))
     entries = read_history_page(db, owner=_history_owner(row), before=before, limit=limit + 1)
     page = entries[:limit]
     next_cursor: Absent | Present[str] = absent()
     if len(entries) > limit and page:
-        last = page[-1]
-        next_cursor = present(
-            encode_keyset_cursor(
-                family=_HISTORY_CURSOR_FAMILY,
-                query=cursor_query,
-                after=(
-                    KeysetValue(KeysetValueKind.DateTime, last.occurred_at),
-                    KeysetValue(KeysetValueKind.Uuid, last.id),
-                ),
-            )
-        )
+        last = {"occurred_at": page[-1].occurred_at, "id": page[-1].id}
+        next_cursor = present(encode_keyset_cursor(binding, _EVENT_PAGE_PLAN, last))
     return HistoryPage(entries=page, next_cursor=next_cursor)
 
 

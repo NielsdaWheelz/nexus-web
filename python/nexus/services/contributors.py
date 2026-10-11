@@ -28,13 +28,7 @@ from nexus.db.models import (
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
-from nexus.schemas.collection_page import (
-    CollectionCursor,
-    CollectionPage,
-    CollectionRevision,
-    ParsedCollectionQuery,
-    parse_collection_query,
-)
+from nexus.schemas.collection_page import CollectionPage, CollectionQuery, parse_collection_query
 from nexus.schemas.contributors import (
     ContributorDetailOut,
     ContributorRoleFactOut,
@@ -51,22 +45,9 @@ from nexus.schemas.contributors import (
     PodcastContributorWorkItemOut,
     ResourceActionSubjectOut,
 )
-from nexus.schemas.presence import Present, absent, present
+from nexus.schemas.presence import Present, presence_from_nullable
 from nexus.services.capabilities import can_edit_media_authors
-from nexus.services.collection_keyset import (
-    SortKey,
-    after_values,
-    expected_kinds,
-    keyset_clause,
-    keyset_params,
-    order_by_sql,
-    plan_json,
-)
-from nexus.services.collection_revisions import (
-    CollectionFamily,
-    read_collection_revision,
-    require_collection_revision,
-)
+from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
 from nexus.services.contributor_credits import load_contributor_credits_for_catalogue
 from nexus.services.contributor_taxonomy import (
     CONTRIBUTOR_ROLES_ORDERED,
@@ -83,7 +64,6 @@ from nexus.services.contributor_writes import (
     CreditTarget,
     MediaTarget,
     ObservationIdentityPlan,
-    bump_credit_revisions,
     create_contributor,
     ensure_alias,
     materialize_observation_credits,
@@ -91,7 +71,6 @@ from nexus.services.contributor_writes import (
     planned_contributor_identity,
     replace_role_slices,
 )
-from nexus.services.keyset_cursor import KeysetValueKind, decode_keyset_cursor, encode_keyset_cursor
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
@@ -254,8 +233,6 @@ def get_contributor_detail(
     )
 
 
-# A new family rejects every cursor minted under earlier works semantics.
-_WORKS_CURSOR_FAMILY = f"{CollectionFamily.AuthorWorks.value}:v3"
 _DATE_MISSING = SortKey("date_missing", "asc", KeysetValueKind.Int)  # undated last, both ways
 _HREF = SortKey("href", "asc", KeysetValueKind.Text)  # the relation's unique key: plans are total
 
@@ -294,7 +271,7 @@ _WORKS_PLANS: dict[tuple[str | None, str | None], list[SortKey]] = {
 
 def parse_contributor_works_query(
     items: Sequence[tuple[str, str]],
-) -> tuple[list[SortKey], ParsedCollectionQuery]:
+) -> tuple[list[SortKey], CollectionQuery]:
     """Strict works-view parse over ``multi_items()``, so duplicate keys are visible."""
     query = parse_collection_query(items, domain_keys={"sort", "direction"})
     plan = _WORKS_PLANS.get((query.parameters.get("sort"), query.parameters.get("direction")))
@@ -309,72 +286,38 @@ def list_contributor_works(
     viewer_id: UUID,
     contributor_handle: ContributorHandle,
     plan: list[SortKey],
-    cursor: CollectionCursor | None = None,
-    collection_revision: CollectionRevision | None = None,
-    limit: int = 100,
+    cursor: str | None,
+    limit: int,
 ) -> CollectionPage[ContributorWorkItemOut]:
     """Distinct visible works with their role facts, in one total order.
 
     The ``facts`` wrapper projects the derived sort columns once, so ORDER BY, the keyset
-    and the cursor read identical expressions. A cursor is bound to this viewer, author,
-    plan and AuthorWorks revision.
+    and the cursor read identical expressions. A cursor is bound to this viewer, author
+    and view.
     """
     from nexus.services.media import list_collection_media_for_viewer_by_ids
 
     contributor = _visible_contributor(db, contributor_handle, viewer_id)
-    family = CollectionFamily.AuthorWorks
-    revision = (
-        read_collection_revision(db, viewer_id=viewer_id, family=family)
-        if collection_revision is None
-        else collection_revision
+    page, next_cursor = keyset_page(
+        db,
+        binding={"list": "AuthorWorks", "viewer": viewer_id, "contributor": contributor_handle},
+        plan=plan,
+        cursor=cursor,
+        limit=limit,
+        params={"viewer_id": viewer_id, "contributor_id": contributor.id},
+        sql=lambda keyset, order: f"""
+            WITH facts AS (
+                SELECT w.*, (w.date_key IS NULL)::int AS date_missing,
+                       lower(btrim(w.title)) AS title_key
+                FROM ({_works_sql()}) w
+                WHERE w.contributor_id = :contributor_id
+            )
+            SELECT * FROM facts
+            WHERE TRUE {keyset}
+            ORDER BY {order}
+            LIMIT :limit
+        """,
     )
-    cursor_query = {
-        "contributorHandle": contributor_handle,
-        "family": _WORKS_CURSOR_FAMILY,
-        "plan": plan_json(plan),
-        "revision": revision,
-        "viewerId": str(viewer_id),
-    }
-    params: dict[str, object] = {
-        "viewer_id": viewer_id,
-        "contributor_id": contributor.id,
-        "limit_plus_one": limit + 1,
-    }
-    keyset_sql = ""
-    if cursor is not None:
-        # The cursor's own binding first: a cursor issued to another viewer, author, view
-        # or revision is invalid whatever the collection did; then a moved one is a 409.
-        after = decode_keyset_cursor(
-            cursor,
-            family=_WORKS_CURSOR_FAMILY,
-            query=cursor_query,
-            expected_kinds=expected_kinds(plan),
-        )
-        require_collection_revision(db, viewer_id=viewer_id, family=family, expected=revision)
-        keyset_sql = keyset_clause(plan, alias="facts")
-        params.update(keyset_params(plan, after))
-    rows = (
-        db.execute(
-            text(
-                f"""
-                WITH facts AS (
-                    SELECT w.*, (w.date_key IS NULL)::int AS date_missing,
-                           lower(btrim(w.title)) AS title_key
-                    FROM ({_works_sql()}) w
-                    WHERE w.contributor_id = :contributor_id
-                )
-                SELECT * FROM facts
-                WHERE TRUE {keyset_sql}
-                ORDER BY {order_by_sql(plan, alias="facts")}
-                LIMIT :limit_plus_one
-                """
-            ),
-            params,
-        )
-        .mappings()
-        .all()
-    )
-    page = rows[:limit]
     summaries = {
         item.id: item.summary
         for item in list_collection_media_for_viewer_by_ids(
@@ -421,17 +364,8 @@ def list_contributor_works(
                     role_facts=facts,
                 )
             )
-    next_cursor = (
-        present(
-            encode_keyset_cursor(
-                family=_WORKS_CURSOR_FAMILY, query=cursor_query, after=after_values(plan, page[-1])
-            )
-        )
-        if len(rows) > limit
-        else absent()
-    )
     return CollectionPage[ContributorWorkItemOut](
-        items=items, collectionRevision=revision, nextCursor=next_cursor
+        items=items, nextCursor=presence_from_nullable(next_cursor)
     )
 
 
@@ -508,18 +442,13 @@ def replace_observed_role_slices_batch(
 def _publish_chunk(
     db: Session, chunk: Sequence[tuple[CreditTarget, ContributorObservationBatch, str]]
 ) -> None:
-    changed = [
-        target
-        for target, observation, source in chunk
-        if _write(
+    for target, observation, source in chunk:
+        _write(
             db,
             prepare_observed_role_slices_in_current_transaction(
                 db, target=target, observation=observation, source=source
             ),
         )
-    ]
-    if changed:
-        bump_credit_revisions(db, changed)
     db.commit()
 
 
@@ -601,10 +530,7 @@ def apply_prepared_role_slices_in_current_transaction(
     db: Session, *, prepared: PreparedContributorPublication
 ) -> ContributorPublicationResult:
     """Write a prevalidated roster; no late rejection, no savepoint."""
-    changed = _write(db, prepared)
-    if changed:
-        bump_credit_revisions(db, [prepared.target])
-    return ContributorPublicationResult(changed, prepared.retained_manual_authors)
+    return ContributorPublicationResult(_write(db, prepared), prepared.retained_manual_authors)
 
 
 def _write(db: Session, prepared: PreparedContributorPublication) -> bool:
@@ -640,14 +566,13 @@ def _write(db: Session, prepared: PreparedContributorPublication) -> bool:
 
 def cleanup_credits_for_deleted_target(db: Session, *, target: CreditTarget) -> None:
     """Drop a deleted target's credits and author-edit memos, on the caller's transaction."""
-    if replace_role_slices(
+    replace_role_slices(
         db,
         target=target,
         managed_roles=frozenset(CONTRIBUTOR_ROLES_ORDERED),
         resolved=(),
         source="cleanup",
-    ):
-        bump_credit_revisions(db, [target])
+    )
     if isinstance(target, MediaTarget):
         scope = f"media:{target.media_id}:authors"
         db.execute(delete(ResourceMutation).where(ResourceMutation.mutation_scope == scope))
@@ -688,14 +613,14 @@ def _put_media_authors(
         # Every memo, old or new, carries authorMode.
         return MediaAuthorsOut.model_validate({"authorMode": stored["authorMode"]})
     target = MediaTarget(media_id)
-    if isinstance(request, ManualMediaAuthorsRequest) and replace_role_slices(
-        db,
-        target=target,
-        managed_roles=frozenset({"author"}),
-        resolved=_bind_manual_authors(db, viewer_id, request),
-        source="user",
-    ):
-        bump_credit_revisions(db, [target])
+    if isinstance(request, ManualMediaAuthorsRequest):
+        replace_role_slices(
+            db,
+            target=target,
+            managed_roles=frozenset({"author"}),
+            resolved=_bind_manual_authors(db, viewer_id, request),
+            source="user",
+        )
     # Releasing the pin leaves the rows; the next observed author slice replaces them.
     media.authors_manually_managed = request.mode == "manual"
     response = MediaAuthorsOut(author_mode=request.mode)

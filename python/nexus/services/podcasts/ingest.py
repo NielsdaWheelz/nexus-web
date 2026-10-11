@@ -26,7 +26,6 @@ from nexus.errors import ApiErrorCode, ConflictError
 from nexus.ids import new_uuid7
 from nexus.logging import get_logger
 from nexus.services import library_entries
-from nexus.services.collection_revisions import ENTRY_VISIBILITY_FAMILIES
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
 from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
 from nexus.services.contributor_writes import MediaTarget
@@ -38,7 +37,6 @@ from nexus.services.url_normalize import normalize_url_for_display
 
 from .feed import EpisodeFacts, is_safe_url
 from .provider import PROVIDER
-from .shows import bump_audience
 
 logger = get_logger(__name__)
 
@@ -133,7 +131,6 @@ def ingest_episodes(
     media_ids: list[UUID | None] = [None] * len(episodes)
     claimed: set[Alias] = set()
     inserted = added = 0
-    moved = False
     for i in order:
         episode = episodes[i]
         item = aliases[i]
@@ -157,9 +154,9 @@ def ingest_episodes(
             media_id = new_uuid7()
             _insert(db, viewer_id, podcast_id, media_id, row, _display_alias(item))
             inserted += 1
-            dirty = keys_moved = True
+            dirty = True
         else:
-            dirty, keys_moved = _update(db, media_id, row, _display_alias({*stored, *item}))
+            dirty = _update(db, media_id, row, _display_alias({*stored, *item}))
         unbound = [alias for alias in item if alias not in stored]
         if unbound:
             db.execute(
@@ -194,9 +191,6 @@ def ingest_episodes(
         added += library_entries.ensure_media_in_default_library(db, viewer_id, media_id)
         _replace_chapters(db, media_id, episode.chapters)
         media_ids[i] = media_id
-        moved = moved or keys_moved
-    if moved:
-        bump_audience(db, podcast_id, ENTRY_VISIBILITY_FAMILIES)
     return IngestResult(media_ids=media_ids, inserted=inserted, added_to_all=added)
 
 
@@ -312,26 +306,20 @@ def _insert(
     )
 
 
-def _update(
-    db: Session, media_id: UUID, row: dict[str, Any], provider_id: str
-) -> tuple[bool, bool]:
+def _update(db: Session, media_id: UUID, row: dict[str, Any], provider_id: str) -> bool:
     """Refresh one episode: bibliography only when the feed's observation changed, and a
     missing value never erases a stored one (show notes, sidecar, duration, date). Returns
-    (observation changed, a list key changed)."""
+    whether the observation changed."""
     fingerprint = _fingerprint(row)
     previous = db.execute(
         text("""
-            SELECT pe.rss_metadata_fingerprint, pe.published_at, pe.duration_seconds
+            SELECT pe.rss_metadata_fingerprint
             FROM media m JOIN podcast_episodes pe ON pe.media_id = m.id
             WHERE m.id = :media_id FOR UPDATE OF m
         """),
         {"media_id": media_id},
     ).one()
     dirty = previous.rss_metadata_fingerprint != fingerprint
-    keys_moved = dirty or any(
-        row[name] is not None and row[name] != getattr(previous, name)
-        for name in ("published_at", "duration_seconds")
-    )
     params = row | {"media_id": media_id, "provider_id": provider_id, "fingerprint": fingerprint}
     db.execute(
         text(
@@ -369,7 +357,7 @@ def _update(
         """),
         params,
     )
-    return dirty, keys_moved
+    return dirty
 
 
 def _replace_chapters(db: Session, media_id: UUID, chapters: list[dict] | None) -> None:

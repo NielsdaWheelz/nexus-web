@@ -17,7 +17,6 @@ from nexus.db.models import ProjectGutenbergCatalogEntry
 from nexus.db.session import transaction
 from nexus.services import contributor_taxonomy as taxonomy
 from nexus.services import contributors
-from nexus.services.collection_revisions import CollectionFamily, bump_all_collection_revisions
 from nexus.services.contributor_credits import current_gutenberg_author_names
 from nexus.services.contributor_writes import GutenbergTarget
 from nexus.services.net.safe_fetch import safe_get
@@ -77,7 +76,6 @@ def sync_project_gutenberg_catalog(db: Session) -> dict[str, Any]:
                 )
             )
         # Catalog titles order AuthorWorks even when no credit changes.
-        bump_all_collection_revisions(db, family=CollectionFamily.AuthorWorks)
     contributors.replace_observed_role_slices_batch(
         [(GutenbergTarget(id_), observations[id_], _CREDIT_SOURCE) for id_ in sorted(changed)]
     )

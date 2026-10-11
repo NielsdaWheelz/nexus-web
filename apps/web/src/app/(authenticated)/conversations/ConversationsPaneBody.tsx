@@ -1,23 +1,26 @@
 "use client";
 
 import { Plus } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import SelectField from "@/components/ui/SelectField";
-import { usePaneChrome } from "@/lib/panes/paneChrome";
-import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
-import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
-import { NO_CURSOR, ZERO_REVISION } from "@/lib/api/collectionPage";
+import PaneCollectionBar, {
+  usePaneCollectionInput,
+} from "@/components/workspace/PaneCollectionBar";
+import { useChangeStamp } from "@/lib/api/changes";
 import { conversationsInitialResource } from "@/lib/api/resource";
-import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
+import { useResourceSeed } from "@/lib/api/resourceCache";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
-import { useResource } from "@/lib/api/useResource";
+import {
+  listRowStatus,
+  useServerList,
+  type ListSnapshot,
+} from "@/lib/api/useServerList";
 import {
   fetchConversationIndex,
-  useConversationIndexRevision,
   type ConversationListItem,
 } from "@/lib/chat/conversationIndex";
 import { presentConversation } from "@/lib/collections/presenters/conversation";
@@ -34,35 +37,29 @@ import {
   type UpdatedTitleSortOptionId,
 } from "@/lib/collections/updatedTitleIndexView";
 import { isAbortError } from "@/lib/errors";
+import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
+import {
+  matchesPaneFilterQuery,
+  usePaneFilterRows,
+} from "@/lib/panes/paneFilterRows";
 import type { ConversationsPaneSeed } from "@/lib/panes/paneResourceLoaders";
 import {
   requirePaneRuntime,
   usePaneIsActive,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
-import {
-  matchesPaneFilterQuery,
-  usePaneFilterRows,
-} from "@/lib/panes/paneFilterRows";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
 import {
   definePaneVisitDataKey,
-  useClearAllPaneVisitData,
   usePaneReturnReady,
   usePaneScrollRetention,
-  usePaneVisitData,
 } from "@/lib/workspace/paneReturnMemento";
 
-/** The committed index: one exact view's rows, revision and cursor, per refresh. */
-type Committed = ConversationsPaneSeed & {
-  readonly view: UpdatedTitleIndexView;
-  readonly version: number;
-};
-
-const VISIT_DATA = definePaneVisitDataKey<Committed>(
-  "Conversations.Pagination",
+const VISIT = definePaneVisitDataKey<ListSnapshot<ConversationListItem>>(
+  "Conversations.Index",
 );
+const UNIT = { singular: "chat", plural: "chats" };
 const NEW_CHAT: readonly PaneHeaderAction[] = [
   {
     kind: "link",
@@ -86,59 +83,34 @@ const VIEW_CODEC = {
 const keyOf = (view: UpdatedTitleIndexView) =>
   conversationsInitialResource.cacheKey({ view });
 
-/** The Chats index in one sortable view: filter, drain every page, count. */
+/** The Chats index in one sortable view: filter, load to the end, count. */
 export default function ConversationsPaneBody() {
   const runtime = requirePaneRuntime(usePaneRuntime(), "ConversationsPaneBody");
-  const isPaneActive = usePaneIsActive();
   const environment = useRenderEnvironment();
   const { state: decoded, setState: setDecoded } = usePaneUrlState(VIEW_CODEC);
-  const view = decoded.kind === "Valid" ? decoded.view : CANONICAL;
-  const viewKey = keyOf(view);
   const invalid = decoded.kind === "Invalid";
-  const sortRef = useRef<HTMLSelectElement | null>(null);
-  const indexRevision = useConversationIndexRevision().revision;
-  const committedRef = useRef<Committed | null>(null);
-  const restored = usePaneVisitData(
-    VISIT_DATA,
-    useCallback(() => committedRef.current, []),
-  );
-  const [committed, setCommitted] = useState<Committed | null>(restored);
-  const commit = useCallback((next: Committed) => {
-    committedRef.current = next;
-    setCommitted(next);
-  }, []);
-  const [version, setVersion] = useState(restored?.version ?? 0);
-  const captureScroll = usePaneScrollRetention(committed);
-  const clearVisitData = useClearAllPaneVisitData();
-  const stale =
-    committed?.version !== version || keyOf(committed.view) !== viewKey;
-
-  const firstPage = useResource<ConversationsPaneSeed>({
-    // the canonical first version reads the route's server seed
-    cacheKey:
-      stale && !invalid ? `${viewKey}${version ? `:${version}` : ""}` : null,
-    load: async (signal) => {
-      const page = await fetchConversationIndex({ view, signal });
-      const { items: conversations, collectionRevision, nextCursor } = page;
-      return { conversations, collectionRevision, nextCursor };
-    },
+  const view = decoded.kind === "Valid" ? decoded.view : CANONICAL;
+  const seed = useResourceSeed<ConversationsPaneSeed>(keyOf(CANONICAL));
+  const list = useServerList<ConversationListItem>({
+    key: invalid ? null : keyOf(view),
+    stale: useChangeStamp("Chats"),
+    pageSize: 100,
+    drain: true,
+    active: usePaneIsActive(),
+    visit: VISIT,
+    seed: seed && { key: keyOf(CANONICAL), page: seed },
+    id: (item) => item.id,
+    fetchPage: (cursor, limit, signal) =>
+      fetchConversationIndex({
+        view,
+        cursor: cursor ?? undefined,
+        limit,
+        signal,
+      }),
   });
-  // a refresh resolves once its first page commits, or fails
-  const settle = useRef<{ resolve(): void; reject(error: unknown): void }>(
-    null,
-  );
-  useEffect(() => {
-    if (firstPage.status === "ready") {
-      commit({ ...firstPage.data, view, version });
-      settle.current?.resolve();
-    }
-    if (firstPage.status === "error") settle.current?.reject(firstPage.error);
-    if (firstPage.status === "ready" || firstPage.status === "error")
-      settle.current = null;
-  }, [firstPage, view, version, commit]);
-  usePaneReturnReady(
-    committed !== null || firstPage.status === "error" || invalid,
-  );
+  usePaneReturnReady(list.status !== "loading" || invalid);
+  const captureScroll = usePaneScrollRetention(list.items);
+  const sortRef = useRef<HTMLSelectElement | null>(null);
   const setView = useCallback(
     (next: UpdatedTitleIndexView) => {
       captureScroll();
@@ -147,82 +119,22 @@ export default function ConversationsPaneBody() {
     [captureScroll, setDecoded],
   );
 
-  const refresh = useCallback(() => {
-    captureScroll();
-    clearVisitData();
-    setVersion((value) => value + 1);
-  }, [captureScroll, clearVisitData]);
-  const seenRevision = useRef(indexRevision);
-  useEffect(() => {
-    if (indexRevision === seenRevision.current) return;
-    seenRevision.current = indexRevision;
-    refresh();
-  }, [indexRevision, refresh]);
-
-  const exhaustion = useExhaustivePagination<ConversationListItem>({
-    active: isPaneActive && !stale,
-    chainKey: `${committed?.version}:${committed && keyOf(committed.view)}`,
-    cursor: committed?.nextCursor ?? NO_CURSOR,
-    collectionRevision: committed?.collectionRevision ?? ZERO_REVISION,
-    itemCount: committed?.conversations.length ?? 0,
-    loadPage: (cursor, collectionRevision, signal) =>
-      fetchConversationIndex({
-        view: committed?.view ?? CANONICAL,
-        cursor,
-        collectionRevision,
-        signal,
-      }),
-    commitPage: (page) => {
-      const current = committedRef.current;
-      if (current?.collectionRevision !== page.collectionRevision)
-        throw new Error(
-          "Conversation continuation settled for a stale collection",
-        );
-      const seen = new Set(current.conversations.map((item) => item.id));
-      const added = page.items.filter((item) => !seen.has(item.id));
-      const conversations = [...current.conversations, ...added];
-      commit({ ...current, conversations, nextCursor: page.nextCursor });
-      return conversations.length;
-    },
-    refresh,
-  });
-
   const rows = useMemo(
-    () =>
-      (committed?.conversations ?? []).map((item) =>
-        presentConversation(item, environment),
-      ),
-    [committed?.conversations, environment],
+    () => list.items.map((item) => presentConversation(item, environment)),
+    [list.items, environment],
   );
-  const failed = firstPage.status === "error" ? firstPage.error : null;
-  const getRowStatus = useCallback(
-    (query: string) => {
-      const visibleCount = rows.filter((row) =>
-        matchesPaneFilterQuery(query, [row.title.text]),
-      ).length;
-      const unit = { singular: "chat", plural: "chats" };
-      const counts = { visibleCount, loadedCount: rows.length, unit };
-      const lost =
-        exhaustion.kind === "ResumeFailed" ||
-        exhaustion.kind === "RefreshRequired";
-      if (committed && stale)
-        return {
-          kind: "Retained" as const,
-          ...counts,
-          cause: failed ? ("Failed" as const) : ("Updating" as const),
-        };
-      if ((!committed && failed) || lost)
-        return { kind: "Failed" as const, ...counts };
-      return exhaustion.kind === "Complete"
-        ? { kind: "Complete" as const, ...counts, totalCount: rows.length }
-        : { kind: "Partial" as const, ...counts };
-    },
-    [committed, exhaustion.kind, failed, rows, stale],
-  );
-  const { query, onQueryChange, clearQuery, rowStatus } = usePaneFilterRows({
+  const filterRows = usePaneFilterRows({
     sourceKey: "Conversations:mine",
-    getRowStatus,
+    getRowStatus: (text) =>
+      listRowStatus(
+        list,
+        rows.length,
+        rows.filter((row) => matchesPaneFilterQuery(text, [row.title.text]))
+          .length,
+        UNIT,
+      ),
   });
+  const { query, clearQuery } = filterRows;
   const { inputRef, focusInput } = usePaneCollectionInput();
   const reset = useCallback(() => {
     clearQuery();
@@ -231,111 +143,89 @@ export default function ConversationsPaneBody() {
       sortRef.current?.focus({ preventScroll: true }),
     );
   }, [clearQuery, setView]);
-  const collection = useMemo(
-    () =>
-      invalid
-        ? undefined
-        : {
-            label: "Filter chats",
-            focusInput,
-            content: (
-              <PaneCollectionBar
-                inputRef={inputRef}
-                inputLabel="Filter chats"
-                placeholder="Filter chats"
-                query={query}
-                onQueryChange={onQueryChange}
-                onClearQuery={clearQuery}
-                rowStatus={rowStatus}
-                filters={
-                  <SelectField
-                    layout="Inline"
-                    label="Sort chats"
-                    size="sm"
-                    ref={sortRef}
-                    value={updatedTitleSortOptionOf(view)}
-                    onChange={(event) =>
-                      setView(
-                        updatedTitleViewForSortOption(
-                          // justify-type-assertion: the options are exactly the ids
-                          event.target.value as UpdatedTitleSortOptionId,
-                        ),
-                      )
-                    }
-                  >
-                    {UPDATED_TITLE_SORT_OPTION_IDS.map((id) => (
-                      <option key={id} value={id}>
-                        {updatedTitleSortOptionLabel(id)}
-                      </option>
-                    ))}
-                  </SelectField>
-                }
-                controls={
-                  view.kind === "Canonical" ? undefined : (
-                    <Button variant="ghost" size="sm" onClick={reset}>
-                      Reset view
-                    </Button>
-                  )
-                }
-              />
-            ),
-          },
-    [
-      invalid,
-      view,
-      setView,
-      reset,
-      focusInput,
-      inputRef,
-      query,
-      onQueryChange,
-      clearQuery,
-      rowStatus,
-    ],
-  );
-  const execute = useCallback(
-    async ({ signal }: { readonly signal: AbortSignal }) => {
-      settle.current?.reject(
-        new DOMException("Refresh superseded.", "AbortError"),
-      );
-      const done = new Promise<void>((resolve, reject) => {
-        settle.current = { resolve, reject };
-        signal.addEventListener("abort", () => reject(signal.reason), {
-          once: true,
-        });
-      });
-      refresh();
-      try {
-        await done;
-        return {
-          kind: "Complete" as const,
-          announcement: "Conversations refreshed",
-        };
-      } catch (error) {
-        if (isAbortError(error)) throw error;
-        return {
-          kind: "Failed" as const,
-          announcement: "Conversations failed to refresh",
-        };
-      }
-    },
-    [refresh],
-  );
+  const { refetch } = list;
+  const execute = useCallback<PaneRefreshExecute>(async () => {
+    try {
+      await refetch();
+      return { kind: "Complete", announcement: "Conversations refreshed" };
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      return {
+        kind: "Failed",
+        announcement: "Conversations failed to refresh",
+      };
+    }
+  }, [refetch]);
   usePaneChrome({
-    collection,
+    collection: invalid
+      ? undefined
+      : {
+          label: "Filter chats",
+          focusInput,
+          content: (
+            <PaneCollectionBar
+              inputRef={inputRef}
+              inputLabel="Filter chats"
+              placeholder="Filter chats"
+              query={query}
+              onQueryChange={filterRows.onQueryChange}
+              onClearQuery={clearQuery}
+              rowStatus={filterRows.rowStatus}
+              filters={
+                <SelectField
+                  layout="Inline"
+                  label="Sort chats"
+                  size="sm"
+                  ref={sortRef}
+                  value={updatedTitleSortOptionOf(view)}
+                  onChange={(event) =>
+                    setView(
+                      updatedTitleViewForSortOption(
+                        // justify-type-assertion: the options are exactly the ids
+                        event.target.value as UpdatedTitleSortOptionId,
+                      ),
+                    )
+                  }
+                >
+                  {UPDATED_TITLE_SORT_OPTION_IDS.map((id) => (
+                    <option key={id} value={id}>
+                      {updatedTitleSortOptionLabel(id)}
+                    </option>
+                  ))}
+                </SelectField>
+              }
+              controls={
+                view.kind === "Canonical" ? undefined : (
+                  <Button variant="ghost" size="sm" onClick={reset}>
+                    Reset view
+                  </Button>
+                )
+              }
+            />
+          ),
+        },
     refresh: { kind: "Refreshable", sourceKey: "Conversations:mine", execute },
     menuActions: NEW_CHAT,
     header: {
       kind: "Section",
       meta: invalid
         ? { kind: "None" }
-        : !stale && exhaustion.kind === "Complete"
-          ? { kind: "Count", value: exhaustion.itemCount, unit: "chat" }
+        : list.complete
+          ? { kind: "Count", value: list.items.length, unit: "chat" }
           : { kind: "Pending" },
     },
   });
 
-  const filtering = query.trim() !== "";
+  if (invalid) {
+    return (
+      <FeedbackNotice
+        content={{ tone: "Danger", title: "Invalid chats view" }}
+        announcement="Assertive"
+        actions={[{ label: "Reset view", onClick: reset }]}
+      />
+    );
+  }
+  const failed = list.failure?.op === "More" ? null : list.failure?.error;
   const failure = failed ? (
     <FeedbackNotice
       content={{
@@ -344,16 +234,10 @@ export default function ConversationsPaneBody() {
         requestId: failed.requestId,
       }}
       announcement="Assertive"
+      actions={[{ label: "Retry", onClick: list.retry }]}
     />
   ) : undefined;
-  if (invalid)
-    return (
-      <FeedbackNotice
-        content={{ tone: "Danger", title: "Invalid chats view" }}
-        announcement="Assertive"
-        actions={[{ label: "Reset view", onClick: reset }]}
-      />
-    );
+  const filtering = query.trim() !== "";
   return (
     <div>
       <CollectionView
@@ -361,22 +245,22 @@ export default function ConversationsPaneBody() {
         rows={rows.filter((row) =>
           matchesPaneFilterQuery(query, [row.title.text]),
         )}
-        status={committed ? "ready" : failed ? "error" : "loading"}
+        status={list.status === "failed" ? "error" : list.status}
         ariaLabel="Conversations"
         rowChangePresentation={{
           kind: "ImmediateOnKeyChange",
           key: query.trim(),
         }}
-        collectionBusy={exhaustion.kind === "Draining"}
-        notice={committed ? failure : undefined}
-        error={committed ? undefined : failure}
+        collectionBusy={list.running !== null || !list.current}
+        notice={list.status === "ready" ? failure : undefined}
+        error={list.status === "ready" ? undefined : failure}
         empty={
           <FeedbackNotice
             content={{
               tone: "Neutral",
               title: !filtering
                 ? "No chats yet."
-                : exhaustion.kind === "Complete"
+                : list.complete
                   ? "No chats match this filter."
                   : "No matching chat found so far.",
             }}
@@ -393,7 +277,7 @@ export default function ConversationsPaneBody() {
             }
           />
         }
-        footer={<CollectionExhaustionNotice state={exhaustion} />}
+        footer={<CollectionExhaustionNotice list={list} />}
       />
     </div>
   );

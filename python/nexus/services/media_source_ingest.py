@@ -83,7 +83,6 @@ from nexus.services.import_history import append_processing_event
 from nexus.services.media_deletion import (
     delete_duplicate_document_media,
 )
-from nexus.services.media_fact_revisions import bump_all_media_fact_collections
 from nexus.services.media_processing_state import (
     mark_extracting,
     mark_ready_for_reading,
@@ -998,7 +997,6 @@ def enqueue_podcast_episode_transcript_source_attempt(
         status=ACCEPTED,
     )
     mark_extracting(db, media)
-    bump_all_media_fact_collections(db)
     db.flush()
     enqueue_accepted_source_attempt_in_transaction(
         db,
@@ -1325,7 +1323,6 @@ def retry_source_for_viewer(
         )
         _reset_requeued_transcript_job(db, media, retry_attempt)
         mark_extracting(db, media)
-        bump_all_media_fact_collections(db)
         job_id = enqueue_accepted_source_attempt_in_transaction(
             db,
             media_id=media.id,
@@ -1452,7 +1449,6 @@ def reprocess_retained_epub(
             ),
         )
         mark_extracting(db, media)
-        bump_all_media_fact_collections(db)
         job_id = enqueue_accepted_source_attempt_in_transaction(
             db,
             media_id=media_id,
@@ -1571,7 +1567,6 @@ def correct_source_type(
             status=ACCEPTED,
         )
         mark_extracting(db, media)
-        bump_all_media_fact_collections(db)
         job_id = enqueue_accepted_source_attempt_in_transaction(
             db,
             media_id=media_id,
@@ -1758,7 +1753,6 @@ def refresh_source_for_viewer(
         )
         _reset_requeued_transcript_job(db, media, refresh_attempt)
         mark_extracting(db, media)
-        bump_all_media_fact_collections(db)
         enqueue_accepted_source_attempt_in_transaction(
             db,
             media_id=media.id,
@@ -1832,7 +1826,6 @@ def repair_source_for_system_media(
         if media.kind == MediaKind.epub.value:
             _require_unpublished_document(db, media.id, require_no_file=False)
         mark_extracting(db, media)
-        bump_all_media_fact_collections(db)
         enqueue_accepted_source_attempt_in_transaction(
             db,
             media_id=media.id,
@@ -1875,7 +1868,6 @@ def repair_source_for_system_media(
     }
     _reset_requeued_transcript_job(db, media, repair_attempt)
     mark_extracting(db, media)
-    bump_all_media_fact_collections(db)
     enqueue_accepted_source_attempt_in_transaction(
         db,
         media_id=media.id,
@@ -2173,7 +2165,6 @@ def _publish_terminal_attempt(
                 error_code="E_PDF_TEXT_UNAVAILABLE",
                 error_message="PDF text is unavailable; OCR is required.",
             )
-        bump_all_media_fact_collections(db)
         if media.kind in {
             MediaKind.web_article.value,
             MediaKind.epub.value,
@@ -2240,7 +2231,6 @@ def _publish_terminal_failure(
                 failure_code=present(assume_safe_failure_code(error_code)),
             )
             mark_ready_for_reading(db, media)
-            bump_all_media_fact_collections(db)
             return
         _fail_source_attempt(
             db,

@@ -35,7 +35,6 @@ from nexus.schemas.library import (
     InheritedLibraryPlacementRelationOut,
     LibraryEntryKind,
     LibraryEntryOrderRequest,
-    LibraryEntryRemovalOut,
     LibraryIdentityOut,
     LibraryLibraryPlacementDestinationOut,
     LibraryPlacementAvailabilityOut,
@@ -46,13 +45,6 @@ from nexus.schemas.library import (
     SavedInNexusLibraryPlacementDestinationOut,
 )
 from nexus.services import library_governance as governance
-from nexus.services.collection_revisions import (
-    ENTRY_VISIBILITY_FAMILIES,
-    CollectionFamily,
-    bump_all_collection_families,
-    bump_collection_families,
-    read_collection_revision,
-)
 from nexus.services.consumption import projection
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 
@@ -76,19 +68,6 @@ def media_target(media_id: UUID) -> EntryTarget:
 
 def podcast_target(podcast_id: UUID) -> EntryTarget:
     return EntryTarget("podcast", podcast_id)
-
-
-def _bump_entry_visibility_revisions(db: Session) -> None:
-    """Invalidate every finite inventory whose membership can change via filing."""
-    bump_all_collection_families(db, families=ENTRY_VISIBILITY_FAMILIES)
-
-
-def _entry_revision(db: Session, viewer_id: UUID) -> LibraryEntryRemovalOut:
-    return LibraryEntryRemovalOut(
-        library_entries_collection_revision=read_collection_revision(
-            db, viewer_id=viewer_id, family=CollectionFamily.LibraryEntries
-        )
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -712,7 +691,6 @@ def ensure_media_in_library_in_current_transaction(
         return False
     inserted = ensure_entry(db, library_id, target)
     clear_user_media_deletion(db, viewer_id, media_id)
-    _bump_entry_visibility_revisions(db)
     return inserted
 
 
@@ -729,27 +707,27 @@ def ensure_media_saved_in_nexus_for_viewer(db: Session, *, viewer_id: UUID, medi
 
 def remove_media_from_library(
     db: Session, viewer_id: UUID, media_id: UUID, library_id: UUID, *, allow_default: bool = False
-) -> LibraryEntryRemovalOut:
+) -> None:
     """Idempotently remove one media from a library the viewer admins.
 
-    Convergent: an already-absent media returns the current revision without
-    revealing whether it exists, and the last physical reference in existence is
-    refused with E_MEDIA_LAST_REFERENCE. `allow_default` is for the Default-backed
+    Convergent: an already-absent media succeeds without revealing whether it
+    exists, and the last physical reference in existence is refused with
+    E_MEDIA_LAST_REFERENCE. `allow_default` is for the Default-backed
     commands (Saved in Nexus, agent undo) that may unfile from All.
     """
 
-    def attempt() -> LibraryEntryRemovalOut:
+    def attempt() -> None:
         with transaction(db):
-            return remove_media_from_library_in_current_transaction(
+            remove_media_from_library_in_current_transaction(
                 db, viewer_id, media_id, library_id, allow_default=allow_default
             )
 
-    return retry_read_committed(db, "remove_media_from_library", attempt)
+    retry_read_committed(db, "remove_media_from_library", attempt)
 
 
 def remove_media_from_library_in_current_transaction(
     db: Session, viewer_id: UUID, media_id: UUID, library_id: UUID, *, allow_default: bool = False
-) -> LibraryEntryRemovalOut:
+) -> None:
     """Perform actor-gated unfiling inside the caller's transaction."""
 
     def authorize(*, lock: bool) -> None:
@@ -762,15 +740,15 @@ def remove_media_from_library_in_current_transaction(
     authorize(lock=False)
     target = media_target(media_id)
     if not entry_exists(db, library_id, target):
-        return _entry_revision(db, viewer_id)
+        return
     # A concurrent whole-resource or whole-library teardown removes the
     # entry with the media row; its commit is a successful serial predecessor.
     if lock_media_rows_in_order(db, [media_id]) != [media_id]:
-        return _entry_revision(db, viewer_id)
+        return
 
     authorize(lock=True)
     if not entry_exists(db, library_id, target):
-        return _entry_revision(db, viewer_id)
+        return
     _raise_if_media_teardown_pending(db, media_id)
     if count_entries_for_media(db, media_id) == 1:
         raise ConflictError(
@@ -779,15 +757,13 @@ def remove_media_from_library_in_current_transaction(
         )
     delete_entry(db, library_id, target)
     normalize_positions(db, library_id)
-    _bump_entry_visibility_revisions(db)
-    return _entry_revision(db, viewer_id)
 
 
 def ensure_media_absent_from_saved_in_nexus_for_viewer(
     db: Session, *, viewer_id: UUID, media_id: UUID
-) -> LibraryEntryRemovalOut:
+) -> None:
     """Idempotently remove `SavedInNexus` while preserving lifetime safety."""
-    return remove_media_from_library(
+    remove_media_from_library(
         db,
         viewer_id,
         media_id,
@@ -804,8 +780,6 @@ def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) 
         db, governance.default_library_id_for_user(db, user_id), media_target(media_id)
     )
     clear_user_media_deletion(db, user_id, media_id)
-    if inserted:  # a default library has one member
-        bump_collection_families(db, viewer_ids=(user_id,), families=ENTRY_VISIBILITY_FAMILIES)
     return inserted
 
 
@@ -817,10 +791,7 @@ def seed_media_into_system_library(db: Session, library_id: UUID, media_id: UUID
     ).fetchone()
     if system_library is None:
         raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "System library not found")
-    inserted = ensure_entry(db, library_id, media_target(media_id))
-    if inserted:
-        _bump_entry_visibility_revisions(db)
-    return inserted
+    return ensure_entry(db, library_id, media_target(media_id))
 
 
 def _add_media_to_resolved_libraries(
@@ -877,7 +848,6 @@ def ensure_media_in_libraries_for_viewer(
             governance.resolve_writable_non_default_library_ids(db, viewer_id, library_ids),
             parent_podcast_id=parent_podcast_id,
         )
-        _bump_entry_visibility_revisions(db)
 
 
 def assign_libraries_for_media_in_current_transaction(
@@ -893,7 +863,6 @@ def assign_libraries_for_media_in_current_transaction(
     _add_media_to_resolved_libraries(
         db, viewer_id, media_id, targets, parent_podcast_id=parent_podcast_id
     )
-    _bump_entry_visibility_revisions(db)
 
 
 # ---------------------------------------------------------------------------
@@ -1047,8 +1016,6 @@ def place_podcast_in_named_libraries_in_current_transaction(
         )
     for library_id in counts:
         normalize_positions(db, library_id)
-    if added or entry_ids:
-        _bump_entry_visibility_revisions(db)
     return tuple(added)
 
 
@@ -1089,12 +1056,7 @@ def place_subscribed_podcast_in_named_library(
             added = place_subscribed_podcast_in_named_library_in_current_transaction(
                 db, viewer_id=viewer_id, library_id=library_id, podcast_id=podcast_id
             )
-            return PodcastPlacementAdditionOut(
-                outcome="Added" if added else "AlreadyPresent",
-                library_entries_collection_revision=read_collection_revision(
-                    db, viewer_id=viewer_id, family=CollectionFamily.LibraryEntries
-                ),
-            )
+            return PodcastPlacementAdditionOut(outcome="Added" if added else "AlreadyPresent")
 
     return retry_read_committed(db, "place_subscribed_podcast_in_named_library", attempt)
 
@@ -1114,13 +1076,7 @@ def undo_podcast_filing_for_viewer_in_current_transaction(
     removed = delete_entry(db, library_id, podcast_target(podcast_id))
     if removed:
         normalize_positions(db, library_id)
-        _bump_entry_visibility_revisions(db)
-    return PodcastPlacementRemovalOut(
-        outcome="Removed" if removed else "AlreadyAbsent",
-        library_entries_collection_revision=read_collection_revision(
-            db, viewer_id=viewer_id, family=CollectionFamily.LibraryEntries
-        ),
-    )
+    return PodcastPlacementRemovalOut(outcome="Removed" if removed else "AlreadyAbsent")
 
 
 def remove_podcast_from_library(
@@ -1198,8 +1154,6 @@ def remove_unsubscribed_podcast_placements(
     for library_id in sorted(removable_library_ids):
         delete_entry(db, library_id, podcast_target(podcast_id))
         normalize_positions(db, library_id)
-    if removable_library_ids:
-        _bump_entry_visibility_revisions(db)
     return len(removable_library_ids), retained_shared_library_count
 
 
@@ -1245,4 +1199,3 @@ def reorder_entries(
             """),
             {"entry_ids": requested_ids, "library_id": library_id},
         )
-        _bump_entry_visibility_revisions(db)

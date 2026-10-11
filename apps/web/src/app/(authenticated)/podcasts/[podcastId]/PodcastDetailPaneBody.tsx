@@ -22,7 +22,6 @@ import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
 import { presenceValueOr } from "@/lib/api/presence";
-import { useConsumptionProjectionRevision } from "@/lib/consumption/projectionRevision";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { listLibraryPlacements } from "@/lib/libraries/libraryPlacement";
 import {
@@ -49,20 +48,20 @@ import {
   observeSubscription,
   retryPodcastSubscriptionBackfill,
   subscribeToPodcast,
-  usePodcastRevision,
   type EpisodeState,
   type PodcastDetail,
   type PodcastEpisodeRow,
   type PodcastLifecycle,
   type PodcastSubscription,
 } from "@/lib/podcasts/api";
+import { useChangeStamp } from "@/lib/api/changes";
+import { useServerValue, type Visit } from "@/lib/api/serverState";
 import {
   listRowStatus,
+  pageQuery,
   useServerList,
-  useServerValue,
-  type ListData,
-  type Visit,
-} from "@/lib/api/serverState";
+  type ListSnapshot,
+} from "@/lib/api/useServerList";
 import {
   podcastErrorMessage,
   podcastRefresh,
@@ -84,7 +83,7 @@ interface Head {
 }
 
 const HEAD = definePaneVisitDataKey<Visit<Head>>("PodcastDetail.Head");
-const EPISODES = definePaneVisitDataKey<Visit<ListData<PodcastEpisodeRow>>>(
+const EPISODES = definePaneVisitDataKey<ListSnapshot<PodcastEpisodeRow>>(
   "PodcastDetail.Episodes",
 );
 const STATES: readonly {
@@ -162,12 +161,10 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const active = usePaneIsActive();
   const state = params.get("state") ?? "all";
   const sort = params.get("sort") ?? "newest";
-  const revision = usePodcastRevision();
-  const mediaRevision = useMediaQueryRevision();
-  const consumption = useConsumptionProjectionRevision();
+  const consumption = useChangeStamp("Consumption");
   const head = useServerValue<Head>({
     key: podcastId,
-    stale: `${revision}:${mediaRevision}`,
+    stale: `${useChangeStamp("Podcasts")}:${useMediaQueryRevision()}`,
     visit: HEAD,
     load: async (signal) => {
       const [detail, placements] = await Promise.all([
@@ -182,11 +179,14 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const query = new URLSearchParams({ state, sort }).toString();
   const episodes = useServerList<PodcastEpisodeRow>({
     key: ready === null ? null : `${podcastId}?${query}`,
-    stale: `${ready?.generation}:${state === "all" ? 0 : consumption.revision}`,
+    stale: `${ready?.generation}:${state === "all" ? "-" : consumption}`,
     pageSize: 100,
+    drain: false,
+    active,
     visit: EPISODES,
-    fetchPage: (page, signal) =>
-      listEpisodes(podcastId, new URLSearchParams(`${query}&${page}`), signal),
+    id: (episode) => episode.id,
+    fetchPage: (cursor, limit, signal) =>
+      listEpisodes(podcastId, pageQuery(query, cursor, limit), signal),
   });
   const loaded = episodes.status === "ready" ? episodes.items : null;
   const summaries = useMediaSummaries(
@@ -248,11 +248,12 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
         shouldPollTranscriptProvisioning(episode.transcript_state),
       ),
     pollIntervalMs: 3000,
-    onPoll: episodes.refetch,
+    // a failed reread shows as the list's failure
+    onPoll: () => episodes.refetch().catch(() => {}),
   });
 
   const command = useCommand();
-  const complete = episodes.status === "ready" && episodes.complete;
+  const complete = episodes.complete;
   const getRowStatus = useCallback(
     (text: string) => {
       const visible = resolved.filter((episode) =>
@@ -261,15 +262,12 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
           mediaListFilterFields(episode.mediaSummary),
         ),
       );
-      return listRowStatus(
-        episodes.status,
-        complete,
-        resolved.length,
-        visible.length,
-        "episode",
-      );
+      return listRowStatus(episodes, resolved.length, visible.length, {
+        singular: "episode",
+        plural: "episodes",
+      });
     },
-    [complete, episodes.status, resolved],
+    [episodes, resolved],
   );
   const filterRows = usePaneFilterRows({
     sourceKey: `PodcastDetail.Episodes:${podcastId}`,
@@ -468,15 +466,15 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
         ) : null}
       </PaneSection>
       <PaneSection>
-        {episodes.status === "failed" ? (
+        {episodes.status === "failed" && episodes.failure !== null ? (
           <FeedbackNotice
             content={podcastErrorMessage(
-              episodes.error,
+              episodes.failure.error,
               "Episodes couldn’t be loaded",
             )}
             announcement="Assertive"
             actions={[
-              episodes.error.code === "E_INVALID_REQUEST"
+              episodes.failure.error.code === "E_INVALID_REQUEST"
                 ? {
                     label: "Reset view",
                     onClick: () => replaceView({ state: null, sort: null }),
@@ -501,11 +499,13 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                     announcement="Assertive"
                   />
                 ) : null}
-                {episodes.status === "ready" && episodes.error ? (
+                {episodes.status === "ready" && episodes.failure ? (
                   <FeedbackNotice
                     content={podcastErrorMessage(
-                      episodes.error,
-                      "Episodes couldn’t be refreshed",
+                      episodes.failure.error,
+                      episodes.failure.op === "More"
+                        ? "More episodes couldn’t be loaded"
+                        : "Episodes couldn’t be refreshed",
                     )}
                     announcement="Polite"
                     actions={[{ label: "Retry", onClick: episodes.retry }]}
@@ -518,11 +518,11 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               </>
             }
             footer={
-              episodes.status === "ready" && !episodes.complete ? (
+              episodes.current && !episodes.complete ? (
                 <LoadMoreFooter
                   hasMore
-                  loading={episodes.loadingMore}
-                  onLoadMore={episodes.loadMore}
+                  loading={episodes.running === "More"}
+                  onLoadMore={episodes.more}
                 />
               ) : undefined
             }

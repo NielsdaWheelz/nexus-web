@@ -44,10 +44,11 @@ export function podcastErrorMessage(
       return content("This account can’t do that.");
     case "E_CONFLICT":
     case "E_SELECTION_CHANGED":
-    case "E_COLLECTION_CHANGED":
       return content("It changed meanwhile. Review it, then retry.");
     case "E_INVALID_REQUEST":
       return content("This view or request isn’t valid.");
+    case "E_INVALID_CURSOR":
+      return content("This list can no longer continue; retry to read it again.");
     case "E_MEDIA_NOT_READY":
       return content("It’s still preparing. Retry once it settles.");
     default:
@@ -91,7 +92,7 @@ export function useCommand(): {
   return { running, failure, run };
 }
 
-/** The pane chrome's refresh: admit, then announce; panes refetch on bump. */
+/** The pane chrome's refresh: admit, then announce; panes refetch on "Podcasts". */
 export function podcastRefresh(scope: PodcastRefreshScope): PaneRefreshExecute {
   return async ({ signal }) => {
     try {

@@ -1,10 +1,4 @@
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import {
-  decodeCollectionCursor,
-  decodeCollectionRevision,
-  type CollectionPage,
-} from "@/lib/api/collectionPage";
-import { absent, present } from "@/lib/api/presence";
 
 export type LibraryOut = Schema<"LibraryOut">;
 export type LibraryMember = Schema<"LibraryMemberOut">;
@@ -48,16 +42,4 @@ export function libraryOutForId(
     );
   }
   return library;
-}
-
-export function librariesPageFromWire(
-  page: ApiJson<"/libraries", "get">["data"],
-): CollectionPage<LibraryOut> {
-  return {
-    items: page.items,
-    collectionRevision: decodeCollectionRevision(page.collectionRevision),
-    nextCursor: page.nextCursor.kind === "Present"
-      ? present(decodeCollectionCursor(page.nextCursor.value))
-      : absent(),
-  };
 }

@@ -19,7 +19,6 @@ from nexus.ids import new_uuid7
 from nexus.schemas import podcast as wire
 from nexus.schemas.presence import Present, nullable_from_presence, presence_from_nullable
 from nexus.services.browse.targets import ResolvedPodcast
-from nexus.services.collection_revisions import CollectionFamily, bump_collection_families
 from nexus.services.library_entries import (
     place_podcast_in_named_libraries_in_current_transaction,
     remove_unsubscribed_podcast_placements,
@@ -126,10 +125,6 @@ def read_subscription_lifecycle(
     )
 
 
-def _bump(db: Session, viewer_id: UUID, *families: CollectionFamily) -> None:
-    bump_collection_families(db, viewer_ids=(viewer_id,), families=families)
-
-
 def subscribe(
     db: Session, viewer_id: UUID, body: wire.PodcastSubscribeRequest
 ) -> wire.PodcastSubscribeOut:
@@ -178,9 +173,6 @@ def subscribe(
                 library_ids=body.named_library_ids,
                 confirmation_fingerprint=fingerprint,
             )
-            if created is not None or added:  # the followed list or a library listing moved
-                families = (CollectionFamily.LibraryEntries, CollectionFamily.PodcastSubscriptions)
-                _bump(db, viewer_id, *families)
             outcome = "DestinationsAdded" if added else "AlreadySubscribed"
             return wire.PodcastSubscribeOut(
                 href=f"/podcasts/{podcast_id}",
@@ -222,13 +214,6 @@ def unsubscribe(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.PodcastU
                 db, viewer_id=viewer_id, podcast_id=podcast_id
             )
             on_visibility_lost(db, user_id=viewer_id)
-            _bump(
-                db,
-                viewer_id,
-                CollectionFamily.LibraryEntries,
-                CollectionFamily.PodcastSubscriptions,
-                CollectionFamily.PodcastEpisodes,
-            )
             return wire.PodcastUnsubscribeOut(
                 outcome="Unsubscribed",
                 podcast_id=podcast_id,

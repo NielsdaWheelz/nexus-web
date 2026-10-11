@@ -276,7 +276,7 @@ top-level `conversation_id`, no `chat_subject`, and no client
 `POST /chat-runs` is a receipt boundary. Under the viewer/key advisory lock it
 first replays the immutable `ResourceMutation(scope="chat:admission")` decision
 or validates a new admission. Accepted chat (when New), messages, run, attached
-evidence, job, the owner's index-revision bump and the receipt commit atomically,
+evidence, job and the receipt commit atomically,
 and admission sets the conversation's active leaf to the new assistant. A modeled rejection rolls provisional writes back to a savepoint and
 commits only its closed reason. The response is
 `{data:{idempotency_key,outcome:Accepted|Rejected}}`; it contains no run
@@ -457,11 +457,11 @@ newest chats, or a title search over `GET /conversations?title_search=`.
 
 ## Chats Index
 
-`GET /conversations` returns the typed finite collection page
-`{data:{items,nextCursor,collectionRevision}}`. `ConversationsPaneBody` shows
-one exact view, drains every page, filters rows client-side by title, counts
-them, and refreshes when a chat or message delete publishes an index change
-(`publishConversationIndexChange`). The pane URL owns the view through the
+`GET /conversations` returns the keyset page `{data:{items,nextCursor}}`
+(architecture §8.12). `ConversationsPaneBody` shows one view through
+`useServerList`, drains every page, filters rows client-side by title, counts
+them, and rereads when a chat delete, a message delete or an accepted send
+publishes `Chats`; `DELETE /conversations/{id}` answers 204. The pane URL owns the view through the
 shared updated/title codec (`lib/collections/updatedTitleIndexView.ts`):
 newest update is canonical and has no keys; `sort=updated&direction=asc` and
 `sort=title&direction=asc|desc` are the others. The Sort control writes the URL,
@@ -549,7 +549,7 @@ the live Highlight.
 
 | module | owns |
 |---|---|
-| `admit` | send, rerun/regenerate, cancel: the receipt envelope (advisory key lock, replay, one savepoint, memo), destination, anchor, quote, message pair, run freeze, job, the owner's index bump |
+| `admit` | send, rerun/regenerate, cancel: the receipt envelope (advisory key lock, replay, one savepoint, memo), destination, anchor, quote, message pair, run freeze, job |
 | `context` | the system prompt, the turn's context blocks, two-budget history, the frozen intent |
 | `quotes` | the reader-quote snapshot: build (locked highlight), encode/decode, revision, projection, preview, the XML quote renderer |
 | `citations` | candidate numbering, attached evidence (retrievals with no call), publication |
@@ -594,8 +594,10 @@ and retrievals), the orphaned snapshots, and when no message remains, the chat's
 edges, its dossier subject and the chat. `llm_calls` has no FK and outlives the
 chat as the operational ledger.
 
-Index revisions are per owner: a send, delete or create bumps only its owner's
-`ConversationIndex` revision, once.
+The index keeps no revision: an accepted send, a chat delete and a message
+delete publish `Chats` (`lib/api/changes.ts`) in their tab, whose mounted index
+rereads; a create publishes nothing (ticket
+`chat-create-publishes-no-change`).
 
 ## Assumptions
 

@@ -24,7 +24,7 @@ import {
   type ActivityDeviceClass,
 } from "@/lib/consumption/activityContract";
 import { activityRecorder } from "@/lib/consumption/activityRecorder";
-import { publishConsumptionProjectionChange } from "@/lib/consumption/projectionRevision";
+import { publishChange } from "@/lib/api/changes";
 import type {
   ConsumptionResult,
   ListeningIn,
@@ -165,7 +165,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
           });
           current.overrideRevision = data.consumptionOverrideRevision;
           if (current === episode) set({ synced: true });
-          publishConsumptionProjectionChange();
+          publishChange("Consumption");
         } catch (error) {
           if (handleUnauthenticatedApiError(error)) return;
           const status = isApiError(error) ? error.status : 0;

@@ -3,8 +3,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import { useMediaQueryRevision, useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
-import { useConsumptionProjectionRevision } from "@/lib/consumption/projectionRevision";
-import { useLibraryPlacementRevision } from "@/lib/libraries/placementRevision";
+import { useChangeStamp } from "@/lib/api/changes";
 import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
@@ -67,10 +66,9 @@ export default function SuggestionsSection({
   const [version, setVersion] = useState(0);
   const [rows, setRows] = useState<SuggestionItem[] | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
-  const consumption = useConsumptionProjectionRevision();
-  const placement = useLibraryPlacementRevision();
+  const changes = useChangeStamp("Consumption", "Entries");
   const queryRevision = useMediaQueryRevision();
-  const factsKey = [consumption.revision, placement.revision, queryRevision].join(":");
+  const factsKey = `${changes}:${queryRevision}`;
   const wasActive = useRef(isActive);
   useEffect(() => {
     if (isActive && !wasActive.current) setVersion((value) => value + 1);

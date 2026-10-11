@@ -2,88 +2,70 @@
 
 import { useEffect, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
-import type { ExhaustionState } from "@/lib/api/useExhaustivePagination";
+import type { ServerList } from "@/lib/api/useServerList";
 import styles from "./CollectionExhaustionNotice.module.css";
 
-interface Notice {
-  readonly text: string;
-  readonly action: { readonly label: string; readonly run: () => void } | null;
-}
+type Phase = "Idle" | "Draining" | "Stopped" | "Complete";
 
-function noticeFor(state: ExhaustionState): Notice | null {
-  switch (state.kind) {
-    case "Idle":
-    case "Complete":
-      return null;
-    case "Draining":
-      return { text: "Loading remaining items…", action: null };
-    case "ResumeFailed":
-      return {
-        text: "Could not finish loading",
-        action: { label: "Retry", run: state.retry },
-      };
-    case "RefreshRequired":
-      return {
-        text:
-          state.reason === "CollectionChanged"
-            ? "List changed while loading"
-            : "This list can no longer continue",
-        action: { label: "Refresh list", run: state.refresh },
-      };
-  }
-}
-
+/** The footer of a list that loads itself to the end (drain): progress, the
+ * continuation failure with its recovery, and one sr-only completion line. */
 export default function CollectionExhaustionNotice({
-  state,
+  list,
 }: {
-  readonly state: ExhaustionState;
+  readonly list: ServerList<unknown>;
 }) {
-  const previousKindRef = useRef<ExhaustionState["kind"]>("Idle");
+  // Any failure stops the drain; only a failed continuation is this footer's to
+  // show (the pane shows a failed load or reread).
+  const failure = list.failure;
+  const phase: Phase = !list.current
+    ? "Idle"
+    : list.complete
+      ? "Complete"
+      : failure === null
+        ? "Draining"
+        : failure.op === "More"
+          ? "Stopped"
+          : "Idle";
+  const [text, action] =
+    phase === "Draining"
+      ? ["Loading remaining items…", null]
+      : phase !== "Stopped"
+        ? [null, null]
+        : failure?.error.code === "E_INVALID_CURSOR"
+          ? ["This list can no longer continue", "Refresh list"]
+          : ["Could not finish loading", "Retry"];
+  const previous = useRef<Phase>("Idle");
   const [announcement, setAnnouncement] = useState("");
-
+  const count = list.items.length;
   useEffect(() => {
-    const previousKind = previousKindRef.current;
-    previousKindRef.current = state.kind;
-    if (state.kind === previousKind) return;
-
-    // Completion is the one announcement with no visible counterpart, and only
-    // after a drain the reader was told about.
-    if (state.kind === "Complete") {
+    const before = previous.current;
+    previous.current = phase;
+    if (phase === before) return;
+    // Completion has no visible counterpart: say it once, after a drain.
+    if (phase === "Complete") {
+      const items = count === 1 ? "item" : "items";
       setAnnouncement(
-        previousKind === "Draining"
-          ? `Finished loading ${state.itemCount} ${state.itemCount === 1 ? "item" : "items"}.`
-          : "",
+        before === "Draining" ? `Finished loading ${count} ${items}.` : "",
       );
-      return;
+    } else {
+      setAnnouncement(action ? `${text} — ${action}` : (text ?? ""));
     }
-    const notice = noticeFor(state);
-    setAnnouncement(
-      notice === null
-        ? ""
-        : notice.action === null
-          ? notice.text
-          : `${notice.text} — ${notice.action.label}`,
-    );
-  }, [state]);
+  }, [phase, count, text, action]);
 
-  const notice = noticeFor(state);
-  if (notice === null && announcement.length === 0) {
-    return null;
-  }
-
+  if (text === null && announcement === "") return null;
   return (
     <>
-      {notice ? (
+      {text !== null ? (
         <p className={styles.notice}>
-          {notice.action ? (
+          {action ? (
             <>
-              <span>{notice.text} —</span>
-              <Button variant="ghost" size="sm" onClick={notice.action.run}>
-                {notice.action.label}
+              <span>{text} —</span>
+              <Button variant="ghost" size="sm" onClick={list.retry}>
+                {action}
               </Button>
             </>
           ) : (
-            notice.text
+            text
           )}
         </p>
       ) : null}

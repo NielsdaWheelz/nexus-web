@@ -1,6 +1,6 @@
 import { apiCommand204, apiFetch } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
+import { publishChange } from "@/lib/api/changes";
 
 export type LibraryPlacementTarget =
   | { readonly kind: "Media"; readonly id: string }
@@ -43,9 +43,7 @@ interface PlacementWrite {
 }
 
 // Every placement write is idempotent, so a write that failed in transport is
-// retried by resending it. A write publishes the library it changed once it
-// succeeds. Saved in Nexus is the viewer's default library, whose id no open
-// pane holds, so it publishes "Unknown".
+// retried by resending it. A write publishes "Entries" once it succeeds.
 
 export async function addLibraryPlacement({
   target,
@@ -54,7 +52,7 @@ export async function addLibraryPlacement({
 }: PlacementWrite): Promise<void> {
   if (destination.kind === "SavedInNexus") {
     await apiCommand204(`/api/media/${target.id}/saved-in-nexus`, { method: "PUT", signal });
-    publishLibraryPlacementChange("Unknown");
+    publishChange("Entries");
     return;
   }
   const libraryId = destination.library.id;
@@ -67,7 +65,7 @@ export async function addLibraryPlacement({
   } else {
     await apiFetch(`/api/libraries/${libraryId}/podcasts/${target.id}`, { method: "PUT", signal });
   }
-  publishLibraryPlacementChange([libraryId]);
+  publishChange("Entries");
 }
 
 export async function removeLibraryPlacement({
@@ -76,18 +74,17 @@ export async function removeLibraryPlacement({
   signal,
 }: PlacementWrite): Promise<void> {
   if (destination.kind === "SavedInNexus") {
-    await apiFetch(`/api/media/${target.id}/saved-in-nexus`, { method: "DELETE", signal });
-    publishLibraryPlacementChange("Unknown");
+    await apiCommand204(`/api/media/${target.id}/saved-in-nexus`, { method: "DELETE", signal });
+    publishChange("Entries");
     return;
   }
   const libraryId = destination.library.id;
-  await apiFetch(
-    target.kind === "Media"
-      ? `/api/media/${target.id}/libraries/${libraryId}`
-      : `/api/libraries/${libraryId}/podcasts/${target.id}`,
-    { method: "DELETE", signal },
-  );
-  publishLibraryPlacementChange([libraryId]);
+  if (target.kind === "Media") {
+    await apiCommand204(`/api/media/${target.id}/libraries/${libraryId}`, { method: "DELETE", signal });
+  } else {
+    await apiFetch(`/api/libraries/${libraryId}/podcasts/${target.id}`, { method: "DELETE", signal });
+  }
+  publishChange("Entries");
 }
 
 /** Add Content patches its local copy of an inventory after a confirmed write. */

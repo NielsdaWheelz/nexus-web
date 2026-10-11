@@ -1,10 +1,6 @@
 import { absent, present, type Presence } from "@/lib/api/presence";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import {
-  decodeCollectionCursor,
-  decodeCollectionRevision,
-  type CollectionPage,
-} from "@/lib/api/collectionPage";
+import type { ListPage } from "@/lib/api/useServerList";
 import type { PositiveCount } from "@/lib/consumption/activityFacts";
 import { decodePublicationDate, type PublicationDate } from "@/lib/dates/publicationDate";
 import type { MediaSummary } from "@/lib/media/mediaSummary";
@@ -41,6 +37,11 @@ export type LibraryPodcastListItem = Omit<
   "podcast"
 > & { podcast: LibraryPodcastListValue };
 export type LibraryEntryListItem = LibraryMediaListItem | LibraryPodcastListItem;
+
+/** The media or podcast an entry files: its row identity. */
+export function libraryEntryTargetId(entry: LibraryEntryListItem): string {
+  return entry.kind === "media" ? entry.media.id : entry.podcast.id;
+}
 
 export function libraryEntryListItemFromWire(
   entry: Schema<"LibraryMediaListItemOut"> | Schema<"LibraryPodcastListItemOut">,
@@ -87,12 +88,6 @@ export function libraryEntryListItemFromWire(
 
 export function libraryEntryPageFromWire(
   page: ApiJson<"/libraries/{library_id}/entries", "get">["data"],
-): CollectionPage<LibraryEntryListItem> {
-  return {
-    items: page.items.map(libraryEntryListItemFromWire),
-    collectionRevision: decodeCollectionRevision(page.collectionRevision),
-    nextCursor: page.nextCursor.kind === "Present"
-      ? present(decodeCollectionCursor(page.nextCursor.value))
-      : absent(),
-  };
+): ListPage<LibraryEntryListItem> {
+  return { items: page.items.map(libraryEntryListItemFromWire), nextCursor: page.nextCursor };
 }

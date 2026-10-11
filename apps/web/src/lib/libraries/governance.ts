@@ -13,7 +13,7 @@ import {
   type LibraryRole,
   type ViewerLibraryInvitation,
 } from "@/lib/libraries/contract";
-import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
+import { publishChange } from "@/lib/api/changes";
 import {
   expectLibraryInvitationHandle,
   expectUserHandle,
@@ -92,7 +92,7 @@ export async function acceptLibraryInvite(
     `/api/libraries/invites/${encodeURIComponent(handle)}/accept`,
     { method: "POST" },
   );
-  publishLibraryPlacementChange("Unknown");
+  publishChange("Libraries", "Entries");
   return response.data.invite;
 }
 

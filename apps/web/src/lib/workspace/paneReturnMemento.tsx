@@ -96,7 +96,6 @@ export function createPaneReturnMemento() {
   const scrollports = new Map<string, Scrollport>(); // by pane
   const readiness = new Map<string, Set<Readiness>>(); // by `${visit}|${route}`
   const pending = new Map<string, PendingRestore>(); // by pane
-  const cleared = { epoch: 0, origin: "" };
 
   function isReady(port: Scrollport): boolean {
     const entries = [...(readiness.get(`${port.visitId}|${port.routeKey}`) ?? [])];
@@ -234,21 +233,13 @@ export function createPaneReturnMemento() {
       const record = visitData.get(visitId);
       return record?.routeKey === routeKey ? (record.values.get(name) ?? null) : null;
     },
-    write(visitId: string, routeKey: string, name: string, value: unknown, epoch: number) {
-      // After a clear-all, only its origin visit and newly sampled hooks write.
-      if (epoch !== cleared.epoch && visitId !== cleared.origin) return;
+    write(visitId: string, routeKey: string, name: string, value: unknown) {
       const current = visitData.get(visitId);
       const values = current?.routeKey === routeKey ? current.values : new Map();
       if (value === null) values.delete(name);
       else values.set(name, value);
       if (values.size) visitData.set(visitId, { routeKey, values });
       else visitData.delete(visitId);
-    },
-    epoch: () => cleared.epoch,
-    clearAll(originVisitId: string): void {
-      visitData.clear();
-      cleared.epoch += 1;
-      cleared.origin = originVisitId;
     },
     /** Keeps the live offset across a same-path view swap (filters, sort). */
     hold(paneId: string): (() => void) | null {
@@ -357,27 +348,16 @@ export function usePaneVisitData<T>(
   captureCommitted: () => T | null,
 ): T | null {
   const { memory, visitId, routeKey } = useScope();
-  const sample = useRef<{
-    scope: string;
-    value: T | null;
-    epoch: number;
-  } | null>(null);
+  const sample = useRef<{ scope: string; value: T | null } | null>(null);
   const scope = `${visitId}|${routeKey}|${key.name}`;
   if (sample.current?.scope !== scope) {
     const value = memory.read(visitId, routeKey, key.name) as T | null;
-    sample.current = { scope, value, epoch: memory.epoch() };
+    sample.current = { scope, value };
   }
-  const { epoch } = sample.current;
   useLayoutEffect(() => {
-    memory.write(visitId, routeKey, key.name, captureCommitted(), epoch);
+    memory.write(visitId, routeKey, key.name, captureCommitted());
   });
   return sample.current.value;
-}
-
-/** After a mutation, the retained list data of every other visit is stale. */
-export function useClearAllPaneVisitData(): () => void {
-  const { memory, visitId } = useScope();
-  return useCallback(() => memory.clearAll(visitId), [memory, visitId]);
 }
 
 /** Call before a same-path view swap; the offset returns once `commitToken` changes. */

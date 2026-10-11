@@ -8,7 +8,7 @@
 // push    {snapshot}, always before the reply to the op that caused it.
 import { useSyncExternalStore } from "react";
 import type { ProgressView } from "@/lib/documentReader/ports";
-import { publishConsumptionProjectionChange } from "@/lib/consumption/projectionRevision";
+import { publishChange } from "@/lib/api/changes";
 
 export type MediaKind = "podcast_episode" | "pdf" | "epub" | "web_article";
 export type FailureReason =
@@ -65,7 +65,7 @@ const pending = new Map<number, {
 
 function publish(next: OfflineSnapshot): void {
   if (next.consumptionRevision !== snapshot?.consumptionRevision)
-    publishConsumptionProjectionChange();
+    publishChange("Consumption");
   snapshot = next;
   for (const listener of listeners) listener();
 }

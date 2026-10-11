@@ -13,12 +13,6 @@ android playback/protocol and lectern editorial contracts.
 contract. the same module docs retain absent universal-link, browse and
 offline-reading references.
 
-source audit at `031c3c95de81f25306b4e17fd656d9eeaf72218c` also found
-`docs/modules/library.md:448–451` naming `library_destinations:v2` and v2-only
-acceptance, while `python/nexus/services/library_governance.py:603` owns
-`LibraryDestinations:v3`. update that description to the actual cursor owner;
-no runtime failure is claimed by this documentation drift.
-
 quick reads corrected the reading-time owner in architecture and module docs,
 documented current duration/slate behavior, and removed library-sorting links.
 the collection-controls change corrected the media-metadata link to the deleted
@@ -28,7 +22,8 @@ player and library contracts.
 
 2026-10-09 docs-history purge: module-doc cutover links now point to the
 current owner ([connections](../modules/connections.md)) or are pinned at
-`ebd648197`; the `library_destinations:v2` drift remains.
+`ebd648197`. the collection-revision cut (2026-10-10) corrected the
+destinations cursor description.
 
 ## prerequisites and proposed fix
 

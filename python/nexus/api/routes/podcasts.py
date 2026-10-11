@@ -63,7 +63,6 @@ def list_subscriptions(
             viewer.user_id,
             limit=query.limit,
             cursor=query.cursor,
-            revision=query.collection_revision,
             sort=_option(
                 query.parameters,
                 "sort",
@@ -136,7 +135,6 @@ def list_podcast_episodes(
             podcast_id,
             limit=query.limit,
             cursor=query.cursor,
-            revision=query.collection_revision,
             state=_option(
                 query.parameters, "state", "all", ("all", "unplayed", "in_progress", "played")
             ),

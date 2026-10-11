@@ -21,7 +21,6 @@ from nexus.logging import get_logger
 from nexus.schemas.presence import Present, present
 from nexus.schemas.publication_dates import normalize_source_publication_date
 from nexus.services import contributor_taxonomy as taxonomy
-from nexus.services.collection_revisions import CollectionFamily, bump_all_collection_families
 from nexus.services.net.http_retry import get_json_with_retry
 from nexus.services.source_outcome import SourceRunOutcome, source_contributor_observations
 from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
@@ -61,9 +60,6 @@ def run_youtube_video_ingest(
         edition = normalize_source_publication_date(snippet.get("published_at"))
         if isinstance(edition, Present):
             media.edition_published_date = edition.value
-        bump_all_collection_families(
-            db, families=(CollectionFamily.AuthorWorks, CollectionFamily.LibraryEntries)
-        )
         if not snippet.get("channel_title"):
             return taxonomy.NOT_OBSERVED
         channel_id = snippet.get("channel_id")

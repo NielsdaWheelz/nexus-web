@@ -17,13 +17,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.schemas.collection_page import (
-    CollectionCursor,
-    CollectionPage,
-    CollectionRevision,
-    ParsedCollectionQuery,
-    parse_collection_query,
-)
+from nexus.schemas.collection_page import CollectionPage, CollectionQuery, parse_collection_query
 from nexus.schemas.library import (
     LibraryEntryListItemOut,
     LibraryEntryMediaCapabilitiesOut,
@@ -36,18 +30,12 @@ from nexus.schemas.library import (
 )
 from nexus.schemas.presence import Presence, absent, presence_from_nullable, present
 from nexus.services import library_governance as governance
-from nexus.services.collection_keyset import Direction, SortKey, plan_json
-from nexus.services.collection_revisions import (
-    CollectionFamily,
-    read_collection_revision,
-    require_collection_revision,
-)
+from nexus.services.collection_keyset import Direction, KeysetValueKind, SortKey, keyset_page
 from nexus.services.consumption import projection
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
     primary_creator_rows_sql,
 )
-from nexus.services.keyset_cursor import KeysetValueKind
 from nexus.services.library_entries import library_media_ids_cte_sql
 from nexus.services.reading_time import reading_time_rows_sql
 
@@ -78,7 +66,7 @@ def _invalid(message: str) -> InvalidRequestError:
 
 def parse_entries_query(
     items: Sequence[tuple[str, str]],
-) -> tuple[LibraryEntryView, ParsedCollectionQuery]:
+) -> tuple[LibraryEntryView, CollectionQuery]:
     """Strict entry-view parse over the request's `multi_items()`.
 
     Every malformed request — unknown or duplicate key, factual sort without a
@@ -579,47 +567,29 @@ def list_library_entries(
     library_id: UUID,
     *,
     view: LibraryEntryView,
-    limit: int = 100,
-    cursor: CollectionCursor | None = None,
-    collection_revision: CollectionRevision | None = None,
+    cursor: str | None,
+    limit: int,
 ) -> CollectionPage[LibraryEntryListItemOut]:
     """One keyset page of a library's hydrated entries under a view lens.
 
     Member-only. Unfiled is valid only for the viewer's own Default. The
-    returned cursor is bound to this exact viewer, library, view and plan.
+    returned cursor is bound to this exact viewer, library and view.
     """
     ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
-    revision = (
-        read_collection_revision(db, viewer_id=viewer_id, family=CollectionFamily.LibraryEntries)
-        if collection_revision is None
-        else require_collection_revision(
-            db,
-            viewer_id=viewer_id,
-            family=CollectionFamily.LibraryEntries,
-            expected=collection_revision,
-        )
-    )
     if view.projection == "unfiled" and not ctx.is_default:
         raise _invalid("Unfiled is only available for the default library")
-
-    plan = _plan(view, is_default=ctx.is_default)
-    cursor_query: dict[str, object] = {
-        "libraryId": str(library_id),
-        "plan": plan_json(plan),
-        "view": asdict(view),
-        "viewerId": str(viewer_id),
-    }
-    if ctx.is_default:
-        cursor_query["inventory"] = "RootSubsumed"
     params: dict[str, object] = {"viewer_id": viewer_id, "library_id": library_id}
     if view.entry_type is not None and view.entry_type != "podcast":
         params["entry_type"] = view.entry_type
-    page_rows, next_cursor = governance.keyset_page(
+    rows, next_cursor = keyset_page(
         db,
-        family=CollectionFamily.LibraryEntries.value,
-        query=cursor_query,
-        plan=plan,
-        alias="facts",
+        binding={
+            "list": "LibraryEntries",
+            "viewer": viewer_id,
+            "library": library_id,
+            "view": asdict(view),
+        },
+        plan=_plan(view, is_default=ctx.is_default),
         cursor=cursor,
         limit=limit,
         params=params,
@@ -628,7 +598,6 @@ def list_library_entries(
         ),
     )
     return CollectionPage[LibraryEntryListItemOut](
-        items=_hydrate_entry_rows(db, viewer_id=viewer_id, rows=page_rows),
-        collectionRevision=revision,
-        nextCursor=present(next_cursor) if next_cursor is not None else absent(),
+        items=_hydrate_entry_rows(db, viewer_id=viewer_id, rows=rows),
+        nextCursor=presence_from_nullable(next_cursor),
     )

@@ -27,15 +27,15 @@ import {
 } from "@/lib/panes/paneFilterRows";
 import {
   listSubscriptions,
-  usePodcastRevision,
   type PodcastSubscriptionRow,
 } from "@/lib/podcasts/api";
+import { useChangeStamp } from "@/lib/api/changes";
 import {
   listRowStatus,
+  pageQuery,
   useServerList,
-  type ListData,
-  type Visit,
-} from "@/lib/api/serverState";
+  type ListSnapshot,
+} from "@/lib/api/useServerList";
 import {
   podcastErrorMessage,
   podcastRefresh,
@@ -46,10 +46,11 @@ import {
   usePaneReturnReady,
 } from "@/lib/workspace/paneReturnMemento";
 
-const VISIT = definePaneVisitDataKey<Visit<ListData<PodcastSubscriptionRow>>>(
+const VISIT = definePaneVisitDataKey<ListSnapshot<PodcastSubscriptionRow>>(
   "Podcasts.Subscriptions",
 );
 const REFRESH = podcastRefresh({ kind: "Podcasts" });
+const UNIT = { singular: "show", plural: "shows" };
 const ACTIONS: readonly PaneHeaderAction[] = [
   {
     kind: "link",
@@ -87,37 +88,30 @@ export default function PodcastsPaneBody() {
   const query = new URLSearchParams({ sort, filter });
   if (libraryId !== null) query.set("library_id", libraryId);
   const key = query.toString();
-  const revision = usePodcastRevision();
-  const mediaRevision = useMediaQueryRevision();
   const list = useServerList<PodcastSubscriptionRow>({
     key,
-    stale: `${revision}:${mediaRevision}`,
+    stale: `${useChangeStamp("Podcasts")}:${useMediaQueryRevision()}`,
     pageSize: 100,
+    drain: false,
+    active: true,
     visit: VISIT,
-    fetchPage: (page, signal) =>
-      listSubscriptions(new URLSearchParams(`${key}&${page}`), signal),
+    id: (row) => row.podcast_id,
+    fetchPage: (cursor, limit, signal) =>
+      listSubscriptions(pageQuery(key, cursor, limit), signal),
   });
   const libraries = useResource({
     cacheKey: "podcasts:member-libraries",
-    load: (signal) => listMemberLibraries({ limit: 200, signal }),
+    load: (signal) => listMemberLibraries({ signal }),
   });
   const rows = list.status === "ready" ? list.items : null;
-  const complete = list.status === "ready" && list.complete;
+  const complete = list.complete;
   const getRowStatus = useCallback(
     (text: string) => {
       const loaded = rows ?? [];
-      const visible = loaded.filter((row) =>
-        matchesPaneFilterQuery(text, fields(row)),
-      );
-      return listRowStatus(
-        list.status,
-        complete,
-        loaded.length,
-        visible.length,
-        "show",
-      );
+      const visible = loaded.filter((row) => matchesPaneFilterQuery(text, fields(row)));
+      return listRowStatus(list, loaded.length, visible.length, UNIT);
     },
-    [complete, list.status, rows],
+    [list, rows],
   );
   const filterRows = usePaneFilterRows({
     sourceKey: "Podcasts.Subscriptions",
@@ -203,12 +197,12 @@ export default function PodcastsPaneBody() {
   });
   usePaneReturnReady(list.status !== "loading");
 
-  if (list.status === "failed") {
-    const invalidView = list.error.code === "E_INVALID_REQUEST";
+  if (list.status === "failed" && list.failure !== null) {
+    const invalidView = list.failure.error.code === "E_INVALID_REQUEST";
     return (
       <FeedbackNotice
         content={podcastErrorMessage(
-          list.error,
+          list.failure.error,
           "Followed podcasts couldn’t be loaded",
         )}
         announcement="Assertive"
@@ -249,11 +243,13 @@ export default function PodcastsPaneBody() {
       ariaLabel="Followed podcasts"
       rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
       notice={
-        list.status === "ready" && list.error ? (
+        list.status === "ready" && list.failure ? (
           <FeedbackNotice
             content={podcastErrorMessage(
-              list.error,
-              "Followed podcasts couldn’t be refreshed",
+              list.failure.error,
+              list.failure.op === "More"
+                ? "More followed podcasts couldn’t be loaded"
+                : "Followed podcasts couldn’t be refreshed",
             )}
             announcement="Polite"
             actions={[{ label: "Retry", onClick: list.retry }]}
@@ -308,11 +304,11 @@ export default function PodcastsPaneBody() {
         )
       }
       footer={
-        list.status === "ready" && !list.complete ? (
+        list.current && !list.complete ? (
           <LoadMoreFooter
             hasMore
-            loading={list.loadingMore}
-            onLoadMore={list.loadMore}
+            loading={list.running === "More"}
+            onLoadMore={list.more}
           />
         ) : undefined
       }

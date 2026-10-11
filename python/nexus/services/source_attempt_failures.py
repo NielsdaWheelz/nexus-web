@@ -14,7 +14,6 @@ from nexus.schemas.import_history import SourceFailed, assume_safe_failure_code
 from nexus.schemas.presence import Presence, present
 from nexus.services import media_source_types as source_types
 from nexus.services.import_history import append_processing_event
-from nexus.services.media_fact_revisions import bump_all_media_fact_collections
 from nexus.services.media_processing_state import MediaFailureStage, mark_media_failed_by_id
 from nexus.services.podcasts.transcription_failure import (
     PodcastTranscriptionFailure,
@@ -177,4 +176,3 @@ def publish_source_attempt_failure(db: Session, failure: SourceAttemptFailure) -
             last_error_code=failure.error_code,
             now=failure.now,
         )
-    bump_all_media_fact_collections(db)

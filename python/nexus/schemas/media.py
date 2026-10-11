@@ -11,7 +11,6 @@ from nexus.db.models import MediaKind, ProcessingStatus
 from nexus.db.models import TranscriptCoverage as MediaTranscriptCoverage
 from nexus.db.models import TranscriptState as MediaTranscriptState
 from nexus.schemas.client_mutation import ClientMutationUuidText
-from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaDurationOut, MediaProcessingStatus
@@ -296,7 +295,6 @@ class MediaRemovedResult(BaseModel):
     kind: Literal["Removed"] = "Removed"
     removed_from_library_ids: list[UUID]
     remaining_reference_count: int = Field(ge=0)
-    library_entries_collection_revision: CollectionRevision
 
 
 class MediaHiddenResult(BaseModel):
@@ -305,7 +303,6 @@ class MediaHiddenResult(BaseModel):
     kind: Literal["Hidden"] = "Hidden"
     removed_from_library_ids: list[UUID]
     remaining_reference_count: int = Field(ge=0)
-    library_entries_collection_revision: CollectionRevision
 
 
 class MediaDeletingResult(BaseModel):

@@ -3,7 +3,7 @@
 // The server validates everything it is sent; nothing here re-validates it.
 
 import { apiFetch } from "@/lib/api/client";
-import type { ServerPage } from "@/lib/api/serverState";
+import type { ListPage } from "@/lib/api/useServerList";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 
 export type ContributorSearchItem = Schema<"ContributorSearchItemOut">;
@@ -43,7 +43,7 @@ export async function listContributorWorks(
   handle: string,
   query: URLSearchParams,
   signal: AbortSignal,
-): Promise<ServerPage<ContributorWork>> {
+): Promise<ListPage<ContributorWork>> {
   type Body = ApiJson<"/contributors/{contributor_handle}/works", "get">;
   const path = `${authorPath(handle)}/works?${query}` as const;
   return (await apiFetch<Body>(path, { signal })).data;

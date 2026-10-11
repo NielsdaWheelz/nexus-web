@@ -16,7 +16,6 @@ from nexus.errors import (
 )
 from nexus.logging import get_logger
 from nexus.schemas.presence import present
-from nexus.services.collection_revisions import CollectionFamily, bump_all_collection_families
 from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
 from nexus.services.pdf_ingest import (
     PdfExtractionError,
@@ -102,9 +101,6 @@ def publish_pdf_source(
     def replace_projection(locked_media: Media) -> SourceRunOutcome:
         result = publish_pdf_extraction_plan(db, media_id=media_id, plan=plan)
         _persist_pdf_metadata(locked_media, result)
-        bump_all_collection_families(
-            db, families=(CollectionFamily.AuthorWorks, CollectionFamily.LibraryEntries)
-        )
         db.flush()
         # D-31: only semicolons separate people; ``Last, First`` is ONE name.
         names = [part.strip() for part in (result.pdf_author or "").split(";") if part.strip()]

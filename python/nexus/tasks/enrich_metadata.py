@@ -32,10 +32,6 @@ from nexus.schemas.metadata_enrichment import (
     MetadataNoFindingsOutcome,
     MetadataOutcome,
 )
-from nexus.services.collection_revisions import (
-    ENTRY_VISIBILITY_FAMILIES,
-    bump_all_collection_families,
-)
 from nexus.services.contributor_writes import MediaTarget
 from nexus.services.contributors import (
     ContributorObservationRejected,
@@ -278,8 +274,6 @@ def _publish(
     )
     media.metadata_enriched_at = completed_at
     media.updated_at = completed_at
-    if changed:
-        bump_all_collection_families(db, families=ENTRY_VISIBILITY_FAMILIES)
     return finish(
         MetadataCompletedOutcome(
             completed_at=completed_at,

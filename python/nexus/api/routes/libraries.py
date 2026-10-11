@@ -19,7 +19,6 @@ from nexus.schemas.library import (
     CreateLibraryInviteRequest,
     CreateLibraryRequest,
     DeclineLibraryInviteResponse,
-    LibraryDeleteOut,
     LibraryDestinationOut,
     LibraryEntryListItemOut,
     LibraryEntryOrderRequest,
@@ -30,7 +29,6 @@ from nexus.schemas.library import (
     LibraryOut,
     LibraryPageInfo,
     LibraryPlacementOptionOut,
-    LibraryRenameOut,
     PodcastPlacementAdditionOut,
     PodcastPlacementRemovalOut,
     TransferLibraryOwnershipRequest,
@@ -120,7 +118,6 @@ def list_libraries(
         viewer.user_id,
         view=view,
         cursor=query.cursor,
-        collection_revision=query.collection_revision,
         limit=query.limit,
     )
     return Data(data=page)
@@ -182,20 +179,21 @@ def rename_library(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     body: UpdateLibraryRequest,
     db: DbSession,
-) -> Data[LibraryRenameOut]:
+) -> Data[LibraryOut]:
     """Rename a library. Admin-only; not the default or a system library."""
     result = library_governance.rename_library(db, viewer.user_id, library_id, body.name)
     return Data(data=result)
 
 
-@router.delete("/libraries/{library_id}")
+@router.delete("/libraries/{library_id}", status_code=204)
 def delete_library(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-) -> Data[LibraryDeleteOut]:
+) -> Response:
     """Delete a library. Owner-only; a non-owner admin gets E_OWNER_REQUIRED."""
-    return Data(data=library_governance.delete_library(db, viewer.user_id, library_id))
+    library_governance.delete_library(db, viewer.user_id, library_id)
+    return Response(status_code=204)
 
 
 @router.post("/libraries/{library_id}/invites", status_code=201)
@@ -300,7 +298,6 @@ def list_library_entries(
         view=view,
         limit=query.limit,
         cursor=query.cursor,
-        collection_revision=query.collection_revision,
     )
     return Data(data=page)
 
