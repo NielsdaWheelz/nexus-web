@@ -202,8 +202,8 @@ SOURCES: dict[str, str] = {
         FROM resource_external_snapshots res
         JOIN (SELECT DISTINCT ON (mr.source_id) mr.source_id, mr.result_ref AS ref, mr.locator,
                 mr.selected
-            FROM message_retrievals mr JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
-            JOIN visible_conversations vc ON vc.conversation_id = mtc.conversation_id
+            FROM message_retrievals mr JOIN messages msg ON msg.id = mr.assistant_message_id
+            JOIN visible_conversations vc ON vc.conversation_id = msg.conversation_id
             WHERE mr.result_type = 'web_result' AND mr.locator IS NOT NULL
               AND mr.locator != 'null' {where}
             ORDER BY mr.source_id, mr.created_at DESC, mr.id DESC) mr

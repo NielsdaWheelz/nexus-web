@@ -19,7 +19,6 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import (
     DbSession,
     RepeatableReadDbSession,
-    get_repeatable_read_db,
     get_session_factory,
 )
 from nexus.responses import Data
@@ -38,12 +37,10 @@ from nexus.schemas.conversation import (
     ReaderSelectionKey,
     ReaderSelectionPreview,
     SetActivePathRequest,
-    TrustToolCallOut,
 )
-from nexus.services.agent_tools.writes import undo_tool_call as revert_tool_call
 from nexus.services.chat import admit, conversations, quotes, reads
 from nexus.services.generation.catalog import Catalog
-from nexus.services.tool_runtime.catalog import ComposedToolRuntime
+from nexus.services.tools.run import Toolbox
 
 router = APIRouter(tags=["chat"])
 CONTRACT = [Depends(require_chat_contract_revision), Depends(require_tool_projection_revision)]
@@ -52,11 +49,11 @@ CatalogDep = Annotated[Catalog, Depends(get_generation_catalog)]
 KeyHeader = Annotated[str | None, Header(alias="Idempotency-Key")]
 
 
-def _tools(request: Request) -> ComposedToolRuntime:
-    return request.app.state.tool_runtime
+def _tools(request: Request) -> Toolbox:
+    return request.app.state.toolbox
 
 
-ToolsDep = Annotated[ComposedToolRuntime, Depends(_tools)]
+ToolsDep = Annotated[Toolbox, Depends(_tools)]
 
 
 @router.post("/chat-runs", dependencies=CONTRACT)
@@ -98,7 +95,7 @@ async def _repeat(
     body: ChatRunRepeatRequest,
     viewer: Viewer,
     catalog: Catalog,
-    tools: ComposedToolRuntime,
+    tools: Toolbox,
     idempotency_key: str | None,
 ) -> Data[ChatRunResponse]:
     response = await admit.repeat(
@@ -197,31 +194,6 @@ def set_active_path(
         leaf_id=body.active_leaf_message_id,
     )
     return Response(status_code=204)
-
-
-@router.post(
-    "/conversations/{conversation_id}/tool-calls/{tool_call_id}/undo", dependencies=CONTRACT
-)
-def undo_tool_call(
-    conversation_id: UUID, tool_call_id: UUID, viewer: ViewerDep, db: DbSession
-) -> Data[TrustToolCallOut]:
-    """Revert one assistant write's created refs. Idempotent."""
-
-    assistant_message_id = revert_tool_call(
-        db, viewer_id=viewer.user_id, conversation_id=conversation_id, tool_call_id=tool_call_id
-    )
-    # The write owner committed (or replayed read-only): read the call from a fresh
-    # snapshot, never its retained pre-commit rows.
-    db.rollback()
-    get_repeatable_read_db(db)
-    db.expire_all()
-    call = reads.tool_call(
-        db,
-        viewer_id=viewer.user_id,
-        assistant_message_id=assistant_message_id,
-        tool_call_id=tool_call_id,
-    )
-    return Data(data=call)
 
 
 @router.patch("/messages/{message_id}/fork-title", status_code=204)

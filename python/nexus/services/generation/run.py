@@ -44,7 +44,7 @@ from nexus.services.generation.policy import MEMORY_PLANS, OperationPolicy, chat
 if TYPE_CHECKING:
     from nexus.services.generation.catalog import Row
     from nexus.services.generation.runtime import Runtime
-    from nexus.services.tool_runtime.catalog import FrozenToolOperation
+    from nexus.services.tools.run import Plan
 
 logger = get_logger(__name__)
 
@@ -83,9 +83,9 @@ async def generate[T](
     ):
         raise AssertionError(f"generate was called outside the {operation} policy")
     refusal, row = await _resolve(runtime, owner, chosen, intent, rules, tools)
-    plan = runtime.tools.operations[tools.plan_id if tools else "NoModelTools"]
+    plan = runtime.tools.plans[tools.plan_id if tools else "NoModelTools"]
     budgets = chat_budgets(row) if row is not None and operation == "chat" else None
-    effect_mode = "AdditiveWrites" if plan.definition.max_live_writes else "ReadOnly"
+    effect_mode = "AdditiveWrites" if plan.writes else "ReadOnly"
     spec = GenerationSpec(
         operation=operation,
         selection=chosen,
@@ -177,7 +177,6 @@ async def _resolve(
     """Everything that can refuse before dispatch, as a value: (code, detail) or None."""
 
     from nexus.services.generation.catalog import CatalogUnavailable, ProviderTarget
-    from nexus.services.tool_runtime.catalog import unavailable_tool_ids
 
     try:
         snapshot = await runtime.catalog.read()
@@ -191,7 +190,7 @@ async def _resolve(
     if tools is not None:
         if isinstance(row.target, ProviderTarget) and not row.target.supports_tools:
             return ("runtime_unavailable", "the selected model cannot call tools"), row
-        missing = unavailable_tool_ids(runtime.tools.operations[tools.plan_id])
+        missing = runtime.tools.plans[tools.plan_id].unavailable()
         if missing:
             return ("runtime_unavailable", f"tools unavailable: {', '.join(missing)}"), row
         if tools.plan_id in MEMORY_PLANS and tools.plan_id != chat_tool_plan(
@@ -212,7 +211,7 @@ async def _dispatch(
     operation: Operation,
     chosen: GenerationSelection,
     row: Row,
-    plan: FrozenToolOperation,
+    plan: Plan,
     budgets: tuple[int, int] | None,
     intent: GenerationIntent,
     rules: OperationPolicy,
@@ -220,34 +219,12 @@ async def _dispatch(
     stop: Stop | None,
     emit: OnEvent,
 ) -> RouteResult:
-    from llm_tools import RunBudgetState
-
     from nexus.services.generation.catalog import CodexTarget
-    from nexus.services.tool_authority import (
-        GenerationToolExecutor,
-        ToolAuthority,
-        ToolAuthorityRefused,
-    )
+    from nexus.services.tools.run import ToolRefused, ToolRun
 
-    executor = (
-        None
-        if tools is None
-        else GenerationToolExecutor(
-            ToolAuthority(
-                session_factory=runtime.session_factory,
-                owner=owner,
-                generation_id=ref.id,
-                generation_seq=ref.seq,
-                operation=plan,
-                transport_kind="NativeCallback"
-                if isinstance(row.target, CodexTarget)
-                else "ProviderApi",
-                admitted_resource_uris=tools.scope_refs,
-                projection=tools.projection,
-                budgets=RunBudgetState(plan.profile.run_limits),
-            )
-        )
-    )
+    run = None
+    if tools is not None:
+        run = ToolRun(runtime.session_factory, owner, ref.id, ref.seq, plan, tools.scope_refs)
     stopped = asyncio.Event()
     reasons: list[Literal["cancelled", "deadline", "claim_lost"]] = []
     watcher = asyncio.create_task(
@@ -267,7 +244,7 @@ async def _dispatch(
                 role=operation,
                 intent=intent,
                 operation=plan,
-                executor=executor,
+                tools=run,
                 deadline_at=datetime.now(UTC) + timedelta(seconds=rules.timeout_seconds),
                 stopped=stopped,
                 on_event=emit,
@@ -275,7 +252,7 @@ async def _dispatch(
         else:
             from nexus.services.generation.provider import run_provider
 
-            if runtime.providers is None or executor is None or budgets is None:
+            if runtime.providers is None or run is None or budgets is None:
                 raise AssertionError("a provider generation needs its runtime and chat tools")
             result = await run_provider(
                 runtime.providers,
@@ -284,12 +261,12 @@ async def _dispatch(
                 intent=intent,
                 max_output_tokens=budgets[1],
                 operation=plan,
-                executor=executor,
+                tools=run,
                 stopped=stopped,
                 on_event=emit,
             )
     except Exception as error:
-        if isinstance(error, ToolAuthorityRefused) and not reasons and stop is not None:
+        if isinstance(error, ToolRefused) and not reasons and stop is not None:
             # The tool fence refuses once a stop commits, possibly before the next poll.
             with runtime.session_factory() as db:
                 if stop(db):
@@ -362,10 +339,10 @@ def _expected_failure(error: Exception) -> tuple[FailureCode, str] | None:
     from provider_runtime.errors import CredentialMissing, RuntimeDefect
     from provider_runtime.errors import CredentialRejected as ApiCredentialRejected
 
-    from nexus.services.tool_authority import ToolAuthorityRefused
+    from nexus.services.tools.run import ToolRefused
 
     detail = f"{type(error).__name__}: {error}"[:500]
-    if isinstance(error, ToolAuthorityRefused | NativeUncertain):
+    if isinstance(error, ToolRefused | NativeUncertain):
         return "interrupted", detail
     if isinstance(
         error,

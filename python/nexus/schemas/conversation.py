@@ -13,21 +13,21 @@ from llm_tools import ToolEffect
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from nexus.jobs.queue import DurableExecutionPhase
+from nexus.schemas.assistant_writes import CreatedRefOut, MachineAuthorshipOut
 from nexus.schemas.citation import CitationOut
 from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.llm import ExpectedChatFailure, GenerationSelection, RunSelectionOut
-from nexus.schemas.machine_authorship import MachineAuthorshipOut
 from nexus.schemas.presence import Presence
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import MediaRetrievalLocator
-from nexus.services.tool_runtime.declarations import BROWSER_TOOL_PROJECTION_CONTRACT
+from nexus.services.tools.contract import ERROR_TYPES
 
 MAX_MESSAGE_CONTENT_LENGTH = 20_000
 MAX_QUOTE_EXACT = 20_000
 MAX_QUOTE_AFFIX = 1_000
 MAX_QUOTE_SOURCE = 1_000
 EXECUTION_ADVISORY_EVENT_TYPE = "ExecutionAdvisory"
-ToolStatus = Literal["pending", "running", "complete", "error", "cancelled"]
+ToolStatus = Literal["running", "complete", "error", "cancelled"]
 
 
 class Wire(BaseModel):
@@ -292,18 +292,14 @@ class ChatRunAssistantTextDeltaEventPayload(Wire):
 
 
 class ToolProjectionOut(Wire):
-    """The tool projection shared by SSE, trust and Undo; attached context has no tool."""
+    """What the tool frames and the trust trail say about a call's tool."""
 
-    record_kind: Literal["attached_context", "current_execution", "historical_execution"]
-    canonical_tool_id: str | None = Field(min_length=1, max_length=128)
-    provider_wire_name: str | None = Field(min_length=1, max_length=128)
-    effect: ToolEffect | None
-    result_kind: Literal["attached_context", "mutation", "navigation", "retrieval"]
+    canonical_tool_id: str = Field(min_length=1, max_length=128)
+    effect: ToolEffect
+    result_kind: Literal["mutation", "navigation", "retrieval"]
     activity_label: str = Field(min_length=1, max_length=150)
     error_type: str | None = Field(
-        min_length=1,
-        max_length=64,
-        json_schema_extra={"enum": [*BROWSER_TOOL_PROJECTION_CONTRACT["error_types"], None]},
+        min_length=1, max_length=64, json_schema_extra={"enum": [*ERROR_TYPES, None]}
     )
 
 
@@ -376,7 +372,7 @@ class TrustToolCallOut(ToolProjectionOut):
     id: UUID
     tool_call_index: int
     status: ToolStatus
-    result_refs: list[dict[str, Any]]
+    created_refs: list[CreatedRefOut]
     machine_authorships: list[MachineAuthorshipOut]
     reverted_at: datetime | None
     retrievals: list[TrustRetrievalOut]
@@ -397,6 +393,7 @@ class TrustContextRefAddedOut(ChatRunContextRefAddedEventPayload):
 class AssistantTrustTrailOut(Out):
     conversation_id: UUID
     run: TrustRunOut | None = None
+    attached: list[TrustRetrievalOut] = Field(default_factory=list)  # the turn's context
     tool_calls: list[TrustToolCallOut] = Field(default_factory=list)
     citations: list[TrustCitationOut] = Field(default_factory=list)
     context_refs_added: list[TrustContextRefAddedOut] = Field(default_factory=list)

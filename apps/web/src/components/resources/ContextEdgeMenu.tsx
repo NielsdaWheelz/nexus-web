@@ -39,8 +39,7 @@ const EDGE_ACTIONS: Record<
     label: "Remove from chat",
     busyLabel: "Removing...",
   },
-  undo_assistant_chat: UNDO_ASSISTANT,
-  undo_assistant_generation: UNDO_ASSISTANT,
+  undo_assistant_write: UNDO_ASSISTANT,
 };
 
 /**

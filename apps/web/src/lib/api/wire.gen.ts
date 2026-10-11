@@ -104,6 +104,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/assistant-writes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Assistant Writes */
+        get: operations["list_assistant_writes_assistant_writes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/assistant-writes/{tool_call_id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo Assistant Write
+         * @description Idempotent: an undone write answers 204 again.
+         */
+        post: operations["undo_assistant_write_assistant_writes__tool_call_id__undo_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/atlas": {
         parameters: {
             query?: never;
@@ -546,26 +583,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/conversations/{conversation_id}/tool-calls/{tool_call_id}/undo": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Undo Tool Call
-         * @description Revert one assistant write's created refs. Idempotent.
-         */
-        post: operations["undo_tool_call_conversations__conversation_id__tool_calls__tool_call_id__undo_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/conversations/{conversation_id}/tree": {
         parameters: {
             query?: never;
@@ -683,40 +700,6 @@ export interface paths {
         get: operations["list_library_destinations_extension_library_destinations_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/generation-effects": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Recent Generation Effects */
-        get: operations["recent_generation_effects_generation_effects_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/generation-effects/{position_id}/undo": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Undo Assistant Write */
-        post: operations["undo_assistant_write_generation_effects__position_id__undo_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3213,6 +3196,8 @@ export interface components {
         };
         /** AssistantTrustTrailOut */
         AssistantTrustTrailOut: {
+            /** Attached */
+            attached: components["schemas"]["TrustRetrievalOut"][];
             /** Citations */
             citations: components["schemas"]["TrustCitationOut"][];
             /** Context Refs Added */
@@ -3235,6 +3220,40 @@ export interface components {
              * @enum {string}
              */
             code: "assistant_unavailable";
+        };
+        /** AssistantWriteOut */
+        AssistantWriteOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created Refs */
+            created_refs: components["schemas"]["CreatedRefOut"][];
+            /** Error Type */
+            error_type: string | null;
+            /**
+             * Generation Id
+             * Format: uuid
+             */
+            generation_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Reverted At */
+            reverted_at: string | null;
+            /** Tool Id */
+            tool_id: string;
+            /** Undo Allowed */
+            undo_allowed: boolean;
+        };
+        /** AssistantWritePage */
+        AssistantWritePage: {
+            /** Items */
+            items: components["schemas"]["AssistantWriteOut"][];
+            next_cursor: components["schemas"]["Presence_UUID_-Output"];
         };
         /** AtlasEdgeOut */
         AtlasEdgeOut: {
@@ -3482,29 +3501,6 @@ export interface components {
              */
             code: "E_MESSAGE_TOO_LONG" | "E_INVALID_GENERATION_SELECTION" | "E_GENERATION_SELECTION_UNAVAILABLE" | "E_INVALID_REQUEST" | "E_BRANCH_PATH_INVALID" | "E_BRANCH_ANCHOR_INVALID" | "E_FORBIDDEN" | "E_NOT_FOUND" | "E_CONVERSATION_NOT_FOUND" | "E_MESSAGE_NOT_FOUND" | "E_READER_SELECTION_STALE" | "E_READER_SELECTION_NOT_FOUND" | "E_READER_SELECTION_FORBIDDEN" | "E_READER_SELECTION_GEOMETRY_ONLY" | "E_READER_SELECTION_TOO_LARGE" | "E_CONVERSATION_NO_LONGER_EMPTY" | "E_GENERATION_CONTEXT_TOO_LARGE";
         };
-        /** ChatCreationRecord */
-        ChatCreationRecord: {
-            /**
-             * Conversation Id
-             * Format: uuid
-             */
-            conversation_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "chat";
-            /**
-             * Message Id
-             * Format: uuid
-             */
-            message_id: string;
-            /**
-             * Tool Call Id
-             * Format: uuid
-             */
-            tool_call_id: string;
-        };
         /** ChatPublicationWarning */
         ChatPublicationWarning: {
             /**
@@ -3589,8 +3585,8 @@ export interface components {
             /** Activity Label */
             activity_label: string;
             /** Canonical Tool Id */
-            canonical_tool_id: string | null;
-            effect: components["schemas"]["ToolEffect"] | null;
+            canonical_tool_id: string;
+            effect: components["schemas"]["ToolEffect"];
             /**
              * Error Type
              * @enum {unknown}
@@ -3600,18 +3596,11 @@ export interface components {
             input: {
                 [key: string]: unknown;
             };
-            /** Provider Wire Name */
-            provider_wire_name: string | null;
-            /**
-             * Record Kind
-             * @enum {string}
-             */
-            record_kind: "attached_context" | "current_execution" | "historical_execution";
             /**
              * Result Kind
              * @enum {string}
              */
-            result_kind: "attached_context" | "mutation" | "navigation" | "retrieval";
+            result_kind: "mutation" | "navigation" | "retrieval";
             /**
              * Tool Call Id
              * Format: uuid
@@ -3625,25 +3614,18 @@ export interface components {
             /** Activity Label */
             activity_label: string;
             /** Canonical Tool Id */
-            canonical_tool_id: string | null;
-            effect: components["schemas"]["ToolEffect"] | null;
+            canonical_tool_id: string;
+            effect: components["schemas"]["ToolEffect"];
             /**
              * Error Type
              * @enum {unknown}
              */
             error_type: "BudgetExceeded" | "Conflict" | "DeadlineExceeded" | "InvalidCursor" | "InvalidInput" | "InvalidUpstreamResponse" | "InvalidUrl" | "MemoryFailure" | "QuoteAmbiguous" | "QuoteNotFound" | "RateLimited" | "ResourceUnavailable" | "StaleCursor" | "TargetAmbiguous" | "TooLarge" | "ToolUnavailable" | "Uninspectable" | "Unreadable" | "UnsafeDestination" | "UnsupportedContent" | "UpstreamUnavailable" | "WriteCapReached" | null;
-            /** Provider Wire Name */
-            provider_wire_name: string | null;
-            /**
-             * Record Kind
-             * @enum {string}
-             */
-            record_kind: "attached_context" | "current_execution" | "historical_execution";
             /**
              * Result Kind
              * @enum {string}
              */
-            result_kind: "attached_context" | "mutation" | "navigation" | "retrieval";
+            result_kind: "mutation" | "navigation" | "retrieval";
             /**
              * Tool Call Id
              * Format: uuid
@@ -3657,30 +3639,23 @@ export interface components {
             /** Activity Label */
             activity_label: string;
             /** Canonical Tool Id */
-            canonical_tool_id: string | null;
-            effect: components["schemas"]["ToolEffect"] | null;
+            canonical_tool_id: string;
+            effect: components["schemas"]["ToolEffect"];
             /**
              * Error Type
              * @enum {unknown}
              */
             error_type: "BudgetExceeded" | "Conflict" | "DeadlineExceeded" | "InvalidCursor" | "InvalidInput" | "InvalidUpstreamResponse" | "InvalidUrl" | "MemoryFailure" | "QuoteAmbiguous" | "QuoteNotFound" | "RateLimited" | "ResourceUnavailable" | "StaleCursor" | "TargetAmbiguous" | "TooLarge" | "ToolUnavailable" | "Uninspectable" | "Unreadable" | "UnsafeDestination" | "UnsupportedContent" | "UpstreamUnavailable" | "WriteCapReached" | null;
-            /** Provider Wire Name */
-            provider_wire_name: string | null;
-            /**
-             * Record Kind
-             * @enum {string}
-             */
-            record_kind: "attached_context" | "current_execution" | "historical_execution";
             /**
              * Result Kind
              * @enum {string}
              */
-            result_kind: "attached_context" | "mutation" | "navigation" | "retrieval";
+            result_kind: "mutation" | "navigation" | "retrieval";
             /**
              * Status
              * @enum {string}
              */
-            status: "pending" | "running" | "complete" | "error" | "cancelled";
+            status: "running" | "complete" | "error" | "cancelled";
             /**
              * Tool Call Id
              * Format: uuid
@@ -3874,11 +3849,26 @@ export interface components {
             /** Generation */
             generation: number;
         };
-        /** ConnectionCreationOut */
+        /**
+         * ConnectionCreationOut
+         * @description Who created an assistant link: its tool call, and the answer while the chat exists.
+         */
         ConnectionCreationOut: {
             authorship: components["schemas"]["MachineAuthorshipOut"];
-            /** Record */
-            record: components["schemas"]["ChatCreationRecord"] | components["schemas"]["GenerationCreationRecord"];
+            /** Conversation Id */
+            conversation_id: string | null;
+            /**
+             * Generation Id
+             * Format: uuid
+             */
+            generation_id: string;
+            /** Message Id */
+            message_id: string | null;
+            /**
+             * Tool Call Id
+             * Format: uuid
+             */
+            tool_call_id: string;
         };
         /** ConnectionDiscoveryScanOut */
         ConnectionDiscoveryScanOut: {
@@ -3957,7 +3947,7 @@ export interface components {
             kind: "context" | "supports" | "contradicts";
             link_note: components["schemas"]["ConnectionLinkNoteOut"] | null;
             /** Mutation */
-            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantChatMutation"] | components["schemas"]["UndoAssistantGenerationMutation"]) | null;
+            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantWriteMutation"]) | null;
             /** Ordinal */
             ordinal: number | null;
             /**
@@ -4390,6 +4380,24 @@ export interface components {
             /** Size Bytes */
             size_bytes: number;
         };
+        /**
+         * CreatedRefOut
+         * @description A target one write inserted; its undo removes exactly these.
+         */
+        CreatedRefOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "entry" | "note_block" | "highlight" | "edge" | "queue";
+            /** Label */
+            label: string;
+        };
         /** CreationAvailabilityOut */
         CreationAvailabilityOut: {
             /** Link */
@@ -4506,6 +4514,10 @@ export interface components {
         Data_Annotated_Union_UploadRequired__Published__NeedsAttention___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Data */
             data: components["schemas"]["UploadRequired"] | components["schemas"]["Published"] | components["schemas"]["NeedsAttention"];
+        };
+        /** Data[AssistantWritePage] */
+        Data_AssistantWritePage_: {
+            data: components["schemas"]["AssistantWritePage"];
         };
         /** Data[AtlasOut] */
         Data_AtlasOut_: {
@@ -4858,10 +4870,6 @@ export interface components {
         /** Data[TranscriptRequestOut] */
         Data_TranscriptRequestOut_: {
             data: components["schemas"]["TranscriptRequestOut"];
-        };
-        /** Data[TrustToolCallOut] */
-        Data_TrustToolCallOut_: {
-            data: components["schemas"]["TrustToolCallOut"];
         };
         /** Data[TypedHighlightOut] */
         Data_TypedHighlightOut_: {
@@ -5698,24 +5706,6 @@ export interface components {
             readiness: components["schemas"]["Ready"] | components["schemas"]["OperatorActionRequired"] | components["schemas"]["TemporarilyUnavailable"];
             /** Route */
             route: components["schemas"]["CodexPersonalRoute"] | components["schemas"]["ProviderApiRoute"];
-        };
-        /** GenerationCreationRecord */
-        GenerationCreationRecord: {
-            /**
-             * Generation Id
-             * Format: uuid
-             */
-            generation_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "generation";
-            /**
-             * Position Id
-             * Format: uuid
-             */
-            position_id: string;
         };
         /** GenerationModelRow */
         GenerationModelRow: {
@@ -9966,7 +9956,7 @@ export interface components {
              */
             edge_id: string;
             /** Mutation */
-            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantChatMutation"] | components["schemas"]["UndoAssistantGenerationMutation"]) | null;
+            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantWriteMutation"]) | null;
             /** Object */
             object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
             /**
@@ -10006,7 +9996,7 @@ export interface components {
             /** Label */
             label: string;
             /** Mutation */
-            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantChatMutation"] | components["schemas"]["UndoAssistantGenerationMutation"]) | null;
+            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantWriteMutation"]) | null;
             /**
              * Role
              * @enum {string}
@@ -10083,7 +10073,7 @@ export interface components {
             label: string;
             link_note: components["schemas"]["ConnectionLinkNoteOut"] | null;
             /** Mutation */
-            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantChatMutation"] | components["schemas"]["UndoAssistantGenerationMutation"]) | null;
+            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantWriteMutation"]) | null;
             /** Object */
             object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
             /**
@@ -10118,7 +10108,7 @@ export interface components {
             /** Label */
             label: string;
             /** Mutation */
-            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantChatMutation"] | components["schemas"]["UndoAssistantGenerationMutation"]) | null;
+            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantWriteMutation"]) | null;
             /** Object */
             object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
             /**
@@ -12875,8 +12865,10 @@ export interface components {
             /** Activity Label */
             activity_label: string;
             /** Canonical Tool Id */
-            canonical_tool_id: string | null;
-            effect: components["schemas"]["ToolEffect"] | null;
+            canonical_tool_id: string;
+            /** Created Refs */
+            created_refs: components["schemas"]["CreatedRefOut"][];
+            effect: components["schemas"]["ToolEffect"];
             /**
              * Error Type
              * @enum {unknown}
@@ -12889,22 +12881,11 @@ export interface components {
             id: string;
             /** Machine Authorships */
             machine_authorships: components["schemas"]["MachineAuthorshipOut"][];
-            /** Provider Wire Name */
-            provider_wire_name: string | null;
-            /**
-             * Record Kind
-             * @enum {string}
-             */
-            record_kind: "attached_context" | "current_execution" | "historical_execution";
             /**
              * Result Kind
              * @enum {string}
              */
-            result_kind: "attached_context" | "mutation" | "navigation" | "retrieval";
-            /** Result Refs */
-            result_refs: {
-                [key: string]: unknown;
-            }[];
+            result_kind: "mutation" | "navigation" | "retrieval";
             /** Retrievals */
             retrievals: components["schemas"]["TrustRetrievalOut"][];
             /** Reverted At */
@@ -12913,7 +12894,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "pending" | "running" | "complete" | "error" | "cancelled";
+            status: "running" | "complete" | "error" | "cancelled";
             /** Tool Call Index */
             tool_call_index: number;
         };
@@ -12959,36 +12940,18 @@ export interface components {
              */
             updated_at: string;
         };
-        /** UndoAssistantChatMutation */
-        UndoAssistantChatMutation: {
-            /**
-             * Conversation Id
-             * Format: uuid
-             */
-            conversation_id: string;
+        /** UndoAssistantWriteMutation */
+        UndoAssistantWriteMutation: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "undo_assistant_chat";
+            kind: "undo_assistant_write";
             /**
              * Tool Call Id
              * Format: uuid
              */
             tool_call_id: string;
-        };
-        /** UndoAssistantGenerationMutation */
-        UndoAssistantGenerationMutation: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "undo_assistant_generation";
-            /**
-             * Position Id
-             * Format: uuid
-             */
-            position_id: string;
         };
         /**
          * UndoFinishCommand
@@ -13911,6 +13874,67 @@ export interface operations {
             };
         };
     };
+    list_assistant_writes_assistant_writes_get: {
+        parameters: {
+            query?: {
+                generation_id?: string | null;
+                before?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_AssistantWritePage_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    undo_assistant_write_assistant_writes__tool_call_id__undo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tool_call_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     read_atlas_atlas_get: {
         parameters: {
             query?: never;
@@ -14785,41 +14809,6 @@ export interface operations {
             };
         };
     };
-    undo_tool_call_conversations__conversation_id__tool_calls__tool_call_id__undo_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Nexus-Chat-Contract"?: string | null;
-                "X-Nexus-Tool-Projection"?: string | null;
-            };
-            path: {
-                conversation_id: string;
-                tool_call_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_TrustToolCallOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_conversation_tree_conversations__conversation_id__tree_get: {
         parameters: {
             query?: never;
@@ -15080,69 +15069,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    recent_generation_effects_generation_effects_get: {
-        parameters: {
-            query?: {
-                generation_id?: string | null;
-                before?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    undo_assistant_write_generation_effects__position_id__undo_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                position_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

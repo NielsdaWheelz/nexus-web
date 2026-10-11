@@ -340,7 +340,7 @@ def _run_dossier_build(*, payload: Payload, context: Context) -> JobResult:
 
     from nexus.services.dossier.run import run_build
     from nexus.services.generation.runtime import run_generation_job
-    from nexus.services.tool_runtime.catalog import compose_configured_web_search_provider
+    from nexus.services.tools.run import configured_web_search
 
     build_id = UUID(str(payload["build_id"]))
 
@@ -348,7 +348,7 @@ def _run_dossier_build(*, payload: Payload, context: Context) -> JobResult:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(120.0, connect=10.0), trust_env=False
         ) as client:
-            web = compose_configured_web_search_provider(client, settings=get_settings())
+            web = configured_web_search(client, get_settings())
             reschedule = await run_build(
                 db, build_id=build_id, ctx=context, runtime=runtime, web=web
             )

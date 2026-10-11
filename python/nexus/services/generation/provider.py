@@ -10,6 +10,7 @@ loses the generation and its caller reruns or fails it.
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing
 from typing import TYPE_CHECKING, Any, cast
@@ -26,6 +27,7 @@ from llm_agent_kernel.generation import (
     GenerationTurn,
     run_generation,
 )
+from llm_tools import canonical_json_bytes
 from provider_runtime import (
     ContinueGeneration,
     GenerateIntent,
@@ -84,8 +86,7 @@ if TYPE_CHECKING:
     from provider_runtime import ProviderRuntime
 
     from nexus.services.generation.catalog import ProviderTarget as RowTarget
-    from nexus.services.tool_authority import GenerationToolExecutor
-    from nexus.services.tool_runtime.catalog import FrozenToolOperation
+    from nexus.services.tools.run import Plan, ToolRun
 
 type _Turn = GenerationTurn[ProviderRequest]
 type _Frame = (
@@ -123,13 +124,13 @@ async def run_provider(
     reasoning: str,
     intent: GenerationIntent,
     max_output_tokens: int,
-    operation: FrozenToolOperation,
-    executor: GenerationToolExecutor,
+    operation: Plan,
+    tools: ToolRun,
     stopped: asyncio.Event,
     on_event: OnEvent,
 ) -> RouteResult:
-    publication = lower_tools(ToolPublication(plan=operation.plan, revealed_targets=()))
-    loop = _Loop(runtime, publication.decode_tool_call, executor, on_event)
+    publication = lower_tools(ToolPublication(plan=operation.tools, revealed_targets=()))
+    loop = _Loop(runtime, publication.decode_tool_call, tools, on_event)
     start = GenerateIntent(
         target=ProviderTarget(provider=target.provider, model=target.model_id),
         messages=(
@@ -200,12 +201,12 @@ class _Loop:
         self,
         runtime: ProviderRuntime,
         decode: Callable[[ToolCall], ToolCallResolution],
-        executor: GenerationToolExecutor,
+        tools: ToolRun,
         on_event: OnEvent,
     ) -> None:
         self._runtime = runtime
         self._decode = decode
-        self._executor = executor
+        self._tools = tools
         self._on_event = on_event
         self.texts: list[list[str]] = []
         self.usage: GenerationUsage | None = None
@@ -281,11 +282,20 @@ class _Loop:
     async def execute(
         self, source_ordinal: int, call: GenerationToolCall[ToolCallResolution]
     ) -> GenerationToolResult[ToolResultMessage]:
-        await self._on_event(ToolCalling(_name(call.payload)))
-        output = await self._executor.execute(call.payload, turn=source_ordinal)
-        return GenerationToolResult(
-            call.call_id, ToolResultMessage(output.call_id, output.output, output.is_error)
-        )
+        from nexus.services.tools.run import run_tool
+
+        del source_ordinal
+        proposal = call.payload
+        await self._on_event(ToolCalling(_name(proposal)))
+        if isinstance(proposal, CanonicalToolCall):
+            arguments = json.loads(canonical_json_bytes(dict(proposal.arguments)))
+            output = await run_tool(self._tools, str(proposal.tool_id), arguments)
+        elif isinstance(proposal, RejectedToolArguments):
+            output = await run_tool(self._tools, str(proposal.tool_id), proposal.reason)
+        else:  # an unpublished name: run_tool answers ToolUnavailable and records nothing
+            output = await run_tool(self._tools, proposal.raw_name, {})
+        message = ToolResultMessage(proposal.provider_call_id, output.text, output.is_error)
+        return GenerationToolResult(call.call_id, message)
 
     async def observe(self, event: object) -> None:
         if isinstance(event, TextDelta):

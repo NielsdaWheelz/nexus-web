@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from nexus.jobs.queue import JobExecutionContext
-    from nexus.services.tool_runtime.chat_projection import ChatToolExecutionProjection
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 type BackgroundOperation = Literal[
@@ -195,7 +194,6 @@ class Tools:
 
     plan_id: str
     scope_refs: frozenset[str]
-    projection: ChatToolExecutionProjection | None = None
 
 
 @dataclass(frozen=True, slots=True)

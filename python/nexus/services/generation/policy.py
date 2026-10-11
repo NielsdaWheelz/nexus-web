@@ -16,7 +16,7 @@ from nexus.schemas.presence import Presence, Present
 from nexus.services.generation.contract import BackgroundOperation, Operation, OwnerKind
 
 if TYPE_CHECKING:
-    from nexus.services.memory_client import MemoryClientConfig
+    from nexus.services.tools.memory import MemoryClientConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,12 +105,11 @@ def chat_tool_plan(
 def validate_policy() -> None:
     """Fail startup when the table is not total or names a plan that does not exist."""
 
-    # Executable plans load only during full composition; workers import the table alone.
-    from nexus.services.tool_runtime.plans import TOOL_PLAN_DEFINITIONS
+    # The tool contract loads only during full composition; workers import the table alone.
+    from nexus.services.tools.contract import PLANS
 
     if set(_TABLE) != {"chat", *get_args(BackgroundOperation.__value__)}:
         raise AssertionError("the generation operation table is not total")
-    plans = {definition.plan_id for definition in TOOL_PLAN_DEFINITIONS}
     for operation, entry in _TABLE.items():
-        if not entry.tool_plans <= plans:
+        if not entry.tool_plans <= PLANS.keys():
             raise AssertionError(f"{operation} names a tool plan that does not exist")

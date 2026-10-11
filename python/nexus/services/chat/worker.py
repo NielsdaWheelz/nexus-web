@@ -35,7 +35,6 @@ from nexus.services.generation.contract import text as text_output
 from nexus.services.generation.ledger import generation_exists, interrupt_job_generations
 from nexus.services.generation.run import generate
 from nexus.services.generation.runtime import Runtime, run_generation_job
-from nexus.services.tool_runtime.chat_projection import ChatToolExecutionProjection
 
 logger = get_logger(__name__)
 
@@ -140,7 +139,6 @@ async def _execute(
             tools=Tools(
                 cast(str, spec.tool_plan),  # admission always freezes a plan
                 frozenset(spec.tool_scope),
-                ChatToolExecutionProjection(run_id),
             ),
             on_event=on_event,
             stop=lambda session: events.cancel_requested(session, run_id),

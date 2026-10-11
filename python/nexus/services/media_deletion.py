@@ -301,9 +301,9 @@ def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> 
         text("""
             UPDATE message_retrievals mr
             SET media_id = NULL
-            FROM message_tool_calls mtc, conversations c
-            WHERE mr.tool_call_id = mtc.id
-              AND mtc.conversation_id = c.id
+            FROM messages msg, conversations c
+            WHERE mr.assistant_message_id = msg.id
+              AND msg.conversation_id = c.id
               AND c.owner_user_id = :viewer_id
               AND mr.media_id = :media_id
         """),

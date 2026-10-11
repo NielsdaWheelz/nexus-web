@@ -2,8 +2,9 @@
 
 import { useState, type ReactNode } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
-import { undoToolCall } from "@/lib/chat/toolCallUndo";
-import { chatFailure, type ChatFailure, type Message } from "@/lib/chat/wire";
+import { undoAssistantWrite, undoFailureMessage } from "@/lib/assistantWrites";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import type { Message } from "@/lib/chat/wire";
 import { formatDisplayNumber, truncateText } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import {
@@ -68,8 +69,10 @@ export default function AssistantTrust({
 function WriteTrail({ trail }: { trail: Trail }) {
   const [undone, setUndone] = useState<ReadonlySet<string>>(new Set());
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<ChatFailure | null>(null);
-  if (failure?.kind === "Defect") throw failure.error;
+  const [failure, setFailure] = useState<
+    { message: string } | { defect: unknown } | null
+  >(null);
+  if (failure && "defect" in failure) throw failure.defect;
   const writes = trail.tool_calls.filter(
     (t) =>
       t.effect === "Write" &&
@@ -80,38 +83,35 @@ function WriteTrail({ trail }: { trail: Trail }) {
   const undo = async (id: string) => {
     setBusy(true);
     try {
-      await undoToolCall(trail.conversation_id, id);
+      await undoAssistantWrite(id);
       setUndone(new Set(undone).add(id));
     } catch (error) {
-      setFailure(chatFailure(error, "Undo unavailable"));
+      if (!handleUnauthenticatedApiError(error)) {
+        try {
+          setFailure({ message: undoFailureMessage(error) });
+        } catch (defect) {
+          setFailure({ defect });
+        }
+      }
     }
     setBusy(false);
   };
   return (
     <div role="list" aria-label="Assistant actions">
-      {failure && failure.kind !== "Handled" ? (
+      {failure && "message" in failure ? (
         <FeedbackNotice
           announcement="Assertive"
           content={{
             tone: "Warning",
             title: "Undo unavailable",
-            message:
-              "Reload the conversation to check this write before trying again.",
-            requestId:
-              failure.kind === "Reload" ? failure.requestId : undefined,
+            message: failure.message,
           }}
         />
       ) : null}
       {writes.map((tool) => {
-        const ref = tool.result_refs.find((r) => typeof r.kind === "string");
-        const label = tool.result_refs
-          .map((r) => r.label)
-          .find((l) => typeof l === "string");
-        const kicker = KICKERS[String(ref?.kind)] ?? "Assistant action";
-        const target =
-          typeof label === "string"
-            ? truncateText(label, 80)
-            : tool.activity_label;
+        const ref = tool.created_refs[0];
+        const kicker = ref ? KICKERS[ref.kind] : "Assistant action";
+        const target = ref ? truncateText(ref.label, 80) : tool.activity_label;
         const authorship = tool.machine_authorships[0];
         return (
           <div key={tool.id} className={styles.write} role="listitem">
@@ -157,7 +157,10 @@ function Details({
   const display = useRenderEnvironment();
   const run = trail.run;
   const shown = run?.run_selection.display_at_dispatch;
-  const retrievals = trail.tool_calls.flatMap((tool) => tool.retrievals);
+  const retrievals = [
+    ...trail.attached,
+    ...trail.tool_calls.flatMap((tool) => tool.retrievals),
+  ];
   const count = (n: unknown) =>
     typeof n === "number" ? `${formatDisplayNumber(n, display)} tokens` : null;
   const facts = {
@@ -194,6 +197,16 @@ function Details({
             ) : null,
           )}
         </dl>
+        {trail.attached.length ? (
+          <ol aria-label="Attached context">
+            <li>
+              Attached context
+              {trail.attached.map((r) => (
+                <Retrieval key={r.id} retrieval={r} />
+              ))}
+            </li>
+          </ol>
+        ) : null}
         {trail.tool_calls.length ? (
           <ol aria-label="Tools">
             {trail.tool_calls.map((tool) => (
@@ -201,12 +214,7 @@ function Details({
                 #{tool.tool_call_index} {tool.activity_label} - {tool.status}
                 {tool.error_type ? ` - ${tool.error_type}` : ""}
                 {tool.retrievals.map((r) => (
-                  <span key={r.id} className={styles.code}>
-                    {r.source_title || r.source_id} —{" "}
-                    {r.selected ? "selected" : "retrieved"}
-                    {r.included_in_prompt ? " · included" : ""}
-                    {r.cited_edge_id ? " · cited" : ""}
-                  </span>
+                  <Retrieval key={r.id} retrieval={r} />
                 ))}
               </li>
             ))}
@@ -234,5 +242,19 @@ function Details({
         ) : null}
       </div>
     </details>
+  );
+}
+
+function Retrieval({
+  retrieval: r,
+}: {
+  retrieval: Trail["attached"][number];
+}) {
+  return (
+    <span className={styles.code}>
+      {r.source_title || r.source_id} — {r.selected ? "selected" : "retrieved"}
+      {r.included_in_prompt ? " · included" : ""}
+      {r.cited_edge_id ? " · cited" : ""}
+    </span>
   );
 }

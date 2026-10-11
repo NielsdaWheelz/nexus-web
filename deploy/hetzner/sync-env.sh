@@ -129,7 +129,7 @@ from pathlib import Path
 import sys
 
 from nexus.schemas.presence import Absent
-from nexus.services.memory_client import load_memory_client_config
+from nexus.services.tools.memory import load_memory_client_config
 from universal_memory.policy import canonical_json
 
 config = load_memory_client_config(Path(sys.argv[1]) if sys.argv[1] else None)

@@ -1,0 +1,123 @@
+# Model tools
+
+What a model may do inside Nexus on a user's behalf, inside a frozen grant: read
+what the chat may see, make five kinds of additive writes, search and read the web,
+and (for one configured owner) use shared memory. Every call leaves one row; every
+write is attributable and undoable.
+
+Code: `python/nexus/services/tools/` (`contract`, `run`, `reads`, `writes`,
+`assistant_writes`, `memory`), `api/routes/assistant_writes.py`,
+`schemas/assistant_writes.py`; web `lib/assistantWrites.ts`, the chat card
+(`components/chat/AssistantTrust.tsx`), the connections menu and settings
+"Assistant writes" (`app/(authenticated)/settings/account/AssistantWrites.tsx`).
+
+## Concepts
+
+- **tool contract** (`contract.py`): the closed vocabulary. Ten Nexus specs plus
+  llm-tools' web pair and universal-memory's six; per tool its input, success and
+  error schemas, effect, limits (input bytes, output bytes, 30 s), result kind and
+  activity label. Input schemas are what providers publish; nothing else is.
+- **plan**: plan id -> granted tool ids, in publication order: `NoModelTools`,
+  `ChatReadAdditiveWrite`, `ChatMemoryRead`, `ChatMemoryReadSave`,
+  `MetadataResearch`. Generation policy picks one; admission freezes it into the
+  generation spec. A plan with an unavailable granted tool (no embedding key, no
+  Brave key, memory not connected/admitted) is refused at admission and in the
+  picker.
+- **admitted scope**: the frozen resource URIs a generation may touch (a chat: its
+  context refs at admission; metadata research: `media:{id}`). Reads also accept a
+  pointer into an admitted parent: a `page_range:` of an admitted media, a complete
+  user/assistant `message:` of an admitted conversation, a fragment-like ref whose
+  media is admitted. Arguments and outputs never widen it.
+- **tool call**: one `tool_calls` row per call that reached dispatch: generation,
+  seq, dense position, principal, the chat answer (while it exists), tool, arguments,
+  result, created refs, status, revert stamp. Its id is the effect id: note and
+  highlight ids are `uuid5(call id, component)`; a memory save submits it.
+- **write budget**: complete, unreverted Nexus writes of the generation; at 8 the
+  next write is `WriteCapReached`; undo frees one. No-op writes count (D-Q4).
+- **undo**: one route, `POST /assistant-writes/{tool_call_id}/undo`, for the chat
+  card, the connections menu and settings.
+- **machine authorship**: a read of the rows: the successful write whose
+  `created_refs` name a target (GIN containment). It feeds the trail badge
+  (`generation/{seq}/tool/{n}`), model-facing evidence and relations, and
+  connections' "View creation".
+- **citation candidates**: chat's; a call's staged retrievals feed them.
+
+## Invariants
+
+- I1 an effect commits only in the transaction that completes its row, after the
+  fence: generation open (`llm_calls` row lock), job claim live, and in a chat the run
+  `running`, not cancel-requested. The row is committed, with the chat's start
+  frames, before the handler runs.
+- I2 one call in flight per generation; positions dense from 1 in dispatch order.
+- I3 a name outside the frozen plan never runs and leaves no row; it answers
+  `ToolUnavailable` (provider route; on codex see ticket
+  `codex-unpublished-tool-call-ends-the-answer`).
+- I4 lock order: generation -> chat run -> job claim -> `tool_calls` row; chat's
+  finalize takes run -> rows.
+- I5 `created_refs` list exactly the targets the call inserted; nothing that
+  existed before.
+- I6 live Nexus writes per generation <= 8.
+- I7 undo is principal-gated; every reversal and the stamp commit together; a second
+  undo is a no-op 204; an absent target counts as reverted; library undo removes
+  only the entry the write inserted, and never a media's last reference (409
+  `E_MEDIA_LAST_REFERENCE`).
+- I8 history, authorship and undo outlive the conversation and the target.
+- I9 the model sees a call's output only after its row committed; in a chat the
+  output carries the call's numbered `tool_citation` sections.
+- I10 memory tools run only for the config's owner, in a live chat; a save submits
+  `submission_id` = call id, `native_conversation_id` = the chat.
+- I11 terminal states: `complete` (Success), `error` (Failure, or settled by chat
+  finalize), `cancelled` (settled by a stopped chat). A call whose generation ended
+  without completing it stays `running`; in a chat, finalize settles it. Nothing
+  treats `running` as finished.
+
+## One call
+
+Generation core holds one value, `ToolRun` (sessions, owner, generation, plan,
+scope), and one callback, `run_tool(run, tool_id, arguments | refusal)`. The codex
+transport passes the kernel-validated input; the provider route passes the
+canonical call, the transport's refusal (`InvalidJson` -> `InvalidInput`,
+`InputTooLarge` -> `BudgetExceeded`) or an unpublished name.
+
+1. `_start` (one transaction): fence, next position, insert the `running` row, the
+   chat's `tool_call_start`/`tool_call_done` frames, commit.
+2. `_dispatch`: input envelope bytes, availability, strict validation, then the
+   handler under the tool's deadline. Declared and boundary failures are results;
+   anything else is a defect and propagates. A stop cancels the codex callback
+   here; the row stays `running` until finalize (I11).
+3. `_complete` (one transaction): a Failure rolls back the call's effects; lock the
+   chat run; complete the row; in a chat, web snapshots for `web.search`, the call's
+   retrievals, the `tool_result` frame and the numbered output; commit.
+
+Writes (`writes._write`) admit every URI field directly, take the fence (held to
+commit), count the cap, run the domain owner, and map reviewed owner refusals to
+declared errors.
+
+## Account history and undo
+
+`GET /assistant-writes?generation_id=&before=` lists the viewer's finished write
+attempts (result present), newest first, 30 a page, keyed by `(created_at, id)`;
+an unknown cursor is 400 `E_INVALID_CURSOR`. `POST /assistant-writes/{id}/undo`
+answers 204; 404 `E_NOT_FOUND` when the row is not the viewer's write; 409
+`E_RESOURCE_CONFLICT` for a failed write or one that created nothing; domain 409s
+pass through. Neither carries the chat contract headers.
+
+Coordinator defaults the owner may reverse: one undo route (D-T3; reversing
+restores a chat-scoped route), and rows outlive the conversation (D-T4;
+`assistant_message_id ON DELETE SET NULL`, so "View creation" then opens settings
+at `?generation_id=&tool_call_id=`).
+
+## Shared memory
+
+Production runs with memory `Absent`. `MEMORY_CLIENT_CONFIG_PATH` names the private
+owner declaration (`memory.MemoryClientConfig`); policy grants a memory plan only
+to its owner on a processor chain it allows. One MCP session per call, never
+resent; the server must answer one bounded text item. `memory.save_note` is a Write
+outside the cap, the history and undo (D-Q3).
+
+## Stale tabs
+
+The browser sends `X-Nexus-Chat-Contract` ("5") and `X-Nexus-Tool-Projection` (the
+generated `contract.PROJECTION_REVISION`, a hash of the effects, error types and
+presentation) on chat paths; a mismatch is 409 "Reload Nexus to continue".
+`scripts/generate_tool_contract_projection.py` writes and checks the revision.

@@ -74,3 +74,40 @@ and `integrity_notices`, assistant-selection anchors are `unmapped` only, and th
 no longer knows them). migration `0271_chat_runs_own_their_intent` drops
 `chat_prompt_assemblies` and `chat_run_turn_contexts`, which the old worker and
 admission write. the same one-vector rule applies.
+
+2026-10-10 model tools rewrite: the chat contract revision is now "5" and the
+tool projection revision is recomputed (`services/tools/contract.py`). the trust
+trail's tool calls drop `record_kind`/`provider_wire_name` and carry
+`created_refs` (was `result_refs`), the trail adds `attached`, tool-call ids are
+the `tool_calls` row ids, connection `creation` is a flat record and the undo
+mutation is `undo_assistant_write`. `POST /conversations/{id}/tool-calls/{id}/undo`
+and `/generation-effects*` are gone; `/assistant-writes` replaces them. migration
+`0274_one_tool_call_record` drops `llm_tool_positions`, `message_tool_calls`,
+`generation_effect_receipts` and `assistant_write_authorships`, which the old
+worker writes and the old api reads; the release runs 0246 -> ... -> 0274 in one
+upgrade, and 0246/0257 still read those tables through the frozen
+`db/generation_effect_receipts_migration.py` before 0274 drops them. same
+one-vector rule: stop the writers, migrate, prove health, promote the same web
+sha. read-only preflight at production's 0241, before the upgrade: 0246 turns
+exactly the positions below into receipts, with the chat row's `result_refs` as
+their `created_refs`, and 0274's gate aborts on any of them it does not know
+(0246 checks ref kind and id but not `label`). it must return 0:
+```sql
+SELECT count(*) FROM llm_tool_positions p
+LEFT JOIN message_tool_calls m ON m.tool_position_id = p.id
+WHERE (p.canonical_tool_id IN ('nexus.library.add', 'nexus.note.create',
+        'nexus.highlight.create', 'nexus.edge.create', 'nexus.queue.add')
+    OR p.effect_identity IS NOT NULL)
+  AND (p.canonical_tool_id <> ALL (ARRAY['web.search', 'web.read', 'nexus.search',
+        'nexus.resource.read', 'nexus.document.search', 'nexus.resource.inspect',
+        'nexus.relations.list', 'nexus.library.add', 'nexus.note.create',
+        'nexus.highlight.create', 'nexus.edge.create', 'nexus.queue.add', 'memory.search',
+        'memory.open', 'memory.view', 'memory.zoom', 'memory.date', 'memory.save_note'])
+    OR EXISTS (SELECT 1 FROM jsonb_array_elements(m.result_refs) ref
+      WHERE COALESCE(ref ->> 'kind', '') NOT IN
+          ('entry', 'note_block', 'highlight', 'edge', 'queue')
+        OR COALESCE(jsonb_typeof(ref -> 'id'), '') <> 'string'
+        OR COALESCE(jsonb_typeof(ref -> 'label'), '') <> 'string'));
+```
+rehearsal:
+campaign artifact `2026-10-09/tools/migration-rehearsal.txt`.

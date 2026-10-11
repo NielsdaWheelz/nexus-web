@@ -9,10 +9,10 @@ import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { ApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
+import { usePagePrefix } from "@/lib/api/pagePrefix";
 import {
   fetchImportDetail,
   fetchImportHistory,
-  usePagePrefix,
   type HistoryEntry,
   type ImportItem,
 } from "@/lib/imports/api";
