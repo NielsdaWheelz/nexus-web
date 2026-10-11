@@ -57,8 +57,8 @@ Invariants:
 `services/chat/worker.py` runs the queued run's one generation (`generate`,
 [llms.md](llms.md)) from its admitted spec and frozen prompt
 (`chat_runs.generation_spec`, `chat_runs.generation_intent`), then publishes it.
-`services/tool_runtime/` and `tool_authority.py` own the immutable declarations,
-grants, binding policy, and one durable tool executor.
+`services/tools/` owns the tool contract, the plans and the one dispatcher
+([model-tools.md](model-tools.md)).
 
 chat admission always freezes `ChatReadAdditiveWrite` with `AdditiveWrites`
 over `ChatAdmittedContext`. it publishes `web.search`, `nexus.search`, `nexus.resource.read`,
@@ -71,8 +71,8 @@ enforced. historical read-only runs retain their frozen facts.
 canonical ids are the only executable identities.
 
 api models receive the frozen plan as `ProviderFunctions`; codex receives it as
-`CodexCallbacks`. both use the same `GenerationToolExecutor`, principal, scope,
-position ledger, evidence, citations, trust, and undo. host-owned authentication
+`CodexCallbacks`. both use the same `run_tool`, principal, scope,
+`tool_calls` row, evidence, citations, trust, and undo. host-owned authentication
 and the shared native adapter do not broaden the operation grant. see
 [backend composition](llms.md#backend-composition). provider-function positions
 use `generation/{generation_seq}/tool/{n}`; their one-based ordinal never
@@ -280,7 +280,7 @@ evidence, job, the owner's index-revision bump and the receipt commit atomically
 and admission sets the conversation's active leaf to the new assistant. A modeled rejection rolls provisional writes back to a savepoint and
 commits only its closed reason. The response is
 `{data:{idempotency_key,outcome:Accepted|Rejected}}`; it contains no run
-projection. Every chat route requires `X-Nexus-Chat-Contract: 4`; an older tab
+projection. Every chat route requires `X-Nexus-Chat-Contract: 5`; an older tab
 gets `409 E_CHAT_CONTRACT_RELOAD_REQUIRED` and the reload notice.
 
 ### Drafts
@@ -479,9 +479,9 @@ citations. One numbering rule (`citations.number_candidates`) assigns dense
 answer-global `message_retrievals.citation_candidate_ordinal` values only to
 citable rows actually exposed to the model: under the run lock each numbering
 continues after the answer's largest ordinal so far and never renumbers a row.
-Attached evidence (the citable `<resources>`, tool call 0) is numbered at
-admission, `1..k`; every tool call's candidates follow, in whatever order the
-calls complete. Selection or prompt inclusion alone does not make a row a
+Attached evidence (the citable `<resources>`: retrievals of the answer with no
+tool call, the trail's `attached`) is numbered at admission, `1..k`; every tool
+call's candidates follow, in whatever order the calls complete. Selection or prompt inclusion alone does not make a row a
 candidate.
 
 After generation, one canonicalizer maps the candidate markers used in the
@@ -552,12 +552,11 @@ the live Highlight.
 | `admit` | send, rerun/regenerate, cancel: the receipt envelope (advisory key lock, replay, one savepoint, memo), destination, anchor, quote, message pair, run freeze, job, the owner's index bump |
 | `context` | the system prompt, the turn's context blocks, two-budget history, the frozen intent |
 | `quotes` | the reader-quote snapshot: build (locked highlight), encode/decode, revision, projection, preview, the XML quote renderer |
-| `citations` | candidate numbering, attached evidence, publication |
+| `citations` | candidate numbering, attached evidence (retrievals with no call), publication |
 | `retrievals` | `RetrievalCitation`, `citation_from_search_result`, the one `message_retrievals` writer |
-| `tool_calls` | the `message_tool_calls` writer: start, finish, attached (index 0), live write count |
 | `events` | run lock, claim fence, append (and the threaded live append), tail read, stop flag, the terminal fold |
 | `worker` | the `chat_run` job, its dead-letter projection, the attempt, the text coalescer |
-| `reads` | failure and rerun policy, run selection, owner gate, advisory, run response, tree, trust trails, the Undo projection |
+| `reads` | failure and rerun policy, run selection, owner gate, advisory, run response, tree, trust trails (the answer's `tool_calls` rows and its attached retrievals) |
 | `conversations` | create, the index, leaf select, fork title, deletes, owned ids, message action facts, the agent's page reader |
 
 Invariants: one admission is one savepoint (or only a rejection receipt); every

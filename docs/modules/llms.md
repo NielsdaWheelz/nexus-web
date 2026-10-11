@@ -33,8 +33,7 @@ Primary owners (the first nine under `services/generation/`):
 - `ledger.py`: `llm_calls`, one row per generation;
 - `synthesis.py`: the strict-JSON prompt/intent/decode scaffold;
 - `runtime.py`: the process runtime and the one job envelope;
-- `tool_authority.py` and `tool_runtime/`: provider-function/native-callback authority, domain handlers, and one row per tool call;
-- `memory_client.py`: the private owner-chat client of Jarvis shared memory;
+- `services/tools/`: the model tools, one dispatcher (`run_tool`) and one `tool_calls` row per call, including the private owner-chat client of Jarvis shared memory ([model-tools.md](model-tools.md));
 - `apps/codex_agent/`: isolated subscription-backed Codex host.
 
 queue ownership is documented in [jobs.md](jobs.md).
@@ -95,14 +94,14 @@ portable declarations as `ProviderFunctions`. metadata publishes exactly the fou
 research tools above; no-model-tool helpers publish none. chat and dossiers retain
 their selected scope/effect policy. prompts cannot broaden an operation grant.
 
-both routes execute the canonical `GenerationToolExecutor`, authority, recorder,
-evidence, citation and undo boundaries. every call that reaches dispatch writes
-one `llm_tool_positions` row at `generation/{generation_seq}/tool/{n}` before it
+both routes hand every call to the one callback, `tools.run.run_tool(ToolRun, id,
+arguments)` ([model-tools.md](model-tools.md)). every call that reaches dispatch
+writes one `tool_calls` row at `generation/{generation_seq}/tool/{n}` before it
 runs and completes it in the transaction that commits its effects; a write's
 effect id is that row's id. nothing replays a recorded result: within one codex
 call the kernel answers a repeated native call id from memory, and a rerun
 generation is new work. codex invalid-argument rejections never reach the host
-and leave no row. budgets are counted in process memory per generation.
+and leave no row.
 
 Untrusted tool arguments or output cannot widen the frozen plan, principal,
 scope, limits, or effect authority. There is no tool-shaped text parser,
@@ -124,9 +123,8 @@ only that viewer's send, rerun and regenerate operations may select the memory
 chat plan. the complete selected frozen processor chain must be declared. a
 connected client gets the five memory reads; admitted notes add the optional
 text-only save tool. other viewers and background operations keep their original
-grants. handlers recheck the principal, chat operation and processor chain through
-the existing tool-position authority, for both provider functions and native
-callbacks.
+grants. the memory handler rechecks the owner and a live chat through the tool
+fence, for both provider functions and native callbacks.
 
 the backend supplies the existing `ToolPositionRecord.id` as the save submission
 UUID and the host-known conversation UUID as a caller-reported association.
@@ -233,7 +231,7 @@ historical and do not qualify this final graph.
 ## Product API and reset boundary
 
 `POST /chat-runs`, rerun, and regenerate carry an explicit selection; chat
-contract revision "3" turns a stale tab into a reload prompt. requests reject
+contract revision "5" turns a stale tab into a reload prompt. requests reject
 the retired `tool_authority` field. policy owns new tool authority.
 chat history, sse meta, and trust projections expose immutable dispatch
 selection and frozen authority derived from the saved generation spec, plus

@@ -7,8 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from nexus.schemas.assistant_writes import MachineAuthorshipOut
 from nexus.schemas.highlights import HIGHLIGHT_COLORS, LinkedNoteBlockRef, PdfQuadIn
-from nexus.schemas.machine_authorship import MachineAuthorshipOut
 from nexus.schemas.resource_items import (
     ExpectedNoteBody,
     ResourceActivationOut,
@@ -80,22 +80,14 @@ class ConnectionLinkNoteOut(Model):
     preview: str | None
 
 
-class ChatCreationRecord(Model):
-    conversation_id: UUID
-    message_id: UUID
-    tool_call_id: UUID
-    kind: Literal["chat"] = "chat"
-
-
-class GenerationCreationRecord(Model):
-    generation_id: UUID
-    position_id: UUID
-    kind: Literal["generation"] = "generation"
-
-
 class ConnectionCreationOut(Model):
+    """Who created an assistant link: its tool call, and the answer while the chat exists."""
+
     authorship: MachineAuthorshipOut
-    record: Annotated[ChatCreationRecord | GenerationCreationRecord, Field(discriminator="kind")]
+    tool_call_id: UUID
+    generation_id: UUID
+    conversation_id: UUID | None
+    message_id: UUID | None
 
 
 class UnlinkMutation(Model):
@@ -111,23 +103,13 @@ class DetachContextMutation(Model):
     kind: Literal["detach_context"] = "detach_context"
 
 
-class UndoAssistantChatMutation(Model):
-    conversation_id: UUID
+class UndoAssistantWriteMutation(Model):
     tool_call_id: UUID
-    kind: Literal["undo_assistant_chat"] = "undo_assistant_chat"
-
-
-class UndoAssistantGenerationMutation(Model):
-    position_id: UUID
-    kind: Literal["undo_assistant_generation"] = "undo_assistant_generation"
+    kind: Literal["undo_assistant_write"] = "undo_assistant_write"
 
 
 ConnectionMutation = Annotated[
-    UnlinkMutation
-    | DismissDiscoveryMutation
-    | DetachContextMutation
-    | UndoAssistantChatMutation
-    | UndoAssistantGenerationMutation,
+    UnlinkMutation | DismissDiscoveryMutation | DetachContextMutation | UndoAssistantWriteMutation,
     Field(discriminator="kind"),
 ]
 

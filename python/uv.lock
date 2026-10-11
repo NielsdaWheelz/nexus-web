@@ -494,7 +494,7 @@ wheels = [
 [[package]]
 name = "llm-agent-kernel"
 version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=57a37523559fe336f159736e329618ff5e20a582#57a37523559fe336f159736e329618ff5e20a582" }
+source = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=1b962a661feaccaf4389a5370b1a54a98e08c6bb#1b962a661feaccaf4389a5370b1a54a98e08c6bb" }
 dependencies = [
     { name = "llm-tools" },
     { name = "provider-runtime" },
@@ -659,7 +659,7 @@ requires-dist = [
     { name = "html5lib", specifier = "==1.1" },
     { name = "httpcore", specifier = ">=1.0.9" },
     { name = "httpx", specifier = ">=0.28.0" },
-    { name = "llm-agent-kernel", git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=57a37523559fe336f159736e329618ff5e20a582" },
+    { name = "llm-agent-kernel", git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=1b962a661feaccaf4389a5370b1a54a98e08c6bb" },
     { name = "llm-tools", git = "https://github.com/NielsdaWheelz/llm-tools.git?rev=73056dfb23733e68bd32b6765cc34880f69674bd" },
     { name = "lxml", specifier = ">=5.0.0" },
     { name = "mcp", specifier = "==2.3.0" },

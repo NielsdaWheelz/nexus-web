@@ -506,7 +506,8 @@ a user turn may carry a `fork_title`); plus the **chat-run** machinery: `chat_ru
 (carries its admitted `generation_spec`, its frozen prompt `generation_intent`
 and `support_id`; execution provenance lives in its `llm_calls` row),
 `chat_run_events` (append-only SSE log); and the
-**retrieval/citation** ledger: `message_tool_calls`, `message_retrievals` — the
+**retrieval/citation** ledger: `message_retrievals` (each hangs off its answer and,
+unless it is attached context, its `tool_calls` row) — the
 sole durable per-result record (telemetry; carries `cited_edge_id` pointing
 back at the citation edge). Candidate generation and rerank/selection are
 transient, in-memory passes over a tool call's results; only the
@@ -943,11 +944,10 @@ after fresh per-run consent:
 Dossier model turns, Idea ones included, carry no model tools: Idea research
 calls the web search provider directly from the build, before the model turn.
 Other background operations retain their direct evidence algorithms and publish
-`NoModelTools`; none inherit Chat authority. Provider API functions adapt eligible plans to the executor. Tool
-declarations, grants, limits, replay policy, and durable
-execution are owned by `services/tool_runtime/` and `tool_authority.py`;
-`services/agent_tools/` remains the domain-adapter layer, not a second tool
-contract.
+`NoModelTools`; none inherit Chat authority. Both transports hand every call to
+the one dispatcher, `services/tools/run.run_tool`; the tool contract, plans,
+domain handlers and the one `tool_calls` row per call are owned by
+`services/tools/` ([model-tools](modules/model-tools.md)).
 
 Citation `[N]` is a **dense, turn-global ordinal** assigned across the whole turn
 (attached context refs first, then each tool's selected results). A citation **is an
@@ -2233,7 +2233,7 @@ The things most likely to bite you, distilled:
 | DB layer / sessions / LISTEN-NOTIFY                               | `python/nexus/db/` (`engine.py`, `session.py`, `listen.py`)                                                                                                                                            |
 | The schema                                                        | `migrations/alembic/versions/0236_baseline_schema.sql` (the squashed baseline) + the revisions after it + the live database (`pg_dump --schema-only`); `python/nexus/db/models.py` is the ORM-mapped classes only                                                               |
 | Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
-| Generation backends                                               | `python/nexus/services/generation/`, `python/nexus/services/tool_authority.py`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md)                                                                                                    |
+| Generation backends                                               | `python/nexus/services/generation/`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md)                                                                                                    |
 | Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_fact_revisions.py`, `web_article.py`, `x_ingest.py`, `youtube.py`, `remote_file.py`, `media_processing_state.py` |
 | Imports workspace (query owner, history, pane)                    | `python/nexus/services/{imports,import_history}.py`, `python/nexus/api/routes/imports.py`, `apps/web/src/lib/imports/`, `apps/web/src/components/imports/`, `apps/web/src/app/(authenticated)/imports/`                                              |
 | Reader/highlights backend                                         | `python/nexus/services/{reader_profile,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote}.py`                                                                        |
@@ -2242,7 +2242,7 @@ The things most likely to bite you, distilled:
 | Search / retrieval / indexing / resource target/openable search   | `python/nexus/services/search/` (`sources`, `semantic`, `scope`, `project`, `service`, `pickers`), `python/nexus/services/{content_indexing,content_chunking,embeddings,note_indexing}.py`, `services/chat/retrievals.py` |
 | Resource graph (edges, refs, citations, connections, links) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `links`, `connections`, `context`, `citations`, `reader_targets`, `cleanup`)                                                     |
 | Universal Dossiers / Media Intelligence                           | `python/nexus/services/dossier/`, `python/nexus/services/media_intelligence.py`, `python/nexus/api/routes/dossiers.py`                                                                               |
-| Agent tools                                                       | `python/nexus/services/agent_tools/`                                                                                                                                                                   |
+| Model tools (contract, dispatcher, writes, undo, memory)         | `python/nexus/services/tools/`, `python/nexus/api/routes/assistant_writes.py`, [`modules/model-tools.md`](modules/model-tools.md)                                                                      |
 | Libraries / contributors / notes                                  | `python/nexus/services/{library_governance,library_entries,library_invitations,contributors,notes}.py`                                                                                                 |
 | Resource grants / public sharing                                  | [`modules/resource-sharing.md`](modules/resource-sharing.md), `python/nexus/services/{resource_grants,resource_sharing,public_resource_sharing}.py`, `apps/web/src/{components,lib}/sharing/`, `apps/web/src/app/s/` |
 | Podcasts / playback                                               | `python/nexus/services/podcasts/`, `python/nexus/services/consumption/`, `python/nexus/api/routes/{lectern,listening_state}.py`                                                                        |

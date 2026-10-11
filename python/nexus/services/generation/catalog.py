@@ -66,7 +66,7 @@ from nexus.services.generation.policy import (
 )
 
 if TYPE_CHECKING:
-    from nexus.services.tool_runtime.catalog import ComposedToolRuntime
+    from nexus.services.tools.run import Toolbox
 
 _TTL_SECONDS = 60
 _RETRY_SECONDS = 10
@@ -141,7 +141,7 @@ _CODEX: dict[Path, tuple[AgentModelCatalog | None, Readiness, float]] = {}
 
 
 class Catalog:
-    def __init__(self, settings: Settings, tools: ComposedToolRuntime) -> None:
+    def __init__(self, settings: Settings, tools: Toolbox) -> None:
         self._socket = settings.codex_native_socket
         configured = settings.generation_api_provider_list
         self._providers: tuple[GenerationApiProvider, ...] = tuple(
@@ -256,12 +256,10 @@ def _compose(
     codex: AgentModelCatalog,
     codex_readiness: Readiness,
     providers: tuple[GenerationApiProvider, ...],
-    tools: ComposedToolRuntime,
+    tools: Toolbox,
 ) -> CatalogSnapshot:
-    from nexus.services.tool_runtime.catalog import unavailable_tool_ids
-
     now = datetime.now(UTC)
-    missing = unavailable_tool_ids(tools.operations["ChatReadAdditiveWrite"])
+    missing = tools.plans["ChatReadAdditiveWrite"].unavailable()
     tool_block = (
         OperatorActionRequired(
             code="required_tool_unavailable",

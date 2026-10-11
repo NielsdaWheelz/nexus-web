@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -22,7 +22,7 @@ from nexus.db.models import (
     Conversation,
     Message,
     MessageRetrieval,
-    MessageToolCall,
+    ToolCall,
 )
 from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiErrorCode, NotFoundError
@@ -35,7 +35,6 @@ from nexus.schemas.conversation import (
     ConversationOut,
     ConversationTreeOut,
     MessageOut,
-    ToolProjectionOut,
     TrustCitationOut,
     TrustContextRefAddedOut,
     TrustRetrievalOut,
@@ -53,12 +52,11 @@ from nexus.schemas.llm import (
     RunSelectionOut,
 )
 from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
-from nexus.services.assistant_write_authorship import machine_authorships_for_tool_calls
 from nexus.services.chat import events, quotes
 from nexus.services.generation.contract import GenerationSpec
 from nexus.services.resource_graph.citations import build_citation_outs_for_sources
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS_BY_ID
+from nexus.services.tools import assistant_writes, contract
 
 # An errored run's code -> its failure card; an unlisted code has no card.
 FAILURES = {
@@ -177,20 +175,6 @@ def tree(db: Session, *, viewer_id: UUID, conversation_id: UUID) -> Conversation
     )
 
 
-def tool_call(
-    db: Session, *, viewer_id: UUID, assistant_message_id: UUID, tool_call_id: UUID
-) -> TrustToolCallOut:
-    """One tool call's trust projection, for the Undo response (the caller owns the answer)."""
-
-    answer = db.get(Message, assistant_message_id)
-    trails = _trails(db, viewer_id, [answer] if answer is not None else [])
-    calls = trails[assistant_message_id][0].tool_calls if trails else []
-    for call in calls:
-        if call.id == tool_call_id:
-            return call
-    raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Write tool call not found")
-
-
 def _executions(db: Session, runs: list[ChatRun]) -> dict[UUID, Execution]:
     """A live run projects its one ``chat_run:{id}`` job's phase and the stop intent."""
 
@@ -295,41 +279,47 @@ def _trails(
         )
     calls = list(
         db.scalars(
-            select(MessageToolCall)
-            .where(MessageToolCall.assistant_message_id.in_(ids))
-            .order_by(MessageToolCall.assistant_message_id, MessageToolCall.tool_call_index)
+            select(ToolCall)
+            .where(ToolCall.assistant_message_id.in_(ids))
+            .order_by(ToolCall.assistant_message_id, ToolCall.position)
         )
     )
-    authorships = machine_authorships_for_tool_calls(db, tool_calls=calls)
-    retrievals: dict[UUID, list[TrustRetrievalOut]] = defaultdict(list)
+    # a retrieval hangs off its call, or (attached context) off the answer alone.
+    retrieved: dict[UUID, list[TrustRetrievalOut]] = defaultdict(list)
+    attached: dict[UUID, list[TrustRetrievalOut]] = defaultdict(list)
     for row in db.scalars(
         select(MessageRetrieval)
-        .where(MessageRetrieval.tool_call_id.in_([call.id for call in calls]))
-        .order_by(MessageRetrieval.tool_call_id, MessageRetrieval.ordinal)
+        .where(MessageRetrieval.assistant_message_id.in_(ids))
+        .order_by(MessageRetrieval.ordinal)
     ):
-        retrievals[row.tool_call_id].append(
-            TrustRetrievalOut(
-                id=row.id,
-                source_id=row.source_id,
-                source_title=row.source_title,
-                selected=row.selected,
-                included_in_prompt=row.included_in_prompt,
-                cited_edge_id=row.cited_edge_id,
-            )
+        out = TrustRetrievalOut(
+            id=row.id,
+            source_id=row.source_id,
+            source_title=row.source_title,
+            selected=row.selected,
+            included_in_prompt=row.included_in_prompt,
+            cited_edge_id=row.cited_edge_id,
         )
+        if row.tool_call_id is None:
+            attached[row.assistant_message_id].append(out)
+        else:
+            retrieved[row.tool_call_id].append(out)
     tools: dict[UUID, list[TrustToolCallOut]] = defaultdict(list)
     for call in calls:
-        tools[call.assistant_message_id].append(
+        result = call.result
+        error = result["error"]["type"] if result and result["type"] == "Failure" else None
+        tools[cast(UUID, call.assistant_message_id)].append(
             TrustToolCallOut.model_validate(
                 {
-                    **_projection(call).model_dump(),
+                    **contract.projection(call.tool_id),
+                    "error_type": error,
                     "id": call.id,
-                    "tool_call_index": call.tool_call_index,
+                    "tool_call_index": call.position,
                     "status": call.status,
-                    "result_refs": call.result_refs,
-                    "machine_authorships": authorships.get(call.id, []),
+                    "created_refs": call.created_refs,
+                    "machine_authorships": assistant_writes.authorships(call),
                     "reverted_at": call.reverted_at,
-                    "retrievals": retrievals[call.id],
+                    "retrievals": retrieved[call.id],
                 }
             )
         )
@@ -354,6 +344,7 @@ def _trails(
         trail = AssistantTrustTrailOut(
             conversation_id=answer.conversation_id,
             run=_trust_run(run, usage.get(run.id), executions[run.id]) if run else None,
+            attached=attached[answer.id],
             tool_calls=tools[answer.id],
             citations=[
                 TrustCitationOut(
@@ -382,30 +373,5 @@ def _trust_run(run: ChatRun, usage: Any, execution: Execution) -> TrustRunOut:
             "publication_warning": warning,
             "failure": failure(run),
             "execution": execution,
-        }
-    )
-
-
-def _projection(call: MessageToolCall) -> ToolProjectionOut:
-    if call.record_kind == "attached_context":
-        return ToolProjectionOut(
-            record_kind="attached_context",
-            canonical_tool_id=None,
-            provider_wire_name=None,
-            effect=None,
-            result_kind="attached_context",
-            activity_label="Attached conversation context",
-            error_type=None,
-        )
-    declaration = CHAT_TOOL_DECLARATIONS_BY_ID[call.canonical_tool_id or ""]
-    return ToolProjectionOut.model_validate(
-        {
-            "record_kind": call.record_kind,
-            "canonical_tool_id": call.canonical_tool_id,
-            "provider_wire_name": call.provider_wire_name,
-            "effect": declaration.spec.effect,
-            "result_kind": declaration.result_kind,
-            "activity_label": declaration.activity_label,
-            "error_type": call.error_code if call.record_kind == "current_execution" else None,
         }
     )

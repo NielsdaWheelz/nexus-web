@@ -2,8 +2,8 @@
 
 Candidate ordinals are dense from 1 across one answer and fixed once numbered: each
 numbering continues after the answer's largest ordinal so far, under the run lock.
-Attached evidence (tool call 0) is numbered at admission, so it holds 1..k and every
-tool call's candidates follow it, in whatever order the calls complete.
+Attached evidence (retrieved by no call) is numbered at admission, so it holds 1..k and
+every tool call's candidates follow it, in whatever order the calls complete.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from nexus.db.models import ChatRun
 from nexus.schemas.conversation import ChatRunContextRefAddedEventPayload
 from nexus.schemas.resource_graph import CitationSnapshot
-from nexus.services.chat import events, tool_calls
+from nexus.services.chat import events
 from nexus.services.chat.retrievals import RetrievalCitation, insert_retrieval
 from nexus.services.resource_graph.citations import (
     CitationInput,
@@ -68,9 +68,10 @@ def citable_target(result_ref: dict[str, Any]) -> ResourceRef | None:
 
 
 def number_candidates(
-    db: Session, *, assistant_message_id: UUID, tool_call_index: int
+    db: Session, *, assistant_message_id: UUID, tool_call_id: UUID | None
 ) -> list[Numbered]:
-    """Number one call's selected citable rows after the answer's largest [N] so far.
+    """Number one call's (None: the attached context's) selected citable rows after the
+    answer's largest [N] so far.
 
     The caller holds the run lock. Every selected row is marked included in the prompt.
     """
@@ -78,22 +79,19 @@ def number_candidates(
     rows = db.execute(
         text(
             """
-            SELECT r.id, r.ordinal, r.result_ref, r.citation_candidate_ordinal AS n
-            FROM message_retrievals r JOIN message_tool_calls c ON c.id = r.tool_call_id
-            WHERE c.assistant_message_id = :answer AND c.tool_call_index = :index
-              AND r.selected
-            ORDER BY r.ordinal
+            SELECT id, ordinal, result_ref, citation_candidate_ordinal AS n
+            FROM message_retrievals
+            WHERE assistant_message_id = :answer
+              AND tool_call_id IS NOT DISTINCT FROM CAST(:call AS uuid) AND selected
+            ORDER BY ordinal
             """
         ),
-        {"answer": assistant_message_id, "index": tool_call_index},
+        {"answer": assistant_message_id, "call": tool_call_id},
     ).all()
     last: int = db.execute(
         text(
-            """
-            SELECT COALESCE(MAX(r.citation_candidate_ordinal), 0)
-            FROM message_retrievals r JOIN message_tool_calls c ON c.id = r.tool_call_id
-            WHERE c.assistant_message_id = :answer
-            """
+            "SELECT COALESCE(MAX(citation_candidate_ordinal), 0) FROM message_retrievals"
+            " WHERE assistant_message_id = :answer"
         ),
         {"answer": assistant_message_id},
     ).scalar_one()
@@ -115,15 +113,14 @@ def number_candidates(
 
 
 def persist_attached(db: Session, run: ChatRun, citations: Sequence[RetrievalCitation]) -> None:
-    """The citable ``<resources>`` as tool call 0, candidates 1..k (their ``n`` attributes)."""
+    """The citable ``<resources>`` as the answer's attached retrievals, candidates 1..k
+    (their ``n`` attributes)."""
 
-    if not citations:
-        return
-    tool_call_id = tool_calls.attached(db, run)
     for ordinal, citation in enumerate(citations):
         insert_retrieval(
             db,
-            tool_call_id=tool_call_id,
+            assistant_message_id=run.assistant_message_id,
+            tool_call_id=None,
             ordinal=ordinal,
             citation=citation,
             selected=True,
@@ -131,7 +128,7 @@ def persist_attached(db: Session, run: ChatRun, citations: Sequence[RetrievalCit
             retrieval_status="attached_context",
             included_in_prompt=True,
         )
-    number_candidates(db, assistant_message_id=run.assistant_message_id, tool_call_index=0)
+    number_candidates(db, assistant_message_id=run.assistant_message_id, tool_call_id=None)
 
 
 def publish(db: Session, run: ChatRun, markdown: str) -> Published | Degraded:
@@ -145,11 +142,11 @@ def publish(db: Session, run: ChatRun, markdown: str) -> Published | Degraded:
     rows = db.execute(
         text(
             """
-            SELECT r.id, r.citation_candidate_ordinal AS n, r.result_type, r.source_title,
-                   r.section_label, r.exact_snippet, r.deep_link, r.result_ref
-            FROM message_retrievals r JOIN message_tool_calls c ON c.id = r.tool_call_id
-            WHERE c.assistant_message_id = :answer AND r.citation_candidate_ordinal IS NOT NULL
-            ORDER BY r.citation_candidate_ordinal
+            SELECT id, citation_candidate_ordinal AS n, result_type, source_title,
+                   section_label, exact_snippet, deep_link, result_ref
+            FROM message_retrievals
+            WHERE assistant_message_id = :answer AND citation_candidate_ordinal IS NOT NULL
+            ORDER BY citation_candidate_ordinal
             """
         ),
         {"answer": run.assistant_message_id},

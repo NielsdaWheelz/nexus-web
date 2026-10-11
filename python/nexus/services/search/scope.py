@@ -101,7 +101,7 @@ _CELLS: dict[str, dict[str, str]] = {
     "artifact": {
         "conversation": f"(a.subject_id = :{{s}} OR {_context('conversation', 'a.subject_id')})"
     },
-    "web_result": {"conversation": "mtc.conversation_id = :{s}"},
+    "web_result": {"conversation": "msg.conversation_id = :{s}"},
 }
 
 # family -> the (scheme, column) pairs a frozen chat context admits by exact ref; a frozen
@@ -122,7 +122,7 @@ _FROZEN: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     "conversation": (("conversation", "c.id"),),
     "artifact": (("artifact", "a.id"), ("conversation", "a.subject_id")),
-    "web_result": (("conversation", "mtc.conversation_id"),),
+    "web_result": (("conversation", "msg.conversation_id"),),
 }
 
 

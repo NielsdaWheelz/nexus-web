@@ -29,12 +29,12 @@ from nexus.schemas.resource_graph import (
     EdgeOrigin,
     UnlinkMutation,
 )
-from nexus.services.assistant_write_authorship import assistant_edge_provenance
 from nexus.services.resource_graph.edges import Pair, link_note_blocks_for_pairs, link_pair
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
 from nexus.services.resource_graph.resolve import resolve_refs
 from nexus.services.resource_items.capabilities import expand_owned_child_refs
 from nexus.services.resource_items.routing import resource_activations_for_refs
+from nexus.services.tools import assistant_writes
 
 
 def query_connections(
@@ -154,6 +154,9 @@ def _hydrate(
     if note_ids:
         query = select(NoteBlock.id, NoteBlock.body_text).where(NoteBlock.id.in_(note_ids))
         previews = dict(db.execute(query).tuples().all())
+    provenance = assistant_writes.edge_provenance(
+        db, viewer_id, [row.id for row in rows if row.origin == "assistant"]
+    )
     items = []
     for row in rows:
         source = f"{row.source_scheme}:{row.source_id}"
@@ -164,7 +167,7 @@ def _hydrate(
             incoming = (row.target_scheme, row.target_id) in matched and far_end_is_source
         creation = mutation = None
         if row.origin == "assistant":
-            creation, mutation = assistant_edge_provenance(db, viewer_id=viewer_id, edge_id=row.id)
+            creation, mutation = provenance.get(row.id, (None, None))
         elif row.origin == "user":
             mutation = UnlinkMutation()
         elif row.origin == "discovery":

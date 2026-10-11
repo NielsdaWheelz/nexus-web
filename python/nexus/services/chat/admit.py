@@ -64,7 +64,7 @@ from nexus.services.resource_graph.edges import create_link
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_mutation_replay import lookup_replay, record_replay
 from nexus.services.seq import assign_next_message_seq
-from nexus.services.tool_runtime.catalog import ComposedToolRuntime, unavailable_tool_ids
+from nexus.services.tools.run import Toolbox
 
 SCOPE = "chat:admission"
 _REJECTABLE = frozenset(get_args(RejectionCode))
@@ -76,7 +76,7 @@ async def create_chat_run(
     request: ChatRunCreateRequest,
     idempotency_key: str | None,
     catalog: Catalog,
-    tools: ComposedToolRuntime,
+    tools: Toolbox,
 ) -> ChatAdmissionReceipt:
     """Admit one send. Never a domain error: the outcome is a committed receipt."""
 
@@ -127,7 +127,7 @@ async def repeat(
     selection: GenerationSelection,
     idempotency_key: str | None,
     catalog: Catalog,
-    tools: ComposedToolRuntime,
+    tools: Toolbox,
 ) -> ChatRunResponse:
     """A sibling turn under the source turn's parent, copied from its frozen user turn."""
 
@@ -443,7 +443,7 @@ def _start_run(
     user: Message,
     assistant: Message,
     row: Row,
-    tools: ComposedToolRuntime,
+    tools: Toolbox,
 ) -> ChatRun:
     """Freeze prompt, spec and attached evidence; enqueue the one job; bump the index."""
 
@@ -467,7 +467,7 @@ def _start_run(
         user_id=viewer_id,
         processors=row.presentation.processor_chain.processors,
     )
-    if unavailable_tool_ids(tools.operations[plan]):
+    if tools.plans[plan].unavailable():
         raise ApiError(
             ApiErrorCode.E_GENERATION_RUNTIME_UNAVAILABLE,
             "The selected generation route cannot run its complete tool plan",

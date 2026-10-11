@@ -8,7 +8,7 @@ hand-written Alembic migrations: constraints and indexes are not mirrored here.
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum as PyEnum
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import (
@@ -1586,41 +1586,6 @@ class LLMCall(Base):
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
 
-class LLMToolPosition(Base):
-    """One tool call that reached dispatch, completed with its effects (sole writer: tool authority)."""
-
-    __tablename__ = "llm_tool_positions"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    generation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("llm_calls.id"),
-        nullable=False,
-    )
-    position: Mapped[int] = mapped_column(Integer, nullable=False)
-    transport_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    model_turn_seq: Mapped[int] = mapped_column(Integer, nullable=False)
-    transport_call_id: Mapped[str] = mapped_column(Text, nullable=False)
-    canonical_tool_id: Mapped[str] = mapped_column(Text, nullable=False)
-    canonical_input_digest: Mapped[str] = mapped_column(Text, nullable=False)
-    tool_contract_revision: Mapped[str] = mapped_column(Text, nullable=False)
-    plan_revision: Mapped[str] = mapped_column(Text, nullable=False)
-    binding_revision: Mapped[str] = mapped_column(Text, nullable=False)
-    arguments: Mapped[object | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
-    result_evidence: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    effect_identity: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    replay_status: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    reverted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-
-
 class Message(Base):
     """Message model - a single message in a conversation."""
 
@@ -1682,154 +1647,40 @@ class Message(Base):
     )
 
 
-class MessageToolCall(Base):
-    """Durable assistant tool-call metadata for a message pair."""
+class ToolCall(Base):
+    """One model tool call that reached dispatch (sole writer: ``services.tools.run``).
 
-    __tablename__ = "message_tool_calls"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    conversation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("conversations.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    user_message_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    assistant_message_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    canonical_tool_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    record_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    provider_wire_name: Mapped[str | None] = mapped_column(Text, nullable=True)
-    canonical_input_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
-    tool_contract_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
-    binding_policy_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Current canonical executions point at the route-neutral generation
-    # position that owns ordering and any write-effect identity.
-    # Rejected provider calls have no canonical position and remain NULL.
-    tool_position_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("llm_tool_positions.id"),
-        nullable=True,
-    )
-    tool_call_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    search_query_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
-    scope: Mapped[str] = mapped_column(Text, nullable=False, server_default="all")
-    requested_types: Mapped[list[str]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'[]'::jsonb"),
-    )
-    result_refs: Mapped[list[dict[str, object]]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'[]'::jsonb"),
-    )
-    selected_context_refs: Mapped[list[dict[str, object]]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'[]'::jsonb"),
-    )
-    provider_request_ids: Mapped[list[str]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'[]'::jsonb"),
-    )
-    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
-    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Undo lifecycle state for assistant write tool calls (amanuensis §5.6, D-3):
-    # a real column, not a result_refs field, because the per-run write cap counts
-    # rows WHERE reverted_at IS NULL (D-6) and undo must be queryable.
-    reverted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    conversation: Mapped["Conversation"] = relationship("Conversation")
-    user_message: Mapped["Message"] = relationship("Message", foreign_keys=[user_message_id])
-    assistant_message: Mapped["Message"] = relationship(
-        "Message",
-        foreign_keys=[assistant_message_id],
-    )
-
-
-class GenerationEffectReceipt(Base):
-    """Completed additive-write facts independent of resettable LLM history.
-
-    ``id`` is the original canonical position/effect UUID. Generation and owner
-    identities are audit facts, not foreign keys to disposable history. Undo
-    changes only ``reverted_at``; the original identity and result stay intact.
+    Written ``running`` before it runs, completed with its effects; undo stamps
+    ``reverted_at``. It outlives its answer (``assistant_message_id`` set null).
     """
 
-    __tablename__ = "generation_effect_receipts"
+    __tablename__ = "tool_calls"
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    generation_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    generation_seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
     principal_user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
-    owner_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    generation_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    generation_seq: Mapped[int] = mapped_column(Integer, nullable=False)
-    tool_position: Mapped[int] = mapped_column(Integer, nullable=False)
-    canonical_tool_id: Mapped[str] = mapped_column(Text, nullable=False)
-    effect_identity: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    result_evidence: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-    completed_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-    reverted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-
-
-class AssistantWriteAuthorship(Base):
-    """Durable machine authorship for one concrete additive-write target.
-
-    The copied effect identity and position facts outlive the generation
-    ledger and Chat projection. ``target_kind`` + ``target_id`` is a
-    validated polymorphic pointer rather than a foreign key: Undo or a later
-    user deletion may remove the target while its authorship fact remains.
-    """
-
-    __tablename__ = "assistant_write_authorships"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    tool_position_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("generation_effect_receipts.id"),
-        nullable=False,
+    assistant_message_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
     )
-    generation_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    generation_seq: Mapped[int] = mapped_column(Integer, nullable=False)
-    tool_position: Mapped[int] = mapped_column(Integer, nullable=False)
-    canonical_tool_id: Mapped[str] = mapped_column(Text, nullable=False)
-    reverted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    target_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    target_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    tool_id: Mapped[str] = mapped_column(Text, nullable=False)
+    arguments: Mapped[object | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    created_refs: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
     )
+    reverted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
 
 class MessageRetrieval(Base):
-    """One app-search result retrieved for an assistant tool call."""
+    """One result an answer retrieved: by a tool call, or attached as context."""
 
     __tablename__ = "message_retrievals"
 
@@ -1838,10 +1689,14 @@ class MessageRetrieval(Base):
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    tool_call_id: Mapped[UUID] = mapped_column(
+    assistant_message_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("message_tool_calls.id", ondelete="CASCADE"),
+        ForeignKey("messages.id", ondelete="CASCADE"),
         nullable=False,
+    )
+    # null: the answer's attached context, retrieved by no call.
+    tool_call_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("tool_calls.id"), nullable=True
     )
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
     result_type: Mapped[str] = mapped_column(Text, nullable=False)

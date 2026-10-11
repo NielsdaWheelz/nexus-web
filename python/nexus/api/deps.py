@@ -9,11 +9,11 @@ from nexus.auth.bearer import parse_bearer_token
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services import stream_tokens
 from nexus.services.generation.catalog import Catalog
-from nexus.services.tool_runtime.declarations import BROWSER_TOOL_PROJECTION_REVISION
+from nexus.services.tools.contract import PROJECTION_REVISION
 
 TOOL_PROJECTION_HEADER = "X-Nexus-Tool-Projection"
 CHAT_CONTRACT_HEADER = "X-Nexus-Chat-Contract"
-CHAT_CONTRACT_REVISION = "4"
+CHAT_CONTRACT_REVISION = "5"
 
 
 def require_chat_contract_revision(
@@ -31,7 +31,7 @@ def require_tool_projection_revision(
 ) -> None:
     """Reject stale tool clients after HTTP middleware authentication."""
 
-    if revision != BROWSER_TOOL_PROJECTION_REVISION:
+    if revision != PROJECTION_REVISION:
         raise ApiError(
             ApiErrorCode.E_TOOL_PROJECTION_RELOAD_REQUIRED,
             "Reload Nexus to continue",

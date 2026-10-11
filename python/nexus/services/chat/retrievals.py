@@ -198,11 +198,13 @@ def citation_from_search_result(
 _INSERT = text(
     """
     INSERT INTO message_retrievals (
-        tool_call_id, ordinal, result_type, source_id, media_id, evidence_span_id,
+        assistant_message_id, tool_call_id, ordinal, result_type, source_id, media_id,
+        evidence_span_id,
         scope, context_ref, result_ref, deep_link, score, selected, source_title,
         section_label, exact_snippet, locator, retrieval_status, included_in_prompt
     ) VALUES (
-        :tool_call_id, :ordinal, :result_type, :source_id, :media_id, :evidence_span_id,
+        :assistant_message_id, :tool_call_id, :ordinal, :result_type, :source_id, :media_id,
+        :evidence_span_id,
         :scope, :context_ref, :result_ref, :deep_link, :score, :selected, :source_title,
         :section_label, :exact_snippet, :locator, :retrieval_status, :included_in_prompt
     )
@@ -214,7 +216,8 @@ _INSERT = text(
 def insert_retrieval(
     db: Session,
     *,
-    tool_call_id: UUID,
+    assistant_message_id: UUID,
+    tool_call_id: UUID | None,
     ordinal: int,
     citation: RetrievalCitation,
     selected: bool,
@@ -222,7 +225,8 @@ def insert_retrieval(
     retrieval_status: str,
     included_in_prompt: bool = False,
 ) -> UUID:
-    """One row per (tool call, ordinal); its refs and locator pass the retrieval validators.
+    """One row per (call, ordinal) of an answer (no call: attached context); its refs and
+    locator pass the retrieval validators.
 
     Candidate ordinals and cited edges belong to ``citations`` and are never written here.
     """
@@ -233,6 +237,7 @@ def insert_retrieval(
     return db.execute(
         _INSERT,
         {
+            "assistant_message_id": assistant_message_id,
             "tool_call_id": tool_call_id,
             "ordinal": ordinal,
             "result_type": citation.result_type,

@@ -162,7 +162,7 @@ Every INSERT/UPDATE/DELETE on `library_entries` goes through
 - **One read tier (Tier-R).** Writes have one owner; visibility/search readers
   read the table under an explicit allowlist: `auth/permissions.py`,
   `services/search/scope.py`, `services/contributors.py`,
-  `services/agent_tools/app_search.py`, `services/note_indexing.py`, and
+  `services/note_indexing.py`, and
   `services/dossier/inputs.py`. `services/object_refs.py` is deleted;
   its former note/@-mention reads are superseded by `services/resource_items/
   targets.py` (target search) and the shared frontend target controller — see

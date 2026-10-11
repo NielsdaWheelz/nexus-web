@@ -11,9 +11,9 @@ import ResourceList from "@/components/ui/ResourceList";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
+import { usePagePrefix } from "@/lib/api/pagePrefix";
 import {
   fetchImportPage,
-  usePagePrefix,
   type ImportItem,
   type ImportsView,
 } from "@/lib/imports/api";

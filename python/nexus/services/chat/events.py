@@ -131,11 +131,11 @@ def finalize(
         ),
         {"content": content, "status": status, "id": run.assistant_message_id},
     )
-    # A call the route rejected, or one a stop cut short, never reported its result.
+    # A call a stop or a dead attempt cut short never reported its result.
     db.execute(
         text(
-            "UPDATE message_tool_calls SET status = :status, updated_at = now()"
-            " WHERE assistant_message_id = :id AND status IN ('pending', 'running')"
+            "UPDATE tool_calls SET status = :status"
+            " WHERE assistant_message_id = :id AND status = 'running'"
         ),
         {
             "status": "cancelled" if status == "cancelled" else "error",

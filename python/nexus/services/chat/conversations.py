@@ -320,9 +320,8 @@ def _delete(db: Session, conversation_id: UUID, root_id: UUID | None) -> bool:
         db.execute(
             text(
                 """
-            SELECT CAST(r.source_id AS uuid) FROM message_retrievals r
-            JOIN message_tool_calls c ON c.id = r.tool_call_id
-            WHERE c.assistant_message_id = ANY(:ids) AND r.result_type = 'web_result'
+            SELECT CAST(source_id AS uuid) FROM message_retrievals
+            WHERE assistant_message_id = ANY(:ids) AND result_type = 'web_result'
             """
             ),
             {"ids": ids},
@@ -333,7 +332,8 @@ def _delete(db: Session, conversation_id: UUID, root_id: UUID | None) -> bool:
     cleanup.delete_edges_for_deleted_resources(
         db, refs=[ResourceRef("message", id_) for id_ in ids]
     )
-    # The cascades take runs, events, tool calls and retrievals; ``llm_calls`` has no
+    # The cascades take runs, events and retrievals; tool calls outlive their answer
+    # (link set null) as the account's write history; ``llm_calls`` has no
     # FK and outlives the chat as the operational ledger.
     db.execute(text("DELETE FROM messages WHERE id = ANY(:ids)"), {"ids": ids})
     cleanup.delete_orphaned_external_snapshots(db, snapshot_ids=snapshots)

@@ -7,7 +7,7 @@ import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { dismissDiscoveryLink } from "@/lib/connectionDiscovery";
-import { undoToolCall } from "@/lib/chat/toolCallUndo";
+import { undoAssistantWrite } from "@/lib/assistantWrites";
 
 export type ConnectionOut = Schema<"ConnectionOut">;
 export type ConnectionMutation = NonNullable<ConnectionOut["mutation"]>;
@@ -88,12 +88,8 @@ export async function mutateConnection(
         { method: "DELETE" },
       );
       return;
-    case "undo_assistant_chat":
-      return undoToolCall(mutation.conversation_id, mutation.tool_call_id);
-    case "undo_assistant_generation":
-      await apiFetch(`/api/generation-effects/${mutation.position_id}/undo`, {
-        method: "POST",
-      });
+    case "undo_assistant_write":
+      return undoAssistantWrite(mutation.tool_call_id);
   }
 }
 
@@ -102,9 +98,7 @@ const GONE = new Set([
   "E_CONVERSATION_NOT_FOUND",
   "E_FORBIDDEN",
   "E_INVALID_REQUEST",
-  "write_position_not_found",
-  "write_did_not_succeed",
-  "operation_in_progress_or_uncertain",
+  "E_RESOURCE_CONFLICT",
 ]);
 
 export function connectionMutationErrorMessage(

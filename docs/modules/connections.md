@@ -51,10 +51,13 @@ exclusion, dedupe and cursors (one bounded pass, see [search](search.md)); a
 selected passage is never replaced by its whole document or a nearby match.
 
 `ConnectionOut.mutation` names only what the owning operation can do: `unlink`,
-`dismiss_discovery`, `detach_context`, `undo_assistant_chat` or
-`undo_assistant_generation`. `creation` is null without a verified authorship
-receipt. citations, embeds and link-note attachments have no generic unlink;
-detaching a context fact never erases the citation occurrence.
+`dismiss_discovery`, `detach_context` or `undo_assistant_write` (the edge's
+`tool_calls` row id, absent once undone). `creation` is one flat record: the
+authorship, `tool_call_id`, `generation_id`, and `conversation_id`/`message_id`
+while the answer exists; it is null unless the viewer's own completed
+`nexus.edge.create` call created the edge. citations, embeds and link-note
+attachments have no generic unlink; detaching a context fact never erases the
+citation occurrence.
 
 chat attachment ranks come from one allocator in `edges.py`: reuse the target's
 earliest rank or append, under the conversation row lock (two chats lock in id

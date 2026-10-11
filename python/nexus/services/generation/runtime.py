@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
     from nexus.jobs.queue import JobExecutionContext
     from nexus.services.generation.catalog import Catalog
-    from nexus.services.tool_runtime.catalog import ComposedToolRuntime
+    from nexus.services.tools.run import Toolbox
 
 logger = get_logger(__name__)
 
@@ -30,7 +30,7 @@ logger = get_logger(__name__)
 class Runtime:
     session_factory: sessionmaker[Session]
     catalog: Catalog
-    tools: ComposedToolRuntime
+    tools: Toolbox
     providers: ProviderRuntime | None
     codex_socket: Path
 
@@ -50,11 +50,8 @@ def run_generation_job[R](
 
         from nexus.services.generation.catalog import Catalog
         from nexus.services.generation.provider import build_provider_runtime
-        from nexus.services.memory_client import load_memory_client_config
-        from nexus.services.tool_runtime.catalog import (
-            compose_configured_web_search_provider,
-            compose_tool_runtime,
-        )
+        from nexus.services.tools.memory import load_memory_client_config
+        from nexus.services.tools.run import compose_tools, configured_web_search
 
         settings = get_settings()
         async with httpx.AsyncClient(
@@ -62,8 +59,8 @@ def run_generation_job[R](
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
             trust_env=False,
         ) as client:
-            tools = compose_tool_runtime(
-                compose_configured_web_search_provider(client, settings=settings),
+            tools = compose_tools(
+                configured_web_search(client, settings),
                 embedding_available=bool(settings.openai_api_key),
                 memory_config=load_memory_client_config(settings.memory_client_config_path),
             )

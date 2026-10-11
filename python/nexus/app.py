@@ -69,11 +69,8 @@ from nexus.runtime_health import get_runtime_identity
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.generation.catalog import Catalog
 from nexus.services.generation.policy import validate_policy
-from nexus.services.memory_client import load_memory_client_config
-from nexus.services.tool_runtime.catalog import (
-    compose_configured_web_search_provider,
-    compose_tool_runtime,
-)
+from nexus.services.tools.memory import load_memory_client_config
+from nexus.services.tools.run import compose_tools, configured_web_search
 
 logger = get_logger(__name__)
 
@@ -152,16 +149,13 @@ async def lifespan(app: FastAPI):
         trust_env=False,
     )
 
-    app.state.web_search_provider = compose_configured_web_search_provider(
-        app.state.httpx_client,
-        settings=settings,
-    )
-    app.state.tool_runtime = compose_tool_runtime(
+    app.state.web_search_provider = configured_web_search(app.state.httpx_client, settings)
+    app.state.toolbox = compose_tools(
         app.state.web_search_provider,
         embedding_available=bool(settings.openai_api_key),
         memory_config=memory_config,
     )
-    app.state.generation_catalog = Catalog(settings, app.state.tool_runtime)
+    app.state.generation_catalog = Catalog(settings, app.state.toolbox)
     logger.info(
         "app_lifespan_started",
         web_search_provider="brave" if settings.brave_search_api_key else None,
