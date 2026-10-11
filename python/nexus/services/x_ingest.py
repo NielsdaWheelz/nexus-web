@@ -21,7 +21,6 @@ from nexus.services import contributor_taxonomy as taxonomy
 from nexus.services import document_embeds as embeds
 from nexus.services import library_entries
 from nexus.services import x_rendering as render
-from nexus.services.collection_revisions import CollectionFamily, bump_all_collection_families
 from nexus.services.media_processing_state import mark_ready_for_reading
 from nexus.services.media_source_ingest import (
     accept_embedded_source,
@@ -256,9 +255,6 @@ def _publish(
                 canonical_url=canonical_x_post_url(quote_id),
             )
         _replace(db, media_id, lambda media: project(db, media, quote_media_ids))
-        bump_all_collection_families(
-            db, families=(CollectionFamily.AuthorWorks, CollectionFamily.LibraryEntries)
-        )
         return _Published(
             None, "ready_for_reading", quote_media_ids, sorted(set(quote_media_ids.values()))
         )

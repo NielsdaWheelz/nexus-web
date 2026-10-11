@@ -616,8 +616,9 @@ once and twice more over two frames after the body reports ready
 content), then focuses the row's `[data-row-focusable]` (else the pane
 landmark). Wheel, touch, pointer and scroll keys cancel a pending restore.
 Visit data is written on every commit and tagged with its routeKey, so a replace
-to another route never restores stale data; `useClearAllPaneVisitData` drops all
-of it after a mutation. `usePaneScrollRetention` holds the live offset across a
+to another route never restores stale data; a list's snapshot carries the change
+stamp it was read under, and a return rereads when the stamp moved
+(architecture §8.12). `usePaneScrollRetention` holds the live offset across a
 same-path view swap. The scrollport registers its route content
 (`usePaneReturnScrollport`'s `contentRef`), so the anchor search starts past
 any collection row. Reader, Chat transcripts, and Atlas keep their separate

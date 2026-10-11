@@ -52,5 +52,4 @@ removes 3,942 formatted lines from this surface.
 resolved when: the owner accepts the overrun, names behaviour to cut, or a
 later pass finds an honest simplification (candidates: one podcast-pane view
 hook absorbing filter-rows, url replace and the collection publication, ~60
-lines; python keyset pages, ticket `podcast-lists-need-keyset-continuations`,
-which would delete the continuation echo and 409 restart).
+lines; the keyset pages landed with the collection-revision cut).

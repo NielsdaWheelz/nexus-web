@@ -57,9 +57,11 @@ return to their own owners for ingestion, playback, files, or assets.
 
 `api/routes/libraries.py` returns typed `Data` or `DataPage` models for every
 json success; its three bodyless commands retain 204. generated wire types own
-both server seed and browser transport shapes. collection pages carry their
-revision and presence cursor inside `data`; governance pages carry a presence
-cursor in `page`; writable destinations retain their snake-case page fields.
+both server seed and browser transport shapes. collection pages carry a
+presence cursor inside `data` (`{items, nextCursor}`); governance pages carry a
+presence cursor in `page`; writable destinations retain their snake-case page
+fields. All of them use the one keyset cursor of architecture §8.12; the three
+envelope spellings remain ([ticket](../tickets/list-cursor-codecs-diverge.md)).
 
 web projections retain media presentation, progress presence, zero-count
 suppression, subscription sync and request identity and value-coherence checks. the
@@ -98,15 +100,15 @@ person fields preserve semantic absence as `Presence`; governance commands
 return fully hydrated projections and use the standard serializable retry
 boundary.
 
-Library entry mutations are commands, not refreshed read models. Media add and
-reorder are bodyless commands. Media removal and idempotent Podcast placement
-add/removal return typed `libraryEntriesCollectionRevision`. After a
+Library entry mutations are commands, not refreshed read models. Media add,
+reorder and media removal are bodyless commands (removal answers 204);
+idempotent Podcast placement add/removal returns its `outcome`. After a
 successful write the placement editor reconciles the subject's action snapshot
 and rereads the placement inventory. Every placement write is idempotent, so a
 transport failure is retried by resending the write; because that write may
 have committed, it also reconciles the snapshot. A refused write rereads the
 inventory and offers no retry, and a missing target ends the editor. An idle
-editor rereads when the placement bus publishes a change made after its read.
+editor rereads when `Libraries` or `Entries` moved after its read.
 Agent filing receives only inserted/already-present truth for Undo and never
 hydrates an entry payload.
 
@@ -204,13 +206,12 @@ episodes immediately resurface with their consumption state intact.
   survives a later membership loss that would otherwise have removed it from
   view.
 - **Stateless keyset pagination, one strict cursor codec.** Listing any
-  library never touches a snapshot table. Every listing uses the shared unsigned
-  keyset cursor, whose body carries the `LibraryEntries` family and a digest of
-  the exact `(viewer, library, view)` query, and whose decode range-checks every
-  typed sort-key value it carries. Continuation also requires the unchanged
-  `collectionRevision`; concurrent membership or ordering changes return
-  `409 E_COLLECTION_CHANGED`. A cursor from the wrong viewer, library, view, or
-  pre-cutover family is `400 E_INVALID_CURSOR`, never reinterpreted.
+  library never touches a snapshot table. Every listing uses the shared keyset
+  cursor (architecture §8.12) bound to `(viewer, library, view)`; its decode
+  checks the digest and every sort-key value's kind. Concurrent membership or
+  ordering changes fall under the keyset guarantee, never a 409. A cursor from
+  the wrong viewer, library or view is `400 E_INVALID_CURSOR`, never
+  reinterpreted.
 - **Total list hydration.** The repeatable-read membership query is the sole
   visibility filter and emits one exact Media-or-Podcast target per row. Batched
   hydration must preserve that cardinality and order; a missing admitted target
@@ -223,8 +224,7 @@ episodes immediately resurface with their consumption state intact.
   `400 E_INVALID_REQUEST`. The name order sorts on the presented name — `All`
   for the viewer's Default library, otherwise the authored `name` — so the
   server order matches `libraryPresentation`, then on `id ASC` in both
-  directions. Cursors are the `LibrariesIndex:v2` family bound to viewer, order
-  plan, and collection revision.
+  directions. Cursors bind viewer and order plan (`Libraries`).
 - **Fixed entry projections.** `GET /libraries/{id}/entries` accepts
   `projection=unfiled|in-progress` (omitted means All items). `Unfiled` is
   valid only for the viewer's own Default library: direct-Default media with
@@ -259,9 +259,8 @@ episodes immediately resurface with their consumption state intact.
   `library_entries` DML of its own.
 - **Placement removal is convergent and non-destructive.**
   `ensure_media_absent_from_library_for_viewer` authorizes a mutable target
-  library, returns the current collection revision when the entry is already
-  absent without exposing media existence, and removes exactly one present
-  entry. It supports every
+  library, succeeds when the entry is already absent without exposing media
+  existence, and removes exactly one present entry. It supports every
   media kind and refuses the final lifetime reference with
   `409 E_MEDIA_LAST_REFERENCE`; it never hides or deletes the media resource.
   Whole-resource `DELETE /media/{id}` accepts no query string.
@@ -295,8 +294,9 @@ operational capabilities.
 last, raw remaining seconds in the requested direction, title, then existing
 target identity keys. it preserves other filters, includes finished items unless
 filtered, and never changes authored positions. cursor keys use finite
-`FloatOrNull` values and retain exact view/plan binding. cursor and content
-changes invalidate continuation through the existing collection revision.
+`FloatOrNull` values and retain the view binding. a reading position that moves
+a row across an open continuation falls under the keyset guarantee; the tab's
+own progress publishes `Consumption`, which rereads these views.
 
 rows show title, author credits, original publication year, state/current
 percentage, and known remaining minutes at canonical 1×. finished hides time;
@@ -330,16 +330,13 @@ pass **No additional libraries**; Podcast Subscribe, episode Add, and OPML pass
 ## Frontend entry-view lifecycle
 
 the pane URL owns the requested `LibraryEntryView` (order + projection + entry
-type). `lib/libraries/useLibraryEntries.ts` owns one committed library and entry
-snapshot, bootstrap/restoration, replacement, continuation, reorder and refresh
-settlement. the pane retains presentation, focus, local filtering, member
-governance, inspector and chrome; commands expose operations rather than
-snapshot setters. the committed collection is
-`{view, entries, collectionRevision, nextCursor}`. the installed tail cursor is
-the snapshot's completion fact: `Absent` means no continuation remains. no
-loaded snapshot means loading, never completion. reorder and Slate also require
-`useExhaustivePagination` to report `Complete`; its draining, retry, and refresh
-states remain separate from the snapshot.
+type). `lib/libraries/useLibraryEntries.ts` owns the library read, the entries
+list (`useServerList`, architecture §8.12) and drag reorder; `LibraryPaneBody`
+renders one `LibraryPane` per library id, so a new id remounts it. the pane
+retains presentation, focus, local filtering, member governance, inspector and
+chrome; commands expose operations rather than setters. the list's completion
+fact is its absent cursor (`entries.complete`); no loaded rows means loading,
+never completion. reorder and Slate require it.
 A same-visit query replacement is in-place: pane chrome, controls, focus, live
 ShellScroll position, Slate, and Inspector stay mounted while the exact first
 page loads. The full query remains runtime/history identity.
@@ -350,18 +347,15 @@ types plus Web articles, EPUBs, PDFs, Videos, Podcast episodes, and Podcast
 shows. Omitted `entry_type` means All types; Podcast shows compose only with All
 items / show finished.
 
-- one replacement path admits only the current library and requested view.
-  new-view replacement rejects stale captured placement, consumption and
-  metadata facts. same-view reconciliation installs its captured baseline and
-  coalesces relevant advances into a follow-up. continuation uses the committed
-  view and collection revision; replacement invalidates its chain.
-- definitive placement/consumption writers publish their existing process seams.
-  confirmed reorder publishes the captured library before its local ui generation
-  fence, including late success; local installation and rollback remain fenced.
-- A mounted All pane reacts to every placement revision; a named/system pane
-  reacts when its id is affected or the scope is `Unknown`. the existing
-  consumption store also owns `rowRevision`, advanced by accepted commands,
-  durable reader-cursor saves, and reading-activity installs. an acknowledged
+- the list's key is the library id plus the view's query; a new view keeps the
+  shown rows until its first page lands and abandons the old continuation.
+  its `stale` token is the `Entries` stamp, the `Consumption` stamp when the
+  view follows consumption (Remaining order, In progress, unfinished), and the
+  media query revision, so any of those rereads the loaded prefix.
+- placement and consumption writers publish their change topics after the
+  write. confirmed reorder shows the dragged order until the reread commits,
+  publishes `Entries`, and rolls back when the server refuses it.
+- every mounted library pane rereads on any `Entries` change; an acknowledged
   teardown save still publishes after its reader unmounts. the account-scoped
   `MediaSummaryProvider` patches retained facts without changing occurrence
   order, pagination or focus. it refreshes through
@@ -375,19 +369,18 @@ items / show finished.
   remain available; continuation, reorder, and entry mutations do not. Reorder
   exists only for a complete, editable, non-default
   `Canonical + All items (all) + All types` view.
-- Failure retains and labels the prior committed collection. Network/5xx
-  exhaustion offers **Retry**. `E_COLLECTION_CHANGED` quietly reconciles the
-  retained prefix and resumes continuation with its fresh boundary. an invalid
-  cursor offers **Refresh list** without clearing committed rows.
-- pane return captures only a ready snapshot whose committed view equals the
-  URL view, and restores library plus page as one coherent value. refresh
-  completion follows layout publication of that committed return snapshot;
-  obsolete, aborted and unmounted requests cannot claim completion.
+- Failure retains and labels the prior rows. A continuation that fails in
+  transport or with a 5xx offers **Retry**; an invalid cursor offers **Refresh
+  list** without clearing rows.
+- pane return paints the visit's rows at once and rereads only when a topic
+  the view follows moved since they were read. Refresh settles when the
+  reread commits or fails. a library members governance finds gone shows
+  "Library not found".
 - A matching commit atomically swaps view, rows, and cursor, resets the
   collection region, and lets `CollectionView` own the single row transition;
   reduced motion performs the same commit without animation.
-- the route bootstrap seeds only `Canonical + All items (all)` at zero process
-  placement, consumption and metadata revisions.
+- the route bootstrap seeds `Canonical + All items (all)`; a first visit to
+  that view paints the seed and reads no first page.
 - podcast settings saves reach the pane through its own facts and visits;
   there is no settings install publisher or confirmed library-entry floor.
 - modeled recovery notices remain; unexpected request rejection reaches the
@@ -455,13 +448,12 @@ library the viewer can read.
   list contract for destination pickers (`LibraryDestinationField` +
   `LibraryChooserSurface` + `LibraryDestinationPicker` adapter on the
   frontend). It excludes the default library and member-only libraries,
-  performs server-side search, and pages with the opaque
-  `library_destinations:v2` keyset cursor (rank + `lower(name)` + name + id,
-  ascending). A blank query is
+  performs server-side search, and pages with the shared keyset cursor
+  (architecture §8.12) over rank + `lower(name)` + name + id, ascending, bound
+  to viewer and query (`LibraryDestinations`). A blank query is
   alphabetical; a non-empty query ranks exact → prefix → contains matches, then
-  alphabetically within each rank. Only `:v2` is accepted — a pre-cutover or
-  malformed cursor returns `400 E_INVALID_CURSOR`; there is no compatibility
-  decoder for the old unversioned/timestamp cursor.
+  alphabetically within each rank. A foreign or malformed cursor returns
+  `400 E_INVALID_CURSOR`.
 - **Standing placement ordering.** `library_entries.list_item_libraries` (the
   `Libraries…` resource-action listing) orders `lower(name) ASC, name ASC, id
   ASC`; the `LibraryChooser` client filters that complete inventory by
@@ -491,8 +483,8 @@ DELETE /libraries/{library_id}/podcasts/{podcast_id}
 ```
 
 The GETs return the strict destination/relation/availability inventory. Media
-POST and Saved PUT are idempotent bodyless commands; removals and Podcast
-placement return typed collection revisions. There is no inverse
+POST, Saved PUT and the media removals are idempotent bodyless commands (204);
+Podcast placement returns its outcome. There is no inverse
 library-to-media write route and no scoped resource-delete query mode.
 
 ## Composition Rules

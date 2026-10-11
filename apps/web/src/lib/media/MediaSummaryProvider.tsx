@@ -14,8 +14,7 @@ import { apiFetch, isApiError, isSameSystemApiDefect, type ApiError } from "@/li
 import type { Presence } from "@/lib/api/presence";
 import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { useConsumptionProjectionRevision } from "@/lib/consumption/projectionRevision";
-import { useMetadataCollectionRevision } from "@/lib/media/mediaMetadataOperations";
+import { useChangeStamp } from "@/lib/api/changes";
 import { isAbortError } from "@/lib/errors";
 import type { MediaSummary } from "./mediaSummary";
 
@@ -179,15 +178,15 @@ const Context = createContext<ReturnType<typeof createMediaSummaries> | null>(nu
 
 export function MediaSummaryProvider({ children }: { children: ReactNode }) {
   const [owner] = useState(createMediaSummaries);
-  const consumption = useConsumptionProjectionRevision();
-  const metadata = useMetadataCollectionRevision();
+  const consumption = useChangeStamp("Consumption");
+  const metadata = useChangeStamp("Metadata");
   const seenMetadata = useRef(metadata);
   useEffect(() => {
     if (seenMetadata.current === metadata) return;
     seenMetadata.current = metadata;
     owner.invalidateQueries();
   }, [metadata, owner]);
-  useEffect(() => { owner.invalidateAll(); }, [owner, consumption.revision]);
+  useEffect(() => { owner.invalidateAll(); }, [owner, consumption]);
   useEffect(() => {
     owner.open();
     const refresh = () => { if (document.visibilityState !== "hidden") owner.invalidateQueries(); };

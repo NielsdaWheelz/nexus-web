@@ -30,7 +30,7 @@ import {
   captureStatusLine,
   type CaptureOperation,
 } from "@/lib/imports/copy";
-import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
+import { publishChange } from "@/lib/api/changes";
 
 export type UploadFileKind = "Pdf" | "Epub";
 export type UploadPhase = "Preparing" | "Uploading" | "Verifying";
@@ -317,7 +317,7 @@ export async function uploadIngestFile({
     started.kind === "Published"
       ? published(started)
       : await putAndConfirm(started, file, signal, onPhaseChange);
-  publishLibraryPlacementChange([...libraryIds]);
+  publishChange("Entries");
   publishImportsInvalidation();
   return result;
 }
@@ -371,7 +371,7 @@ export async function retryUploadSession({
     }
     throw error;
   }
-  publishLibraryPlacementChange("Unknown");
+  publishChange("Entries");
   publishImportsInvalidation();
 }
 
@@ -415,7 +415,7 @@ export async function addMediaFromUrl({
       signal,
     },
   );
-  publishLibraryPlacementChange([...libraryIds]);
+  publishChange("Entries");
   publishImportsInvalidation();
   const status = data.processing_status;
   return {

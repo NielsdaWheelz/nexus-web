@@ -14,14 +14,8 @@ from uuid import UUID
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import media_viewer_ids_sql, podcast_viewer_ids_sql
 from nexus.db.models import Contributor, ContributorAlias, ContributorCredit, ContributorExternalId
 from nexus.schemas.presence import Present
-from nexus.services.collection_revisions import (
-    CollectionFamily,
-    bump_all_collection_revisions,
-    bump_collection_families,
-)
 from nexus.services.contributor_taxonomy import (
     CONTRIBUTOR_ROLES_ORDERED,
     ContributorObservation,
@@ -323,34 +317,3 @@ def replace_role_slices(
     db.add_all(planned)
     db.flush()
     return True
-
-
-def bump_credit_revisions(db: Session, targets: Sequence[CreditTarget]) -> None:
-    """Advance each collection whose rows embed these targets' credits, for every viewer
-    who can see one of them, so a continuation across the change fails with
-    E_COLLECTION_CHANGED. Catalogue ebooks are visible to everyone."""
-    media_ids = [t.media_id for t in targets if isinstance(t, MediaTarget)]
-    podcast_ids = [t.podcast_id for t in targets if isinstance(t, PodcastTarget)]
-    if media_ids:
-        bump_collection_families(
-            db,
-            viewer_ids=list(db.scalars(text(media_viewer_ids_sql()), {"media_ids": media_ids})),
-            families=(
-                CollectionFamily.AuthorWorks,
-                CollectionFamily.LibraryEntries,
-                CollectionFamily.PodcastEpisodes,
-            ),
-        )
-    if podcast_ids:
-        viewers = db.scalars(text(podcast_viewer_ids_sql()), {"podcast_ids": podcast_ids})
-        bump_collection_families(
-            db,
-            viewer_ids=list(viewers),
-            families=(
-                CollectionFamily.AuthorWorks,
-                CollectionFamily.LibraryEntries,
-                CollectionFamily.PodcastSubscriptions,
-            ),
-        )
-    if any(isinstance(target, GutenbergTarget) for target in targets):
-        bump_all_collection_revisions(db, family=CollectionFamily.AuthorWorks)

@@ -512,7 +512,7 @@ export interface paths {
         };
         /**
          * List Conversations
-         * @description The chats index: four views, a literal ``title_search``, revision-bound paging.
+         * @description The chats index: four views, a literal ``title_search``, keyset paging.
          *
          *     Errors:
          *         E_INVALID_REQUEST (400): a view outside the advertised four, an unknown query
@@ -3780,56 +3780,39 @@ export interface components {
         };
         /** CollectionPage[Annotated[Union[LibraryMediaListItemOut, LibraryPodcastListItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         CollectionPage_Annotated_Union_LibraryMediaListItemOut__LibraryPodcastListItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
-            /** Collectionrevision */
-            collectionRevision: number;
             /** Items */
             items: (components["schemas"]["LibraryMediaListItemOut"] | components["schemas"]["LibraryPodcastListItemOut"])[];
-            nextCursor: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
+            nextCursor: components["schemas"]["Presence_str_-Output"];
         };
         /** CollectionPage[Annotated[Union[MediaContributorWorkItemOut, PodcastContributorWorkItemOut, ExternalContributorWorkItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         CollectionPage_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
-            /** Collectionrevision */
-            collectionRevision: number;
             /** Items */
             items: (components["schemas"]["MediaContributorWorkItemOut"] | components["schemas"]["PodcastContributorWorkItemOut"] | components["schemas"]["ExternalContributorWorkItemOut"])[];
-            nextCursor: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
+            nextCursor: components["schemas"]["Presence_str_-Output"];
         };
         /** CollectionPage[ConversationListItemOut] */
         CollectionPage_ConversationListItemOut_: {
-            /** Collectionrevision */
-            collectionRevision: number;
             /** Items */
             items: components["schemas"]["ConversationListItemOut"][];
-            nextCursor: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
+            nextCursor: components["schemas"]["Presence_str_-Output"];
         };
         /** CollectionPage[LibraryOut] */
         CollectionPage_LibraryOut_: {
-            /** Collectionrevision */
-            collectionRevision: number;
             /** Items */
             items: components["schemas"]["LibraryOut"][];
-            nextCursor: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
+            nextCursor: components["schemas"]["Presence_str_-Output"];
         };
         /** CollectionPage[PodcastEpisodeListItemOut] */
         CollectionPage_PodcastEpisodeListItemOut_: {
-            /** Collectionrevision */
-            collectionRevision: number;
             /** Items */
             items: components["schemas"]["PodcastEpisodeListItemOut"][];
-            nextCursor: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
+            nextCursor: components["schemas"]["Presence_str_-Output"];
         };
         /** CollectionPage[PodcastSubscriptionListItemOut] */
         CollectionPage_PodcastSubscriptionListItemOut_: {
-            /** Collectionrevision */
-            collectionRevision: number;
             /** Items */
             items: components["schemas"]["PodcastSubscriptionListItemOut"][];
-            nextCursor: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
-        };
-        /** CollectionRevisionOut */
-        CollectionRevisionOut: {
-            /** Collectionrevision */
-            collectionRevision: number;
+            nextCursor: components["schemas"]["Presence_str_-Output"];
         };
         /** CompletionStatsSectionOut */
         CompletionStatsSectionOut: {
@@ -4040,8 +4023,6 @@ export interface components {
         ConsumptionResult: {
             finishId: components["schemas"]["Presence_UUID_-Output"];
             lectern: components["schemas"]["LecternSnapshot"];
-            /** Libraryentriescollectionrevision */
-            libraryEntriesCollectionRevision: number;
             nextItem: components["schemas"]["Presence_LecternItemOut_"];
             /**
              * Outcome
@@ -4495,6 +4476,11 @@ export interface components {
             /** Data */
             data: components["schemas"]["LearnDossierOpenedOut"] | components["schemas"]["LearnDossierBuildAcceptedOut"];
         };
+        /** Data[Annotated[Union[MediaRemovedResult, MediaHiddenResult, MediaDeletingResult], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
+        Data_Annotated_Union_MediaRemovedResult__MediaHiddenResult__MediaDeletingResult___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
+            /** Data */
+            data: components["schemas"]["MediaRemovedResult"] | components["schemas"]["MediaHiddenResult"] | components["schemas"]["MediaDeletingResult"];
+        };
         /** Data[Annotated[Union[ReaderTargetTextOut, ReaderTargetPdfOut, ReaderTargetTimeOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         Data_Annotated_Union_ReaderTargetTextOut__ReaderTargetPdfOut__ReaderTargetTimeOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Data */
@@ -4562,10 +4548,6 @@ export interface components {
         /** Data[CollectionPage[PodcastSubscriptionListItemOut]] */
         Data_CollectionPage_PodcastSubscriptionListItemOut__: {
             data: components["schemas"]["CollectionPage_PodcastSubscriptionListItemOut_"];
-        };
-        /** Data[CollectionRevisionOut] */
-        Data_CollectionRevisionOut_: {
-            data: components["schemas"]["CollectionRevisionOut"];
         };
         /** Data[ConnectionDiscoveryScanOut] */
         Data_ConnectionDiscoveryScanOut_: {
@@ -4655,14 +4637,6 @@ export interface components {
         Data_LecternSnapshot_: {
             data: components["schemas"]["LecternSnapshot"];
         };
-        /** Data[LibraryDeleteOut] */
-        Data_LibraryDeleteOut_: {
-            data: components["schemas"]["LibraryDeleteOut"];
-        };
-        /** Data[LibraryEntryRemovalOut] */
-        Data_LibraryEntryRemovalOut_: {
-            data: components["schemas"]["LibraryEntryRemovalOut"];
-        };
         /** Data[LibraryInvitationOut] */
         Data_LibraryInvitationOut_: {
             data: components["schemas"]["LibraryInvitationOut"];
@@ -4674,10 +4648,6 @@ export interface components {
         /** Data[LibraryOut] */
         Data_LibraryOut_: {
             data: components["schemas"]["LibraryOut"];
-        };
-        /** Data[LibraryRenameOut] */
-        Data_LibraryRenameOut_: {
-            data: components["schemas"]["LibraryRenameOut"];
         };
         /** Data[LinkNoteOut] */
         Data_LinkNoteOut_: {
@@ -6362,16 +6332,6 @@ export interface components {
             /** Items */
             items: components["schemas"]["LecternItemOut"][];
         };
-        /** LibraryDeleteOut */
-        LibraryDeleteOut: {
-            /** Collectionrevision */
-            collectionRevision: number;
-            /**
-             * Libraryid
-             * Format: uuid
-             */
-            libraryId: string;
-        };
         /** LibraryDestinationOut */
         LibraryDestinationOut: {
             /**
@@ -6473,11 +6433,6 @@ export interface components {
             defaultPlaybackSpeed: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Output"];
             pauseShorteningMode: components["schemas"]["Presence_Literal__Off____Natural___-Output"];
             syncStatus: components["schemas"]["PodcastSyncStatus"];
-        };
-        /** LibraryEntryRemovalOut */
-        LibraryEntryRemovalOut: {
-            /** Libraryentriescollectionrevision */
-            libraryEntriesCollectionRevision: number;
         };
         /** LibraryGovernancePageInfo */
         LibraryGovernancePageInfo: {
@@ -6645,12 +6600,6 @@ export interface components {
             podcast: components["schemas"]["LibraryEntryPodcastOut"];
             readingTimeEstimate: components["schemas"]["Presence_ReadingTimeEstimateOut_"];
             subscription: components["schemas"]["Presence_LibraryEntryPodcastSubscriptionOut_"];
-        };
-        /** LibraryRenameOut */
-        LibraryRenameOut: {
-            /** Collectionrevision */
-            collectionRevision: number;
-            library: components["schemas"]["LibraryOut"];
         };
         /** LinkAudienceIn */
         LinkAudienceIn: {
@@ -7007,6 +6956,14 @@ export interface components {
             /** Rolefacts */
             roleFacts: components["schemas"]["ContributorRoleFactOut"][];
         };
+        /** MediaDeletingResult */
+        MediaDeletingResult: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Deleting";
+        };
         /** MediaDurationOut */
         MediaDurationOut: {
             estimate: components["schemas"]["ReadingTimeEstimateOut"];
@@ -7025,6 +6982,18 @@ export interface components {
             expires_at: string;
             /** Url */
             url: string;
+        };
+        /** MediaHiddenResult */
+        MediaHiddenResult: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Hidden";
+            /** Remainingreferencecount */
+            remainingReferenceCount: number;
+            /** Removedfromlibraryids */
+            removedFromLibraryIds: string[];
         };
         /**
          * MediaKind
@@ -7165,6 +7134,18 @@ export interface components {
             /** Readercursor */
             readerCursor: components["schemas"]["ReaderCursorEmpty"] | components["schemas"]["ReaderCursorPositioned"];
         };
+        /** MediaRemovedResult */
+        MediaRemovedResult: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Removed";
+            /** Remainingreferencecount */
+            remainingReferenceCount: number;
+            /** Removedfromlibraryids */
+            removedFromLibraryIds: string[];
+        };
         /** MediaSuggestionTargetOut */
         MediaSuggestionTargetOut: {
             /** Href */
@@ -7211,8 +7192,6 @@ export interface components {
         };
         /** MessageDeleteOut */
         MessageDeleteOut: {
-            /** Collectionrevision */
-            collectionRevision: number;
             /** Conversationdeleted */
             conversationDeleted: boolean;
             /**
@@ -8596,8 +8575,6 @@ export interface components {
         };
         /** PodcastPlacementAdditionOut */
         PodcastPlacementAdditionOut: {
-            /** Libraryentriescollectionrevision */
-            libraryEntriesCollectionRevision: number;
             /**
              * Outcome
              * @enum {string}
@@ -8606,8 +8583,6 @@ export interface components {
         };
         /** PodcastPlacementRemovalOut */
         PodcastPlacementRemovalOut: {
-            /** Libraryentriescollectionrevision */
-            libraryEntriesCollectionRevision: number;
             /**
              * Outcome
              * @enum {string}
@@ -8895,7 +8870,6 @@ export interface components {
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____"];
         "Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__-Input"];
         "Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__-Output": components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__-Output"];
-        Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
         Presence_Annotated_str__StringConstraints__AfterValidator__: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_str__StringConstraints__AfterValidator__"];
         Presence_AwareDatetime_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_AwareDatetime_"];
         Presence_BrowseSort_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_BrowseSort_"];
@@ -9142,16 +9116,6 @@ export interface components {
         };
         /** Present[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[MinLen(min_length=1)]), AfterValidator]] */
         "Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__-Output": {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Present";
-            /** Value */
-            value: string;
-        };
-        /** Present[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[Strict(strict=True), MinLen(min_length=1)])]] */
-        Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -14724,13 +14688,11 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["Data_CollectionRevisionOut_"];
-                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -15774,13 +15736,11 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["Data_LibraryDeleteOut_"];
-                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -15814,7 +15774,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_LibraryRenameOut_"];
+                    "application/json": components["schemas"]["Data_LibraryOut_"];
                 };
             };
             /** @description Validation Error */
@@ -16889,9 +16849,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_Annotated_Union_MediaRemovedResult__MediaHiddenResult__MediaDeletingResult___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
                 };
             };
             /** @description Validation Error */
@@ -17146,13 +17104,11 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["Data_LibraryEntryRemovalOut_"];
-                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -17573,13 +17529,11 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["Data_LibraryEntryRemovalOut_"];
-                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

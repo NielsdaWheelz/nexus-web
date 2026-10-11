@@ -10,31 +10,17 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import visible_media_ids_cte_sql, visible_podcast_ids_cte_sql
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas import podcast as wire
-from nexus.schemas.collection_page import CollectionCursor, CollectionPage
-from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
+from nexus.schemas.collection_page import CollectionPage
+from nexus.schemas.presence import Absent, Present, presence_from_nullable
 from nexus.services import library_entries
-from nexus.services.collection_keyset import (
-    SortKey,
-    after_values,
-    expected_kinds,
-    keyset_clause,
-    keyset_params,
-    order_by_sql,
-)
-from nexus.services.collection_revisions import (
-    CollectionFamily,
-    read_collection_revision,
-    require_collection_revision,
-)
+from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
 from nexus.services.consumption import projection
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
-from nexus.services.keyset_cursor import KeysetValueKind, decode_keyset_cursor, encode_keyset_cursor
 
 from .subscriptions import find_status
 
 SubscriptionSort = Literal["recent_episode", "unplayed_count", "alpha"]
 SubscriptionFilter = Literal["all", "has_new", "not_in_library"]
-_FAMILY = CollectionFamily.PodcastSubscriptions
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,27 +119,13 @@ def list_subscriptions(
     viewer_id: UUID,
     *,
     limit: int,
-    cursor: CollectionCursor | None,
-    revision: int | None,
+    cursor: str | None,
     sort: SubscriptionSort,
     filter: SubscriptionFilter,
     library_id: UUID | None,
 ) -> CollectionPage[wire.PodcastSubscriptionListItemOut]:
-    """One page of followed shows under one total order; a continuation names the
-    revision it was issued at and is refused once the family moved."""
-    current = (
-        read_collection_revision(db, viewer_id=viewer_id, family=_FAMILY)
-        if revision is None
-        else require_collection_revision(db, viewer_id=viewer_id, family=_FAMILY, expected=revision)
-    )
-    plan = _plan(sort)
-    identity = {
-        "viewerId": str(viewer_id),
-        "sort": sort,
-        "filter": filter,
-        "libraryId": None if library_id is None else str(library_id),
-    }
-    params: dict[str, object] = {"viewer_id": viewer_id, "limit": limit + 1}
+    """One keyset page of followed shows under one total order."""
+    params: dict[str, object] = {"viewer_id": viewer_id}
     # library_entries owns membership reads: library predicates arrive as id sets.
     where = []
     if filter == "has_new":
@@ -170,12 +142,6 @@ def list_subscriptions(
             )
         )
         where.append("AND podcast_id = ANY(CAST(:scoped AS uuid[]))")
-    if cursor is not None:
-        after = decode_keyset_cursor(
-            cursor, family=_FAMILY.value, query=identity, expected_kinds=expected_kinds(plan)
-        )
-        params.update(keyset_params(plan, after))
-        where.append(keyset_clause(plan, alias="o"))
     state = projection.episode_state_case_sql(listening_alias="pls", override_alias="co")
     joins = projection.episode_state_joins_sql(
         user_param=":viewer_id",
@@ -183,40 +149,47 @@ def list_subscriptions(
         listening_alias="pls",
         override_alias="co",
     )
-    rows = (
-        db.execute(
-            text(f"""
-                WITH visible_media AS ({visible_media_ids_cte_sql()}),
-                episodes AS (
-                    SELECT pe.podcast_id, pe.published_at, {state} AS episode_state
-                    FROM podcast_episodes pe
-                    JOIN visible_media vm ON vm.media_id = pe.media_id
-                    {joins}
-                ),
-                o AS (
-                    SELECT s.podcast_id, s.default_playback_speed, s.pause_shortening_mode,
-                           s.auto_queue, s.sync_status, s.created_at AS followed_at,
-                           p.title, LOWER(p.title) AS title_key,
-                           COUNT(e.*) FILTER (WHERE e.episode_state = 'unplayed') AS unplayed_count,
-                           MAX(e.published_at) AS latest_published_at,
-                           (MAX(e.published_at) IS NULL)::int AS latest_missing
-                    FROM podcast_subscriptions s
-                    JOIN podcasts p ON p.id = s.podcast_id
-                    LEFT JOIN episodes e ON e.podcast_id = s.podcast_id
-                    WHERE s.user_id = :viewer_id
-                    GROUP BY s.id, p.id
-                )
-                SELECT * FROM o
-                WHERE TRUE {" ".join(where)}
-                ORDER BY {order_by_sql(plan, alias="o")}
-                LIMIT :limit
-            """),
-            params,
-        )
-        .mappings()
-        .all()
+    page, next_cursor = keyset_page(
+        db,
+        binding={
+            "list": "PodcastSubscriptions",
+            "viewer": viewer_id,
+            "sort": sort,
+            "filter": filter,
+            "library": library_id,
+        },
+        plan=_plan(sort),
+        cursor=cursor,
+        limit=limit,
+        params=params,
+        alias="o",
+        sql=lambda keyset, order: f"""
+            WITH visible_media AS ({visible_media_ids_cte_sql()}),
+            episodes AS (
+                SELECT pe.podcast_id, pe.published_at, {state} AS episode_state
+                FROM podcast_episodes pe
+                JOIN visible_media vm ON vm.media_id = pe.media_id
+                {joins}
+            ),
+            o AS (
+                SELECT s.podcast_id, s.default_playback_speed, s.pause_shortening_mode,
+                       s.auto_queue, s.sync_status, s.created_at AS followed_at,
+                       p.title, LOWER(p.title) AS title_key,
+                       COUNT(e.*) FILTER (WHERE e.episode_state = 'unplayed') AS unplayed_count,
+                       MAX(e.published_at) AS latest_published_at,
+                       (MAX(e.published_at) IS NULL)::int AS latest_missing
+                FROM podcast_subscriptions s
+                JOIN podcasts p ON p.id = s.podcast_id
+                LEFT JOIN episodes e ON e.podcast_id = s.podcast_id
+                WHERE s.user_id = :viewer_id
+                GROUP BY s.id, p.id
+            )
+            SELECT * FROM o
+            WHERE TRUE {" ".join(where)} {keyset}
+            ORDER BY {order}
+            LIMIT :limit
+        """,
     )
-    page = rows[:limit]
     credits = load_contributor_credits_for_podcasts(db, [row["podcast_id"] for row in page])
     return CollectionPage(
         items=[
@@ -233,14 +206,7 @@ def list_subscriptions(
             )
             for row in page
         ],
-        collectionRevision=current,
-        nextCursor=present(
-            encode_keyset_cursor(
-                family=_FAMILY.value, query=identity, after=after_values(plan, page[-1])
-            )
-        )
-        if len(rows) > limit
-        else absent(),
+        nextCursor=presence_from_nullable(next_cursor),
     )
 
 

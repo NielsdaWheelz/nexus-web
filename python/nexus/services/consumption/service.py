@@ -32,11 +32,6 @@ from nexus.schemas.presence import (
     present,
 )
 from nexus.schemas.reader import CursorWrite, ReaderCursorSnapshot
-from nexus.services.collection_revisions import (
-    CollectionFamily,
-    bump_collection_families,
-    read_collection_revision,
-)
 from nexus.services.consumption import (
     fresh_session,
     lectern,
@@ -52,11 +47,6 @@ from nexus.services.reader_publication import lock_publication_generation
 _PODCAST = "podcast_episode"
 _COMMANDS = "Consumption.Commands"
 _LECTERN_OUTCOME = TypeAdapter[wire.LecternOutcome](wire.LecternOutcome)
-_PODCAST_FAMILIES = (
-    CollectionFamily.LibraryEntries,
-    CollectionFamily.PodcastEpisodes,
-    CollectionFamily.PodcastSubscriptions,
-)
 
 
 def get_lectern(db: Session, viewer_id: UUID) -> wire.LecternSnapshot:
@@ -144,7 +134,6 @@ def put_reader_cursor_in_txn(
     # A podcast transcript is not listening activity.
     if kind != _PODCAST:
         _resume(db, viewer_id, media_id)
-    _bump(db, viewer_id, podcast=kind == _PODCAST)
     return snapshot
 
 
@@ -218,7 +207,6 @@ def _apply(db: Session, viewer_id: UUID, command: wire.ConsumptionCommand) -> di
         if kind == _PODCAST:
             listening.reset(db, viewer_id=viewer_id, media_id=media_id)
         memo["progress"] = str(media_id)
-        _bump(db, viewer_id, podcast=kind == _PODCAST)
         return memo
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Media not found")
@@ -233,7 +221,6 @@ def _apply(db: Session, viewer_id: UUID, command: wire.ConsumptionCommand) -> di
         _mark_unread(db, viewer_id, media_id, podcast=kind == _PODCAST)
     elif isinstance(command, wire.UndoFinishCommand):
         _undo_finish(db, viewer_id, command)
-    _bump(db, viewer_id, podcast=kind == _PODCAST)
     return memo
 
 
@@ -315,7 +302,6 @@ def _settle(
     _finish(db, viewer_id, media_id, was_finished=was_finished)
     index = lectern.remove_media(db, viewer_id=viewer_id, media_id=media_id)
     memo["next"] = None if index is None else {"from": index, "activation": "FooterAudio"}
-    _bump(db, viewer_id, podcast=True)
     return "Done"
 
 
@@ -364,9 +350,6 @@ def _answer(
         next_item=absent() if next_item is None else present(next_item),
         finish_id=absent() if memo["finish"] is None else present(command.client_mutation_id),
         progress_state=progress,
-        library_entries_collection_revision=read_collection_revision(
-            db, viewer_id=viewer_id, family=CollectionFamily.LibraryEntries
-        ),
     )
 
 
@@ -383,10 +366,7 @@ def set_podcast_episode_states_in_txn(
         else:
             _mark_unread(db, viewer_id, media_id, podcast=True)
     target = "finished" if state == "Finished" else "unread"
-    changed = sum(1 for media_id in media_ids if before[media_id].state != target)
-    if media_ids:
-        _bump(db, viewer_id, podcast=True)
-    return changed
+    return sum(1 for media_id in media_ids if before[media_id].state != target)
 
 
 def record_listening(
@@ -418,7 +398,6 @@ def record_listening(
                 },
             )
         _resume(db, viewer_id, media_id)
-        _bump(db, viewer_id, podcast=True)
         result = wire.ListeningPositionOut(
             position_ms=heard.position_ms,
             reset_epoch=heard.reset_epoch,
@@ -453,7 +432,6 @@ def install_preview_position(viewer_id: UUID, media_id: UUID, body: wire.Preview
             duration_ms=duration_ms,
         ):
             _resume(db, viewer_id, media_id)
-            _bump(db, viewer_id, podcast=True)
         db.commit()
 
     viewer_txn("install_preview_position", viewer_id, run)
@@ -585,11 +563,6 @@ def _record_completion(db: Session, viewer_id: UUID, media_id: UUID) -> UUID | N
         """),
         {"id": new_uuid7(), "viewer_id": viewer_id, "media_id": media_id},
     )
-
-
-def _bump(db: Session, viewer_id: UUID, *, podcast: bool) -> None:
-    families = _PODCAST_FAMILIES if podcast else _PODCAST_FAMILIES[:1]
-    bump_collection_families(db, viewer_ids=(viewer_id,), families=families)
 
 
 def _reader_kind(db: Session, viewer_id: UUID, media_id: UUID) -> str:

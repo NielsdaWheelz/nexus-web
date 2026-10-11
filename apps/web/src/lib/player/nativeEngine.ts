@@ -16,7 +16,7 @@ import {
   type Engine,
   type EngineState,
 } from "@/lib/player/playerRuntime";
-import { publishConsumptionProjectionChange } from "@/lib/consumption/projectionRevision";
+import { publishChange } from "@/lib/api/changes";
 import { ApiError } from "@/lib/api/client";
 
 interface Port {
@@ -62,7 +62,7 @@ export function createNativeEngine(
 
   const publish = (snapshot: EngineState) => {
     if (snapshot.consumptionRevision !== state.consumptionRevision)
-      publishConsumptionProjectionChange();
+      publishChange("Consumption");
     // Keep the source's identity across position pushes, so session readers do not re-render.
     const same =
       JSON.stringify(snapshot.source) === JSON.stringify(state.source);

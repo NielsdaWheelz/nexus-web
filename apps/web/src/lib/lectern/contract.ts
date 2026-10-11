@@ -3,10 +3,6 @@
 import type { Schema } from "@/lib/api/wire";
 import type { Presence } from "@/lib/api/presence";
 import {
-  decodeCollectionRevision,
-  type CollectionRevision,
-} from "@/lib/api/collectionPage";
-import {
   type MediaSummary,
 } from "@/lib/media/mediaSummary";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
@@ -86,7 +82,6 @@ export interface ConsumptionResult {
   nextItem: Presence<LecternItem>;
   finishId: Presence<FinishId>;
   progressState: Presence<MediaProgressState>;
-  libraryEntriesCollectionRevision: CollectionRevision;
 }
 export interface NaturalEnd {
   mediaId: MediaId;
@@ -162,8 +157,5 @@ export function consumptionResultFromWire(
             },
           }
         : progressState,
-    libraryEntriesCollectionRevision: decodeCollectionRevision(
-      result.libraryEntriesCollectionRevision,
-    ),
   };
 }

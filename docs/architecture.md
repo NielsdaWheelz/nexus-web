@@ -1386,12 +1386,8 @@ the hide-finished completion filter for reads — no DML on
   row, pane title/label, resource-target results, Dossier and Atlas labels —
   while the domain object, storage row, and API fields keep their internal
   Default identity; `All` is a reserved library name (`400 E_NAME_INVALID` on
-  any non-default create/rename). Pagination over any library — default or
-  not — is stateless keyset pagination with the unversioned
-  `LibraryEntries` cursor family. Its query digest binds viewer, Library, view,
-  order, completion, and a named keyset plan; any wrong family, digest, plan,
-  or scalar kind is a clean
-  `400 E_INVALID_CURSOR`, never a silent reinterpretation. Canonical order is
+  any non-default create/rename). Entries page as a keyset list (§8.12) whose
+  cursor binds viewer, Library and view. Canonical order is
   the durable authored order for named Libraries and
   `(addedAt DESC, targetKind ASC, targetId DESC)` for Default. A `view` is the
   order plus a fixed entry projection: `All items (all)` includes Podcast
@@ -1402,11 +1398,9 @@ the hide-finished completion filter for reads — no DML on
   it). Factual view lenses (Title/Creator/Published/Added/Remaining, each ascending or
   descending), projections, and the hide-finished completion filter are
   URL-only: they are never persisted and never write
-  `library_entries.position`. In the browser, two process-local monotonic
-  revision seams — `lib/libraries/placementRevision.ts` and
-  `lib/consumption/projectionRevision.ts` — are published by every definitive
-  placement/consumption writer after each acknowledged write, and the Library
-  pane refetches its exact requested view when a captured revision advances.
+  `library_entries.position`. In the browser every placement and consumption
+  writer publishes its change topic after the write (§8.12), and the Library
+  pane rereads its view when a topic it follows moves.
 - **reading duration has one shared read owner.** `services/reading_time.py`
   composes stored integer counts from `media_document_metrics.py`, document
   quote-readiness from `capabilities.py`, and current-position facts from
@@ -1420,9 +1414,8 @@ the hide-finished completion filter for reads — no DML on
   shape; collection formatting consumes its numbers directly. requests never scan document text.
 - **remaining-time order belongs to library listing.** `sort=remaining` orders
   raw `float8` seconds before pagination, unknowns last in either direction,
-  then title and target identity. finite `FloatOrNull` cursor keys retain exact
-  view/plan binding. existing cursor/content revision changes invalidate old
-  continuations. filters and authored positions retain their owners.
+  then title and target identity; its finite `FloatOrNull` cursor key keeps the
+  view binding of §8.12. filters and authored positions retain their owners.
 - **suggestions is the one relevance owner.** `services/suggestions.py` composes
   policy-neutral read ports from consumption, libraries, the resource graph,
   contributors and the semantic index. it owns quick reads, lectern and library
@@ -1450,12 +1443,11 @@ credits, across four python owners (`docs/modules/contributors.md`):
 `contributor_taxonomy.py` (pure values: role vocabulary, name keys, handle
 grammar and generation, observation values, `build_observation`),
 `contributor_writes.py` (the read-only identity planner, person creation,
-aliases, role-slice replacement, and the one invalidation rule
-`bump_credit_revisions`; never commits), `contributor_credits.py` (the sql
+aliases and role-slice replacement; never commits), `contributor_credits.py` (the sql
 fragments and batch loaders other modules compose), and `contributors.py`
 (the facade: search, detail, works, refs, and every write entry point — batch,
 in-transaction, prepare/apply, cleanup and the media-author PUT; it owns
-sessions, retries and when to invalidate). The saved-EPUB repair lives apart in
+sessions and retries). The saved-EPUB repair lives apart in
 `epub_contributor_repair.py`.
 Every `contributors` row is active — there is no self-FK, status, merge, split,
 rename or delete. `contributor_aliases` (searchable names; `resolves_identity`
@@ -1469,13 +1461,11 @@ authority (then a new, distinct person) → new person. It runs inline inside th
 publishing transaction (batch publication opens a fresh SERIALIZABLE-retried
 session per 200 targets; source ingest, podcast identity and metadata research
 publish on their own transaction), so there is no dedupe job, proposal table,
-or merge contract. A publication that changes rows advances AuthorWorks plus the
-families whose rows embed that target's credits, for the viewers who can see
-it (catalogue ebooks: everyone), so a continuation across the change fails with
-`E_COLLECTION_CHANGED`. Visibility predicates (`visible_podcast_ids_cte_sql`,
-`visible_content_credit_rows_sql`, `visible_contributor_ids_cte_sql` and their
-inverses `media_viewer_ids_sql` / `podcast_viewer_ids_sql`) live solely in
-`auth/permissions.py`. An orphaned person is already invisible under those
+or merge contract. A credit change moves rows across open author-works
+continuations under the keyset guarantee (§8.12); the tab that made it rereads.
+Visibility predicates (`visible_podcast_ids_cte_sql`,
+`visible_content_credit_rows_sql`, `visible_contributor_ids_cte_sql`) live
+solely in `auth/permissions.py`. An orphaned person is already invisible under those
 predicates, so nothing prunes contributor rows. There is no `/authors`
 directory or root Authors pane; author search lives in desktop Nexus at
 `/search?kinds=people`, and credit links open the `/authors/{handle}` pane
@@ -1564,8 +1554,7 @@ answers with semantic repair; inflight work (transcript `queued | running` or jo
 `pending | running`) answers and writes nothing; otherwise admission materializes
 transcript state, resets the job, marks the transcript `queued`, and creates one
 durable transcript source attempt. The media row lock keeps at most one queued job
-per Episode. Podcast collection revisions advance only when the request changes
-viewer-visible transcript work state.
+per Episode.
 `reset_podcast_transcription_job` is the one writer that puts the Episode's job
 row back to `pending`. Explicit admission and durable source requeue (retry,
 refresh, system repair) both call it while holding a conflicting media lock; no
@@ -1576,14 +1565,11 @@ replacement.
 The batch forecast counts and fingerprints the eligible selection as a pure
 read. A fingerprinted episode query is one atomic admission transaction: Media
 rows lock in deterministic selection order, and a stale selection or enqueue
-defect rolls back every episode's state, source attempt, queue job, and
-collection revision.
+defect rolls back every episode's state, source attempt and queue job.
 `media_source_ingest.enqueue_podcast_episode_transcript_source_attempt` binds
 the accepted attempt to its durable job inside the transcript caller's current
 transaction; it never commits or converts an enqueue defect into durable failed
-state. That source-attempt owner publishes the all-viewer media-fact revision
-exactly once; the outer transcript controller does not publish a second
-revision for the same accepted attempt.
+state.
 The worker, `run_podcast_transcription_now`, owns the sidecar-then-Deepgram
 order for every run, requeues included: a present sidecar is fetched first and
 its segments publish in one fenced phase; otherwise `_begin_generated_run` marks
@@ -1596,17 +1582,13 @@ persists only `media_id` and that request reason; request/user correlation is
 not a worker input and is not copied into the durable payload.
 Publisher and generated transcript success callbacks publish only source
 artifacts plus their domain ledger. The common source terminal is the sole owner
-of ready-state, semantic admission, and the success media-fact revision; a
-worker beginning an already-admitted `extracting` Episode does not publish an
-unchanged revision. The acquisition operation returns only
+of ready-state and semantic admission. The acquisition operation returns only
 `PodcastTranscriptionCompleted`; every modeled failure raises its typed error,
 so no nullable skipped/failed result fields or downstream variant guard exist.
 Podcast source failure likewise has one terminal publication: the source owner
 settles the attempt, while `podcasts/transcription_failure.py` atomically settles
 Media, the transcription job, transcript state (`unavailable` for
-`E_TRANSCRIPT_UNAVAILABLE`, else `failed_provider`), and one shared media-fact
-revision. `media_fact_revisions.bump_all_media_fact_collections` owns the exact
-`AuthorWorks | LibraryEntries | PodcastEpisodes` family set. The failure owner
+`E_TRANSCRIPT_UNAVAILABLE`, else `failed_provider`). The failure owner
 imports no provider adapter.
 `services/transcripts/state.py` is the sole persistence owner for
 `media_transcript_states`; `current.py` owns artifact publication and retracts the
@@ -1614,12 +1596,11 @@ media's content index in the same transaction. The transcript's index is the
 media's index (`content_indexing`): re-requesting a readable transcript asks for a
 new revision only when the index is missing, on another embedding model, or its
 current job is dead (`request_stale_media_content_reindex`), never beside a live
-job, and bumps no collection revision. Database enqueue defects propagate and roll back;
+job. Database enqueue defects propagate and roll back;
 there is no transcript `enqueue_failed` runtime or persisted audit outcome.
 Canonical YouTube Video caption import lives in `_import_youtube_captions`. It
 crosses the provider boundary with no database transaction open, reauthorizes
-before atomic `Imported` transcript publication, and advances `LibraryEntries` only; Video import never invalidates
-`PodcastEpisodes`.
+before atomic `Imported` transcript publication.
 
 The canonical Podcast detail pane observes those two independent owners through
 one viewer-owned subscription-lifecycle snapshot stream. Transactional triggers
@@ -1703,7 +1684,8 @@ otherwise queries only while its pane is active. It delegates Add to the
 existing Lectern or library mutation owner and owns deterministic stable
 refill, not destination state. the lectern section order is queue, quick reads,
 then suggestions. `QuickReadsSection` uses an independent client `useResource` read,
-refreshing on active mount, reactivation and consumption/placement revisions.
+refreshing on active mount, reactivation and the Consumption and Entries
+change topics (§8.12).
 it has no selection controls or dedicated add button; opening navigates without
 enqueueing. shared collection rows retain standard menus, factual dates and
 reading estimates without relation explanations or inline expansion. known
@@ -1735,7 +1717,7 @@ only raw `nx_device` reader.
 breakdowns, derived observed sessions, active exclusions, capture/sync health,
 and a deterministic Year in Reading view. Exact session Exclude/Restore is the
 only correction lifecycle. Accepted writes publish the
-process-local Consumption revision; focus, activation, visibility, pageshow,
+Consumption change topic (§8.12); focus, activation, visibility, pageshow,
 and online transitions revalidate cross-process state without polling. The
 committed Stats response owns its session-continuation state: the pane delegates
 manual cursor lifecycle to `lib/api/useCursorPagination.ts` and builds
@@ -1863,27 +1845,86 @@ pane URL
   -> strict route parse + backend domain view
   -> authorized base relation
   -> domain filter -> order plan -> keyset -> limit+1
-  -> committed exact-view exhaustive drain
+  -> useServerList: one view's rows, drained or Load more (§8.12)
   -> domain presenter + explicit local match fields
   -> visit-local Filter query -> CollectionView
 ```
 
-The URL is requested state. Each pane controller commits
-`{view, rows, collectionRevision, nextCursor}` atomically, retains
-the previously committed rows until the exact first page of the new view
-arrives, and disables continuation while requested and committed disagree.
-the loaded tail cursor determines whether the snapshot has another page;
-`useExhaustivePagination` owns the separate draining, complete, retry, and refresh
-states. seeds and visit-return snapshots carry the tail cursor directly.
-`python/nexus/services/collection_keyset.py` is the single owner of the
-plan → `ORDER BY` → keyset predicate → cursor-value mechanics, so those four can
-never disagree; each collection owner keeps its own plan construction because
-the sort vocabulary is domain language. Cursors bind viewer,
-scope/resource identity, cursor-family version, the exact order plan, and the
-collection revision, so a cursor is undecodable outside the binding that minted
-it. The Author works, Conversation index, and Libraries index families are at
-`:v2`; no compatibility decoder for the retired families exists.
+The URL is requested state; the pane's list hook owns everything after it
+(§8.12).
 
+### 8.12 Lists
+
+Every keyset list pages one way: the six collection families (chats,
+libraries, library entries, author works, followed podcasts, podcast
+episodes), library destinations, members and invitations, imports and import
+history, and the chat read tool's completed messages.
+
+- **One plan.** A list declares a total order of `SortKey`s ending in a unique
+  key; `services/collection_keyset.keyset_page` derives the `ORDER BY`, the
+  strict NULL-safe page predicate and the cursor from it, so the three cannot
+  disagree. Each owner keeps its own plans: the sort vocabulary is domain
+  language.
+- **One cursor.** Unpadded base64url JSON `{after, binding}`: the last row's
+  sort values and a sha256 over the list's binding, the plan and those values.
+  The binding is `{list, viewer, …scope, …view}`: `Chats` (title search),
+  `Libraries`, `LibraryEntries` (library, view), `AuthorWorks` (handle),
+  `PodcastSubscriptions` (sort, filter, library), `PodcastEpisodes` (podcast,
+  state, sort), `LibraryDestinations` (query), `LibraryMembers` (library),
+  `LibraryInvitations` (library, status), `imports:{view}` (the normalized
+  query), `imports:history` (import ref), `CompletedMessages` (resource uri).
+  Decoding checks the digest, the arity and every value's kind; any failure is
+  `400 E_INVALID_CURSOR`, never a reinterpretation. A cursor carries no
+  revision, so a deploy that changes a plan or a binding answers each
+  outstanding cursor 400 once.
+- **One page contract** for the six families (`schemas/collection_page.py`):
+  query `limit` (1..200, default 100), `cursor` and the list's own keys; an
+  unknown or repeated key, a bad limit or an empty cursor is
+  `400 E_INVALID_REQUEST`. The response is `{data: {items, nextCursor}}`.
+  The other lists keep their envelopes (`page.nextCursor`, snake
+  `next_cursor`).
+- **The keyset guarantee.** Following cursors to the end returns every row
+  whose sort values do not change during the walk exactly once, in plan
+  order. A row inserted or moved after the cursor appears; one inserted or
+  moved before it is missing until the next read from the first page; a
+  deleted row disappears; a row moved forward across the cursor can come
+  twice from the server and is shown once. The volatile orders are chats by
+  update, podcasts by unplayed count and latest episode, the entries
+  "remaining" order with the in-progress and unfinished projections, and the
+  episode state filter. The tab's own writes always reread from page one.
+
+The browser holds each list in `lib/api/useServerList.ts`. `key` names the
+view; a new key loads its first page while the previous view's rows stay
+shown (`current: false`), then swaps them at once and abandons the old
+continuation. Rows are deduped by id, first wins. `refetch()` rereads the
+loaded prefix (at least one page; a complete list to its end) in one commit,
+queued behind the read in flight and shared by every call made meanwhile; a
+change of `stale` under the same key calls it. `drain` loads to the end while
+the pane is active and the document visible and stops at the first failure
+until Retry; manual lists use `more()` (Load more, offered only while the
+rows shown are the current view's). Rows are always kept: a
+continuation that fails in transport or with a 5xx offers Retry, a rejected
+cursor offers Refresh list (a reread), and only "cursor absent" licenses the
+count header, the "Complete" filter status and reorder. A pane return paints
+the visit's snapshot and rereads only if `stale` moved since it was read; a
+server seed paints a first visit the same way.
+
+In-tab change topics (`lib/api/changes.ts`) tell mounted lists that a
+committed write in this tab changed server state. A writer publishes after
+the write; an observing list puts the topics' stamp in its `stale` token.
+Nothing crosses tabs, and no list rereads on focus (media summaries do,
+through the media query revision some lists also follow).
+
+| topic | publishers | observers |
+| --- | --- | --- |
+| `Libraries` | create, rename, delete library; accept invitation | libraries index; library pane (detail); placement overlay |
+| `Entries` | placement add/remove; library delete; invitation accept; media delete; podcast subscribe, unsubscribe and episode add; upload, upload retry, URL add; entries reorder | library entries; placement overlay; quick reads; suggestions; imports summary |
+| `Consumption` | accepted listening heartbeat; native and offline engines; reader-state save; lectern commands; stats exclusions; episodes marked played | entries in consumption views; state-filtered episodes; quick reads; suggestions; stats; media summaries |
+| `Metadata` | metadata research that changed a title, contributors or first publication, seen by an open view or by the tab that admitted the run | media summaries (the media query revision); lectern |
+| `Podcasts` | every podcast write in `lib/podcasts/api.ts` | followed podcasts; podcast detail and its episodes; author detail and works |
+| `Chats` | chat delete; message send and delete | chats index |
+
+Imports keeps its own window event (`Imports.Invalidated`, lib/imports/api.ts).
 ---
 
 ## 9. Frontend architecture
@@ -2234,7 +2275,7 @@ The things most likely to bite you, distilled:
 | The schema                                                        | `migrations/alembic/versions/0236_baseline_schema.sql` (the squashed baseline) + the revisions after it + the live database (`pg_dump --schema-only`); `python/nexus/db/models.py` is the ORM-mapped classes only                                                               |
 | Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
 | Generation backends                                               | `python/nexus/services/generation/`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md)                                                                                                    |
-| Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_fact_revisions.py`, `web_article.py`, `x_ingest.py`, `youtube.py`, `remote_file.py`, `media_processing_state.py` |
+| Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `web_article.py`, `x_ingest.py`, `youtube.py`, `remote_file.py`, `media_processing_state.py` |
 | Imports workspace (query owner, history, pane)                    | `python/nexus/services/{imports,import_history}.py`, `python/nexus/api/routes/imports.py`, `apps/web/src/lib/imports/`, `apps/web/src/components/imports/`, `apps/web/src/app/(authenticated)/imports/`                                              |
 | Reader/highlights backend                                         | `python/nexus/services/{reader_profile,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote}.py`                                                                        |
 | Chat / conversations                                              | `python/nexus/services/chat/`, `python/nexus/api/routes/chat.py`, `python/nexus/schemas/conversation.py`                                                                                              |

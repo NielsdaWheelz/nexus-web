@@ -74,7 +74,6 @@ def list_contributor_works(
         contributor_handle=handle,
         plan=plan,
         cursor=query.cursor,
-        collection_revision=query.collection_revision,
         limit=query.limit,
     )
     return Data(data=page)

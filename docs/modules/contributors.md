@@ -17,7 +17,6 @@ works.
 | observation | `contributor_taxonomy` (`build_observation`, `ObservedRoleSlices`, `NOT_OBSERVED`) | none |
 | author pin | the PUT sets it; `prepare_observed_role_slices_in_current_transaction` honours it | `media.authors_manually_managed` |
 | works view | `contributors._WORKS_PLANS`; the web forwards url keys verbatim | url `sort`/`direction` |
-| credit staleness | `contributor_writes.bump_credit_revisions` | `viewer_collection_revisions` |
 | manual edit (web) | `components/contributors/MediaAuthorsEditor` (load, edit, PUT, reconcile) | rows, notice, mutation id |
 | credit presentation (web) | `lib/contributors/credits.ts` | none |
 
@@ -51,30 +50,15 @@ the saved-epub repair lives in `epub_contributor_repair.py`, gated on
   writes on the caller's transaction (apply). prepare rejects a bound handle that
   is missing, combined with a key, or not credited on that media, and, for
   `metadata_enrichment`, a duplicate identity within a role.
-- I7 every credit change that alters a works relation advances AuthorWorks, so a
-  continuation fails with `E_COLLECTION_CHANGED` instead of skipping or
-  duplicating rows.
+- I7 works page under the keyset guarantee (architecture §8.12): a credit
+  change moves rows across an open continuation without failing it; the tab
+  that made it rereads (the media query revision).
 
 identity selection: a bound handle names its person; else an existing exact key
 wins; else the earliest-created owner of a resolving alias wins unless it already
 holds a different key of the same authority, which plans a new, distinct person;
 else a new person shared by keyless same-name credits of one batch. an unseen key
 is recorded for whoever won. people are never merged or split.
-
-## invalidation
-
-`bump_credit_revisions(db, targets)` runs once per write entry point (once per
-200-target chunk in batch publication), only when a row changed. families follow
-the target kind, for the viewers who can see a target (`media_viewer_ids_sql`,
-`podcast_viewer_ids_sql`):
-
-| target | families | viewers |
-| --- | --- | --- |
-| media | AuthorWorks, LibraryEntries, PodcastEpisodes | library members and grant holders of the media |
-| podcast | AuthorWorks, LibraryEntries, PodcastSubscriptions | subscribers and library members of the show |
-| catalogue ebook | AuthorWorks | everyone |
-
-callers keep the bumps they make for their own facts.
 
 ## works views
 
@@ -89,12 +73,13 @@ callers keep the bumps they make for their own facts.
 | `sort=title&direction=asc` / `desc` | title a–z / z–a |
 
 publication orders sort by `(date_missing asc, date, title, href)`, so undated
-works stay last both ways. cursors are `AuthorWorks:v3`, bound to viewer, handle,
-plan and revision: a cursor issued for another binding is 400 `E_INVALID_CURSOR`, and
-only then is an issued pair whose collection moved 409 `E_COLLECTION_CHANGED`. podcast works carry role facts and no date ("Publication date
+works stay last both ways. cursors bind viewer, handle and view (`AuthorWorks`,
+architecture §8.12): a cursor issued for another binding is 400
+`E_INVALID_CURSOR`. podcast works carry role facts and no date ("Publication date
 unknown"); catalogue works carry their author credits and no action subject. the
-pane loads every page while active, so its count and filter cover all works; a
-409 reloads the prefix once, a second surfaces with Retry.
+pane drains every page while active (`useServerList`), so its count and filter
+cover all works; a failed continuation keeps the rows and offers Retry, a
+rejected cursor Refresh list.
 
 ## media authors
 

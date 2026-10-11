@@ -1,6 +1,13 @@
 "use client";
 
-import { createContext, useRef, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useRef,
+  type ReactNode,
+} from "react";
 
 // Server-prefetched initial data, keyed by the same cacheKey the client hook reads.
 // Serialized by the server data root; the provider wraps each value as a ready entry.
@@ -51,4 +58,14 @@ export function ResourceCacheProvider({
       {children}
     </ResourceCacheContext.Provider>
   );
+}
+
+/** The server's first-paint seed for `key`, read at mount and consumed once. */
+export function useResourceSeed<T>(key: string): T | null {
+  const cache = useContext(ResourceCacheContext);
+  const [seed] = useState(() => (cache?.peek(key)?.data ?? null) as T | null);
+  useEffect(() => {
+    if (seed !== null) cache?.consume(key);
+  }, [cache, key, seed]);
+  return seed;
 }

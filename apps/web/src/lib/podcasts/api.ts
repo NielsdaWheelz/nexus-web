@@ -1,16 +1,14 @@
 "use client";
 
 // Podcast http for the web (docs/modules/podcast.md). Every podcast write
-// here bumps one process-local revision after success; podcast panes put it
-// in their refetch token, so they refetch after a podcast change made from
-// anywhere (a pane, a resource action, the settings overlay, the player).
+// here publishes "Podcasts" after success (lib/api/changes); podcast panes put
+// its stamp in their refetch token.
 
-import { useSyncExternalStore } from "react";
 import { apiFetch } from "@/lib/api/client";
+import { publishChange } from "@/lib/api/changes";
 import type { Presence } from "@/lib/api/presence";
 import { sseClientDirect } from "@/lib/api/sse-client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 
 export type PodcastDetail = Schema<"PodcastDetailOut">;
 export type PodcastSubscription = Schema<"PodcastSubscriptionStatusOut">;
@@ -23,27 +21,6 @@ export type PodcastRefreshScope =
   | Schema<"PodcastRefreshPodcastScope">
   | Schema<"PodcastRefreshPodcastsScope">
   | Schema<"PodcastRefreshLibraryScope">;
-
-let revision = 0;
-const listeners = new Set<() => void>();
-
-function bump(): void {
-  revision += 1;
-  for (const listener of listeners) listener();
-}
-
-function subscribeRevision(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
-
-export function usePodcastRevision(): number {
-  return useSyncExternalStore(
-    subscribeRevision,
-    () => revision,
-    () => 0,
-  );
-}
 
 export async function listSubscriptions(
   query: URLSearchParams,
@@ -118,9 +95,7 @@ export async function subscribeToPodcast(input: {
     method: "POST",
     body: JSON.stringify({ target, namedLibraryIds, replacementConfirmation }),
   });
-  const named = [...input.namedLibraryIds];
-  publishLibraryPlacementChange(named.length > 0 ? named : "Unknown");
-  bump();
+  publishChange("Podcasts", "Entries");
   return response.data;
 }
 
@@ -137,7 +112,7 @@ export async function addEpisodeFromDiscovery(input: {
       body: JSON.stringify({ target, namedLibraryIds }),
     },
   );
-  publishLibraryPlacementChange([...input.namedLibraryIds]);
+  publishChange("Entries");
   return response.data;
 }
 
@@ -145,8 +120,7 @@ export async function unsubscribeFromPodcast(podcastId: string): Promise<void> {
   await apiFetch(`/api/podcasts/subscriptions/${podcastId}`, {
     method: "DELETE",
   });
-  publishLibraryPlacementChange("Unknown");
-  bump();
+  publishChange("Podcasts", "Entries");
 }
 
 export async function retryPodcastSubscriptionBackfill(
@@ -155,7 +129,7 @@ export async function retryPodcastSubscriptionBackfill(
   await apiFetch(`/api/podcasts/subscriptions/${podcastId}/backfill/retry`, {
     method: "POST",
   });
-  bump();
+  publishChange("Podcasts");
 }
 
 export async function savePodcastSubscriptionSettings(
@@ -166,7 +140,7 @@ export async function savePodcastSubscriptionSettings(
     method: "PATCH",
     body: JSON.stringify(patch),
   });
-  bump();
+  publishChange("Podcasts");
 }
 
 /** Admits a refresh of every subscription in scope; returns how many. */
@@ -180,7 +154,7 @@ export async function requestPodcastRefresh(
     body: JSON.stringify(scope),
     signal,
   });
-  bump();
+  publishChange("Podcasts");
   return response.data.requestedCount;
 }
 
@@ -198,7 +172,7 @@ export async function markEpisodesPlayed(
     method: "POST",
     body: JSON.stringify({ state }),
   });
-  bump();
+  publishChange("Podcasts", "Consumption");
 }
 
 const transcriptTarget = (podcastId: string, state: EpisodeState) => ({
@@ -231,6 +205,6 @@ export async function requestEpisodeTranscripts(
     method: "POST",
     body: JSON.stringify({ target, selectionFingerprint }),
   });
-  bump();
+  publishChange("Podcasts");
   return response.data;
 }

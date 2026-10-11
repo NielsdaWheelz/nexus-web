@@ -104,8 +104,7 @@ finished under the same viewer lock. A stale epoch answers 409
 `E_STALE_LISTENING_REVISION` with that tuple in `error.details.current`; the
 writer adopts it with no read. A consumption command answers
 `ConsumptionResult {outcome: Done |
-Superseded | Gone, lectern, nextItem, finishId, progressState,
-libraryEntriesCollectionRevision}`; `finishId` (the command's own
+Superseded | Gone, lectern, nextItem, finishId, progressState}`; `finishId` (the command's own
 `clientMutationId`) is present after EnsureMediaFinished and Done. `nextItem` is present only for `Done` (the
 first visible Readable row after the removed one) and `SettleNaturalEnd` (the
 first visible FooterAudio row after it), no wrap. `Superseded`: the override

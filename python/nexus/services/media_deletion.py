@@ -35,12 +35,6 @@ from nexus.services import (
     passage_anchors,
     resource_grants,
 )
-from nexus.services.collection_revisions import (
-    CollectionFamily,
-    bump_all_collection_families,
-    bump_collection_families,
-    read_collection_revision,
-)
 from nexus.services.consumption import service as consumption_service
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.contributor_writes import MediaTarget
@@ -263,23 +257,12 @@ def _remove_media_for_viewer_attempt(
         reconcile_document_embed_edges_for_viewer(db, viewer_id=viewer_id, media_id=media_id)
         dossier_engine.on_visibility_lost(db, user_id=viewer_id)
 
-        families = [CollectionFamily.AuthorWorks, CollectionFamily.LibraryEntries]
-        if media_kind == MediaKind.podcast_episode.value:
-            families.extend(
-                (CollectionFamily.PodcastEpisodes, CollectionFamily.PodcastSubscriptions)
-            )
-        bump_collection_families(db, viewer_ids=(viewer_id,), families=families)
-
         if result_kind == "Deleting":
             return MediaDeletingResult()
-        revision = read_collection_revision(
-            db, viewer_id=viewer_id, family=CollectionFamily.LibraryEntries
-        )
         result_type = MediaRemovedResult if result_kind == "Removed" else MediaHiddenResult
         return result_type(
             removed_from_library_ids=removed_from_library_ids,
             remaining_reference_count=remaining_reference_count,
-            library_entries_collection_revision=revision,
         )
 
 
@@ -343,10 +326,6 @@ def delete_duplicate_document_media(
     affected_library_ids = library_entries.delete_all_entries_for_media(db, loser_media_id)
     for library_id in affected_library_ids:
         library_entries.normalize_positions(db, library_id)
-    if affected_library_ids:
-        bump_all_collection_families(
-            db, families=(CollectionFamily.AuthorWorks, CollectionFamily.LibraryEntries)
-        )
     claim_media_teardown(db, loser_media_id)
 
 

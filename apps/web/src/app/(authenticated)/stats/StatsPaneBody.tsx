@@ -15,10 +15,7 @@ import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { useResource, type AsyncResource } from "@/lib/api/useResource";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import {
-  publishConsumptionProjectionChange,
-  useConsumptionProjectionRevision,
-} from "@/lib/consumption/projectionRevision";
+import { publishChange, useChangeStamp } from "@/lib/api/changes";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import {
   requirePaneRuntime,
@@ -698,7 +695,7 @@ function Controls(props: {
 export default function StatsPaneBody() {
   const feedback = useFeedback();
   const timeZone = useHydratedBrowserTimeZone();
-  const projection = useConsumptionProjectionRevision();
+  const projection = useChangeStamp("Consumption");
   const isPaneActive = usePaneIsActive();
   const searchParams = usePaneSearchParams();
   const { state, setState } = usePaneUrlState(statsUrlCodec);
@@ -750,7 +747,7 @@ export default function StatsPaneBody() {
 
   const query = timeZone && canonical ? statsQuery(state, timeZone).toString() : null;
   const resource = useResource<Committed>({
-    cacheKey: query === null ? null : `${query}\u0000${projection.revision}\u0000${lifecycle}`,
+    cacheKey: query === null ? null : `${query}\u0000${projection}\u0000${lifecycle}`,
     load: async (signal) => {
       const url = `/api/consumption/stats?${query}` as const;
       const body = await apiFetch<ApiJson<"/consumption/stats", "get">>(url, { signal });
@@ -803,7 +800,7 @@ export default function StatsPaneBody() {
         init,
       );
       mutationIds.current.delete(key);
-      publishConsumptionProjectionChange();
+      publishChange("Consumption");
       hud({ tone: "Success", title: success });
     } catch (error) {
       const expected = isApiError(error) && !isSameSystemApiDefect(error);
@@ -811,7 +808,7 @@ export default function StatsPaneBody() {
       if (!isApiError(error) || failure === undefined) return setCorrectionDefect(error);
       if (error.code === "E_UNAUTHENTICATED") handleUnauthenticatedApiError(error);
       hud({ tone: "Warning", ...failure, requestId: error.requestId });
-      if (failure === STALE) publishConsumptionProjectionChange();
+      if (failure === STALE) publishChange("Consumption");
     } finally {
       setCorrecting(false);
     }

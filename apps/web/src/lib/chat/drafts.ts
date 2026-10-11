@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { publishChange } from "@/lib/api/changes";
 import { apiFetch } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { createRandomId } from "@/lib/createRandomId";
@@ -118,6 +119,8 @@ function post(
       );
       const outcome = data.outcome;
       if (outcome.kind === "Accepted") {
+        // the chat moved to the top of the index, with one message more
+        publishChange("Chats");
         // the next turn keeps the choice just sent; a new chat starts from the seed
         const { selection } = read(storageKey);
         write(storageKey, keepSelection ? { ...EMPTY, selection } : EMPTY);

@@ -22,7 +22,7 @@ from nexus.db.session import (
     get_session_factory,
 )
 from nexus.responses import Data
-from nexus.schemas.collection_page import CollectionPage, CollectionRevisionOut
+from nexus.schemas.collection_page import CollectionPage
 from nexus.schemas.conversation import (
     ChatAdmissionReceipt,
     ChatRunCreateRequest,
@@ -142,7 +142,7 @@ async def regenerate_assistant_message(
 def list_conversations(
     request: Request, viewer: ViewerDep, db: RepeatableReadDbSession
 ) -> Data[CollectionPage[ConversationListItemOut]]:
-    """The chats index: four views, a literal ``title_search``, revision-bound paging.
+    """The chats index: four views, a literal ``title_search``, keyset paging.
 
     Errors:
         E_INVALID_REQUEST (400): a view outside the advertised four, an unknown query
@@ -166,14 +166,10 @@ def create_conversation(
     return Data(data=conversations.create(db, viewer_id=viewer.user_id, initial_context_refs=refs))
 
 
-@router.delete("/conversations/{conversation_id}")
-def delete_conversation(
-    conversation_id: UUID, viewer: ViewerDep, db: DbSession
-) -> Data[CollectionRevisionOut]:
-    deleted = conversations.delete_conversation(
-        db, viewer_id=viewer.user_id, conversation_id=conversation_id
-    )
-    return Data(data=deleted)
+@router.delete("/conversations/{conversation_id}", status_code=204)
+def delete_conversation(conversation_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
+    conversations.delete_conversation(db, viewer_id=viewer.user_id, conversation_id=conversation_id)
+    return Response(status_code=204)
 
 
 @router.get("/conversations/{conversation_id}/tree", dependencies=CONTRACT)

@@ -27,7 +27,6 @@ from nexus.schemas.publication_dates import normalize_source_publication_date
 from nexus.services import contributor_taxonomy as taxonomy
 from nexus.services import document_embeds as embeds
 from nexus.services import html_apparatus as apparatus
-from nexus.services.collection_revisions import CollectionFamily, bump_all_collection_families
 from nexus.services.fragment_blocks import insert_fragment_blocks
 from nexus.services.media_source_ingest import (
     enqueue_accepted_source_attempt_in_transaction,
@@ -213,9 +212,6 @@ def publish_article(
             edition = normalize_source_publication_date(metadata.published_time)
             if isinstance(edition, Present):
                 media.edition_published_date = edition.value
-        bump_all_collection_families(
-            db, families=(CollectionFamily.AuthorWorks, CollectionFamily.LibraryEntries)
-        )
         return fragment_id
 
     return run_source_publication_phase(

@@ -14,18 +14,10 @@ import {
   settingsAccountResource,
   type ConversationIndexResourceParams,
 } from "@/lib/api/resource";
-import type { CollectionCursor, CollectionRevision } from "@/lib/api/collectionPage";
-import type { Presence } from "@/lib/api/presence";
 import type { ResourceFetcher } from "@/lib/api/resourceTransport";
-import {
-  conversationIndexPage,
-  type ConversationListItem,
-} from "@/lib/chat/conversationIndex";
-import {
-  librariesPageFromWire,
-  libraryOutForId,
-  type LibraryOut,
-} from "@/lib/libraries/contract";
+import type { ListPage } from "@/lib/api/useServerList";
+import type { ConversationListItem } from "@/lib/chat/conversationIndex";
+import { libraryOutForId, type LibraryOut } from "@/lib/libraries/contract";
 import {
   libraryEntryPageFromWire,
   type LibraryEntryListItem,
@@ -41,16 +33,10 @@ export interface PaneResourceLoader {
   load: (request: ResourceFetcher, params: Params) => Promise<unknown>;
 }
 
-interface CollectionSeed {
-  collectionRevision: CollectionRevision;
-  nextCursor: Presence<CollectionCursor>;
-}
-export interface ConversationsPaneSeed extends CollectionSeed {
-  conversations: readonly ConversationListItem[];
-}
-export interface LibraryPaneSeed extends CollectionSeed {
-  library: LibraryOut;
-  entries: readonly LibraryEntryListItem[];
+export type ConversationsPaneSeed = ListPage<ConversationListItem>;
+export interface LibraryPaneSeed {
+  readonly library: LibraryOut;
+  readonly entries: ListPage<LibraryEntryListItem>;
 }
 export interface MediaPaneSeed {
   readonly media: MediaDetail;
@@ -81,13 +67,13 @@ export const paneResourceLoaders: Partial<
     },
   },
   libraries: {
-    cacheKey: () => librariesResource.cacheKey({ refreshVersion: 0 }),
+    cacheKey: () => librariesResource.cacheKey({}),
     load: async (request) => {
       const response = await request<
-        { refreshVersion: number; limit: number },
+        { limit: number },
         ApiJson<"/libraries", "get">
-      >(librariesResource, { refreshVersion: 0, limit: 100 });
-      return librariesPageFromWire(response.data);
+      >(librariesResource, { limit: 100 });
+      return response.data;
     },
   },
   library: {
@@ -103,12 +89,9 @@ export const paneResourceLoaders: Partial<
           ApiJson<"/libraries/{library_id}/entries", "get">
         >(libraryEntriesResource, { id }),
       ]);
-      const page = libraryEntryPageFromWire(entries.data);
       return {
         library: libraryOutForId(library.data, id, "Library pane response.data"),
-        entries: page.items,
-        collectionRevision: page.collectionRevision,
-        nextCursor: page.nextCursor,
+        entries: libraryEntryPageFromWire(entries.data),
       };
     },
   },
@@ -123,17 +106,11 @@ export const paneResourceLoaders: Partial<
   conversations: {
     cacheKey: () => conversationsInitialResource.cacheKey({}),
     load: async (request): Promise<ConversationsPaneSeed> => {
-      const page = conversationIndexPage(
-        await request<
-          ConversationIndexResourceParams,
-          ApiJson<"/conversations", "get">
-        >(conversationsInitialResource, {}),
-      );
-      return {
-        conversations: page.items,
-        collectionRevision: page.collectionRevision,
-        nextCursor: page.nextCursor,
-      };
+      const response = await request<
+        ConversationIndexResourceParams,
+        ApiJson<"/conversations", "get">
+      >(conversationsInitialResource, {});
+      return response.data;
     },
   },
   settingsAccount: {

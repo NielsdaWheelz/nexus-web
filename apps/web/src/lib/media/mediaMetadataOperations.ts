@@ -1,16 +1,24 @@
 "use client";
 
-// The metadata-research client: admission, one live observer per media (SSE
-// `state` frames, never terminal), and the in-browser revision that moves when
-// research changes a summary field (title, contributors, first publication).
+// The metadata-research client: admission and one live observer per media (SSE
+// `state` frames, never terminal); research that changes a summary field
+// (title, contributors, first publication) publishes "Metadata" while the
+// media is observed: by an open view, or by the tab that admitted the run.
 
 import { useCallback, useSyncExternalStore } from "react";
 import { apiFetch } from "@/lib/api/client";
+import { publishChange } from "@/lib/api/changes";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { sseClientDirect } from "@/lib/api/sse-client";
 
 export type MetadataEnrichmentView = Schema<"MetadataEnrichmentView">;
 export type MetadataOperation = Schema<"MetadataOperationOut">;
+
+const SETTLED = new Set<MetadataOperation["status"]>([
+  "completed",
+  "no_findings",
+  "failed",
+]);
 
 export async function submitMetadataEnrichment(
   mediaId: string,
@@ -21,6 +29,21 @@ export async function submitMetadataEnrichment(
   >(`/api/media/${encodeURIComponent(mediaId)}/metadata-enrichment`, {
     method: "POST",
     body: JSON.stringify(request),
+  });
+  // The admitting tab follows its run to the end, so a summary change reaches
+  // this tab's lists ("Metadata") with no metadata… overlay open. It stops when
+  // the run settles, when a later job is latest, or when the stream ends.
+  const jobId = response.data.job_id;
+  admitted.add(jobId);
+  const stop = observe(mediaId, () => {
+    const { snapshot, stop: stream } = entryFor(mediaId);
+    const latest = snapshot.view?.operation;
+    if (stream === null) {
+      stop();
+    } else if (!snapshot.disconnected && latest?.kind === "Present") {
+      const { job_id, status } = latest.value;
+      if (job_id !== jobId || SETTLED.has(status)) stop();
+    }
   });
   return response.data;
 }
@@ -37,8 +60,9 @@ interface Entry {
 const EMPTY: Observation = { view: null, disconnected: false };
 const entries = new Map<string, Entry>();
 const operationListeners = new Set<(mediaId: string) => void>();
-const collectionListeners = new Set<() => void>();
-let collectionRevision = 0;
+// Jobs this tab admitted: a first frame showing one already completed is a
+// change this tab made, not its baseline.
+const admitted = new Set<string>();
 
 function entryFor(mediaId: string): Entry {
   const entry = entries.get(mediaId) ?? {
@@ -77,11 +101,20 @@ function connect(mediaId: string, entry: Entry): void {
         view.last_enriched_at.kind === "Present"
           ? view.last_enriched_at.value
           : null;
-      publish(entry, { view, disconnected: false });
-      for (const listener of operationListeners) listener(mediaId);
-      if (stamp === null || stamp === previousStamp) return;
       const operation =
         view.operation.kind === "Present" ? view.operation.value : null;
+      // The first frame is this tab's baseline, unless it shows a run this tab
+      // admitted already completed (it settled before the stream opened).
+      const baseline =
+        previous === null &&
+        !(
+          operation?.status === "completed" &&
+          operation.outcome.completed_at === stamp &&
+          admitted.has(operation.job_id)
+        );
+      publish(entry, { view, disconnected: false });
+      for (const listener of operationListeners) listener(mediaId);
+      if (baseline || stamp === null || stamp === previousStamp) return;
       // An older job can publish while a newer job is latest. Without its field
       // list, reconcile summaries conservatively through their existing owners.
       const summaryChanged =
@@ -93,17 +126,32 @@ function connect(mediaId: string, entry: Entry): void {
             field === "contributors" ||
             field === "original_published_date",
         );
-      if (summaryChanged) {
-        collectionRevision += 1;
-        for (const listener of collectionListeners) listener();
-      }
+      if (summaryChanged) publishChange("Metadata");
     },
     onReconnect: async () => {
       publish(entry, { ...entry.snapshot, disconnected: true });
       return "continue";
     },
-    onError: () => publish(entry, { ...entry.snapshot, disconnected: true }),
+    // The stream is over: the next observer opens a new one.
+    onError: () => {
+      entry.stop = null;
+      publish(entry, { ...entry.snapshot, disconnected: true });
+    },
   });
+}
+
+/** Adds a listener to the media's one observer; the last to leave closes it. */
+function observe(mediaId: string, listener: () => void): () => void {
+  const entry = entryFor(mediaId);
+  entry.listeners.add(listener);
+  if (entry.stop === null) connect(mediaId, entry);
+  return () => {
+    entry.listeners.delete(listener);
+    if (entry.listeners.size === 0) {
+      entry.stop?.();
+      entry.stop = null;
+    }
+  };
 }
 
 export function reconnectMetadataOperations(mediaId: string): void {
@@ -117,19 +165,8 @@ export function useMediaMetadataOperations(
   mediaId: string | null,
 ): Observation {
   const subscribe = useCallback(
-    (listener: () => void) => {
-      if (mediaId === null) return () => {};
-      const entry = entryFor(mediaId);
-      entry.listeners.add(listener);
-      if (entry.stop === null) connect(mediaId, entry);
-      return () => {
-        entry.listeners.delete(listener);
-        if (entry.listeners.size === 0) {
-          entry.stop?.();
-          entry.stop = null;
-        }
-      };
-    },
+    (listener: () => void) =>
+      mediaId === null ? () => {} : observe(mediaId, listener),
     [mediaId],
   );
   const getSnapshot = useCallback(
@@ -146,23 +183,6 @@ export function subscribeMetadataOperationChanges(
   return () => {
     operationListeners.delete(listener);
   };
-}
-
-export function metadataCollectionSnapshot(): number {
-  return collectionRevision;
-}
-
-export function useMetadataCollectionRevision(): number {
-  return useSyncExternalStore(
-    (listener) => {
-      collectionListeners.add(listener);
-      return () => {
-        collectionListeners.delete(listener);
-      };
-    },
-    metadataCollectionSnapshot,
-    () => 0,
-  );
 }
 
 export const METADATA_FIELD_LABELS = {

@@ -1,7 +1,7 @@
 """Library governance: the `libraries` table and the viewer's index over it."""
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -20,45 +20,15 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
-from nexus.schemas.collection_page import (
-    CollectionCursor,
-    CollectionPage,
-    CollectionRevision,
-    ParsedCollectionQuery,
-    parse_collection_query,
-)
+from nexus.schemas.collection_page import CollectionPage, CollectionQuery, parse_collection_query
 from nexus.schemas.library import (
     CreateLibraryRequest,
-    LibraryDeleteOut,
     LibraryDestinationOut,
     LibraryOut,
-    LibraryRenameOut,
     LibraryRole,
 )
-from nexus.schemas.presence import absent, present
-from nexus.services.collection_keyset import (
-    Direction,
-    SortKey,
-    after_values,
-    expected_kinds,
-    keyset_clause,
-    keyset_params,
-    order_by_sql,
-    plan_json,
-)
-from nexus.services.collection_revisions import (
-    ENTRY_VISIBILITY_FAMILIES,
-    CollectionFamily,
-    bump_collection_families,
-    bump_collection_revisions,
-    read_collection_revision,
-    require_collection_revision,
-)
-from nexus.services.keyset_cursor import (
-    KeysetValueKind,
-    decode_keyset_cursor,
-    encode_keyset_cursor,
-)
+from nexus.schemas.presence import presence_from_nullable
+from nexus.services.collection_keyset import Direction, KeysetValueKind, SortKey, keyset_page
 from nexus.services.sealed_handles import seal_user
 from nexus.storage.client import StorageError, get_storage_client
 from nexus.text import escape_like
@@ -191,73 +161,6 @@ def require_not_system(system_key: str | None) -> None:
         raise ForbiddenError(ApiErrorCode.E_LIBRARY_FORBIDDEN, "System library cannot be modified")
 
 
-def library_member_ids(db: Session, library_id: UUID) -> list[UUID]:
-    """Every current member of a library, in UUID order."""
-    return [
-        UUID(str(user_id))
-        for user_id in db.execute(
-            text("SELECT user_id FROM memberships WHERE library_id = :library_id ORDER BY user_id"),
-            {"library_id": library_id},
-        ).scalars()
-    ]
-
-
-def bump_library_index(
-    db: Session, viewer_ids: Sequence[UUID], *, conversations: bool = False
-) -> None:
-    """Invalidate the index and entry inventories of every affected member."""
-    bump_collection_families(
-        db,
-        viewer_ids=viewer_ids,
-        families=(*ENTRY_VISIBILITY_FAMILIES, CollectionFamily.LibrariesIndex),
-    )
-    if conversations:
-        bump_collection_revisions(
-            db, viewer_ids=viewer_ids, family=CollectionFamily.ConversationIndex
-        )
-
-
-def keyset_page(
-    db: Session,
-    *,
-    family: str,
-    query: dict[str, object],
-    plan: Sequence[SortKey],
-    alias: str,
-    cursor: str | None,
-    limit: int,
-    params: dict[str, object],
-    sql: Callable[[str, str], str],
-) -> tuple[list[Any], str | None]:
-    """Run one keyset page for the library domain's four cursored listings.
-
-    `sql(keyset_predicate, order_by)` returns a statement selecting `:limit`
-    rows from `alias`; this binds `limit + 1` and reports the next cursor.
-    """
-    bound = dict(params, limit=limit + 1)
-    keyset_sql = ""
-    if cursor is not None:
-        keyset_sql = keyset_clause(plan, alias=alias)
-        bound.update(
-            keyset_params(
-                plan,
-                decode_keyset_cursor(
-                    cursor, family=family, query=query, expected_kinds=expected_kinds(plan)
-                ),
-            )
-        )
-    rows = (
-        db.execute(text(sql(keyset_sql, order_by_sql(plan, alias=alias))), bound).mappings().all()
-    )
-    page_rows = list(rows[:limit])
-    next_cursor = (
-        encode_keyset_cursor(family=family, query=query, after=after_values(plan, page_rows[-1]))
-        if len(rows) > limit
-        else None
-    )
-    return page_rows, next_cursor
-
-
 def _validate_library_name(name: str) -> str:
     """Normalize a user-authored name; `All` is reserved for the All view."""
     name = name.strip()
@@ -322,11 +225,6 @@ def create_library(db: Session, viewer_id: UUID, request: CreateLibraryRequest) 
                 """),
                 {"library_id": request.library_id, "user_id": viewer_id},
             )
-            bump_collection_families(
-                db,
-                viewer_ids=(viewer_id,),
-                families=(CollectionFamily.LibrariesIndex, CollectionFamily.LibraryEntries),
-            )
             return membership_context({**created, "role": "admin"})
 
     return library_out(retry_serializable(db, "create_library", attempt), viewer_id=viewer_id)
@@ -356,29 +254,22 @@ def ensure_system_library(db: Session, *, system_key: str, name: str, owner_user
             """),
             {"library_id": library_id, "user_id": owner_user_id},
         )
-        bump_collection_families(
-            db,
-            viewer_ids=(owner_user_id,),
-            families=(CollectionFamily.LibrariesIndex, CollectionFamily.LibraryEntries),
-        )
         return library_id
 
 
 def join_system_library(db: Session, *, system_key: str, user_id: UUID) -> None:
     """Make the user a member of an existing system library; flush only, no-op if already."""
-    joined = db.execute(
+    db.execute(
         text("""
             INSERT INTO memberships (library_id, user_id, role)
             SELECT id, :user_id, 'member' FROM libraries WHERE system_key = :system_key
-            ON CONFLICT DO NOTHING RETURNING library_id
+            ON CONFLICT DO NOTHING
         """),
         {"system_key": system_key, "user_id": user_id},
-    ).first()
-    if joined is not None:
-        bump_library_index(db, [user_id])
+    )
 
 
-def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) -> LibraryRenameOut:
+def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) -> LibraryOut:
     """Rename a mutable library. Admin-only."""
     name = _validate_library_name(name)
     with transaction(db):
@@ -395,18 +286,11 @@ def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) ->
             """),
             {"name": name, "updated_at": now, "library_id": library_id},
         )
-        bump_library_index(db, library_member_ids(db, library_id))
-        collection_revision = read_collection_revision(
-            db, viewer_id=viewer_id, family=CollectionFamily.LibrariesIndex
-        )
 
-    return LibraryRenameOut(
-        library=library_out(ctx, viewer_id=viewer_id, name=name, updated_at=now),
-        collection_revision=collection_revision,
-    )
+    return library_out(ctx, viewer_id=viewer_id, name=name, updated_at=now)
 
 
-def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryDeleteOut:
+def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
     """Delete a mutable library and everything sourced by it. Owner-only."""
     from nexus.services import library_entries, media_deletion, media_upload_sessions
     from nexus.services.dossier import engine as dossier_engine
@@ -423,7 +307,7 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryDel
             )
         return ctx
 
-    def attempt() -> tuple[list[str], CollectionRevision]:
+    def attempt() -> list[str]:
         with transaction(db):
             require_owner(lock=False)
             media_ids = sorted(set(library_entries.list_media_ids_in_library(db, library_id)))
@@ -444,7 +328,6 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryDel
                     {"library_id": library_id},
                 ).scalars()
             ]
-            bump_library_index(db, affected_user_ids, conversations=True)
             # Prelock the whole possible Dossier head union once, in the owner's
             # canonical order, before any nested cleanup can take a head lock.
             dossier_engine.lock_heads(
@@ -472,11 +355,9 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryDel
                     storage_paths.extend(paths)
             for user_id in affected_user_ids:
                 dossier_engine.on_visibility_lost(db, user_id=user_id)
-            return storage_paths, read_collection_revision(
-                db, viewer_id=viewer_id, family=CollectionFamily.LibrariesIndex
-            )
+            return storage_paths
 
-    storage_paths, collection_revision = retry_read_committed(db, "delete_library", attempt)
+    storage_paths = retry_read_committed(db, "delete_library", attempt)
 
     if storage_paths:
         storage_client = get_storage_client()
@@ -490,7 +371,6 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryDel
                     storage_path,
                     exc.message,
                 )
-    return LibraryDeleteOut(library_id=library_id, collection_revision=collection_revision)
 
 
 def get_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryOut:
@@ -508,10 +388,6 @@ class LibrariesIndexView:
     direction: Direction
 
 
-_INDEX_QUERY_KEYS = frozenset({"sort", "direction"})
-# Versioned family: a cursor minted under the single unordered index carried no
-# plan and no revision, so none is decodable against a chosen order.
-_INDEX_CURSOR_FAMILY = f"{CollectionFamily.LibrariesIndex.value}:v2"
 # The presented Library name, matching `libraries/presentation.ts`. Ordering on
 # the authored column would file the Default Library under a name no one sees.
 _PRESENTED_NAME_SQL = "CASE WHEN l.is_default THEN 'All' ELSE l.name END"
@@ -543,9 +419,9 @@ _INDEX_PLANS: dict[LibrariesIndexView, tuple[SortKey, ...]] = {
 
 def parse_libraries_index_query(
     items: Sequence[tuple[str, str]],
-) -> tuple[LibrariesIndexView, ParsedCollectionQuery]:
+) -> tuple[LibrariesIndexView, CollectionQuery]:
     """Strict libraries-index view parse over the request's `multi_items()`."""
-    query = parse_collection_query(items, domain_keys=_INDEX_QUERY_KEYS)
+    query = parse_collection_query(items, domain_keys={"sort", "direction"})
     view = _INDEX_VIEWS.get((query.parameters.get("sort"), query.parameters.get("direction")))
     if view is None:
         raise InvalidRequestError(
@@ -555,42 +431,17 @@ def parse_libraries_index_query(
 
 
 def list_libraries(
-    db: Session,
-    viewer_id: UUID,
-    *,
-    view: LibrariesIndexView,
-    cursor: CollectionCursor | None = None,
-    collection_revision: CollectionRevision | None = None,
-    limit: int = 100,
+    db: Session, viewer_id: UUID, *, view: LibrariesIndexView, cursor: str | None, limit: int
 ) -> CollectionPage[LibraryOut]:
-    """One immutable-keyset page of the viewer's libraries index.
+    """One keyset page of the viewer's libraries index.
 
     The `facts` wrapper projects the derived sort columns once so ORDER BY, the
     keyset and the cursor read identical expressions.
     """
-    revision = (
-        read_collection_revision(db, viewer_id=viewer_id, family=CollectionFamily.LibrariesIndex)
-        if collection_revision is None
-        else require_collection_revision(
-            db,
-            viewer_id=viewer_id,
-            family=CollectionFamily.LibrariesIndex,
-            expected=collection_revision,
-        )
-    )
-    plan = _INDEX_PLANS[view]
-    cursor_query: dict[str, object] = {
-        "family": _INDEX_CURSOR_FAMILY,
-        "plan": plan_json(plan),
-        "revision": revision,
-        "viewerId": str(viewer_id),
-    }
-    page_rows, next_cursor = keyset_page(
+    rows, next_cursor = keyset_page(
         db,
-        family=_INDEX_CURSOR_FAMILY,
-        query=cursor_query,
-        plan=plan,
-        alias="facts",
+        binding={"list": "Libraries", "viewer": viewer_id},
+        plan=_INDEX_PLANS[view],
         cursor=cursor,
         limit=limit,
         params={"viewer_id": viewer_id},
@@ -608,13 +459,11 @@ def list_libraries(
         """,
     )
     return CollectionPage[LibraryOut](
-        items=[library_out(membership_context(row), viewer_id=viewer_id) for row in page_rows],
-        collectionRevision=revision,
-        nextCursor=present(next_cursor) if next_cursor is not None else absent(),
+        items=[library_out(membership_context(row), viewer_id=viewer_id) for row in rows],
+        nextCursor=presence_from_nullable(next_cursor),
     )
 
 
-_DESTINATIONS_CURSOR_FAMILY = "LibraryDestinations:v3"
 _DESTINATIONS_PLAN = (
     SortKey("match_rank", "asc", KeysetValueKind.Int),
     SortKey("normalized_name", "asc", KeysetValueKind.Text),
@@ -636,16 +485,9 @@ def list_writable_library_destinations(
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
     limit = min(limit, 50)
     query = q or ""
-    cursor_query: dict[str, object] = {
-        "family": _DESTINATIONS_CURSOR_FAMILY,
-        "plan": plan_json(_DESTINATIONS_PLAN),
-        "q": query,
-        "viewerId": str(viewer_id),
-    }
     page_rows, next_cursor = keyset_page(
         db,
-        family=_DESTINATIONS_CURSOR_FAMILY,
-        query=cursor_query,
+        binding={"list": "LibraryDestinations", "viewer": viewer_id, "q": query},
         plan=_DESTINATIONS_PLAN,
         alias="ranked",
         cursor=cursor,

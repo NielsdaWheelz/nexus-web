@@ -30,22 +30,20 @@ panes.
 `usePaneRefresh` owns the refresh command, gesture, indicator and settled
 announcement. One execution runs at a time; it belongs to the fence (route and
 the publication's source key) that started it, and a new fence aborts it, so a
-result lands only where it was asked for. `useResource` owns fetch identity and retries. Collection
-panes use `useRevalidationSettlement` to own one pending promise and its abort
-listener. Each pane keeps its source checks, committed-result marker, and
-cancellation restoration; it resolves the promise only after its matching
-result is committed. The settlement helper owns no data, fetch, or commit effect.
+result lands only where it was asked for. `useResource` owns fetch identity and retries. A
+collection pane's refresh awaits its list's `refetch()`, which settles when the
+reread commits or fails (architecture §8.12).
 
 podcast refresh is [durable admission](jobs.md#podcast-live-sync-and-backfill).
 `lib/podcasts/api.ts` owns one typed `requestPodcastRefresh` command returning
 the selected-subscription count and announced as `Refresh requested for n
 show(s)`, or `Nothing to refresh` at zero. the podcast index and detail settle
 their refresh on admission (`podcastRefresh` in `lib/podcasts/paneState.ts`):
-the command bumps the podcast revision and the panes refetch through it a moment
+the command publishes `Podcasts` and the panes reread through it a moment
 later. the library detail keeps admission followed by its matching reload and
 retry. Complete describes the admitted command, never provider sync completion.
 the RefreshPodcast resource action posts the same command and opens no pane; an
-open detail pane converges through the revision and its subscription stream.
+open detail pane converges through `Podcasts` and its subscription stream.
 shared pane source fencing, progress and lifecycle remain owned by
 `usePaneRefresh`.
 

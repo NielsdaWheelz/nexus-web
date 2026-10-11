@@ -5,6 +5,7 @@ import { requestNexusOpen } from "@/lib/nexus/events";
 import { isInvalidViewError } from "@/lib/api/client";
 import { libraryEntriesResource } from "@/lib/api/resource";
 import { present } from "@/lib/api/presence";
+import { listRowStatus } from "@/lib/api/useServerList";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   FeedbackNotice,
@@ -81,15 +82,15 @@ import type { PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { isAbortError } from "@/lib/errors";
 import { podcastRefreshRequestAnnouncement, requestPodcastRefresh } from "@/lib/podcasts/api";
-import type { LibraryEntryListItem } from "@/lib/libraries/entryListItem";
+import {
+  libraryEntryTargetId,
+  type LibraryEntryListItem,
+} from "@/lib/libraries/entryListItem";
 import { suggestionTargetId } from "@/lib/suggestions";
 import styles from "./LibraryPaneBody.module.css";
 
 type LibraryEntry = LibraryEntryListItem;
-const EMPTY_LIBRARY_ENTRIES: readonly LibraryEntry[] = [];
-function libraryTargetId(entry: LibraryEntry): string {
-  return entry.kind === "media" ? entry.media.id : entry.podcast.id;
-}
+const ENTRY_UNIT = { singular: "entry", plural: "entries" };
 interface LibraryPaneFeedback {
   readonly content: FeedbackContent;
   readonly actions?: FeedbackActions;
@@ -117,31 +118,37 @@ function libraryEntryFilterFields(entry: LibraryEntry): readonly string[] {
 export default function LibraryPaneBody() {
   const id = usePaneParam("id");
   if (!id) throw new Error("library route requires an id");
+  return <LibraryPane key={id} id={id} />;
+}
+
+function LibraryPane({ id }: { readonly id: string }) {
   const paneRuntime = usePaneRuntime();
   const isPaneActive = usePaneIsActive();
   const paneId = paneRuntime?.paneId ?? `library-${id}`;
   const listRegionRef = useRef<HTMLDivElement | null>(null);
   const owner = useLibraryEntries({ id, active: isPaneActive });
   const {
-    committed, view: decodedView, state, exhaustion: entryExhaustion,
-    reorderBusy, setView, adoptLibrary, revalidate: revalidateLibraryEntries,
+    library: currentLibrary, entries: list, shownView: committedView,
+    invalid: invalidView, libraryFailure, reorderBusy, setView, adoptLibrary,
+    refresh: refreshLibrary,
   } = owner;
-  const currentLibrary = committed?.library ?? null;
-  const knownLibrary = owner.library;
-  const entries = committed?.entries ?? EMPTY_LIBRARY_ENTRIES;
+  const knownLibrary = currentLibrary;
+  const entries = list.items;
   const summaries = useMediaSummaries(entries.flatMap((entry) => entry.kind === "media" ? [entry.mediaSummary] : []));
   const installedEntries = useMemo(() => entries.flatMap<LibraryEntry>((entry) => {
     if (entry.kind !== "media") return [entry];
     const mediaSummary = summaries.resolve(entry.mediaSummary);
     return mediaSummary.kind === "Absent" ? [] : [{ ...entry, mediaSummary: mediaSummary.value }];
   }), [entries, summaries]);
-  const committedView = committed?.view ?? null;
-  const view = decodedView.kind === "Valid" ? decodedView.view : null;
-  const viewIsCommitted = state.kind === "Ready";
+  const view = owner.view.kind === "Valid" ? owner.view.view : null;
+  const viewIsCommitted = list.current;
   const requestedViewKey = view === null ? null : libraryEntriesResource.cacheKey({ id, view });
-  const invalidView = state.kind === "Invalid";
-  const firstPageError = state.kind === "Failed" ? state.error : null;
-  const loading = knownLibrary === null && state.kind === "Loading";
+  const draining = list.current && !list.complete && list.failure === null;
+  const entryFailure =
+    !invalidView && list.failure?.op === "Load" ? list.failure.error : null;
+  const firstPageError = libraryFailure ?? entryFailure;
+  const loading =
+    knownLibrary === null && firstPageError === null && !invalidView && !owner.unavailable;
   const [error, setError] = useState<LibraryPaneFeedback | null>(null);
   const [authorityFeedback, setAuthorityFeedback] = useState<FeedbackContent | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
@@ -209,13 +216,6 @@ export default function LibraryPaneBody() {
   const filtersTriggerRef = useRef<HTMLButtonElement | null>(null);
   const hideFinishedInputId = `library-hide-finished-${id}`;
   useSetPaneLabel(knownLibrary ? libraryPresentation(knownLibrary).name : loading ? null : "Library");
-  useEffect(() => {
-    if (owner.reconciliation?.recovery !== "RefreshList" || owner.reconciliation.error === null) return;
-    const scope = listRegionRef.current?.closest<HTMLElement>("[data-pane-content]") ?? document;
-    const button = Array.from(scope.querySelectorAll<HTMLButtonElement>("button"))
-      .find(candidate => candidate.textContent?.trim() === "Refresh list");
-    button?.focus();
-  }, [owner.reconciliation?.recovery, owner.reconciliation?.error]);
   const handleReorderEntries = (nextEntries: readonly LibraryEntry[]) => {
     setError(null);
     void owner.reorder(nextEntries).catch((requestError: unknown) =>
@@ -270,9 +270,7 @@ export default function LibraryPaneBody() {
     () => installedEntries.filter(isVisibleEntry),
     [installedEntries, isVisibleEntry],
   );
-  const entryCollectionComplete =
-    committed?.nextCursor.kind === "Absent" &&
-    entryExhaustion.kind === "Complete";
+  const entryCollectionComplete = list.complete;
   const orderPresetIds = useMemo(
     () => orderPresetIdsFor(isDefaultLibrary),
     [isDefaultLibrary],
@@ -344,42 +342,16 @@ export default function LibraryPaneBody() {
     ],
   );
   const getFilterStatus = useCallback(
-    (query: string) => {
-      const visibleCount = visibleEntries.filter((entry) =>
-        matchesPaneFilterQuery(query, libraryEntryFilterFields(entry)),
-      ).length;
-      const unit = { singular: "entry", plural: "entries" };
-      if (committed !== null && !viewIsCommitted) {
-        return {
-          kind: "Retained" as const,
-          visibleCount,
-          loadedCount: visibleEntries.length,
-          unit,
-          cause: firstPageError === null ? "Updating" as const : "Failed" as const,
-        };
-      }
-      if (
-        (committed === null && firstPageError !== null) ||
-        entryExhaustion.kind === "ResumeFailed" ||
-        entryExhaustion.kind === "RefreshRequired"
-      ) {
-        return { kind: "Failed" as const, visibleCount, loadedCount: visibleEntries.length, unit };
-      }
-      return entryCollectionComplete
-        ? {
-          kind: "Complete" as const,
-          visibleCount,
-          totalCount: visibleEntries.length,
-          unit,
-        }
-        : {
-          kind: "Partial" as const,
-          visibleCount,
-          loadedCount: visibleEntries.length,
-          unit,
-        };
-    },
-    [committed, entryCollectionComplete, entryExhaustion.kind, firstPageError, viewIsCommitted, visibleEntries],
+    (query: string) =>
+      listRowStatus(
+        list,
+        visibleEntries.length,
+        visibleEntries.filter((entry) =>
+          matchesPaneFilterQuery(query, libraryEntryFilterFields(entry)),
+        ).length,
+        ENTRY_UNIT,
+      ),
+    [list, visibleEntries],
   );
   const {
     query: filterQuery,
@@ -540,9 +512,7 @@ export default function LibraryPaneBody() {
       { kind: "Library", libraryId: id },
       controller.signal,
     )
-      .then(async () => {
-        await revalidateLibraryEntries(controller.signal);
-      })
+      .then(refreshLibrary)
       .catch((refreshError: unknown) => {
         if (isAbortError(refreshError)) return;
         if (handleUnauthenticatedApiError(refreshError)) return;
@@ -556,7 +526,7 @@ export default function LibraryPaneBody() {
           },
         );
       });
-  }, [id, presentFailure, revalidateLibraryEntries]);
+  }, [id, refreshLibrary, presentFailure]);
   retryLibraryRefreshRef.current = retryLibraryRefresh;
   const executeRefresh = useCallback<PaneRefreshExecute>(
     async ({ signal }) => {
@@ -565,7 +535,7 @@ export default function LibraryPaneBody() {
           { kind: "Library", libraryId: id },
           signal,
         );
-        await revalidateLibraryEntries(signal);
+        await refreshLibrary();
         return {
           kind: "Complete",
           announcement: podcastRefreshRequestAnnouncement(requestedCount),
@@ -595,7 +565,7 @@ export default function LibraryPaneBody() {
         };
       }
     },
-    [id, revalidateLibraryEntries],
+    [id, refreshLibrary],
   );
   usePaneChrome({
     collection,
@@ -622,9 +592,9 @@ export default function LibraryPaneBody() {
   const firstPageFailureContent = firstPageError === null ? null
     : isInvalidViewError(firstPageError) ? { tone: "Danger" as const, title: "Invalid library view" }
       : libraryRequestErrorMessage(firstPageError, {
-        title: state.kind === "Failed" && state.request === "LibraryRead"
+        title: libraryFailure !== null
           ? "Library couldn’t be loaded" : "Library entries couldn’t be loaded",
-        request: state.kind === "Failed" ? state.request : "EntryRead",
+        request: libraryFailure !== null ? "LibraryRead" : "EntryRead",
       });
   if (loading) return <>
     <PaneLoadingState label="Loading library…" announcement="Polite" />
@@ -640,24 +610,21 @@ export default function LibraryPaneBody() {
       : firstPageError ? [{ label: "Retry", onClick: owner.retry }] : error?.actions}
   />;
   const entryRegionId = `library-entry-region-${id}`;
-  const canReorderVisibleEntries = viewIsCommitted && canReorder &&
-    committedView?.order.kind === "Canonical" && committedView.projection.kind === "AllItems" &&
-    committedView.projection.completion === "all" && committedView.entryType.kind === "AllTypes" &&
-    committed?.nextCursor.kind === "Absent" && entryExhaustion.kind === "Complete";
-  const entryFooter = <CollectionExhaustionNotice state={entryExhaustion} />;
-  const entryRefreshError = owner.reconciliation?.error ?? summaries.error;
+  const entryFooter = <CollectionExhaustionNotice list={list} />;
+  const refetchError = list.failure?.op === "Refetch" ? list.failure.error : null;
+  const entryRefreshError = refetchError ?? summaries.error;
   const entryReconciliationNotice = entryRefreshError === null ? null : <MediaSummaryNotice
     error={entryRefreshError}
     retry={() => {
       if (summaries.error !== null) summaries.retry();
-      if (owner.reconciliation?.error) owner.retry();
+      if (refetchError !== null) list.retry();
     }}
   />;
   const requestedViewLabel = view === null ? "" : formatLibraryView(view, isDefaultLibrary);
   const committedViewLabel = committedView === null ? "" : formatLibraryView(committedView, isDefaultLibrary);
-  const entryStatusNode = !invalidView && state.kind !== "Ready" ? (
+  const entryStatusNode = !invalidView && !list.current ? (
     <div className={styles.entryViewStatus} role="status" aria-controls={entryRegionId}>
-      <span>{`${state.kind === "Failed" ? "Could not load" : "Loading"} ${requestedViewLabel}.${committed === null ? "" : ` Showing ${committedViewLabel}.`
+      <span>{`${entryFailure !== null ? "Could not load" : "Loading"} ${requestedViewLabel}.${list.status !== "ready" ? "" : ` Showing ${committedViewLabel}.`
         }`}</span>
       {firstPageError === null ? null : (
         <Button variant="ghost" size="sm" onClick={() => {
@@ -680,7 +647,7 @@ export default function LibraryPaneBody() {
       });
       return {
         ...row,
-        id: libraryTargetId(item),
+        id: libraryEntryTargetId(item),
         context: showAdded ? present({
           kind: "Text",
           text: `${isDefaultLibrary ? "Added to Nexus " : "Added "}${formatAdded(item.addedAt)}`,
@@ -688,7 +655,7 @@ export default function LibraryPaneBody() {
       };
     }
     return presentMedia(item.mediaSummary, {
-      id: libraryTargetId(item),
+      id: libraryEntryTargetId(item),
       primary: {
         kind: "link",
         href: `/media/${item.mediaSummary.mediaId}`,
@@ -814,10 +781,8 @@ export default function LibraryPaneBody() {
         {entryFooter}
       </>
     )
-  ) : currentLibrary ===
-    null ? // (rows/empty-state only); the polite status node carries "Loading …" / // Metadata known but no page has committed yet: the busy region stays empty
-    // "Could not load …". No false empty-state notice before the first commit.
-    null : entryExhaustion.kind !== "Complete" ? (
+  ) : list.status !== "ready" ? // No false empty-state notice before the first commit.
+    null : !list.complete ? (
       entryFooter
     ) : (
       emptyStateNotice
@@ -849,18 +814,18 @@ export default function LibraryPaneBody() {
       }}
       rowActionsAvailable={viewIsCommitted}
       footer={filteredEntries.length > 0 ? entryFooter : undefined}
-      collectionBusy={entryExhaustion.kind === "Draining"}
+      collectionBusy={draining}
       surface={false}
       sortable={
         canReorder && committedView?.order.kind === "Canonical" &&
           committedView.projection.kind === "AllItems" && committedView.projection.completion === "all" &&
           committedView.entryType.kind === "AllTypes" && !filterQuery.trim()
           ? {
-            disabled: reorderBusy || !canReorderVisibleEntries || owner.reconciliation !== null,
+            disabled: reorderBusy || !owner.reorderable || list.running === "Refetch",
             onReorder: (nextRows) => {
               const byEntryId = new Map(
                 filteredEntries.map((entry) => [
-                  libraryTargetId(entry),
+                  libraryEntryTargetId(entry),
                   entry,
                 ]),
               );
@@ -911,18 +876,14 @@ export default function LibraryPaneBody() {
           aria-label={entriesAccessibleName}
           tabIndex={-1}
           aria-busy={
-            state.kind === "Refreshing" ||
-              (state.kind === "Loading" && !invalidView) ||
-              entryExhaustion.kind === "Draining"
+            (!list.current && !invalidView) || draining
               ? true
               : undefined
           }
         >
           {mainBody}
         </div>
-        {currentLibrary !== null &&
-          committed?.nextCursor.kind === "Absent" &&
-          entryExhaustion.kind === "Complete" ? (
+        {currentLibrary !== null && list.complete ? (
           <SuggestionsSection
             key={currentLibrary.id}
             returnScope="Library.Suggestions"

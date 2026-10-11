@@ -15,7 +15,6 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from nexus.jobs.queue import DurableExecutionPhase
 from nexus.schemas.assistant_writes import CreatedRefOut, MachineAuthorshipOut
 from nexus.schemas.citation import CitationOut
-from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.llm import ExpectedChatFailure, GenerationSelection, RunSelectionOut
 from nexus.schemas.presence import Presence
 from nexus.schemas.resource_items import ResourceActivationOut
@@ -120,7 +119,6 @@ class MessageDeleteOut(Wire):
 
     conversation_id: UUID = Field(alias="conversationId")
     conversation_deleted: bool = Field(alias="conversationDeleted")
-    collection_revision: CollectionRevision = Field(alias="collectionRevision")
 
 
 class ConversationTreeOut(Wire):

@@ -5,7 +5,7 @@ import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { apiCommand204, apiFetch, type ApiPath } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/retryPolicy";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { publishConversationIndexChange } from "@/lib/chat/conversationIndex";
+import { publishChange } from "@/lib/api/changes";
 import {
   emptyLive,
   foldLive,
@@ -371,7 +371,7 @@ export function createChatStore(conversationId: string | null) {
         >(path, {
           method: "DELETE",
         });
-        publishConversationIndexChange();
+        publishChange("Chats");
         if (!data.conversationDeleted) await store.load();
         return data;
       } catch (error) {

@@ -16,7 +16,6 @@ from nexus.errors import (
 )
 from nexus.logging import get_logger
 from nexus.schemas.presence import Present, present
-from nexus.services.collection_revisions import CollectionFamily, bump_all_collection_families
 from nexus.services.epub_ingest import (
     EpubExtractionError,
     EpubExtractionPlan,
@@ -107,9 +106,6 @@ def publish_epub_source(
     def replace_projection(locked_media: Media) -> tuple[SourceRunOutcome, list[str]]:
         result, old_storage_paths = publish_epub_extraction_plan(db, media_id=media_id, plan=plan)
         _persist_epub_metadata(locked_media, result)
-        bump_all_collection_families(
-            db, families=(CollectionFamily.AuthorWorks, CollectionFamily.LibraryEntries)
-        )
         db.flush()
         diagnostics: SourceDiagnostics = {
             "status": "success",

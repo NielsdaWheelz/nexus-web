@@ -5,18 +5,16 @@ import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import PaneSection from "@/components/ui/PaneSection";
 import { useResource } from "@/lib/api/useResource";
-import { useConsumptionProjectionRevision } from "@/lib/consumption/projectionRevision";
-import { useLibraryPlacementRevision } from "@/lib/libraries/placementRevision";
+import { useChangeStamp } from "@/lib/api/changes";
 import { useMediaQueryRevision, useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import MediaSummaryNotice from "./MediaSummaryNotice";
 import { getSuggestions, presentSuggestionItem, type Suggestions } from "@/lib/suggestions";
 
 export default function QuickReadsSection({ isActive }: { isActive: boolean }) {
-  const consumption = useConsumptionProjectionRevision();
-  const placement = useLibraryPlacementRevision();
+  const changes = useChangeStamp("Consumption", "Entries");
   const queryRevision = useMediaQueryRevision();
   const [retained, setRetained] = useState<Suggestions | null>(null);
-  const factsRevision = [consumption.revision, placement.revision, queryRevision].join(":");
+  const factsRevision = `${changes}:${queryRevision}`;
   const resource = useResource<{ snapshot: Suggestions; factsRevision: string }>({
     cacheKey: isActive || retained !== null ? `lectern:quick-reads:${factsRevision}` : null,
     load: async (signal) => ({ snapshot: await getSuggestions("/api/lectern/quick-reads", signal), factsRevision }),

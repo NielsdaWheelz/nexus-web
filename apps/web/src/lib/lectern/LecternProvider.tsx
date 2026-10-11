@@ -29,8 +29,7 @@ import type { Presence } from "@/lib/api/presence";
 import type { AsyncResource } from "@/lib/api/useResource";
 import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { publishConsumptionProjectionChange } from "@/lib/consumption/projectionRevision";
-import { useMetadataCollectionRevision } from "@/lib/media/mediaMetadataOperations";
+import { publishChange, useChangeStamp } from "@/lib/api/changes";
 import {
   consumptionResultFromWire,
   lecternSnapshotFromWire,
@@ -198,7 +197,7 @@ export function LecternProvider({ children }: { children: ReactNode }) {
           const result = await send();
           acknowledged = true;
           install(result.lectern);
-          publishConsumptionProjectionChange({ rowChanged: true });
+          publishChange("Consumption");
           const event: CanonicalInstallEvent = { kind: "snapshot", snapshot: result.lectern, unreadMediaIds: unreadIds };
           await Promise.all([...listeners.current].map((listener) => listener(event)));
           if ("progressState" in result && result.progressState.kind === "Present") {
@@ -268,7 +267,7 @@ export function LecternProvider({ children }: { children: ReactNode }) {
     };
   }, [install, refetch, serial]);
 
-  const metadataRevision = useMetadataCollectionRevision();
+  const metadataRevision = useChangeStamp("Metadata");
   const seenMetadataRevision = useRef(metadataRevision);
   useEffect(() => {
     if (seenMetadataRevision.current === metadataRevision) return;

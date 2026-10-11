@@ -14,8 +14,8 @@ from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data, ok, success_response
 from nexus.schemas.contributors import MediaAuthorsOut, MediaAuthorsPutRequest
-from nexus.schemas.library import LibraryEntryRemovalOut, LibraryPlacementOptionOut
-from nexus.schemas.media import MediaLibrariesRequest, MediaOut
+from nexus.schemas.library import LibraryPlacementOptionOut
+from nexus.schemas.media import MediaDeleteResult, MediaLibrariesRequest, MediaOut
 from nexus.schemas.media_summary import (
     MediaSummaryResolutionOut,
     ResolvedMediaSummariesOut,
@@ -111,14 +111,15 @@ def put_media_authors(
 
 
 @router.delete("/media/{media_id}")
-def remove_media(media_id: UUID, request: Request, viewer: ViewerDep, db: DbSession) -> dict:
+def remove_media(
+    media_id: UUID, request: Request, viewer: ViewerDep, db: DbSession
+) -> Data[MediaDeleteResult]:
     if request.query_params:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             "Whole-resource media deletion does not accept query parameters",
         )
-    result = media_deletion_service.remove_media_for_viewer(db, viewer.user_id, media_id)
-    return ok(result, by_alias=True)
+    return Data(data=media_deletion_service.remove_media_for_viewer(db, viewer.user_id, media_id))
 
 
 @router.get("/media/{media_id}/libraries")
@@ -149,22 +150,20 @@ def add_media_saved_in_nexus(media_id: UUID, viewer: ViewerDep, db: DbSession) -
     return Response(status_code=204)
 
 
-@router.delete("/media/{media_id}/saved-in-nexus")
-def remove_media_saved_in_nexus(
-    media_id: UUID, viewer: ViewerDep, db: DbSession
-) -> Data[LibraryEntryRemovalOut]:
-    result = library_entries.ensure_media_absent_from_saved_in_nexus_for_viewer(
+@router.delete("/media/{media_id}/saved-in-nexus", status_code=204)
+def remove_media_saved_in_nexus(media_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
+    library_entries.ensure_media_absent_from_saved_in_nexus_for_viewer(
         db, viewer_id=viewer.user_id, media_id=media_id
     )
-    return Data(data=result)
+    return Response(status_code=204)
 
 
-@router.delete("/media/{media_id}/libraries/{library_id}")
+@router.delete("/media/{media_id}/libraries/{library_id}", status_code=204)
 def remove_media_library(
     media_id: UUID, library_id: UUID, viewer: ViewerDep, db: DbSession
-) -> Data[LibraryEntryRemovalOut]:
-    result = library_entries.remove_media_from_library(db, viewer.user_id, media_id, library_id)
-    return Data(data=result)
+) -> Response:
+    library_entries.remove_media_from_library(db, viewer.user_id, media_id, library_id)
+    return Response(status_code=204)
 
 
 @router.post("/media/{media_id}/refresh", status_code=202)

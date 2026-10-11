@@ -9,7 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.config import get_settings
-from nexus.db.models import Media, MediaFile, MediaKind, MediaSourceAttempt, ProcessingStatus
+from nexus.db.models import Media, MediaFile, MediaKind, MediaSourceAttempt
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.extension_capture import decode_article_packet
@@ -18,7 +18,6 @@ from nexus.services import media_source_types as source_types
 from nexus.services.epub_ingest import EpubExtractionPlan
 from nexus.services.epub_lifecycle import prepare_epub_source, publish_epub_source
 from nexus.services.media_deletion import delete_document_storage_objects
-from nexus.services.media_fact_revisions import bump_all_media_fact_collections
 from nexus.services.media_processing_state import mark_extracting
 from nexus.services.pdf_ingest import PdfExtractionPlan
 from nexus.services.pdf_lifecycle import prepare_pdf_source, publish_pdf_source
@@ -243,10 +242,7 @@ def _begin_source_extraction(
                 ApiErrorCode.E_INVALID_KIND,
                 f"{label} requires {'/'.join(sorted(expected_kinds))} media.",
             )
-        changed = media.processing_status != ProcessingStatus.extracting
         mark_extracting(db, media)
-        if changed:
-            bump_all_media_fact_collections(db)
         return media.kind
 
     return run_source_publication_phase(
@@ -349,7 +345,6 @@ def _run_existing_file(
                 ApiErrorCode.E_STORAGE_MISSING, "Source file metadata missing."
             )
         mark_extracting(db, media)
-        bump_all_media_fact_collections(db)
         return (
             media.kind,
             media_file.storage_path,

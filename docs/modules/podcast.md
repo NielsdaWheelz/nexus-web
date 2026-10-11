@@ -20,32 +20,29 @@ Backend owners live under `python/nexus/services/podcasts/*` (`feed`, `provider`
 `podcasts/transcription_failure.py`, which does not import the provider adapter
 on the background supervisor path. Frontend pane composition lives under
 `apps/web/src/app/(authenticated)/podcasts/*`. `lib/podcasts/api.ts` owns the
-podcast http, its types and the podcast revision; `lib/api/serverState.ts` owns
-the panes' server state (shared with the author pane and the metadata overlay);
+podcast http and its types; `lib/api/serverState.ts` (one resource) and
+`lib/api/useServerList.ts` (one list, architecture §8.12) own the panes' server
+state (shared with the author pane and the metadata overlay);
 `lib/podcasts/paneState.ts` owns the podcast failure copy, command runner and
 chrome refresh; reusable presentation lives under
 `apps/web/src/components/podcasts/*`.
 
-Pane server state: `useServerValue` (one resource) and `useServerList` (a
-server-ordered collection) load on their key, refetch when a `stale` token
-changes, coalesce refetches (at most one queued, never aborting the run in
-flight), show the pane visit's snapshot on return (once: a later return to the
-same key loads afresh) and throw defects at render.
-Every podcast write in `api.ts` bumps a process-local podcast revision after
-success; the index and detail panes put it in their tokens, so a change from a
-pane, a resource action, the settings overlay or the player refetches them. The
-detail head's token also carries the media query revision, and its generation
-feeds the episodes' token, so episodes are always read again after each detail
-read. On a pane return the restored episodes are re-read beside the restored
-head's first read, then once more after it. A state-filtered episode view also
-refetches on the consumption revision.
+Pane server state: `useServerValue` (one resource) and `useServerList` (one
+list) load on their key, refetch when a `stale` token changes, coalesce
+refetches (at most one queued, never aborting the run in flight), show the pane
+visit's snapshot on return and throw defects at render. A list keeps the
+previous view's rows ("Retained · Updating") while a new sort or filter loads,
+and a return rereads it only when its `stale` token moved since it was read.
+Every podcast write in `api.ts` publishes `Podcasts` after success; the index
+and detail panes put its stamp in their tokens, so a change from a pane, a
+resource action, the settings overlay or the player rereads them. The detail
+head's token also carries the media query revision, and its generation feeds
+the episodes' token, so episodes are read again after each detail read. A
+state-filtered episode view also rereads on `Consumption`.
 
-Both lists load 100 rows and continue on Load more. A continuation echoes the
-issuing page's `(cursor, collection_revision)` as one opaque pair; a 409
-`E_COLLECTION_CHANGED` reloads the asked-for prefix once (one page longer for a
-Load more) and then shows the error with Retry
-([ticket](../tickets/podcast-lists-need-keyset-continuations.md)). The header
-count appears once a list is complete.
+Both lists load 100 rows and continue on Load more with plain keyset cursors
+(architecture §8.12). A rejected cursor keeps the rows and offers Retry, which
+rereads the loaded prefix. The header count appears once a list is complete.
 
 Followed-show and episode text filtering is local over the loaded rows ("found
 so far" until the list is complete). It matches title and contributor names,
@@ -141,9 +138,9 @@ with their progress.
   app-level resource overlay is the only load/draft/save/reconcile lifecycle
   owner: it loads the subscription, saves one PATCH through `lib/podcasts/api.ts`
   and reconciles the resource-action snapshot. The save (and the player's
-  remember-speed) bumps the podcast revision, so open podcast panes refetch; the
-  Library pane refetches on its own facts and visits. There is no install
-  publisher, mutation tail or confirmed library-entry revision.
+  remember-speed) publishes `Podcasts`, so open podcast panes reread; the
+  Library pane rereads on its own topics. There is no install publisher or
+  mutation tail.
 
 Feed-controlled urls (rss pages, Podcasting 2.0 chapter json, transcript
 sidecars) are fetched only through `net.safe_fetch.safe_get` (feed pages 60 s
@@ -158,21 +155,11 @@ then media rows, library rows and the user row (Lectern). Acquisition takes the
 alias locks before `upsert_show` touches the show row; subscribe inserts its own
 subscription row `ON CONFLICT DO NOTHING` and takes no alias lock.
 
-Collection revisions exist only to make a list continuation exact. A write moves
-a viewer's family iff it can change that viewer's list membership or order:
-subscribe, unsubscribe and placement move the viewer's own families; an ingest
-that inserted an episode or changed its bibliography, date or duration moves
-`ENTRY_VISIBILITY_FAMILIES` for the show's audience (subscribers ∪ members of
-libraries holding the show or one of its episodes, `shows.bump_audience`); a
-show title change moves `LibraryEntries` and `PodcastSubscriptions` for that
-audience. A changed show or episode author credit also moves the credit writer's
-families for that target's viewers (`contributor_writes.bump_credit_revisions`,
-[contributors](contributors.md#invalidation)). Sync status, settings, backfill progress and transcript states are not
-list keys and move nothing (the followed list's recency orders break ties on the
-follow time, never on `updated_at`). Writers outside this module (transcript source
-attempts, metadata enrichment, listening writes) still move every viewer
-([ticket](../tickets/media-fact-writers-bump-every-viewer.md),
-[ticket](../tickets/listening-writes-bump-podcast-collection-families.md)).
+Podcast lists keep no revision. A write that moves a show or an episode across
+an open continuation (an ingest, a title or credit change, listening) falls
+under the keyset guarantee (architecture §8.12); the tab that made the write
+rereads. The followed list's recency orders break ties on the follow time,
+never on `updated_at`.
 
 ## Sync and backfill
 
@@ -248,7 +235,7 @@ exactness guard, not vestigial. A video's request imports its YouTube captions.
   `media_transcript_states`. Non-source import uses `write_current_transcript`,
   which also makes Media readable and admits semantic work. Fenced source ingest
   uses `publish_source_transcript`, which publishes artifacts only; the common
-  source terminal owns ready-state, one semantic job, and one media-fact revision.
+  source terminal owns ready-state and one semantic job.
   Neither caller re-implements the replace → insert sequence. The owner holds
   `pg_advisory_xact_lock('transcript-current:{media_id}')` for the whole sequence
   and runs in the caller's transaction (`transaction()` is non-reentrant).

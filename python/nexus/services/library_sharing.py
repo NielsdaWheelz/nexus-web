@@ -38,9 +38,7 @@ from nexus.schemas.library import (
 )
 from nexus.schemas.presence import absent, presence_from_nullable, present
 from nexus.services import library_governance as governance
-from nexus.services.collection_keyset import SortKey, plan_json
-from nexus.services.collection_revisions import CollectionFamily, bump_collection_families
-from nexus.services.keyset_cursor import KeysetValueKind
+from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
 from nexus.services.sealed_handles import (
     InvalidSealedHandle,
     LibraryInvitationHandle,
@@ -51,9 +49,7 @@ from nexus.services.sealed_handles import (
 )
 
 _MAX_PAGE = 200
-_MEMBER_CURSOR_FAMILY = "LibraryMembers:v2"
 _MEMBER_PLAN = (SortKey("user_id", "asc", KeysetValueKind.Uuid),)
-_INVITATION_CURSOR_FAMILY = "LibraryInvitations:v2"
 _INVITATION_PLAN = (
     SortKey("created_at", "desc", KeysetValueKind.DateTime),
     SortKey("id", "desc", KeysetValueKind.Uuid),
@@ -176,15 +172,9 @@ def list_library_members(
     """One keyset page of a library's members over `user_id ASC`. Admin-only."""
     ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
     governance.require_admin(ctx.role)
-    page_rows, next_cursor = governance.keyset_page(
+    page_rows, next_cursor = keyset_page(
         db,
-        family=_MEMBER_CURSOR_FAMILY,
-        query={
-            "family": _MEMBER_CURSOR_FAMILY,
-            "libraryId": str(library_id),
-            "plan": plan_json(_MEMBER_PLAN),
-            "viewerId": str(viewer_id),
-        },
+        binding={"list": "LibraryMembers", "viewer": viewer_id, "library": library_id},
         plan=_MEMBER_PLAN,
         alias="m",
         cursor=cursor,
@@ -246,7 +236,6 @@ def update_library_member_role(
                 ),
                 {"role": role, "lid": library_id, "uid": target_user_id},
             )
-            governance.bump_library_index(db, governance.library_member_ids(db, library_id))
             return _member_out(target, owner_user_id=ctx.owner_user_id, role=role)
 
     return retry_serializable(db, "update_library_member_role", attempt)
@@ -279,11 +268,6 @@ def remove_library_member(
             ).fetchone()
             if removed is None:
                 return
-            governance.bump_library_index(
-                db,
-                [*governance.library_member_ids(db, library_id), target_user_id],
-                conversations=True,
-            )
             on_visibility_lost(db, user_id=target_user_id)
 
     retry_serializable(db, "remove_library_member", attempt)
@@ -332,7 +316,6 @@ def transfer_library_ownership(
                 ),
                 {"new_owner": new_owner_user_id, "now": now, "lid": library_id},
             )
-            governance.bump_library_index(db, governance.library_member_ids(db, library_id))
             return governance.library_out(
                 ctx,
                 viewer_id=viewer_id,
@@ -448,15 +431,13 @@ def list_library_invites(
     ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
     governance.require_admin(ctx.role)
     governance.require_not_system(ctx.system_key)
-    page_rows, next_cursor = governance.keyset_page(
+    page_rows, next_cursor = keyset_page(
         db,
-        family=_INVITATION_CURSOR_FAMILY,
-        query={
-            "family": _INVITATION_CURSOR_FAMILY,
-            "libraryId": str(library_id),
-            "plan": plan_json(_INVITATION_PLAN),
+        binding={
+            "list": "LibraryInvitations",
+            "viewer": viewer_id,
+            "library": library_id,
             "status": status,
-            "viewerId": str(viewer_id),
         },
         plan=_INVITATION_PLAN,
         alias="i",
@@ -545,17 +526,6 @@ def accept_library_invite(
                 {"lid": library_id, "uid": viewer_id, "role": invite["role"]},
             )
             responded_at = _set_invitation_status(db, invitation_id=invite["id"], status="accepted")
-            bump_collection_families(
-                db,
-                viewer_ids=(viewer_id,),
-                families=(
-                    CollectionFamily.AuthorWorks,
-                    CollectionFamily.LibrariesIndex,
-                    CollectionFamily.LibraryEntries,
-                    CollectionFamily.PodcastEpisodes,
-                    CollectionFamily.PodcastSubscriptions,
-                ),
-            )
             return AcceptLibraryInviteResponse(
                 invite=_invitation_out(invite, status="accepted", responded_at=responded_at),
                 membership=InviteAcceptMembershipOut(

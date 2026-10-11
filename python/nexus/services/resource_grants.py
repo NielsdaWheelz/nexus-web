@@ -16,7 +16,6 @@ from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.ids import new_uuid7
-from nexus.services.collection_revisions import CollectionFamily, bump_collection_families
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.sealed_handles import (
     InvalidSealedHandle,
@@ -69,24 +68,6 @@ def media_grant_path_exists_sql(media_expr: str, viewer_param: str = ":viewer_id
     )"""
 
 
-def media_grant_path_user_ids_sql(media_ids_expr: str) -> str:
-    """Inverse of `media_grant_path_exists_sql`: the creators and grantees of grants on any of
-    these media or on their highlights, found in one pass over those grants."""
-    return f"""
-        SELECT party.user_id
-        FROM (
-            SELECT g.created_by_user_id, g.grantee_user_id FROM resource_grants g
-            WHERE g.subject_scheme = 'media' AND g.subject_id = ANY({media_ids_expr})
-            UNION ALL
-            SELECT g.created_by_user_id, g.grantee_user_id FROM resource_grants g
-            JOIN highlights h ON h.id = g.subject_id
-            WHERE g.subject_scheme = 'highlight' AND h.anchor_media_id = ANY({media_ids_expr})
-        ) path
-        CROSS JOIN LATERAL (VALUES (path.created_by_user_id), (path.grantee_user_id)) party(user_id)
-        WHERE party.user_id IS NOT NULL
-    """
-
-
 def highlight_grant_path_exists_sql(highlight_expr: str, viewer_param: str = ":viewer_id") -> str:
     """Text-SQL twin of `highlight_grant_path_exists_expr`."""
     return f"""EXISTS (
@@ -125,8 +106,6 @@ def count_for_media(db: Session, media_id: UUID) -> int:
 def _notify(db: Session, user_ids: set[UUID]) -> None:
     from nexus.services.dossier.engine import on_visibility_lost
 
-    families = (CollectionFamily.AuthorWorks, CollectionFamily.PodcastEpisodes)
-    bump_collection_families(db, viewer_ids=user_ids, families=families)
     for user_id in sorted(user_ids):
         on_visibility_lost(db, user_id=user_id)
 

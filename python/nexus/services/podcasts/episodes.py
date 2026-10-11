@@ -16,28 +16,14 @@ from nexus.db.models import TranscriptState
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas import podcast as wire
-from nexus.schemas.collection_page import CollectionCursor, CollectionPage
-from nexus.schemas.presence import absent, present
+from nexus.schemas.collection_page import CollectionPage
+from nexus.schemas.presence import presence_from_nullable
 from nexus.services import media as media_service
-from nexus.services.collection_keyset import (
-    SortKey,
-    after_values,
-    expected_kinds,
-    keyset_clause,
-    keyset_params,
-    order_by_sql,
-)
-from nexus.services.collection_revisions import (
-    CollectionFamily,
-    read_collection_revision,
-    require_collection_revision,
-)
+from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
 from nexus.services.consumption import projection
 from nexus.services.consumption import service as consumption
-from nexus.services.keyset_cursor import KeysetValueKind, decode_keyset_cursor, encode_keyset_cursor
 
 EpisodeSort = Literal["newest", "oldest", "duration_asc", "duration_desc"]
-_FAMILY = CollectionFamily.PodcastEpisodes
 _TRANSCRIBABLE = (
     "COALESCE(mts.transcript_state, 'not_requested') IN ('not_requested', 'failed_provider')"
 )
@@ -119,49 +105,36 @@ def list_episodes(
     podcast_id: UUID,
     *,
     limit: int,
-    cursor: CollectionCursor | None,
-    revision: int | None,
+    cursor: str | None,
     state: str,
     sort: EpisodeSort,
 ) -> CollectionPage[wire.PodcastEpisodeListItemOut]:
     if db.scalar(text("SELECT 1 FROM podcasts WHERE id = :id"), {"id": podcast_id}) is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
-    current = (
-        read_collection_revision(db, viewer_id=viewer_id, family=_FAMILY)
-        if revision is None
-        else require_collection_revision(db, viewer_id=viewer_id, family=_FAMILY, expected=revision)
-    )
-    plan = _plan(sort)
-    identity = {
-        "viewerId": str(viewer_id),
-        "podcastId": str(podcast_id),
-        "state": state,
-        "sort": sort,
-    }
-    params = {"viewer_id": viewer_id, "podcast_id": podcast_id, "state": state, "limit": limit + 1}
-    keyset = ""
-    if cursor is not None:
-        after = decode_keyset_cursor(
-            cursor, family=_FAMILY.value, query=identity, expected_kinds=expected_kinds(plan)
-        )
-        params.update(keyset_params(plan, after))
-        keyset = keyset_clause(plan, alias="r")
     columns = """, pe.published_at, COALESCE(pe.duration_seconds, 0) AS duration_sort,
         (pe.published_at IS NULL)::int AS published_missing,
         (pe.duration_seconds IS NULL)::int AS duration_missing,
         NULLIF(BTRIM(pe.description_text), '') IS NOT NULL AS has_show_notes"""
-    rows = (
-        db.execute(
-            text(f"""
-                SELECT * FROM ({_episodes_sql(columns)}) r WHERE TRUE {keyset}
-                ORDER BY {order_by_sql(plan, alias="r")} LIMIT :limit
-            """),
-            params,
-        )
-        .mappings()
-        .all()
+    rows, next_cursor = keyset_page(
+        db,
+        binding={
+            "list": "PodcastEpisodes",
+            "viewer": viewer_id,
+            "podcast": podcast_id,
+            "state": state,
+            "sort": sort,
+        },
+        plan=_plan(sort),
+        cursor=cursor,
+        limit=limit,
+        params={"viewer_id": viewer_id, "podcast_id": podcast_id, "state": state},
+        alias="r",
+        sql=lambda keyset, order: f"""
+            SELECT * FROM ({_episodes_sql(columns)}) r WHERE TRUE {keyset}
+            ORDER BY {order} LIMIT :limit
+        """,
     )
-    page = {row["media_id"]: row for row in rows[:limit]}
+    page = {row["media_id"]: row for row in rows}
     media = media_service.list_collection_media_for_viewer_by_ids(
         db, viewer_id=viewer_id, media_ids=list(page)
     )
@@ -175,12 +148,5 @@ def list_episodes(
             )
             for episode in media
         ],
-        collectionRevision=current,
-        nextCursor=present(
-            encode_keyset_cursor(
-                family=_FAMILY.value, query=identity, after=after_values(plan, rows[limit - 1])
-            )
-        )
-        if len(rows) > limit
-        else absent(),
+        nextCursor=presence_from_nullable(next_cursor),
     )

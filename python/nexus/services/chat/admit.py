@@ -47,7 +47,6 @@ from nexus.schemas.llm import (
 from nexus.schemas.presence import Present
 from nexus.services.chat import citations, context, events, quotes, reads
 from nexus.services.chat.conversations import DEFAULT_TITLE
-from nexus.services.collection_revisions import CollectionFamily, bump_collection_revision
 from nexus.services.generation.catalog import (
     Catalog,
     CatalogUnavailable,
@@ -504,5 +503,4 @@ def _start_run(
         max_attempts=3,
         dedupe_key=f"chat_run:{run.id}",
     )
-    bump_collection_revision(db, viewer_id=viewer_id, family=CollectionFamily.ConversationIndex)
     return run

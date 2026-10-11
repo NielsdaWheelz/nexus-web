@@ -138,8 +138,12 @@ one shared browser observer serves visible details and the `metadata…` overlay
 for each media id. no collection-row subscriptions or browser polling. reconnect
 reconciles missed work; closing details detaches observation without cancelling
 research. bibliographic rereads preserve reader locator, selection and playback.
-changed research refreshes existing collection revision owners; unchanged success
-refreshes activity only. row menus use their inspected action expectation.
+changed research publishes `Metadata` (architecture §8.12) while the media is
+observed — by an open view, or by the tab that admitted the run, which follows
+it until it settles, a later job is latest or the stream ends. a media's first
+frame in a tab is its baseline, never a change, unless it shows a run that tab
+admitted already completed (it settled before the stream opened); unchanged
+success refreshes activity only. row menus use their inspected action expectation.
 
 each successful stamp checks the text reader's authoritative navigation version;
 the same version needs no content reread. a different version verifies current

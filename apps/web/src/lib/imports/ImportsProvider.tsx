@@ -24,15 +24,11 @@ import {
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   fetchImportSummary,
-  publishImportsInvalidation,
   subscribeImportsInvalidations,
   type ImportSummary,
 } from "@/lib/imports/api";
 import { removeUploadSession, retryUploadSession } from "@/lib/imports/ingest";
-import {
-  libraryPlacementUnknownSince,
-  useLibraryPlacementRevision,
-} from "@/lib/libraries/placementRevision";
+import { useChangeStamp } from "@/lib/api/changes";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 
 const POLL_MS = 5_000;
@@ -89,17 +85,15 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => subscribeImportsInvalidations(refresh), [refresh]);
 
-  // A placement whose libraries became unknown may have changed what Imports
-  // shows (an upload retried from Imports publishes one).
-  const placement = useLibraryPlacementRevision();
-  const seenPlacement = useRef(placement.revision);
+  // A change to what libraries hold (a removal, a library deletion) may have
+  // changed what Imports shows.
+  const entries = useChangeStamp("Entries");
+  const seenEntries = useRef(entries);
   useEffect(() => {
-    const seen = seenPlacement.current;
-    seenPlacement.current = placement.revision;
-    if (placement.revision !== seen && libraryPlacementUnknownSince(seen)) {
-      publishImportsInvalidation();
-    }
-  }, [placement.revision]);
+    if (entries === seenEntries.current) return;
+    seenEntries.current = entries;
+    refresh();
+  }, [entries, refresh]);
 
   // Wakes: visible again, focus after a blur, pageshow, back online. A tab
   // opened in the background reports its state once rather than assuming.

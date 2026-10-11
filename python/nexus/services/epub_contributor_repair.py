@@ -26,10 +26,8 @@ from nexus.schemas.presence import (
 )
 from nexus.services.contributor_taxonomy import ContributorHandle, ContributorObservation
 from nexus.services.contributor_writes import (
-    MediaTarget,
     NewContributor,
     ResolvedCredit,
-    bump_credit_revisions,
     ensure_alias,
     materialize_observation_credits,
     plan_observation_credits,
@@ -379,5 +377,4 @@ def apply_epub_contributor_repair_in_current_transaction(
             alias=observation.credited_name,
             resolves_identity=False,
         )
-    bump_credit_revisions(db, [MediaTarget(media.id)])
     return report
