@@ -6,6 +6,7 @@ Reads project the row; only navigation is current (``get_reading``). A pending r
 that history shows started (``started_at``) displays ``streaming``; the job still owns it.
 """
 
+from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
@@ -220,7 +221,8 @@ def _columns(reading: OracleReading) -> dict[str, Any]:
 # ---------- the generation job -----------------------------------------------------
 
 
-def run_reading_job(*, reading_id: UUID, context: JobExecutionContext) -> dict[str, object]:
+def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> dict[str, object]:
+    reading_id = UUID(payload["reading_id"])
     return run_generation_job(
         "oracle_reading",
         context,

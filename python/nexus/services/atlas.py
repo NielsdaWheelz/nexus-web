@@ -10,6 +10,8 @@ never become stars.
 """
 
 import math
+from collections.abc import Mapping
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
@@ -17,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.session import get_session_factory
+from nexus.jobs.queue import JobExecutionContext
 from nexus.schemas.atlas import AtlasEdgeOut, AtlasOut, ConstellationOut, StarOut
 from nexus.services.embeddings import EMBEDDING_PROVIDER, embedding_model
 from nexus.services.library_entries import library_media_ids_cte_sql
@@ -128,7 +131,9 @@ def project_all(db: Session) -> int:
     return len(rows)
 
 
-def atlas_project_job() -> dict[str, int]:
+def atlas_project_job(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> dict[str, int]:
     with get_session_factory()() as db:
         positioned = project_all(db)
         db.commit()

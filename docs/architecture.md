@@ -139,8 +139,8 @@ dependencies.
 | Next.js frontend + BFF | `apps/web`                                            | **Vercel** (staged, then promoted) | React UI + `/api/*` proxy to FastAPI    |
 | Caddy edge             | `deploy/hetzner/Caddyfile`                            | **Hetzner VPS** (Docker Compose) | TLS termination and exact route proxying  |
 | FastAPI API            | `apps/api/main.py` → `python/nexus`                   | **Hetzner VPS** (Docker Compose) | product API, SSE streaming                |
-| Interactive worker     | `apps/worker/main.py` → `python/nexus/jobs` + `tasks` | **same Hetzner VPS**             | user-waiting queue work                    |
-| Background worker      | `apps/worker/main.py` → `python/nexus/jobs` + `tasks` | **same Hetzner VPS**             | indexing, repair, teardown, periodic work |
+| Interactive worker     | `apps/worker/main.py` → `python/nexus/jobs` + owners  | **same Hetzner VPS**             | user-waiting queue work                    |
+| Background worker      | `apps/worker/main.py` → `python/nexus/jobs` + owners  | **same Hetzner VPS**             | indexing, repair, teardown, periodic work |
 | Codex generation host  | `apps/codex_agent`                                    | **same Hetzner VPS**             | isolated subscription-backed generation  |
 | Codex egress policy    | `deploy/hetzner/docker-compose.yml` (nginx stream)    | **same Hetzner VPS**             | TLS-SNI allowlist (chatgpt.com, auth.openai.com) |
 | PostgreSQL (pgvector)  | —                                                     | **same Hetzner VPS**             | the single source of truth                |
@@ -626,80 +626,40 @@ keepalive, never drops it.
 
 A durable Postgres-backed queue (`python/nexus/jobs/`). Jobs are enqueued by
 inserting a `background_jobs` row + `pg_notify` **in the caller's transaction**
-(atomic with domain writes). Two single-process, single-replica workers run the
-same entrypoint with fixed `interactive` and `background` lanes:
+(atomic with domain writes), with the attempt budget of the kind's registry row.
+Two single-process workers run the same entrypoint with fixed `interactive` and
+`background` lanes; each loop cycle:
 
-- **Job loop**: `claim_next_job` atomically picks one due row with
-  `FOR UPDATE SKIP LOCKED` (new work _or_ a crashed job whose lease expired),
-  admits it through its registry-owned `Light | Heavy` class, flips it to
-  `running` with a lease, allocates the attempt's non-resetting `execution_id`,
-  dispatches to the registered handler under a heartbeat
-  thread, then commits a terminal/retry transition. Each committed transition
-  also applies the kind's `history_projection`
-  (`jobs/history_projections.py`) so the retry, dead-letter, reclaim, or
-  reschedule is recorded as import history in the same transaction. One queue-owned capacity
-  row permits at most one Heavy attempt globally without blocking eligible
-  Light work. Retries are bounded
-  per-kind (`max_attempts`, `retry_delays_seconds`, `lease_seconds`); exhaustion
-  dead-letters the row. Domain finalizers close or suspend current Chat, Note,
-  Dossier, Media teardown, Podcast live-sync, and Podcast-backfill state without
-  overwriting newer lifecycle facts.
-- **Scheduler loop**: the background lane enqueues production periodic jobs
-  into fixed time slots with deterministic dedupe keys. Routine periodic rows
-  use priority 200 and yield to ordinary priority-100 work; the stale-ingest
-  reconciler alone uses priority -1000. A schedule pass locks and validates all
-  active aligned slots in that kind's global dedupe namespace, then reconciles
-  only priority, so deployment and expired-lease replay cannot retain stale
-  ordering policy. Immutable scheduler identity stays exact while the registry
-  declares the optional checkpoint keys that the storage orphan sweep may
-  persist; its owning codec remains responsible for checkpoint values.
-  The namespace lookup is cross-kind and locks at most 257 rows: more than 256
-  active claimants defects the whole transaction before reconciliation.
-  Propagated `request_id` values are correlation, not namespace ownership.
-  On-demand rows sharing the kind remain untouched, terminal history is
-  immutable, and foreign-kind, undeclared-checkpoint, or noncanonical periodic
-  collisions fail closed. The interactive lane has no periodic kinds.
+- **Schedules**: the background lane enqueues each periodic kind's current UTC
+  slot once cluster-wide (`periodic:<kind>:<slot start>`, unique dedupe key,
+  `available_at` = slot start). Routine periodic rows use priority 200 and yield to
+  ordinary priority-100 work; the stale-ingest reconciler alone uses priority
+  -1000. The interactive lane has no periodic kinds.
+- **Claims and runs**: `claim_next_job` picks one due row of the lane's kinds with
+  `FOR UPDATE SKIP LOCKED` (new work _or_ a row whose 30 s liveness lease expired),
+  takes the one Heavy capacity lease for a Heavy kind, flips it to `running` and
+  mints its `execution_id`. A heartbeat thread renews the lease every 5 s. The
+  interactive lane runs the handler in process; the background lane in a fresh
+  child bounded by the lane's 448 MiB cgroup.
+- **Settles**: one transaction applies the outcome (complete, reschedule, retry
+  after the kind's delay, or dead) under the fence `status = 'running' AND
+  execution_id`, then the kind's `on_dead` and `on_history` hooks, so a domain
+  finalizer and the import history commit with the transition they document.
 
-The **registry** (`jobs/registry.py`) is the source of truth mapping job kind →
-handler + policy. `job_topology.py` owns the disjoint/exhaustive 20-kind
-production topology and separate three-kind maintenance declaration without
-importing the application runtime graph. The entrypoint rejects
-missing/unknown lanes, registry drift, and raw allowlists on normal lanes. See
+The **registry** (`jobs/registry.py`) is the one table of kinds: lane, handler
+(`module:fn` in the owning service), budget, retry delays, Heavy class, schedule,
+retention and hook paths. Lanes, budgets and prune retention derive from it. See
 [modules/jobs.md](modules/jobs.md).
-Registry shims decode durable same-system payloads without compatibility
-defaults. In particular, the sole note-index and Synapse enqueuers persist a
-canonical, nonempty, unpadded `reason`; omission, coercion, or padding defects at
-dispatch instead of inventing `note_edit` or `manual`. Optional `request_id` and
-`scheduler_identity` carriers are either absent/`null` or the same canonical
-text shape; the registry never stringifies or trims malformed values. The
-scheduler-only Gutenberg sync, job-prune, and auth-handoff purge handlers
-require their scheduler-written `request_id`, and Gutenberg also requires the
-exact `scheduler_identity`; their tasks expose no default or invented identity.
-The note-reindex payload is closed to exactly `note_block_id` plus `reason`.
-Its registry shim passes the claimed `JobExecutionContext`, so task diagnostics
-use the real queue job identity and expose no direct-call `task_id` or unowned
-`request_id` compatibility surface.
-Worker-only task signatures mirror their registry shims without direct-call
-defaults. Nullable request identity remains explicit at the call site, and the
-podcast semantic-index task opens its production session factory internally;
-there is no unused factory-injection seam.
-The periodic storage orphan sweep receives only its claimed job context and
-reloads the fenced continuation payload from that row; the registry does not
-thread a duplicate raw mapping into the task.
 
-Task catalog (each is a thin handler in `tasks/` that wraps a service; the two
-reindex kinds are handled by their services, `content_indexing.run_media_reindex_job`
-and `note_indexing.run_note_reindex_job`):
-`ingest_media_source`, `enrich_metadata`, `chat_run`,
-`oracle_reading_generate`, `dossier_build`,
-`media_content_reindex_job`, `media_unit_build`, `note_reindex_job`,
-`podcast_sync_subscription_job`,
-`podcast_backfill_subscription`, `podcast_refresh_due_job` (periodic),
-`reconcile_stale_ingest_media_job` (periodic),
-`sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`
-(periodic), `purge_expired_auth_handoff_codes` (periodic), `connection_discovery_scan`,
-`atlas_project_job` (periodic), `media_teardown`,
-`storage_object_cleanup`, and `storage_orphan_sweep` (periodic).
+Kinds (19): interactive `chat_run`, `dossier_build`, `enrich_metadata`,
+`oracle_reading_generate`, `podcast_sync_subscription_job`; background
+`ingest_media_source`, `media_content_reindex_job`, `note_reindex_job`,
+`media_unit_build`, `connection_discovery_scan`, `podcast_backfill_subscription`,
+`media_teardown`, `storage_object_cleanup`, and the periodic
+`reconcile_stale_ingest_media_job`, `podcast_refresh_due_job`, `atlas_project_job`,
+`storage_orphan_sweep`, `prune_background_jobs_job`,
+`purge_expired_auth_handoff_codes`. The Project Gutenberg catalog sync is an
+operator command (`nexus sync-gutenberg-catalog`), not a kind.
 
 Author identity is resolved inline, synchronously, inside each ingest/enrichment
 lane — there is no separate contributor-dedupe job, proposal table, or merge
@@ -709,11 +669,10 @@ resolver keyed on exact stable key → confirmed alias → new contributor
 so duplicate identity is prevented at write time rather than proposed and
 reconciled after the fact.
 
-> Gotcha: `media_unit_build` declares `failed_result_statuses`. Other ingest
-> tasks that _return_ `{"status":"failed"}`
-> still mark the **queue** row succeeded — the failure is recorded on the domain
-> row, and recovery relies on the stale reconciler + manual API retry, not
-> queue-level retries.
+> Gotcha: a handler that _returns_ `{"status":"failed"}` still marks the
+> **queue** row succeeded — the failure is recorded on the domain row, and
+> recovery relies on the stale reconciler + manual API retry, not queue-level
+> retries. A handler that wants the job dead returns `TerminalJobFailure`.
 
 **Generation boundary.** Every generative job — chat, Oracle, connection
 discovery, dossiers, media summaries, and metadata enrichment — makes one
@@ -743,8 +702,8 @@ use the same positions. Every call that reaches dispatch leaves one row, complet
 with its effects.
 
 Local execution capacity belongs to the single-process interactive/background
-lanes and queue claims. SERIALIZABLE retries everywhere (including the scheduler
-loop) go through the one helper `db/retries.py:retry_serializable`.
+lanes and queue claims. SERIALIZABLE retries everywhere go through the one helper
+`db/retries.py:retry_serializable`.
 
 ### 7.4 Auth, identity & bootstrap
 

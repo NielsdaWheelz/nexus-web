@@ -9,6 +9,8 @@ again. Publication takes the media lock before its exact queue claim.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -20,8 +22,9 @@ from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.jobs.queue import (
     JobExecutionContext,
+    JobResult,
     TerminalJobFailure,
-    lock_and_renew_running_job_claim,
+    lock_running_job_claim,
 )
 from nexus.logging import get_logger
 from nexus.schemas.metadata_enrichment import (
@@ -67,7 +70,6 @@ from nexus.services.reader_publication import (
 
 logger = get_logger(__name__)
 
-_LEASE_SECONDS = 300
 type _JobResult = dict[str, object] | TerminalJobFailure
 
 _FAILURE_CODES: dict[FailureCode, MetadataFailureCode] = {
@@ -84,6 +86,16 @@ _FAILURE_CODES: dict[FailureCode, MetadataFailureCode] = {
     "interrupted": "worker_interrupted",
     "defect": "execution_failed",
 }
+
+
+def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobResult:
+    """The ``enrich_metadata`` handler."""
+    return enrich_metadata(
+        payload["media_id"],
+        payload.get("request_id"),
+        requester_user_id=UUID(payload["requester_user_id"]),
+        context=context,
+    )
 
 
 def enrich_metadata(
@@ -216,7 +228,7 @@ def _publish(
     media = db.scalar(
         select(Media).options(defer(Media.plain_text)).where(Media.id == media_id).with_for_update()
     )
-    if lock_and_renew_running_job_claim(db, context=context, lease_seconds=_LEASE_SECONDS) is None:
+    if lock_running_job_claim(db, context=context) is None:
         db.rollback()
         return {"status": "skipped", "reason": "claim_lost_before_publication"}
 

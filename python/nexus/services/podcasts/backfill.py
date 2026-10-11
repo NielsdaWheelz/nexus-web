@@ -7,6 +7,7 @@ applies once however often its job runs. Lock order: the backfill row, then inge
 """
 
 import json
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -14,9 +15,9 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.session import transaction
+from nexus.db.session import get_session_factory, transaction
 from nexus.ids import new_uuid7
-from nexus.jobs.queue import enqueue_unique_job
+from nexus.jobs.queue import JobExecutionContext, JobResult, enqueue_unique_job
 
 from .feed import fetch_page, is_safe_url
 from .ingest import ingest_episodes
@@ -52,7 +53,7 @@ def _enqueue_step(db: Session, backfill_id: UUID, step_no: int) -> None:
 def run_step(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
     """Fetch the step's page with no transaction open, then apply it once. A page that
     cannot be fetched or parsed raises: the job retries and, exhausted, fails the backfill
-    (jobs/dead_letter_projections.py)."""
+    (jobs/dead_letters.py)."""
     backfill_id = UUID(str(payload["backfillId"]))
     step_no = int(payload["expectedStepNo"])
     with transaction(db):
@@ -133,3 +134,9 @@ def run_step(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
         if cursor is not None:
             _enqueue_step(db, backfill_id, step_no + 1)
         return {"status": "Applied", "processed": len(page.episodes), "added": result.added_to_all}
+
+
+def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobResult:
+    """The ``podcast_backfill_subscription`` handler, in its background child."""
+    with get_session_factory()() as db:
+        return run_step(db, dict(payload))

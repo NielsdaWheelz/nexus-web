@@ -1,15 +1,8 @@
 # Worker-only env for the Hetzner VPS.
-# Compose assigns each normal worker its fixed lane. Raw allowlists are reserved
-# for gated, one-off maintenance invocations and do not belong in this file.
+# Compose assigns each worker its lane (WORKER_LANE). Leases, heartbeats and the
+# idle wait are fixed by the job runtime, not configured here.
 
 PARSER_TEMP_ROOT=/var/lib/nexus/parser-tmp
-WORKER_POLL_INTERVAL_SECONDS=5
-WORKER_IDLE_BACKOFF_MAX_SECONDS=300
-WORKER_SCHEDULER_INTERVAL_SECONDS=300
-WORKER_HEARTBEAT_INTERVAL_SECONDS=60
-WORKER_LEASE_SECONDS=300
-WORKER_DB_FAILURE_BACKOFF_SECONDS=60
-WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS=900
 
 # Connection discovery scans (connection_discovery_scan jobs no-op when false).
 # CONNECTION_DISCOVERY_ENABLED=true
@@ -23,9 +16,6 @@ INGEST_RECONCILE_SCHEDULE_SECONDS=600
 # Podcast freshness is ordinary background-lane work.
 PODCAST_REFRESH_DUE_SCHEDULE_SECONDS=900
 PODCAST_REFRESH_DUE_LIMIT=100
-
-# Maintenance-only schedules remain disabled in the normal production env.
-SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS=0
 
 # Background-job pruning runs on the background lane; these bound its retention.
 BACKGROUND_JOB_PRUNE_SUCCEEDED_AFTER_DAYS=7

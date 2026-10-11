@@ -555,7 +555,7 @@ the live Highlight.
 | `citations` | candidate numbering, attached evidence (retrievals with no call), publication |
 | `retrievals` | `RetrievalCitation`, `citation_from_search_result`, the one `message_retrievals` writer |
 | `events` | run lock, claim fence, append (and the threaded live append), tail read, stop flag, the terminal fold |
-| `worker` | the `chat_run` job, its dead-letter projection, the attempt, the text coalescer |
+| `worker` | the `chat_run` job (`run_job`), its `on_dead` hook, the attempt, the text coalescer |
 | `reads` | failure and rerun policy, run selection, owner gate, advisory, run response, tree, trust trails (the answer's `tool_calls` rows and its attached retrievals) |
 | `conversations` | create, the index, leaf select, fork title, deletes, owned ids, message action facts, the agent's page reader |
 

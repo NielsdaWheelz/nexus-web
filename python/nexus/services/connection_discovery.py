@@ -210,7 +210,7 @@ def dismiss_connection_discovery_edge(db: Session, *, viewer_id: UUID, edge_id: 
 
 
 def connection_discovery_scan_job(
-    payload: Mapping[str, object], *, context: JobExecutionContext
+    *, payload: Mapping[str, object], context: JobExecutionContext
 ) -> dict:
     user_id, ref = UUID(str(payload["user_id"])), assert_resource_ref(str(payload["ref"]))
 

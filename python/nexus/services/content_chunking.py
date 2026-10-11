@@ -24,6 +24,10 @@ from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
 
+from provider_runtime.errors import NonGenerationCallFailed
+from provider_runtime.types import TransientExhausted
+
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.embeddings import embed_texts
 from nexus.services.parser_temp import utf8_byte_length
 
@@ -65,13 +69,27 @@ class EnvelopeExceeded(Exception):
 
 
 def plan_chunks(blocks: Sequence[IndexableBlock], *, max_bytes: int | None) -> Iterator[Chunk]:
-    """Every chunk in order with its embedding, one provider request per 64 chunks."""
+    """Every chunk in order with its embedding, one provider request per 64 chunks.
+
+    A provider that stayed unavailable through its transient retries is
+    ``E_EMBEDDING_PROVIDER_UNAVAILABLE``: the index job retries it, not a defect.
+    """
     parts_iter = _chunk_parts(blocks)
     while batch := list(islice(parts_iter, EMBED_BATCH)):
         texts = ["".join(blocks[i].text[start:end] for i, start, end in parts) for parts in batch]
         if max_bytes is not None and any(utf8_byte_length(text) > max_bytes for text in texts):
             raise EnvelopeExceeded()
-        for parts, text, vector in zip(batch, texts, embed_texts(texts), strict=True):
+        try:
+            vectors = embed_texts(texts)
+        except NonGenerationCallFailed as exc:
+            if not isinstance(exc.failure, TransientExhausted):
+                raise
+            cause = f"{type(exc.failure.cause).__name__} after {exc.failure.attempts} attempts"
+            raise ApiError(
+                ApiErrorCode.E_EMBEDDING_PROVIDER_UNAVAILABLE,
+                f"The embedding provider stayed unavailable: {cause}.",
+            ) from exc
+        for parts, text, vector in zip(batch, texts, vectors, strict=True):
             yield Chunk(
                 parts[0][0], text, _chunk_locator(blocks, parts, text), array("f", vector).tobytes()
             )

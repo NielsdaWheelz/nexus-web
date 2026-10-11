@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from functools import partial
 from typing import Any
 from uuid import UUID
@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
+from nexus.jobs.queue import JobExecutionContext
 from nexus.services import media_source_types as source_types
 from nexus.services.content_indexing import ensure_media_content_reindex_job
 from nexus.services.media_source_ingest import ensure_stale_source_attempt_job
@@ -93,8 +94,9 @@ _STALE_CONTENT_INDEX_STATES = """
 """
 
 
-def reconcile_stale_ingest_media_job(request_id: str | None) -> dict[str, int]:
+def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> dict[str, int]:
     """Ensure the canonical job for every stuck source attempt and media index."""
+    request_id = payload["request_id"]
     stale_seconds = int(get_settings().ingest_stale_extracting_seconds)
     source_rows = _discover(_STALE_SOURCE_ATTEMPTS, stale_seconds=stale_seconds)
     index_rows = _discover(_STALE_CONTENT_INDEX_STATES, stale_seconds=stale_seconds)

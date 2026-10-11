@@ -15,7 +15,7 @@ from nexus.db.models import Media, ResourceMutation
 from nexus.db.retries import admit_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode, ConflictError
-from nexus.jobs.queue import lock_jobs_for_payload
+from nexus.jobs.queue import jobs_for_payload
 from nexus.services.content_indexing import request_media_content_reindex
 from nexus.services.media_source_ingest import correct_source_type, reprocess_retained_epub
 from nexus.services.reader_publication import normalize_stored_web_publication
@@ -85,10 +85,11 @@ def normalize_web(
                 ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Content index is not awaiting repair."
             )
         revision = int(index_state.revision)
-        jobs = lock_jobs_for_payload(
+        jobs = jobs_for_payload(
             db,
             kind="media_content_reindex_job",
-            expected_payload_match={"media_id": str(media_id), "revision": revision},
+            match={"media_id": str(media_id), "revision": revision},
+            lock=True,
         )
         if len(jobs) > 1:
             raise ConflictError(

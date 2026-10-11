@@ -13,6 +13,7 @@ then the user row for the Lectern.
 """
 
 import hashlib
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -20,9 +21,10 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.session import transaction
+from nexus.config import get_settings
+from nexus.db.session import get_session_factory, transaction
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.jobs.queue import JobRow, enqueue_job
+from nexus.jobs.queue import JobExecutionContext, JobResult, JobRow, enqueue_job
 from nexus.logging import get_logger
 from nexus.schemas import podcast as wire
 from nexus.services import library_governance
@@ -219,3 +221,15 @@ def dead_letter(db: Session, job: JobRow) -> None:
         ApiErrorCode.E_PODCAST_SYNC_RETRY_EXHAUSTED.value,
         job.last_error or "Podcast sync exhausted its retry budget",
     )
+
+
+def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobResult:
+    """The ``podcast_sync_subscription_job`` handler."""
+    with get_session_factory()() as db:
+        return run(db, dict(payload))
+
+
+def run_due_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobResult:
+    """The periodic ``podcast_refresh_due_job`` handler."""
+    with get_session_factory()() as db:
+        return {"subscription_count": admit_due(db, limit=get_settings().podcast_refresh_due_limit)}

@@ -10,15 +10,15 @@ model's event stream.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
-from typing import cast
+from collections.abc import Callable, Mapping
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
-from nexus.jobs.queue import JobExecutionContext, JobRow, get_job
+from nexus.jobs.queue import JobExecutionContext, JobRow
 from nexus.logging import get_logger, set_flow_id
 from nexus.schemas.conversation import ChatRunAssistantTextDeltaEventPayload
 from nexus.services.chat import citations, events, reads
@@ -43,13 +43,11 @@ FLUSH_CHARS = 512
 FLUSH_BYTES = 2048
 
 
-def chat_run(run_id: str, *, context: JobExecutionContext) -> None:
+def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> None:
     """The ``chat_run`` job; a defect escapes into the queue's retry."""
+    run_id = payload["run_id"]
 
     async def work(db: Session, runtime: Runtime) -> None:
-        job = get_job(db, context.job_id)
-        if job is None or str(job.payload.get("run_id")) != run_id:
-            raise AssertionError("claimed chat job does not match its run payload")
         set_flow_id(run_id)
         try:
             await _execute(db, UUID(run_id), context, runtime)

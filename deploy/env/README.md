@@ -133,17 +133,19 @@ is `deploy/hetzner/deploy.sh <source-sha> [--model-cutover-snapshot <reviewed-js
 
 ## Worker contract
 
-Production has exactly `interactive` and `background` workers. Their normal env
-contains no `WORKER_LANE`, raw job-kind allowlist, or maintenance authorization.
-Compose assigns lanes; the registry assigns kinds.
+Production has exactly `interactive` and `background` workers. Their env
+contains no `WORKER_LANE`: Compose assigns lanes; the registry
+(`python/nexus/jobs/registry.py`) assigns kinds.
 
 `PARSER_TEMP_ROOT` is exactly `/var/lib/nexus/parser-tmp`. Production Compose
 binds that host directory only into the background worker; it is not a tunable
 capacity control.
 
-The background lane owns ordinary periodic work. Maintenance kinds run only in
-a bounded explicitly authorized one-off process; there is no deployed
-maintenance worker.
+The background lane owns ordinary periodic work. The Project Gutenberg catalog
+sync is operator-triggered: `nexus sync-gutenberg-catalog` in a one-off
+`migration` container
+([`deployment.md`](../../deployment.md#gutenberg-catalog-sync)); no worker runs
+it.
 
 ## Provider checks
 

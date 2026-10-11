@@ -13,7 +13,7 @@ from typing import Any
 
 from nexus.config import get_settings
 from nexus.db.session import get_session_factory
-from nexus.jobs.queue import JobExecutionContext, RescheduleRequested, ScheduleAt, get_job
+from nexus.jobs.queue import JobExecutionContext, RescheduleRequested
 from nexus.logging import get_logger
 from nexus.storage.client import get_storage_client
 from nexus.tasks.storage_object_cleanup import (
@@ -29,16 +29,13 @@ _CONTINUATION_TOKEN_KEY = "continuationToken"
 
 
 def storage_orphan_sweep(
-    *, context: JobExecutionContext
+    *, payload: Mapping[str, Any], context: JobExecutionContext
 ) -> Mapping[str, Any] | RescheduleRequested | None:
     """Sweep one page of the media prefix; reschedule to continue, else complete."""
     min_age = timedelta(seconds=int(get_settings().storage_orphan_sweep_min_age_seconds))
     db = get_session_factory()()
     try:
-        job = get_job(db, context.job_id)
-        if job is None:
-            raise RuntimeError("storage_orphan_sweep job row vanished after claim")
-        token = job.payload.get(_CONTINUATION_TOKEN_KEY)
+        token = payload.get(_CONTINUATION_TOKEN_KEY)
 
         client = get_storage_client()
         page = client.list_objects(_MEDIA_PREFIX, continuation_token=token)
@@ -63,12 +60,12 @@ def storage_orphan_sweep(
                 "storage_orphan_sweep_reclaimed_objects",
                 deleted=deleted,
                 scanned=scanned,
-                worker_id=context.worker_id,
+                execution_id=str(context.execution_id),
             )
         if page.next_continuation_token is not None:
             return RescheduleRequested(
-                schedule=ScheduleAt(datetime.now(UTC)),
-                payload={**job.payload, _CONTINUATION_TOKEN_KEY: page.next_continuation_token},
+                datetime.now(UTC),
+                payload={**payload, _CONTINUATION_TOKEN_KEY: page.next_continuation_token},
             )
         return {"disposition": "SweepComplete", "deleted": deleted, "scanned": scanned}
     finally:

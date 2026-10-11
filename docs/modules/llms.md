@@ -183,7 +183,7 @@ spec and job id, closed once with `Succeeded | Failed | Cancelled`, one failure
 code, route evidence (never model text) and summed usage. it is an unreplayable
 multi-mutation: nothing survives a process. a worker that dies mid-generation
 leaves its row open until its job's next attempt starts (`run_generation_job`
-closes the job's open rows first), the job dies (dead-letter projection), the
+closes the job's open rows first), the job dies (its `on_dead` hook), the
 job is revoked, or migration 0269 closes it `interrupted`. chat never reruns a
 generation (the run fails `interrupted`; the user reruns); background jobs rerun
 from scratch, repaying the call. completed additive writes still commit effect
