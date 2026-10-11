@@ -1,10 +1,11 @@
-# indexing without a credential is classified as a child defect
+# indexing without a credential is classified as a handler failure
 
 status: open · origin: 2026-09-24 reader-inspector-controls live verification, branch `reader-inspector-controls` · area: worker / search indexing
 
 without an openai credential, `media_content_reindex_job` (documents and, since
 the 2026-10-10 content index reauthor, transcripts) and `note_reindex_job` fail as
-`E_WORKER_CHILD_DEFECT` ("CredentialMissing at background child boundary") and
+`E_WORKER_HANDLER_FAILED` ("CredentialMissing: no openai credential configured";
+since the 2026-10-10 jobs reauthor one `failure_of` classifies both lanes) and
 retry to dead. the reader then shows "search indexing stopped" and imports count
 it as needs-attention. a missing configuration is reported as a code defect.
 (the transcript kind's reconciler loop that re-admitted such a dead index every

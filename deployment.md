@@ -448,6 +448,23 @@ library, sources and anchors to the file and prints its counts; ordinary
 workers ingest and index, and the next reading resolves the anchors. See
 [docs/modules/oracle.md](docs/modules/oracle.md).
 
+## Gutenberg catalog sync
+
+The Project Gutenberg catalog mirror is refreshed on demand, never by a worker.
+Run it in a one-off `migration` container (the API image, 512 MiB, its own
+cgroup), not inside `worker-background`, whose 448 MiB belongs to its job child:
+
+```bash
+ssh nexus@5.78.194.235 'sudo env API_IMAGE=<deployed api digest> \
+  WORKER_IMAGE=<deployed worker digest> NEXUS_CONFIG_FILE=/etc/nexus/current.env \
+  docker compose --project-name nexus --env-file /etc/nexus/current.env \
+  --file /etc/nexus/docker-compose.yml --profile release \
+  run --rm --no-deps --no-TTY migration nexus sync-gutenberg-catalog'
+```
+
+It downloads the feed, reconciles the mirror in one transaction, and prints its
+result (`row_count`, `source_url`); it is safe while every writer runs.
+
 ## Reader publication preflight
 
 Offline reading identifies a reader document by its publication generation.

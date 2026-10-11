@@ -25,10 +25,9 @@ from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
     RescheduleRequested,
-    ScheduleAt,
     enqueue_job,
-    find_nonterminal_jobs_for_payload,
     get_job,
+    jobs_for_payload,
     update_running_job_payload,
     update_unclaimed_job,
 )
@@ -111,10 +110,11 @@ def path_has_live_db_owner(db: Session, storage_path: str) -> bool:
 
 
 def _armed_writers_for_path(db: Session, storage_path: str) -> list[JobRow]:
-    return find_nonterminal_jobs_for_payload(
+    return jobs_for_payload(
         db,
         kind=STORAGE_OBJECT_CLEANUP_JOB_KIND,
-        expected_payload_match={"storagePath": storage_path},
+        match={"storagePath": storage_path},
+        statuses=("pending", "failed", "running"),
     )
 
 
@@ -182,16 +182,15 @@ def _reserve(
         payload["retainUntil"] = iso(retain_until)
         available_at = max(retain_until, write_may_land_until)
 
-    existing = find_nonterminal_jobs_for_payload(
-        db, kind=STORAGE_OBJECT_CLEANUP_JOB_KIND, expected_payload_match=match
+    existing = jobs_for_payload(
+        db,
+        kind=STORAGE_OBJECT_CLEANUP_JOB_KIND,
+        match=match,
+        statuses=("pending", "failed", "running"),
     )
     if not existing:
         enqueue_job(
-            db,
-            kind=STORAGE_OBJECT_CLEANUP_JOB_KIND,
-            payload=payload,
-            available_at=available_at,
-            max_attempts=5,
+            db, kind=STORAGE_OBJECT_CLEANUP_JOB_KIND, payload=payload, available_at=available_at
         )
         return
     renewed = update_unclaimed_job(
@@ -255,8 +254,11 @@ def _finalize(
     with transaction(db):
         owner_present, intent_present = _lock_owner(db, owner_kind, owner_id)
         owned = path_has_live_db_owner(db, storage_path)
-        reservations = find_nonterminal_jobs_for_payload(
-            db, kind=STORAGE_OBJECT_CLEANUP_JOB_KIND, expected_payload_match=match
+        reservations = jobs_for_payload(
+            db,
+            kind=STORAGE_OBJECT_CLEANUP_JOB_KIND,
+            match=match,
+            statuses=("pending", "failed", "running"),
         )
         if owner_present and not intent_present and owned and reservations:
             update_unclaimed_job(
@@ -382,9 +384,9 @@ def _resolve_armed(
     if decision == _DELETE_REQUIRED:
         return _perform_delete(db, context, storage_path, base_payload)
     if decision == "retained-window":
-        return RescheduleRequested(schedule=ScheduleAt(delete_not_before))
+        return RescheduleRequested(delete_not_before)
     # Live intent: wait for teardown to delete the media or void the intent.
-    return RescheduleRequested(schedule=ScheduleAt(now_utc(db) + timedelta(seconds=poll_seconds)))
+    return RescheduleRequested(now_utc(db) + timedelta(seconds=poll_seconds))
 
 
 def _perform_delete(

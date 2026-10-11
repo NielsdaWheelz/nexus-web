@@ -90,12 +90,12 @@ services:
     volumes:
       - ${NEXUS_LOCAL_RUNTIME_IDENTITY_FILE:?generate a local runtime identity}:/app/local-runtime-identity.json:ro
       - nexus_codex_run:/tmp/codex-daemon-10001
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-        reservations:
-          memory: 512M
+    # The lane proves this exact bound at start (BACKGROUND_WORKER_MEMORY_LIMIT_BYTES):
+    # one memory-bounded child per job shares it with the supervisor, as in production.
+    init: true
+    mem_limit: 448m
+    memswap_limit: 448m
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "python", "-S", "-m", "apps.worker.health", "--lane", "background"]
       interval: 30s

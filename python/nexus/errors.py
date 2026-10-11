@@ -102,6 +102,8 @@ class ApiErrorCode(str, Enum):
 
     # LLM errors
     E_APP_SEARCH_FAILED = ("E_APP_SEARCH_FAILED", 500)  # Required in-app retrieval failed
+    # Indexing: the embedding provider stayed unavailable through its transient retries.
+    E_EMBEDDING_PROVIDER_UNAVAILABLE = ("E_EMBEDDING_PROVIDER_UNAVAILABLE", 503)
     E_MESSAGE_TOO_LONG = ("E_MESSAGE_TOO_LONG", 400)  # Message exceeds 20,000 char limit
     E_RATE_LIMITED = ("E_RATE_LIMITED", 429)  # SSE listener capacity exhausted (db/listen.py)
     E_IDEMPOTENCY_KEY_REPLAY_MISMATCH = (
@@ -271,8 +273,8 @@ type ResourceFailureDimension = Literal["Memory", "Time", "Structure", "Output"]
 class ResourceLimitError(ApiError):
     """A declared parser or runtime budget breach carrying its safe dimension.
 
-    This is the single typed carrier the background child boundary projects into
-    the ``ModeledFailure`` result; untyped exception attributes are never read.
+    The job runtime's ``failure_of`` keeps the dimension, so the job goes dead as a
+    resource failure; untyped exception attributes are never read.
     """
 
     def __init__(self, message: str, *, dimension: ResourceFailureDimension) -> None:

@@ -1,16 +1,12 @@
-# local worker overlay memory bound fails the background lane check
+# local worker overlay hardcodes its minio cors origins and ports
 
-status: open; read from code, not run · origin: 2026-09-24 reader-inspector-controls live verification, branch `reader-inspector-controls` · area: local development / worker
+status: open (the memory half was fixed by the 2026-10-10 jobs reauthor: the
+overlay bounds `worker-background` at `mem_limit`/`memswap_limit` 448m, `init:
+true`); read from code, not run · origin: 2026-09-24 reader-inspector-controls live verification, branch `reader-inspector-controls` · area: local development / worker
 
-`docker/docker-compose.worker.yml:42` (and `:85`) bound the background worker at
-`2G`, but the background lane validates its cgroup `memory.max` equals
-`BACKGROUND_WORKER_MEMORY_LIMIT_BYTES` (448 MiB, `python/nexus/config.py:42`,
-checked by the process executor's validated cgroup open). the overlay's minio
-cors/ports are also hardcoded to 3000/3001. an isolated stack ran the lane with
-`mem_limit`/`memswap_limit` 448m (matching `deploy/hetzner`) and it validated.
+the overlay's minio cors/ports are hardcoded to 3000/3001.
 
-fix: bound the local overlay exactly as production does and derive the cors
-origins from the web port.
+fix: derive the cors origins from the web port.
 
-acceptance: `docker compose -f docker/docker-compose.worker.yml up` starts a
-background lane that passes its cgroup validation on a clean host.
+acceptance: `docker compose -f docker/docker-compose.worker.yml up` with a
+non-default web port serves browser uploads.

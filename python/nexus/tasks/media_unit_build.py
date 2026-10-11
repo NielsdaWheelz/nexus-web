@@ -8,6 +8,7 @@ retry after a dead worker generates again from scratch.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal, NamedTuple, cast
 from uuid import UUID
 
@@ -96,10 +97,9 @@ class _Head(NamedTuple):
     content_fingerprint: str
 
 
-def media_unit_build(
-    *, media_id: str, content_fingerprint: str, context: JobExecutionContext
-) -> dict:
+def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> dict:
     """Worker entry: synthesize one media unit."""
+    media_id, content_fingerprint = payload["media_id"], payload["content_fingerprint"]
     media_uuid = UUID(media_id)
 
     async def handler(db: Session, runtime: Runtime) -> dict:
@@ -322,8 +322,7 @@ def _update_head(
                   AND content_fingerprint = :expected_fingerprint
                   AND EXISTS (
                       SELECT 1 FROM background_jobs
-                      WHERE id = :job_id AND status = 'running' AND claimed_by = :worker_id
-                        AND attempts = :attempt_no AND lease_expires_at > now()
+                      WHERE id = :job_id AND status = 'running' AND execution_id = :execution_id
                   )
                 """
             ),
@@ -333,8 +332,7 @@ def _update_head(
                 "media_id": head.media_id,
                 "expected_fingerprint": head.content_fingerprint,
                 "job_id": ctx.job_id,
-                "worker_id": ctx.worker_id,
-                "attempt_no": ctx.attempt_no,
+                "execution_id": ctx.execution_id,
             },
         ),
     )

@@ -33,7 +33,6 @@ from nexus.db.retries import admit_serializable, retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
 from nexus.jobs import queue
-from nexus.jobs.registry import get_default_registry
 from nexus.schemas.import_history import (
     IndexAccepted,
     IndexExecutionStarted,
@@ -407,10 +406,9 @@ def _lock(db: Session, media_id: UUID) -> Row[Any] | None:
 
 
 def _current_job(db: Session, media_id: UUID, revision: int) -> queue.JobRow | None:
-    """The revision's one job, locked."""
-    jobs = queue.lock_jobs_for_payload(
-        db, kind=JOB_KIND, expected_payload_match={"media_id": str(media_id), "revision": revision}
-    )
+    """The revision's newest job, locked."""
+    match = {"media_id": str(media_id), "revision": revision}
+    jobs = queue.jobs_for_payload(db, kind=JOB_KIND, match=match, lock=True)
     return jobs[-1] if jobs else None
 
 
@@ -435,20 +433,17 @@ def request_media_content_reindex(
     payload = {"media_id": str(media_id), "revision": revision, "reason": reason}
     waiting = [
         job
-        for job in queue.lock_jobs_for_payload(
-            db, kind=JOB_KIND, expected_payload_match={"media_id": str(media_id)}
+        for job in queue.jobs_for_payload(
+            db, kind=JOB_KIND, match={"media_id": str(media_id)}, lock=True
         )
-        if job.status in ("pending", "failed") and job.claimed_by is None
+        if job.status in ("pending", "failed")
     ]
     for obsolete in waiting[1:]:
         queue.supersede_unclaimed_job(db, job_id=obsolete.id, kind=JOB_KIND)
-    attempts = get_default_registry()[JOB_KIND].max_attempts
     job = (
-        queue.reset_unclaimed_job_for_new_intent(
-            db, job_id=waiting[0].id, kind=JOB_KIND, payload=payload, max_attempts=attempts
-        )
+        queue.reset_unclaimed_job(db, job_id=waiting[0].id, kind=JOB_KIND, payload=payload)
         if waiting
-        else queue.enqueue_job(db, kind=JOB_KIND, payload=payload, max_attempts=attempts)
+        else queue.enqueue_job(db, kind=JOB_KIND, payload=payload)
     )
     _event(db, media_id, IndexAccepted(revision=revision, job_id=job.id))
     return MediaContentReindexIntent(revision, job.id, suspended=False, enqueued=not waiting)
@@ -520,7 +515,6 @@ def run_media_reindex_job(
         "media_id": str(media_id),
         "revision": revision,
     }
-    lease = get_default_registry()[JOB_KIND].lease_seconds
 
     def record(db: Session, facts: Callable[..., IndexFacts], job_id: UUID) -> None:
         execution = {"revision": revision, "job_id": job_id, "execution_id": context.execution_id}
@@ -529,11 +523,7 @@ def run_media_reindex_job(
     def fence(db: Session) -> UUID | None:
         """The claimed job's id while ``revision`` is current; else record supersession."""
         state = _lock(db, media_id)
-        job = (
-            None
-            if state is None
-            else queue.lock_and_renew_running_job_claim(db, context=context, lease_seconds=lease)
-        )
+        job = None if state is None else queue.lock_running_job_claim(db, context=context)
         if state is None or job is None:
             return None
         if state.revision != revision:

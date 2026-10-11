@@ -12,48 +12,28 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.models import MediaSourceAttempt, MediaSourceAttemptStatus
 from nexus.db.retries import retry_serializable
-from nexus.jobs.queue import JobExecutionContext, lock_and_renew_running_job_claim
+from nexus.jobs.queue import JobExecutionContext, lock_running_job_claim
 from nexus.logging import get_logger
 from nexus.schemas.import_history import SourceStageChanged, Stage
 from nexus.schemas.media import SourceCountedProgress, SourceProgress, SourceStageProgress
 from nexus.schemas.presence import absent, present
 from nexus.services.import_history import append_processing_event
 
-SOURCE_PUBLICATION_LEASE_SECONDS = 300
 _NONTERMINAL = {"accepted", "queued", "running"}
 logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
-class SourcePublicationFence:
+class SourcePublicationFence(JobExecutionContext):
+    """A source attempt's claim: every publication phase fences on it."""
+
     attempt_id: UUID
-    job_id: UUID
-    worker_id: str
-    attempt_no: int
-    resource_class: Literal["Light", "Heavy"]
-    execution_id: UUID
 
     @classmethod
     def from_context(
         cls, *, attempt_id: UUID, context: JobExecutionContext
     ) -> SourcePublicationFence:
-        return cls(
-            attempt_id=attempt_id,
-            job_id=context.job_id,
-            worker_id=context.worker_id,
-            attempt_no=context.attempt_no,
-            resource_class=context.resource_class,
-            execution_id=context.execution_id,
-        )
-
-    def execution_context(self) -> JobExecutionContext:
-        return JobExecutionContext(
-            job_id=self.job_id,
-            worker_id=self.worker_id,
-            attempt_no=self.attempt_no,
-            resource_class=self.resource_class,
-            execution_id=self.execution_id,
-        )
+        return cls(context.job_id, context.execution_id, context.attempt_no, attempt_id)
 
 
 class SourcePublicationSuperseded(Exception):
@@ -90,12 +70,7 @@ def require_source_publication(
         raise SourcePublicationSuperseded("attempt_identity_changed")
     if latest_source_attempt_id(db, attempt.media_id) != attempt.id:
         raise SourcePublicationSuperseded("newer_source_attempt_exists")
-    if (
-        lock_and_renew_running_job_claim(
-            db, context=fence.execution_context(), lease_seconds=SOURCE_PUBLICATION_LEASE_SECONDS
-        )
-        is None
-    ):
+    if lock_running_job_claim(db, context=fence) is None:
         raise SourcePublicationSuperseded("queue_claim_lost")
     return attempt
 

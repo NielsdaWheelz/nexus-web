@@ -1,4 +1,5 @@
-"""Terminal failure publication for durable media source attempts."""
+"""Terminal failure publication for durable media source attempts, and the ingest
+job's two queue hooks (import-light: they run in the background supervisor)."""
 
 from __future__ import annotations
 
@@ -10,7 +11,12 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.errors import ApiErrorCode, ResourceFailureDimension
-from nexus.schemas.import_history import SourceFailed, assume_safe_failure_code
+from nexus.jobs.queue import JobRow
+from nexus.schemas.import_history import (
+    SourceFailed,
+    assume_safe_failure_code,
+    queue_failure_code,
+)
 from nexus.schemas.presence import Presence, present
 from nexus.services import media_source_types as source_types
 from nexus.services.import_history import append_processing_event
@@ -22,6 +28,7 @@ from nexus.services.podcasts.transcription_failure import (
 from nexus.services.source_history import source_failure_progress, source_history_stage
 from nexus.services.transcripts.state import set_media_transcript_state
 
+# Keyed by a resource failure's dimension (``background_jobs.result``).
 _RESOURCE_LIMIT_MESSAGES: dict[ResourceFailureDimension, str] = {
     "Memory": "Source processing exceeded its memory resource limit.",
     "Time": "Source processing exceeded its time resource limit.",
@@ -43,44 +50,11 @@ class SourceAttemptFailure:
     was published outside any execution (acceptance or enqueue time)."""
 
 
-@dataclass(frozen=True)
-class ResourceLimitedSourceAttempt:
-    media_id: UUID
-    attempt_id: UUID
-    dimension: ResourceFailureDimension
-    execution_id: Presence[UUID]
-
-
 def source_attempt_failure_stage(source_type: str) -> MediaFailureStage:
     """The one Media failure stage owned by a source type."""
     if source_type in source_types.TRANSCRIPT_SOURCE_TYPES:
         return "transcribe"
     return "extract"
-
-
-def publish_resource_limited_source_attempt(
-    db: Session, command: ResourceLimitedSourceAttempt
-) -> str:
-    """Publish a bounded child resource failure and return its queue-safe message."""
-    message = _RESOURCE_LIMIT_MESSAGES[command.dimension]
-    now = db.execute(text("SELECT clock_timestamp()")).scalar_one()
-    source_type = db.execute(
-        text("SELECT source_type FROM media_source_attempts WHERE id = :attempt_id"),
-        {"attempt_id": command.attempt_id},
-    ).scalar_one()
-    publish_source_attempt_failure(
-        db,
-        SourceAttemptFailure(
-            media_id=command.media_id,
-            attempt_id=command.attempt_id,
-            failure_stage=source_attempt_failure_stage(str(source_type)),
-            error_code=ApiErrorCode.E_RESOURCE_LIMIT.value,
-            error_message=message,
-            now=now,
-            execution_id=command.execution_id,
-        ),
-    )
-    return message
 
 
 def publish_source_attempt_failure(db: Session, failure: SourceAttemptFailure) -> None:
@@ -176,3 +150,64 @@ def publish_source_attempt_failure(db: Session, failure: SourceAttemptFailure) -
             last_error_code=failure.error_code,
             now=failure.now,
         )
+
+
+def on_failure(db: Session, job: JobRow) -> dict[str, str] | None:
+    """An ingest attempt that failed after its source work finished completes instead.
+
+    Its own committed success wins over a dying child; an attempt that is not this
+    job's, or not the media's latest, makes the job superseded.
+    """
+    attempt = (
+        db.execute(
+            text("""SELECT a.job_id, a.status, a.id = (
+                    SELECT latest.id FROM media_source_attempts latest
+                    WHERE latest.media_id = a.media_id
+                    ORDER BY latest.attempt_no DESC, latest.created_at DESC, latest.id DESC
+                    LIMIT 1) AS latest
+                FROM media_source_attempts a WHERE a.id = :attempt_id AND a.media_id = :media_id"""),
+            {"attempt_id": job.payload["attempt_id"], "media_id": job.payload["media_id"]},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if attempt is None or attempt["job_id"] != job.id or not attempt["latest"]:
+        return {"status": "superseded"}
+    return {"kind": "SourceProjectionSucceeded"} if attempt["status"] == "succeeded" else None
+
+
+def on_dead_letter(db: Session, job: JobRow) -> None:
+    """A dead ingest job fails its still-running attempt when a retry cannot help.
+
+    A resource limit fails any source; a podcast transcript fails so a later request
+    can admit a new attempt. Other sources keep the dead job for the repair offer.
+    """
+    attempt_id, media_id = UUID(job.payload["attempt_id"]), UUID(job.payload["media_id"])
+    source_type = db.scalar(
+        text("""SELECT source_type FROM media_source_attempts
+            WHERE id = :attempt_id AND media_id = :media_id
+              AND status IN ('accepted', 'queued', 'running')"""),
+        {"attempt_id": attempt_id, "media_id": media_id},
+    )
+    resource = job.error_code == ApiErrorCode.E_RESOURCE_LIMIT.value
+    if source_type is None or not (
+        resource or source_type == source_types.PODCAST_EPISODE_TRANSCRIPT
+    ):
+        return
+    assert job.error_code and job.last_error and job.execution_id  # a dead claim has all three
+    message = job.last_error
+    if resource:
+        assert job.result is not None  # the worker records a resource failure's dimension
+        message = _RESOURCE_LIMIT_MESSAGES[job.result["dimension"]]
+    publish_source_attempt_failure(
+        db,
+        SourceAttemptFailure(
+            media_id=media_id,
+            attempt_id=attempt_id,
+            failure_stage=source_attempt_failure_stage(source_type),
+            error_code=queue_failure_code(job.error_code),
+            error_message=message,
+            now=db.scalar(text("SELECT clock_timestamp()")),
+            execution_id=present(job.execution_id),
+        ),
+    )

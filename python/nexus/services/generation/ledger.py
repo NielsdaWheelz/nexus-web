@@ -16,6 +16,7 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.orm import Session
 
 from nexus.db.models import LLMCall
+from nexus.jobs.queue import JobRow
 from nexus.services.generation.contract import (
     Failed,
     GenerationSpec,
@@ -96,6 +97,11 @@ def interrupt_job_generations(db: Session, *, job_id: UUID, detail: str) -> None
         """),
         {"job_id": job_id, "detail": detail},
     )
+
+
+def on_dead_letter(db: Session, job: JobRow) -> None:
+    """A dead job's open generation closes; its domain row stays (a rerun starts afresh)."""
+    interrupt_job_generations(db, job_id=job.id, detail="its job died")
 
 
 def generation_exists(db: Session, *, kind: OwnerKind, id: UUID) -> bool:

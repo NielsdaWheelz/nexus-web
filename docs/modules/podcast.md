@@ -203,7 +203,7 @@ non-terminal, ingests the page's episodes at or before the cutoff (undated
 included), advances the step and enqueues the next, or stamps `completed_at` /
 `source_limited_at` (a revisit, an unsafe url, 10 pages, or a skipped item). A
 page that cannot be fetched or parsed raises: the job retries (60 s, 300 s) and
-its dead letter (`jobs/dead_letter_projections._project_podcast_backfill`,
+its `on_dead` reaction (`jobs/dead_letters.podcast_backfill`,
 matching backfill id and step) stamps it Failed. Retry backlog replaces a failed
 backfill with a fresh one at the same cutoff, else answers `NotEligible`. Live
 sync continues while the backfill runs, is source-limited, or failed.
@@ -259,7 +259,7 @@ through `source_attempt_failures.py`, which publishes Media, job and transcript
 failure through `podcasts/transcription_failure.py` (`unavailable` for
 `E_TRANSCRIPT_UNAVAILABLE`, else `failed_provider`; it imports no provider: the
 supervisor path). A retryable failure (Deepgram 5xx, timeout) retries the job;
-when its retries run out, the `SourceAttempt` dead-letter projection settles a
+when its retries run out, its `on_dead` hook (`source_attempt_failures.on_dead_letter`) settles a
 still-running transcript attempt the same way, so a later request can admit a
 new one. Other source types keep their dead job for the source repair offer.
 

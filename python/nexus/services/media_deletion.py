@@ -117,7 +117,6 @@ def claim_media_teardown(db: Session, media_id: UUID) -> UUID:
             "intentId": str(intent_id),
             "checkpoint": {"kind": "Unprepared"},
         },
-        max_attempts=5,
     )
     return intent_id
 

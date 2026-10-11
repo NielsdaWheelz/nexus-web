@@ -26,9 +26,8 @@ from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
     RescheduleRequested,
-    ScheduleAt,
-    find_nonterminal_jobs_for_payload,
     get_job,
+    jobs_for_payload,
     update_running_job_payload,
 )
 from nexus.services import media_deletion
@@ -112,10 +111,11 @@ def _prepare(
         # deadline, and sweep the paths those writers hold.
         grace = int(get_settings().media_teardown_cleanup_grace_seconds)
         cleanup_not_before = now_utc(db) + timedelta(seconds=grace)
-        for writer in find_nonterminal_jobs_for_payload(
+        for writer in jobs_for_payload(
             db,
             kind=STORAGE_OBJECT_CLEANUP_JOB_KIND,
-            expected_payload_match={"mediaId": str(media_id)},
+            match={"mediaId": str(media_id)},
+            statuses=("pending", "failed", "running"),
         ):
             path = writer.payload.get("storagePath")
             if isinstance(path, str):
@@ -135,7 +135,7 @@ def _prepare(
         )
 
     # Re-run immediately for the deletion step, on the queue's own clock.
-    return RescheduleRequested(schedule=ScheduleAt(now_utc(db)))
+    return RescheduleRequested(now_utc(db))
 
 
 def _commit_or_void(
@@ -188,9 +188,7 @@ def _commit_or_void(
 
     next_kind = retry_serializable(db, "media_teardown_commit", op)
     if next_kind == _DELETION_COMMITTED:
-        return RescheduleRequested(
-            schedule=ScheduleAt(parse_iso(str(checkpoint["cleanupNotBefore"])))
-        )
+        return RescheduleRequested(parse_iso(str(checkpoint["cleanupNotBefore"])))
     return {"disposition": next_kind}
 
 
@@ -200,7 +198,7 @@ def _cleanup_storage(
     """DeletionCommitted: wait out cleanupNotBefore, then delete the persisted paths."""
     cleanup_not_before: datetime = parse_iso(str(checkpoint["cleanupNotBefore"]))
     if now_utc(db) < cleanup_not_before:
-        return RescheduleRequested(schedule=ScheduleAt(cleanup_not_before))
+        return RescheduleRequested(cleanup_not_before)
 
     client = get_storage_client()
     storage_paths = list(checkpoint.get("storagePaths") or [])

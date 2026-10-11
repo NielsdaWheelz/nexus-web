@@ -24,7 +24,8 @@ reachable states fall outside that and raise `AssertionError` instead:
    job state")`. This is the dominant case in production.
 2. **A nonterminal attempt whose exact job is `dead`.** That is precisely the state
    `source_repairable_sql` offers `RepairSource` for. The read is
-   `find_nonterminal_jobs_for_payload`, which excludes `dead`, so the completion
+   `find_nonterminal_jobs_for_payload` (since the jobs reauthor `jobs_for_payload`
+   with the unfinished statuses), which excludes `dead`, so the completion
    raises `AssertionError("in-flight X-post attempt has no exact ingest job")`
    (before this round the same state raised "invalid job state").
 

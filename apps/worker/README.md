@@ -1,15 +1,14 @@
 # Nexus Worker
 
-One process per lane, each running two loops against `background_jobs`:
+One process per lane. Each loop cycle enqueues the lane's due periodic slots
+(once cluster-wide), dead-letters or claims one due job, runs it, and settles it;
+an idle worker waits for a notify on its kinds, its next due row, or 5 s.
 
-- Job loop: claim one due row, execute its handler, settle the row.
-- Scheduler loop: enqueue each due periodic slot once, cluster-wide.
-
-`WORKER_LANE=interactive` owns the five user-waiting kinds and keeps handlers
-in-process. `WORKER_LANE=background`
-owns the fifteen retrieval, repair, teardown and periodic kinds and runs every
-handler in a fresh cgroup-limited child. The lanes are disjoint and together
-cover the production-enabled job set (`python/nexus/job_topology.py`).
+`WORKER_LANE=interactive` owns the five user-waiting kinds and runs handlers
+in-process. `WORKER_LANE=background` owns the fourteen retrieval, repair,
+teardown and periodic kinds and runs every handler in a fresh child bounded by
+the lane's 448 MiB cgroup. Each kind's lane is its registry row
+(`python/nexus/jobs/registry.py`).
 
 ## Run
 
@@ -31,6 +30,9 @@ PYTHONPATH=$PWD:$PWD/.. \
   uv run python -m apps.worker.main
 ```
 
+The background lane runs only in a container: it proves its cgroup v2 memory
+bound (exactly 448 MiB, `memory.oom.group` 0) when it starts.
+
 ## Docker
 
 ```bash
@@ -42,35 +44,28 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml 
 ```
 
 Each container's healthcheck runs `python -S -m apps.worker.health --lane <lane>`,
-which fails unless the process published a database-backed cycle in the last 20
-seconds under the running image's identity.
+which fails unless the lane's live process published a database-backed cycle in
+the last 20 seconds. A worker publishes nothing until the database is at its
+image's revision, which it proves once, at start.
 
 ## Environment
 
 `DATABASE_URL`, `NEXUS_RUNTIME_IDENTITY_FILE` (local only; production uses the
-baked `/app/runtime-identity.json`), `WORKER_LANE`, `WORKER_POLL_INTERVAL_SECONDS`,
-`WORKER_IDLE_BACKOFF_MAX_SECONDS`, `WORKER_SCHEDULER_INTERVAL_SECONDS`,
-`WORKER_HEARTBEAT_INTERVAL_SECONDS`, `WORKER_LEASE_SECONDS`,
-`WORKER_DB_FAILURE_BACKOFF_SECONDS`, `WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS`,
-`PARSER_TEMP_ROOT`, `BACKGROUND_PROCESS_*`, `BACKGROUND_JOB_PRUNE_*`, and the
-schedule knobs `PODCAST_REFRESH_DUE_SCHEDULE_SECONDS`,
-`INGEST_RECONCILE_SCHEDULE_SECONDS`, `ATLAS_PROJECT_SCHEDULE_SECONDS`,
-`STORAGE_ORPHAN_SWEEP_INTERVAL_SECONDS`, `SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS`.
-See root `.env.example` for values.
+baked `/app/runtime-identity.json`), `WORKER_LANE`, `PARSER_TEMP_ROOT`,
+`BACKGROUND_PROCESS_*`, `BACKGROUND_JOB_PRUNE_*`, and the schedule knobs
+`PODCAST_REFRESH_DUE_SCHEDULE_SECONDS`, `INGEST_RECONCILE_SCHEDULE_SECONDS`,
+`ATLAS_PROJECT_SCHEDULE_SECONDS`, `STORAGE_ORPHAN_SWEEP_INTERVAL_SECONDS`. Leases
+(30 s), heartbeats (5 s) and the idle wait are fixed by the runtime.
 
-## Maintenance
+## Gutenberg catalog
 
-A one-off process, never a deployed service. The raw allowlist must be a
-non-empty subset of `MAINTENANCE_JOB_KINDS`; the normal lanes reject it. Stop
-the process when the bounded operation is complete.
+The Project Gutenberg catalog sync is operator-triggered, not a job:
 
 ```bash
-WORKER_LANE=maintenance \
-NEXUS_ALLOW_WORKER_MAINTENANCE=1 \
-WORKER_ALLOWED_JOB_KINDS=sync_gutenberg_catalog_job \
-SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS=86400 \
-uv run python -m apps.worker.main
+cd python && uv run nexus sync-gutenberg-catalog
 ```
+
+In production it runs in a one-off `migration` container ([`deployment.md`](../../deployment.md#gutenberg-catalog-sync)).
 
 ## Contract
 

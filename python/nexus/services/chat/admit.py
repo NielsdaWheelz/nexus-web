@@ -23,7 +23,7 @@ from starlette.concurrency import run_in_threadpool
 from nexus.db.models import ChatRun, Conversation, Message
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.jobs.queue import current_dead_job_for_payload, enqueue_job
+from nexus.jobs.queue import enqueue_job, jobs_for_payload
 from nexus.schemas.conversation import (
     MAX_MESSAGE_CONTENT_LENGTH,
     AcceptedChatAdmission,
@@ -197,10 +197,8 @@ def cancel(*, viewer_id: UUID, run_id: UUID) -> ChatRunResponse:
             if run.cancel_requested_at is None:
                 run.cancel_requested_at = datetime.now(UTC)
                 run.updated_at = datetime.now(UTC)
-            dead = current_dead_job_for_payload(
-                db, kind="chat_run", expected_payload_match={"run_id": str(run.id)}
-            )
-            if dead is not None:
+            match = {"run_id": str(run.id)}
+            if jobs_for_payload(db, kind="chat_run", match=match, statuses=("dead",), lock=True):
                 # Its dead-letter projection skipped this then-locked run.
                 events.finalize_dead(db, run)
         db.commit()
@@ -500,7 +498,6 @@ def _start_run(
         kind="chat_run",
         payload={"run_id": str(run.id)},
         priority=50,
-        max_attempts=3,
         dedupe_key=f"chat_run:{run.id}",
     )
     return run

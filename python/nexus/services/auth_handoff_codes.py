@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+from collections.abc import Mapping
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import delete, func, insert, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import AuthHandoffCode
+from nexus.db.session import get_session_factory
+from nexus.jobs.queue import JobExecutionContext, JobResult
 
 _CODE_PREFIX = "nx_hand_"
 _CODE_TTL_INTERVAL = text("interval '90 seconds'")
@@ -68,6 +72,12 @@ def purge_expired_auth_handoff_codes(db: Session) -> int:
     )
     db.commit()
     return len(deleted_ids)
+
+
+def purge_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobResult:
+    """The hourly ``purge_expired_auth_handoff_codes`` handler."""
+    with get_session_factory()() as db:
+        return {"deleted_count": purge_expired_auth_handoff_codes(db)}
 
 
 def _hash(value: str) -> str:

@@ -10,7 +10,7 @@ from nexus.auth.permissions import can_read_media
 from nexus.db.models import Media
 from nexus.db.retries import retry_read_committed
 from nexus.errors import ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
-from nexus.jobs.queue import JobRow, enqueue_job, lock_jobs_for_payload
+from nexus.jobs.queue import JobRow, enqueue_job, jobs_for_payload
 from nexus.logging import get_logger
 from nexus.schemas.metadata_enrichment import (
     MetadataEnrichmentAccepted,
@@ -36,8 +36,6 @@ def enqueue_metadata_enrichment(
     request_id: str | None,
 ) -> JobRow:
     """Enqueue in the caller's transaction, serialized by the media parent."""
-    from nexus.jobs.registry import get_default_registry
-
     media_uuid = UUID(str(media_id))
     exists = db.scalar(select(Media.id).where(Media.id == media_uuid).with_for_update())
     if exists is None:
@@ -54,14 +52,7 @@ def enqueue_metadata_enrichment(
         "requester_user_id": str(requester_user_id),
         "request_id": request_id,
     }
-    attempts = get_default_registry()["enrich_metadata"].max_attempts
-    return enqueue_job(
-        db,
-        kind="enrich_metadata",
-        payload=payload,
-        max_attempts=attempts,
-        created_at=created_at,
-    )
+    return enqueue_job(db, kind="enrich_metadata", payload=payload, created_at=created_at)
 
 
 def try_enqueue_metadata_enrichment(
@@ -131,8 +122,8 @@ def admit_metadata_enrichment(
 
     def admit() -> MetadataEnrichmentAccepted:
         media = authorize(lock=True)
-        jobs = lock_jobs_for_payload(
-            db, kind="enrich_metadata", expected_payload_match={"media_id": str(media_id)}
+        jobs = jobs_for_payload(
+            db, kind="enrich_metadata", match={"media_id": str(media_id)}, lock=True
         )
         if (existing := replay()) is not None:
             db.rollback()

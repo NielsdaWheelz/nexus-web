@@ -38,6 +38,11 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] web / resource graph · 2026-10-10 visual primitives reauthor · p3 · the link composer offers Retry (and a persistent notice) for create failures a retry cannot fix (`E_LINK_SELF`, `E_LINK_CAPABILITY`, `E_NOT_FOUND`): [ticket](tickets/link-composer-offers-retry-for-non-retryable-failures.md).
 - [open] web / render environment · 2026-10-10 visual primitives reauthor · p3 · every viewer sees dates in en-US and UTC; where a viewer's locale and zone come from is undecided: [ticket](tickets/display-locale-and-zone-are-fixed-to-en-us-utc.md).
 - [open] web / settings, reader · 2026-10-10 visual primitives reauthor · p3 · the reader's Focus mode is a tablist whose tabs control no panel; by meaning a radio group: [ticket](tickets/reader-focus-mode-uses-tabs-without-panels.md).
+- [open] release / workers · 2026-10-10 jobs runtime reauthor · migration 0276 runs with every worker stopped; no chat run in flight when the workers stop; drop ten retired worker env knobs: [ticket](tickets/jobs-runtime-release-steps.md).
+- [open] jobs runtime / interactive lane · 2026-10-10 jobs runtime reauthor · p2 · the interactive worker ignores SIGTERM inside a running job, so a long chat run makes the release's stop exit 137: [ticket](tickets/interactive-worker-ignores-sigterm-mid-job.md).
+- [open] jobs / verification · 2026-10-10 jobs runtime reauthor · p3 · five design §15 checks (reindex OOM, prune batch limit, enrich_metadata budget and media unit requeue, search repair, teardown death) never ran live: [ticket](tickets/jobs-runtime-checks-not-run-live.md).
+- [open] jobs / database · 2026-10-10 jobs runtime reauthor · p3 · 13 `background_jobs` indexes are unverified against the claim, wait, prune and payload queries: [ticket](tickets/background-job-indexes-unverified.md).
+- [open] imports / import history · 2026-10-10 jobs runtime reauthor · p3 · an embedding provider outage reads as "Processing failed" (`E_WORKER_HANDLER_FAILED`) in import history: [ticket](tickets/import-history-reads-embedding-outage-as-handler-failure.md).
 - [open] release / web auth · 2026-10-10 auth reauthor · before promoting set one `NEXUS_EXTENSION_REDIRECT_ORIGINS` and check hosted `jwt_expiry` > 120 s; after, forbid the three retired origin vars: [ticket](tickets/auth-reauthor-release-steps.md).
 - [open] android / auth · 2026-10-10 auth reauthor · p3 · identity linking cannot complete inside the android shell (spec D1): [ticket](tickets/android-identity-linking-cannot-complete-in-shell.md).
 - [open] web auth / headers · 2026-10-10 auth harness · p3 · next replaces middleware's `Vary: Cookie` on auth documents; harmless while they are private, no-store: [ticket](tickets/auth-documents-lose-vary-cookie.md).
@@ -45,11 +50,9 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] libraries / wire · 2026-10-10 authors reauthor · p3 · `LibraryEntryMediaOut.author_mode` reaches the web and nothing reads it: [ticket](tickets/library-entry-author-mode-unread.md).
 - [open] podcasts, browse / reauthoring · 2026-10-10 podcasts/browse rewrite · 4,163 formatted lines against a 3,000 cap; no behaviour cut for budget: [ticket](tickets/podcasts-reauthor-over-line-budget.md).
 - [open] podcasts / backfill data · 2026-10-10 podcasts python reauthor · p3 · backfills a swallowed page failure completed before 0270 are indistinguishable and cannot be walked again: [ticket](tickets/backfills-completed-by-silent-page-failures.md).
-- [open] jobs / observability · 2026-10-10 podcasts python reauthor · p2 · background-lane children write their structured logs to a discarded stdout, so backfill skips and every other background log line are lost: [ticket](tickets/background-job-logs-are-discarded.md).
 - [open] browse / preview schema · 2026-10-10 podcasts/browse rewrite · p3 · an episode preview's audio href is typed only as a string (spec D10): [ticket](tickets/browse-episode-audio-href-is-untyped.md).
 - [open] panes / filter rows · 2026-10-10 podcasts/browse rewrite · p3 · the partial row-status copy promises loading a manual Load-more list never does: [ticket](tickets/pane-filter-partial-copy-assumes-draining.md).
 - [open] browse / android player bridge · 2026-10-10 podcasts/browse rewrite · p3 · preview audio over `window.nexusPlayback` not exercised after the descriptor moved (json unchanged): [ticket](tickets/browse-preview-audio-android-unverified.md).
-- [open] jobs runtime / worker death · 2026-10-10 generation rewrite · a killed worker's chat run fails `interrupted` only after the 1,200 s chat job lease expires: [ticket](tickets/worker-death-surfaces-after-job-lease.md).
 - [open] generation / background jobs · 2026-10-10 generation rewrite · a dead background generation job closes its ledger row but leaves its reading, build or summary pending: [ticket](tickets/dead-background-jobs-leave-domain-rows-pending.md).
 - [open] generation / provider runtime · 2026-10-10 generation rewrite · the 24-turn and whole-generation timeout bounds on provider tool loops were chosen without evidence: [ticket](tickets/provider-tool-loop-bounds.md).
 - [open] chat tool runtime / codex · 2026-10-10 generation rewrite · codex calls with invalid arguments (and repeated call ids) leave no tool row: [ticket](tickets/codex-invalid-tool-arguments-invisible.md).
@@ -98,7 +101,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [deferred] resource sharing / public reader · 2026-09-28 resource-sharing reauthoring · owner call: public PDF bytes keep streaming through the api, or move to signed storage urls: [ticket](tickets/public-pdf-signed-url-decision.md).
 - [open] resource sharing / share overlay web · 2026-09-28 resource-sharing review · the Native and X bearer-link triggers stay enabled while another change is in flight: [ticket](tickets/share-overlay-bearer-warning-triggers-ignore-busy.md).
 - [open] python comments / capabilities generator · 2026-09-28 pr-06 library placement · ten python comment lines and the resource-capabilities generator still cite deleted cutover docs: [ticket](tickets/code-comments-cite-deleted-cutovers.md).
-- [open] jobs / documentation · 2026-10-04 backend owner audit · the jobs module still describes a media-unit failed-result declaration absent from the registry: [ticket](tickets/jobs-handler-outcome-docs-stale.md).
 - [open] notes / documentation · 2026-10-09 docs-history purge · writing acknowledgement, persistence and outline contracts have no module doc after their plans were deleted: [ticket](tickets/notes-writing-contract-has-no-module-doc.md).
 - [open] docs/rules subtree · 2026-10-09 docs-history purge · the subtree was hand-edited and never pulled; it documents absent subsystems and a test doctrine local rules override: [ticket](tickets/rules-subtree-is-stale-and-partly-inapplicable.md).
 - [deferred] notes / web · 2026-10-04 source audit · a delayed accepted attachment can resume against its destroyed editor view: [ticket](tickets/note-attachment-can-resume-into-destroyed-editor.md).
@@ -138,8 +140,8 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] epub / parser bound · 2026-09-27 corpus census · two backlink indexes exceed the bounded extractor: [ticket](tickets/reader-epub-backlink-index-exhaustion.md).
 - [open] api / operations · 2026-09-27 release preflight · a read-only live source-hash probe exited 137 and restarted the api once: [ticket](tickets/live-api-source-hash-probe-restarted-container.md).
 - [open] epub ingest · 2026-09-26 fragment-only nav fix review · unsafe authored nav hrefs lack source issues: [ticket](tickets/epub-unsafe-nav-targets-have-no-source-issue.md).
-- [open] worker / indexing · 2026-09-24 reader-inspector-controls · a missing indexing credential is classified as a child defect: [ticket](tickets/indexing-without-credential-is-a-child-defect.md).
-- [open] local development · 2026-09-24 reader-inspector-controls · worker overlay memory bound fails the lane check: [ticket](tickets/local-worker-overlay-memory-bound-fails-lane-check.md).
+- [open] worker / indexing · 2026-09-24 reader-inspector-controls · a missing indexing credential is classified as a handler failure (`E_WORKER_HANDLER_FAILED`) and retried to dead: [ticket](tickets/indexing-without-credential-is-a-child-defect.md).
+- [open] local development · 2026-09-24 reader-inspector-controls · p3 · the local worker overlay hardcodes its minio cors origins and ports (its memory bound was fixed): [ticket](tickets/local-worker-overlay-memory-bound-fails-lane-check.md).
 - [open] workspace / deep links · 2026-09-25 article-section-navigation acceptance · a full-page article deep link can revert to the restored EPUB pane during bootstrap: [ticket](tickets/workspace-deep-link-reverts-during-reader-jump.md).
 - [open] android / local auth · 2026-09-25 article-section-navigation acceptance · isolated Next dev login showed an unattributed JSON.parse overlay; standalone login passed: [ticket](tickets/android-isolated-login-dev-overlay.md).
 - [open] android / local startup · 2026-09-25 article-section-navigation acceptance · isolated standalone redirects unauthenticated 127 root to localhost; authenticated cold launch works: [ticket](tickets/android-isolated-root-redirect-blank.md).
@@ -153,12 +155,6 @@ frontend · opened 2026-09-08 by Claude (imports cutover, Track E) · P3
 now refused by the server after its bytes are sent instead of by the browser
 before. See
 [docs/tickets/imports-upload-retry-cannot-check-the-file-size.md](tickets/imports-upload-retry-cannot-check-the-file-size.md).
-
-### [OPEN] OI-012 — Import history collapses three queue execution codes
-backend · opened 2026-09-08 by Claude (imports cutover, Track A) · P3
-`queue_failure_code` maps three distinct queue execution codes onto
-`E_WORKER_HANDLER_FAILED`, which costs the inspector precision it could keep. See
-[docs/tickets/import-history-collapses-three-queue-execution-codes.md](tickets/import-history-collapses-three-queue-execution-codes.md).
 
 ### [OPEN] OI-013 — `E_PDF_TEXT_UNAVAILABLE` is a catalogued code that names no failure
 backend · opened 2026-09-08 by Claude (imports cutover, Track A) · P3

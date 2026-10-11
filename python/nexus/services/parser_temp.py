@@ -6,13 +6,18 @@ import errno
 import hashlib
 import re
 import shutil
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
+from sqlalchemy import text
+
 from nexus.config import get_settings
+from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.jobs.queue import JobExecutionContext, JobResult
 from nexus.storage.client import StorageClient, StorageError
 
 _SHA256_HEX_RE = re.compile(r"[0-9a-f]{64}\Z")
@@ -105,23 +110,31 @@ def stream_storage_object_to_file(
     return actual_source_sha256
 
 
-def prune_stale_parser_temp(root: Path, *, operation_is_live: Callable[[UUID], bool]) -> int:
-    """Delete only UUID operation roots proven not to have live queue work."""
-    if not root.exists():
-        return 0
+def prune_job(*, payload: Mapping[str, Any], context: JobExecutionContext | None) -> JobResult:
+    """Worker startup, in a bounded child: remove the UUID operation roots (an ingest
+    attempt's, a reindex job's) whose job is finished or gone."""
+    root = Path(payload["root"])
     removed = 0
-    for path in root.iterdir():
-        if not path.is_dir():
-            continue
-        try:
-            operation_id = UUID(path.name)
-        except ValueError:
-            continue
-        if operation_is_live(operation_id):
-            continue
-        shutil.rmtree(path)
-        removed += 1
-    return removed
+    with get_session_factory()() as db:
+        for path in root.iterdir() if root.exists() else ():
+            try:
+                operation_id = UUID(path.name)
+            except ValueError:
+                continue
+            live = db.execute(
+                text("""SELECT EXISTS (
+                    SELECT 1 FROM media_source_attempts a JOIN background_jobs j ON j.id = a.job_id
+                    WHERE a.id = :id AND j.status IN ('pending', 'failed', 'running')
+                    UNION ALL
+                    SELECT 1 FROM background_jobs
+                    WHERE id = :id AND kind = 'media_content_reindex_job'
+                      AND status IN ('pending', 'failed', 'running'))"""),
+                {"id": operation_id},
+            ).scalar_one()
+            if path.is_dir() and not live:
+                shutil.rmtree(path)
+                removed += 1
+    return {"removed_directories": removed}
 
 
 def utf8_byte_length(value: str) -> int:

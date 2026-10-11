@@ -11,10 +11,10 @@ from __future__ import annotations
 import hashlib
 import json
 import posixpath
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal, cast
+from typing import Any, Literal, cast
 from urllib.parse import unquote, urlparse
 from uuid import UUID
 
@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import Media, MediaFile, MediaKind, MediaSourceAttempt, ProcessingStatus
 from nexus.db.retries import admit_serializable, retry_read_committed
-from nexus.db.session import transaction
+from nexus.db.session import get_session_factory, transaction
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
@@ -35,11 +35,11 @@ from nexus.errors import (
 )
 from nexus.jobs.queue import (
     JobExecutionContext,
+    JobResult,
     JobRow,
-    current_dead_job_for_payload,
     enqueue_job,
-    find_nonterminal_jobs_for_payload,
-    lock_job,
+    get_job,
+    jobs_for_payload,
     requeue_dead_job,
     supersede_unclaimed_job,
 )
@@ -256,12 +256,14 @@ def _recovery_facts(
     """Per-row facts inside an admission; the dead job, when exact, stays locked."""
     repairable = False
     if attempt.job_id is not None and attempt.status in IN_FLIGHT_STATUSES:
-        dead = current_dead_job_for_payload(
+        dead = jobs_for_payload(
             db,
             kind="ingest_media_source",
-            expected_payload_match={"media_id": str(media.id), "attempt_id": str(attempt.id)},
+            match={"media_id": str(media.id), "attempt_id": str(attempt.id)},
+            statuses=("dead",),
+            lock=True,
         )
-        repairable = dead is not None and dead.id == attempt.job_id
+        repairable = any(job.id == attempt.job_id for job in dead)
     return SourceRecoveryFacts(
         attempt_id=attempt.id,
         attempt_status=attempt.status,
@@ -1068,15 +1070,14 @@ def _release_in_flight_x_post_job(db: Session, attempt: MediaSourceAttempt) -> N
     """
     if attempt.status != QUEUED or attempt.job_id is None:
         return
-    jobs = find_nonterminal_jobs_for_payload(
-        db, kind="ingest_media_source", expected_payload_match={"attempt_id": str(attempt.id)}
+    jobs = jobs_for_payload(
+        db,
+        kind="ingest_media_source",
+        match={"attempt_id": str(attempt.id)},
+        statuses=("pending", "failed"),
     )
     for job in jobs:
-        if (
-            job.id == attempt.job_id
-            and job.status in {"pending", "failed"}
-            and job.claimed_by is None
-        ):
+        if job.id == attempt.job_id:
             supersede_unclaimed_job(db, job_id=job.id, kind="ingest_media_source")
 
 
@@ -1208,7 +1209,7 @@ def ensure_stale_source_attempt_job(
     if attempt is None or attempt.media_id != media.id or attempt.status not in IN_FLIGHT_STATUSES:
         return "skipped"
     if attempt.job_id is not None:
-        job = lock_job(db, attempt.job_id)
+        job = get_job(db, attempt.job_id, lock=True)
         if job is not None:
             if job.status == "dead":
                 return "suspended"
@@ -1941,6 +1942,26 @@ def run_source_attempt(
         )
     except SourcePublicationSuperseded:
         return {"status": "superseded"}
+
+
+def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobResult:
+    """The ``ingest_media_source`` handler, in its bounded background child."""
+    result = run_source_attempt(
+        session_factory=get_session_factory(),
+        media_id=UUID(payload["media_id"]),
+        attempt_id=UUID(payload["attempt_id"]),
+        actor_user_id=UUID(payload["actor_user_id"]),
+        request_id=payload.get("request_id"),
+        context=context,
+    )
+    logger.info(
+        "ingest_media_source_completed",
+        media_id=payload["media_id"],
+        attempt_id=payload["attempt_id"],
+        result=result,
+        request_id=payload.get("request_id"),
+    )
+    return result
 
 
 def _run_fenced_attempt(

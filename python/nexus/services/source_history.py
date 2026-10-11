@@ -1,7 +1,7 @@
 """The history stage and counted progress of one source attempt.
 
 A leaf over the source-type contract and the history vocabulary: the queue seam
-(``jobs/history_projections.py``) records these facts inside the worker's queue
+(``import_history.on_source_job_outcome``) records these facts inside the worker's queue
 transition, so this owner reaches neither the ORM nor the queue.
 """
 

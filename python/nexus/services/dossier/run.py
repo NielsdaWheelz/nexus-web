@@ -6,19 +6,46 @@ after a dead worker synthesizes again from scratch. No transaction is held acros
 network call.
 """
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID
 
 from llm_tools import WebSearchProvider
 from sqlalchemy.orm import Session
 
-from nexus.jobs.queue import JobExecutionContext, RescheduleRequested, ScheduleAt, get_job
+from nexus.config import get_settings
+from nexus.jobs.queue import JobExecutionContext, JobResult, RescheduleRequested, get_job
 from nexus.schemas.dossier import DossierFailureCode
 from nexus.services.dossier import engine, research, subjects, synthesis
 from nexus.services.dossier.inputs import InputTooLarge
-from nexus.services.generation.runtime import Runtime
+from nexus.services.generation.runtime import Runtime, run_generation_job
 
 _PENDING_RECHECK = timedelta(seconds=5)
+
+
+def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobResult:
+    """One ``dossier_build`` attempt, with the web search provider its runtime composes.
+
+    ``run_build`` owns every terminal write; an unexpected exception goes to the
+    queue's retry and dead-letter policy, which the head reads as Suspended.
+    """
+    import httpx
+
+    from nexus.services.tools.run import configured_web_search
+
+    build_id = UUID(payload["build_id"])
+
+    async def attempt(db: Session, runtime: Runtime) -> JobResult:
+        timeout = httpx.Timeout(120.0, connect=10.0)
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            web = configured_web_search(client, get_settings())
+            reschedule = await run_build(
+                db, build_id=build_id, ctx=context, runtime=runtime, web=web
+            )
+        return reschedule or {"status": "ok", "build_id": str(build_id)}
+
+    return run_generation_job("dossier_build", context, attempt)
 
 
 async def run_build(
@@ -48,7 +75,7 @@ async def run_build(
         readiness = binding.ensure(db, facts.subject_id, viewer)
         db.commit()
         if readiness == "Pending":
-            return RescheduleRequested(ScheduleAt(datetime.now(UTC) + _PENDING_RECHECK))
+            return RescheduleRequested(datetime.now(UTC) + _PENDING_RECHECK)
         if readiness == "Failed":
             fail(DossierFailureCode.DependencyProjectionFailed)
             return None
@@ -64,7 +91,7 @@ async def run_build(
             web=web,
         )
         if isinstance(collected, datetime):
-            return RescheduleRequested(ScheduleAt(collected))
+            return RescheduleRequested(collected)
     else:
         try:
             collected = binding.inputs(db, facts.subject_id, viewer)

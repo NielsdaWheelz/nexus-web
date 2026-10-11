@@ -4,7 +4,7 @@ Every body change marks the index ``pending`` (out of search) and leaves a job t
 not started. The job reads the body, embeds it with no transaction open, and publishes
 only if the body is still the one it embedded; otherwise the edit that changed it left
 a newer waiting job, which publishes instead. Exhausted retries mark a still ``pending``
-index ``failed`` (``jobs/dead_letter_projections``, ``NoteContentIndex``).
+index ``failed`` with the job's code (``jobs/dead_letters.note_index``).
 """
 
 from __future__ import annotations
@@ -39,10 +39,10 @@ def enqueue_note_reindex(db: Session, *, note_block_id: UUID, reason: str) -> No
     without a common lock may both enqueue; the second job republishes the same body.
     """
     mark_content_index_pending(db, owner=IndexOwner("note_block", note_block_id), reason=reason)
-    jobs = queue.lock_jobs_for_payload(
-        db, kind=JOB_KIND, expected_payload_match={"note_block_id": str(note_block_id)}
+    jobs = queue.jobs_for_payload(
+        db, kind=JOB_KIND, match={"note_block_id": str(note_block_id)}, lock=True
     )
-    if not any(job.status in ("pending", "failed") and job.claimed_by is None for job in jobs):
+    if not any(job.status in ("pending", "failed") for job in jobs):
         payload = {"note_block_id": str(note_block_id), "reason": reason}
         queue.enqueue_job(db, kind=JOB_KIND, payload=payload)
 

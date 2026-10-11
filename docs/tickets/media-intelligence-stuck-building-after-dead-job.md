@@ -13,7 +13,8 @@ building.
 repro: let a `media_unit_build` exhaust its attempts (in the harness, any codex
 dispatch failure before D1 was fixed).
 
-fix: decide the owner: either the job's dead-letter projection marks the head
+fix: decide the owner: either the kind's `on_dead` hook (registry; import-light, it
+runs in the background supervisor) marks the head
 `failed` (with the job's error code) so retry is an ordinary rebuild, or
 `building` without a runnable job is defined as suspended everywhere and an
 operator requeue is the only exit. then make every reader agree.

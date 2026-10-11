@@ -27,8 +27,6 @@ from urllib.parse import urlparse
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings
 
-from nexus.job_topology import MAINTENANCE_JOB_KINDS
-
 TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
 # Cross-runtime upload safety contract. Keep this equal to
 # `DIRECT_UPLOAD_PUT_TIMEOUT_MS` in `apps/web/src/lib/imports/ingest.ts`.
@@ -213,38 +211,10 @@ class Settings(BaseSettings):
     )
     parser_temp_root: Path = Field(default=Path("/tmp/nexus-parser-tmp"), alias="PARSER_TEMP_ROOT")
 
-    # Worker runtime. Normal workers use one fixed lane. A raw allowlist is
-    # accepted only for a gated, bounded maintenance invocation.
-    worker_lane: Literal["interactive", "background", "maintenance"] | None = Field(
+    # Worker runtime: one lane per worker process.
+    worker_lane: Literal["interactive", "background"] | None = Field(
         default=None,
         alias="WORKER_LANE",
-    )
-    worker_allowed_job_kinds: str | None = Field(
-        default=None,
-        alias="WORKER_ALLOWED_JOB_KINDS",
-    )
-    nexus_allow_worker_maintenance: bool = Field(
-        default=False,
-        alias="NEXUS_ALLOW_WORKER_MAINTENANCE",
-    )
-    worker_poll_interval_seconds: float = Field(
-        default=5.0, alias="WORKER_POLL_INTERVAL_SECONDS", gt=0
-    )
-    worker_idle_backoff_max_seconds: float = Field(
-        default=300.0, alias="WORKER_IDLE_BACKOFF_MAX_SECONDS"
-    )
-    worker_scheduler_interval_seconds: float = Field(
-        default=300.0, alias="WORKER_SCHEDULER_INTERVAL_SECONDS", gt=0
-    )
-    worker_heartbeat_interval_seconds: float = Field(
-        default=60.0, alias="WORKER_HEARTBEAT_INTERVAL_SECONDS", gt=0
-    )
-    worker_lease_seconds: int = Field(default=300, alias="WORKER_LEASE_SECONDS", ge=1)
-    worker_db_failure_backoff_seconds: float = Field(
-        default=60.0, alias="WORKER_DB_FAILURE_BACKOFF_SECONDS", gt=0
-    )
-    worker_db_failure_backoff_max_seconds: float = Field(
-        default=900.0, alias="WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS"
     )
     background_process_cgroup_root: Path = Field(
         default=Path("/sys/fs/cgroup"), alias="BACKGROUND_PROCESS_CGROUP_ROOT"
@@ -272,9 +242,6 @@ class Settings(BaseSettings):
         alias="BACKGROUND_PROCESS_OOM_SCORE_ADJ",
         ge=1,
         le=1000,
-    )
-    sync_gutenberg_catalog_schedule_seconds: int = Field(
-        default=0, alias="SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS", ge=0
     )
     background_job_prune_succeeded_after_days: int = Field(
         default=7, alias="BACKGROUND_JOB_PRUNE_SUCCEEDED_AFTER_DAYS", ge=1
@@ -424,7 +391,6 @@ class Settings(BaseSettings):
         self._validate_deployed_generation_runtime()
         self._validate_ingest_runtime_and_paths()
         self._validate_worker_lane()
-        self._validate_worker_intervals()
         self._validate_background_process_cgroup_root()
         return self
 
@@ -639,52 +605,12 @@ class Settings(BaseSettings):
             raise ValueError("PARSER_TEMP_ROOT must be an absolute path.")
 
     def _validate_worker_lane(self) -> None:
-        if self.worker_lane == "maintenance":
-            if not self.nexus_allow_worker_maintenance:
-                raise ValueError(
-                    "WORKER_LANE=maintenance requires NEXUS_ALLOW_WORKER_MAINTENANCE=1."
-                )
-            allowed_kinds = tuple(
-                value.strip()
-                for value in (self.worker_allowed_job_kinds or "").split(",")
-                if value.strip()
-            )
-            if not allowed_kinds:
-                raise ValueError("WORKER_LANE=maintenance requires WORKER_ALLOWED_JOB_KINDS.")
-            if len(set(allowed_kinds)) != len(allowed_kinds):
-                raise ValueError("WORKER_ALLOWED_JOB_KINDS must not contain duplicates.")
-            unknown_maintenance_kinds = set(allowed_kinds) - set(MAINTENANCE_JOB_KINDS)
-            if unknown_maintenance_kinds:
-                raise ValueError(
-                    "WORKER_ALLOWED_JOB_KINDS must be a subset of MAINTENANCE_JOB_KINDS; "
-                    f"invalid kinds: {', '.join(sorted(unknown_maintenance_kinds))}."
-                )
-        else:
-            if self.worker_allowed_job_kinds is not None:
-                raise ValueError(
-                    "WORKER_ALLOWED_JOB_KINDS is valid only with WORKER_LANE=maintenance."
-                )
-            if self.nexus_allow_worker_maintenance:
-                raise ValueError(
-                    "NEXUS_ALLOW_WORKER_MAINTENANCE is valid only with WORKER_LANE=maintenance."
-                )
         if (
             self.worker_lane is not None
             and self.nexus_env in (Environment.STAGING, Environment.PROD)
             and self.database_statement_timeout_ms == 0
         ):
             raise ValueError("DATABASE_STATEMENT_TIMEOUT_MS must be bounded for deployed workers.")
-
-    def _validate_worker_intervals(self) -> None:
-        if self.worker_idle_backoff_max_seconds < self.worker_poll_interval_seconds:
-            raise ValueError(
-                "WORKER_IDLE_BACKOFF_MAX_SECONDS must be >= WORKER_POLL_INTERVAL_SECONDS."
-            )
-        if self.worker_db_failure_backoff_max_seconds < self.worker_db_failure_backoff_seconds:
-            raise ValueError(
-                "WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS must be >= "
-                "WORKER_DB_FAILURE_BACKOFF_SECONDS."
-            )
 
     def _validate_background_process_cgroup_root(self) -> None:
         if not self.background_process_cgroup_root.is_absolute():

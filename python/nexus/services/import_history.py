@@ -12,7 +12,8 @@ the accepted source identity's resolution.
 
 No policy, no scheduling, no domain decisions — these are the final insert
 adapters for the two tables, which is why they convert owned `Presence` to
-column `NULL` (`docs/rules/boundaries.md`).
+column `NULL` (`docs/rules/boundaries.md`). The two queue hooks at the end
+translate a job's transition into its history, inside that transition.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from nexus.ids import new_uuid7
+from nexus.jobs.queue import JobRow
 from nexus.schemas.import_history import (
     PROCESSING_EVENTS_TABLE,
     UPLOAD_EVENTS_TABLE,
@@ -35,9 +37,13 @@ from nexus.schemas.import_history import (
     HistoryOwner,
     HistoryTable,
     IndexFacts,
+    IndexFailed,
+    IndexRetryScheduled,
     PartialHistoryCoverage,
     SafeFailureCode,
     SourceFacts,
+    SourceFailed,
+    SourceRetryScheduled,
     SourceSuperseded,
     Stage,
     UploadFacts,
@@ -45,8 +51,17 @@ from nexus.schemas.import_history import (
     history_event_type,
     history_facts,
     history_payload,
+    queue_failure_code,
 )
-from nexus.schemas.presence import Presence, Present, nullable_from_presence, presence_from_nullable
+from nexus.schemas.presence import (
+    Presence,
+    Present,
+    absent,
+    nullable_from_presence,
+    presence_from_nullable,
+    present,
+)
+from nexus.services.source_history import source_failure_progress, source_history_stage
 
 _APPEND_UPLOAD_EVENT = text(
     """
@@ -280,3 +295,94 @@ def history_coverage(db: Session, *, owner: HistoryOwner) -> HistoryCoverage:
     if recorded_since is None:
         return FullHistoryCoverage()
     return PartialHistoryCoverage(recorded_since=recorded_since)
+
+
+def on_source_job_outcome(db: Session, job: JobRow, execution_id: UUID) -> None:
+    """Source ingest's queue history: a failed or reclaimed attempt, a scheduled retry.
+
+    An attempt its owner already settled (succeeded, or failed with its own history)
+    records nothing more.
+    """
+    media_id, attempt_id = UUID(job.payload["media_id"]), UUID(job.payload["attempt_id"])
+    attempt = (
+        db.execute(
+            text("""SELECT source_type, processing_stage, progress_completed, progress_total,
+                       progress_unit
+                FROM media_source_attempts
+                WHERE id = :attempt_id AND media_id = :media_id
+                  AND status IN ('accepted', 'queued', 'running')"""),
+            {"attempt_id": attempt_id, "media_id": media_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if attempt is None:
+        return
+    failure, terminal, next_at = _queue_outcome(job)
+    stage: Presence[Stage] = present(
+        source_history_stage(
+            source_type=attempt["source_type"], processing_stage=attempt["processing_stage"]
+        )
+    )
+    if failure is not None:
+        progress = source_failure_progress(
+            processing_stage=attempt["processing_stage"],
+            progress_completed=attempt["progress_completed"],
+            progress_total=attempt["progress_total"],
+            progress_unit=attempt["progress_unit"],
+        )
+        facts = SourceFailed(
+            source_attempt_id=attempt_id,
+            execution_id=present(execution_id),
+            origin="Execution",
+            terminal=terminal,
+            progress=progress,
+        )
+        append_processing_event(
+            db, media_id=media_id, facts=facts, stage=stage, failure_code=present(failure)
+        )
+    if next_at is not None:
+        retry = SourceRetryScheduled(
+            source_attempt_id=attempt_id,
+            execution_id=present(execution_id),
+            next_attempt_at=next_at,
+        )
+        append_processing_event(
+            db, media_id=media_id, facts=retry, stage=stage, failure_code=absent()
+        )
+
+
+def on_index_job_outcome(db: Session, job: JobRow, execution_id: UUID) -> None:
+    """A media reindex job's queue history; a deleted media records nothing."""
+    media_id, revision = UUID(job.payload["media_id"]), job.payload["revision"]
+    if db.execute(text("SELECT 1 FROM media WHERE id = :id"), {"id": media_id}).first() is None:
+        return
+    failure, terminal, next_at = _queue_outcome(job)
+    execution = {"revision": revision, "job_id": job.id, "execution_id": present(execution_id)}
+    stage: Presence[Stage] = present("Index")
+    if failure is not None:
+        append_processing_event(
+            db,
+            media_id=media_id,
+            facts=IndexFailed(**execution, origin="Execution", terminal=terminal),
+            stage=stage,
+            failure_code=present(failure),
+        )
+    if next_at is not None:
+        append_processing_event(
+            db,
+            media_id=media_id,
+            facts=IndexRetryScheduled(**execution, next_attempt_at=next_at),
+            stage=stage,
+            failure_code=absent(),
+        )
+
+
+def _queue_outcome(job: JobRow) -> tuple[SafeFailureCode | None, bool, datetime | None]:
+    """What a transition says: pending was rescheduled, running was reclaimed."""
+    failure = None
+    if job.status != "pending":
+        assert job.error_code  # failing, dead-lettering and reclaiming each set it
+        failure = queue_failure_code(job.error_code)
+    next_at = job.available_at if job.status in ("pending", "failed") else None
+    return failure, job.status == "dead", next_at
