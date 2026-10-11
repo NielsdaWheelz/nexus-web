@@ -11,8 +11,7 @@
   font-style: italic;
 }
 
-.prefix,
-.suffix {
+.context {
   opacity: 0.7;
 }
 

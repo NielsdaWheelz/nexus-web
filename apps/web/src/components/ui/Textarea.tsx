@@ -1,102 +1,85 @@
 "use client";
 
-import {
-  forwardRef,
-  useImperativeHandle,
-  useLayoutEffect,
-  useRef,
-  type TextareaHTMLAttributes,
-} from "react";
-import styles from "./Textarea.module.css";
+import { useLayoutEffect, useRef, type ComponentProps } from "react";
+import { cx } from "@/lib/ui/cx";
+import styles from "./Field.module.css";
 
-type TextareaVariant = "default" | "bare";
-type TextareaSize = "sm" | "md" | "lg";
-
-interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
-  variant?: TextareaVariant;
-  size?: TextareaSize;
-  autoGrow?: boolean;
-  minRows?: number;
-  maxRows?: number;
-}
-
-const variantClass: Record<TextareaVariant, string> = {
-  default: styles.default,
-  bare: styles.bare,
-};
-
-const sizeClass: Record<TextareaSize, string> = {
-  sm: styles.sm,
-  md: styles.md,
-  lg: styles.lg,
-};
-
-const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function Textarea(
-  {
-    variant = "default",
-    size = "md",
-    autoGrow = false,
-    minRows = 3,
-    maxRows = 12,
-    className,
-    rows,
-    value,
-    defaultValue,
-    ...rest
-  },
-  ref
-) {
-  const innerRef = useRef<HTMLTextAreaElement>(null);
-  useImperativeHandle(ref, () => {
-    const textarea = innerRef.current;
-    if (!textarea) {
-      throw new Error("Textarea ref is not mounted");
-    }
-    return textarea;
-  }, []);
-
+/**
+ * A textarea. `autoGrow` fits its height to the content between `minRows` and
+ * `maxRows` lines, then scrolls; it re-fits when the value or its width changes.
+ */
+export default function Textarea({
+  bare = false,
+  size = "md",
+  autoGrow,
+  className,
+  rows,
+  ref,
+  ...rest
+}: ComponentProps<"textarea"> & {
+  bare?: boolean;
+  size?: "sm" | "md" | "lg";
+  autoGrow?: { minRows: number; maxRows: number };
+}) {
+  const element = useRef<HTMLTextAreaElement | null>(null);
+  const maxRows = autoGrow?.maxRows;
   useLayoutEffect(() => {
-    if (!autoGrow) return;
-    const el = innerRef.current;
-    if (!el) return;
-    el.style.overflowY = "hidden";
-    el.style.height = "auto";
-    const style = getComputedStyle(el);
-    const lineHeight = parseFloat(style.lineHeight) || 0;
-    const verticalPadding =
-      parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
-    const verticalBorder =
-      parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
-    const maxVisibleScrollArea =
-      lineHeight > 0 ? lineHeight * maxRows + verticalPadding : Infinity;
-    const contentHeight = el.scrollHeight;
-    el.style.height = `${
-      Math.min(contentHeight, maxVisibleScrollArea) + verticalBorder
-    }px`;
-    el.style.overflowY =
-      contentHeight > maxVisibleScrollArea ? "auto" : "hidden";
-  }, [autoGrow, maxRows, value]);
-
-  const cls = [
-    styles.textarea,
-    variantClass[variant],
-    sizeClass[size],
-    autoGrow ? styles.autoGrow : "",
-    className ?? "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+    if (element.current && maxRows !== undefined) fit(element.current, maxRows);
+  }, [maxRows, rest.value]);
+  // A narrower pane rewraps the draft: re-fit when the width changes, a frame
+  // later, so the new height is not a resize inside this observer's delivery.
+  useLayoutEffect(() => {
+    const textarea = element.current;
+    if (!textarea || maxRows === undefined) return;
+    let width = textarea.clientWidth;
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      if (textarea.clientWidth === width) return;
+      width = textarea.clientWidth;
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => fit(textarea, maxRows));
+    });
+    observer.observe(textarea);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [maxRows]);
 
   return (
     <textarea
-      ref={innerRef}
-      className={cls}
-      rows={rows ?? minRows}
-      value={value}
-      defaultValue={defaultValue}
+      ref={(node) => {
+        element.current = node;
+        if (typeof ref === "function") return ref(node);
+        if (ref) ref.current = node;
+      }}
+      rows={autoGrow?.minRows ?? rows}
+      className={cx(
+        styles.field,
+        styles.textarea,
+        styles[size],
+        bare ? styles.bare : styles.boxed,
+        autoGrow && styles.autoGrow,
+        className,
+      )}
       {...rest}
     />
   );
-});
+}
 
-export default Textarea;
+// Fits the height to the content, up to `maxRows` lines, then scrolls. Measured
+// without a scrollbar, whose width would rewrap the text.
+function fit(textarea: HTMLTextAreaElement, maxRows: number) {
+  textarea.style.overflowY = "hidden";
+  textarea.style.height = "auto";
+  const style = getComputedStyle(textarea);
+  const line = parseFloat(style.lineHeight);
+  const padding =
+    parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+  const border =
+    parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+  const content = textarea.scrollHeight;
+  const limit = line > 0 ? line * maxRows + padding : Infinity;
+  textarea.style.height = `${Math.min(content, limit) + border}px`;
+  textarea.style.overflowY = content > limit ? "auto" : "hidden";
+}

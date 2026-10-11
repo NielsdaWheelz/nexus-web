@@ -1,5 +1,5 @@
 import { absent, present } from "@/lib/api/presence";
-import type { ResourceRowPrimary } from "@/components/ui/ResourceActivation";
+import type { ResourceRowPrimary } from "@/components/ui/ResourceRow";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { selectMediaAuthors } from "@/lib/contributors/credits";
 import type { MediaSummary } from "@/lib/media/mediaSummary";

@@ -1,313 +1,227 @@
-/**
- * MarkdownMessage — renders assistant message content as markdown.
- *
- * Uses react-markdown with GFM support and syntax highlighting. Memoized so a
- * completed message re-parses only when its content or citations change; only
- * the one actively streaming message re-parses, per coalesced delta flush.
- */
-
 "use client";
 
 import {
   createContext,
   memo,
-  useCallback,
   useContext,
   useMemo,
   useRef,
   useState,
-  type ReactNode,
-  type HTMLAttributes,
   type ComponentProps,
+  type MouseEvent,
+  type ReactNode,
 } from "react";
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import ReaderCitation from "@/components/ui/ReaderCitation";
+import remarkGfm from "remark-gfm";
 import type {
   ReaderCitationData,
   ReaderSourceTarget,
 } from "@/lib/resourceGraph/citations";
 import type { ResourceActivation } from "@/lib/resources/activation";
+import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
+import ReaderCitation from "./ReaderCitation";
 import "./hljs-theme.css";
 import styles from "./MarkdownMessage.module.css";
-import {
-  ClipboardWriteUnavailableError,
-  copyText,
-} from "@/lib/ui/copyText";
 
-const remarkPlugins = [remarkGfm];
-const rehypePlugins = [rehypeHighlight];
-const CITATION_HREF_PREFIX = "#nexus-reader-citation-";
+type OnCitationActivate = (
+  activation: ResourceActivation,
+  target: ReaderSourceTarget | null,
+  event?: MouseEvent,
+) => void;
+type Components = ComponentProps<typeof ReactMarkdown>["components"];
+type MdNode = {
+  type: string;
+  value?: string;
+  url?: string;
+  children?: MdNode[];
+};
 
-// ---------------------------------------------------------------------------
-// Code block with language label + copy button
-// ---------------------------------------------------------------------------
+const CITATION_HREF = "#nexus-reader-citation-";
 
-function CodeBlock({
-  className,
+/**
+ * `[n]` in prose becomes a citation link; code, inline code and link text are
+ * not prose, so they keep it verbatim. The link renders as the citation when n
+ * is one, else as the original `[n]`.
+ */
+function remarkCitations() {
+  const split = (value: string): MdNode[] =>
+    value.split(/(\[\d+\])/).flatMap((part): MdNode[] => {
+      const n = /^\[(\d+)\]$/.exec(part)?.[1];
+      if (n)
+        return [
+          {
+            type: "link",
+            url: `${CITATION_HREF}${n}`,
+            children: [{ type: "text", value: part }],
+          },
+        ];
+      return part ? [{ type: "text", value: part }] : [];
+    });
+  const walk = (node: MdNode) => {
+    if (!node.children || node.type === "link" || node.type === "linkReference")
+      return;
+    node.children = node.children.flatMap((child) => {
+      if (child.type === "text") return split(child.value ?? "");
+      walk(child);
+      return [child];
+    });
+  };
+  return walk;
+}
+
+const CitationContext = createContext<{
+  byIndex: Map<number, ReaderCitationData>;
+  onActivate?: OnCitationActivate;
+} | null>(null);
+
+function Link({
+  href,
   children,
   node: _node,
   ...rest
-}: HTMLAttributes<HTMLElement> & { children?: ReactNode; node?: unknown }) {
-  const match = /language-(\w+)/.exec(className ?? "");
-  const position = (
-    _node as
-      | { position?: { start?: { line?: number }; end?: { line?: number } } }
-      | undefined
-  )?.position;
-  const startLine = position?.start?.line;
-  const endLine = position?.end?.line;
-  const isBlock =
-    typeof startLine === "number" &&
-    typeof endLine === "number" &&
-    endLine > startLine;
-
-  if (!match && !isBlock) {
-    return <code className={styles.inlineCode} {...rest}>{children}</code>;
+}: ComponentProps<"a"> & { node?: unknown }) {
+  const citations = useContext(CitationContext);
+  if (citations && href?.startsWith(CITATION_HREF)) {
+    const citation = citations.byIndex.get(
+      Number(href.slice(CITATION_HREF.length)),
+    );
+    if (!citation) return <>{children}</>;
+    return (
+      <ReaderCitation
+        {...citation}
+        onActivate={citations.onActivate ?? (() => undefined)}
+      />
+    );
   }
-
+  if (!href) return <>{children}</>;
   return (
-    <CodeBlockWrapper language={match?.[1] ?? "text"}>
-      <code className={className} {...rest}>{children}</code>
-    </CodeBlockWrapper>
+    <a href={href} {...rest}>
+      {children}
+    </a>
   );
 }
 
-function CodeBlockWrapper({
+function Code({
+  className,
+  children,
+  node,
+  ...rest
+}: ComponentProps<"code"> & {
+  node?: { position?: { start: { line: number }; end: { line: number } } };
+}) {
+  const language = /language-(\w+)/.exec(className ?? "")?.[1];
+  const block =
+    node?.position !== undefined &&
+    node.position.end.line > node.position.start.line;
+  if (!language && !block) {
+    return (
+      <code className={styles.inlineCode} {...rest}>
+        {children}
+      </code>
+    );
+  }
+  return (
+    <CodeBlock language={language ?? "text"}>
+      <code className={className} {...rest}>
+        {children}
+      </code>
+    </CodeBlock>
+  );
+}
+
+function CodeBlock({
   language,
   children,
 }: {
   language: string;
   children: ReactNode;
 }) {
-  const [copyState, setCopyState] = useState<
-    "idle" | "copied" | "failed"
-  >("idle");
-  const [copyDefect, setCopyDefect] = useState<{ error: unknown } | null>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-
-  const handleCopy = useCallback(async () => {
-    const text = contentRef.current?.textContent ?? "";
-    try {
-      await copyText(text);
-      setCopyState("copied");
-    } catch (error) {
-      if (!(error instanceof ClipboardWriteUnavailableError)) {
-        setCopyDefect({ error });
-        return;
-      }
-      setCopyState("failed");
-    }
-    setTimeout(() => setCopyState("idle"), 1500);
-  }, []);
-
-  if (copyDefect !== null) throw copyDefect.error;
-
+  const [copy, setCopy] = useState<"copy" | "copied" | "copy failed">("copy");
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const content = useRef<HTMLDivElement>(null);
+  if (defect) throw defect.error;
+  const onCopy = () =>
+    copyText(content.current?.textContent ?? "")
+      .then(
+        () => setCopy("copied"),
+        (error: unknown) =>
+          error instanceof ClipboardWriteUnavailableError
+            ? setCopy("copy failed")
+            : setDefect({ error }),
+      )
+      .then(() => setTimeout(() => setCopy("copy"), 1500));
   return (
     <div className={styles.codeBlock}>
-      <div
-        className={styles.codeBlockHeader}
-        data-pane-find-exclude="true"
-      >
+      <div className={styles.codeHeader} data-pane-find-exclude="true">
         <span>{language}</span>
-        <button type="button" className={styles.copyBtn} onClick={() => void handleCopy()}>
-          {copyState === "copied"
-            ? "copied"
-            : copyState === "failed"
-              ? "copy failed"
-              : "copy"}
+        <button
+          type="button"
+          className={styles.copy}
+          onClick={() => void onCopy()}
+        >
+          {copy}
         </button>
       </div>
       <div
-        ref={contentRef}
-        className={styles.codeBlockContent}
+        ref={content}
+        className={styles.codeContent}
         data-pane-find-code-scroll="true"
         data-lang={language}
       >
-        {children}
+        <pre>{children}</pre>
       </div>
     </div>
   );
 }
 
-// Wrap <pre> to avoid double-nesting from react-markdown
-function PreBlock({ children }: { children?: ReactNode }) {
-  return <>{children}</>;
-}
-
-function TableBlock({
-  children,
-  node: _node,
-  ...rest
-}: HTMLAttributes<HTMLTableElement> & { children?: ReactNode; node?: unknown }) {
-  return (
+const components: Components = {
+  code: Code,
+  // The code block draws its own frame and its own <pre>.
+  pre: ({ children }) => <>{children}</>,
+  table: ({ node: _node, ...props }) => (
     <div className={styles.tableScroll}>
-      <table {...rest}>{children}</table>
+      <table {...props} />
     </div>
-  );
-}
-
-function MarkdownLink({
-  href,
-  children,
-  node: _node,
-  ...rest
-}: HTMLAttributes<HTMLAnchorElement> & {
-  href?: string;
-  children?: ReactNode;
-  node?: unknown;
-}) {
-  if (!href) return <>{children}</>;
-  return <a href={href} {...rest}>{children}</a>;
-}
-
-type MarkdownComponents = ComponentProps<typeof ReactMarkdown>["components"];
-const baseComponents: MarkdownComponents = {
-  code: CodeBlock,
-  pre: PreBlock,
-  table: TableBlock,
-  a: MarkdownLink,
-};
-const CitationContext = createContext<{
-  citationByIndex?: Map<number, ReaderCitationData>;
-  onActivate?: (
-    activation: ResourceActivation,
-    target: ReaderSourceTarget | null,
-    event?: React.MouseEvent,
-  ) => void;
-}>({});
-
-function citationIndexFromHref(href: string | undefined): number | null {
-  if (!href?.startsWith(CITATION_HREF_PREFIX)) return null;
-  const index = Number(href.slice(CITATION_HREF_PREFIX.length));
-  return Number.isInteger(index) && index > 0 ? index : null;
-}
-
-function replaceMarkdown({
-  content,
-  pattern,
-  replacement,
-}: {
-  readonly content: string;
-  readonly pattern: RegExp;
-  readonly replacement: (match: RegExpExecArray) => string;
-}): string {
-  pattern.lastIndex = 0;
-  let cursor = 0;
-  let rendered = "";
-  for (let match = pattern.exec(content); match; match = pattern.exec(content)) {
-    const matched = match[0];
-    const next = replacement(match);
-    rendered += content.slice(cursor, match.index);
-    rendered += next;
-    cursor = match.index + matched.length;
-  }
-  rendered += content.slice(cursor);
-  return rendered;
-}
-
-function CitationAwareLink({
-  href,
-  children,
-  node: _node,
-  ...rest
-}: HTMLAttributes<HTMLAnchorElement> & {
-  href?: string;
-  children?: ReactNode;
-  node?: unknown;
-}) {
-  const { citationByIndex, onActivate } = useContext(CitationContext);
-  const citationIndex = citationIndexFromHref(href);
-  const citation =
-    citationIndex !== null ? citationByIndex?.get(citationIndex) : undefined;
-  if (citation) {
-    return (
-      <ReaderCitation
-        index={citation.index}
-        preview={citation.preview}
-        activation={citation.activation}
-        target={citation.target}
-        onActivate={onActivate ?? (() => undefined)}
-      />
-    );
-  }
-  if (citationIndex !== null) {
-    return null;
-  }
-
-  return <MarkdownLink href={href} {...rest}>{children}</MarkdownLink>;
-}
-
-const citationComponents: MarkdownComponents = {
-  ...baseComponents,
-  a: CitationAwareLink,
+  ),
+  a: Link,
 };
 
-// ---------------------------------------------------------------------------
-// Full render (completed messages)
-// ---------------------------------------------------------------------------
-
-function MarkdownMessageInner({
+/**
+ * Assistant markdown: gfm, highlighted code with a language label and copy,
+ * tables that scroll, and, given `citations`, `[n]` marks that open their sources.
+ * Memoized: a settled message re-renders only when its content or citations change.
+ */
+export const MarkdownMessage = memo(function MarkdownMessage({
   content,
   citations,
   onCitationActivate,
 }: {
   content: string;
   citations?: ReaderCitationData[];
-  onCitationActivate?: (
-    activation: ResourceActivation,
-    target: ReaderSourceTarget | null,
-    event?: React.MouseEvent,
-  ) => void;
+  onCitationActivate?: OnCitationActivate;
 }) {
-  const citationByIndex =
-    useMemo(
-      () =>
-        citations && citations.length > 0
-          ? new Map(citations.map((c) => [c.index, c]))
-          : undefined,
-      [citations],
-    );
-  const citationContext = useMemo(
-    () => ({ citationByIndex, onActivate: onCitationActivate }),
-    [citationByIndex, onCitationActivate],
-  );
-  const rendered = useMemo(() => {
-    const withCitations = citationByIndex
-      ? replaceMarkdown({
-          content,
-          pattern: /\[(\d+)\](?!\()/g,
-          replacement: (match) =>
-            `[${match[1]}](${CITATION_HREF_PREFIX}${match[1]})`,
-        })
-      : content;
-    return replaceMarkdown({
-      content: withCitations,
-      pattern: /<<cite:(\d+)>>/g,
-      replacement: (match) => `\\<\\<cite:${match[1]}\\>\\>`,
-    });
-  }, [citationByIndex, content]);
-  const markdown = (
-    <ReactMarkdown
-      remarkPlugins={remarkPlugins}
-      rehypePlugins={rehypePlugins}
-      components={citationByIndex ? citationComponents : baseComponents}
-    >
-      {rendered}
-    </ReactMarkdown>
+  const cited = useMemo(
+    () =>
+      citations?.length
+        ? {
+            byIndex: new Map(citations.map((c) => [c.index, c])),
+            onActivate: onCitationActivate,
+          }
+        : null,
+    [citations, onCitationActivate],
   );
   return (
     <div className={styles.markdown}>
-      {citationByIndex ? (
-        <CitationContext.Provider value={citationContext}>
-          {markdown}
-        </CitationContext.Provider>
-      ) : (
-        markdown
-      )}
+      <CitationContext value={cited}>
+        <ReactMarkdown
+          remarkPlugins={cited ? [remarkGfm, remarkCitations] : [remarkGfm]}
+          rehypePlugins={[rehypeHighlight]}
+          components={components}
+        >
+          {content}
+        </ReactMarkdown>
+      </CitationContext>
     </div>
   );
-}
-
-export const MarkdownMessage = memo(MarkdownMessageInner);
+});

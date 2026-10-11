@@ -28,7 +28,6 @@ export default function KindChips({
         return (
           <Chip
             key={kind}
-            size="md"
             pressed={isActive(kind) && !kindDisabled}
             disabled={kindDisabled}
             onPressedChange={() => onToggle(kind)}

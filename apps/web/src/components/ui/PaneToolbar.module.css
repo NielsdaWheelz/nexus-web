@@ -11,129 +11,23 @@
   min-inline-size: 0;
 }
 
-.filters {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-inline-size: 0;
-}
-
-.controls {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-inline-size: 0;
-  margin-inline-start: auto;
-}
-
-.controls:only-child {
-  flex: 1 1 auto;
-  min-width: 0;
-  margin-inline-start: 0;
-}
-
-.instrument {
-  flex-wrap: nowrap;
-}
-
-.instrument .search {
-  min-inline-size: 8rem;
-}
-
-.instrument .filters,
-.instrument .controls {
-  flex: 0 0 auto;
-  flex-wrap: nowrap;
-  white-space: nowrap;
-}
-
-.instrument .controls:only-child {
-  flex: 1 1 auto;
-}
-
-.refinement {
-  flex-wrap: wrap;
-}
-
-.refinement .filters,
-.refinement .controls {
-  flex: 0 1 auto;
-  flex-wrap: wrap;
-  max-inline-size: 100%;
-}
-
-.refinement .filters {
-  white-space: normal;
-}
-
-.refinement .filters > * {
-  min-inline-size: 0;
-  max-inline-size: 100%;
-}
-
-.collection {
-  flex-wrap: wrap;
-}
-
-.collection .search {
-  flex: 1 1 12rem;
-  min-inline-size: min(11rem, 100%);
-}
-
-.collection .filters,
-.collection .controls,
-.collection .summary {
-  flex-wrap: wrap;
-  max-inline-size: 100%;
-}
-
-.collection .filters {
-  flex: 0 0 auto;
-}
-
-.collection .filters > label {
-  flex-wrap: wrap;
-  max-inline-size: 100%;
-}
-
-.collection .filters > label > span {
-  white-space: nowrap;
-}
-
-.collection .filters > label > div {
-  flex: 1 1 9rem;
-  min-inline-size: min(9rem, 100%);
-  max-inline-size: 100%;
-}
-
-.collection .filters > label > div > select {
-  padding-inline: 8px 32px;
-}
-
-.collection .filters > label > div > svg {
-  right: 8px;
-}
-
-.collection .controls,
-.collection .summary {
-  flex: 0 1 auto;
-}
-
-.collection .controls {
-  margin-inline-start: 0;
-}
-
+.filters,
+.controls,
 .summary {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   min-inline-size: 0;
+}
+
+.controls,
+.summary {
   margin-inline-start: auto;
 }
 
-.collection .summary > * {
-  min-inline-size: 0;
-  max-inline-size: 100%;
+.controls:only-child {
+  flex: 1 1 auto;
+  margin-inline-start: 0;
 }
 
 .toolbar :where(button, [role="button"]) {
@@ -145,39 +39,98 @@
   min-block-size: var(--size-md);
 }
 
+.Instrument {
+  flex-wrap: nowrap;
+}
+
+.Instrument .search {
+  min-inline-size: 8rem;
+}
+
+.Instrument .filters,
+.Instrument .controls {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.Instrument .controls:only-child {
+  flex: 1 1 auto;
+}
+
+.Refinement,
+.Collection {
+  flex-wrap: wrap;
+}
+
+.Refinement .filters,
+.Refinement .controls {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  max-inline-size: 100%;
+}
+
+.Refinement .filters {
+  white-space: normal;
+}
+
+.Refinement .filters > * {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.Collection .search {
+  flex: 1 1 12rem;
+  min-inline-size: min(11rem, 100%);
+}
+
+.Collection .filters,
+.Collection .controls,
+.Collection .summary {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  max-inline-size: 100%;
+}
+
+.Collection .filters {
+  flex: 0 0 auto;
+}
+
+.Collection .controls {
+  margin-inline-start: 0;
+}
+
+.Collection .summary > * {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
 @container primaryPane (max-width: 479px) {
-  .refinement {
+  .Refinement {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .refinement .search,
-  .refinement .filters,
-  .refinement .controls {
+  .Refinement :is(.search, .filters, .controls) {
     flex: 0 1 auto;
     inline-size: 100%;
-    min-inline-size: 0;
     margin-inline-start: 0;
   }
 
-  .refinement .controls {
+  .Refinement .controls {
     justify-content: flex-end;
   }
 }
 
 @container primaryPane (max-width: 359px) {
-  .refinement .filters > :where(label):has(select) {
+  .Refinement .filters > label:has(select) {
     flex: 1 1 100%;
     inline-size: 100%;
   }
 }
 
 @media (pointer: coarse) {
-  .collection :where(button, input, select) {
+  .Collection :where(button, input, select) {
     min-block-size: var(--size-xl);
-  }
-
-  .collection :where(div):has(> select) {
-    block-size: var(--size-xl);
   }
 }

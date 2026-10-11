@@ -2,7 +2,7 @@
 // scroll. Wheel, single-finger drag, scroll keys and scrollbar drags are the
 // reader's own movement; everything else (positioning, reflow) is not.
 import { useEffect, useRef, type RefObject } from "react";
-import { isEditableTarget } from "@/lib/ui/isEditableTarget";
+import { isEditableTarget } from "@/lib/ui/eventTarget";
 import type { ReaderRuntime } from "./runtime";
 
 export function useScrollport(

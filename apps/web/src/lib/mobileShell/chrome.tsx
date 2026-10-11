@@ -21,7 +21,7 @@ import type { PaneCompanionAction } from "@/lib/panes/paneChrome";
 import type { TargetLinkMouseEvent } from "@/lib/panes/targetLinkActivation";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { isInteractiveTarget } from "@/lib/ui/interactiveTarget";
+import { isInteractiveTarget } from "@/lib/ui/eventTarget";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   findPaneChromeFocusTarget,

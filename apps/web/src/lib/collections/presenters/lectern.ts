@@ -11,7 +11,7 @@ export function playbackVerb(consumption: ConsumptionInfo): "Play" | "Replay" | 
 export function presentLecternItem(item: LecternItem): CollectionRowView {
   return presentMedia(item.mediaSummary, {
     id: item.itemId,
-    primary: { kind: "link", href: item.href, viewTransition: "media-reader" },
+    primary: { kind: "link", href: item.href },
     actionSubject: item.actionSubject,
     selected: false,
   });

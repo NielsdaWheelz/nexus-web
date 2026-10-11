@@ -9,7 +9,8 @@
   border: 1px solid transparent;
   cursor: pointer;
   white-space: nowrap;
-  transition: background-color var(--duration-fast) var(--ease-glide),
+  transition:
+    background-color var(--duration-fast) var(--ease-glide),
     border-color var(--duration-fast) var(--ease-glide),
     color var(--duration-fast) var(--ease-glide);
 }
@@ -20,7 +21,6 @@
   pointer-events: none;
 }
 
-/* Sizes */
 .sm {
   height: var(--size-sm);
   font-size: var(--text-sm);
@@ -39,7 +39,6 @@
   padding: 0 var(--space-5);
 }
 
-/* Icon-only sizing: square button, no padding/gap */
 .iconOnly {
   padding: 0;
   gap: 0;
@@ -57,7 +56,6 @@
   width: var(--size-xl);
 }
 
-/* Variants */
 .primary {
   background: var(--accent);
   color: var(--ink-on-accent);
@@ -71,15 +69,21 @@
   background: var(--accent-active);
 }
 
-.secondary {
+.secondary,
+.pill {
   background: var(--surface-2);
   color: var(--ink);
   border-color: var(--edge);
 }
 
-.secondary:hover:not(:disabled) {
+.secondary:hover:not(:disabled),
+.pill:hover:not(:disabled) {
   background: var(--surface-hover);
   border-color: var(--edge-strong);
+}
+
+.pill {
+  border-radius: var(--radius-full);
 }
 
 .ghost {
@@ -100,20 +104,7 @@
   filter: brightness(1.1);
 }
 
-.pill {
-  background: var(--surface-2);
-  color: var(--ink);
-  border-color: var(--edge);
-  border-radius: var(--radius-full);
-}
-
-.pill:hover:not(:disabled) {
-  background: var(--surface-hover);
-  border-color: var(--edge-strong);
-}
-
-/* An asChild anchor keeps its variant's ink on hover: the global a:hover color
-   outranks a lone variant class. */
+/* An asChild anchor keeps its variant's ink: the global a:hover colour outranks a lone class. */
 a.primary:hover,
 a.danger:hover {
   color: var(--ink-on-accent);
@@ -125,7 +116,6 @@ a.pill:hover {
   color: var(--ink);
 }
 
-/* Icon slot wrapper */
 .icon {
   display: inline-flex;
   align-items: center;
@@ -133,19 +123,18 @@ a.pill:hover {
   flex-shrink: 0;
 }
 
-/* Loading state */
+.label {
+  display: inline-flex;
+  align-items: center;
+}
+
 .loading {
   position: relative;
 }
 
+/* Out of sight, still the button's name. */
 .hiddenLabel {
-  /* Keep the visible label out of sight without removing the button name. */
   opacity: 0;
-}
-
-.label {
-  display: inline-flex;
-  align-items: center;
 }
 
 .spinner {

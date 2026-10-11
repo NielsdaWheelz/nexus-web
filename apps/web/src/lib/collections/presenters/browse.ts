@@ -23,7 +23,6 @@ export function presentBrowseCandidate(
       primary: {
         kind: "link",
         href: resolution.href,
-        viewTransition: "media-reader",
       },
       actionSubject: {
         ref: assumeCanonicalResourceRef(resolution.actionSubjectRef),

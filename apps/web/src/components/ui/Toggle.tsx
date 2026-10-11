@@ -1,24 +1,10 @@
 "use client";
 
 import { useId, type ReactNode } from "react";
+import { cx } from "@/lib/ui/cx";
 import styles from "./Toggle.module.css";
 
-type ToggleSize = "sm" | "md";
-
-interface ToggleProps {
-  checked: boolean;
-  onCheckedChange: (next: boolean) => void;
-  label?: ReactNode;
-  disabled?: boolean;
-  id?: string;
-  size?: ToggleSize;
-}
-
-const sizeClass: Record<ToggleSize, string> = {
-  sm: styles.sm,
-  md: styles.md,
-};
-
+/** A switch: a visually hidden checkbox drawn as a track and thumb. */
 export default function Toggle({
   checked,
   onCheckedChange,
@@ -26,15 +12,21 @@ export default function Toggle({
   disabled = false,
   id,
   size = "md",
-}: ToggleProps) {
+}: {
+  checked: boolean;
+  onCheckedChange: (next: boolean) => void;
+  label?: ReactNode;
+  disabled?: boolean;
+  id?: string;
+  size?: "sm" | "md";
+}) {
   const generatedId = useId();
   const inputId = id ?? generatedId;
-  const rootClass = [styles.root, sizeClass[size], disabled ? styles.disabled : ""]
-    .filter(Boolean)
-    .join(" ");
-
   return (
-    <label className={rootClass} htmlFor={inputId}>
+    <label
+      className={cx(styles.root, styles[size], disabled && styles.disabled)}
+      htmlFor={inputId}
+    >
       <input
         id={inputId}
         type="checkbox"
@@ -46,8 +38,7 @@ export default function Toggle({
       <span className={styles.track} aria-hidden="true">
         <span className={styles.thumb} />
       </span>
-      {label !== undefined ? <span className={styles.label}>{label}</span> : null}
+      {label}
     </label>
   );
 }
-

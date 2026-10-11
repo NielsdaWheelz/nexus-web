@@ -1,14 +1,8 @@
-import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { cx } from "@/lib/ui/cx";
 import styles from "./PaneSection.module.css";
 
-interface PaneSectionProps extends Omit<ComponentPropsWithoutRef<"section">, "title"> {
-  title?: ReactNode;
-  description?: ReactNode;
-  actions?: ReactNode;
-  children: ReactNode;
-}
-
+/** A bordered section of a pane body, with an optional header (title, description, actions). */
 export default function PaneSection({
   title,
   description,
@@ -16,7 +10,12 @@ export default function PaneSection({
   children,
   className,
   ...sectionProps
-}: PaneSectionProps) {
+}: Omit<ComponentProps<"section">, "title"> & {
+  title?: ReactNode;
+  description?: ReactNode;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <section {...sectionProps} className={cx(styles.section, className)}>
       {title || description || actions ? (

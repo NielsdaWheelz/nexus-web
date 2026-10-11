@@ -49,7 +49,7 @@ import {
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
@@ -60,7 +60,7 @@ const VISIT = definePaneVisitDataKey<ListSnapshot<ConversationListItem>>(
   "Conversations.Index",
 );
 const UNIT = { singular: "chat", plural: "chats" };
-const NEW_CHAT: readonly PaneHeaderAction[] = [
+const NEW_CHAT: readonly ActionDescriptor[] = [
   {
     kind: "link",
     id: "Conversations.New",

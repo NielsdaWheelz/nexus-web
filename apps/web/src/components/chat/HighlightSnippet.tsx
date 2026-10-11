@@ -1,27 +1,24 @@
-"use client";
-
 import styles from "./HighlightSnippet.module.css";
 
-interface HighlightSnippetProps {
-  exact: string;
-  prefix?: string | null;
-  suffix?: string | null;
-}
-
+/** A quoted passage: its context dimmed around the marked exact text. */
 export default function HighlightSnippet({
   exact,
   prefix,
   suffix,
-}: HighlightSnippetProps) {
+}: {
+  exact: string;
+  prefix?: string | null;
+  suffix?: string | null;
+}) {
   return (
     <span className={styles.root}>
-      {prefix ? <span className={styles.prefix}>{prefix}</span> : null}
+      {prefix ? <span className={styles.context}>{prefix}</span> : null}
       {exact.trim() ? (
         <mark className={styles.exact}>{exact}</mark>
       ) : (
         <span className={styles.empty}>No selectable text</span>
       )}
-      {suffix ? <span className={styles.suffix}>{suffix}</span> : null}
+      {suffix ? <span className={styles.context}>{suffix}</span> : null}
     </span>
   );
 }

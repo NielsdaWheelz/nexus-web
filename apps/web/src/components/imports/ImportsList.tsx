@@ -207,7 +207,6 @@ export default function ImportsList({
     <Tabs
       className={styles.workspace}
       value={view}
-      variant="segmented"
       onValueChange={(next) => {
         const target = oneOf(next, IMPORTS_VIEWS);
         if (target !== undefined && target !== view) {

@@ -266,12 +266,12 @@ additive.
 The sole promoted action is the typed companion action. `PaneShell` derives it
 (`companionAction` in `Companion.tsx`) iff the body publishes a Companion, and
 it is the only source of its name (`Inspector`), `PanelRight` icon and disclosure
-state; desktop renders it through `ActionBar` with `showLabels` (icon and label
-at natural width; the identity yields width first), mobile as an icon-only
-48px bar button. Its open state is visually distinct and announced through
-`aria-expanded`; `aria-controls` names the mounted region while open, and the
-hover title is the projected `Show inspector`/`Hide inspector` command copy.
-Other `ActionBar` consumers stay icon-only.
+state; desktop renders it in `SurfaceHeader` as one labelled ghost `Button`
+(icon and label at natural width, 32px; the identity yields width first),
+mobile as an icon-only 48px bar button. Its open state is visually distinct and
+announced through `aria-expanded`; `aria-controls` names the
+mounted region while open, and the hover title is the projected
+`Show inspector`/`Hide inspector` command copy.
 
 `ContextualActionMenu` projects every remaining command through the existing
 `ActionMenu` in desktop and mobile chrome. PDF publishes page controls; EPUB and

@@ -6,23 +6,21 @@
   min-inline-size: 0;
 }
 
-.bar > div {
+/* A long label wraps inside its chip (outranking Chip's height on weight). */
+.bar .chip {
   block-size: auto;
   min-block-size: var(--size-sm);
   max-inline-size: 100%;
-}
-
-.bar > div span {
   overflow-wrap: anywhere;
 }
 
 @media (pointer: coarse) {
-  .bar > * {
+  .bar .chip,
+  .bar button {
     min-block-size: var(--size-xl);
   }
 
   .bar button {
     min-inline-size: var(--size-xl);
-    min-block-size: var(--size-xl);
   }
 }

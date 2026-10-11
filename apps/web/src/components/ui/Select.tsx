@@ -1,48 +1,30 @@
-"use client";
-
-import { forwardRef, type SelectHTMLAttributes } from "react";
 import { ChevronDown } from "lucide-react";
-import styles from "./Select.module.css";
+import type { ComponentProps } from "react";
+import { cx } from "@/lib/ui/cx";
+import styles from "./Field.module.css";
 
 export type SelectSize = "sm" | "md" | "lg";
 
-interface SelectProps extends Omit<SelectHTMLAttributes<HTMLSelectElement>, "size"> {
-  size?: SelectSize;
-}
-
-const sizeClass: Record<SelectSize, string> = {
-  sm: styles.sm,
-  md: styles.md,
-  lg: styles.lg,
-};
-
-const iconSize: Record<SelectSize, number> = {
-  sm: 14,
-  md: 16,
-  lg: 18,
-};
-
-const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select(
-  { size = "md", className, children, ...rest },
-  ref
-) {
-  const wrapperCls = [styles.wrapper, sizeClass[size], className ?? ""]
-    .filter(Boolean)
-    .join(" ");
-  const selectCls = [styles.select, sizeClass[size]].join(" ");
-
+/** A native select with the field appearance and a chevron. */
+export default function Select({
+  size = "md",
+  className,
+  children,
+  ...rest
+}: Omit<ComponentProps<"select">, "size"> & { size?: SelectSize }) {
   return (
-    <div className={wrapperCls}>
-      <select ref={ref} className={selectCls} {...rest}>
+    <div className={cx(styles.selectWrap, styles[size], className)}>
+      <select
+        className={cx(styles.field, styles.boxed, styles.select, styles[size])}
+        {...rest}
+      >
         {children}
       </select>
       <ChevronDown
-        size={iconSize[size]}
+        size={{ sm: 14, md: 16, lg: 18 }[size]}
         className={styles.chevron}
         aria-hidden="true"
       />
     </div>
   );
-});
-
-export default Select;
+}

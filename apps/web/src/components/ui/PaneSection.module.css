@@ -28,10 +28,7 @@
   font-size: var(--text-lg);
 }
 
-/* The section opener takes the Solar's display face. Cormorant ships at 300 only
-   and its hairline serifs disintegrate below 20px, so the size rises from
-   --text-lg with the face. The heading is flow-laid inside a wrapping header, so
-   the taller line costs height and nothing else. */
+/* The Solar's display face, which needs 20px for its hairlines. */
 :global([data-theme="elvish"]) .title {
   font-family: var(--font-display);
   font-size: var(--text-xl);

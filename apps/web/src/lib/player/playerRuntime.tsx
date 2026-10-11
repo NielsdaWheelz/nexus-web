@@ -46,8 +46,7 @@ import {
   useAndroidShell,
   useViewportState,
 } from "@/lib/renderEnvironment/provider";
-import { isInteractiveTarget } from "@/lib/ui/interactiveTarget";
-import { isEditableTarget } from "@/lib/ui/isEditableTarget";
+import { isEditableTarget, isInteractiveTarget } from "@/lib/ui/eventTarget";
 
 /**
  * Browse preview audio. It carries no media identity because a preview never

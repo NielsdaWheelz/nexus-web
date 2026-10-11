@@ -1,73 +1,68 @@
+/* A tinted tone fills with an 18% mix of the tone and paints its label in the
+   room's ink step for that tone (globals.css), which holds 4.5:1 over the fill. */
 .pill {
+  --pill-tone: var(--ink);
+  --pill-ink: var(--ink-muted);
   display: inline-flex;
   min-width: 0;
   max-width: 100%;
   align-items: center;
   gap: var(--space-1);
-  border: 1px solid transparent;
+  border: 1px solid color-mix(in srgb, var(--pill-tone) 30%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--pill-tone) 18%, transparent);
+  color: var(--pill-ink);
   font-weight: var(--weight-semibold);
   letter-spacing: var(--tracking-wider);
-  white-space: nowrap;
-  border-radius: var(--radius-full);
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-/* The smallest pill: a count in icon-only chrome, where the whole control is
-   the width of a glyph. It drops the wider tracking with the type size, since
-   a two- or three-character count has no word shape to open up. */
-.sizeXs {
+/* A count in icon-only chrome: no word shape to open up, so no tracking. */
+.xs {
   padding: 1px var(--space-1);
   font-size: var(--text-2xs);
   line-height: var(--leading-tight);
   letter-spacing: var(--tracking-normal);
 }
 
-.sizeSm {
+.sm {
   padding: 2px var(--space-2);
   font-size: var(--text-xs);
 }
 
-.toneNeutral {
+.neutral {
+  border-color: transparent;
   background: color-mix(in srgb, var(--ink) 10%, transparent);
-  color: var(--ink-muted);
 }
 
-/* The tinted tones paint their label in the palette's ink step for that tone,
-   never in the tone itself: the fill is an 18% mix of the same token, so the
-   tone-on-tone pair cannot clear AA for text this size (globals.css). */
-.toneInfo {
-  background: color-mix(in srgb, var(--info) 18%, transparent);
-  color: var(--info-ink);
-  border-color: color-mix(in srgb, var(--info) 30%, transparent);
+.info {
+  --pill-tone: var(--info);
+  --pill-ink: var(--info-ink);
 }
 
-.toneSuccess {
-  background: color-mix(in srgb, var(--success) 18%, transparent);
-  color: var(--success-ink);
-  border-color: color-mix(in srgb, var(--success) 30%, transparent);
+.success {
+  --pill-tone: var(--success);
+  --pill-ink: var(--success-ink);
 }
 
-.toneWarning {
-  background: color-mix(in srgb, var(--warning) 18%, transparent);
-  color: var(--warning-ink);
-  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
+.warning {
+  --pill-tone: var(--warning);
+  --pill-ink: var(--warning-ink);
 }
 
-.toneDanger {
-  background: color-mix(in srgb, var(--danger) 18%, transparent);
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+.danger {
+  --pill-tone: var(--danger);
+  --pill-ink: var(--danger-ink);
 }
 
-.toneAccent {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+.accent {
+  --pill-tone: var(--accent);
+  --pill-ink: var(--accent-ink);
 }

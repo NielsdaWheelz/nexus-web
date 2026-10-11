@@ -1,10 +1,5 @@
 export type PlatformKind =
-  | "mac"
-  | "ios"
-  | "android"
-  | "windows"
-  | "linux"
-  | "other";
+  "mac" | "ios" | "android" | "windows" | "linux" | "other";
 
 export type ViewportKind = "desktop" | "mobile";
 

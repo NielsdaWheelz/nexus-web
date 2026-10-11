@@ -35,6 +35,9 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] chats index · 2026-10-10 colrev rebase · p3 · "Chat about this…" creates a chat without publishing `Chats`, so a mounted index misses it until reread: [ticket](tickets/chat-create-publishes-no-change.md).
 - [open] consumption / lists · 2026-10-10 collection-revision cut · p3 · every listening heartbeat and reader save rereads consumption-dependent lists; publish only on transitions?: [ticket](tickets/consumption-heartbeats-refetch-lists.md).
 - [open] libraries / entries · 2026-10-10 colrev harness · p3 · re-filing a removed entry keeps its original added time, so "Newest added" puts it where it first was: [ticket](tickets/library-refiling-keeps-original-added-time.md).
+- [open] web / resource graph · 2026-10-10 visual primitives reauthor · p3 · the link composer offers Retry (and a persistent notice) for create failures a retry cannot fix (`E_LINK_SELF`, `E_LINK_CAPABILITY`, `E_NOT_FOUND`): [ticket](tickets/link-composer-offers-retry-for-non-retryable-failures.md).
+- [open] web / render environment · 2026-10-10 visual primitives reauthor · p3 · every viewer sees dates in en-US and UTC; where a viewer's locale and zone come from is undecided: [ticket](tickets/display-locale-and-zone-are-fixed-to-en-us-utc.md).
+- [open] web / settings, reader · 2026-10-10 visual primitives reauthor · p3 · the reader's Focus mode is a tablist whose tabs control no panel; by meaning a radio group: [ticket](tickets/reader-focus-mode-uses-tabs-without-panels.md).
 - [open] release / web auth · 2026-10-10 auth reauthor · before promoting set one `NEXUS_EXTENSION_REDIRECT_ORIGINS` and check hosted `jwt_expiry` > 120 s; after, forbid the three retired origin vars: [ticket](tickets/auth-reauthor-release-steps.md).
 - [open] android / auth · 2026-10-10 auth reauthor · p3 · identity linking cannot complete inside the android shell (spec D1): [ticket](tickets/android-identity-linking-cannot-complete-in-shell.md).
 - [open] web auth / headers · 2026-10-10 auth harness · p3 · next replaces middleware's `Vary: Cookie` on auth documents; harmless while they are private, no-store: [ticket](tickets/auth-documents-lose-vary-cookie.md).
@@ -84,7 +87,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] ingest / duplicate feedback · 2026-10-04 source audit · identical command replay is labeled content duplication; qualify the browser marker before changing the public result: [ticket](tickets/source-replay-is-reported-as-content-duplicate.md).
 - [open] ingest / replay authority · 2026-10-04 source audit · replay validates current destination write access before reading the saved admission: [ticket](tickets/url-replay-requires-current-destination-write-access.md).
 - [open] media upload retry · 2026-10-04 source audit · the fresh and memo retry paths repeat the same capability generation/expiry in a private result: [ticket](tickets/upload-retry-repeats-capability-result.md).
-- [open] ui field controls · 2026-10-04 source audit · input, textarea and select repeat appearance rules; qualify one shared class against caller overrides and focus behavior: [ticket](tickets/ui-field-controls-repeat-appearance-rules.md).
 
 
 - [open] operator credentials · 2026-10-02 cleanup workflow · skid's three peer bearer fields were printed into a tool transcript; coordinate rotation with active sessions: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
@@ -211,15 +213,6 @@ Successor to OI-032. The D15 journey run records the post-fix capture
 (`F-imports-review-6/rail-badge-collapsed.png`), so the capture clause is met;
 the D15 collapsed-rail gate stays `not_run` until the visual reviewer reads it. See
 [docs/tickets/collapsed-rail-count-has-no-recorded-review-capture.md](tickets/collapsed-rail-count-has-no-recorded-review-capture.md).
-
-### [OPEN] OI-047 — `Pill`'s danger and accent tones fail AA contrast against their own fill
-frontend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain W4) · P2
-`.toneDanger` and `.toneAccent` still paint their text in the tone over an 18%
-mix of the same tone, measuring 3.07:1 to 4.16:1 against their own fill — below
-WCAG AA for text at `--text-xs`. The info, success and warning tones were fixed
-with per-palette `--*-ink` steps in Phase 7 chain Z; these two are painted only
-by surfaces outside the imports cutover's ownership. See
-[docs/tickets/pill-tone-text-fails-aa-contrast-against-its-own-fill.md](tickets/pill-tone-text-fails-aa-contrast-against-its-own-fill.md).
 
 ### [OPEN] OI-048 — The mobile Imports entry has no D15 capture
 frontend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain W4) · P3
@@ -413,7 +406,6 @@ unexpected timeouts. See
 - [open] workspace / host canvas · 2026-10-10 workspace host reauthor · p2 · a resume aims the active pane once, before the panes left of it finish growing, so it ends partly or wholly off-screen: [ticket](tickets/resume-scroll-misses-late-pane-growth.md).
 - [open] imports / web · 2026-10-10 workspace host reauthor · p3 · a dismissed imports Inspector reopens whenever the pane remounts (resume, breakpoint round trip): [ticket](tickets/imports-inspector-reopens-on-every-mount.md).
 - [deferred] web / overlays · 2026-10-10 overlay kernel reauthor · page-level menus, floating surfaces and citation cards on a phone do not own Back (the history entry exists only while a modal is open); product call pending: [ticket](tickets/mobile-page-menus-ignore-back.md).
-- [open] web / chat, overlays · 2026-10-10 overlay kernel reauthor · the desktop citation card is a tooltip holding buttons that keyboard focus cannot reach: [ticket](tickets/citation-preview-actions-unreachable-by-keyboard.md).
+- [open] web / chat, overlays · 2026-10-10 overlay kernel reauthor · the desktop citation card is a tooltip holding a button (Open in context or Open source) that keyboard focus cannot reach: [ticket](tickets/citation-preview-actions-unreachable-by-keyboard.md).
 - [open] web / reader · 2026-10-10 overlay kernel reauthor (harness D8) · the selection dock anchors to the rect captured at the last selectionchange, so it does not follow a scroll: [ticket](tickets/selection-dock-does-not-follow-scroll.md).
 - [open] web / reader · 2026-10-10 overlay kernel reauthor (harness D9) · on firefox the dock's More menu taking focus collapses the selection and the dock closes: [ticket](tickets/firefox-selection-dock-closes-when-its-menu-takes-focus.md).
-- [open] web / ui · 2026-10-10 overlay kernel reauthor · the action bar's custom popover action has no producer, so no floating surface opens inside a modal (design journey O13 unpinned): [ticket](tickets/action-bar-popover-has-no-producer.md).

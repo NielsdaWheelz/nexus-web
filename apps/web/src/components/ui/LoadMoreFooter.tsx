@@ -1,6 +1,4 @@
-"use client";
-
-import Button from "@/components/ui/Button";
+import Button from "./Button";
 import styles from "./LoadMoreFooter.module.css";
 
 export default function LoadMoreFooter({
@@ -17,13 +15,12 @@ export default function LoadMoreFooter({
   label?: string;
 }) {
   if (!hasMore) return null;
-
   return (
     <div className={styles.footer}>
       <Button
         variant="secondary"
         loading={loading}
-        disabled={loading || disabled}
+        disabled={disabled}
         onClick={onLoadMore}
       >
         {label}

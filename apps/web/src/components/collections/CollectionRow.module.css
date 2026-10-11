@@ -56,6 +56,11 @@
   gap: var(--space-2);
 }
 
+/* A media row whose update failed. */
+.failed {
+  color: var(--danger);
+}
+
 .mediaSupportLine {
   display: flex;
   min-width: 0;

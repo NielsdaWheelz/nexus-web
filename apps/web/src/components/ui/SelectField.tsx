@@ -1,36 +1,34 @@
-"use client";
+import type { ChangeEventHandler, ReactNode, Ref } from "react";
+import Select, { type SelectSize } from "./Select";
+import styles from "./Field.module.css";
 
-import { forwardRef, type ChangeEventHandler, type ReactNode } from "react";
-import Select, { type SelectSize } from "@/components/ui/Select";
-import styles from "./SelectField.module.css";
-
-/** Stacked labels a pane refinement control; Inline labels a compact instrument option. */
-type SelectFieldLayout = "Stacked" | "Inline";
-
-const layoutClass: Record<SelectFieldLayout, string> = {
-  Stacked: styles.stacked,
-  Inline: styles.inline,
-};
-
-/** One visibly labelled native select. Presentational: the caller owns the options. */
-const SelectField = forwardRef<
-  HTMLSelectElement,
-  {
-    readonly layout: SelectFieldLayout;
-    readonly label: string;
-    readonly id?: string;
-    readonly size?: SelectSize;
-    readonly value: string;
-    readonly disabled?: boolean;
-    readonly onChange: ChangeEventHandler<HTMLSelectElement>;
-    readonly children: ReactNode;
-  }
->(function SelectField(
-  { layout, label, id, size, value, disabled, onChange, children },
+/** One visibly labelled native select: Stacked for a pane refinement, Inline for a compact instrument option. */
+export default function SelectField({
+  layout,
+  label,
+  id,
+  size,
+  value,
+  disabled,
+  onChange,
   ref,
-) {
+  children,
+}: {
+  readonly layout: "Stacked" | "Inline";
+  readonly label: string;
+  readonly id?: string;
+  readonly size?: SelectSize;
+  readonly value: string;
+  readonly disabled?: boolean;
+  readonly onChange: ChangeEventHandler<HTMLSelectElement>;
+  readonly ref?: Ref<HTMLSelectElement>;
+  readonly children: ReactNode;
+}) {
   return (
-    <label className={layoutClass[layout]} htmlFor={id}>
+    <label
+      className={layout === "Stacked" ? styles.stacked : styles.inline}
+      htmlFor={id}
+    >
       <span>{label}</span>
       <Select
         ref={ref}
@@ -44,6 +42,4 @@ const SelectField = forwardRef<
       </Select>
     </label>
   );
-});
-
-export default SelectField;
+}

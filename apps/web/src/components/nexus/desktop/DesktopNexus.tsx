@@ -73,7 +73,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
         <span className="sr-only">Find anything…</span>
         <Input
           ref={inputRef}
-          variant="bare"
+          bare
           role="combobox"
           aria-label="Find anything…"
           aria-autocomplete="list"

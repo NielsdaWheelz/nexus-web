@@ -1,23 +1,18 @@
 import type { ReactNode } from "react";
 import styles from "./ResourceList.module.css";
 
-interface ResourceListProps {
-  ariaLabel: string;
-  busy?: boolean;
-  children: ReactNode;
-}
-
+/** An editorial index: rows butt together, separated by their own hairlines. */
 export default function ResourceList({
   ariaLabel,
   busy,
   children,
-}: ResourceListProps) {
+}: {
+  ariaLabel: string;
+  busy?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <ul
-      className={styles.list}
-      aria-label={ariaLabel}
-      aria-busy={busy}
-    >
+    <ul className={styles.list} aria-label={ariaLabel} aria-busy={busy}>
       {children}
     </ul>
   );
