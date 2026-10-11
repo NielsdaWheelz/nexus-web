@@ -14,28 +14,24 @@ import type { RenderEnvironment, ViewportKind } from "./types";
 const MOBILE_QUERY =
   "(max-width: 768px), (max-width: 900px) and (orientation: landscape) and (pointer: coarse)";
 
-/** Read the canonical browser projection synchronously at an input boundary. */
+/** The viewport kind now, read synchronously at an input boundary. */
 export function getBrowserViewportKind(): ViewportKind {
   return window.matchMedia(MOBILE_QUERY).matches ? "mobile" : "desktop";
 }
 
-function serverViewportKind(): ViewportKind {
-  return "desktop";
-}
-
-function subscribeToViewport(onStoreChange: () => void): () => void {
+function subscribeToViewport(onChange: () => void): () => void {
   const query = window.matchMedia(MOBILE_QUERY);
-  query.addEventListener("change", onStoreChange);
-  return () => query.removeEventListener("change", onStoreChange);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
 }
 
-interface RenderEnvironmentContextValue extends RenderEnvironment {
+type Context = RenderEnvironment & {
   viewportKind: ViewportKind;
   viewportHydrated: boolean;
-}
+};
+const RenderEnvironmentContext = createContext<Context | null>(null);
 
-const RenderEnvironmentContext = createContext<RenderEnvironmentContextValue | null>(null);
-
+/** The server's render facts, plus the live viewport kind (desktop on the server and at hydration). */
 export function RenderEnvironmentProvider({
   value,
   children,
@@ -46,35 +42,31 @@ export function RenderEnvironmentProvider({
   const viewportKind = useSyncExternalStore(
     subscribeToViewport,
     getBrowserViewportKind,
-    serverViewportKind,
+    (): ViewportKind => "desktop",
   );
   const [viewportHydrated, setViewportHydrated] = useState(false);
-
-  useEffect(() => {
-    setViewportHydrated(true);
-  }, []);
-
+  useEffect(() => setViewportHydrated(true), []);
   return (
-    <RenderEnvironmentContext.Provider value={{ ...value, viewportKind, viewportHydrated }}>
+    <RenderEnvironmentContext
+      value={{ ...value, viewportKind, viewportHydrated }}
+    >
       {children}
-    </RenderEnvironmentContext.Provider>
+    </RenderEnvironmentContext>
   );
 }
 
-function useRenderEnvironmentContext(): RenderEnvironmentContextValue {
+function useEnvironment(): Context {
   const value = useContext(RenderEnvironmentContext);
-  if (!value) {
-    throw new Error("RenderEnvironmentProvider is missing");
-  }
+  if (!value) throw new Error("RenderEnvironmentProvider is missing");
   return value;
 }
 
 export function useRenderEnvironment(): RenderEnvironment {
-  return useRenderEnvironmentContext();
+  return useEnvironment();
 }
 
 export function useAndroidShell(): boolean {
-  return useRenderEnvironmentContext().androidShell;
+  return useEnvironment().androidShell;
 }
 
 export function useViewportState(): {
@@ -82,7 +74,7 @@ export function useViewportState(): {
   isMobile: boolean;
   hydrated: boolean;
 } {
-  const { viewportKind, viewportHydrated } = useRenderEnvironmentContext();
+  const { viewportKind, viewportHydrated } = useEnvironment();
   return {
     kind: viewportKind,
     isMobile: viewportKind === "mobile",

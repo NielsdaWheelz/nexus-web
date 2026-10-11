@@ -29,7 +29,7 @@ import { executeResourceChat } from "@/lib/resources/resourceActionExecution";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
-import { isEditableTarget } from "@/lib/ui/isEditableTarget";
+import { isEditableTarget } from "@/lib/ui/eventTarget";
 import styles from "./media.module.css";
 
 const FOCUS_CYCLE = { off: "distraction_free", distraction_free: "paragraph", paragraph: "sentence", sentence: "off" } as const;

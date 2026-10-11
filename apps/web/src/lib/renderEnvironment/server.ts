@@ -2,9 +2,13 @@ import "server-only";
 
 import { cookies, headers } from "next/headers";
 import { isAndroidShellUserAgent } from "@/lib/androidShell";
-import { NAV_COLLAPSED_COOKIE, type PlatformKind, type RenderEnvironment } from "./types";
+import {
+  NAV_COLLAPSED_COOKIE,
+  type PlatformKind,
+  type RenderEnvironment,
+} from "./types";
 
-function platformFromUserAgent(userAgent: string): PlatformKind {
+function platformOf(userAgent: string): PlatformKind {
   if (/iPhone|iPad|iPod/.test(userAgent)) return "ios";
   if (/Mac/.test(userAgent)) return "mac";
   if (/Android/.test(userAgent)) return "android";
@@ -13,17 +17,15 @@ function platformFromUserAgent(userAgent: string): PlatformKind {
   return "other";
 }
 
+/** Display locale and zone are fixed (en-US, UTC) so server and client format identically. */
 export async function loadRenderEnvironment(): Promise<RenderEnvironment> {
   const userAgent = (await headers()).get("user-agent") ?? "";
-  const displayLocale = "en-US";
-  const displayTimeZone = "UTC";
-  const now = new Date();
   return {
     androidShell: isAndroidShellUserAgent(userAgent),
-    platform: platformFromUserAgent(userAgent),
-    displayLocale,
-    displayTimeZone,
-    currentInstant: now.toISOString(),
+    platform: platformOf(userAgent),
+    displayLocale: "en-US",
+    displayTimeZone: "UTC",
+    currentInstant: new Date().toISOString(),
     navCollapsed: (await cookies()).get(NAV_COLLAPSED_COOKIE)?.value === "1",
   };
 }

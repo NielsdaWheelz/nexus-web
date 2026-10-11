@@ -14,7 +14,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { isEditableTarget } from "@/lib/ui/isEditableTarget";
+import { isEditableTarget } from "@/lib/ui/eventTarget";
 
 const ANCHORS = "[data-collection-row-id], [data-note-block-id]";
 const SCROLL_KEY = /^(Arrow(Up|Down)|Page(Up|Down)|Home|End| )$/;

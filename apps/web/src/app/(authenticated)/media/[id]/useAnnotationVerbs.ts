@@ -38,7 +38,7 @@ import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysC
 import { useShareController } from "@/lib/sharing/controller";
 import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
 import { canonicalResourceRef, resourceShareTarget } from "@/lib/sharing/targets";
-import { isEditableTarget } from "@/lib/ui/isEditableTarget";
+import { isEditableTarget } from "@/lib/ui/eventTarget";
 import type { AnnotationStore } from "./annotations";
 
 type NoteIntent = Extract<HighlightActionIntent, { kind: "AddHighlightNote" | "EditHighlightNote" }>;

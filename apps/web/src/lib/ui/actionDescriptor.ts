@@ -4,10 +4,10 @@ export interface ActionSelectDetail {
   readonly triggerEl: HTMLButtonElement | null;
 }
 
-interface ActionRenderControls extends ActionSelectDetail {
-  readonly closeMenu: () => void;
-  readonly closeMenuWithoutFocus: () => void;
-}
+type DisclosureLabels = {
+  readonly collapsed: string;
+  readonly expanded: string;
+};
 
 export type ActionControlState =
   | { readonly kind: "toggle"; readonly pressed: boolean }
@@ -15,78 +15,54 @@ export type ActionControlState =
       readonly kind: "disclosure";
       readonly expanded: false;
       readonly controls?: never;
-      readonly menuLabels: {
-        readonly collapsed: string;
-        readonly expanded: string;
-      };
+      readonly menuLabels: DisclosureLabels;
     }
   | {
       readonly kind: "disclosure";
       readonly expanded: true;
       readonly controls: string;
-      readonly menuLabels: {
-        readonly collapsed: string;
-        readonly expanded: string;
-      };
+      readonly menuLabels: DisclosureLabels;
     };
 
-interface ActionControlProjection {
-  readonly menuLabel: string;
-  readonly menuRole: "menuitem" | "menuitemcheckbox";
-  readonly menuChecked: boolean | undefined;
-  readonly barPressed: boolean | undefined;
-  readonly barExpanded: boolean | undefined;
-  readonly barControls: string | undefined;
-  readonly active: boolean;
-}
-
+/** A control state as a menu item's role and label and as a bar button's aria. */
 export function projectActionControlState(
   label: string,
   state: ActionControlState | undefined,
-): ActionControlProjection {
-  if (!state) {
+): {
+  readonly menuLabel: string;
+  readonly menuRole: "menuitem" | "menuitemcheckbox";
+  readonly menuChecked?: boolean;
+  readonly barPressed?: boolean;
+  readonly barExpanded?: boolean;
+  readonly barControls?: string;
+  readonly active: boolean;
+} {
+  if (state?.kind === "toggle") {
+    const pressed = state.pressed;
     return {
       menuLabel: label,
-      menuRole: "menuitem",
-      menuChecked: undefined,
-      barPressed: undefined,
-      barExpanded: undefined,
-      barControls: undefined,
-      active: false,
+      menuRole: "menuitemcheckbox",
+      menuChecked: pressed,
+      barPressed: pressed,
+      active: pressed,
     };
   }
-  switch (state.kind) {
-    case "toggle":
-      return {
-        menuLabel: label,
-        menuRole: "menuitemcheckbox",
-        menuChecked: state.pressed,
-        barPressed: state.pressed,
-        barExpanded: undefined,
-        barControls: undefined,
-        active: state.pressed,
-      };
-    case "disclosure":
-      return {
-        menuLabel:
-          state.menuLabels[state.expanded ? "expanded" : "collapsed"],
-        menuRole: "menuitem",
-        menuChecked: undefined,
-        barPressed: undefined,
-        barExpanded: state.expanded,
-        barControls: state.expanded ? state.controls : undefined,
-        active: state.expanded,
-      };
-    default: {
-      const exhaustive: never = state;
-      throw new Error(
-        `Unhandled action control state: ${JSON.stringify(exhaustive)}`,
-      );
-    }
+  if (state?.kind === "disclosure") {
+    const { expanded } = state;
+    return {
+      menuLabel: expanded
+        ? state.menuLabels.expanded
+        : state.menuLabels.collapsed,
+      menuRole: "menuitem",
+      barExpanded: expanded,
+      barControls: expanded ? state.controls : undefined,
+      active: expanded,
+    };
   }
+  return { menuLabel: label, menuRole: "menuitem", active: false };
 }
 
-interface ActionDescriptorBase {
+interface ActionBase {
   readonly id: string;
   readonly label: string;
   readonly icon?: ReactElement;
@@ -97,40 +73,34 @@ interface ActionDescriptorBase {
   readonly separatorBefore?: boolean;
 }
 
-interface ActionCommandDescriptor extends ActionDescriptorBase {
-  readonly kind: "command";
-  readonly onSelect: (detail: ActionSelectDetail) => void;
-  readonly state?: ActionControlState;
-  readonly restoreFocusOnClose?: boolean;
-  readonly href?: never;
-  readonly render?: never;
-}
-
-interface ActionLinkDescriptor extends ActionDescriptorBase {
-  readonly kind: "link";
-  readonly href: string;
-  readonly onSelect?: (detail: ActionSelectDetail) => void;
-  readonly restoreFocusOnClose?: boolean;
-  readonly state?: never;
-  readonly render?: never;
-}
-
-interface ActionCustomDescriptor extends ActionDescriptorBase {
-  readonly kind: "custom";
-  readonly render: (controls: ActionRenderControls) => ReactNode;
-  readonly href?: never;
-  readonly onSelect?: never;
-  readonly restoreFocusOnClose?: never;
-  readonly state?: never;
-}
-
+/** One command shape for menus and the pane chrome: run a command, follow a link, or render custom controls. */
 export type ActionDescriptor =
-  | ActionCommandDescriptor
-  | ActionLinkDescriptor
-  | ActionCustomDescriptor;
-
-type RequireIcon<Descriptor extends ActionDescriptor> = Descriptor extends ActionDescriptor
-  ? Omit<Descriptor, "icon"> & { readonly icon: ReactElement }
-  : never;
-
-export type PaneHeaderAction = RequireIcon<ActionDescriptor>;
+  | (ActionBase & {
+      readonly kind: "command";
+      readonly onSelect: (detail: ActionSelectDetail) => void;
+      readonly state?: ActionControlState;
+      readonly restoreFocusOnClose?: boolean;
+      readonly href?: never;
+      readonly render?: never;
+    })
+  | (ActionBase & {
+      readonly kind: "link";
+      readonly href: string;
+      readonly onSelect?: (detail: ActionSelectDetail) => void;
+      readonly restoreFocusOnClose?: boolean;
+      readonly state?: never;
+      readonly render?: never;
+    })
+  | (ActionBase & {
+      readonly kind: "custom";
+      readonly render: (
+        controls: ActionSelectDetail & {
+          readonly closeMenu: () => void;
+          readonly closeMenuWithoutFocus: () => void;
+        },
+      ) => ReactNode;
+      readonly href?: never;
+      readonly onSelect?: never;
+      readonly restoreFocusOnClose?: never;
+      readonly state?: never;
+    });

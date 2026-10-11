@@ -257,8 +257,9 @@ export default function CollectionRow({
     row.exceptionalStatus.kind === "Present"
       ? renderExceptionalStatus(row.exceptionalStatus.value)
       : undefined;
+  const failed = mediaLayout && Boolean(exceptionalStatus);
   const status = exceptionalStatus || activity ? (
-    <span className={styles.status}>
+    <span className={failed ? `${styles.status} ${styles.failed}` : styles.status}>
       {exceptionalStatus}
       {activity ? (
         <span className={styles.activity}>
@@ -327,14 +328,12 @@ export default function CollectionRow({
         "data-collection-row-id": row.id,
         "data-collection-item-kind": row.kind,
         "data-media-identity": mediaLayout ? "true" : undefined,
-        "data-media-failed": row.mediaIdentity && exceptionalStatus ? "true" : undefined,
-        "data-view-transition-part": "row",
         style: rootStyle,
       }}
       title={title}
       supporting={supporting}
       status={status}
-      separateStatus={!mediaLayout}
+      wrapped={mediaLayout}
       evidence={evidence}
       primaryControl={primaryControl}
       actions={actions}

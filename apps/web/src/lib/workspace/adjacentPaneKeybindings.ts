@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { matchesKeyEvent } from "@/lib/keybindings";
 import { useKeybindings } from "@/lib/keybindingsProvider";
-import { isEditableTarget } from "@/lib/ui/isEditableTarget";
+import { isEditableTarget } from "@/lib/ui/eventTarget";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 
 /** pane-next / pane-previous move to the adjacent visible pane (clamped). */

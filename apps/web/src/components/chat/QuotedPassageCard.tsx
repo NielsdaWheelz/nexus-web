@@ -6,7 +6,7 @@ import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import HighlightSnippet from "@/components/ui/HighlightSnippet";
+import HighlightSnippet from "@/components/chat/HighlightSnippet";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import type { ApiJson, Schema } from "@/lib/api/wire";

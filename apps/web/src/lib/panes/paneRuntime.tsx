@@ -12,11 +12,9 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { preloadPane } from "@/lib/panes/paneRenderRegistry";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import type { WorkspaceSecondarySurfaceId } from "@/lib/panes/paneSecondaryModel";
 import {
-  clearMediaReaderViewTransition,
   startSameDocumentViewTransition,
   type PaneViewTransitionIntent,
 } from "@/lib/ui/viewTransitions";
@@ -121,18 +119,11 @@ export function PaneRuntimeProvider(props: {
     const go = (target: string, replace: boolean, options: PaneRouterOptions = {}) => {
       const next = normalizeWorkspaceHref(target);
       if (!next) return;
-      const { labelHint, activate, viewTransition: transition } = options;
+      const { labelHint, activate, viewTransition } = options;
       const navigate = () =>
         now().store.navigatePane(pane.id, next, { replace, activate, labelHint });
-      if (!transition) return navigate();
-      const id = resolvePaneRouteModel(next).id;
-      const reader = transition.kind === "media-reader";
-      startSameDocumentViewTransition(navigate, {
-        preload: reader && id !== "unsupported" ? () => preloadPane(id) : undefined,
-        onFinish: reader
-          ? () => clearMediaReaderViewTransition(transition.mediaId)
-          : undefined,
-      });
+      if (viewTransition) startSameDocumentViewTransition(navigate);
+      else navigate();
     };
     const router: PaneScopedRouter = {
       get canGoBack() {

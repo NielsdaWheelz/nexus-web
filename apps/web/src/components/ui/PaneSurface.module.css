@@ -1,6 +1,5 @@
 .surface {
   display: flex;
-  box-sizing: border-box;
   width: 100%;
   min-width: 0;
   flex-direction: column;
@@ -8,17 +7,11 @@
   padding: var(--space-4);
 }
 
-.brief,
-.toolbar,
-.state,
-.content,
-.empty,
-.footer {
+.surface > * {
   min-width: 0;
 }
 
-/* The standfirst voice the deleted section opener owned: a measure-constrained
-   serif lede that orients the surface without competing with its chrome title. */
+/* The standfirst: a measured serif lede under the chrome title. */
 .brief {
   max-width: 60ch;
   color: var(--ink-muted);
@@ -27,16 +20,14 @@
   line-height: var(--leading-normal);
 }
 
-.toolbar,
-.state {
+.stack,
+.content {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
 }
 
 .content {
-  display: flex;
-  flex-direction: column;
   gap: var(--space-4);
 }
 
@@ -45,15 +36,11 @@
   justify-content: center;
 }
 
-/* The Solar — §8.8: the empty slot is the one surface where ornament is the
-   content. Two mirrored branches, not §8.8's four: §6 caps a screen at three
-   ornaments, and the open diagonal pair is the more elvish form than a closed
-   frame anyway. Both are pseudo-elements on the slot that already exists, so
-   `--ornament: 0` leaves the notice standing alone and nothing has moved. */
+/* The Solar: the empty slot is where ornament is the content. Two mirrored
+   corner branches (the far one only in a pane wider than 480px), over the
+   notice's corners; the dimmer leaves the notice alone. */
 :global([data-theme="elvish"]) .empty {
   position: relative;
-  /* The branches paint over the notice's own corners, which needs an index;
-     the isolation keeps that index from reaching past this slot. */
   isolation: isolate;
 }
 
@@ -67,18 +54,10 @@
   background-color: var(--gilt-b);
   opacity: calc(0.75 * var(--ornament));
   pointer-events: none;
-  mask-image: var(--elvish-corner);
-  mask-repeat: no-repeat;
-  mask-size: 48px 48px;
-  mask-position: center;
-  -webkit-mask-image: var(--elvish-corner);
-  -webkit-mask-repeat: no-repeat;
-  -webkit-mask-size: 48px 48px;
-  -webkit-mask-position: center;
+  mask: var(--elvish-corner) center / 48px 48px no-repeat;
+  -webkit-mask: var(--elvish-corner) center / 48px 48px no-repeat;
 }
 
-/* The asset is drawn for the near corner and exits its own left edge; the far
-   corner is the same branch turned through 180°. */
 :global([data-theme="elvish"]) .empty::before {
   inset-block-start: 0;
   inset-inline-start: 0;
@@ -90,9 +69,6 @@
   transform: scale(-1);
 }
 
-/* §6 demotion: in a narrow pane the illuminated tier keeps its leading corner
-   only — a container query, not a viewport one, so a 300px pane in a nine-pane
-   desktop workspace demotes too. */
 @container primaryPane (max-width: 480px) {
   :global([data-theme="elvish"]) .empty::after {
     display: none;

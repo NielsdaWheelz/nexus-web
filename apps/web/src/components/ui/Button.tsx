@@ -1,99 +1,66 @@
-"use client";
-
 import {
-  Children,
   cloneElement,
-  forwardRef,
   isValidElement,
-  type ButtonHTMLAttributes,
+  type ComponentProps,
   type ReactNode,
 } from "react";
+import { cx } from "@/lib/ui/cx";
 import styles from "./Button.module.css";
 
-type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "pill";
-type ButtonSize = "sm" | "md" | "lg";
-
-interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: ButtonVariant;
-  size?: ButtonSize;
+/**
+ * The app's button. `loading` keeps the width, shows a spinner, disables it and
+ * sets `aria-busy`. `asChild` styles its one element child (an anchor) instead.
+ */
+export default function Button({
+  variant = "primary",
+  size = "md",
+  iconOnly = false,
+  loading = false,
+  leadingIcon,
+  asChild = false,
+  className,
+  children,
+  disabled,
+  type = "button",
+  ...rest
+}: ComponentProps<"button"> & {
+  variant?: "primary" | "secondary" | "ghost" | "danger" | "pill";
+  size?: "sm" | "md" | "lg";
   iconOnly?: boolean;
   loading?: boolean;
   leadingIcon?: ReactNode;
-  trailingIcon?: ReactNode;
   asChild?: boolean;
-}
-
-const variantClass: Record<ButtonVariant, string> = {
-  primary: styles.primary,
-  secondary: styles.secondary,
-  ghost: styles.ghost,
-  danger: styles.danger,
-  pill: styles.pill,
-};
-
-const sizeClass: Record<ButtonSize, string> = {
-  sm: styles.sm,
-  md: styles.md,
-  lg: styles.lg,
-};
-
-const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  {
-    variant = "primary",
-    size = "md",
-    iconOnly = false,
-    loading = false,
-    leadingIcon,
-    trailingIcon,
-    asChild = false,
-    className,
-    children,
-    disabled,
-    type,
-    "aria-busy": ariaBusy,
-    ...rest
-  },
-  ref,
-) {
-  const cls = [
+}) {
+  const classes = cx(
     styles.button,
-    variantClass[variant],
-    sizeClass[size],
-    iconOnly ? styles.iconOnly : "",
-    loading ? styles.loading : "",
-    className ?? "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-
+    styles[variant],
+    styles[size],
+    iconOnly && styles.iconOnly,
+    className,
+  );
   if (asChild) {
-    const child = Children.only(children);
-    if (!isValidElement<{ className?: string }>(child)) {
+    if (!isValidElement<{ className?: string }>(children))
       throw new Error("Button asChild expects one element child");
-    }
-    return cloneElement(child, {
-      className: `${cls} ${child.props.className ?? ""}`.trim(),
+    return cloneElement(children, {
+      className: cx(classes, children.props.className),
     });
   }
-
   return (
     <button
-      ref={ref}
-      type={type ?? "button"}
-      className={cls}
+      type={type}
+      className={cx(classes, loading && styles.loading)}
       disabled={disabled || loading}
       {...rest}
-      aria-busy={loading ? true : ariaBusy}
+      aria-busy={loading || rest["aria-busy"]}
     >
       {loading ? (
         <span className={styles.spinner} aria-hidden="true" />
-      ) : (
-        leadingIcon && <span className={styles.icon}>{leadingIcon}</span>
-      )}
-      <span className={loading ? styles.hiddenLabel : styles.label}>{children}</span>
-      {!loading && trailingIcon && <span className={styles.icon}>{trailingIcon}</span>}
+      ) : leadingIcon ? (
+        <span className={styles.icon}>{leadingIcon}</span>
+      ) : null}
+      <span className={loading ? styles.hiddenLabel : styles.label}>
+        {children}
+      </span>
     </button>
   );
-});
-
-export default Button;
+}

@@ -10,24 +10,19 @@ import {
 } from "lucide-react";
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
-  useMemo,
-  useRef,
   useState,
+  useSyncExternalStore,
   type FocusEvent,
   type ReactNode,
 } from "react";
 import Button from "@/components/ui/Button";
-import {
-  ClipboardWriteUnavailableError,
-  copyText,
-} from "@/lib/ui/copyText";
+import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
 import styles from "./Feedback.module.css";
 
-export type FeedbackTone = "Neutral" | "Info" | "Success" | "Warning" | "Danger";
-
+export type FeedbackTone =
+  "Neutral" | "Info" | "Success" | "Warning" | "Danger";
 export type FeedbackAnnouncement = "None" | "Polite" | "Assertive";
 
 export interface FeedbackContent {
@@ -43,8 +38,7 @@ export interface FeedbackAction {
 }
 
 export type FeedbackActions =
-  | readonly [FeedbackAction]
-  | readonly [FeedbackAction, FeedbackAction];
+  readonly [FeedbackAction] | readonly [FeedbackAction, FeedbackAction];
 
 export type DetachedFeedback =
   | {
@@ -66,207 +60,320 @@ export interface FeedbackContextValue {
   resolve(key: string): void;
 }
 
-type SignalRecordBase = {
-  id: number;
-  key?: string;
-  content: FeedbackContent;
-  actions?: FeedbackActions;
+const ICONS = {
+  Neutral: Circle,
+  Info,
+  Success: CircleCheckBig,
+  Warning: TriangleAlert,
+  Danger: OctagonAlert,
 };
-
-type HudRecord = SignalRecordBase & {
-  kind: "Hud";
-  remainingMs: number;
-};
-
-type PersistentRecord = SignalRecordBase & {
-  kind: "Persistent";
-  key: string;
-  announcement: "Polite" | "Assertive";
-};
-
-type SignalRecord = HudRecord | PersistentRecord;
-type PauseReason = "Hover" | "Focus";
-type TimerState = {
-  handle: ReturnType<typeof setTimeout>;
-  startedAt: number;
-};
-type DetachedAnnouncement = {
-  sequence: number;
-  policy: "Polite" | "Assertive";
-  text: string;
-};
-
-const HUD_WITHOUT_ACTIONS_MS = 5_000;
-const HUD_WITH_ACTIONS_MS = 10_000;
 const MAX_HUDS = 3;
 
-const FeedbackContext = createContext<FeedbackContextValue | null>(null);
-const PersistentFeedbackElementContext = createContext<HTMLDivElement | null>(null);
+type Entry = { readonly id: number; readonly signal: DetachedFeedback };
+// A hud's clock: time left, when it last started running, and how many of hover and focus hold it.
+type Clock = {
+  remaining: number;
+  startedAt: number | null;
+  holds: number;
+  timer?: ReturnType<typeof setTimeout>;
+};
+// The empty queue: the server snapshot, and the client's until the first publish.
+const NO_SIGNALS: readonly Entry[] = [];
 
-function toneIcon(tone: FeedbackTone): ReactNode {
-  switch (tone) {
-    case "Neutral":
-      return <Circle size={15} aria-hidden="true" />;
-    case "Info":
-      return <Info size={16} aria-hidden="true" />;
-    case "Success":
-      return <CircleCheckBig size={16} aria-hidden="true" />;
-    case "Warning":
-      return <TriangleAlert size={16} aria-hidden="true" />;
-    case "Danger":
-      return <OctagonAlert size={16} aria-hidden="true" />;
-  }
-}
-
-function announcementRole(
-  announcement: FeedbackAnnouncement,
-): "status" | "alert" | undefined {
-  switch (announcement) {
-    case "None":
-      return undefined;
-    case "Polite":
-      return "status";
-    case "Assertive":
-      return "alert";
-  }
-}
-
-function signalAnnouncement(record: SignalRecord): "Polite" | "Assertive" {
-  return record.kind === "Hud" ? "Polite" : record.announcement;
-}
-
-function announcementText(content: FeedbackContent): string {
-  return content.message ? `${content.title}. ${content.message}` : content.title;
-}
-
-function hasSameContent(left: FeedbackContent, right: FeedbackContent): boolean {
-  return (
-    left.tone === right.tone &&
-    left.title === right.title &&
-    left.message === right.message &&
-    left.requestId === right.requestId
-  );
-}
-
-function hasSameActions(
-  left: FeedbackActions | undefined,
-  right: FeedbackActions | undefined,
-): boolean {
-  if (left === undefined || right === undefined) return left === right;
-  return (
-    left.length === right.length &&
-    left.every((action, index) => action.label === right[index]?.label)
-  );
-}
-
-function hasSamePresentation(record: SignalRecord, signal: DetachedFeedback): boolean {
-  if (record.kind !== signal.kind) return false;
-  if (!hasSameContent(record.content, signal.content)) return false;
-  if (!hasSameActions(record.actions, signal.actions)) return false;
-  if (record.kind === "Hud") return signal.kind === "Hud";
-  return signal.kind === "Persistent" && record.announcement === signal.announcement;
-}
-
-function feedbackDuration(actions: FeedbackActions | undefined): number {
-  return actions === undefined ? HUD_WITHOUT_ACTIONS_MS : HUD_WITH_ACTIONS_MS;
-}
-
-function Diagnostics({
-  requestId,
-  parentOwnsAnnouncement,
-}: {
-  requestId: string;
-  parentOwnsAnnouncement: boolean;
-}) {
-  const text = `Nexus request ID: ${requestId}`;
-  const [copyUnavailable, setCopyUnavailable] = useState(false);
-  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
-  const copy = async () => {
-    try {
-      await copyText(text);
-      setCopyUnavailable(false);
-    } catch (error) {
-      if (error instanceof ClipboardWriteUnavailableError) {
-        setCopyUnavailable(true);
-        return;
-      }
-      setAsyncDefect({ error });
-    }
+/**
+ * The signal queue. Rendering reads `snapshot()`; clocks are internal. A hud
+ * runs while nothing holds it and the document is visible, and leaves when its
+ * time is spent; a persistent signal leaves only by `resolve` or its dismiss.
+ */
+function createSignals() {
+  let signals = NO_SIGNALS;
+  let nextId = 1;
+  const clocks = new Map<number, Clock>();
+  const listeners = new Set<() => void>();
+  const commit = (next: readonly Entry[]) => {
+    signals = next;
+    listeners.forEach((listener) => listener());
+  };
+  const stop = (id: number) => {
+    const clock = clocks.get(id);
+    if (!clock || clock.startedAt === null) return;
+    clearTimeout(clock.timer);
+    clock.remaining -= Date.now() - clock.startedAt;
+    clock.startedAt = null;
+  };
+  const run = (id: number) => {
+    const clock = clocks.get(id);
+    if (
+      !clock ||
+      clock.startedAt !== null ||
+      clock.holds > 0 ||
+      document.hidden
+    )
+      return;
+    clock.startedAt = Date.now();
+    clock.timer = setTimeout(() => remove(id), Math.max(0, clock.remaining));
+  };
+  const remove = (id: number) => {
+    stop(id);
+    clocks.delete(id);
+    commit(signals.filter((entry) => entry.id !== id));
   };
 
-  if (asyncDefect !== null) throw asyncDefect.error;
+  return {
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    snapshot: () => signals,
+    publish(signal: DetachedFeedback) {
+      const old =
+        signal.key === undefined
+          ? undefined
+          : signals.find((entry) => entry.signal.key === signal.key);
+      // A keyed publish of the same kind replaces in place: same id, same position, hover/focus holds kept.
+      const id = old && old.signal.kind === signal.kind ? old.id : nextId++;
+      if (old && old.id !== id) remove(old.id);
+      stop(id);
+      if (signal.kind === "Hud") {
+        const holds = clocks.get(id)?.holds ?? 0;
+        clocks.set(id, {
+          remaining: signal.actions ? 10_000 : 5_000,
+          startedAt: null,
+          holds,
+        });
+      }
+      let next = signals.some((entry) => entry.id === id)
+        ? signals.map((entry) => (entry.id === id ? { id, signal } : entry))
+        : [...signals, { id, signal }];
+      const huds = next.filter(
+        (entry) => entry.id !== id && entry.signal.kind === "Hud",
+      );
+      if (signal.kind === "Hud" && huds.length >= MAX_HUDS) {
+        // The oldest hud nobody is reading leaves first; if every one is held, the oldest.
+        const evicted =
+          huds.find((entry) => clocks.get(entry.id)?.holds === 0) ?? huds[0];
+        stop(evicted.id);
+        clocks.delete(evicted.id);
+        next = next.filter((entry) => entry !== evicted);
+      }
+      commit(next);
+      run(id);
+    },
+    resolve(key: string) {
+      signals
+        .filter((entry) => entry.signal.key === key)
+        .forEach((entry) => remove(entry.id));
+    },
+    dismiss: remove,
+    // A hud action closes its hud even if it throws; a persistent action never closes it.
+    act(id: number, index: number) {
+      const entry = signals.find((candidate) => candidate.id === id);
+      if (!entry) return;
+      const action = entry.signal.actions?.[index];
+      if (entry.signal.kind === "Persistent") {
+        action?.onClick();
+        return;
+      }
+      try {
+        action?.onClick();
+      } finally {
+        remove(id);
+      }
+    },
+    hold(id: number, delta: 1 | -1) {
+      const clock = clocks.get(id);
+      if (!clock) return;
+      clock.holds = Math.max(0, clock.holds + delta);
+      if (clock.holds > 0) stop(id);
+      else run(id);
+    },
+    visibilityChanged() {
+      clocks.forEach((_, id) => (document.hidden ? stop(id) : run(id)));
+    },
+    dispose() {
+      clocks.forEach((clock) => clearTimeout(clock.timer));
+    },
+  };
+}
 
+const FeedbackContext = createContext<FeedbackContextValue | null>(null);
+const RailContext = createContext<HTMLElement | null>(null);
+
+/** The app's viewport: the application, then the persistent rail in flow; huds float above both. */
+export function FeedbackProvider({ children }: { children: ReactNode }) {
+  const [queue] = useState(createSignals);
+  const [rail, setRail] = useState<HTMLElement | null>(null);
+  const signals = useSyncExternalStore(
+    queue.subscribe,
+    queue.snapshot,
+    () => NO_SIGNALS,
+  );
+  useEffect(() => {
+    document.addEventListener("visibilitychange", queue.visibilityChanged);
+    return () => {
+      document.removeEventListener("visibilitychange", queue.visibilityChanged);
+      queue.dispose();
+    };
+  }, [queue]);
+
+  // Edge entry and exit only: moving between a hud's own controls neither holds nor releases it.
+  const crossing = (event: FocusEvent<HTMLElement>) =>
+    !event.currentTarget.contains(event.relatedTarget);
   return (
-    <details className={styles.diagnostics}>
-      <summary>Diagnostics</summary>
-      <div className={styles.diagnosticsBody}>
-        <code>{text}</code>
-        <Button variant="ghost" size="sm" onClick={() => void copy()}>
-          {copyUnavailable ? "Retry" : "Copy diagnostics"}
-        </Button>
-      </div>
-      {copyUnavailable ? (
-        <p
-          className={styles.diagnosticsError}
-          role={parentOwnsAnnouncement ? undefined : "status"}
-        >
-          Diagnostics couldn’t be copied.
-        </p>
-      ) : null}
-    </details>
+    <FeedbackContext value={queue}>
+      <RailContext value={rail}>
+        <div className={styles.viewport}>
+          <div className={styles.application}>
+            {children}
+            <section
+              className={styles.huds}
+              aria-label="Notifications"
+              aria-live="polite"
+            >
+              {signals.map(({ id, signal }) =>
+                signal.kind === "Hud" ? (
+                  <Signal
+                    key={id}
+                    content={signal.content}
+                    actions={signal.actions}
+                    className={styles.hud}
+                    onAction={(index) => queue.act(id, index)}
+                    onDismiss={() => queue.dismiss(id)}
+                    onMouseEnter={() => queue.hold(id, 1)}
+                    onMouseLeave={() => queue.hold(id, -1)}
+                    onFocus={(event) => crossing(event) && queue.hold(id, 1)}
+                    onBlur={(event) => crossing(event) && queue.hold(id, -1)}
+                  />
+                ) : null,
+              )}
+            </section>
+          </div>
+          <section
+            ref={setRail}
+            className={styles.rail}
+            aria-label="Notices"
+            aria-live="polite"
+          >
+            {signals.map(({ id, signal }) =>
+              signal.kind === "Persistent" ? (
+                <Signal
+                  key={id}
+                  content={signal.content}
+                  actions={signal.actions}
+                  className={styles.persistent}
+                  role={
+                    signal.announcement === "Assertive" ? "alert" : undefined
+                  }
+                  onAction={(index) => queue.act(id, index)}
+                  onDismiss={() => queue.dismiss(id)}
+                />
+              ) : null,
+            )}
+          </section>
+        </div>
+      </RailContext>
+    </FeedbackContext>
   );
 }
 
-function SignalArticle({
+export function useFeedback(): FeedbackContextValue {
+  const context = useContext(FeedbackContext);
+  if (context === null)
+    throw new Error("useFeedback must be used within a FeedbackProvider");
+  return context;
+}
+
+/** The persistent rail, which the mobile viewport registers as a bottom surface. */
+export function usePersistentFeedbackElement(): HTMLElement | null {
+  return useContext(RailContext);
+}
+
+export function FeedbackNotice({
   content,
+  announcement,
   actions,
   children,
+}: {
+  content: FeedbackContent;
+  announcement: FeedbackAnnouncement;
+  actions?: FeedbackActions;
+  children?: ReactNode;
+}) {
+  return (
+    <Signal
+      content={content}
+      actions={actions}
+      className={styles.notice}
+      role={
+        announcement === "Polite"
+          ? "status"
+          : announcement === "Assertive"
+            ? "alert"
+            : undefined
+      }
+      onAction={(index) => actions?.[index]?.onClick()}
+    >
+      {children}
+    </Signal>
+  );
+}
+
+export function FieldFeedback({
+  id,
+  content,
+}: {
+  id: string;
+  content: FeedbackContent | null;
+}) {
+  if (content === null) return null;
+  return (
+    <div id={id} className={`${styles.field} ${styles[content.tone]}`}>
+      {content.title}
+    </div>
+  );
+}
+
+function Signal({
+  content,
+  actions,
   className,
   role,
+  children,
   onAction,
   onDismiss,
-  onMouseEnter,
-  onMouseLeave,
-  onFocusCapture,
-  onBlurCapture,
+  ...hold
 }: {
   content: FeedbackContent;
   actions?: FeedbackActions;
-  children?: ReactNode;
-  className?: string;
+  className: string;
   role?: "status" | "alert";
-  onAction(actionIndex: number): void;
+  children?: ReactNode;
+  onAction(index: number): void;
   onDismiss?: () => void;
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
-  onFocusCapture?: () => void;
-  onBlurCapture?: (event: FocusEvent<HTMLElement>) => void;
+  onFocus?: (event: FocusEvent<HTMLElement>) => void;
+  onBlur?: (event: FocusEvent<HTMLElement>) => void;
 }) {
+  const Icon = ICONS[content.tone];
   return (
     <article
-      className={[styles.signal, styles[content.tone], className]
-        .filter(Boolean)
-        .join(" ")}
+      className={`${styles.signal} ${styles[content.tone]} ${className}`}
       role={role}
-      aria-atomic={role === undefined ? undefined : "true"}
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
-      onFocusCapture={onFocusCapture}
-      onBlurCapture={onBlurCapture}
+      {...hold}
     >
       <div className={styles.toneMark}>
-        <span className={styles.icon}>{toneIcon(content.tone)}</span>
+        <Icon size={content.tone === "Neutral" ? 15 : 16} aria-hidden="true" />
         <span className={styles.toneLabel}>{content.tone}</span>
       </div>
       <div className={styles.body}>
         <p className={styles.title}>{content.title}</p>
-        {content.message ? <p className={styles.message}>{content.message}</p> : null}
-        {children ? <div className={styles.supporting}>{children}</div> : null}
+        {content.message ? (
+          <p className={styles.message}>{content.message}</p>
+        ) : null}
+        {children ? <div className={styles.message}>{children}</div> : null}
         {content.requestId ? (
-          <Diagnostics
-            requestId={content.requestId}
-            parentOwnsAnnouncement={role !== undefined}
-          />
+          <Diagnostics requestId={content.requestId} />
         ) : null}
         {actions ? (
           <div className={styles.actions}>
@@ -288,7 +395,6 @@ function SignalArticle({
           variant="ghost"
           size="sm"
           iconOnly
-          className={styles.dismiss}
           onClick={onDismiss}
           aria-label={`Dismiss ${content.title}`}
         >
@@ -299,363 +405,33 @@ function SignalArticle({
   );
 }
 
-export function FeedbackProvider({ children }: { children: ReactNode }) {
-  const [persistentElement, setPersistentElement] = useState<HTMLDivElement | null>(null);
-  const [records, setRecords] = useState<SignalRecord[]>([]);
-  const recordsRef = useRef<SignalRecord[]>([]);
-  const nextIdRef = useRef(1);
-  const timersRef = useRef<Map<number, TimerState>>(new Map());
-  const interactionPausesRef = useRef<Map<number, Set<PauseReason>>>(new Map());
-  const announcementSequenceRef = useRef(0);
-  const [detachedAnnouncement, setDetachedAnnouncement] =
-    useState<DetachedAnnouncement | null>(null);
-
-  const commit = useCallback((nextRecords: SignalRecord[]) => {
-    recordsRef.current = nextRecords;
-    setRecords(nextRecords);
-  }, []);
-
-  const clearTimer = useCallback((id: number) => {
-    const timer = timersRef.current.get(id);
-    if (timer === undefined) return;
-    clearTimeout(timer.handle);
-    timersRef.current.delete(id);
-  }, []);
-
-  const removeRecord = useCallback(
-    (id: number) => {
-      clearTimer(id);
-      interactionPausesRef.current.delete(id);
-      const nextRecords = recordsRef.current.filter((record) => record.id !== id);
-      if (nextRecords.length !== recordsRef.current.length) commit(nextRecords);
-    },
-    [clearTimer, commit],
-  );
-
-  const scheduleHud = useCallback(
-    (id: number) => {
-      clearTimer(id);
-      const record = recordsRef.current.find(
-        (candidate): candidate is HudRecord =>
-          candidate.id === id && candidate.kind === "Hud",
-      );
-      if (record === undefined || record.remainingMs <= 0) return;
-      if (document.visibilityState === "hidden") return;
-      if ((interactionPausesRef.current.get(id)?.size ?? 0) > 0) return;
-
-      timersRef.current.set(id, {
-        startedAt: Date.now(),
-        handle: setTimeout(() => removeRecord(id), record.remainingMs),
-      });
-    },
-    [clearTimer, removeRecord],
-  );
-
-  const pauseHud = useCallback(
-    (id: number) => {
-      const timer = timersRef.current.get(id);
-      if (timer === undefined) return;
-      const elapsedMs = Math.max(0, Date.now() - timer.startedAt);
-      clearTimer(id);
-      const record = recordsRef.current.find(
-        (candidate): candidate is HudRecord =>
-          candidate.id === id && candidate.kind === "Hud",
-      );
-      if (record === undefined) return;
-      const remainingMs = Math.max(0, record.remainingMs - elapsedMs);
-      if (remainingMs === 0) {
-        // Time fully elapsed while paused: release the record and all of its
-        // pause/timer bookkeeping together rather than leaking the pause entry.
-        removeRecord(id);
-        return;
-      }
-      commit(
-        recordsRef.current.map((candidate) =>
-          candidate.id === id ? { ...candidate, remainingMs } : candidate,
-        ),
-      );
-    },
-    [clearTimer, commit, removeRecord],
-  );
-
-  const announce = useCallback((record: SignalRecord) => {
-    announcementSequenceRef.current += 1;
-    setDetachedAnnouncement({
-      sequence: announcementSequenceRef.current,
-      policy: signalAnnouncement(record),
-      text: announcementText(record.content),
-    });
-  }, []);
-
-  const publish = useCallback(
-    (signal: DetachedFeedback) => {
-      const existing =
-        signal.key === undefined
-          ? undefined
-          : recordsRef.current.find((record) => record.key === signal.key);
-
-      if (existing && hasSamePresentation(existing, signal)) {
-        // Keep behavior closures fresh without mutating the rendered presentation.
-        recordsRef.current = recordsRef.current.map((record) =>
-          record.id === existing.id ? { ...record, actions: signal.actions } : record,
-        );
-        return;
-      }
-
-      const id = existing?.id ?? nextIdRef.current++;
-      let nextRecord: SignalRecord;
-
-      if (signal.kind === "Hud") {
-        nextRecord = {
-          id,
-          kind: "Hud",
-          key: signal.key,
-          content: signal.content,
-          actions: signal.actions,
-          remainingMs: feedbackDuration(signal.actions),
-        };
-      } else {
-        nextRecord = {
-          id,
-          kind: "Persistent",
-          key: signal.key,
-          content: signal.content,
-          actions: signal.actions,
-          announcement: signal.announcement,
-        };
-      }
-
-      if (existing) {
-        clearTimer(existing.id);
-        if (existing.kind !== signal.kind) interactionPausesRef.current.delete(existing.id);
-      }
-
-      let nextRecords = existing
-        ? recordsRef.current.map((record) => (record.id === id ? nextRecord : record))
-        : [...recordsRef.current, nextRecord];
-      const hudRecords = nextRecords.filter(
-        (record): record is HudRecord => record.kind === "Hud",
-      );
-      if (hudRecords.length > MAX_HUDS) {
-        // Evict the oldest HUD the user is not actively reading. A hovered or
-        // focused HUD is paused (WCAG 2.2.1 Timing Adjustable) and must not be
-        // yanked out from under the pointer; only when every rendered HUD is
-        // paused does the oldest fall back to eviction.
-        const evicted =
-          hudRecords.find(
-            (record) =>
-              record.id !== id &&
-              (interactionPausesRef.current.get(record.id)?.size ?? 0) === 0,
-          ) ??
-          hudRecords.find((record) => record.id !== id) ??
-          hudRecords[0];
-        clearTimer(evicted.id);
-        interactionPausesRef.current.delete(evicted.id);
-        nextRecords = nextRecords.filter((record) => record.id !== evicted.id);
-      }
-
-      commit(nextRecords);
-      announce(nextRecord);
-      if (nextRecord.kind === "Hud" && nextRecords.some((record) => record.id === id)) {
-        scheduleHud(id);
-      }
-    },
-    [announce, clearTimer, commit, scheduleHud],
-  );
-
-  const resolve = useCallback(
-    (key: string) => {
-      const record = recordsRef.current.find((candidate) => candidate.key === key);
-      if (record) removeRecord(record.id);
-    },
-    [removeRecord],
-  );
-
-  const setPauseReason = useCallback(
-    (id: number, reason: PauseReason, paused: boolean) => {
-      const reasons = interactionPausesRef.current.get(id) ?? new Set<PauseReason>();
-      if (paused) {
-        if (reasons.has(reason)) return;
-        reasons.add(reason);
-        interactionPausesRef.current.set(id, reasons);
-        pauseHud(id);
-        return;
-      }
-
-      reasons.delete(reason);
-      if (reasons.size === 0) {
-        interactionPausesRef.current.delete(id);
-        scheduleHud(id);
-      } else {
-        interactionPausesRef.current.set(id, reasons);
-      }
-    },
-    [pauseHud, scheduleHud],
-  );
-
-  const runAction = useCallback(
-    (id: number, actionIndex: number) => {
-      const record = recordsRef.current.find((candidate) => candidate.id === id);
-      const action = record?.actions?.[actionIndex];
-      if (record === undefined || action === undefined) return;
-      if (record.kind === "Persistent") {
-        action.onClick();
-        return;
-      }
-      try {
-        action.onClick();
-      } finally {
-        removeRecord(id);
-      }
-    },
-    [removeRecord],
-  );
-
-  useEffect(() => {
-    const timers = timersRef.current;
-    const handleVisibilityChange = () => {
-      for (const record of recordsRef.current) {
-        if (record.kind !== "Hud") continue;
-        if (document.visibilityState === "hidden") pauseHud(record.id);
-        else scheduleHud(record.id);
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      for (const timer of timers.values()) clearTimeout(timer.handle);
-      timers.clear();
-    };
-  }, [pauseHud, scheduleHud]);
-
-  const value = useMemo(() => ({ publish, resolve }), [publish, resolve]);
-
+function Diagnostics({ requestId }: { requestId: string }) {
+  const text = `Nexus request ID: ${requestId}`;
+  const [failed, setFailed] = useState(false);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  if (defect) throw defect.error;
+  const copy = () =>
+    copyText(text).then(
+      () => setFailed(false),
+      (error: unknown) =>
+        error instanceof ClipboardWriteUnavailableError
+          ? setFailed(true)
+          : setDefect({ error }),
+    );
   return (
-    <FeedbackContext.Provider value={value}>
-      <PersistentFeedbackElementContext.Provider value={persistentElement}>
-        <div className={styles.viewport}>
-          <div className={styles.application}>
-            {children}
-            <div className={styles.hudViewport} role="region" aria-label="HUD feedback">
-              {records
-                .filter((record): record is HudRecord => record.kind === "Hud")
-                .map((record) => (
-                  <SignalArticle
-                    key={record.id}
-                    content={record.content}
-                    actions={record.actions}
-                    className={styles.hud}
-                    onAction={(actionIndex) => runAction(record.id, actionIndex)}
-                    onDismiss={() => removeRecord(record.id)}
-                    onMouseEnter={() => setPauseReason(record.id, "Hover", true)}
-                    onMouseLeave={() => setPauseReason(record.id, "Hover", false)}
-                    onFocusCapture={() => setPauseReason(record.id, "Focus", true)}
-                    onBlurCapture={(event) => {
-                      if (!event.currentTarget.contains(event.relatedTarget)) {
-                        setPauseReason(record.id, "Focus", false);
-                      }
-                    }}
-                  />
-                ))}
-            </div>
-          </div>
-          <div
-            ref={setPersistentElement}
-            className={styles.persistentRail}
-            role="region"
-            aria-label="Persistent feedback"
-          >
-            {records
-              .filter((record): record is PersistentRecord => record.kind === "Persistent")
-              .map((record) => (
-                <SignalArticle
-                  key={record.id}
-                  content={record.content}
-                  actions={record.actions}
-                  className={styles.persistent}
-                  onAction={(actionIndex) => runAction(record.id, actionIndex)}
-                />
-              ))}
-          </div>
-        </div>
-        <div
-          className={styles.announcer}
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-        >
-          {detachedAnnouncement?.policy === "Polite" ? (
-            <span key={detachedAnnouncement.sequence}>
-              {detachedAnnouncement.text}
-            </span>
-          ) : null}
-        </div>
-        <div
-          className={styles.announcer}
-          role="alert"
-          aria-live="assertive"
-          aria-atomic="true"
-        >
-          {detachedAnnouncement?.policy === "Assertive" ? (
-            <span key={detachedAnnouncement.sequence}>
-              {detachedAnnouncement.text}
-            </span>
-          ) : null}
-        </div>
-      </PersistentFeedbackElementContext.Provider>
-    </FeedbackContext.Provider>
-  );
-}
-
-export function useFeedback(): FeedbackContextValue {
-  const context = useContext(FeedbackContext);
-  if (context === null) {
-    throw new Error("useFeedback must be used within a FeedbackProvider");
-  }
-  return context;
-}
-
-/** The existing mobile viewport owner measures this flow surface beside the player. */
-export function usePersistentFeedbackElement(): HTMLDivElement | null {
-  return useContext(PersistentFeedbackElementContext);
-}
-
-export function FeedbackNotice({
-  content,
-  announcement,
-  actions,
-  children,
-}: {
-  content: FeedbackContent;
-  announcement: FeedbackAnnouncement;
-  actions?: FeedbackActions;
-  children?: ReactNode;
-}) {
-  return (
-    <SignalArticle
-      content={content}
-      actions={actions}
-      className={styles.notice}
-      role={announcementRole(announcement)}
-      onAction={(actionIndex) => actions?.[actionIndex]?.onClick()}
-    >
-      {children}
-    </SignalArticle>
-  );
-}
-
-export function FieldFeedback({
-  id,
-  content,
-}: {
-  id: string;
-  content: FeedbackContent | null;
-}) {
-  if (content === null) return null;
-  return (
-    <div id={id} className={`${styles.field} ${styles[content.tone]}`}>
-      {content.title}
-    </div>
+    <details className={styles.diagnostics}>
+      <summary>Diagnostics</summary>
+      <div className={styles.diagnosticsBody}>
+        <code>{text}</code>
+        <Button variant="ghost" size="sm" onClick={() => void copy()}>
+          {failed ? "Retry" : "Copy diagnostics"}
+        </Button>
+      </div>
+      {failed ? (
+        <p className={styles.diagnosticsError} role="status">
+          Diagnostics couldn’t be copied.
+        </p>
+      ) : null}
+    </details>
   );
 }

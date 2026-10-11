@@ -5,12 +5,6 @@
 // clicks, other buttons, _blank, downloads, fragments, browser-owned paths)
 // stays the browser's.
 import type { MouseEvent as ReactMouseEvent } from "react";
-import { preloadPane } from "@/lib/panes/paneRenderRegistry";
-import {
-  beginMediaReaderViewTransition,
-  clearMediaReaderViewTransition,
-  startSameDocumentViewTransition,
-} from "@/lib/ui/viewTransitions";
 import type {
   WorkspaceTarget,
   WorkspaceTargetDisposition,
@@ -60,7 +54,6 @@ export function activateTargetLink(input: {
   runtime: TargetLinkActivationRuntime | null;
   href: string | null;
   labelHint?: string;
-  sourceAnchor?: HTMLAnchorElement;
 }): TargetLinkActivationResult {
   const { event, runtime } = input;
   const href =
@@ -82,19 +75,7 @@ export function activateTargetLink(input: {
   event.preventDefault();
   const { disposition } = workspaceTargetClickIntent(event);
   const target = input.labelHint ? { href, labelHint: input.labelHint } : { href };
-  const activate = () => runtime.activateTarget({ target, disposition });
-  const transition =
-    disposition.kind === "Follow" && input.sourceAnchor
-      ? beginMediaReaderViewTransition(input.sourceAnchor, href)
-      : undefined;
-  if (transition?.kind === "media-reader") {
-    startSameDocumentViewTransition(activate, {
-      preload: () => preloadPane("media"),
-      onFinish: () => clearMediaReaderViewTransition(transition.mediaId),
-    });
-  } else {
-    activate();
-  }
+  runtime.activateTarget({ target, disposition });
   return "handled";
 }
 
@@ -122,6 +103,5 @@ export function activateTargetAnchor(input: {
     runtime: input.runtime,
     href: anchor.getAttribute("href"),
     labelHint: anchor.dataset.paneLabelHint || menuText || undefined,
-    sourceAnchor: anchor,
   });
 }

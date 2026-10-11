@@ -1,24 +1,52 @@
-/* Syntax highlighting — matches app color palette */
-.hljs { color: var(--ink); background: var(--surface-2); }
+/* Syntax highlighting (rehype-highlight's global classes) in the room's inks. */
+.hljs {
+  color: var(--ink);
+  background: var(--surface-2);
+}
+
 .hljs-keyword,
-.hljs-selector-tag { color: var(--accent); }
-.hljs-string,
-.hljs-addition { color: var(--success); }
-.hljs-number,
-.hljs-literal { color: var(--warning); }
-.hljs-comment,
-.hljs-quote { color: var(--ink-faint); font-style: italic; }
+.hljs-selector-tag {
+  color: var(--accent);
+}
+
 .hljs-title,
-.hljs-section { color: var(--accent-hover); }
-.hljs-built_in,
-.hljs-type { color: var(--info); }
-.hljs-deletion { color: var(--danger); }
+.hljs-section {
+  color: var(--accent-hover);
+}
+
+.hljs-string,
+.hljs-addition,
+.hljs-symbol {
+  color: var(--success);
+}
+
+.hljs-number,
+.hljs-literal,
 .hljs-attr,
-.hljs-attribute { color: var(--warning); }
-.hljs-meta { color: var(--ink-muted); }
+.hljs-attribute {
+  color: var(--warning);
+}
+
+.hljs-built_in,
+.hljs-type,
+.hljs-regexp {
+  color: var(--info);
+}
+
+.hljs-deletion,
 .hljs-variable,
-.hljs-template-variable { color: var(--danger); }
+.hljs-template-variable,
 .hljs-name,
-.hljs-tag { color: var(--danger); }
-.hljs-regexp { color: var(--info); }
-.hljs-symbol { color: var(--success); }
+.hljs-tag {
+  color: var(--danger);
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+.hljs-meta {
+  color: var(--ink-muted);
+}

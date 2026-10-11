@@ -5,7 +5,7 @@ import "pdfjs-dist/web/pdf_viewer.css";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { SolarEffects } from "@/components/theme/SolarEffects";
 import { readThemeCookie } from "@/lib/theme/cookie";
-import { BRAND_BG_DARK, BRAND_BG_LIGHT } from "@/lib/brand";
+import { ROOM_CHROME } from "@/lib/theme/room";
 import { getEnv } from "@/lib/env";
 import { PRODUCT_DESCRIPTOR, PRODUCT_NAME } from "@/lib/productIdentity";
 
@@ -27,21 +27,14 @@ export const metadata: Metadata = {
   },
 };
 
-// --surface-canvas of the [data-theme="elvish"] block in globals.css. It is not
-// in the brand module because that module is generated from the asterism SVG.
-const SOLAR_BG = "#15201b";
-
 // The chosen room must reach the browser chrome.
 export async function generateViewport(): Promise<Viewport> {
-  const theme = await readThemeCookie();
   return {
     width: "device-width",
     initialScale: 1,
     viewportFit: "cover",
     interactiveWidget: "resizes-content",
-    themeColor: { light: BRAND_BG_LIGHT, dark: BRAND_BG_DARK, elvish: SOLAR_BG }[
-      theme
-    ],
+    themeColor: ROOM_CHROME[await readThemeCookie()],
   };
 }
 

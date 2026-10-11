@@ -20,10 +20,8 @@
   background: var(--surface-1);
 }
 
-/* Selection outranks hover and focus by weight, not by order: the wash above
-   is a heavier selector than a bare class, so a selected row a reader points
-   at or tabs into would otherwise lose the only mark that it is selected. The
-   left rule is that mark in a form colour cannot take away. */
+/* Selection outranks hover and focus by weight; the left rule is the mark a
+   colour change cannot take away. */
 .row.selected,
 .row.selected:has(a.primary:hover),
 .row.selected:has(button.primary:hover:not(:disabled)),
@@ -42,7 +40,7 @@
   display: contents;
 }
 
-.stateSeparator {
+.separator {
   display: none;
 }
 
@@ -58,12 +56,12 @@
   text-decoration: none;
 }
 
-.interactivePrimary::before {
+/* The whole row is the primary's hit area; nested controls sit above it. */
+.stretched::before {
   content: "";
   position: absolute;
   inset: 0;
   z-index: 1;
-  pointer-events: auto;
 }
 
 button.primary {
@@ -73,6 +71,16 @@ button.primary {
 button.primary:disabled {
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+.primary:focus-visible::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  z-index: 1;
+  border: var(--focus-ring-width) solid var(--ring);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
 }
 
 .title {
@@ -88,53 +96,80 @@ button.primary:disabled {
   white-space: nowrap;
 }
 
-.supporting {
+.supporting,
+.status,
+.evidence {
   min-width: 0;
-  grid-column: 1;
-  grid-row: 2;
-  overflow: hidden;
   color: var(--ink-muted);
   font-size: var(--text-sm);
-  line-height: var(--leading-normal);
+}
+
+.supporting,
+.status {
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   pointer-events: none;
 }
 
-.supporting :is(a, button, input, select, textarea, summary, [role="button"], [role="link"]) {
+.supporting {
+  grid-column: 1;
+  grid-row: 2;
+  line-height: var(--leading-normal);
+}
+
+.supporting
+  :is(
+    a,
+    button,
+    input,
+    select,
+    textarea,
+    summary,
+    [role="button"],
+    [role="link"]
+  ) {
   position: relative;
   z-index: 2;
   pointer-events: auto;
 }
 
-.state {
+.status {
   display: inline-flex;
-  min-width: 0;
   max-width: min(18rem, 34cqi);
   grid-column: 2;
   grid-row: 1 / span 2;
   align-items: center;
-  overflow: hidden;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
   line-height: var(--leading-snug);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  pointer-events: none;
 }
 
-.primaryControl {
-  display: inline-flex;
+.evidence {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}
+
+.primaryControl,
+.actions,
+.expanded {
+  position: relative;
+  z-index: 2;
   min-width: 0;
-  max-width: min(22rem, 30cqi);
-  grid-column: 3;
+}
+
+.primaryControl,
+.actions {
+  display: inline-flex;
   grid-row: 1 / span 2;
   align-items: center;
   justify-content: flex-end;
-  position: relative;
-  z-index: 2;
-  pointer-events: auto;
+}
+
+.primaryControl {
+  max-width: min(22rem, 30cqi);
+  grid-column: 3;
 }
 
 .primaryControl > * {
@@ -143,50 +178,22 @@ button.primary:disabled {
 }
 
 .actions {
-  display: inline-flex;
-  min-width: 0;
   grid-column: 4;
-  grid-row: 1 / span 2;
-  align-items: center;
-  justify-content: flex-end;
-  position: relative;
-  z-index: 2;
-  pointer-events: auto;
 }
 
 .expanded {
-  min-width: 0;
   grid-column: 1 / -1;
   grid-row: 3;
-  position: relative;
-  z-index: 2;
-  pointer-events: auto;
 }
 
-.evidence {
-  min-width: 0;
+/* Wrapped: supporting, status, evidence and the panel take full lines. */
+.wrapped .supporting {
   grid-column: 1 / -1;
-  grid-row: 3;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-  line-height: var(--leading-normal);
-  overflow-wrap: anywhere;
-}
-
-.row[data-media-identity="true"] .secondary {
-  display: contents;
-}
-
-.row[data-media-identity="true"] .supporting {
-  grid-column: 1 / -1;
-  grid-row: 2;
   overflow: visible;
   white-space: normal;
 }
 
-.row[data-media-identity="true"] .state,
-.row[data-media-identity="true"] .evidence,
-.row[data-media-identity="true"] .expanded {
+.wrapped :is(.status, .evidence, .expanded) {
   grid-column: 1 / -1;
   grid-row: auto;
   max-width: none;
@@ -194,44 +201,19 @@ button.primary:disabled {
   white-space: normal;
 }
 
-.row[data-media-identity="true"] .stateSeparator {
-  display: none;
-}
-
-.row[data-media-failed="true"] .state {
-  color: var(--danger);
-}
-
-.row[data-media-identity="true"] .primaryControl,
-.row[data-media-identity="true"] .actions {
+.wrapped :is(.primaryControl, .actions) {
   grid-row: 1;
 }
 
-.primary:focus-visible::after {
-  content: "";
-  position: absolute;
-  inset: 2px;
-  z-index: 1;
-  border: var(--focus-ring-width) solid var(--ring);
-  border-radius: var(--radius-sm);
-  pointer-events: none;
-}
-
 @container (max-width: 520px) {
-  .titleCell {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
   .title {
     display: -webkit-box;
-    overflow: hidden;
     white-space: normal;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
   }
 
-  .secondary {
+  .row:not(.wrapped) .secondary {
     display: flex;
     min-width: 0;
     grid-column: 1 / -1;
@@ -241,23 +223,21 @@ button.primary:disabled {
     white-space: nowrap;
   }
 
-  .supporting {
-    /* Adjacency, not geometry, positions the separator after this cell: a
-       supporting cell that grows leaves its own separator stranded against
-       the state block on the far side of the row. */
+  /* Adjacency, not geometry, places the separator after the supporting cell. */
+  .row:not(.wrapped) .supporting {
     flex: 0 1 auto;
     grid-column: auto;
     grid-row: auto;
   }
 
-  .state {
+  .row:not(.wrapped) .status {
     flex: none;
     max-width: 50%;
     grid-column: auto;
     grid-row: auto;
   }
 
-  .stateSeparator {
+  .separator {
     display: inline;
     flex: none;
     padding: 0 var(--space-1);
@@ -276,15 +256,10 @@ button.primary:disabled {
   }
 }
 
-/* The Solar — §8.2: the app's most-used surface is its most restrained one.
-   Both marks are pseudo-elements over the row's existing box and neither has a
-   resting state, so the Bare tier holds: a row at rest paints exactly what it
-   painted before, and `--ornament: 0` silences the pair without moving a
-   pixel. No geometry here changes in this room. */
+/* The Solar, at its most restrained: a lamp at the leading edge and a leaf
+   terminal on hover, focus and selection; at rest the row paints as in the
+   other rooms, and the dimmer silences both without moving a pixel. */
 :global([data-theme="elvish"]) .row {
-  /* The lamp sits at a negative index so the row's own text stays above it.
-     `container-type` already makes the row a stacking context; declaring the
-     isolation pins that containment to a contract rather than a side effect. */
   isolation: isolate;
 }
 
@@ -294,13 +269,9 @@ button.primary:disabled {
   position: absolute;
   opacity: 0;
   pointer-events: none;
-  /* Out on the instant duration — chrome that lingers on the way out reads as
-     lag. The engaged rule below declares the way in. */
   transition: opacity var(--duration-instant) var(--ease-glide);
 }
 
-/* The lamp: light with a source and a direction at the leading edge, never a
-   box that uniformly brightens. */
 :global([data-theme="elvish"]) .row::before {
   inset: 0;
   z-index: -1;
@@ -311,9 +282,7 @@ button.primary:disabled {
   );
 }
 
-/* The leaf terminal, inside the row's own inline padding: the asset's ink stops
-   at 8.6/10 of its box, so it ends where the title's first glyph begins and
-   overdraws nothing. Centred by auto margins rather than a transform. */
+/* Inside the row's own padding: it ends where the title's first glyph begins. */
 :global([data-theme="elvish"]) .row::after {
   inset-block: 0;
   inset-inline-start: 0;
@@ -321,20 +290,12 @@ button.primary:disabled {
   inline-size: 10px;
   block-size: 10px;
   background-color: var(--accent);
-  mask-image: var(--elvish-leaf);
-  mask-repeat: no-repeat;
-  mask-size: 10px 10px;
-  mask-position: center;
-  -webkit-mask-image: var(--elvish-leaf);
-  -webkit-mask-repeat: no-repeat;
-  -webkit-mask-size: 10px 10px;
-  -webkit-mask-position: center;
+  mask: var(--elvish-leaf) center / 10px 10px no-repeat;
+  -webkit-mask: var(--elvish-leaf) center / 10px 10px no-repeat;
 }
 
-/* Hover is the lamp, so it rises on the fast duration. The trigger list is the
-   row's existing hover state verbatim — the interactive primary covers the row,
-   so `:has(...:hover)` is row hover. `:where()` keeps the whole list at the
-   weight of the base rule so the selected state below can still win on order. */
+/* The trigger list is the row's own hover and focus, kept at base weight by
+   `:where()` so the selected rule below wins on order. */
 :global([data-theme="elvish"])
   .row:where(
     :has(a.primary:hover),
@@ -351,8 +312,6 @@ button.primary:disabled {
   transition: opacity var(--duration-fast) var(--ease-glide);
 }
 
-/* The selected row's brass left rule is the base layer's now; here the leaf at
-   its foot burns at full strength. */
 :global([data-theme="elvish"]) .selected::after {
-  opacity: calc(1 * var(--ornament));
+  opacity: var(--ornament);
 }

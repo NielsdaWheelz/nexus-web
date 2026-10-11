@@ -129,7 +129,6 @@ export default function SettingsReaderPaneBody() {
                 const option = FOCUS_MODE_OPTIONS.find(({ value }) => value === next);
                 if (option) setFocusMode(option.value);
               }}
-              variant="segmented"
             >
               <TabsList aria-label="Focus mode">
                 {FOCUS_MODE_OPTIONS.map((option) => (

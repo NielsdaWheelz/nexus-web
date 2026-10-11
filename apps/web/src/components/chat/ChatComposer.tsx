@@ -240,10 +240,8 @@ export default function ChatComposer(props: {
         ) : null}
         <Textarea
           ref={textarea}
-          variant="bare"
-          autoGrow
-          minRows={2}
-          maxRows={6}
+          bare
+          autoGrow={{ minRows: 2, maxRows: 6 }}
           className={styles.input}
           value={draft.text}
           onChange={(event) => setText(event.target.value)}

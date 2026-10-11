@@ -256,7 +256,7 @@ export default function LibraryChooser({
     <div className={styles.chooser}>
       <div className={styles.searchHeader}>
         <Input
-          variant="bare"
+          bare
           className={styles.search}
           role="combobox"
           aria-label={searchLabel}

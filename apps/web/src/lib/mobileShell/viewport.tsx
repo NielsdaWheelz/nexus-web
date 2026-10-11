@@ -17,7 +17,7 @@ import {
   type ReactNode,
 } from "react";
 import { usePersistentFeedbackElement } from "@/components/feedback/Feedback";
-import { isTextEntryTarget } from "@/lib/ui/isTextEntryTarget";
+import { isTextEntryTarget } from "@/lib/ui/eventTarget";
 
 export type MobileBottomSurfaceId = "Nexus" | "Player" | "Feedback";
 

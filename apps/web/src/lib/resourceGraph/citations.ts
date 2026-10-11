@@ -38,7 +38,6 @@ export interface ReaderCitationPreview {
   excerpt?: string;
   summary?: string;
   meta?: string[];
-  copyText?: string;
 }
 
 export interface ReaderCitationData {

@@ -1,5 +1,5 @@
-import { useRef, type RefObject } from "react";
-import Chip from "@/components/ui/Chip";
+import type { RefObject } from "react";
+import Chip from "./Chip";
 import styles from "./AppliedFilters.module.css";
 
 export interface AppliedFilterChip {
@@ -7,43 +7,41 @@ export interface AppliedFilterChip {
   label: string;
 }
 
-interface AppliedFiltersProps {
-  chips: AppliedFilterChip[];
-  onRemove: (id: string) => void;
-  returnFocusTo: RefObject<HTMLElement | null>;
-}
-
+/** Removable filter chips; removing one moves focus to its neighbour, then to `returnFocusTo`. */
 export default function AppliedFilters({
   chips,
   onRemove,
   returnFocusTo,
-}: AppliedFiltersProps) {
-  const barRef = useRef<HTMLDivElement>(null);
-  if (chips.length === 0) {
-    return null;
-  }
+}: {
+  chips: AppliedFilterChip[];
+  onRemove: (id: string) => void;
+  returnFocusTo: RefObject<HTMLElement | null>;
+}) {
+  if (chips.length === 0) return null;
   return (
     <div
-      ref={barRef}
       className={styles.bar}
       role="group"
       aria-label="Applied filters"
       onClickCapture={(event) => {
-        const target = event.target;
-        if (!(target instanceof Element)) return;
-        const button = target.closest("button");
-        const bar = barRef.current;
-        if (!button || !bar?.contains(button)) return;
-        const buttons = Array.from(bar.querySelectorAll<HTMLButtonElement>("button"));
+        const button =
+          event.target instanceof Element
+            ? event.target.closest("button")
+            : null;
+        if (!button) return;
+        const buttons = [...event.currentTarget.querySelectorAll("button")];
         const index = buttons.indexOf(button);
-        (buttons[index + 1] ?? buttons[index - 1] ?? returnFocusTo.current)
-          ?.focus({ preventScroll: true });
+        (
+          buttons[index + 1] ??
+          buttons[index - 1] ??
+          returnFocusTo.current
+        )?.focus({ preventScroll: true });
       }}
     >
       {chips.map((chip) => (
         <Chip
           key={chip.id}
-          size="md"
+          className={styles.chip}
           removable
           removeLabel={`Remove filter: ${chip.label}`}
           onRemove={() => onRemove(chip.id)}

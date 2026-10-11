@@ -1,36 +1,29 @@
-"use client";
+import type { ComponentProps } from "react";
+import { cx } from "@/lib/ui/cx";
+import styles from "./Field.module.css";
 
-import { forwardRef, type InputHTMLAttributes } from "react";
-import styles from "./Input.module.css";
-
-type InputVariant = "default" | "bare";
-type InputSize = "sm" | "md" | "lg";
-
-interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "size"> {
-  variant?: InputVariant;
-  size?: InputSize;
+/** A text input; `bare` leaves the surface (background, border, padding) to the caller. */
+export default function Input({
+  bare = false,
+  size = "md",
+  className,
+  type = "text",
+  ...rest
+}: Omit<ComponentProps<"input">, "size"> & {
+  bare?: boolean;
+  size?: "sm" | "md" | "lg";
+}) {
+  return (
+    <input
+      type={type}
+      className={cx(
+        styles.field,
+        styles.input,
+        styles[size],
+        bare ? styles.bare : styles.boxed,
+        className,
+      )}
+      {...rest}
+    />
+  );
 }
-
-const variantClass: Record<InputVariant, string> = {
-  default: styles.default,
-  bare: styles.bare,
-};
-
-const sizeClass: Record<InputSize, string> = {
-  sm: styles.sm,
-  md: styles.md,
-  lg: styles.lg,
-};
-
-const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
-  { variant = "default", size = "md", className, type, ...rest },
-  ref
-) {
-  const cls = [styles.input, variantClass[variant], sizeClass[size], className ?? ""]
-    .filter(Boolean)
-    .join(" ");
-
-  return <input ref={ref} type={type ?? "text"} className={cls} {...rest} />;
-});
-
-export default Input;

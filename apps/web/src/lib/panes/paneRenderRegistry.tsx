@@ -73,10 +73,6 @@ function load(id: PaneRouteId): Promise<Module> {
   return loaded;
 }
 
-export function preloadPane(id: PaneRouteId): Promise<void> {
-  return load(id).then(() => undefined);
-}
-
 export function renderPane(id: PaneRouteId): ReactNode {
   let Body = bodies.get(id);
   if (!Body) {

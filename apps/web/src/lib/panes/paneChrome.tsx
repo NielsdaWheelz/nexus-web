@@ -11,6 +11,7 @@ import {
   useContext,
   useLayoutEffect,
   useState,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import type { FindController } from "@/lib/find/useFind";
@@ -21,10 +22,7 @@ import type {
   WorkspaceSecondarySurfaceIdOf,
 } from "@/lib/panes/paneSecondaryModel";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
-import type {
-  ActionDescriptor,
-  PaneHeaderAction,
-} from "@/lib/ui/actionDescriptor";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
 /** Why a pane command holds its place while the fact deciding it loads. */
 export const PANE_COMMAND_RESOLVING_REASON =
@@ -83,9 +81,12 @@ export type PaneRefresh =
 
 /** The Inspector header action; the shell derives it from a published Companion. */
 export type PaneCompanionAction = Extract<
-  PaneHeaderAction,
+  ActionDescriptor,
   { readonly kind: "command" }
-> & { readonly id: "resource-inspector-companion" };
+> & {
+  readonly id: "resource-inspector-companion";
+  readonly icon: ReactElement;
+};
 
 interface PaneChromeCommon {
   readonly header?: PaneHeaderPublication;

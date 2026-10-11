@@ -18,7 +18,7 @@ export function presentSearchResult(vm: SearchResultRowViewModel): CollectionRow
     ) ? vm.snippetSegments : undefined;
     return presentMedia(vm.mediaSummary, {
       id: vm.key,
-      primary: { kind: "link", href, viewTransition: "media-reader" },
+      primary: { kind: "link", href },
       actionSubject: vm.actionSubject,
       selected: false,
       searchEvidence: evidence,
@@ -45,7 +45,6 @@ export function presentSearchResult(vm: SearchResultRowViewModel): CollectionRow
       kind: "link",
       href,
       paneLabelHint: vm.paneLabelHint,
-      viewTransition: href.startsWith("/media/") ? "media-reader" : undefined,
     },
     title: { text: vm.primaryText },
     contributors: vm.contributorCredits,

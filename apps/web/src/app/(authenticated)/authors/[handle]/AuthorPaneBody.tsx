@@ -110,7 +110,6 @@ function presentWork(work: ContributorWork): CollectionRowView {
       primary: {
         kind: "link",
         href: work.href,
-        viewTransition: "media-reader",
       },
       actionSubject,
       selected: false,

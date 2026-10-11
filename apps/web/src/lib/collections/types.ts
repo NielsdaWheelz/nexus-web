@@ -3,7 +3,7 @@
  * projection; CollectionRow owns formatting and visual hierarchy.
  */
 
-import type { ResourceRowPrimary } from "@/components/ui/ResourceActivation";
+import type { ResourceRowPrimary } from "@/components/ui/ResourceRow";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { Presence } from "@/lib/api/presence";
 import type { ContributorCredit } from "@/lib/contributors/credits";

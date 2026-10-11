@@ -2009,12 +2009,12 @@ open over Resume and never become panes.
   projects it into one 60px desktop or mobile identity track (mobile safe area
   additional). The label is the only title value: a publication carries typed
   section metadata or resource status plus structured credits, never a title.
-  Actions/options are typed descriptors shared by desktop `ActionBar` and
-  mobile Options. PDF and EPUB may additionally publish one labelled control
-  instrument; `PaneShell` owns its 40px desktop or 48px mobile frame, and
-  expanded Search replaces it in the same contextual track. A pane-scoped
-  error boundary contains chrome and body failures without replacing sibling
-  panes or the workspace.
+  Actions/options are typed descriptors (`lib/ui/actionDescriptor.ts`) shared by
+  the desktop More menu and companion button and mobile Options. PDF and EPUB
+  may additionally publish one labelled control instrument; `PaneShell` owns
+  its 40px desktop or 48px mobile frame, and expanded Search replaces it in the
+  same contextual track. A pane-scoped error boundary contains chrome and body
+  failures without replacing sibling panes or the workspace.
 - **App navigation is a curated projection, not a feature directory.**
   `lib/navigation/destinations.ts` owns destination identity;
   `components/appnav/navModel.ts` independently owns the flat desktop rail, the

@@ -678,7 +678,6 @@ function Controls(props: {
           {chips.map(([key, value]) => (
             <Chip
               key={key}
-              size="md"
               removable
               removeLabel={`Clear ${key} filter`}
               onRemove={() => onFilter(key, "")}

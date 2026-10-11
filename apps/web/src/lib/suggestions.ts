@@ -35,7 +35,6 @@ export function presentSuggestionItem({ target }: SuggestionItem): CollectionRow
       primary: {
         kind: "link",
         href: target.href,
-        viewTransition: "media-reader",
       },
       actionSubject,
       selected: false,

@@ -7,7 +7,6 @@
   list-style: none;
 }
 
-/* Editorial index: rows butt together, separated by their own hairline rules. */
 .list > li {
   content-visibility: auto;
   contain-intrinsic-size: auto 52px;

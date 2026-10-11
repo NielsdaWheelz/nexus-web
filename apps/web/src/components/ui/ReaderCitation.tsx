@@ -1,25 +1,24 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import type { MouseEvent } from "react";
 import { useHoverPreview } from "@/components/ui/HoverPreview";
 import { truncateText } from "@/lib/display/format";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type {
   ReaderCitationPreview,
   ReaderSourceTarget,
 } from "@/lib/resourceGraph/citations";
 import type { ResourceActivation } from "@/lib/resources/activation";
+import { cx } from "@/lib/ui/cx";
 import styles from "./ReaderCitation.module.css";
-import {
-  ClipboardWriteUnavailableError,
-  copyText as copyToClipboard,
-} from "@/lib/ui/copyText";
-import {
-  FeedbackNotice,
-  useFeedback,
-} from "@/components/feedback/Feedback";
-import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 
+/**
+ * A citation mark `[n]`. It opens its source in the pane (an anchor, so
+ * shift-click forks), or, when it only has a located target, runs `onActivate`;
+ * with neither it is unavailable and only previews. Hover or keyboard focus
+ * previews the source.
+ */
 export default function ReaderCitation({
   index,
   preview,
@@ -34,228 +33,103 @@ export default function ReaderCitation({
   onActivate: (
     activation: ResourceActivation,
     target: ReaderSourceTarget | null,
-    event?: React.MouseEvent,
+    event?: MouseEvent,
   ) => void;
 }) {
-  const feedback = useFeedback();
-  const paneRuntime = usePaneRuntime();
+  const runtime = usePaneRuntime();
   const href = activation.href;
-  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(
-    null,
-  );
-  const [copyFailure, setCopyFailure] = useState(false);
-  const activationTarget = useMemo(
-    () =>
-      target && href && target.href !== href ? { ...target, href } : target,
-    [href, target],
-  );
-
-  const copyText = preview.copyText;
-  const hasPreviewActions = Boolean(activationTarget || href || copyText);
+  // The activation's address wins over the target's own.
+  const located =
+    target && href && target.href !== href ? { ...target, href } : target;
+  const linkHref = located?.href ?? href ?? null;
+  const opens = located !== null || Boolean(href);
   const hover = useHoverPreview(
     Boolean(
       preview.title ||
       preview.summary ||
       preview.excerpt ||
-      (preview.meta && preview.meta.length > 0) ||
-      hasPreviewActions,
+      preview.meta?.length ||
+      opens,
     ),
   );
-  const closePreview = hover.close;
-  const externalHref =
-    href?.startsWith("http://") || href?.startsWith("https://");
-  const copyCitation = useCallback(async () => {
-    if (!copyText) return;
-    try {
-      await copyToClipboard(copyText);
-      setCopyFailure(false);
-      feedback.publish({
-        kind: "Hud",
-        content: {
-          tone: "Success",
-          title: "Citation copied",
-        },
-      });
-      closePreview();
-    } catch (error) {
-      if (!(error instanceof ClipboardWriteUnavailableError)) {
-        setAsyncDefect({ error });
-        return;
-      }
-      setCopyFailure(true);
-    }
-  }, [closePreview, copyText, feedback]);
-
-  const previewNode = hover.render(
+  const card = hover.render(
     <>
       {preview.title ? (
-        <div className={styles.previewTitle}>
-          {truncateText(preview.title, 96)}
-        </div>
+        <div className={styles.title}>{truncateText(preview.title, 96)}</div>
       ) : null}
       {preview.summary ? (
-        <div className={styles.previewSummary}>
+        <div className={styles.summary}>
           {truncateText(preview.summary, 140)}
         </div>
       ) : null}
       {preview.excerpt ? (
-        <div className={styles.previewExcerpt}>{preview.excerpt}</div>
+        <div className={styles.excerpt}>{preview.excerpt}</div>
       ) : null}
       {preview.meta?.map((entry, i) => (
-        <div key={i} className={styles.previewMeta}>
+        <div key={i} className={styles.meta}>
           {entry}
         </div>
       ))}
-      {hasPreviewActions ? (
-        <div className={styles.previewActions}>
-          {activationTarget ? (
-            <button
-              type="button"
-              className={styles.previewAction}
-              onClick={(event) => {
-                event.stopPropagation();
-                onActivate(activation, activationTarget, event);
-                closePreview();
-              }}
-            >
-              Open in context
-            </button>
-          ) : href ? (
-            <button
-              type="button"
-              className={styles.previewAction}
-              onClick={(event) => {
-                event.stopPropagation();
-                onActivate(activation, null, event);
-                closePreview();
-              }}
-            >
-              Open source
-            </button>
-          ) : null}
-          {copyText && !copyFailure ? (
-            <button
-              type="button"
-              className={styles.previewAction}
-              onClick={(event) => {
-                event.stopPropagation();
-                void copyCitation();
-              }}
-            >
-              Copy citation
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-      {copyFailure ? (
-        <FeedbackNotice
-          content={{ tone: "Danger", title: "Citation wasn’t copied" }}
-          announcement="Assertive"
-          actions={[{ label: "Retry", onClick: () => void copyCitation() }]}
-        />
+      {opens ? (
+        <button
+          type="button"
+          className={styles.action}
+          onClick={(event) => {
+            event.stopPropagation();
+            onActivate(activation, located, event);
+            hover.close();
+          }}
+        >
+          {located ? "Open in context" : "Open source"}
+        </button>
       ) : null}
     </>,
   );
-
-  const className = `${styles.citation} ${
-    activationTarget || href ? "" : styles.unavailable
-  }`.trim();
-
-  const label =
-    activationTarget || href ? `Open citation ${index}` : `Citation ${index}`;
-  if (asyncDefect !== null) throw asyncDefect.error;
-
-  if (href && !target) {
-    return (
-      <>
-        <a
-          className={className}
-          href={href}
-          target={externalHref ? "_blank" : undefined}
-          rel={externalHref ? "noopener noreferrer" : undefined}
-          aria-label={label}
-          {...hover.trigger}
-          onClick={(event) => {
-            onActivate(activation, null, event);
-            if (event.defaultPrevented) return;
-            activateTargetLink({
-              event,
-              runtime: paneRuntime,
-              href,
-              sourceAnchor: event.currentTarget,
-            });
-          }}
-          data-workspace-rich-target="true"
-          data-pane-find-exclude="true"
-        >
-          {index}
-        </a>
-        {previewNode}
-      </>
-    );
-  }
-
-  if (activationTarget) {
-    const targetHref = activationTarget.href ?? href ?? null;
-    if (!targetHref) {
-      return (
-        <>
-          <button
-            type="button"
-            className={className}
-            aria-label={label}
-            {...hover.trigger}
-            onClick={(event) => {
-              onActivate(activation, activationTarget, event);
-            }}
-            data-pane-find-exclude="true"
-          >
-            {index}
-          </button>
-          {previewNode}
-        </>
-      );
-    }
-    return (
-      <>
-        <a
-          className={className}
-          href={targetHref}
-          aria-label={label}
-          {...hover.trigger}
-          onClick={(event) => {
-            onActivate(activation, activationTarget, event);
-            if (event.defaultPrevented) return;
-            activateTargetLink({
-              event,
-              runtime: paneRuntime,
-              href: targetHref,
-              labelHint: activationTarget.label,
-              sourceAnchor: event.currentTarget,
-            });
-          }}
-          data-workspace-rich-target="true"
-          data-pane-find-exclude="true"
-        >
-          {index}
-        </a>
-        {previewNode}
-      </>
-    );
-  }
+  const label = opens ? `Open citation ${index}` : `Citation ${index}`;
+  const external = !located && /^https?:\/\//.test(href ?? "");
 
   return (
     <>
-      <sup
-        className={className}
-        aria-label={label}
-        {...hover.trigger}
-        onClick={(event) => hover.show(event.currentTarget)}
-        data-pane-find-exclude="true"
-      >
-        {index}
-      </sup>
-      {previewNode}
+      {linkHref ? (
+        <a
+          className={styles.citation}
+          href={linkHref}
+          target={external ? "_blank" : undefined}
+          rel={external ? "noopener noreferrer" : undefined}
+          aria-label={label}
+          data-workspace-rich-target="true"
+          data-pane-find-exclude="true"
+          {...hover.trigger}
+          onClick={(event) => {
+            onActivate(activation, located, event);
+            if (event.defaultPrevented) return;
+            activateTargetLink({
+              event,
+              runtime,
+              href: linkHref,
+              labelHint: located?.label,
+            });
+          }}
+        >
+          {index}
+        </a>
+      ) : (
+        <button
+          type="button"
+          className={cx(styles.citation, !located && styles.unavailable)}
+          aria-label={label}
+          data-pane-find-exclude="true"
+          {...hover.trigger}
+          onClick={(event) =>
+            located
+              ? onActivate(activation, located, event)
+              : hover.show(event.currentTarget)
+          }
+        >
+          {index}
+        </button>
+      )}
+      {card}
     </>
   );
 }

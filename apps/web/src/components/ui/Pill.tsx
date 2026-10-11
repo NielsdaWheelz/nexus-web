@@ -1,58 +1,24 @@
-import { forwardRef, type HTMLAttributes } from "react";
+import type { ComponentProps } from "react";
+import { cx } from "@/lib/ui/cx";
 import styles from "./Pill.module.css";
 
 export type PillTone =
-  | "neutral"
-  | "info"
-  | "success"
-  | "warning"
-  | "danger"
-  | "accent";
-type PillSize = "xs" | "sm";
+  "neutral" | "info" | "success" | "warning" | "danger" | "accent";
 
-interface PillProps extends HTMLAttributes<HTMLSpanElement> {
-  tone?: PillTone;
-  size?: PillSize;
-}
-
-const toneClass: Record<PillTone, string> = {
-  neutral: styles.toneNeutral,
-  info: styles.toneInfo,
-  success: styles.toneSuccess,
-  warning: styles.toneWarning,
-  danger: styles.toneDanger,
-  accent: styles.toneAccent,
-};
-
-const sizeClass: Record<PillSize, string> = {
-  xs: styles.sizeXs,
-  sm: styles.sizeSm,
-};
-
-const Pill = forwardRef<HTMLSpanElement, PillProps>(function Pill(
-  {
-    tone = "neutral",
-    size = "sm",
-    className,
-    children,
-    ...rest
-  },
-  ref
-) {
-  const cls = [
-    styles.pill,
-    toneClass[tone],
-    sizeClass[size],
-    className ?? "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-
+/** A tone-tinted uppercase label; `xs` is a count in icon-only chrome. */
+export default function Pill({
+  tone = "neutral",
+  size = "sm",
+  className,
+  children,
+  ...rest
+}: ComponentProps<"span"> & { tone?: PillTone; size?: "xs" | "sm" }) {
   return (
-    <span ref={ref} className={cls} {...rest}>
+    <span
+      className={cx(styles.pill, styles[tone], styles[size], className)}
+      {...rest}
+    >
       <span className={styles.label}>{children}</span>
     </span>
   );
-});
-
-export default Pill;
+}

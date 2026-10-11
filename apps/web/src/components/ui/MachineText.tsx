@@ -1,40 +1,13 @@
-"use client";
-
 import type { HTMLAttributes } from "react";
+import { cx } from "@/lib/ui/cx";
 import styles from "./MachineText.module.css";
 
-export interface MachineOrigin {
-  /**
-   * Honest origin label for the small-caps signature (e.g. "Assistant",
-   * "Connection discovery", "Dossier"). MUST derive from the surface's own provenance
-   * (message.role, edge.origin, model attribution) — never a literal invented
-   * in the component. Also stamped onto `data-machine-origin` for the gate.
-   */
-  label: string;
-}
-
 /**
- * Signature time travels as a pair — both fields or neither (D-9). A discriminated
- * union so a call site can't construct a bare `timestamp` (which would render an
- * HTML-invalid `<time>` with no `datetime`) at the type level.
- */
-export type MachineSignatureTime =
-  /** Signed with a time: ALREADY-FORMATTED display string ("06:14") + the ISO instant backing `<time datetime>`. */
-  | { timestamp: string; timestampIso: string }
-  /** No honest time — no `<time>` is rendered. */
-  | { timestamp?: null; timestampIso?: null };
-
-export type MachineTextProps = HTMLAttributes<HTMLElement> & {
-  origin: MachineOrigin;
-  variant?: "block" | "inline";
-  as?: "div" | "section" | "span";
-} & MachineSignatureTime;
-
-/**
- * MachineText — the sole owner of the machine-voice typographic register: the
- * machine face, a cooler ink, the hairline apparatus rail, and the small-caps
- * origin signature. Every machine-voice surface composes it; the machine tokens
- * are referenced ONLY through MachineText.module.css.
+ * The machine voice: the machine face, a cooler ink, the apparatus rail and a
+ * small-caps signature naming the text's origin. The origin label must come from
+ * the surface's own provenance (message role, edge origin, model), never a literal
+ * invented here. A signature time is both fields or neither, so `<time>` always has
+ * its `datetime`.
  */
 export default function MachineText({
   origin,
@@ -45,44 +18,32 @@ export default function MachineText({
   className,
   children,
   ...rest
-}: MachineTextProps) {
-  const isInline = variant === "inline";
-  const Tag = as ?? (isInline ? "span" : "div");
-  const classes = [styles.machine, isInline ? styles.inline : styles.block, className]
-    .filter(Boolean)
-    .join(" ");
-
+}: HTMLAttributes<HTMLElement> & {
+  origin: { label: string };
+  variant?: "block" | "inline";
+  as?: "div" | "section" | "span";
+} & (
+    | { timestamp: string; timestampIso: string }
+    | { timestamp?: null; timestampIso?: null }
+  )) {
+  const inline = variant === "inline";
+  const Tag = as ?? (inline ? "span" : "div");
   return (
-    <Tag className={classes} data-machine-origin={origin.label} {...rest}>
-      {!isInline ? (
-        <MachineSignature
-          label={origin.label}
-          timestamp={timestamp}
-          timestampIso={timestampIso}
-        />
-      ) : null}
+    <Tag
+      className={cx(styles.machine, !inline && styles.block, className)}
+      {...rest}
+    >
+      {inline ? null : (
+        <div className={styles.signature}>
+          <span className={styles.origin}>{origin.label}</span>
+          {timestamp ? (
+            <time className={styles.time} dateTime={timestampIso}>
+              {`· ${timestamp}`}
+            </time>
+          ) : null}
+        </div>
+      )}
       {children}
     </Tag>
-  );
-}
-
-function MachineSignature({
-  label,
-  timestamp,
-  timestampIso,
-}: {
-  label: string;
-  timestamp?: string | null;
-  timestampIso?: string | null;
-}) {
-  return (
-    <div className={styles.signature}>
-      <span className={styles.origin}>{label}</span>
-      {timestamp ? (
-        <time className={styles.time} dateTime={timestampIso ?? undefined}>
-          {`· ${timestamp}`}
-        </time>
-      ) : null}
-    </div>
   );
 }

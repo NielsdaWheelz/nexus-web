@@ -40,7 +40,7 @@ import {
   podcastErrorMessage,
   podcastRefresh,
 } from "@/lib/podcasts/paneState";
-import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
@@ -51,7 +51,7 @@ const VISIT = definePaneVisitDataKey<ListSnapshot<PodcastSubscriptionRow>>(
 );
 const REFRESH = podcastRefresh({ kind: "Podcasts" });
 const UNIT = { singular: "show", plural: "shows" };
-const ACTIONS: readonly PaneHeaderAction[] = [
+const ACTIONS: readonly ActionDescriptor[] = [
   {
     kind: "link",
     id: "Podcasts.Browse",

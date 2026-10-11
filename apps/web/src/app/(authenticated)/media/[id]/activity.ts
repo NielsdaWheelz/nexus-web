@@ -9,7 +9,7 @@ import { parseMediaRef } from "@/lib/consumption/activityContract";
 import { activityRecorder } from "@/lib/consumption/activityRecorder";
 import { documentWordBoundaryOrdinal } from "@/lib/consumption/canonicalWordPosition";
 import type { Reader } from "@/lib/documentReader/DocumentReader";
-import { isInteractiveTarget } from "@/lib/ui/interactiveTarget";
+import { isInteractiveTarget } from "@/lib/ui/eventTarget";
 
 const IDLE_AFTER_MS = 300_000;
 
