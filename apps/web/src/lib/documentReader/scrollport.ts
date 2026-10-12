@@ -19,6 +19,7 @@ export function useScrollport(
     const port = ref.current;
     if (!port) return;
     const release = runtime.host?.scrollport?.(port);
+    // justify-type-assertion: DocumentReader mounts its indicator before surface effects run.
     const indicator = indicatorRef.current!;
     let frame = 0;
     let idle: ReturnType<typeof setTimeout> | null = null;
@@ -31,6 +32,7 @@ export function useScrollport(
     // passive overlay reports pixel position; it never changes reading intent.
     const paintIndicator = () => {
       if (indicator.clientHeight === 0) return;
+      // justify-type-assertion: DocumentReader owns the indicator as a direct frame child.
       const frameBounds = indicator.parentElement!.getBoundingClientRect();
       const portBounds = port.getBoundingClientRect();
       const portStyle = getComputedStyle(port);
@@ -64,6 +66,9 @@ export function useScrollport(
         maxLeft > 0
           ? Math.max(0, Math.min(maxLeft, port.scrollLeft)) / maxLeft * (trackWidth - thumbWidth)
           : 0;
+      // Zero-sized thumbs still cast shadows; hide axes without overflow.
+      indicator.style.setProperty("--scroll-indicator-vertical-display", maxTop > 0 ? "block" : "none");
+      indicator.style.setProperty("--scroll-indicator-horizontal-display", maxLeft > 0 ? "block" : "none");
       indicator.style.setProperty("--scroll-indicator-height", `${thumbHeight}px`);
       indicator.style.setProperty("--scroll-indicator-width", `${thumbWidth}px`);
       indicator.style.setProperty("--scroll-indicator-top", `${top}px`);

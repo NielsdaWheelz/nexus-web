@@ -4,7 +4,7 @@ status: open
 origin: 2026-10-11 scrollbar verification; baseline `39dfa94568`
 area: workspace / viewport classification
 
-the isolated pixel 7 emulator on android 35 reports a `915x412` css viewport,
+the isolated pixel 7 emulator on android 15 (api 35) reports a `915x412` css viewport,
 coarse primary pointer and no hover in landscape. the mobile query at
 `apps/web/src/lib/renderEnvironment/provider.tsx:14-15` requires at most 900px
 for coarse landscape, so it classifies this phone as desktop. the same query

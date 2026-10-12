@@ -150,6 +150,7 @@
 }
 
 .scrollIndicatorVertical {
+  display: var(--scroll-indicator-vertical-display, none);
   top: 0;
   right: 0;
   width: 3px;
@@ -158,6 +159,7 @@
 }
 
 .scrollIndicatorHorizontal {
+  display: var(--scroll-indicator-horizontal-display, none);
   bottom: 0;
   left: 0;
   height: 3px;
