@@ -79,6 +79,16 @@ empty headline's star.
 
 ## ownership
 
+`globals.css` customizes scrollbars only for a fine primary pointer with hover;
+touch uses platform defaults at every viewport width. this follows input,
+independently of the workspace's layout breakpoints.
+
+the shared reader supplies passive touch indicators because android webview
+suppresses native indicators inside nested scroll containers. text and pdf hide
+their native scrollbars and share the overlay: zero layout width, pixel scroll
+position in both axes, visible during movement, then fading after 400ms idle.
+it takes neither pointer nor keyboard input and records no reading progress.
+
 no module styles another module's internal dom. a caller adjusts a primitive
 only through its props, its `className` (a field primitive's rules weigh one
 class, so the caller's class meets them at equal weight) or a context token the

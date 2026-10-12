@@ -5,10 +5,13 @@ import { useEffect, useRef, type RefObject } from "react";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
 import type { ReaderRuntime } from "./runtime";
 
+const SCROLL_INDICATOR_IDLE_MS = 400;
+
 export function useScrollport(
   ref: RefObject<HTMLElement | null>,
   runtime: ReaderRuntime,
   measure: () => void,
+  indicatorRef: RefObject<HTMLDivElement | null>,
 ): void {
   const measureRef = useRef(measure);
   measureRef.current = measure;
@@ -16,16 +19,71 @@ export function useScrollport(
     const port = ref.current;
     if (!port) return;
     const release = runtime.host?.scrollport?.(port);
+    const indicator = indicatorRef.current!;
     let frame = 0;
+    let idle: ReturnType<typeof setTimeout> | null = null;
     let touchY: number | null = null;
     let seek: {
       op: { settle(moved: boolean): void; cancel(): void };
       top: number;
     } | null = null;
+    // WebView suppresses native scrollbars inside nested scrollports. This
+    // passive overlay reports pixel position; it never changes reading intent.
+    const paintIndicator = () => {
+      if (indicator.clientHeight === 0) return;
+      const frameBounds = indicator.parentElement!.getBoundingClientRect();
+      const portBounds = port.getBoundingClientRect();
+      const portStyle = getComputedStyle(port);
+      indicator.style.setProperty(
+        "--scroll-indicator-inset-top",
+        `${portBounds.top - frameBounds.top + Number.parseFloat(portStyle.paddingTop)}px`,
+      );
+      indicator.style.setProperty(
+        "--scroll-indicator-inset-bottom",
+        `${frameBounds.bottom - portBounds.bottom + Number.parseFloat(portStyle.paddingBottom)}px`,
+      );
+      const height = port.clientHeight;
+      const width = port.clientWidth;
+      const maxTop = port.scrollHeight - height;
+      const maxLeft = port.scrollWidth - width;
+      const trackHeight = indicator.clientHeight;
+      const trackWidth = indicator.clientWidth;
+      const thumbHeight =
+        maxTop > 0
+          ? Math.min(trackHeight, Math.max(24, trackHeight * height / port.scrollHeight))
+          : 0;
+      const thumbWidth =
+        maxLeft > 0
+          ? Math.min(trackWidth, Math.max(24, trackWidth * width / port.scrollWidth))
+          : 0;
+      const top =
+        maxTop > 0
+          ? Math.max(0, Math.min(maxTop, port.scrollTop)) / maxTop * (trackHeight - thumbHeight)
+          : 0;
+      const left =
+        maxLeft > 0
+          ? Math.max(0, Math.min(maxLeft, port.scrollLeft)) / maxLeft * (trackWidth - thumbWidth)
+          : 0;
+      indicator.style.setProperty("--scroll-indicator-height", `${thumbHeight}px`);
+      indicator.style.setProperty("--scroll-indicator-width", `${thumbWidth}px`);
+      indicator.style.setProperty("--scroll-indicator-top", `${top}px`);
+      indicator.style.setProperty("--scroll-indicator-left", `${left}px`);
+      if (maxTop <= 0 && maxLeft <= 0) {
+        indicator.removeAttribute("data-scrolling");
+        return;
+      }
+      indicator.dataset.scrolling = "";
+      if (idle !== null) clearTimeout(idle);
+      idle = setTimeout(() => {
+        idle = null;
+        indicator.removeAttribute("data-scrolling");
+      }, SCROLL_INDICATOR_IDLE_MS);
+    };
     const scroll = () => {
       frame ||= requestAnimationFrame(() => {
         frame = 0;
         measureRef.current();
+        paintIndicator();
       });
     };
     const wheel = (event: WheelEvent) => {
@@ -116,10 +174,12 @@ export function useScrollport(
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", cancel);
       cancelAnimationFrame(frame);
+      if (idle !== null) clearTimeout(idle);
+      indicator.removeAttribute("data-scrolling");
       finish(true);
       release?.();
     };
-  }, [ref, runtime]);
+  }, [ref, runtime, indicatorRef]);
 }
 
 /** Resolves on the next frame, or at once when aborted. */
