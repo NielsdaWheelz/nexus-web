@@ -1,6 +1,7 @@
 # Docker Compose for running the Postgres queue worker locally.
 #
 # Usage:
+#   export UNIVERSAL_MEMORY_DEPLOY_KEY_FILE=/absolute/path/to/read-only-deploy-key
 #   docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml \
 #     up -d worker-interactive worker-background
 
@@ -10,6 +11,8 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.backend
       target: worker
+      secrets:
+        - universal_memory_deploy_key
       args:
         SOURCE_SHA: ${NEXUS_LOCAL_SOURCE_SHA:?set the exact local Git SHA}
     environment:
@@ -63,6 +66,8 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.backend
       target: worker
+      secrets:
+        - universal_memory_deploy_key
       args:
         SOURCE_SHA: ${NEXUS_LOCAL_SOURCE_SHA:?set the exact local Git SHA}
     environment:
@@ -105,3 +110,7 @@ services:
 
 volumes:
   nexus_codex_run:
+
+secrets:
+  universal_memory_deploy_key:
+    file: ${UNIVERSAL_MEMORY_DEPLOY_KEY_FILE:?set the private dependency build key file}

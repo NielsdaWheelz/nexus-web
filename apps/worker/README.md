@@ -39,9 +39,16 @@ bound (exactly 448 MiB, `memory.oom.group` 0) when it starts.
 make local-runtime-identity
 export NEXUS_LOCAL_SOURCE_SHA="$(git rev-parse HEAD)"
 export NEXUS_LOCAL_RUNTIME_IDENTITY_FILE="$PWD/.nexus-local/runtime-identity.json"
+export UNIVERSAL_MEMORY_DEPLOY_KEY_FILE=/absolute/path/to/read-only-deploy-key
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml \
   up -d worker-interactive worker-background
 ```
+
+both image builds need that private dependency key, including the background
+image without runtime memory access. compose mounts it only as the required
+BuildKit secret; an unset path or missing file fails the build. it never enters
+image layers, build arguments or runtime configuration. the optional interactive
+`NEXUS_MEMORY_CLIENT_CONFIG_FILE` is a separate runtime declaration.
 
 Each container's healthcheck runs `python -S -m apps.worker.health --lane <lane>`,
 which fails unless the lane's live process published a database-backed cycle in

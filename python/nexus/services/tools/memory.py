@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Self
 from uuid import UUID
 
+import anyio
 import httpx2
 from llm_tools import (
     Available,
@@ -22,11 +23,22 @@ from llm_tools import (
     ToolFamily,
     ToolSpec,
     Unavailable,
-    canonical_json_bytes,
 )
 from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
-from mcp.types import CallToolResult, Implementation, TextContent
+from mcp.client.streamable_http import StreamableHTTPError, streamable_http_client
+from mcp.shared.exceptions import MCPError
+from mcp.types import (
+    CONNECTION_CLOSED,
+    INTERNAL_ERROR,
+    REQUEST_TIMEOUT,
+    CallToolResult,
+    Implementation,
+    JSONRPCError,
+    JSONRPCRequest,
+    JSONRPCResponse,
+    TextContent,
+    jsonrpc_message_adapter,
+)
 from pydantic import (
     AnyHttpUrl,
     BaseModel,
@@ -111,51 +123,196 @@ def load_memory_client_config(path: Path | None) -> Presence[MemoryClientConfig]
         raise RuntimeError("invalid private memory client configuration") from None
 
 
+def _http_failure(status: int) -> MemoryToolFailure:
+    if status == 401:
+        return MemoryToolFailure(code="unauthorized")
+    if status == 403:
+        return MemoryToolFailure(code="forbidden")
+    if status == 429:
+        return MemoryToolFailure(code="rate_limited")
+    return MemoryToolFailure(code="unavailable" if 500 <= status < 600 else "unsupported")
+
+
+def _boundary_failure(error: BaseException) -> MemoryToolFailure | None:
+    """Classify known remote failures; a group containing a defect/cancel stays intact."""
+
+    if isinstance(error, BaseExceptionGroup):
+        failures = tuple(_boundary_failure(child) for child in error.exceptions)
+        first = failures[0]
+        if first is None or any(failure is None for failure in failures):
+            return None
+        if any(failure is not None and failure.code != first.code for failure in failures):
+            return MemoryToolFailure(code="unavailable")
+        return first
+    if isinstance(error, MemoryError):
+        return MemoryToolFailure.model_validate({"code": error.code})
+    if isinstance(error, httpx2.HTTPStatusError):
+        return _http_failure(error.response.status_code)
+    if isinstance(error, MCPError):
+        return MemoryToolFailure(
+            code="unavailable"
+            if error.code in (CONNECTION_CLOSED, REQUEST_TIMEOUT, INTERNAL_ERROR)
+            else "unsupported"
+        )
+    if isinstance(
+        error,
+        (
+            httpx2.NetworkError,
+            httpx2.TimeoutException,
+            httpx2.RemoteProtocolError,
+            StreamableHTTPError,
+            anyio.EndOfStream,
+            anyio.BrokenResourceError,
+            anyio.ClosedResourceError,
+        ),
+    ):
+        return MemoryToolFailure(code="unavailable")
+    if isinstance(error, (ValidationError, httpx2.DecodingError, httpx2.SSEError)):
+        return MemoryToolFailure(code="unsupported")
+    return None
+
+
 async def _call_memory(
-    config: MemoryClientConfig, name: str, arguments: dict[str, JsonValue]
-) -> dict[str, JsonValue]:
+    config: MemoryClientConfig, spec: ToolSpec[Any, Any, Any], arguments: dict[str, JsonValue]
+) -> Any:
     """One protocol session per call; a call is never resent."""
 
-    async with httpx2.AsyncClient(
-        headers={"authorization": "Bearer " + config.bearer.get_secret_value()},
-        timeout=httpx2.Timeout(20.0, connect=10.0),
-        follow_redirects=False,
-        trust_env=False,
-    ) as http:
-        async with streamable_http_client(str(config.mcp_url), http_client=http) as (read, write):
-            async with ClientSession(
+    async def check_response(response: httpx2.Response) -> None:
+        if response.request.method != "POST":
+            return
+        # The SDK discards these statuses and can log private malformed bodies.
+        if response.status_code >= 400:
+            raise MemoryError(_http_failure(response.status_code).code)
+        if 300 <= response.status_code < 400:
+            location = response.headers.get("location")
+            if response.status_code not in (307, 308) or location is None:
+                raise MemoryError("unsupported")
+            url = response.request.url
+            try:
+                target = url.join(location)
+            except httpx2.InvalidURL:
+                raise MemoryError("unsupported") from None
+            same_origin = (url.scheme, url.host, url.port) == (
+                target.scheme,
+                target.host,
+                target.port,
+            )
+            https_upgrade = (
+                url.host == target.host
+                and url.scheme == "http"
+                and url.port is None
+                and target.scheme == "https"
+                and target.port is None
+            )
+            if target.userinfo or not (same_origin or https_upgrade):
+                raise MemoryError("unsupported")
+            return  # let the SDK follow its supported method-preserving redirect
+        if response.status_code == 202:
+            return  # the SDK distinguishes notification acknowledgement from a lost reply
+        sent = jsonrpc_message_adapter.validate_json(response.request.content, by_name=False)
+        if not isinstance(sent, JSONRPCRequest):
+            return  # notification replies carry no result, including 200/204
+        if (
+            response.status_code != 200
+            or "mcp-session-id" in response.headers
+            or response.headers.get("content-type", "").partition(";")[0].strip().lower()
+            != "application/json"
+        ):
+            raise MemoryError("unsupported")  # this server is stateless JSON, never SSE
+        try:
+            received = jsonrpc_message_adapter.validate_json(await response.aread(), by_name=False)
+        except ValidationError:
+            raise MemoryError("unsupported") from None
+        if not isinstance(received, (JSONRPCResponse, JSONRPCError)) or received.id != sent.id:
+            raise MemoryError("unsupported")
+
+    submitted = False
+    try:
+        async with httpx2.AsyncClient(
+            headers={"authorization": "Bearer " + config.bearer.get_secret_value()},
+            timeout=httpx2.Timeout(20.0, connect=10.0),
+            follow_redirects=False,
+            trust_env=False,
+            event_hooks={"response": [check_response]},
+        ) as http:
+            async with streamable_http_client(str(config.mcp_url), http_client=http) as (
                 read,
                 write,
-                client_info=Implementation(name="nexus-owner", version="1"),
-                read_timeout_seconds=20.0,
-            ) as client:
-                await client.initialize()
-                await client.list_tools()
-                result = await client.call_tool(name, arguments)
-    if (
-        not isinstance(result, CallToolResult)
-        or result.structured_content is not None
-        or len(result.content) != 1
-        or not isinstance(result.content[0], TextContent)
-        or len(
-            canonical_json(
-                result.model_dump(mode="json", exclude_none=True, by_alias=True)
-            ).encode()
-        )
-        > RESULT_BYTES
-    ):
-        raise RuntimeError("memory server violated its result contract")
-    body = result.content[0].text
-    if result.is_error:
+            ):
+                async with ClientSession(
+                    read,
+                    write,
+                    client_info=Implementation(name="nexus-owner", version="1"),
+                    read_timeout_seconds=20.0,
+                ) as client:
+                    try:
+                        await client.initialize()
+                    except RuntimeError as error:
+                        # This one pinned-SDK handshake failure has no concrete type.
+                        if not str(error).startswith(
+                            "Unsupported protocol version from the server:"
+                        ):
+                            raise
+                        raise MemoryError("unsupported") from None
+                    name = str(spec.id).replace(".", "_")
+                    tools = await client.list_tools()
+                    if not any(
+                        tool.name == name and tool.output_schema is None for tool in tools.tools
+                    ):
+                        raise MemoryError("unsupported")
+                    submitted = True
+                    result = await client.call_tool(
+                        name, arguments, allow_input_required=True, allow_claimed=True
+                    )
+        if (
+            not isinstance(result, CallToolResult)
+            or result.structured_content is not None
+            or len(result.content) != 1
+            or not isinstance(result.content[0], TextContent)
+        ):
+            raise MemoryError("unsupported")
         try:
+            size = len(
+                canonical_json(
+                    result.model_dump(mode="json", exclude_none=True, by_alias=True)
+                ).encode()
+            )
+        except UnicodeEncodeError:
+            raise MemoryError("unsupported") from None
+        if size > RESULT_BYTES:
+            raise MemoryError("unsupported")
+        body = result.content[0].text
+        if result.is_error:
             failure = MemoryToolFailure.model_validate_json(body, strict=True)
-        except ValidationError:
-            raise RuntimeError("memory server returned an invalid failure") from None
-        raise MemoryError(failure.code)
-    try:
-        return TypeAdapter(dict[str, JsonValue]).validate_json(body, strict=True)
-    except ValidationError:
-        raise RuntimeError("memory server returned a non-object result") from None
+            raise MemoryError(failure.code)
+        return TypeAdapter(spec.success_type).validate_json(body, strict=True)
+    except (
+        MemoryError,
+        httpx2.HTTPStatusError,
+        httpx2.NetworkError,
+        httpx2.TimeoutException,
+        httpx2.RemoteProtocolError,
+        httpx2.DecodingError,
+        httpx2.SSEError,
+        MCPError,
+        StreamableHTTPError,
+        anyio.EndOfStream,
+        anyio.BrokenResourceError,
+        anyio.ClosedResourceError,
+        ValidationError,
+        BaseExceptionGroup,
+    ) as error:
+        failure = _boundary_failure(error)
+        if failure is None:
+            raise
+        if submitted and spec is MEMORY_SAVE_NOTE_SPEC:
+            failure = failure.model_copy(
+                update={
+                    "notice": failure.notice
+                    + " no success receipt; this save may already have committed."
+                }
+            )
+        raise DeclaredToolFailure(failure, actual_attempts=0) from None
 
 
 def _handler(spec: ToolSpec[Any, Any, Any], config: MemoryClientConfig) -> Any:
@@ -170,15 +327,7 @@ def _handler(spec: ToolSpec[Any, Any, Any], config: MemoryClientConfig) -> Any:
                 "submission_id": str(call.id),
                 "native_conversation_id": str(chat.conversation_id),
             }
-        try:
-            result = await _call_memory(config, str(spec.id).replace(".", "_"), arguments)
-        except MemoryError as error:
-            raise DeclaredToolFailure(
-                MemoryToolFailure.model_validate({"code": error.code}), actual_attempts=0
-            ) from None
-        return TypeAdapter(spec.success_type).validate_json(
-            canonical_json_bytes(result), strict=True
-        )
+        return await _call_memory(config, spec, arguments)
 
     return handler
 
@@ -200,7 +349,7 @@ def family(config: Presence[MemoryClientConfig]) -> ToolFamily:
                 spec=spec,
                 execute=execute,
                 replay_policy=ReplayPolicy.ReDispatchable,
-                implementation_revision="nexus-shared-memory-v1",
+                implementation_revision="nexus-shared-memory-v2",
                 policy_epoch=PolicyEpoch("nexus-shared-memory-v1"),
                 policy_inputs={},
             )

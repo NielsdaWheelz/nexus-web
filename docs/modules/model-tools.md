@@ -2,8 +2,8 @@
 
 What a model may do inside Nexus on a user's behalf, inside a frozen grant: read
 what the chat may see, make five kinds of additive writes, search and read the web,
-and (for one configured owner) use shared memory. Every call leaves one row; every
-write is attributable and undoable.
+and (for one configured owner) use shared memory. every call leaves one row;
+nexus writes are attributable and undoable. remote memory saves are append-only.
 
 Code: `python/nexus/services/tools/` (`contract`, `run`, `reads`, `writes`,
 `assistant_writes`, `memory`), `api/routes/assistant_writes.py`,
@@ -44,7 +44,7 @@ Code: `python/nexus/services/tools/` (`contract`, `run`, `reads`, `writes`,
 
 ## Invariants
 
-- I1 an effect commits only in the transaction that completes its row, after the
+- I1 a nexus effect commits only in the transaction that completes its row, after the
   fence: generation open (`llm_calls` row lock), job claim live, and in a chat the run
   `running`, not cancel-requested. The row is committed, with the chat's start
   frames, before the handler runs.
@@ -85,7 +85,7 @@ canonical call, the transport's refusal (`InvalidJson` -> `InvalidInput`,
    handler under the tool's deadline. Declared and boundary failures are results;
    anything else is a defect and propagates. A stop cancels the codex callback
    here; the row stays `running` until finalize (I11).
-3. `_complete` (one transaction): a Failure rolls back the call's effects; lock the
+3. `_complete` (one transaction): a Failure rolls back locally staged effects; lock the
    chat run; complete the row; in a chat, web snapshots for `web.search`, the call's
    retrievals, the `tool_result` frame and the numbered output; commit.
 
@@ -114,6 +114,34 @@ owner declaration (`memory.MemoryClientConfig`); policy grants a memory plan onl
 to its owner on a processor chain it allows. One MCP session per call, never
 resent; the server must answer one bounded text item. `memory.save_note` is a Write
 outside the cap, the history and undo (D-Q3).
+
+the client speaks the current private stateless json endpoint. sse responses and
+session ids are `unsupported`; generic streaming/stateful compatibility is outside
+this client. the sdk retains supported method-preserving redirects and notification
+replies. the http boundary rejects unsupported redirects without logging their
+destinations, retains status codes, and validates json-rpc with the sdk's public
+adapter before its logger can expose private bodies. a request requires a response
+or error with its matching id. tool
+results must be one text item, without structured content or an advertised output
+schema, within the actual serialized envelope bound and the requested tool schema.
+
+expected transport/auth/protocol failures become `MemoryFailure` and complete the
+existing tool row, so the model can continue. http 401/403/429 become
+`unauthorized`/`forbidden`/`rate_limited`; connection, remote timeout and server
+failures become `unavailable`; malformed or unsupported results become
+`unsupported`. valid application error codes survive. known exception groups are
+normalized only when every leaf is recognized; mixed known codes become
+`unavailable`. unknown defects and cancellation propagate; the outer tool deadline
+retains `DeadlineExceeded`. no retry, reconnect or alternate endpoint is added.
+
+a save uses the original `tool_calls.id` and host-known conversation. after
+submission, failure does not prove absence: the central note may have committed
+even if nexus rolls back, times out or stops. client-normalized failures say so
+in their existing notice; outer deadline/cancellation keeps its existing result.
+report success only after a valid receipt. an intentional same-intent replay uses
+the exact id/text/owner/conversation; a new model call, rerun or regeneration is
+a new intent. there is no new recovery ledger or endpoint. local transaction
+completion and undo cannot reverse a central note.
 
 ## Stale tabs
 

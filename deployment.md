@@ -115,8 +115,18 @@ needs, to a 0600 file in the runner's temp directory and remove it once the
 dependency install or the image builds finish. both backend build layers mount
 that file as the required BuildKit secret `universal_memory_deploy_key`; it
 never becomes a build argument, image layer, git or ssh configuration, cached
-credential or runtime environment. local image builds pass the owner's github
-ssh key instead: `--secret id=universal_memory_deploy_key,src=$HOME/.ssh/id_ed25519`.
+credential or runtime environment. local worker compose builds use the same
+file-backed secret for both targets:
+
+```bash
+export UNIVERSAL_MEMORY_DEPLOY_KEY_FILE=/absolute/path/to/read-only-deploy-key
+```
+
+the local overlay grants that BuildKit secret to both interactive/background
+builds; an unset path or missing file fails. see the [worker runbook](apps/worker/README.md#docker)
+for the complete command. direct image builds pass
+`--secret id=universal_memory_deploy_key,src="$UNIVERSAL_MEMORY_DEPLOY_KEY_FILE"`.
+this build-only key is separate from the optional runtime memory-client file;
 ordinary local uv installs use authenticated git.
 
 rotate the key by adding the new one before deleting the old:
