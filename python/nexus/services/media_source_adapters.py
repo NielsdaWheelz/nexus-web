@@ -14,7 +14,6 @@ from nexus.db.models import Media, MediaFile, MediaKind, MediaSourceAttempt
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.extension_capture import decode_article_packet
-from nexus.schemas.presence import Presence, Present, absent, nullable_from_presence, present
 from nexus.services import media_source_types as source_types
 from nexus.services.epub_ingest import EpubExtractionPlan
 from nexus.services.epub_lifecycle import prepare_epub_source, publish_epub_source
@@ -64,7 +63,7 @@ class PreparedFileSource:
     """Detached acquisition; the source coordinator owns its atomic publication."""
 
     plan: ExtractionPlan
-    remote_file: Presence[RemoteFile]
+    remote_file: RemoteFile | None
 
 
 def run_source_adapter(
@@ -116,7 +115,7 @@ def run_source_adapter(
         packet = decode_article_packet(
             _read_stored_source(session_factory, media_id, attempt, fence)
         )
-        byline = nullable_from_presence(packet.byline) or ""
+        byline = packet.byline or ""
         fragment_id = publish_article(
             session_factory,
             media_id=media_id,
@@ -131,9 +130,9 @@ def run_source_adapter(
                 metadata=ArticleMetadata(
                     title=packet.title,
                     byline=byline,
-                    excerpt=nullable_from_presence(packet.excerpt) or "",
-                    site_name=nullable_from_presence(packet.site_name) or "",
-                    published_time=nullable_from_presence(packet.published_time) or "",
+                    excerpt=packet.excerpt or "",
+                    site_name=packet.site_name or "",
+                    published_time=packet.published_time or "",
                 ),
             ),
         )
@@ -148,7 +147,7 @@ def run_source_adapter(
                 observation=byline_observation(byline),
                 source="web_article_capture",
             ),
-            metadata_enrichment=present(True),
+            metadata_enrichment=True,
         )
     if source_type == source_types.EMAIL_MESSAGE:
         if not dict(attempt.source_payload or {}).get("has_content"):
@@ -183,7 +182,7 @@ def run_source_adapter(
                 "source_type": source_types.EMAIL_MESSAGE,
                 "fragment_id": str(fragment_id),
             },
-            metadata_enrichment=present(False),
+            metadata_enrichment=False,
         )
     if source_type in source_types.LOCAL_FILE_SOURCE_TYPES:
         return _run_existing_file(session_factory, media_id, fence)
@@ -207,8 +206,8 @@ def run_source_adapter(
                 "segment_count": completed.segment_count,
                 "source_type": source_types.PODCAST_EPISODE_TRANSCRIPT,
             },
-            metadata_enrichment=present(True),
-            transcript_request_reason=present(request_reason),
+            metadata_enrichment=True,
+            transcript_request_reason=request_reason,
         )
     raise ApiError(ApiErrorCode.E_INVALID_KIND, f"Unsupported source attempt type: {source_type}")
 
@@ -285,7 +284,7 @@ def _run_remote_file(
         source_sha256=fetched.sha256_hex,
     )
 
-    return PreparedFileSource(plan=plan, remote_file=present(fetched))
+    return PreparedFileSource(plan=plan, remote_file=fetched)
 
 
 def _run_existing_file(
@@ -328,7 +327,7 @@ def _run_existing_file(
         source_size_bytes=source_size_bytes,
         source_sha256=source_sha256,
     )
-    return PreparedFileSource(plan=plan, remote_file=absent())
+    return PreparedFileSource(plan=plan, remote_file=None)
 
 
 def _prepare_file_source(
@@ -382,8 +381,8 @@ def publish_prepared_file_source(
 ) -> tuple[SourceRunOutcome, list[str]]:
     """Publish files in the source coordinator's fenced terminal transaction."""
     source_file = None
-    if isinstance(prepared.remote_file, Present):
-        fetched = prepared.remote_file.value
+    if prepared.remote_file is not None:
+        fetched = prepared.remote_file
         media = db.get(Media, media_id)
         if media is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
@@ -411,7 +410,7 @@ def finalize_prepared_file_source(
 ) -> None:
     """Finalize referenced reservations and delete superseded objects after commit."""
     storage_client = get_storage_client()
-    if isinstance(prepared.remote_file, Present):
+    if prepared.remote_file is not None:
         _finalize(session_factory, media_id, prepared.plan.storage_path, storage_client)
     if isinstance(prepared.plan, EpubExtractionPlan):
         for asset_storage_path in prepared.plan.asset_storage_paths.values():

@@ -59,9 +59,9 @@ export async function loadWorkspaceBootstrap(): Promise<WorkspaceBootstrap> {
   // justify-type-assertion: the API validates the active visible pane on every
   // stored read, and enterWorkspace preserves it or creates one with its pane.
   const pane = initialState.panes.find(
-    (pane) => pane.id === initialState.activePrimaryPaneId,
+    (pane) => pane.id === initialState.active_primary_pane_id,
   )!;
-  const route = resolvePaneRouteModel(pane.currentVisit.href);
+  const route = resolvePaneRouteModel(pane.current_visit.href);
   const loader = route.id === "unsupported" ? undefined : paneResourceLoaders[route.id];
   if (loader) {
     try {

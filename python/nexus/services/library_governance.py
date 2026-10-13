@@ -27,7 +27,6 @@ from nexus.schemas.library import (
     LibraryOut,
     LibraryRole,
 )
-from nexus.schemas.presence import presence_from_nullable
 from nexus.services.collection_keyset import Direction, KeysetValueKind, SortKey, keyset_page
 from nexus.services.sealed_handles import seal_user
 from nexus.storage.client import StorageError, get_storage_client
@@ -460,7 +459,7 @@ def list_libraries(
     )
     return CollectionPage[LibraryOut](
         items=[library_out(membership_context(row), viewer_id=viewer_id) for row in rows],
-        nextCursor=presence_from_nullable(next_cursor),
+        next_cursor=next_cursor,
     )
 
 

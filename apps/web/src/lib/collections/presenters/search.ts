@@ -1,6 +1,5 @@
 /** Pure semantic projection for one already-decoded search result row. */
 
-import { absent, present } from "@/lib/api/presence";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import type { CollectionRowView } from "@/lib/collections/types";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
@@ -26,17 +25,17 @@ export function presentSearchResult(vm: SearchResultRowViewModel): CollectionRow
   }
   const context =
     vm.snippetSegments.length > 0
-      ? present({
+      ? {
           kind: "Snippet" as const,
           segments: vm.snippetSegments.map((segment) => ({
             text: segment.text,
             emphasized: segment.emphasized,
           })),
-        })
-      : present({
+        }
+      : {
           kind: "Text" as const,
           text: [vm.typeLabel, vm.sourceMeta].filter(Boolean).join(" · "),
-        });
+        };
 
   return {
     id: vm.key,
@@ -50,8 +49,8 @@ export function presentSearchResult(vm: SearchResultRowViewModel): CollectionRow
     contributors: vm.contributorCredits,
     publicationDate: vm.publicationDate,
     context,
-    activity: absent(),
-    exceptionalStatus: absent(),
+    activity: null,
+    exceptionalStatus: null,
     actionSubject: vm.actionSubject,
     selected: false,
   };

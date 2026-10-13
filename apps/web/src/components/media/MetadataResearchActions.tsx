@@ -111,9 +111,7 @@ export default function MetadataResearchActions({
     currentRetry?.purpose === view.retry.purpose &&
     expected !== undefined &&
     offered !== undefined &&
-    expected.kind === offered.kind &&
-    (expected.kind === "Absent" ||
-      (offered.kind === "Present" && expected.value === offered.value));
+    expected === offered;
   const operation = view.operation;
   const sourceRemedy =
     view.retry.status === "blocked" &&
@@ -128,15 +126,15 @@ export default function MetadataResearchActions({
         )
       : undefined;
   const reviewable =
-    operation.kind === "Present" &&
-    operation.value.status === "no_findings" &&
-    operation.value.reviewed_at.kind === "Absent";
+    operation !== null &&
+    operation.status === "no_findings" &&
+    operation.reviewed_at === null;
   return (
     <>
       {reviewable ? (
         <MetadataReviewButton
           mediaId={mediaId}
-          jobId={operation.value.job_id}
+          jobId={operation.job_id}
         />
       ) : null}
       {(!primaryOnly || !reviewable) &&

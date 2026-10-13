@@ -1,5 +1,5 @@
-"""Consumption wire: camelCase bases, activity capture, the Lectern, the player descriptor,
-listening writes and the consumption commands. Absence is owned via :mod:`nexus.schemas.presence`.
+"""Consumption wire: the closed base, activity capture, the Lectern, the player descriptor,
+listening writes and the consumption commands. Absence is null.
 
 The capture body is posted by the web and the Android app; raw device ids arrive only through
 the BFF.
@@ -11,10 +11,8 @@ from typing import Annotated, Literal, Self
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
-from pydantic.alias_generators import to_camel
 
 from nexus.schemas.media_summary import MediaSummaryOut
-from nexus.schemas.presence import Absent, Presence
 from nexus.schemas.reader import ReaderCursorSnapshot
 
 ActivityModality = Literal["Reading", "Listening", "Viewing"]
@@ -26,22 +24,18 @@ _Position = Annotated[int, Field(ge=0, le=9_223_372_036_854_775_807)]
 _Progress = Annotated[float, Field(ge=0, le=1)]
 
 
-class CamelIn(BaseModel):
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=False, extra="forbid")
+class Closed(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
-class CamelOut(BaseModel):
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
-
-
-class _Tagged(CamelOut):
+class _Tagged(Closed):
     """An output variant whose defaulted ``kind`` the generated wire still marks required."""
 
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
-class CommandIn(CamelIn):
-    """A write that replays by its ``clientMutationId``."""
+class CommandIn(Closed):
+    """A write that replays by its ``client_mutation_id``."""
 
     client_mutation_id: UUID
 
@@ -49,7 +43,7 @@ class CommandIn(CamelIn):
 # ---- activity capture ----
 
 
-class _SpanIn(CamelIn):
+class _SpanIn(Closed):
     capture_key: UUID
     occurred_at: AwareDatetime
     duration_ms: int = Field(gt=0, le=30_000)
@@ -59,10 +53,8 @@ class _SpanIn(CamelIn):
         """Each ``*_start`` measurement is present exactly when its ``*_end`` is."""
         for start in (name for name in type(self).model_fields if "_start" in name):
             end = start.replace("_start", "_end")
-            if isinstance(getattr(self, start), Absent) != isinstance(getattr(self, end), Absent):
-                raise ValueError(
-                    f"{to_camel(start)} and {to_camel(end)} must have the same presence"
-                )
+            if (getattr(self, start) is None) != (getattr(self, end) is None):
+                raise ValueError(f"{start} and {end} must have the same presence")
         return self
 
 
@@ -71,30 +63,30 @@ class ViewingActivitySpanIn(_SpanIn):
 
 
 class ReadingActivitySpanIn(_SpanIn):
-    progress_start: Presence[_Progress]
-    progress_end: Presence[_Progress]
-    word_start: Presence[_Position]
-    word_end: Presence[_Position]
+    progress_start: _Progress | None
+    progress_end: _Progress | None
+    word_start: _Position | None
+    word_end: _Position | None
 
 
 class ListeningActivitySpanIn(_SpanIn):
-    progress_start: Presence[_Progress]
-    progress_end: Presence[_Progress]
-    media_position_start_ms: Presence[_Position]
-    media_position_end_ms: Presence[_Position]
+    progress_start: _Progress | None
+    progress_end: _Progress | None
+    media_position_start_ms: _Position | None
+    media_position_end_ms: _Position | None
 
 
-class ReadingActivityBatchIn(CamelIn):
+class ReadingActivityBatchIn(Closed):
     modality: Literal["Reading"]
     spans: list[ReadingActivitySpanIn] = Field(min_length=1, max_length=120)
 
 
-class ListeningActivityBatchIn(CamelIn):
+class ListeningActivityBatchIn(Closed):
     modality: Literal["Listening"]
     spans: list[ListeningActivitySpanIn] = Field(min_length=1, max_length=120)
 
 
-class ViewingActivityBatchIn(CamelIn):
+class ViewingActivityBatchIn(Closed):
     modality: Literal["Viewing"]
     spans: list[ViewingActivitySpanIn] = Field(min_length=1, max_length=120)
 
@@ -105,7 +97,7 @@ ActivityBatchIn = Annotated[
 ]
 
 
-class ActivityRecordIn(CamelIn):
+class ActivityRecordIn(Closed):
     media_ref: str = Field(min_length=1, max_length=100)
     device_id: str = Field(min_length=1, max_length=200)
     device_class: ActivityDeviceClass
@@ -115,34 +107,34 @@ class ActivityRecordIn(CamelIn):
     def _distinct_capture_keys(self) -> Self:
         keys = [span.capture_key for span in self.batch.spans]
         if len(keys) != len(set(keys)):
-            raise ValueError("captureKey must be unique within one activity batch")
+            raise ValueError("capture_key must be unique within one activity batch")
         return self
 
 
 # ---- the player descriptor and the Lectern ----
 
 
-class ChapterOut(CamelOut):
+class ChapterOut(Closed):
     title: str = Field(min_length=1, max_length=300)
     start_ms: _Int32
-    end_ms: Presence[_Int32]
+    end_ms: _Int32 | None
 
 
-class PlayerDescriptor(CamelOut):
+class PlayerDescriptor(Closed):
     """What a device needs to play one episode; ``position_ms`` is the server's resume point."""
 
     media_id: UUID
     title: str = Field(max_length=300)
-    subtitle: Presence[str]
-    artwork_url: Presence[str]
+    subtitle: str | None
+    artwork_url: str | None
     stream_url: str
     position_ms: _Int32
-    duration_ms: Presence[_Int32]
+    duration_ms: _Int32 | None
     reset_epoch: _Int32
-    consumption_override_revision: Presence[_Int32]
+    consumption_override_revision: _Int32 | None
     playback_rate: PlaybackRate
-    podcast_id: Presence[UUID]
-    pause_shortening_mode: Presence[PauseShorteningMode]
+    podcast_id: UUID | None
+    pause_shortening_mode: PauseShorteningMode | None
     chapters: list[ChapterOut] = Field(max_length=100)
 
 
@@ -159,7 +151,7 @@ class OpenPaneActivation(_Tagged):
     kind: Literal["OpenPane"] = "OpenPane"
 
 
-class LecternItemOut(CamelOut):
+class LecternItemOut(Closed):
     item_id: UUID
     media_summary: MediaSummaryOut
     href: str
@@ -170,7 +162,7 @@ class LecternItemOut(CamelOut):
     ]
 
 
-class LecternSnapshot(CamelOut):
+class LecternSnapshot(Closed):
     items: list[LecternItemOut] = Field(max_length=2000)
     at_capacity: bool
 
@@ -178,11 +170,11 @@ class LecternSnapshot(CamelOut):
 # ---- Lectern commands ----
 
 
-class FirstPlacement(CamelIn):
+class FirstPlacement(Closed):
     kind: Literal["First"]
 
 
-class AfterPlacement(CamelIn):
+class AfterPlacement(Closed):
     kind: Literal["After"]
     item_id: UUID
 
@@ -240,7 +232,7 @@ LecternOutcome = Annotated[
 ]
 
 
-class LecternResult(CamelOut):
+class LecternResult(Closed):
     outcome: LecternOutcome
     lectern: LecternSnapshot
 
@@ -248,19 +240,19 @@ class LecternResult(CamelOut):
 # ---- listening ----
 
 
-class ListeningIn(CamelIn):
+class ListeningIn(Closed):
     """One listening sample. An absent rate keeps the stored episode rate; an absent duration
     keeps the stored duration."""
 
     position_ms: _Int32
-    duration_ms: Presence[_Int32]
-    episode_playback_rate: Presence[PlaybackRate]
+    duration_ms: _Int32 | None
+    episode_playback_rate: PlaybackRate | None
     expected_reset_epoch: _Int32
 
 
-class PreviewPositionIn(CamelIn):
+class PreviewPositionIn(Closed):
     position_ms: _Int32
-    duration_ms: Presence[_Int32]
+    duration_ms: _Int32 | None
 
 
 # ---- consumption commands ----
@@ -288,22 +280,22 @@ class ResetProgressCommand(CommandIn):
     media_id: UUID
 
 
-class UndoRestoreIn(CamelIn):
+class UndoRestoreIn(Closed):
     """The Lectern row a Done removed: put back with its id and added time."""
 
     item_id: UUID
     added_at: AwareDatetime
-    after: Presence[UUID]
+    after: UUID | None
 
 
 class UndoFinishCommand(CommandIn):
-    """Undo the finish ``finish_id`` names (its ``finishId``): the override it replaced and the
+    """Undo the finish ``finish_id`` names: the override it replaced and the
     first-completion fact it recorded, as the server stored them, and the row a Done removed."""
 
     kind: Literal["UndoFinish"]
     media_id: UUID
     finish_id: UUID
-    restore: Presence[UndoRestoreIn]
+    restore: UndoRestoreIn | None
 
 
 class SettleNaturalEndCommand(CommandIn):
@@ -312,7 +304,7 @@ class SettleNaturalEndCommand(CommandIn):
     kind: Literal["SettleNaturalEnd"]
     media_id: UUID
     terminal_listening: ListeningIn
-    expected_consumption_override_revision: Presence[_Int32]
+    expected_consumption_override_revision: _Int32 | None
 
 
 ConsumptionCommand = Annotated[
@@ -326,22 +318,22 @@ ConsumptionCommand = Annotated[
 ]
 
 
-class ListeningPositionOut(CamelOut):
+class ListeningPositionOut(Closed):
     position_ms: _Int32
     reset_epoch: _Int32
-    consumption_override_revision: Presence[_Int32]
+    consumption_override_revision: _Int32 | None
 
 
-class MediaProgressState(CamelOut):
+class MediaProgressState(Closed):
     media_id: UUID
     reader_cursor: ReaderCursorSnapshot
-    listening_state: Presence[ListeningPositionOut]
+    listening_state: ListeningPositionOut | None
 
 
-class ConsumptionResult(CamelOut):
+class ConsumptionResult(Closed):
     outcome: Literal["Done", "Superseded", "Gone"]
     lectern: LecternSnapshot
-    next_item: Presence[LecternItemOut]
+    next_item: LecternItemOut | None
     # the finish this command made (EnsureMediaFinished, Done), for UndoFinish
-    finish_id: Presence[UUID]
-    progress_state: Presence[MediaProgressState]
+    finish_id: UUID | None
+    progress_state: MediaProgressState | None

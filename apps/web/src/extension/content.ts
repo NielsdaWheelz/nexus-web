@@ -8,7 +8,6 @@
 // credential or an arbitrary fetch.
 
 import { extractArticle } from "@nexus-ingest/article_extraction";
-import { absent, present, type Presence } from "@/lib/api/presence";
 import {
   ARTICLE_CONTENT_MAX_BYTES,
   ARTICLE_SOURCE_MAX_BYTES,
@@ -120,10 +119,10 @@ function extract(): ContentReply {
       title: bounded(article.title, 1024),
       content_html: contentHtml,
       source_html: sourceHtml,
-      byline: presence(article.byline, 1024),
-      excerpt: presence(article.excerpt, 4000),
-      site_name: presence(article.siteName, 1024),
-      published_time: presence(article.publishedTime, 128),
+      byline: nonblank(article.byline, 1024),
+      excerpt: nonblank(article.excerpt, 4000),
+      site_name: nonblank(article.siteName, 1024),
+      published_time: nonblank(article.publishedTime, 128),
     },
     previewText: text.slice(0, PREVIEW_MAX_CHARS),
   };
@@ -279,8 +278,8 @@ function bounded(value: string | null | undefined, limit: number): string {
   return Array.from(value ?? "").slice(0, limit).join("");
 }
 
-function presence(value: string | null | undefined, limit: number): Presence<string> {
-  return typeof value === "string" && value.trim() !== "" ? present(bounded(value, limit)) : absent();
+function nonblank(value: string | null | undefined, limit: number): string | null {
+  return typeof value === "string" && value.trim() !== "" ? bounded(value, limit) : null;
 }
 
 // --- bind -------------------------------------------------------------------

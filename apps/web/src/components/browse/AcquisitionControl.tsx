@@ -13,7 +13,6 @@ import LibraryDestinationPicker from "@/components/libraries/LibraryDestinationP
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { apiCommand204 } from "@/lib/api/client";
-import { absent, present, type Presence } from "@/lib/api/presence";
 import { isAbortError } from "@/lib/errors";
 import {
   createLibrary,
@@ -30,9 +29,9 @@ import styles from "./AcquisitionControl.module.css";
 export interface AcquisitionCommand {
   readonly namedLibraryIds: readonly string[];
   readonly idempotencyKey: string;
-  readonly replacementConfirmation: Presence<{
-    readonly conflictFingerprint: string;
-  }>;
+  readonly replacementConfirmation: {
+    readonly conflict_fingerprint: string;
+  } | null;
 }
 
 export interface AcquisitionSuccess {
@@ -42,18 +41,18 @@ export interface AcquisitionSuccess {
 
 interface FrozenCommand extends AcquisitionCommand {
   readonly previewPosition: {
-    readonly positionMs: number;
-    readonly durationMs: Presence<number>;
+    readonly position_ms: number;
+    readonly duration_ms: number | null;
   } | null;
 }
 
 interface Conflict {
   readonly conflicts: readonly {
-    readonly libraryId: string;
-    readonly libraryName: string;
-    readonly episodeCount: number;
+    readonly library_id: string;
+    readonly library_name: string;
+    readonly episode_count: number;
   }[];
-  readonly conflictFingerprint: string;
+  readonly conflict_fingerprint: string;
 }
 
 const FAILURES = {
@@ -240,12 +239,12 @@ export default function AcquisitionControl({
     return {
       namedLibraryIds: selected.map((library) => library.id),
       idempotencyKey: crypto.randomUUID(),
-      replacementConfirmation: absent(),
+      replacementConfirmation: null,
       previewPosition:
         stopped !== null && stopped.positionMs > 0
           ? {
-              positionMs: Math.floor(stopped.positionMs),
-              durationMs: stopped.durationMs,
+              position_ms: Math.floor(stopped.positionMs),
+              duration_ms: stopped.durationMs,
             }
           : null,
     };
@@ -254,20 +253,20 @@ export default function AcquisitionControl({
   // Confirming mints one fresh key; retrying that confirmation reuses it.
   const confirmReplacement = () => {
     if (conflict === null || frozen === null) return;
-    const fingerprint = conflict.conflictFingerprint;
+    const fingerprint = conflict.conflict_fingerprint;
     const confirmation = frozen.replacementConfirmation;
     const confirmed =
-      confirmation.kind === "Present" &&
-      confirmation.value.conflictFingerprint === fingerprint;
+      confirmation !== null &&
+      confirmation.conflict_fingerprint === fingerprint;
     void run(
       confirmed
         ? frozen
         : {
             ...frozen,
             idempotencyKey: crypto.randomUUID(),
-            replacementConfirmation: present({
-              conflictFingerprint: fingerprint,
-            }),
+            replacementConfirmation: {
+              conflict_fingerprint: fingerprint,
+            },
           },
     );
   };
@@ -298,7 +297,7 @@ export default function AcquisitionControl({
   const spoken = unknown ? label : action;
   const unavailable = failure?.kind === "Unavailable";
   const conflictEpisodes =
-    conflict?.conflicts.reduce((total, row) => total + row.episodeCount, 0) ??
+    conflict?.conflicts.reduce((total, row) => total + row.episode_count, 0) ??
     0;
   const cautious =
     failure?.kind === "Unavailable" || failure?.kind === "Permission";
@@ -395,9 +394,9 @@ export default function AcquisitionControl({
         </p>
         <ul>
           {conflict?.conflicts.map((row) => (
-            <li key={row.libraryId}>
-              {row.libraryName} · {row.episodeCount}{" "}
-              {row.episodeCount === 1 ? "episode" : "episodes"}
+            <li key={row.library_id}>
+              {row.library_name} · {row.episode_count}{" "}
+              {row.episode_count === 1 ? "episode" : "episodes"}
             </li>
           ))}
         </ul>

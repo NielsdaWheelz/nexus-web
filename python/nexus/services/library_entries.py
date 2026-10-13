@@ -978,14 +978,14 @@ def place_podcast_in_named_libraries_in_current_transaction(
             details={
                 "conflicts": [
                     {
-                        "libraryId": str(library_id),
-                        "libraryName": contexts[library_id].name,
-                        "episodeCount": counts[library_id],
+                        "library_id": str(library_id),
+                        "library_name": contexts[library_id].name,
+                        "episode_count": counts[library_id],
                     }
                     for library_id in targets
                     if library_id in counts
                 ],
-                "conflictFingerprint": fingerprint,
+                "conflict_fingerprint": fingerprint,
             },
         )
 

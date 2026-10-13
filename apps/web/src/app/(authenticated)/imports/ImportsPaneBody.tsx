@@ -30,7 +30,6 @@ const CODEC = {
   encode: (state: ImportsUrlState) => encodeImportsUrl(state),
   basePath: "/imports",
 };
-const ABSENT = { kind: "Absent" } as const;
 
 /**
  * The Imports pane (docs/modules/imports.md): the url owns the view, the
@@ -79,7 +78,7 @@ export default function ImportsPaneBody() {
   const matched =
     evidence?.importRef === selected && evidence.apiQuery === query
       ? evidence.event
-      : ABSENT;
+      : null;
   const [openIntent, setOpenIntent] = useState<{
     ref: string;
     triggerElement: HTMLButtonElement;

@@ -16,7 +16,6 @@ from nexus.schemas.extension_capture import (
     CaptureLimits,
     ExtensionSessionOut,
 )
-from nexus.schemas.presence import presence_from_nullable
 from nexus.services.sealed_handles import seal_user
 
 _TOKEN_PREFIX = "nx_ext_"
@@ -61,8 +60,8 @@ def describe_extension_session(db: Session, user_id: UUID) -> ExtensionSessionOu
     settings = get_settings()
     return ExtensionSessionOut(
         user_handle=seal_user(user_id),
-        email=presence_from_nullable(row.email),
-        display_name=presence_from_nullable(row.display_name),
+        email=row.email,
+        display_name=row.display_name,
         limits=CaptureLimits(
             max_pdf_bytes=settings.max_pdf_bytes,
             max_epub_bytes=settings.max_epub_bytes,

@@ -37,7 +37,6 @@ from nexus.schemas.metadata_enrichment import (
     MetadataUnfinishedOperation,
     MetadataWaitingOperation,
 )
-from nexus.schemas.presence import Presence, Present, absent, presence_from_nullable, present
 from nexus.services.generation.ledger import latest_job_generations
 from nexus.services.media_processing_state import is_metadata_enrichment_eligible
 from nexus.services.x_source import x_source_attempt_ids
@@ -123,7 +122,7 @@ def metadata_retry(
         media=media,
         viewer_id=viewer_id,
         unfinished_count=sum(job.status in {"pending", "running", "failed"} for job in jobs),
-        latest_job_id=present(latest.id) if latest else absent(),
+        latest_job_id=latest.id if latest else None,
         has_source_context=media.id in x_source_attempt_ids(db, media_ids=[media.id])
         if metadata_purpose(media) == "title"
         else False,
@@ -135,7 +134,7 @@ def _retry(
     media: Media,
     viewer_id: UUID,
     unfinished_count: int,
-    latest_job_id: Presence[UUID],
+    latest_job_id: UUID | None,
     has_source_context: bool,
 ) -> MetadataRetry:
     purpose = metadata_purpose(media)
@@ -195,16 +194,16 @@ def metadata_enrichment_views(
         by_media[row["media_id"]].append(row)
     views: dict[UUID, MetadataEnrichmentView] = {}
     for item in media:
-        operation: Presence[MetadataOperationOut] = absent()
-        unfinished: Presence[MetadataUnfinishedOperation] = absent()
+        operation: MetadataOperationOut | None = None
+        unfinished: MetadataUnfinishedOperation | None = None
         unfinished_count = 0
-        latest_job_id: Presence[UUID] = absent()
+        latest_job_id: UUID | None = None
         for row in by_media[item.id]:
             decoded = operations[row["job_id"]]
             unfinished_count = row["unfinished_count"]
             if row["latest_position"] == 1:
-                operation = Present[MetadataOperationOut](value=decoded)
-                latest_job_id = present(row["job_id"])
+                operation = decoded
+                latest_job_id = row["job_id"]
             if row["is_unfinished"] and row["unfinished_position"] == 1:
                 match decoded:
                     case (
@@ -213,7 +212,7 @@ def metadata_enrichment_views(
                         | MetadataRecoveringOperation()
                         | MetadataWaitingOperation()
                     ):
-                        unfinished = Present[MetadataUnfinishedOperation](value=decoded)
+                        unfinished = decoded
                     case _:
                         # justify-defect: queue unfinished facts and this owner's
                         # decoder must describe the same operation.
@@ -229,7 +228,7 @@ def metadata_enrichment_views(
                 latest_job_id=latest_job_id,
                 has_source_context=item.id in source_attempts,
             ),
-            last_enriched_at=presence_from_nullable(item.metadata_enriched_at),
+            last_enriched_at=item.metadata_enriched_at,
         )
     return views
 
@@ -273,20 +272,18 @@ def _decode_operations(db: Session, rows: Sequence[RowMapping]) -> dict[UUID, Me
 
 def _operation(row: RowMapping, call: LLMCall | None) -> MetadataOperationOut:
     payload = _JOB_PAYLOAD.validate_json(json.dumps(row["payload"]))
-    selection: Presence[MetadataSelection] = absent()
+    selection: MetadataSelection | None = None
     if call is not None:
         selected = call.generation_spec["selection"]
         assert isinstance(selected, dict)
-        selection = Present[MetadataSelection](
-            value=MetadataSelection(
-                provider="codex", model=str(selected["model"]), reasoning=str(selected["reasoning"])
-            )
+        selection = MetadataSelection(
+            provider="codex", model=str(selected["model"]), reasoning=str(selected["reasoning"])
         )
     common = {
         "job_id": row["job_id"],
         "created_at": row["created_at"],
-        "started_at": presence_from_nullable(row["started_at"]),
-        "generation_id": presence_from_nullable(call.id if call else None),
+        "started_at": row["started_at"],
+        "generation_id": call.id if call else None,
         "selection": selection,
         "purpose": payload.purpose,
     }
@@ -303,7 +300,7 @@ def _operation(row: RowMapping, call: LLMCall | None) -> MetadataOperationOut:
                 return MetadataNoFindingsOperation(
                     **common,
                     completed_at=outcome.completed_at,
-                    reviewed_at=presence_from_nullable(row["reviewed_at"]),
+                    reviewed_at=row["reviewed_at"],
                 )
             case "failed":
                 return MetadataFailedOperation(
@@ -322,9 +319,7 @@ def _operation(row: RowMapping, call: LLMCall | None) -> MetadataOperationOut:
                 code=_FAILURE_CODE.validate_python(row["failure_code"]),
             )
         case "waiting":
-            return MetadataWaitingOperation(
-                **common, reason="retry", until=present(row["available_at"])
-            )
+            return MetadataWaitingOperation(**common, reason="retry", until=row["available_at"])
         case "recovering":
             return MetadataRecoveringOperation(**common)
         case "queued":

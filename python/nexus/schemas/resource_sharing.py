@@ -1,11 +1,9 @@
-"""The Share overlay's wire: camelCase, requests by alias only with no extra keys."""
+"""The Share overlay's wire: requests take no extra keys."""
 
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-from pydantic.alias_generators import to_camel
 
-from nexus.schemas.presence import Presence
 from nexus.services.resource_items.capabilities import ShareMode
 from nexus.services.sealed_handles import ResourceGrantHandle, UserHandle
 
@@ -20,11 +18,11 @@ AudienceUnavailableReason = Literal[
 
 
 class _In(BaseModel):
-    model_config = ConfigDict(alias_generator=to_camel, extra="forbid")
+    model_config = ConfigDict(extra="forbid")
 
 
 class _Out(BaseModel):
-    model_config = ConfigDict(alias_generator=to_camel, validate_by_name=True)
+    pass
 
 
 class UserAudienceIn(_In):
@@ -42,8 +40,8 @@ class CreateResourceShareRequest(_In):
 
 class ShareUserOut(_Out):
     user_handle: UserHandle
-    email: Presence[str]
-    display_name: Presence[str]
+    email: str | None
+    display_name: str | None
 
 
 class AudienceAvailableOut(_Out):
@@ -92,7 +90,7 @@ class ResourceShareSnapshotOut(_Out):
     creation_availability: CreationAvailabilityOut
     shares: list[OwnedShareOut]
     received_access: list[ReceivedUserShareOut]
-    members: Presence[ShareMembersOut]
+    members: ShareMembersOut | None
 
 
 class CreateResourceShareOut(_Out):

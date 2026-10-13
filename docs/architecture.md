@@ -1460,14 +1460,13 @@ SERIALIZABLE transaction. Surface activation uses the bounded batch router, so
 heterogeneous rows add no per-occurrence query loop. Intrinsic page-title and
 note-body edits use the resource-item mutation owner. `services/notes.py`
 remains the notes collection, daily-page, and dated-capture facade.
-A Page list row is exactly `{id,title,updatedAt}`; Page detail adds required
-`dailyPage: Presence<{localDate}>`. `schemas/notes.py` and
-`services/notes.py` own those typed backend shapes and convert nullable daily
-binding state to `Presence` at `_page_out`. On the frontend,
+A Page list row is exactly `{id,title,updated_at}`; Page detail adds required
+`daily_page: {local_date} | null`. `schemas/notes.py` and
+`services/notes.py` own those typed backend shapes. On the frontend,
 `lib/notes/pageContract.ts` is the sole exact Page list/detail decoder and owns
 `loadNotePages`; server seed, intent prefetch, and Notes-pane replacement all
 call that same loader. Missing, extra, aliased, or malformed fields are defects,
-not empty-state fallbacks. `dailyPage` remains `Presence` after decoding.
+not empty-state fallbacks.
 A daily date is a latent non-mutating locator until its first meaningful Note.
 That first capture creates the ordinary Page, binding, Note, ordered
 occurrence, required versions, and replay receipt in one serializable
@@ -1616,12 +1615,11 @@ Two bounded aggregate command ports — `POST /lectern/commands`
 (`EnsureItem`/`PlaceItems`/`RemoveItem`/`SetOrder`) and `POST /consumption/commands`
 (`EnsureMediaFinished`/`Done`/`SetUnread`/`ResetProgress`/`UndoFinish`/
 `SettleNaturalEnd`) — each share one `retry_serializable` transaction, one
-canonical response, and `clientMutationId` replay through
+canonical response, and `client_mutation_id` replay through
 `services/resource_mutation_replay.py`; `GET /lectern`, `GET /media/{id}/player`
 and the epoch-fenced `PUT /media/{id}/listening-state` sit outside that replay
-ledger. Owned-absence fields on every wire
-shape use `Presence<T>` ([`rules/boundaries.md`](rules/boundaries.md)), never
-`null` or omission.
+ledger. An absent value on every wire shape is `null`, its key always present
+([`local-rules/typed-wire.md`](local-rules/typed-wire.md)).
 
 Media teardown (see [`modules/storage.md`](modules/storage.md)) composes one
 consumption call, `consumption_service.delete_media_consumption_state_in_txn`
@@ -1701,13 +1699,12 @@ committed Stats response owns its session-continuation state: the pane delegates
 manual cursor lifecycle to `lib/api/useCursorPagination.ts` and builds
 continuation requests from the committed decoded view. the shared manual owner
 accepts one `CursorPage<T, Cursor extends string>` contract:
-`{items: readonly T[], nextCursor: Presence<Cursor>}`. first-page object identity
+`{items: readonly T[], next_cursor: Cursor | null}`. first-page object identity
 owns appended rows and continuation; a replacement first page aborts the old
 request and immediately projects its own rows and tail. one continuation runs at
 a time, supplied rows append in order including duplicates, and retryable
-failures retain rows and tail. cursor absence stays explicit until the network
-command unwraps a present cursor; no empty-string or nullable cursor alias is
-introduced. imports, browse, stats, and the conversation picker consume this
+failures retain rows and tail. a `null` cursor ends the list; no empty-string
+cursor stands in for it. imports, browse, stats, and the conversation picker consume this
 same contract. stats' full contract is
 [`modules/consumption-activity.md`](modules/consumption-activity.md).
 

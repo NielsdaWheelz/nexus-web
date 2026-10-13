@@ -14,11 +14,11 @@ import type { UserSearchResult } from "@/lib/users/search";
 import styles from "./PeopleSearchCombobox.module.css";
 
 function labelFor(person: UserSearchResult): string {
-  return person.displayName.kind === "Present"
-    ? person.displayName.value
-    : person.email.kind === "Present"
-      ? person.email.value
-      : person.userHandle;
+  return person.display_name !== null
+    ? person.display_name
+    : person.email !== null
+      ? person.email
+      : person.user_handle;
 }
 
 function normalizedActiveIndex(index: number, itemCount: number): number {
@@ -170,7 +170,7 @@ export default function PeopleSearchCombobox({
           {results.map((person, index) => (
             <li
               id={optionIds[index]}
-              key={person.userHandle}
+              key={person.user_handle}
               role="option"
               className={styles.option}
               aria-selected={index === effectiveActiveIndex}
@@ -179,9 +179,9 @@ export default function PeopleSearchCombobox({
               onClick={() => selectIndex(index)}
             >
               <span>{labelFor(person)}</span>
-              {person.displayName.kind === "Present" &&
-              person.email.kind === "Present" ? (
-                <span>{person.email.value}</span>
+              {person.display_name !== null &&
+              person.email !== null ? (
+                <span>{person.email}</span>
               ) : null}
             </li>
           ))}

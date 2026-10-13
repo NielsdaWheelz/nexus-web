@@ -403,8 +403,8 @@ function LibrarySettingsOverlay({
       library={{
         id: library.id,
         name: library.name,
-        canRename: library.canRename,
-        canDelete: library.canDelete,
+        canRename: library.can_rename,
+        canDelete: library.can_delete,
       }}
       onRename={async (name) => {
         const lease = mutation.begin();
@@ -504,7 +504,7 @@ function SubscribeOverlay({
             leaseRef.current = lease;
             try {
               const result = await subscribeToPodcast({
-                target: { kind: "Canonical", podcastId },
+                target: { kind: "Canonical", podcast_id: podcastId },
                 namedLibraryIds: command.namedLibraryIds,
                 replacementConfirmation: command.replacementConfirmation,
               });

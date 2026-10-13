@@ -30,8 +30,8 @@ and all credits.
 generated json has exactly eight required nullable fields: title, contributors,
 original date, edition date, edition isbn, publisher, language and description.
 `schemas/metadata_enrichment.py` owns the closed schema. malformed output rejects
-the entire result; there is no repair generation. accepted nulls become
-`Presence<T>` immediately. unknown scalars preserve stored facts. all-null output
+the entire result; there is no repair generation. an accepted null is an absent
+finding. unknown scalars preserve stored facts. all-null output
 is `no_findings`, not success. partial findings and unchanged non-null confirmation
 are successful research.
 
@@ -147,7 +147,7 @@ presentation remains owned by that ingress as described in the
 [reader module](reader-implementation.md).
 
 - `POST /media/{id}/metadata-enrichment`: creator-only, replayable admission;
-  body `{client_mutation_id, expected_job_id: Presence<UUID>}`; 202 returns
+  body `{client_mutation_id, expected_job_id: UUID | null}`; 202 returns
   `{media_id, job_id}` in the existing data envelope.
 - `GET /media/{id}` includes `metadata_enrichment`: latest operation, precise
   retry permission, `last_enriched_at`, unfinished count and oldest unfinished
@@ -236,7 +236,7 @@ notes remain in their listening/source view and never replace this bibliographic
 field.
 
 the same detail response exposes stored `provider`, `provider_id`, `requested_url`
-and `canonical_url` as required presences. the overlay's source group shows the
+and `canonical_url` as required nullable fields. the overlay's source group shows the
 exact provider identity and distinct stored urls alongside `canonical_source_url`;
 it reconstructs no identifier or url and adds no reads. an absent provider says
 `not recorded`; absent provider ids/urls are omitted. identical requested and

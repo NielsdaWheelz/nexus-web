@@ -165,7 +165,7 @@ function WorkspaceEntryNotice({ failure }: { failure: { requestId?: string } | n
   const { state } = useWorkspaceStore();
   const [pending, startTransition] = useTransition();
   const inFlight = useRef(false);
-  const activePaneId = useRef(state.activePrimaryPaneId);
+  const activePaneId = useRef(state.active_primary_pane_id);
   const retry = useCallback(() => {
     if (inFlight.current) return;
     inFlight.current = true;
@@ -198,9 +198,9 @@ function WorkspaceEntryNotice({ failure }: { failure: { requestId?: string } | n
 
   useLayoutEffect(() => {
     // Keep the removal target current without republishing a dismissed notice.
-    activePaneId.current = state.activePrimaryPaneId;
+    activePaneId.current = state.active_primary_pane_id;
     if (failure === null) resolve(ENTRY_NOTICE);
-  }, [failure, resolve, state.activePrimaryPaneId]);
+  }, [failure, resolve, state.active_primary_pane_id]);
 
   // A keyed update keeps the existing notice and button. Only unmount cleans it up.
   useEffect(() => () => resolve(ENTRY_NOTICE), [resolve]);

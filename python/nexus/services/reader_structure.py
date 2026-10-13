@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from itertools import groupby
 from uuid import UUID
 
-from nexus.schemas.presence import Presence, Present, absent, present
 from nexus.schemas.reader_apparatus import NoteBodyRegion, NoteGroupRegion, NoteRegion
 
 
@@ -20,8 +19,8 @@ class DocumentPoint:
 class SectionRangeInput:
     section_id: str
     target: DocumentPoint
-    parent_section_id: Presence[str]
-    container_end: Presence[DocumentPoint]
+    parent_section_id: str | None
+    container_end: DocumentPoint | None
     owns_container: bool
 
 
@@ -40,8 +39,8 @@ class NavigationNoteIndex:
                 raise ValueError("A note region must remain within one canonical fragment")
             target = bodies if isinstance(region, NoteBodyRegion) else groups
             target.setdefault(idx, []).append((start.offset, end.offset))
-            if isinstance(region, NoteGroupRegion) and isinstance(region.heading, Present):
-                headings.add(DocumentPoint(idx, region.heading.value.offset))
+            if isinstance(region, NoteGroupRegion) and region.heading is not None:
+                headings.add(DocumentPoint(idx, region.heading.offset))
         self._bodies = {idx: self._merge(ranges) for idx, ranges in bodies.items()}
         self._groups = {idx: self._merge(ranges) for idx, ranges in groups.items()}
         self._headings = headings
@@ -74,7 +73,7 @@ class NavigationNoteIndex:
 
 def resolve_section_ends(
     sections: Sequence[SectionRangeInput], document_end: DocumentPoint
-) -> dict[str, Presence[DocumentPoint]]:
+) -> dict[str, DocumentPoint | None]:
     """End a section at its next peer/ancestor, bounded by source containers."""
     by_id = {section.section_id: section for section in sections}
     if len(by_id) != len(sections):
@@ -89,9 +88,9 @@ def resolve_section_ends(
             raise ValueError("Section ancestry contains a cycle")
         visiting.add(section_id)
         parent = by_id[section_id].parent_section_id
-        if isinstance(parent, Present) and parent.value not in by_id:
+        if parent is not None and parent not in by_id:
             raise ValueError("Section ancestry names a missing parent")
-        result = depth(parent.value) + 1 if isinstance(parent, Present) else 0
+        result = depth(parent) + 1 if parent is not None else 0
         visiting.remove(section_id)
         depths[section_id] = result
         return result
@@ -106,25 +105,19 @@ def resolve_section_ends(
             natural_ends[stack.pop().section_id] = target
         stack.extend(group)
 
-    ends: dict[str, Presence[DocumentPoint]] = {}
+    ends: dict[str, DocumentPoint | None] = {}
     for section in sorted(ordered, key=lambda section: depths[section.section_id]):
         end = natural_ends[section.section_id]
-        if isinstance(section.container_end, Present):
+        if section.container_end is not None:
             end = (
-                section.container_end.value
-                if section.owns_container
-                else min(end, section.container_end.value)
+                section.container_end if section.owns_container else min(end, section.container_end)
             )
-        if isinstance(section.parent_section_id, Present):
-            parent = by_id[section.parent_section_id.value]
+        if section.parent_section_id is not None:
+            parent = by_id[section.parent_section_id]
             parent_end = ends[parent.section_id]
-            if (
-                not isinstance(parent_end, Present)
-                or parent.target > section.target
-                or section.target > parent_end.value
-            ):
-                ends[section.section_id] = absent()
+            if parent_end is None or parent.target > section.target or section.target > parent_end:
+                ends[section.section_id] = None
                 continue
-            end = min(end, parent_end.value)
-        ends[section.section_id] = present(end) if end >= section.target else absent()
+            end = min(end, parent_end)
+        ends[section.section_id] = end if end >= section.target else None
     return ends

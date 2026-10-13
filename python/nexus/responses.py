@@ -53,7 +53,7 @@ def success_response(data: Any) -> dict[str, Any]:
     return {"data": data}
 
 
-def ok(data: BaseModel | Sequence[BaseModel], *, by_alias: bool = False) -> dict[str, Any]:
+def ok(data: BaseModel | Sequence[BaseModel]) -> dict[str, Any]:
     """Envelope a model (or list of models) as ``{"data": ...}``.
 
     The single owner of the serialize-then-envelope projection for model payloads,
@@ -62,17 +62,15 @@ def ok(data: BaseModel | Sequence[BaseModel], *, by_alias: bool = False) -> dict
     their own shape.
     """
     if isinstance(data, BaseModel):
-        return {"data": data.model_dump(mode="json", by_alias=by_alias)}
-    return {"data": [item.model_dump(mode="json", by_alias=by_alias) for item in data]}
+        return {"data": data.model_dump(mode="json")}
+    return {"data": [item.model_dump(mode="json") for item in data]}
 
 
-def ok_page(
-    items: Sequence[BaseModel], page: BaseModel, *, by_alias: bool = False
-) -> dict[str, Any]:
+def ok_page(items: Sequence[BaseModel], page: BaseModel) -> dict[str, Any]:
     """Envelope a page of models as ``{"data": [...], "page": {...}}``."""
     return {
-        "data": [item.model_dump(mode="json", by_alias=by_alias) for item in items],
-        "page": page.model_dump(mode="json", by_alias=by_alias),
+        "data": [item.model_dump(mode="json") for item in items],
+        "page": page.model_dump(mode="json"),
     }
 
 

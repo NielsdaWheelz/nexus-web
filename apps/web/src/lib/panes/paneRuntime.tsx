@@ -110,7 +110,7 @@ export function PaneRuntimeProvider(props: {
 }) {
   const { pane, host } = props;
   const store = useWorkspaceStore();
-  const { href, id: visitId } = pane.currentVisit;
+  const { href, id: visitId } = pane.current_visit;
   const route = useMemo(() => resolvePaneRouteModel(href), [href]);
   const url = parseWorkspaceHref(href);
   const search = url?.search ?? "";

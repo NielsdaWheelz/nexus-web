@@ -128,19 +128,15 @@ PYTHONPATH="${ROOT_DIR}/python${PYTHONPATH:+:${PYTHONPATH}}" \
 from pathlib import Path
 import sys
 
-from nexus.schemas.presence import Absent
 from nexus.services.tools.memory import load_memory_client_config
 from universal_memory.policy import canonical_json
 
 config = load_memory_client_config(Path(sys.argv[1]) if sys.argv[1] else None)
-if isinstance(config, Absent):
-    value = {"kind": "Absent"}
-else:
-    value = {
-        "kind": "Present",
-        "value": config.value.model_dump(mode="json")
-        | {"bearer": config.value.bearer.get_secret_value()},
-    }
+value = (
+    None
+    if config is None
+    else config.model_dump(mode="json") | {"bearer": config.bearer.get_secret_value()}
+)
 Path(sys.argv[2]).write_text(canonical_json(value) + "\n")
 PY
 memory_digest="$(sha256sum "$MEMORY" | cut -d' ' -f1)"

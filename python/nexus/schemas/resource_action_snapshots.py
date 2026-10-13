@@ -7,8 +7,7 @@ never carries labels, icons, order, separators, confirmation copy, mutation
 URLs, executors, busy state, or client-only blocked reasons — those are owned by
 the frontend planner/runtime. See ``docs/modules/resource-actions.md``.
 
-Serialization is camelCase via ``by_alias=True`` (repo convention, mirroring
-``ResourceActivationOut``). Capabilities are closed unions on ``kind``; conditional membership and note
+Capabilities are closed unions on ``kind``; conditional membership and note
 states discriminate on ``state``. Unknown or mis-shaped variants are boundary
 defects, not silent coercion.
 """
@@ -24,18 +23,14 @@ from pydantic import (
     Field,
     model_validator,
 )
-from pydantic.alias_generators import to_camel
 
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.metadata_enrichment import MetadataRetry
-from nexus.schemas.presence import Presence
 from nexus.schemas.resource_items import ResourceActivationOut
 
 _MAX_REFS = 100
 _OUT_CONFIG = ConfigDict(
-    alias_generator=to_camel,
-    populate_by_name=True,
     extra="forbid",
     json_schema_serialization_defaults_required=True,
 )
@@ -128,7 +123,7 @@ class SimpleResourceActionCapabilityOut(BaseModel):
 class RefreshSourceResourceActionCapabilityOut(BaseModel):
     kind: Literal["RefreshSource"] = "RefreshSource"
     availability: ServerActionAvailabilityOut
-    expected_attempt_id: Presence[UUID]
+    expected_attempt_id: UUID | None
 
     model_config = _OUT_CONFIG
 
@@ -165,7 +160,7 @@ SourceRecoveryOfferOut = Annotated[
     RetrySourceOfferOut | RepairSourceOfferOut,
     Field(discriminator="kind"),
 ]
-"""The Imports owner's media offers, camelCased like every other snapshot field."""
+"""The Imports owner's media offers."""
 
 
 class SourceRecoveryResourceActionCapabilityOut(BaseModel):

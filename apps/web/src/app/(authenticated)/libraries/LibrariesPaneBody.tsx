@@ -202,15 +202,15 @@ export default function LibrariesPaneBody() {
     action: "accept" | "decline",
   ) => {
     if (busyInvitation !== null) return;
-    setBusyInvitation(invite.invitationHandle);
+    setBusyInvitation(invite.invitation_handle);
     try {
       if (action === "accept")
-        await acceptLibraryInvite(invite.invitationHandle);
-      else await declineLibraryInvite(invite.invitationHandle);
+        await acceptLibraryInvite(invite.invitation_handle);
+      else await declineLibraryInvite(invite.invitation_handle);
       setFeedback(null);
       setPendingInvites((current) =>
         current.filter(
-          (row) => row.invitationHandle !== invite.invitationHandle,
+          (row) => row.invitation_handle !== invite.invitation_handle,
         ),
       );
       setDeclining(null);
@@ -360,11 +360,11 @@ export default function LibrariesPaneBody() {
           </div>
           <div className={styles.invitationRows}>
             {pendingInvites.map((invite) => {
-              const handle = invite.invitationHandle;
+              const handle = invite.invitation_handle;
               return (
                 <div className={styles.invitationRow} key={handle}>
                   <span>
-                    {invite.libraryName} ·{" "}
+                    {invite.library_name} ·{" "}
                     {invite.role === "admin" ? "Admin" : "Member"}
                   </span>
                   {declining === handle ? (

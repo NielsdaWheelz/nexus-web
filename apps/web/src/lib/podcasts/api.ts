@@ -6,7 +6,6 @@
 
 import { apiFetch } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
-import type { Presence } from "@/lib/api/presence";
 import { sseClientDirect } from "@/lib/api/sse-client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 
@@ -85,15 +84,19 @@ export function observeSubscription(
 export async function subscribeToPodcast(input: {
   readonly target: Schema<"PodcastSubscribeRequest">["target"];
   readonly namedLibraryIds: readonly string[];
-  readonly replacementConfirmation: Presence<{
-    readonly conflictFingerprint: string;
-  }>;
+  readonly replacementConfirmation: {
+    readonly conflict_fingerprint: string;
+  } | null;
 }): Promise<ApiJson<"/podcasts/subscriptions", "post">["data"]> {
   const { target, namedLibraryIds, replacementConfirmation } = input;
   type Body = ApiJson<"/podcasts/subscriptions", "post">;
   const response = await apiFetch<Body>("/api/podcasts/subscriptions", {
     method: "POST",
-    body: JSON.stringify({ target, namedLibraryIds, replacementConfirmation }),
+    body: JSON.stringify({
+      target,
+      named_library_ids: namedLibraryIds,
+      replacement_confirmation: replacementConfirmation,
+    }),
   });
   publishChange("Podcasts", "Entries");
   return response.data;
@@ -109,7 +112,7 @@ export async function addEpisodeFromDiscovery(input: {
     "/api/podcast-episodes/from-discovery",
     {
       method: "POST",
-      body: JSON.stringify({ target, namedLibraryIds }),
+      body: JSON.stringify({ target, named_library_ids: namedLibraryIds }),
     },
   );
   publishChange("Entries");
@@ -155,7 +158,7 @@ export async function requestPodcastRefresh(
     signal,
   });
   publishChange("Podcasts");
-  return response.data.requestedCount;
+  return response.data.requested_count;
 }
 
 export function podcastRefreshRequestAnnouncement(count: number): string {
@@ -177,7 +180,7 @@ export async function markEpisodesPlayed(
 
 const transcriptTarget = (podcastId: string, state: EpisodeState) => ({
   kind: "PodcastEpisodeQuery",
-  podcastId,
+  podcast_id: podcastId,
   selection: { state },
   reason: "search",
 });
@@ -203,7 +206,7 @@ export async function requestEpisodeTranscripts(
   type Body = ApiJson<"/media/transcript/request/batch", "post">;
   const response = await apiFetch<Body>("/api/media/transcript/request/batch", {
     method: "POST",
-    body: JSON.stringify({ target, selectionFingerprint }),
+    body: JSON.stringify({ target, selection_fingerprint: selectionFingerprint }),
   });
   publishChange("Podcasts");
   return response.data;

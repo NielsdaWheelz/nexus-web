@@ -1,4 +1,3 @@
-import { absent, present, type Presence } from "@/lib/api/presence";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { ListPage } from "@/lib/api/useServerList";
 import type { PositiveCount } from "@/lib/consumption/activityFacts";
@@ -20,17 +19,17 @@ export type LibraryMediaListValue = Omit<
 
 export type LibraryPodcastListValue = Omit<
   Schema<"LibraryEntryPodcastOut">,
-  "unplayedCount" | "publishedDate"
+  "unplayed_count" | "published_date"
 > & {
-  unplayedCount: Presence<PositiveCount>;
-  publicationDate: Presence<PublicationDate>;
-  syncStatus: Presence<Schema<"PodcastSyncStatus">>;
+  unplayedCount: PositiveCount | null;
+  publicationDate: PublicationDate | null;
+  syncStatus: Schema<"PodcastSyncStatus"> | null;
 };
 export type LibraryPodcastSubscriptionValue = Schema<"LibraryEntryPodcastSubscriptionOut">;
 export type LibraryEntryPlacement = Schema<"LibraryEntryPlacementOut">;
 export type LibraryMediaListItem = Omit<
   Schema<"LibraryMediaListItemOut">,
-  "media" | "mediaSummary"
+  "media" | "media_summary"
 > & { media: LibraryMediaListValue; mediaSummary: MediaSummary };
 export type LibraryPodcastListItem = Omit<
   Schema<"LibraryPodcastListItemOut">,
@@ -47,12 +46,13 @@ export function libraryEntryListItemFromWire(
   entry: Schema<"LibraryMediaListItemOut"> | Schema<"LibraryPodcastListItemOut">,
 ): LibraryEntryListItem {
   if (entry.kind === "media") {
-    const mediaSummary = entry.mediaSummary;
-    if (entry.media.id !== mediaSummary.mediaId) {
+    const mediaSummary = entry.media_summary;
+    if (entry.media.id !== mediaSummary.media_id) {
       throw new TypeError("Library media entry identity mismatch");
     }
+    const { media_summary: _summary, ...rest } = entry;
     return {
-      ...entry,
+      ...rest,
       mediaSummary,
       media: {
         id: entry.media.id,
@@ -70,18 +70,18 @@ export function libraryEntryListItemFromWire(
       id: entry.podcast.id,
       title: entry.podcast.title,
       contributors: entry.podcast.contributors,
-      unplayedCount: entry.podcast.unplayedCount === 0
-        ? absent()
-        : present({ value: entry.podcast.unplayedCount }),
-      publicationDate: entry.podcast.publishedDate.kind === "Present"
-        ? present(decodePublicationDate(
-            entry.podcast.publishedDate.value,
-            "Library podcast list item.publishedDate.value",
-          ))
-        : absent(),
-      syncStatus: entry.subscription.kind === "Present"
-        ? present(entry.subscription.value.syncStatus)
-        : absent(),
+      unplayedCount: entry.podcast.unplayed_count === 0
+        ? null
+        : { value: entry.podcast.unplayed_count },
+      publicationDate: entry.podcast.published_date !== null
+        ? decodePublicationDate(
+            entry.podcast.published_date,
+            "Library podcast list item.published_date",
+          )
+        : null,
+      syncStatus: entry.subscription !== null
+        ? entry.subscription.sync_status
+        : null,
     },
   };
 }
@@ -89,5 +89,5 @@ export function libraryEntryListItemFromWire(
 export function libraryEntryPageFromWire(
   page: ApiJson<"/libraries/{library_id}/entries", "get">["data"],
 ): ListPage<LibraryEntryListItem> {
-  return { items: page.items.map(libraryEntryListItemFromWire), nextCursor: page.nextCursor };
+  return { items: page.items.map(libraryEntryListItemFromWire), next_cursor: page.next_cursor };
 }

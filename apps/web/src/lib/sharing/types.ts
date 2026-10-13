@@ -1,4 +1,3 @@
-import type { Presence } from "@/lib/api/presence";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 
 export type ShareMode =
@@ -19,5 +18,5 @@ export type ShareTarget =
 
 export interface ShareOpenOptions {
   returnFocusTo: ReturnFocusTarget;
-  returnFocusFallback: Presence<ReturnFocusTarget>;
+  returnFocusFallback: ReturnFocusTarget | null;
 }

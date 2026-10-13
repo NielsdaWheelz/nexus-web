@@ -575,7 +575,7 @@ export default function SearchPaneBody() {
   const rows = results.flatMap((result) => {
     if (!("mediaSummary" in result)) return [presentSearchResult(result)];
     const mediaSummary = summaries.resolve(result.mediaSummary);
-    return mediaSummary.kind === "Absent" ? [] : [presentSearchResult({ ...result, mediaSummary: mediaSummary.value })];
+    return mediaSummary === null ? [] : [presentSearchResult({ ...result, mediaSummary: mediaSummary })];
   });
   const resultStatus = retained
     ? `${rows.length} results retained from the previous search; ${firstPageError === null ? "updating" : "update failed"}.`

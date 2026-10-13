@@ -73,7 +73,7 @@ export default function ImportInspector({
     stale: observation,
     load: (signal) => fetchImportDetail(importRef, signal),
   });
-  const matchedId = matched.kind === "Present" ? matched.value.id : null;
+  const matchedId = matched !== null ? matched.id : null;
   const expandedMatch = useRef(matchedId);
   const [historyOpen, setHistoryOpen] = useState(matchedId !== null);
   useEffect(() => {
@@ -100,17 +100,11 @@ export default function ImportInspector({
   }
   const { item, history_coverage: coverage } = detail.data;
   const issues = detail.data.source_issues;
-  const metadata =
-    item.obligations.metadata.kind === "Present"
-      ? item.obligations.metadata.value
-      : null;
-  const operation =
-    metadata?.operation.kind === "Present" ? metadata.operation.value : null;
+  const metadata = item.obligations.metadata;
+  const operation = metadata?.operation ?? null;
   const earlierRuns = metadata === null ? 0 : earlierMetadataRuns(metadata);
   const mediaId =
-    item.media_ref.kind === "Present"
-      ? item.media_ref.value.slice("media:".length)
-      : null;
+    item.media_ref === null ? null : item.media_ref.slice("media:".length);
   const state = item.state;
   const field = (label: string, value: ReactNode) => (
     <div>
@@ -142,11 +136,11 @@ export default function ImportInspector({
         </p>
         <p className={styles.provenance}>
           <span>{KIND_LABEL[item.media_kind]}</span>
-          {item.source_label.kind === "Present" ? (
-            <span>{item.source_label.value}</span>
+          {item.source_label !== null ? (
+            <span>{item.source_label}</span>
           ) : null}
-          {item.original_filename.kind === "Present" ? (
-            <span>original file: {item.original_filename.value}</span>
+          {item.original_filename !== null ? (
+            <span>original file: {item.original_filename}</span>
           ) : null}
         </p>
         {mediaId !== null &&
@@ -155,26 +149,26 @@ export default function ImportInspector({
             <ImportOpenAction item={item} />
           </div>
         ) : null}
-        {matched.kind === "Present" ? (
+        {matched !== null ? (
           <p className={styles.rowMatched}>
-            {matchLine(matched.value, display, new Date())}
+            {matchLine(matched, display, new Date())}
           </p>
         ) : null}
       </header>
-      {issues.kind === "Present" && issues.value.issues.length > 0 ? (
+      {issues !== null && issues.issues.length > 0 ? (
         <section className={styles.inspectorSection}>
           <h3>Source quality</h3>
           <SourceIssuesNotice
-            issues={issues.value.issues}
+            issues={issues.issues}
             readable={item.readiness.can_read}
           />
         </section>
       ) : null}
       {(["source", "search"] as const).map((key) => {
         const slot = item.obligations[key];
-        if (slot.kind === "Absent") return null;
-        const recovery = recoveryLine(slot.value);
-        const state = slot.value.state;
+        if (slot === null) return null;
+        const recovery = recoveryLine(slot);
+        const state = slot.state;
         const retained = key === "source" ? sourceFailureLine(item) : null;
         return (
           <section key={key} className={styles.inspectorSection}>
@@ -188,17 +182,16 @@ export default function ImportInspector({
                 )}
             </p>
             {state.kind === "NeedsAttention" &&
-            state.failure_code.kind === "Present" ? (
+            state.failure_code !== null ? (
               <p>
-                {importFailureCopy(state.failure_code.value).reason}.{" "}
-                {importFailureCopy(state.failure_code.value).explanation}
+                {importFailureCopy(state.failure_code).reason}.{" "}
+                {importFailureCopy(state.failure_code).explanation}
               </p>
             ) : null}
             {recovery === null ? null : <p>{recovery}</p>}
-            {slot.value.recovery.kind === "Present" &&
-            slot.value.recovery.value.kind === "RetryUpload" &&
-            item.original_filename.kind === "Present" ? (
-              <p>choose the original file: {item.original_filename.value}</p>
+            {slot.recovery?.kind === "RetryUpload" &&
+            item.original_filename !== null ? (
+              <p>choose the original file: {item.original_filename}</p>
             ) : null}
             <div className={styles.inspectorActions}>
               <ImportObligationActions item={item} obligation={key} />
@@ -222,7 +215,7 @@ export default function ImportInspector({
             <p>{METADATA_FAILURE_COPY[operation.code]}</p>
           ) : null}
           {operation?.status === "no_findings" &&
-          operation.reviewed_at.kind === "Absent" ? (
+          operation.reviewed_at === null ? (
             <p>{METADATA_REVIEW_HELP}</p>
           ) : null}
           {operation?.status === "completed" &&
@@ -241,19 +234,18 @@ export default function ImportInspector({
               {earlierRuns === 1 ? "run remains" : "runs remain"} unfinished
             </p>
           ) : null}
-          {metadata.unfinished_operation.kind === "Present" &&
-          metadata.unfinished_operation.value.job_id !== operation?.job_id ? (
+          {metadata.unfinished_operation !== null &&
+          metadata.unfinished_operation.job_id !== operation?.job_id ? (
             <p>
-              {metadataOperationSummary(
-                metadata.unfinished_operation.value,
-                (at) => momentText(at, display),
+              {metadataOperationSummary(metadata.unfinished_operation, (at) =>
+                momentText(at, display),
               )}{" "}
-              · {moment(metadata.unfinished_operation.value.created_at)}
+              · {moment(metadata.unfinished_operation.created_at)}
             </p>
           ) : null}
           {metadata.retry.status === "blocked" &&
           !(metadata.retry.reason === "active" &&
-            metadata.unfinished_operation.kind === "Present") ? (
+            metadata.unfinished_operation !== null) ? (
             <p>{metadataRetryBlockedCopy(metadata.retry)}</p>
           ) : null}
           <div className={styles.inspectorActions}>
@@ -264,15 +256,12 @@ export default function ImportInspector({
               <summary>operation details</summary>
               <dl>
                 {field("Job", <code>{operation.job_id}</code>)}
-                {operation.generation_id.kind === "Present"
-                  ? field(
-                      "Generation",
-                      <code>{operation.generation_id.value}</code>,
-                    )
+                {operation.generation_id !== null
+                  ? field("Generation", <code>{operation.generation_id}</code>)
                   : null}
                 {field("Requested", moment(operation.created_at))}
-                {operation.started_at.kind === "Present"
-                  ? field("Started", moment(operation.started_at.value))
+                {operation.started_at !== null
+                  ? field("Started", moment(operation.started_at))
                   : null}
                 {operation.status === "completed"
                   ? field("Finished", moment(operation.outcome.completed_at))
@@ -281,12 +270,12 @@ export default function ImportInspector({
                     ? field("Finished", moment(operation.completed_at))
                     : null}
                 {operation.status === "waiting" &&
-                operation.until.kind === "Present"
-                  ? field("Next retry", moment(operation.until.value))
+                operation.until !== null
+                  ? field("Next retry", moment(operation.until))
                   : null}
                 {operation.status === "no_findings" &&
-                operation.reviewed_at.kind === "Present"
-                  ? field("Reviewed", moment(operation.reviewed_at.value))
+                operation.reviewed_at !== null
+                  ? field("Reviewed", moment(operation.reviewed_at))
                   : null}
               </dl>
             </details>
@@ -315,8 +304,8 @@ export default function ImportInspector({
             ? null
             : field("Stage", stageLabel(state.stage))}
           {state.kind === "NeedsAttention" &&
-          state.failure_code.kind === "Present"
-            ? field("Code", <code>{state.failure_code.value}</code>)
+          state.failure_code !== null
+            ? field("Code", <code>{state.failure_code}</code>)
             : null}
           {field("Accepted", moment(item.accepted_at))}
           {field("Updated", moment(item.updated_at))}
@@ -390,10 +379,9 @@ function Attempts({
       />
     );
   const entries = history.data.pages.flatMap((page) => page.entries);
-  const matchedId = matched.kind === "Present" ? matched.value.id : null;
+  const matchedId = matched !== null ? matched.id : null;
   const outsidePrefix =
-    matched.kind === "Present" &&
-    !entries.some((entry) => entry.id === matched.value.id);
+    matched !== null && !entries.some((entry) => entry.id === matched.id);
   const moreFailed = short && history.error !== null;
   return (
     <>
@@ -416,7 +404,7 @@ function Attempts({
           <h3 className={styles.attemptTitle}>Matched event</h3>
           <ol className={styles.attemptEvents}>
             <HistoryEvent
-              entry={matched.value}
+              entry={matched}
               mediaId={mediaId}
               matchedId={matchedId}
             />
@@ -467,7 +455,7 @@ function HistoryEvent({
       {mediaId !== null &&
       entry.facts.kind === "MetadataOperation" &&
       entry.facts.operation.status === "no_findings" &&
-      entry.facts.operation.reviewed_at.kind === "Absent" ? (
+      entry.facts.operation.reviewed_at === null ? (
         <MetadataReviewButton
           mediaId={mediaId}
           jobId={entry.facts.operation.job_id}
@@ -492,11 +480,11 @@ function HistoryEvent({
                 <code>{entry.facts.operation.job_id}</code>
               </dd>
             </div>
-            {entry.facts.operation.generation_id.kind === "Present" ? (
+            {entry.facts.operation.generation_id !== null ? (
               <div>
                 <dt>Generation</dt>
                 <dd>
-                  <code>{entry.facts.operation.generation_id.value}</code>
+                  <code>{entry.facts.operation.generation_id}</code>
                 </dd>
               </div>
             ) : null}
@@ -505,11 +493,11 @@ function HistoryEvent({
               <dd>{momentText(entry.facts.operation.created_at, display)}</dd>
             </div>
             {entry.facts.operation.status === "no_findings" &&
-            entry.facts.operation.reviewed_at.kind === "Present" ? (
+            entry.facts.operation.reviewed_at !== null ? (
               <div>
                 <dt>Reviewed</dt>
                 <dd>
-                  {momentText(entry.facts.operation.reviewed_at.value, display)}
+                  {momentText(entry.facts.operation.reviewed_at, display)}
                 </dd>
               </div>
             ) : null}

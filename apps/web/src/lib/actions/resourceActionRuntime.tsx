@@ -207,7 +207,7 @@ export function ResourceActionRuntimeProvider({
     if (pending.submitting) return;
     pending.submitting = true;
     const paneId = detail.triggerEl?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId
-      ?? workspaceRef.current.state.activePrimaryPaneId;
+      ?? workspaceRef.current.state.active_primary_pane_id;
     const showMetadata = () => openMediaMetadata(mediaId, detail.triggerEl, () =>
       findPaneChromeFocusTarget(paneId));
     try {
@@ -273,7 +273,7 @@ export function ResourceActionRuntimeProvider({
     pending.submitting = true;
     const ref = canonicalResourceRef({ scheme: "media", id: mediaId });
     const paneId = detail.triggerEl?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId
-      ?? workspaceRef.current.state.activePrimaryPaneId;
+      ?? workspaceRef.current.state.active_primary_pane_id;
     const showMetadata = () => openMediaMetadata(mediaId, detail.triggerEl, () =>
       findPaneChromeFocusTarget(paneId));
     try {
@@ -340,7 +340,7 @@ export function ResourceActionRuntimeProvider({
   const lecternMembers = useRef<Set<string> | null>(null);
   useEffect(() => {
     if (lectern.resource.status !== "ready") return;
-    const current = new Set(lectern.resource.data.items.map((item) => item.mediaSummary.mediaId));
+    const current = new Set(lectern.resource.data.items.map((item) => item.mediaSummary.media_id));
     const previous = lecternMembers.current;
     lecternMembers.current = current;
     if (previous === null) return;
@@ -389,7 +389,7 @@ export function ResourceActionRuntimeProvider({
     submitMetadata,
     submitSourceRefresh,
     workspace,
-    activePaneId: workspace.state.activePrimaryPaneId,
+    activePaneId: workspace.state.active_primary_pane_id,
     openShare,
     openLibraryPlacement,
     linkComposer,
@@ -497,7 +497,7 @@ export function ResourceActionRuntimeProvider({
     const byRef = new Map<CanonicalResourceRef, "Idle" | "Paused" | "Ended">();
     const state = playerSession.state;
     if (state.kind !== "Loaded" || state.source.kind !== "Episode") return byRef;
-    const ref = canonicalResourceRef({ scheme: "media", id: state.source.descriptor.mediaId });
+    const ref = canonicalResourceRef({ scheme: "media", id: state.source.descriptor.media_id });
     if (state.phase === "Ended" || state.phase === "Paused") byRef.set(ref, state.phase);
     return byRef;
   }, [playerSession.state]);

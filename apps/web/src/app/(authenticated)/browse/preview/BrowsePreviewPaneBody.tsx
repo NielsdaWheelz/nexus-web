@@ -24,7 +24,6 @@ import PaneSurface from "@/components/ui/PaneSurface";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { ApiError } from "@/lib/api/client";
-import { absent, present } from "@/lib/api/presence";
 import { useCursorPagination } from "@/lib/api/useCursorPagination";
 import { useResource } from "@/lib/api/useResource";
 import {
@@ -194,7 +193,7 @@ export default function BrowsePreviewPaneBody() {
                     credits: [
                       {
                         label: BROWSE_SOURCE_LABELS[preview.source],
-                        href: preview.sourceHref,
+                        href: preview.source_href,
                       },
                     ],
                   },
@@ -245,7 +244,7 @@ export default function BrowsePreviewPaneBody() {
         return { href: result.href };
       }
       case "Episode": {
-        const { href, mediaId } = await addEpisodeFromDiscovery({
+        const { href, media_id: mediaId } = await addEpisodeFromDiscovery({
           target: preview.target,
           namedLibraryIds,
         });
@@ -254,10 +253,10 @@ export default function BrowsePreviewPaneBody() {
       default: {
         const url =
           preview.kind === "Epub"
-            ? preview.kindFacts.importHref
+            ? preview.kind_facts.import_href
             : preview.kind === "WebArticle"
-              ? preview.kindFacts.canonicalUrl
-              : preview.sourceHref;
+              ? preview.kind_facts.canonical_url
+              : preview.source_href;
         const { mediaId } = await addMediaFromUrl({
           url,
           libraryIds: namedLibraryIds,
@@ -278,14 +277,13 @@ export default function BrowsePreviewPaneBody() {
   // justify-type-assertion: the server issues every browse image as a media
   // image proxy src (services/browse/models.py proxied_image).
   const image =
-    preview.image.kind === "Present"
-      ? (preview.image.value as MediaImageProxySrc)
+    preview.image !== null
+      ? (preview.image as MediaImageProxySrc)
       : null;
-  const description =
-    preview.description.kind === "Present" ? preview.description.value : null;
+  const description = preview.description;
 
   if (preview.kind === "Podcast") {
-    const website = preview.kindFacts.websiteHref;
+    const website = preview.kind_facts.website_href;
     return (
       <PaneSurface>
         <PodcastOverview
@@ -295,10 +293,10 @@ export default function BrowsePreviewPaneBody() {
           description={description}
           facts={["Podcast Index"]}
           links={[
-            { label: "Open source", href: preview.sourceHref },
-            { label: "RSS feed", href: preview.kindFacts.feedHref },
-            ...(website.kind === "Present"
-              ? [{ label: "Website", href: website.value }]
+            { label: "Open source", href: preview.source_href },
+            { label: "RSS feed", href: preview.kind_facts.feed_href },
+            ...(website !== null
+              ? [{ label: "Website", href: website }]
               : []),
           ]}
           note="Previewing does not subscribe or add episodes."
@@ -308,8 +306,8 @@ export default function BrowsePreviewPaneBody() {
       </PaneSurface>
     );
   }
-  const audio = preview.kind === "Episode" ? preview.kindFacts : null;
-  const host = audio === null ? null : new URL(audio.audioHref).hostname;
+  const audio = preview.kind === "Episode" ? preview.kind_facts : null;
+  const host = audio === null ? null : new URL(audio.audio_href).hostname;
   return (
     <PaneSurface>
       <div className={styles.lead}>
@@ -324,10 +322,10 @@ export default function BrowsePreviewPaneBody() {
           />
         ) : null}
         <div>
-          {audio ? <p>{audio.podcastTitle}</p> : null}
+          {audio ? <p>{audio.podcast_title}</p> : null}
           <p>{description ?? "No summary from source."}</p>
           <a
-            href={preview.sourceHref}
+            href={preview.source_href}
             target="_blank"
             rel="noopener noreferrer"
           >
@@ -337,7 +335,7 @@ export default function BrowsePreviewPaneBody() {
       </div>
       {preview.kind !== "Video" ? null : videoLoaded ? (
         <YouTubeEmbedFrame
-          embedUrl={preview.kindFacts.embedHref}
+          embedUrl={preview.kind_facts.embed_href}
           className={styles.video}
         />
       ) : (
@@ -355,13 +353,13 @@ export default function BrowsePreviewPaneBody() {
                 previewHref: browsePreviewHref(preview.target),
                 title: preview.title,
                 source: host,
-                sourceHref: preview.sourceHref,
-                audioUrl: audio.audioHref,
-                imageUrl: image ? present(image) : absent(),
+                sourceHref: preview.source_href,
+                audioUrl: audio.audio_href,
+                imageUrl: image ? image : null,
                 durationMs:
-                  audio.durationSeconds.kind === "Present"
-                    ? present(audio.durationSeconds.value * 1000)
-                    : absent(),
+                  audio.duration_seconds !== null
+                    ? (audio.duration_seconds * 1000)
+                    : null,
               })
             }
           >

@@ -8,7 +8,6 @@
 // `requiredOrigins` lives on the state, not the draft: login needs the nexus
 // origin before any draft exists. One list, one prompt.
 
-import { decodePresence, presenceValueOr, type Presence } from "@/lib/api/presence";
 import type {
   LibraryDestinationPage,
   LibraryDestinationSelection,
@@ -16,8 +15,8 @@ import type {
 import {
   expectExactRecord,
   expectNonemptyString,
+  expectNullableString,
   expectPositiveInteger,
-  expectString,
 } from "@/lib/validation";
 
 export type CaptureTargetView =
@@ -151,10 +150,10 @@ export interface ArticlePacket {
   content_html: string;
   /** bounded complete source note and embed subtrees; empty when none exist */
   source_html: string;
-  byline: Presence<string>;
-  excerpt: Presence<string>;
-  site_name: Presence<string>;
-  published_time: Presence<string>;
+  byline: string | null;
+  excerpt: string | null;
+  site_name: string | null;
+  published_time: string | null;
 }
 
 /** utf-8 bytes of the packet in exactly the frozen key order; the server hashes
@@ -243,12 +242,11 @@ export function decodeExtensionSession(raw: unknown): ExtensionSession {
     ["max_pdf_bytes", "max_epub_bytes", "max_article_packet_bytes"],
     `${name}.limits`,
   );
-  const text = (value: unknown) => expectString(value, `${name} text`);
   return {
     account: {
       userHandle: expectNonemptyString(data.user_handle, `${name}.user_handle`),
-      email: presenceValueOr(decodePresence(data.email, text), null),
-      displayName: presenceValueOr(decodePresence(data.display_name, text), null),
+      email: expectNullableString(data.email, `${name}.email`),
+      displayName: expectNullableString(data.display_name, `${name}.display_name`),
     },
     limits: {
       maxPdfBytes: expectPositiveInteger(limits.max_pdf_bytes, `${name}.limits.max_pdf_bytes`),

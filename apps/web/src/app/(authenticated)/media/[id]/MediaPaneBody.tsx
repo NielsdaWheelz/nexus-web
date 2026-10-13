@@ -147,15 +147,13 @@ function MediaPane({ id }: { readonly id: string }) {
   // A title job is admitted with source publication, before naming may fail.
   // Manual title admission costs the same small reread; it does not reload progress.
   const metadata = useMediaMetadataOperations(paneVisible && media ? id : null);
-  const stamp = metadata.view?.last_enriched_at.kind === "Present" ? metadata.view.last_enriched_at.value : null;
+  const stamp = metadata.view?.last_enriched_at != null ? metadata.view.last_enriched_at : null;
   const operation = metadata.view?.operation;
-  const titleJob = operation?.kind === "Present" && operation.value.purpose === "title"
-    ? operation.value.job_id : null;
+  const titleJob = operation?.purpose === "title" ? operation.job_id : null;
   useEffect(() => {
     if (!media) return;
     const recorded = media.metadata_enrichment.operation;
-    const recordedTitleJob = recorded.kind === "Present" && recorded.value.purpose === "title"
-      ? recorded.value.job_id : null;
+    const recordedTitleJob = recorded?.purpose === "title" ? recorded.job_id : null;
     const titleAdmitted = titleJob !== null && titleJob !== recordedTitleJob;
     const metadataPublished = stamp !== null && media.metadata_enriched_at !== stamp;
     if (!titleAdmitted && !metadataPublished) return;
@@ -417,7 +415,7 @@ function MediaPane({ id }: { readonly id: string }) {
 
   const next = (() => {
     const items = lectern.resource.status === "ready" ? lectern.resource.data.items : [];
-    const index = items.findIndex((item) => item.mediaSummary.mediaId === id);
+    const index = items.findIndex((item) => item.mediaSummary.media_id === id);
     if (index < 0 || items[index].mediaSummary.consumption.state !== "Finished") return null;
     return items.slice(index + 1).find((item) => item.activation.kind === "Readable") ?? null;
   })();
@@ -426,9 +424,9 @@ function MediaPane({ id }: { readonly id: string }) {
     const before = lectern.resource.status === "ready" ? lectern.resource.data : { items: [] };
     const result = await lectern.done(parseMediaId(id));
     offerUndo({ mediaId: parseMediaId(id), before, finishId: result.finishId, done: true });
-    if (result.nextItem.kind === "Present")
+    if (result.nextItem !== null)
       activateTarget({
-        target: { href: result.nextItem.value.href, labelHint: result.nextItem.value.mediaSummary.title },
+        target: { href: result.nextItem.href, labelHint: result.nextItem.mediaSummary.title },
         disposition: { kind: "Fork" },
       });
   };

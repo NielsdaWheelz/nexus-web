@@ -105,10 +105,10 @@ export function useNexusController() {
     () =>
       state.panes.map((pane) => ({
         id: pane.id,
-        href: pane.currentVisit.href,
+        href: pane.current_visit.href,
         visibility: pane.visibility,
         label: resolveWorkspacePaneLabel(pane, runtimeLabelByPaneId).label,
-        current: pane.id === state.activePrimaryPaneId,
+        current: pane.id === state.active_primary_pane_id,
       })),
     [runtimeLabelByPaneId, state],
   );
@@ -130,8 +130,8 @@ export function useNexusController() {
 
   // A navigation that lands while the Nexus is open (a resource menu's Open or Chat, closing
   // the current tab) must not sit behind it: close, and let focus follow the new pane.
-  const activePane = state.panes.find((pane) => pane.id === state.activePrimaryPaneId);
-  const navigationToken = `${state.activePrimaryPaneId}\0${activePane?.currentVisit.id ?? ""}`;
+  const activePane = state.panes.find((pane) => pane.id === state.active_primary_pane_id);
+  const navigationToken = `${state.active_primary_pane_id}\0${activePane?.current_visit.id ?? ""}`;
   const navigationBaseline = useRef(navigationToken);
   useEffect(() => {
     if (open && navigationToken !== navigationBaseline.current) {
@@ -147,7 +147,7 @@ export function useNexusController() {
     query: parsed,
     list,
     panes,
-    playback: playback && playbackRow(playback.title, playback.subtitle.kind === "Present" ? playback.subtitle.value : undefined),
+    playback: playback && playbackRow(playback.title, playback.subtitle !== null ? playback.subtitle : undefined),
     recent: find.recent,
     frecency: find.frecency,
     todayAppend,
@@ -172,7 +172,7 @@ export function useNexusController() {
       return { kind: "Accepted" };
     }
     const result = workspace.activateWorkspaceTarget({
-      originPaneId: state.activePrimaryPaneId,
+      originPaneId: state.active_primary_pane_id,
       target: { href: target.href, labelHint: target.labelHint, secondaryActivation: target.secondaryActivation },
       disposition: activation.disposition,
     });

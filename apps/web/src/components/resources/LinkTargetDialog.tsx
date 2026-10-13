@@ -7,7 +7,6 @@ import EmphasisSegments from "@/components/ui/EmphasisSegments";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { absent, present } from "@/lib/api/presence";
 import {
   useCursorPagination,
   type CursorPage,
@@ -29,7 +28,7 @@ type Target =
 
 /** A row's identity: the item's ref, or a passage's transient candidate ref. */
 const keyOf = (target: Target) =>
-  target.kind === "resource" ? target.item.ref : target.candidateRef;
+  target.kind === "resource" ? target.item.ref : target.candidate_ref;
 
 /** One page of visible items and passage candidates; the source is never offered. */
 async function searchTargets(
@@ -52,7 +51,7 @@ async function searchTargets(
   });
   return {
     items: data.targets,
-    nextCursor: data.nextCursor === null ? absent() : present(data.nextCursor),
+    next_cursor: data.next_cursor,
   };
 }
 
@@ -116,7 +115,7 @@ export default function LinkTargetDialog({
       );
     } else {
       void composer.confirm(
-        { kind: "passage", candidate_ref: target.candidateRef },
+        { kind: "passage", candidate_ref: target.candidate_ref },
         target.label,
       );
     }
@@ -240,7 +239,7 @@ export default function LinkTargetDialog({
                   </span>
                 </span>
               )}
-              {target.existingLinkId ? (
+              {target.existing_link_id ? (
                 <span className={styles.linkedBadge}>Linked</span>
               ) : null}
             </div>

@@ -17,7 +17,6 @@ from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
 from nexus.schemas.consumption import ActivityBatchIn, ActivityDeviceClass
-from nexus.schemas.presence import Absent, Present, nullable_from_presence
 from nexus.services.consumption import viewer_txn
 
 # The stored facts a replayed capture key must match; Viewing spans carry no measurements.
@@ -36,15 +35,7 @@ def record_batch(
     """Store recent, ordered, non-overlapping spans exactly once per capture key."""
     shared = {"user_id": viewer_id, "media_id": media_id, "modality": batch.modality}
     shared |= {"device_id": device_id, "device_class": device_class}
-    rows = [
-        shared
-        | {"id": new_uuid7()}
-        | {
-            name: nullable_from_presence(value) if isinstance(value, Absent | Present) else value
-            for name, value in span
-        }
-        for span in batch.spans
-    ]
+    rows = [shared | {"id": new_uuid7()} | dict(span) for span in batch.spans]
 
     def run(db: Session) -> None:
         now, previous_end = datetime.now(UTC), None

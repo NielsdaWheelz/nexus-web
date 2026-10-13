@@ -1,5 +1,4 @@
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import type { Presence } from "@/lib/api/presence";
 import { LibraryContractDefect } from "@/lib/libraries/contract";
 import type {
   LibraryGovernanceCursor,
@@ -17,7 +16,7 @@ export type LibraryGovernancePageLoad =
 
 export interface LibraryGovernancePageState<T> {
   rows: T[];
-  nextCursor: Presence<LibraryGovernanceCursor>;
+  nextCursor: LibraryGovernanceCursor | null;
   seenCursors: LibraryGovernanceCursor[];
   pageLoad: LibraryGovernancePageLoad;
 }
@@ -140,7 +139,7 @@ export function libraryGovernanceFirstPage<T>(
   assertUniqueStableHandles(page.data, rowHandle, name);
   return {
     rows: [...page.data],
-    nextCursor: page.page.nextCursor,
+    nextCursor: page.page.next_cursor,
     seenCursors: [],
     pageLoad: { kind: "Idle" },
   };
@@ -149,16 +148,16 @@ export function libraryGovernanceFirstPage<T>(
 export function mergeLibraryGovernancePage<T>(
   current: LibraryGovernancePageState<T>,
   incoming: LibraryGovernancePage<T>,
-  requestedCursor: Presence<LibraryGovernanceCursor>,
+  requestedCursor: LibraryGovernanceCursor | null,
   rowHandle: (row: T) => string,
   creationIdentity: (row: T) => string,
 ):
   | { kind: "Merged"; page: LibraryGovernancePageState<T> }
   | { kind: "RestartRequired" } {
   if (
-    requestedCursor.kind !== "Present" ||
-    current.nextCursor.kind !== "Present" ||
-    requestedCursor.value !== current.nextCursor.value
+    requestedCursor === null ||
+    current.nextCursor === null ||
+    requestedCursor !== current.nextCursor
   ) {
     throw new LibraryContractDefect(
       "Library governance page settlement does not match the requested next cursor",
@@ -197,24 +196,24 @@ export function mergeLibraryGovernancePage<T>(
   }
 
   const seenCursors = new Set(current.seenCursors);
-  seenCursors.add(requestedCursor.value);
+  seenCursors.add(requestedCursor);
   if (
-    incoming.page.nextCursor.kind === "Present" &&
-    seenCursors.has(incoming.page.nextCursor.value)
+    incoming.page.next_cursor !== null &&
+    seenCursors.has(incoming.page.next_cursor)
   ) {
     throw new LibraryContractDefect(
       "Library governance pagination returned a cursor cycle",
     );
   }
-  if (incoming.page.nextCursor.kind === "Present") {
-    seenCursors.add(incoming.page.nextCursor.value);
+  if (incoming.page.next_cursor !== null) {
+    seenCursors.add(incoming.page.next_cursor);
   }
 
   return {
     kind: "Merged",
     page: {
       rows: [...current.rows, ...incoming.data],
-      nextCursor: incoming.page.nextCursor,
+      nextCursor: incoming.page.next_cursor,
       seenCursors: [...seenCursors],
       pageLoad: { kind: "Idle" },
     },

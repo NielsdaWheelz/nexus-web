@@ -594,7 +594,7 @@ function LoadedResourceSurfaceEditor({
           kind: "resource_ref",
           ref,
         });
-        const href = resolved.resourceItem.route;
+        const href = resolved.resource_item.route;
         if (!href) {
           setFeedback({
             tone: "Warning",

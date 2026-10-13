@@ -20,7 +20,6 @@ from nexus.auth.permissions import (
 )
 from nexus.db.models import Media, MediaKind, TranscriptCoverage, TranscriptState
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.consumption_state import ConsumptionOut, ConsumptionStateValue
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.media import (
@@ -29,18 +28,9 @@ from nexus.schemas.media import (
     MediaProcessingSnapshotOut,
     MediaReadState,
     PodcastEpisodeChapterOut,
-    SourceProgress,
 )
 from nexus.schemas.media_summary import MediaDurationOut, MediaProcessingStatus, MediaSummaryOut
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView, MetadataRetry
-from nexus.schemas.presence import (
-    Absent,
-    Presence,
-    Present,
-    absent,
-    presence_from_nullable,
-    present,
-)
 from nexus.schemas.reading_time import ReadingTimeEstimateOut
 from nexus.services.capabilities import (
     SearchRecoveryAnswer,
@@ -283,7 +273,7 @@ def _dedupe_uuid_order(values: Iterable[UUID]) -> list[UUID]:
 @dataclass(frozen=True, slots=True)
 class CompactMediaTarget:
     summary: MediaSummaryOut
-    image_url: Absent | Present[str]
+    image_url: str | None
     href: str
 
 
@@ -318,14 +308,14 @@ class CollectionMedia:
     has_original_file: bool
     capabilities: CollectionMediaCapabilities
     metadata_retry: MetadataRetry
-    refresh_source_attempt_id: Presence[UUID]
+    refresh_source_attempt_id: UUID | None
     refresh_source_authorized: bool
-    reviewable_metadata_job_id: Presence[UUID]
-    source_recovery: Presence[RetrySourceOffer | RepairSourceOffer]
-    search_recovery: Presence[RepairSearchOffer]
+    reviewable_metadata_job_id: UUID | None
+    source_recovery: RetrySourceOffer | RepairSourceOffer | None
+    search_recovery: RepairSearchOffer | None
     """The offer the viewer's own authority yields."""
-    applicable_source_recovery: Presence[RetrySourceOffer | RepairSourceOffer]
-    applicable_search_recovery: Presence[RepairSearchOffer]
+    applicable_source_recovery: RetrySourceOffer | RepairSourceOffer | None
+    applicable_search_recovery: RepairSearchOffer | None
     """The offer a creator or admin would be given: discoverable, permission-blocked."""
     created_at: datetime
 
@@ -375,7 +365,7 @@ def hydrate_compact_media_targets(
             continue
         hydrated[media_id] = CompactMediaTarget(
             summary=summaries[media_id],
-            image_url=presence_from_nullable(_nullable_str(row["image_url"])),
+            image_url=_nullable_str(row["image_url"]),
             href=cast(str, activations[ResourceRef(scheme="media", id=media_id).uri].href),
         )
     return hydrated
@@ -445,7 +435,7 @@ def _listening_state(row: RowMapping) -> ListeningStateOut | None:
 
 def _summary_duration(
     row: RowMapping, kind: str, estimates: dict[UUID, ReadingTimeEstimateOut]
-) -> Presence[MediaDurationOut]:
+) -> MediaDurationOut | None:
     if kind == MediaKind.podcast_episode.value:
         return projection.listening_duration(
             position_ms=int(row["listening_position_ms"] or 0),
@@ -461,7 +451,7 @@ def _summary_duration(
             ),
         )
     estimate = estimates.get(UUID(str(row["id"])))
-    return present(MediaDurationOut(modality="Read", estimate=estimate)) if estimate else absent()
+    return MediaDurationOut(modality="Read", estimate=estimate) if estimate else None
 
 
 def list_collection_media_for_viewer_by_ids(
@@ -555,11 +545,11 @@ def list_collection_media_for_viewer_by_ids(
         )
         operation = metadata_views[media_id].operation
         reviewable_job = (
-            present(operation.value.job_id)
-            if isinstance(operation, Present)
-            and operation.value.status == "no_findings"
-            and operation.value.reviewed_at.kind == "Absent"
-            else absent()
+            operation.job_id
+            if operation is not None
+            and operation.status == "no_findings"
+            and operation.reviewed_at is None
+            else None
         )
         source, search = answers[0]
         applicable_source, applicable_search = answers[1]
@@ -571,13 +561,13 @@ def list_collection_media_for_viewer_by_ids(
                     media_kind=MediaKind(kind_value),
                     title=str(row["title"]),
                     contributors=contributors_by_media.get(media_id, []),
-                    original_published_date=presence_from_nullable(row["original_published_date"]),
+                    original_published_date=row["original_published_date"],
                     processing_status=cast(
                         "MediaProcessingStatus", _status_to_str(row["processing_status"])
                     ),
                     consumption=ConsumptionOut(
                         state=_CONSUMPTION_STATE[read_states[media_id].state],
-                        progress=presence_from_nullable(read_states[media_id].progress_fraction),
+                        progress=read_states[media_id].progress_fraction,
                     ),
                     duration=_summary_duration(row, kind_value, reading_times),
                 ),
@@ -611,37 +601,26 @@ def list_collection_media_for_viewer_by_ids(
                 ),
                 metadata_retry=metadata_views[media_id].retry,
                 refresh_source_authorized=is_creator,
-                refresh_source_attempt_id=present(UUID(str(row["latest_source_attempt"]["id"])))
+                refresh_source_attempt_id=UUID(str(row["latest_source_attempt"]["id"]))
                 if viewer_caps.can_refresh_source
-                else absent(),
+                else None,
                 reviewable_metadata_job_id=reviewable_job,
-                source_recovery=presence_from_nullable(
+                source_recovery=(
                     source if isinstance(source, RetrySourceOffer | RepairSourceOffer) else None
                 ),
-                search_recovery=presence_from_nullable(
-                    search if isinstance(search, RepairSearchOffer) else None
-                ),
-                applicable_source_recovery=presence_from_nullable(
+                search_recovery=search if isinstance(search, RepairSearchOffer) else None,
+                applicable_source_recovery=(
                     applicable_source
                     if isinstance(applicable_source, RetrySourceOffer | RepairSourceOffer)
                     else None
                 ),
-                applicable_search_recovery=presence_from_nullable(
+                applicable_search_recovery=(
                     applicable_search if isinstance(applicable_search, RepairSearchOffer) else None
                 ),
                 created_at=cast(datetime, row["created_at"]),
             )
         )
     return collection
-
-
-def _source_progress(progress: SourceProgress | None) -> Presence[SourceProgress]:
-    """In-flight source progress in the field's own parametrization.
-
-    ``present()`` would stamp the concrete variant, which serializes with a
-    Pydantic field mismatch against the declared union.
-    """
-    return absent() if progress is None else Present[SourceProgress](value=progress)
 
 
 def _load_chapters(
@@ -753,17 +732,15 @@ def _hydrate_media_out(
                 kind=MediaKind(kind_value),
                 title=str(row["title"]),
                 canonical_source_url=row["canonical_source_url"],
-                provider=presence_from_nullable(row["provider"]),
-                provider_id=presence_from_nullable(row["provider_id"]),
-                requested_url=presence_from_nullable(row["requested_url"]),
-                canonical_url=presence_from_nullable(row["canonical_url"]),
+                provider=row["provider"],
+                provider_id=row["provider_id"],
+                requested_url=row["requested_url"],
+                canonical_url=row["canonical_url"],
                 processing_status=cast(
                     "MediaProcessingStatus", _status_to_str(row["processing_status"])
                 ),
-                source_progress=_source_progress(progress_by_media.get(media_id)),
-                x_source_context=present(x_context_by_media[media_id])
-                if media_id in x_context_by_media
-                else absent(),
+                source_progress=progress_by_media.get(media_id),
+                x_source_context=x_context_by_media.get(media_id),
                 transcript_state=(
                     None
                     if row["transcript_state"] is None
@@ -774,7 +751,7 @@ def _hydrate_media_out(
                     if row["transcript_coverage"] is None
                     else TranscriptCoverage(row["transcript_coverage"])
                 ),
-                transcript_origin=presence_from_nullable(row["transcript_origin"]),
+                transcript_origin=row["transcript_origin"],
                 retrieval_status=retrieval_status,
                 retrieval_status_reason=row["retrieval_status_reason"],
                 failure_stage=_nullable_str(row["failure_stage"]),
@@ -809,9 +786,9 @@ def _hydrate_media_out(
                 document_embed_summary=embed_summaries.get(media_id),
                 contributors=contributors_by_media.get(media_id, []),
                 author_mode="manual" if row["authors_manually_managed"] else "automatic",
-                original_published_date=presence_from_nullable(row["original_published_date"]),
-                edition_published_date=presence_from_nullable(row["edition_published_date"]),
-                edition_isbn=presence_from_nullable(row["edition_isbn"]),
+                original_published_date=row["original_published_date"],
+                edition_published_date=row["edition_published_date"],
+                edition_isbn=row["edition_isbn"],
                 duration=_summary_duration(row, kind_value, reading_times),
                 publisher=row["publisher"],
                 language=row["language"],
@@ -824,9 +801,7 @@ def _hydrate_media_out(
                 progress_fraction=read_state.progress_fraction,
                 progress_resettable=read_state.progress_resettable,
                 last_engaged_at=engaged_at.get(media_id),
-                playerDescriptor=(
-                    absent() if descriptor is None else Present[PlayerDescriptor](value=descriptor)
-                ),
+                player_descriptor=(descriptor),
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],
             )

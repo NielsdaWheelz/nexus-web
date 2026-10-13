@@ -102,8 +102,8 @@ export default function PublicShareReader() {
 
 /** The shared highlight as the reader's one mark, addressed by unit ordinal. */
 function sharedMark(share: Share): Mark | null {
-  if (share.highlight.kind !== "Present") return null;
-  const { color, anchor } = share.highlight.value;
+  if (share.highlight === null) return null;
+  const { color, anchor } = share.highlight;
   return {
     id: "shared",
     color,
@@ -126,8 +126,7 @@ function SharedDocument({
   readonly token: string;
   readonly share: Share;
 }) {
-  const highlight =
-    share.highlight.kind === "Present" ? share.highlight.value : null;
+  const highlight = share.highlight;
   const mark = useMemo(() => sharedMark(share), [share]);
   const options = useMemo(() => {
     const target: ReaderTarget | null =
@@ -184,9 +183,9 @@ function SharedDocument({
         <div className={styles.brand}>Nexus</div>
         <h1>{share.title}</h1>
         {share.bylines.length > 0 ? <p>{share.bylines.join(", ")}</p> : null}
-        {share.source_url.kind === "Present" ? (
+        {share.source_url !== null ? (
           <a
-            href={share.source_url.value}
+            href={share.source_url}
             target="_blank"
             rel="noopener noreferrer"
             referrerPolicy="no-referrer"
@@ -198,8 +197,8 @@ function SharedDocument({
       {highlight ? (
         <aside className={styles.callout} aria-label="Shared highlight">
           <span>Shared highlight</span>
-          {highlight.quote.kind === "Present" ? (
-            <blockquote>{highlight.quote.value}</blockquote>
+          {highlight.quote !== null ? (
+            <blockquote>{highlight.quote}</blockquote>
           ) : (
             <p>The highlighted area is shown in the document below.</p>
           )}

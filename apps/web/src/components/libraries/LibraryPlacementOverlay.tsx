@@ -40,7 +40,7 @@ export default function LibraryPlacementOverlay({
       presentation="Responsive"
       onClose={onClose}
       anchor={session ? session.options.anchor : () => null}
-      returnFocusFallback={fallback?.kind === "Present" ? fallback.value : undefined}
+      returnFocusFallback={fallback ?? undefined}
       title="Libraries"
       focusKey={session?.key}
     >

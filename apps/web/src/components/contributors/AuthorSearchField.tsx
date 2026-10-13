@@ -95,7 +95,7 @@ export default function AuthorSearchField({
     // A person by this name exists here or in results: offer a second one.
     if (
       duplicate ||
-      items.some((item) => contributorNameKey(item.displayName) === key)
+      items.some((item) => contributorNameKey(item.display_name) === key)
     ) {
       options.push({
         id: "create-distinct",
@@ -107,7 +107,7 @@ export default function AuthorSearchField({
   const active =
     options.find((option) => option.id === activeId) ?? options[0] ?? null;
   const listVisible = open && (overLength || searchable);
-  const truncated = page?.nextCursor != null;
+  const truncated = page?.next_cursor != null;
   const status = overLength
     ? "A name can be up to 200 characters."
     : !searchable || failed
@@ -249,21 +249,21 @@ export default function AuthorSearchField({
                     {...optionProps(option)}
                   >
                     <span className={styles.name} dir="auto">
-                      {option.item.displayName}
+                      {option.item.display_name}
                     </span>
                     <span className={styles.meta}>
-                      {count(option.item.workCount, "work")}
-                      {option.item.workExamples.map((example, index) => (
+                      {count(option.item.work_count, "work")}
+                      {option.item.work_examples.map((example, index) => (
                         <span key={example.href} dir="auto">
                           {index === 0 ? " · " : ", "}
                           {example.title}
                         </span>
                       ))}
                     </span>
-                    {option.item.matchedAlias ? (
+                    {option.item.matched_alias ? (
                       <span className={styles.meta}>
                         also known as{" "}
-                        <span dir="auto">{option.item.matchedAlias}</span>
+                        <span dir="auto">{option.item.matched_alias}</span>
                       </span>
                     ) : null}
                     {option.disabled ? (

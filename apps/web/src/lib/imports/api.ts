@@ -17,24 +17,21 @@ export type ImportStage = Schema<"ImportStateNeedsAttention">["stage"];
 export type ImportDetail = ApiJson<"/imports/{ref}", "get">["data"];
 export type HistoryPage = ApiJson<"/imports/{ref}/history", "get">["data"];
 export type HistoryEntry = Schema<"HistoryEntry">;
-export type ImportFailureCode = Extract<
-  Schema<"ImportStateNeedsAttention">["failure_code"],
-  { kind: "Present" }
->["value"];
+export type ImportFailureCode = NonNullable<
+  Schema<"ImportStateNeedsAttention">["failure_code"]
+>;
 export type SafeFailureCode = Exclude<
   ImportFailureCode,
   Schema<"MetadataFailureCode">
 >;
 export type SourceImportObligation = Schema<"SourceImportObligation">;
 export type SearchImportObligation = Schema<"SearchImportObligation">;
-export type RecoveryOffer = Extract<
-  SourceImportObligation["recovery"] | SearchImportObligation["recovery"],
-  { kind: "Present" }
->["value"];
-export type RecoveryRestriction = Extract<
-  SourceImportObligation["unavailable_reason"],
-  { kind: "Present" }
->["value"];
+export type RecoveryOffer = NonNullable<
+  SourceImportObligation["recovery"] | SearchImportObligation["recovery"]
+>;
+export type RecoveryRestriction = NonNullable<
+  SourceImportObligation["unavailable_reason"]
+>;
 export type ImportsView = "NeedsAttention" | "InProgress" | "History";
 export type UploadVerificationCode = Extract<
   Schema<"NeedsAttention">["failure"],

@@ -60,7 +60,7 @@ export async function listPendingLibraryInvites(input: {
   );
   for (const invitation of page.data) {
     if (
-      invitation.libraryId !== input.libraryId ||
+      invitation.library_id !== input.libraryId ||
       invitation.status !== "pending"
     ) {
       throw new LibraryContractDefect(
@@ -124,7 +124,7 @@ export async function createLibraryInvite(input: {
     {
       method: "POST",
       body: JSON.stringify({
-        invitee: { kind: "User", userHandle },
+        invitee: { kind: "User", user_handle: userHandle },
         role: input.role,
       }),
     },
@@ -187,7 +187,7 @@ export async function transferLibraryOwnership(input: {
     `/api/libraries/${encodeURIComponent(input.libraryId)}/transfer-ownership`,
     {
       method: "POST",
-      body: JSON.stringify({ newOwnerUserHandle }),
+      body: JSON.stringify({ new_owner_user_handle: newOwnerUserHandle }),
     },
   );
   return libraryOutForId(

@@ -16,7 +16,6 @@ import Button from "@/components/ui/Button";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
-import { absent, present } from "@/lib/api/presence";
 import { useResource } from "@/lib/api/useResource";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import { listMemberLibraries } from "@/lib/libraries/client";
@@ -219,9 +218,9 @@ export default function PodcastsPaneBody() {
           contributors: row.contributors,
           unplayedCount:
             row.unplayed_count > 0
-              ? present({ value: row.unplayed_count })
-              : absent(),
-          syncStatus: present(row.sync_status),
+              ? { value: row.unplayed_count }
+              : null,
+          syncStatus: row.sync_status,
           publicationDate: row.latest_episode_published_at,
         }),
       )}

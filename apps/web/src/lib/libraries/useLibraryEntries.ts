@@ -193,8 +193,8 @@ export function useLibraryEntries({
   const reorderable =
     library !== null &&
     library.role === "admin" &&
-    library.canEditEntries &&
-    !library.isDefault &&
+    library.can_edit_entries &&
+    !library.is_default &&
     view !== null &&
     isInitialLibraryView(view) &&
     entries.complete;
@@ -210,11 +210,11 @@ export function useLibraryEntries({
           method: "PATCH",
           body: JSON.stringify({
             entry_ids: next.map((entry) => {
-              if (entry.placement.kind !== "Present") {
+              if (entry.placement === null) {
                 // justify-defect: a named library's rows are all physical entries.
                 throw new Error("Virtual Library rows cannot be reordered");
               }
-              return entry.placement.value.libraryEntryId;
+              return entry.placement.library_entry_id;
             }),
           }),
         },

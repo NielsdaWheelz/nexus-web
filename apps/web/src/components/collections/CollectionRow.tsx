@@ -182,14 +182,14 @@ export default function CollectionRow({
 
   const supportParts: ReactNode[] = [];
   const remainingTime =
-    row.activity.kind === "Present" && row.activity.value.kind === "RemainingTime"
-      ? collectionActivityText(row.activity.value)
+    row.activity !== null && row.activity.kind === "RemainingTime"
+      ? collectionActivityText(row.activity)
       : null;
-  const date = row.publicationDate.kind === "Present" ? (
-    <time key="date" className={styles.year} dateTime={row.publicationDate.value}>
+  const date = row.publicationDate !== null ? (
+    <time key="date" className={styles.year} dateTime={row.publicationDate}>
       {mediaLayout
-        ? collectionPublicationYear(row.publicationDate.value)
-        : formatCollectionPublicationDate(row.publicationDate.value)}
+        ? collectionPublicationYear(row.publicationDate)
+        : formatCollectionPublicationDate(row.publicationDate)}
     </time>
   ) : null;
   const contributors = row.contributors.length > 0 ? (
@@ -203,10 +203,10 @@ export default function CollectionRow({
   ) : null;
   if (contributors) supportParts.push(contributors);
   if (date) supportParts.push(date);
-  if (row.context.kind === "Present" && !mediaLayout) {
+  if (row.context !== null && !mediaLayout) {
     supportParts.push(
       <span key="context" className={styles.context}>
-        {renderContext(row.context.value)}
+        {renderContext(row.context)}
       </span>,
     );
   }
@@ -245,17 +245,17 @@ export default function CollectionRow({
     </span>
   ) : bibliography;
   const evidence =
-    mediaLayout && row.context.kind === "Present"
-      ? <span className={styles.context}>{renderContext(row.context.value)}</span>
+    mediaLayout && row.context !== null
+      ? <span className={styles.context}>{renderContext(row.context)}</span>
       : undefined;
 
   const activity =
-    row.activity.kind === "Present" && row.activity.value.kind !== "RemainingTime"
-      ? collectionActivityText(row.activity.value)
+    row.activity !== null && row.activity.kind !== "RemainingTime"
+      ? collectionActivityText(row.activity)
       : null;
   const exceptionalStatus =
-    row.exceptionalStatus.kind === "Present"
-      ? renderExceptionalStatus(row.exceptionalStatus.value)
+    row.exceptionalStatus !== null
+      ? renderExceptionalStatus(row.exceptionalStatus)
       : undefined;
   const failed = mediaLayout && Boolean(exceptionalStatus);
   const status = exceptionalStatus || activity ? (

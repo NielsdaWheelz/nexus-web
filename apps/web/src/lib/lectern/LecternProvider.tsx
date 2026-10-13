@@ -29,7 +29,6 @@ import {
 import { useFeedback } from "@/components/feedback/Feedback";
 import { createRandomId } from "@/lib/createRandomId";
 import { assertNever } from "@/lib/assertNever";
-import type { Presence } from "@/lib/api/presence";
 import type { AsyncResource } from "@/lib/api/useResource";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -98,7 +97,7 @@ export interface LecternCapability {
   undoFinish(input: {
     mediaId: MediaId;
     finishId: FinishId;
-    restore: Presence<UndoRestore>;
+    restore: UndoRestore | null;
   }): Promise<ConsumptionResult>;
   settleNaturalEnd(
     input: NaturalEnd & { clientMutationId: string },
@@ -149,10 +148,10 @@ async function postLectern(
           outcome = data.outcome;
           break;
         case "Placed":
-          outcome = { kind: "Placed", itemIds: data.outcome.itemIds.map(parseLecternItemId) };
+          outcome = { kind: "Placed", itemIds: data.outcome.item_ids.map(parseLecternItemId) };
           break;
         case "Removed":
-          outcome = { kind: "Removed", itemId: parseLecternItemId(data.outcome.itemId) };
+          outcome = { kind: "Removed", itemId: parseLecternItemId(data.outcome.item_id) };
           break;
         default:
           return assertNever(data.outcome, "Unsupported Lectern outcome");
@@ -168,7 +167,7 @@ async function postConsumption(body: object): Promise<ConsumptionResult> {
     "/api/consumption/commands",
     {
       method: "POST",
-      body: JSON.stringify({ clientMutationId: createRandomId(), ...body }),
+      body: JSON.stringify({ client_mutation_id: createRandomId(), ...body }),
     },
   );
   return decodeApiPayload(
@@ -216,7 +215,7 @@ export function LecternProvider({ children }: { children: ReactNode }) {
   const showEnsureRecovery = useCallback((pending: PendingEnsure, checking: boolean) => {
     feedback.publish({
       kind: "Persistent",
-      key: `lectern-add:${pending.command.clientMutationId}`,
+      key: `lectern-add:${pending.command.client_mutation_id}`,
       announcement: "Polite",
       content: checking
         ? { tone: "Neutral", title: "checking the add…", message: pending.title }
@@ -225,8 +224,8 @@ export function LecternProvider({ children }: { children: ReactNode }) {
       actions: [{ label: "check add", onClick: pending.check, busy: checking }],
       returnFocus: () => {
         if (!active.current) return null;
-        const paneId = workspaceRef.current.state.activePrimaryPaneId;
-        const item = snapshot.current?.items.find((item) => item.mediaSummary.mediaId === pending.mediaId);
+        const paneId = workspaceRef.current.state.active_primary_pane_id;
+        const item = snapshot.current?.items.find((item) => item.mediaSummary.media_id === pending.mediaId);
         return findPaneCollectionRowFocusTarget(paneId, `media:${pending.mediaId}`) ??
           (item ? findPaneCollectionRowFocusTarget(paneId, item.itemId) : null) ??
           findPaneChromeFocusTarget(paneId) ?? findPaneLandmarkFocusTarget(paneId);
@@ -297,7 +296,7 @@ export function LecternProvider({ children }: { children: ReactNode }) {
       for (const listener of listeners.current) afterReceipt(() => listener(event));
       afterReceipt(() => publishChange("Consumption"));
       afterReceipt(publishEnsureRequests);
-      afterReceipt(() => feedback.resolve(`lectern-add:${pending.command.clientMutationId}`));
+      afterReceipt(() => feedback.resolve(`lectern-add:${pending.command.client_mutation_id}`));
       afterReceipt(() => feedback.publish({
         kind: "Hud",
         content: { tone: "Success", title: "add confirmed.", message: pending.title },
@@ -315,8 +314,8 @@ export function LecternProvider({ children }: { children: ReactNode }) {
     let pending = pendingEnsures.current.get(mediaId);
     if (!pending) {
       const command: Schema<"EnsureItemCommand"> = {
-        kind: "EnsureItem", mediaId,
-        clientMutationId: createRandomId(),
+        kind: "EnsureItem", media_id: mediaId,
+        client_mutation_id: createRandomId(),
       };
       const created: PendingEnsure = {
         mediaId, title, command, state: { kind: "Sending" }, attempt: null,
@@ -339,7 +338,7 @@ export function LecternProvider({ children }: { children: ReactNode }) {
     const pending = pendingEnsures.current;
     return () => {
       active.current = false;
-      for (const request of pending.values()) feedback.resolve(`lectern-add:${request.command.clientMutationId}`);
+      for (const request of pending.values()) feedback.resolve(`lectern-add:${request.command.client_mutation_id}`);
       pending.clear();
     };
   }, [feedback]);
@@ -377,8 +376,8 @@ export function LecternProvider({ children }: { children: ReactNode }) {
           publishChange("Consumption");
           const event: CanonicalInstallEvent = { kind: "snapshot", snapshot: result.lectern, unreadMediaIds: unreadIds };
           await Promise.all([...listeners.current].map((listener) => listener(event)));
-          if ("progressState" in result && result.progressState.kind === "Present") {
-            const state = result.progressState.value;
+          if ("progressState" in result && result.progressState !== null) {
+            const state = result.progressState;
             await Promise.all([...listeners.current].map((listener) => listener({ kind: "progressState", state })));
           } else {
             await Promise.all(hooks.map((hook) => hook.reconcile(fenceIds)));
@@ -459,9 +458,19 @@ export function LecternProvider({ children }: { children: ReactNode }) {
       ensureRequests,
       ensureItem,
       placeItems: ({ mediaIds, placement }) =>
-        run(() => postLectern({ kind: "PlaceItems", mediaIds, placement, clientMutationId: createRandomId() })),
+        run(() =>
+          postLectern({
+            kind: "PlaceItems",
+            media_ids: mediaIds,
+            placement:
+              placement.kind === "After"
+                ? { kind: "After", item_id: placement.itemId }
+                : placement,
+            client_mutation_id: createRandomId(),
+          }),
+        ),
       removeItem: (itemId) =>
-        run(() => postLectern({ kind: "RemoveItem", itemId, clientMutationId: createRandomId() })),
+        run(() => postLectern({ kind: "RemoveItem", item_id: itemId, client_mutation_id: createRandomId() })),
       setOrder: (itemIds) => {
         const current = snapshot.current;
         if (current !== undefined) {
@@ -471,16 +480,34 @@ export function LecternProvider({ children }: { children: ReactNode }) {
           const items = itemIds.flatMap((itemId) => byId.get(itemId) ?? []);
           setResource({ status: "ready", data: { ...current, items } });
         }
-        return run(() => postLectern({ kind: "SetOrder", itemIds, clientMutationId: createRandomId() }));
+        return run(() => postLectern({ kind: "SetOrder", item_ids: itemIds, client_mutation_id: createRandomId() }));
       },
       ensureMediaFinished: (mediaId) =>
-        consumption({ kind: "EnsureMediaFinished", mediaId }),
-      done: (mediaId) => consumption({ kind: "Done", mediaId }),
-      setUnread: (mediaId) => consumption({ kind: "SetUnread", mediaId }, [mediaId], [mediaId]),
-      resetProgress: (mediaId) => consumption({ kind: "ResetProgress", mediaId }, [mediaId]),
-      undoFinish: (input) => consumption({ kind: "UndoFinish", ...input }, [input.mediaId]),
+        consumption({ kind: "EnsureMediaFinished", media_id: mediaId }),
+      done: (mediaId) => consumption({ kind: "Done", media_id: mediaId }),
+      setUnread: (mediaId) => consumption({ kind: "SetUnread", media_id: mediaId }, [mediaId], [mediaId]),
+      resetProgress: (mediaId) => consumption({ kind: "ResetProgress", media_id: mediaId }, [mediaId]),
+      undoFinish: ({ mediaId, finishId, restore }) =>
+        consumption(
+          {
+            kind: "UndoFinish",
+            media_id: mediaId,
+            finish_id: finishId,
+            restore:
+              restore === null
+                ? null
+                : { item_id: restore.itemId, added_at: restore.addedAt, after: restore.after },
+          },
+          [mediaId],
+        ),
       settleNaturalEnd: (input) =>
-        consumption({ kind: "SettleNaturalEnd", ...input }),
+        consumption({
+          kind: "SettleNaturalEnd",
+          client_mutation_id: input.clientMutationId,
+          media_id: input.mediaId,
+          terminal_listening: input.terminalListening,
+          expected_consumption_override_revision: input.expectedConsumptionOverrideRevision,
+        }),
       revalidate: () => void refetch("no-store"),
       getCanonicalSnapshot: () => snapshot.current,
       onCanonicalInstall: (listener) => {

@@ -22,7 +22,6 @@ from uuid import UUID
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter
 
 from nexus.schemas.metadata_enrichment import MetadataFailureCode, MetadataOperationOut
-from nexus.schemas.presence import Presence
 from nexus.schemas.upload_failures import (
     UploadTransportFailure,
     UploadVerificationFailureCode,
@@ -166,12 +165,12 @@ class UploadExecutionStarted(_HistoryModel):
 
 
 class UploadFailed(_HistoryModel):
-    """Transport Present is a client-reported upload failure; Absent is a
+    """A transport is a client-reported upload failure; null is a
     server-side verification rejection whose code is on the envelope."""
 
     kind: Literal["UploadFailed"] = "UploadFailed"
     generation: int
-    transport: Presence[UploadTransportFailure]
+    transport: UploadTransportFailure | None
 
 
 class UploadRecoveryAccepted(_HistoryModel):
@@ -204,8 +203,8 @@ UploadFacts = Annotated[
 
 class SourceFailureProgress(_HistoryModel):
     completed: int
-    total: Presence[int]
-    unit: Presence[str]
+    total: int | None
+    unit: str | None
 
 
 class RetrySourceRecovery(_HistoryModel):
@@ -278,17 +277,17 @@ class SourceStageChanged(_HistoryModel):
 class SourceRetryScheduled(_HistoryModel):
     kind: Literal["SourceRetryScheduled"] = "SourceRetryScheduled"
     source_attempt_id: UUID
-    execution_id: Presence[UUID]
+    execution_id: UUID | None
     next_attempt_at: datetime
 
 
 class SourceFailed(_HistoryModel):
     kind: Literal["SourceFailed"] = "SourceFailed"
     source_attempt_id: UUID
-    execution_id: Presence[UUID]
+    execution_id: UUID | None
     origin: FailureOrigin
     terminal: bool
-    progress: Presence[SourceFailureProgress]
+    progress: SourceFailureProgress | None
 
 
 class SourceRecoveryAccepted(_HistoryModel):
@@ -298,12 +297,12 @@ class SourceRecoveryAccepted(_HistoryModel):
 
 
 class SourceSucceeded(_HistoryModel):
-    """`execution_id` is Absent for an attempt born succeeded and for an
+    """`execution_id` is null for an attempt born succeeded and for an
     execution that predates the execution-identity cut."""
 
     kind: Literal["SourceSucceeded"] = "SourceSucceeded"
     source_attempt_id: UUID
-    execution_id: Presence[UUID]
+    execution_id: UUID | None
 
 
 class SourceSuperseded(_HistoryModel):
@@ -350,7 +349,7 @@ class IndexRetryScheduled(_HistoryModel):
     kind: Literal["IndexRetryScheduled"] = "IndexRetryScheduled"
     revision: int
     job_id: UUID
-    execution_id: Presence[UUID]
+    execution_id: UUID | None
     next_attempt_at: datetime
 
 
@@ -358,7 +357,7 @@ class IndexFailed(_HistoryModel):
     kind: Literal["IndexFailed"] = "IndexFailed"
     revision: int
     job_id: UUID
-    execution_id: Presence[UUID]
+    execution_id: UUID | None
     origin: Literal["Execution"]
     terminal: bool
 
@@ -447,8 +446,8 @@ class HistoryEntry(_HistoryModel):
 
     id: HistoryEntryId
     occurred_at: datetime
-    stage: Presence[Stage]
-    failure_code: Presence[ImportFailureCode]
+    stage: Stage | None
+    failure_code: ImportFailureCode | None
     facts: Annotated[HistoryFacts | MetadataOperationFacts, Field(discriminator="kind")]
 
 
@@ -463,7 +462,7 @@ class UploadHistoryOwner(_HistoryModel):
 
     kind: Literal["UploadHistoryOwner"] = "UploadHistoryOwner"
     session_id: UUID
-    media_id: Presence[UUID]
+    media_id: UUID | None
 
 
 HistoryOwner = Annotated[MediaHistoryOwner | UploadHistoryOwner, Field(discriminator="kind")]

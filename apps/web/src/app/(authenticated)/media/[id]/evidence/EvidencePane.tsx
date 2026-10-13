@@ -156,7 +156,7 @@ export default function EvidencePane({
       </section>
     ) : null;
   const excerpt = (group: Group) =>
-    group.target_excerpt.kind === "Present" && group.target_excerpt.value.trim() ? group.target_excerpt.value : null;
+    group.target_excerpt !== null && group.target_excerpt.trim() ? group.target_excerpt : null;
 
   return (
     <div className={styles.evidence}>

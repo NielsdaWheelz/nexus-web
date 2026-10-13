@@ -16,7 +16,6 @@ from pydantic import (
 
 from nexus.schemas.client_mutation import ClientMutationUuidText
 from nexus.schemas.isbn import Isbn13
-from nexus.schemas.presence import Presence, Present
 from nexus.schemas.publication_dates import PublicationDate
 from nexus.services.contributor_taxonomy import (
     CONTRIBUTOR_ROLES_ORDERED,
@@ -164,9 +163,9 @@ class MetadataEnrichmentOutput(_MetadataModel):
 
 
 class AcceptedMetadataContributorCredit(_MetadataModel):
-    contributor_handle: Presence[ContributorHandle]
+    contributor_handle: ContributorHandle | None
     credited_name: _Name
-    raw_role: Presence[_RawRole]
+    raw_role: _RawRole | None
 
 
 class AcceptedMetadataContributorRoleSlice(_MetadataModel):
@@ -175,42 +174,40 @@ class AcceptedMetadataContributorRoleSlice(_MetadataModel):
 
 
 class AcceptedMetadataEnrichment(_MetadataModel):
-    """Validated findings. Presence is owned absence; no raw null reaches publication."""
+    """Validated findings; null is an absent finding."""
 
-    title: Presence[_ShortText]
-    contributors: Presence[list[AcceptedMetadataContributorRoleSlice]]
-    original_published_date: Presence[PublicationDate]
-    edition_published_date: Presence[PublicationDate]
-    edition_isbn: Presence[Isbn13]
-    publisher: Presence[_ShortText]
-    language: Presence[_Language]
-    description: Presence[_Description]
+    title: _ShortText | None
+    contributors: list[AcceptedMetadataContributorRoleSlice] | None
+    original_published_date: PublicationDate | None
+    edition_published_date: PublicationDate | None
+    edition_isbn: Isbn13 | None
+    publisher: _ShortText | None
+    language: _Language | None
+    description: _Description | None
 
     @property
     def has_findings(self) -> bool:
-        return any(isinstance(getattr(self, name), Present) for name in METADATA_FIELDS)
+        return any(getattr(self, name) is not None for name in METADATA_FIELDS)
 
     @property
     def unresolved_fields(self) -> list[MetadataField]:
-        return [name for name in METADATA_FIELDS if not isinstance(getattr(self, name), Present)]
+        return [name for name in METADATA_FIELDS if getattr(self, name) is None]
 
     def contributor_observation(self) -> ContributorObservationBatch:
         """Adapt accepted credits to the contributor owner's existing observation API."""
-        if not isinstance(self.contributors, Present):
+        if self.contributors is None:
             return NOT_OBSERVED
         return ObservedRoleSlices(
-            managed_roles=frozenset(item.role for item in self.contributors.value),
+            managed_roles=frozenset(item.role for item in self.contributors),
             credits=tuple(
                 ContributorObservation(
                     credited_name=credit.credited_name,
                     role=item.role,
-                    raw_role=credit.raw_role.value
-                    if isinstance(credit.raw_role, Present)
-                    else None,
+                    raw_role=credit.raw_role,
                     identity_key=None,
                     contributor_handle=credit.contributor_handle,
                 )
-                for item in self.contributors.value
+                for item in self.contributors
                 for credit in item.credits
             ),
         )
@@ -260,7 +257,7 @@ type MetadataOutcome = Annotated[
 
 class MetadataEnrichmentRequest(_MetadataModel):
     client_mutation_id: ClientMutationUuidText
-    expected_job_id: Presence[UUID]
+    expected_job_id: UUID | None
 
 
 class MetadataEnrichmentAccepted(_MetadataModel):
@@ -280,7 +277,7 @@ class MetadataResultReviewed(_MetadataModel):
 class MetadataRetryAllowed(_MetadataModel):
     status: Literal["allowed"] = "allowed"
     purpose: MetadataPurpose
-    expected_job_id: Presence[UUID]
+    expected_job_id: UUID | None
 
 
 class MetadataRetryBlocked(_MetadataModel):
@@ -303,9 +300,9 @@ class MetadataSelection(_MetadataModel):
 class _MetadataOperationBase(_MetadataModel):
     job_id: UUID
     created_at: AwareDatetime
-    started_at: Presence[AwareDatetime]
-    generation_id: Presence[UUID]
-    selection: Presence[MetadataSelection]
+    started_at: AwareDatetime | None
+    generation_id: UUID | None
+    selection: MetadataSelection | None
 
 
 class MetadataQueuedOperation(_MetadataOperationBase):
@@ -327,7 +324,7 @@ class MetadataWaitingOperation(_MetadataOperationBase):
     status: Literal["waiting"] = "waiting"
     purpose: MetadataPurpose
     reason: Literal["retry"]
-    until: Presence[AwareDatetime]
+    until: AwareDatetime | None
 
 
 class MetadataCompletedOperation(_MetadataOperationBase):
@@ -340,7 +337,7 @@ class MetadataNoFindingsOperation(_MetadataOperationBase):
     status: Literal["no_findings"] = "no_findings"
     purpose: Literal["bibliography"]
     completed_at: AwareDatetime
-    reviewed_at: Presence[AwareDatetime]
+    reviewed_at: AwareDatetime | None
 
 
 class MetadataFailedOperation(_MetadataOperationBase):
@@ -372,8 +369,8 @@ type MetadataUnfinishedOperation = Annotated[
 
 
 class MetadataEnrichmentView(_MetadataModel):
-    operation: Presence[MetadataOperationOut]
+    operation: MetadataOperationOut | None
     unfinished_count: Annotated[int, Field(ge=0)]
-    unfinished_operation: Presence[MetadataUnfinishedOperation]
+    unfinished_operation: MetadataUnfinishedOperation | None
     retry: MetadataRetry
-    last_enriched_at: Presence[AwareDatetime]
+    last_enriched_at: AwareDatetime | None

@@ -2,13 +2,12 @@
 
 import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import LibraryPlacementOverlay from "@/components/libraries/LibraryPlacementOverlay";
-import type { Presence } from "@/lib/api/presence";
 import type { LibraryPlacementTarget } from "@/lib/libraries/libraryPlacement";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 
 export interface LibraryPlacementOpenOptions {
   anchor: ReturnFocusTarget;
-  returnFocusFallback: Presence<ReturnFocusTarget>;
+  returnFocusFallback: ReturnFocusTarget | null;
   /** Reconciles the subject's action snapshot after a successful placement write. */
   reconcileActions: () => Promise<void>;
 }

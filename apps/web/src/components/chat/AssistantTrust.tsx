@@ -174,7 +174,7 @@ function Details({
     Input: count(run?.usage?.input_tokens),
     Output: count(run?.usage?.output_tokens),
     "Support ID":
-      run?.support_id.kind === "Present" ? run.support_id.value : null,
+      run?.support_id != null ? run.support_id : null,
   };
   return (
     <details className={styles.details}>

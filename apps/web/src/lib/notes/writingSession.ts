@@ -744,9 +744,9 @@ export class WritingSession {
     return "network";
   }
   private acknowledgeCanonicalBody(data: Schema<"ResourceBodyMutationOut">): BodyAck {
-    const version = data.item.versionByLane.body;
+    const version = data.item.version_by_lane.body;
     if (version === undefined) throw new Error("Body acknowledgement omitted its version");
-    return { body: { bodyPmJson: data.bodyPmJson, bodyText: data.bodyText }, version };
+    return { body: { bodyPmJson: data.body_pm_json, bodyText: data.body_text }, version };
   }
   async refreshConflict(noteRef: string): Promise<void> {
     const runtime = this.state(noteRef);
@@ -755,11 +755,11 @@ export class WritingSession {
     if (!noteId) throw new TypeError("conflicted body has no canonical note id");
     const response = await apiFetch<{ data: unknown }>(`/api/notes/blocks/${encodeURIComponent(noteId)}`);
     const data = expectRecord(response.data, "conflicted note");
-    const versions = expectRecord(data.versionByLane, "conflicted note versions");
+    const versions = expectRecord(data.version_by_lane, "conflicted note versions");
     runtime.version = expectInteger(versions.body, "conflicted note body version");
     if (expectString(data.id, "conflicted note id") !== noteId) throw new TypeError("conflicted note identity changed");
     if (runtime.entry?.paused !== "conflict") return;
-    runtime.remote = decodeNoteBodyValue(data.bodyPmJson, data.bodyText, "conflicted note");
+    runtime.remote = decodeNoteBodyValue(data.body_pm_json, data.body_text, "conflicted note");
     this.snapshot(runtime, "conflict", runtime.snapshot.localRetained);
   }
   reapply(noteRef: string): boolean {

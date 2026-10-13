@@ -4,7 +4,6 @@ import { useCallback, useId, useEffect, useMemo, useRef, useState } from "react"
 import { requestNexusOpen } from "@/lib/nexus/events";
 import { isInvalidViewError } from "@/lib/api/client";
 import { libraryEntriesResource } from "@/lib/api/resource";
-import { present } from "@/lib/api/presence";
 import { listRowStatus } from "@/lib/api/useServerList";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -138,7 +137,7 @@ function LibraryPane({ id }: { readonly id: string }) {
   const installedEntries = useMemo(() => entries.flatMap<LibraryEntry>((entry) => {
     if (entry.kind !== "media") return [entry];
     const mediaSummary = summaries.resolve(entry.mediaSummary);
-    return mediaSummary.kind === "Absent" ? [] : [{ ...entry, mediaSummary: mediaSummary.value }];
+    return mediaSummary === null ? [] : [{ ...entry, mediaSummary: mediaSummary }];
   }), [entries, summaries]);
   const view = owner.view.kind === "Valid" ? owner.view.view : null;
   const viewIsCommitted = list.current;
@@ -180,23 +179,23 @@ function LibraryPane({ id }: { readonly id: string }) {
     [],
   );
   useEffect(() => {
-    if (currentLibrary?.canManageMembers === true) {
+    if (currentLibrary?.can_manage_members === true) {
       setAuthorityFeedback(null);
     }
-  }, [currentLibrary?.canManageMembers]);
+  }, [currentLibrary?.can_manage_members]);
   useEffect(() => setAuthorityFeedback(null), [id]);
   // the runtime reports the stored Companion: a remembered Members tab counts
   // only where this viewer is shown it.
   const membersShown =
-    currentLibrary?.canManageMembers === true &&
-    currentLibrary.isDefault === false &&
-    currentLibrary.systemKey === null;
+    currentLibrary?.can_manage_members === true &&
+    currentLibrary.is_default === false &&
+    currentLibrary.system_key === null;
   const membersActive =
     isPaneActive &&
     membersShown &&
-    paneRuntime?.secondaryPane?.groupId === "resource-inspector" &&
+    paneRuntime?.secondaryPane?.group_id === "resource-inspector" &&
     paneRuntime.secondaryPane.visibility === "visible" &&
-    paneRuntime.secondaryPane.activeSurfaceId === "resource-members";
+    paneRuntime.secondaryPane.active_surface_id === "resource-members";
   const libraryMembersController = useLibraryMembers({
     libraryId: id,
     library: currentLibrary,
@@ -204,11 +203,11 @@ function LibraryPane({ id }: { readonly id: string }) {
     membersActive,
     announceAuthorityLoss: announceLibraryAuthorityLoss,
   });
-  const isDefaultLibrary = knownLibrary?.isDefault === true;
+  const isDefaultLibrary = knownLibrary?.is_default === true;
   // Entry mutation (add content, reorder, remove) is hidden for system-protected
   // libraries (e.g. the Oracle Corpus), which report canEditEntries === false.
   const canEditEntries =
-    currentLibrary?.role === "admin" && currentLibrary.canEditEntries === true;
+    currentLibrary?.role === "admin" && currentLibrary.can_edit_entries === true;
   // Explicit reorder gate: Default has server-defined ordering and no reorder
   // UX/endpoint support, independent of canEditEntries (which stays true for
   // Default's "Add content" capability).
@@ -233,7 +232,7 @@ function LibraryPane({ id }: { readonly id: string }) {
               kind: "Add",
               seed: {
                 kind: "Content",
-                initialDestinations: currentLibrary.isDefault
+                initialDestinations: currentLibrary.is_default
                   ? []
                   : [
                     {
@@ -418,7 +417,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     const controller = new AbortController();
     setError(null);
     void requestPodcastRefresh(
-      { kind: "Library", libraryId: id },
+      { kind: "Library", library_id: id },
       controller.signal,
     )
       .then(refreshLibrary)
@@ -441,7 +440,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     async ({ signal }) => {
       try {
         const requestedCount = await requestPodcastRefresh(
-          { kind: "Library", libraryId: id },
+          { kind: "Library", library_id: id },
           signal,
         );
         await refreshLibrary();
@@ -557,20 +556,20 @@ function LibraryPane({ id }: { readonly id: string }) {
       return {
         ...row,
         id: libraryEntryTargetId(item),
-        context: showAdded ? present({
+        context: showAdded ? {
           kind: "Text",
-          text: `${isDefaultLibrary ? "Added to Nexus " : "Added "}${formatAdded(item.addedAt)}`,
-        }) : row.context,
+          text: `${isDefaultLibrary ? "Added to Nexus " : "Added "}${formatAdded(item.added_at)}`,
+        } : row.context,
       };
     }
     return presentMedia(item.mediaSummary, {
       id: libraryEntryTargetId(item),
       primary: {
         kind: "link",
-        href: `/media/${item.mediaSummary.mediaId}`,
+        href: `/media/${item.mediaSummary.media_id}`,
       },
       actionSubject: {
-        ref: canonicalResourceRef({ scheme: "media", id: item.mediaSummary.mediaId }),
+        ref: canonicalResourceRef({ scheme: "media", id: item.mediaSummary.media_id }),
       },
       selected: false,
     });

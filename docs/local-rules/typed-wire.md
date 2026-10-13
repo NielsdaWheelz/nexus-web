@@ -12,11 +12,17 @@ its wire types are generated from FastAPI's OpenAPI schema, so tsc catches drift
   `ok_page()` and `success_response()` go route by route as routes are typed.
 - typing a route keeps its JSON byte for byte. check it against the old route
   before merging.
-- FastAPI writes the schema by alias and serializes response models by alias.
-  never set `response_model_by_alias=False`: the bytes would then disagree with
-  the schema. a route that dumped by field name (`ok()`'s default) keeps its
-  bytes only if its models (nested ones included) have no aliases on output;
-  make an input-only alias a `validation_alias`.
+- every wire key is snake_case: the python field name. no wire model sets an
+  `alias`, `serialization_alias` or `alias_generator`, and no route or dump
+  passes `by_alias` (owner decision 2026-10-13). an alias survives only where
+  the name is not ours: a header, a python keyword (`from`), a provider's
+  schema field, an opaque sealed payload.
+- absence is `null`: an optional value is `T | None` in python and `T | null`
+  on the web, its key always present on output. this overrides the
+  `Presence<T>` rule of [../rules/boundaries.md](../rules/boundaries.md),
+  [../rules/json-values.md](../rules/json-values.md) and
+  [../rules/frontend.md](../rules/frontend.md) (owner decision 2026-10-13). a
+  request PATCH that tells an omitted key from `null` reads `model_fields_set`.
 - always-serialized fields of an Out model must be required in its output
   schema. `json_schema_serialization_defaults_required=True` on that selected
   output model keeps useful nullable/factory constructor defaults while making

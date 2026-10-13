@@ -1,6 +1,5 @@
 /** Pure semantic projection for one note page row. */
 
-import { absent } from "@/lib/api/presence";
 import type { CollectionRowView } from "@/lib/collections/types";
 import type { NotePageSummary } from "@/lib/notes/pageContract";
 
@@ -15,10 +14,10 @@ export function presentNote(item: NotePageSummary): CollectionRowView {
     },
     title: { text: item.title },
     contributors: [],
-    publicationDate: absent(),
-    context: absent(),
-    activity: absent(),
-    exceptionalStatus: absent(),
+    publicationDate: null,
+    context: null,
+    activity: null,
+    exceptionalStatus: null,
     actionSubject: item.actionSubject,
     selected: false,
   };

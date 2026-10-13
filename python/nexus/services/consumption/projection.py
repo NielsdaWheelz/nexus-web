@@ -23,7 +23,6 @@ from nexus.schemas import consumption as wire
 from nexus.schemas.consumption_state import ConsumptionStateValue
 from nexus.schemas.media import MediaReadState
 from nexus.schemas.media_summary import MediaDurationOut, MediaSummaryOut
-from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
 from nexus.schemas.reading_time import ReadingTimeEstimateOut
 from nexus.services.consumption import lectern, listening, reader_cursor
 from nexus.services.playback_source import derive_playback_source
@@ -250,7 +249,7 @@ def player_descriptors(
                 wire.ChapterOut(
                     title=chapter.title[:300],
                     start_ms=chapter.t_start_ms,
-                    end_ms=presence_from_nullable(chapter.t_end_ms),
+                    end_ms=chapter.t_end_ms,
                 )
             )
     descriptors: dict[UUID, wire.PlayerDescriptor] = {}
@@ -268,16 +267,16 @@ def player_descriptors(
         descriptors[row.media_id] = wire.PlayerDescriptor(
             media_id=row.media_id,
             title=row.title[:300],
-            subtitle=presence_from_nullable(subtitle),
-            artwork_url=presence_from_nullable(row.image_url),
+            subtitle=subtitle,
+            artwork_url=row.image_url,
             stream_url=source.stream_url,
             position_ms=row.position_ms,
-            duration_ms=presence_from_nullable(row.duration_ms),
+            duration_ms=row.duration_ms,
             reset_epoch=row.reset_epoch,
-            consumption_override_revision=presence_from_nullable(row.override_revision),
+            consumption_override_revision=row.override_revision,
             playback_rate=float(row.rate),
-            podcast_id=presence_from_nullable(row.podcast_id),
-            pause_shortening_mode=presence_from_nullable(row.pause_shortening_mode),
+            podcast_id=row.podcast_id,
+            pause_shortening_mode=row.pause_shortening_mode,
             chapters=chapters.get(row.media_id, []),
         )
     return descriptors
@@ -318,7 +317,7 @@ def lectern_snapshot(
 
 def listening_duration(
     *, position_ms: int, listening_duration_ms: int | None, feed_duration_seconds: int | None
-) -> Absent | Present[MediaDurationOut]:
+) -> MediaDurationOut | None:
     """Display media time at 1×: the listening record's duration before the feed's."""
     duration_ms = (
         listening_duration_ms
@@ -328,15 +327,13 @@ def listening_duration(
         else None
     )
     if duration_ms is None or duration_ms <= 0:
-        return absent()
-    return present(
-        MediaDurationOut(
-            modality="Listen",
-            estimate=ReadingTimeEstimateOut(
-                total_minutes=ceil(duration_ms / 60_000),
-                remaining_minutes=present(ceil(max(0, duration_ms - position_ms) / 60_000)),
-            ),
-        )
+        return None
+    return MediaDurationOut(
+        modality="Listen",
+        estimate=ReadingTimeEstimateOut(
+            total_minutes=ceil(duration_ms / 60_000),
+            remaining_minutes=ceil(max(0, duration_ms - position_ms) / 60_000),
+        ),
     )
 
 

@@ -1,7 +1,6 @@
 import { createElement } from "react";
 import type { LucideIcon } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
-import { present } from "@/lib/api/presence";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { assertNever } from "@/lib/assertNever";
 import type { FeedbackContextValue } from "@/components/feedback/Feedback";
@@ -399,9 +398,9 @@ export function resourceActionDescriptors({
         }
       };
     const enqueue = call("enqueue", {
-      kind: capability.mediaKind,
+      kind: capability.media_kind,
       title: capability.title,
-      url: capability.audioUrl,
+      url: capability.audio_url,
     });
     const state = environment.offline;
     if (state.kind !== "Ready")
@@ -418,7 +417,7 @@ export function resourceActionDescriptors({
           checked: false,
           blocked: requiresOnline,
           confirmation:
-            capability.mediaKind === "web_article"
+            capability.media_kind === "web_article"
               ? {
                   title: "Download text-only copy?",
                   body: "Downloaded web articles include readable text but not images.",
@@ -527,8 +526,8 @@ export function resourceActionDescriptors({
               .getCanonicalSnapshot()
               ?.items.find(
                 (item) =>
-                  item.mediaSummary.mediaId === playing?.mediaId &&
-                  item.mediaSummary.mediaId !== id(),
+                  item.mediaSummary.media_id === playing?.media_id &&
+                  item.mediaSummary.media_id !== id(),
               );
             await ports.lectern.placeItems({
               mediaIds: [assumeMediaId(id())],
@@ -633,9 +632,8 @@ export function resourceActionDescriptors({
               openLibraryPlacement: ports.openLibraryPlacement,
               options: {
                 anchor: () => anchor,
-                returnFocusFallback: present(() =>
-                  findPaneLandmarkFocusTarget(ports.activePaneId),
-                ),
+                returnFocusFallback: (() =>
+                  findPaneLandmarkFocusTarget(ports.activePaneId)),
                 reconcileActions: () => ports.reconcile(subjectScope),
               },
             });
@@ -665,7 +663,7 @@ export function resourceActionDescriptors({
             if (!lecternReady(ports, !included)) return;
             if (capability.state === "Present")
               await ports.lectern.removeItem(
-                assumeLecternItemId(capability.lecternItemId),
+                assumeLecternItemId(capability.lectern_item_id),
               );
             else
               await ports.lectern.ensureItem({ mediaId, title: capability.title });
@@ -728,9 +726,8 @@ export function resourceActionDescriptors({
               : null;
           ports.openShare(resourceShareTarget(subject.ref), {
             returnFocusTo: () => anchor,
-            returnFocusFallback: present(() =>
-              findPaneLandmarkFocusTarget(ports.activePaneId),
-            ),
+            returnFocusFallback: (() =>
+              findPaneLandmarkFocusTarget(ports.activePaneId)),
           });
         });
       case "DownloadOriginal":
@@ -755,7 +752,7 @@ export function resourceActionDescriptors({
               async () => {
                 await retrySourceImport({
                   mediaId: id(),
-                  expectedAttemptId: offer.expectedAttemptId,
+                  expectedAttemptId: offer.expected_attempt_id,
                   clientMutationId: crypto.randomUUID(),
                 });
               },
@@ -768,8 +765,8 @@ export function resourceActionDescriptors({
               async () => {
                 await repairSourceImport({
                   mediaId: id(),
-                  expectedAttemptId: offer.expectedAttemptId,
-                  expectedJobId: offer.expectedJobId,
+                  expectedAttemptId: offer.expected_attempt_id,
+                  expectedJobId: offer.expected_job_id,
                   clientMutationId: crypto.randomUUID(),
                 });
               },
@@ -782,8 +779,8 @@ export function resourceActionDescriptors({
               async () => {
                 await repairSearchImport({
                   mediaId: id(),
-                  expectedRevision: offer.expectedRevision,
-                  expectedJobId: offer.expectedJobId,
+                  expectedRevision: offer.expected_revision,
+                  expectedJobId: offer.expected_job_id,
                   clientMutationId: crypto.randomUUID(),
                 });
               },
@@ -801,10 +798,7 @@ export function resourceActionDescriptors({
           canConfirm ? { ...capability, availability: { kind: "Available" } } : capability,
           "ResourceOperation.Media.RefreshSource",
           async (ports, detail) => {
-            await ports.submitSourceRefresh(id(),
-              capability.expectedAttemptId.kind === "Present"
-                ? capability.expectedAttemptId.value : null,
-              detail);
+            await ports.submitSourceRefresh(id(), capability.expected_attempt_id, detail);
           },
           {
             label: canConfirm ? "confirm refresh request" : undefined,
@@ -830,7 +824,7 @@ export function resourceActionDescriptors({
           },
           {
             label: canConfirm ? "confirm metadata request" : metadataResearchLabel(
-              { kind: "Absent" }, capability.retry.purpose,
+              null, capability.retry.purpose,
             ),
             disabledReason: !canConfirm && capability.retry.status === "blocked"
               ? metadataRetryBlockedCopy(capability.retry) : undefined,
@@ -843,7 +837,7 @@ export function resourceActionDescriptors({
         return make(
           capability,
           "ResourceOperation.Media.ReviewMetadataResult",
-          async () => submitMetadataResultReview(id(), capability.jobId),
+          async () => submitMetadataResultReview(id(), capability.job_id),
           { reconcile: subjectScope },
         );
       case "EditAuthors":
@@ -935,7 +929,7 @@ export function resourceActionDescriptors({
           capability,
           "ResourceOperation.Podcast.Refresh",
           async () => {
-            await requestPodcastRefresh({ kind: "Podcast", podcastId: id() });
+            await requestPodcastRefresh({ kind: "Podcast", podcast_id: id() });
           },
           { reconcile: subjectScope },
         );
@@ -978,7 +972,7 @@ export function resourceActionDescriptors({
                 capability.state === "Present"
                   ? {
                       kind: "EditHighlightNote",
-                      noteBlockId: capability.noteBlockId,
+                      noteBlockId: capability.note_block_id,
                       ...mounted,
                       ...completion,
                     }
@@ -1045,8 +1039,7 @@ export function resourceActionDescriptors({
                 kind === "DeleteMessage"
                   ? {
                       kind: "DeleteMessage",
-                      settleDeletedConversation:
-                        ports.settleDeletedMessageConversation,
+                      settleDeletedConversation: ports.settleDeletedMessageConversation,
                       ...mounted,
                       ...completion,
                     }

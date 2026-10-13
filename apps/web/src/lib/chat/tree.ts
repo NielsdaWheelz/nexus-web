@@ -134,8 +134,7 @@ export function chatView(
   const activeRun = run
     ? {
         runId: run.run_id,
-        execution:
-          run.execution.kind === "Present" ? run.execution.value : null,
+        execution: run.execution,
       }
     : null;
   const branch =

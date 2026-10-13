@@ -21,7 +21,6 @@ from nexus.schemas.media import (
     ReaderNavigationSectionOut,
     ReaderNavigationTocNodeOut,
 )
-from nexus.schemas.presence import absent, presence_from_nullable, present
 from nexus.services.html_tree import inner_html
 from nexus.services.reader_publication import (
     read_publication_source_issues,
@@ -124,16 +123,14 @@ def read_epub_navigation(
             fragment_id=fragment_ids[row["fragment_idx"]],
             offset=row["start_offset"],
         )
-        extent = absent()
+        extent = None
         if row["end_fragment_idx"] is not None:
-            extent = present(
-                NavigationTextRangeOut(
-                    start=target,
-                    end=NavigationTextPointOut(
-                        fragment_id=fragment_ids[row["end_fragment_idx"]],
-                        offset=row["end_offset"],
-                    ),
-                )
+            extent = NavigationTextRangeOut(
+                start=target,
+                end=NavigationTextPointOut(
+                    fragment_id=fragment_ids[row["end_fragment_idx"]],
+                    offset=row["end_offset"],
+                ),
             )
         elif row["end_offset"] is not None:
             # The structure write owner stores both extent coordinates together.
@@ -144,9 +141,9 @@ def read_epub_navigation(
             ReaderNavigationSectionOut(
                 section_id=row["location_id"],
                 label=row["label"],
-                parent_section_id=presence_from_nullable(row["parent_section_id"]),
+                parent_section_id=row["parent_section_id"],
                 target=target,
-                anchor_id=presence_from_nullable(row["href_fragment"]),
+                anchor_id=row["href_fragment"],
                 extent=extent,
                 source=row["source"],
             )
@@ -194,14 +191,12 @@ def read_epub_navigation(
         row["node_id"]: ReaderNavigationTocNodeOut(
             id=row["node_id"],
             label=row["label"],
-            target=present(
-                NavigationTextPointOut(
-                    fragment_id=fragment_ids[row["fragment_idx"]], offset=row["target_offset"]
-                )
+            target=NavigationTextPointOut(
+                fragment_id=fragment_ids[row["fragment_idx"]], offset=row["target_offset"]
             )
             if row["target_offset"] is not None
-            else absent(),
-            section_id=presence_from_nullable(row["section_id"]),
+            else None,
+            section_id=row["section_id"],
             children=[],
         )
         for row in toc_rows
@@ -220,22 +215,22 @@ def read_epub_navigation(
 
     node_by_section: dict[str, ReaderNavigationTocNodeOut] = {}
     for node in nodes.values():
-        if node.section_id.kind == "Present":
-            node_by_section.setdefault(node.section_id.value, node)
+        if node.section_id is not None:
+            node_by_section.setdefault(node.section_id, node)
     # Source-only headings augment the outline without changing publisher sibling order.
     missing = [section for section in sections if section.section_id not in node_by_section]
     for section in missing:
         node_by_section[section.section_id] = ReaderNavigationTocNodeOut(
             id=section.section_id,
             label=section.label,
-            target=present(section.target),
-            section_id=present(section.section_id),
+            target=section.target,
+            section_id=section.section_id,
             children=[],
         )
     for section in missing:
         node = node_by_section[section.section_id]
-        if section.parent_section_id.kind == "Present":
-            node_by_section[section.parent_section_id.value].children.append(node)
+        if section.parent_section_id is not None:
+            node_by_section[section.parent_section_id].children.append(node)
         else:
             roots.append(node)
 
@@ -243,13 +238,11 @@ def read_epub_navigation(
     for row in toc_rows:
         if row["nav_type"] == "toc":
             continue
-        target = absent()
+        target = None
         if row["fragment_idx"] is not None and row["target_offset"] is not None:
-            target = present(
-                NavigationTextPointOut(
-                    fragment_id=fragment_ids[row["fragment_idx"]],
-                    offset=row["target_offset"],
-                )
+            target = NavigationTextPointOut(
+                fragment_id=fragment_ids[row["fragment_idx"]],
+                offset=row["target_offset"],
             )
         locations[row["nav_type"]].append(
             ReaderNavigationLocationOut(id=row["node_id"], label=row["label"], target=target)

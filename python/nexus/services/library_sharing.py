@@ -36,7 +36,6 @@ from nexus.schemas.library import (
     UserLibraryInvitee,
     ViewerLibraryInvitationOut,
 )
-from nexus.schemas.presence import absent, presence_from_nullable, present
 from nexus.services import library_governance as governance
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
 from nexus.services.sealed_handles import (
@@ -54,7 +53,7 @@ _INVITATION_PLAN = (
     SortKey("created_at", "desc", KeysetValueKind.DateTime),
     SortKey("id", "desc", KeysetValueKind.Uuid),
 )
-# Every invitation read carries the invitee's Presence fields and the library's
+# Every invitation read carries the invitee's nullable fields and the library's
 # mutability, so no lifecycle step has to re-read either.
 _INVITATION_COLUMNS = """
     i.id, i.library_id, i.inviter_user_id, i.invitee_user_id,
@@ -69,9 +68,7 @@ _INVITATION_SOURCE = """
 
 
 def _page_info(next_cursor: str | None) -> LibraryGovernancePageInfo:
-    return LibraryGovernancePageInfo(
-        next_cursor=present(next_cursor) if next_cursor is not None else absent()
-    )
+    return LibraryGovernancePageInfo(next_cursor=next_cursor)
 
 
 def _member_out(
@@ -81,8 +78,8 @@ def _member_out(
         user_handle=seal_user(row["user_id"]),
         role=row["role"] if role is None else role,
         is_owner=row["user_id"] == owner_user_id,
-        email=presence_from_nullable(row["email"]),
-        display_name=presence_from_nullable(row["display_name"]),
+        email=row["email"],
+        display_name=row["display_name"],
         created_at=row["created_at"],
     )
 
@@ -103,11 +100,9 @@ def _invitation_out(
         role=row["role"],
         status=row["status"] if status is None else status,
         created_at=row["created_at"],
-        responded_at=presence_from_nullable(
-            row["responded_at"] if status is None else responded_at
-        ),
-        invitee_email=presence_from_nullable(row["email"]),
-        invitee_display_name=presence_from_nullable(row["display_name"]),
+        responded_at=(row["responded_at"] if status is None else responded_at),
+        invitee_email=row["email"],
+        invitee_display_name=row["display_name"],
     )
 
 

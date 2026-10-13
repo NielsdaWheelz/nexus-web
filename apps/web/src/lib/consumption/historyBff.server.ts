@@ -37,7 +37,7 @@ export async function postActivity(request: Request): Promise<Response> {
   const device = await deviceId();
   if (device === null) return failure(500, "E_INTERNAL", "Device cookie missing");
   const { headers, signal } = request;
-  const forwarded = JSON.stringify({ ...body, deviceId: device });
+  const forwarded = JSON.stringify({ ...body, device_id: device });
   const init = { method: "POST", headers, body: forwarded, signal };
   return proxyToFastAPI(new Request(request.url, init), "/consumption/activity");
 }
@@ -49,7 +49,7 @@ export async function proxyConsumptionRead(
   const device = await deviceId();
   if (device === null) return failure(500, "E_INTERNAL", "Device cookie missing");
   const url = new URL(request.url);
-  url.searchParams.set("currentDeviceId", device);
+  url.searchParams.set("current_device_id", device);
   const { headers, signal } = request;
   return proxyToFastAPI(new Request(url, { method: "GET", headers, signal }), backendPath);
 }

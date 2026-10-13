@@ -212,7 +212,7 @@ export function useLibraryMembers({
   const searchSequenceRef = useRef(0);
   const wasEligibleRef = useRef(false);
   const authorityLossAnnouncedRef = useRef(false);
-  const previousCapabilityRef = useRef(library?.canManageMembers ?? null);
+  const previousCapabilityRef = useRef(library?.can_manage_members ?? null);
   const commit = useCallback((reduce: (current: LibraryGovernanceState) => LibraryGovernanceState) => {
     if (!mountedRef.current) return;
     const next = reduce(stateRef.current);
@@ -247,8 +247,8 @@ export function useLibraryMembers({
 
   useEffect(() => {
     const previous = previousCapabilityRef.current;
-    previousCapabilityRef.current = library?.canManageMembers ?? null;
-    if (library === null || library.canManageMembers) return;
+    previousCapabilityRef.current = library?.can_manage_members ?? null;
+    if (library === null || library.can_manage_members) return;
     cancelReads();
     if (previous === true) {
       announceObservedAuthorityLoss(
@@ -259,8 +259,8 @@ export function useLibraryMembers({
   }, [announceObservedAuthorityLoss, cancelReads, clearGovernance, library]);
 
   useEffect(() => {
-    if (library?.canManageMembers) authorityLossAnnouncedRef.current = false;
-  }, [library?.canManageMembers]);
+    if (library?.can_manage_members) authorityLossAnnouncedRef.current = false;
+  }, [library?.can_manage_members]);
 
   const isCurrentRead = useCallback((controller: AbortController) =>
     mountedRef.current &&
@@ -287,9 +287,9 @@ export function useLibraryMembers({
     for (let restartCount = 0; restartCount < 2; restartCount += 1) {
       let page = libraryGovernanceFirstPage(await fetchFirst(signal), rowHandle, name);
       let restart = false;
-      while (page.nextCursor.kind === "Present" && page.rows.length < minimumRows) {
+      while (page.nextCursor !== null && page.rows.length < minimumRows) {
         const requestedCursor = page.nextCursor;
-        const incoming = await fetchNext(requestedCursor.value, signal);
+        const incoming = await fetchNext(requestedCursor, signal);
         const merged = mergeLibraryGovernancePage(
           page, incoming, requestedCursor, rowHandle, creationIdentity,
         );
@@ -316,8 +316,8 @@ export function useLibraryMembers({
         minimumRows: minimumMembers,
         fetchFirst: (nextSignal) => listLibraryMembers({ libraryId, signal: nextSignal }),
         fetchNext: (cursor, nextSignal) => listLibraryMembers({ libraryId, cursor, signal: nextSignal }),
-        rowHandle: (row: LibraryMember) => row.userHandle,
-        creationIdentity: (row: LibraryMember) => row.createdAt,
+        rowHandle: (row: LibraryMember) => row.user_handle,
+        creationIdentity: (row: LibraryMember) => row.created_at,
         name: "Library members page",
         signal,
       }),
@@ -326,8 +326,8 @@ export function useLibraryMembers({
         fetchFirst: (nextSignal) => listPendingLibraryInvites({ libraryId, signal: nextSignal }),
         fetchNext: (cursor, nextSignal) =>
           listPendingLibraryInvites({ libraryId, cursor, signal: nextSignal }),
-        rowHandle: (row: LibraryInvitation) => row.invitationHandle,
-        creationIdentity: (row: LibraryInvitation) => row.createdAt,
+        rowHandle: (row: LibraryInvitation) => row.invitation_handle,
+        creationIdentity: (row: LibraryInvitation) => row.created_at,
         name: "Library invitations page",
         signal,
       }),
@@ -349,7 +349,7 @@ export function useLibraryMembers({
     }
     if (!isCurrentRead(controller)) return { kind: "Stale" };
     adoptLibrary(nextLibrary);
-    if (!nextLibrary.canManageMembers) return { kind: "AuthorityLost" };
+    if (!nextLibrary.can_manage_members) return { kind: "AuthorityLost" };
     try {
       const pages = await loadGovernance(
         controller.signal, minimumMembers, minimumInvites,
@@ -363,7 +363,7 @@ export function useLibraryMembers({
         const classified = await getMemberLibrary(libraryId, controller.signal);
         if (!isCurrentRead(controller)) return { kind: "Stale" };
         adoptLibrary(classified);
-        if (!classified.canManageMembers) return { kind: "AuthorityLost" };
+        if (!classified.can_manage_members) return { kind: "AuthorityLost" };
       } catch (classificationError) {
         if (isApiError(classificationError) && classificationError.status === 404) {
           return { kind: "NotFound" };
@@ -475,11 +475,11 @@ export function useLibraryMembers({
   }, [adoptLibrary, announceObservedAuthorityLoss, cancelReads, clearGovernance, commit, isCurrentRead, observe]);
 
   useEffect(() => {
-    const eligible = membersActive && library?.canManageMembers === true;
+    const eligible = membersActive && library?.can_manage_members === true;
     const becameEligible = eligible && !wasEligibleRef.current;
     wasEligibleRef.current = eligible;
     if (becameEligible) void ensureFresh();
-  }, [ensureFresh, library?.canManageMembers, membersActive]);
+  }, [ensureFresh, library?.can_manage_members, membersActive]);
 
   useEffect(() => {
     const current = stateRef.current;
@@ -596,7 +596,7 @@ export function useLibraryMembers({
       } else {
         let feedback = outcome.feedback;
         if (kind === "Role" && outcome.kind === "Unacknowledged") {
-          const observed = snapshot.members.rows.find((member) => member.userHandle === subjectHandle);
+          const observed = snapshot.members.rows.find((member) => member.user_handle === subjectHandle);
           feedback = {
             ...feedback,
             title: "The role change was not acknowledged.",
@@ -635,7 +635,7 @@ export function useLibraryMembers({
     if (!mountedRef.current || current.snapshot.kind !== "Ready" ||
       current.snapshot.reconciliation.kind !== "Confirmed") return;
     const page = pageOf(current.snapshot);
-    if (page.nextCursor.kind !== "Present" || page.pageLoad.kind === "Loading") return;
+    if (page.nextCursor === null || page.pageLoad.kind === "Loading") return;
     const requestedCursor = page.nextCursor;
     pageAbortRef.current[kind]?.abort();
     const controller = new AbortController();
@@ -652,7 +652,7 @@ export function useLibraryMembers({
         : latest,
     );
     try {
-      const incoming = await fetchNext(requestedCursor.value, controller.signal);
+      const incoming = await fetchNext(requestedCursor, controller.signal);
       if (
         !mountedRef.current ||
         controller.signal.aborted ||
@@ -711,8 +711,8 @@ export function useLibraryMembers({
     pageOf: (snapshot) => snapshot.members,
     withPage: (snapshot, members) => ({ ...snapshot, members }),
     fetchNext: (cursor, signal) => listLibraryMembers({ libraryId, cursor, signal }),
-    rowHandle: (row) => row.userHandle,
-    creationIdentity: (row) => row.createdAt,
+    rowHandle: (row) => row.user_handle,
+    creationIdentity: (row) => row.created_at,
     errorTitle: "More members could not be loaded.",
   }), [libraryId, loadMorePage]);
 
@@ -721,8 +721,8 @@ export function useLibraryMembers({
     pageOf: (snapshot) => snapshot.pendingInvites,
     withPage: (snapshot, pendingInvites) => ({ ...snapshot, pendingInvites }),
     fetchNext: (cursor, signal) => listPendingLibraryInvites({ libraryId, cursor, signal }),
-    rowHandle: (row) => row.invitationHandle,
-    creationIdentity: (row) => row.createdAt,
+    rowHandle: (row) => row.invitation_handle,
+    creationIdentity: (row) => row.created_at,
     errorTitle: "More invitations could not be loaded.",
   }), [libraryId, loadMorePage]);
 
@@ -734,11 +734,11 @@ export function useLibraryMembers({
   }, [commit]);
 
   const selectUser = useCallback((user: UserSearchResult) => {
-    const label = user.displayName.kind === "Present"
-      ? user.displayName.value
-      : user.email.kind === "Present"
-        ? user.email.value
-        : user.userHandle;
+    const label = user.display_name !== null
+      ? user.display_name
+      : user.email !== null
+        ? user.email
+        : user.user_handle;
     commit((current) => ({
       ...current,
       search: { kind: "Idle" },
@@ -763,7 +763,7 @@ export function useLibraryMembers({
     if (!selected) return;
     await runCommand(
       "Invite",
-      () => createLibraryInvite({ libraryId, userHandle: selected.userHandle, role }),
+      () => createLibraryInvite({ libraryId, userHandle: selected.user_handle, role }),
       "The invitation could not be created.",
       "Invitation created. They’ll see it in Nexus when they next open Libraries; no email was sent.",
     );

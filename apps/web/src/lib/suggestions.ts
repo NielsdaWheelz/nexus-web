@@ -1,7 +1,6 @@
 /** Suggestions reads (Lectern "At hand", library suggestions, quick reads)
  * and their row presentation. Items are the generated wire shape. */
 
-import { absent, present } from "@/lib/api/presence";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { presentMedia } from "@/lib/collections/presenters/media";
@@ -30,7 +29,7 @@ export function suggestionTargetId(target: SuggestionTarget): string {
 export function presentSuggestionItem({ target }: SuggestionItem): CollectionRowView {
   const actionSubject = { ref: assumeCanonicalResourceRef(target.ref) };
   if (target.kind === "Media") {
-    return presentMedia(target.mediaSummary, {
+    return presentMedia(target.media_summary, {
       id: target.ref,
       primary: {
         kind: "link",
@@ -46,13 +45,13 @@ export function presentSuggestionItem({ target }: SuggestionItem): CollectionRow
     primary: { kind: "link", href: target.href, paneLabelHint: target.title },
     title: { text: target.title },
     contributors: [],
-    publicationDate: absent(),
+    publicationDate: null,
     context:
-      target.subtitle.kind === "Present"
-        ? present({ kind: "Text", text: target.subtitle.value })
-        : absent(),
-    activity: absent(),
-    exceptionalStatus: absent(),
+      target.subtitle !== null
+        ? { kind: "Text", text: target.subtitle }
+        : null,
+    activity: null,
+    exceptionalStatus: null,
     actionSubject,
     selected: false,
   };

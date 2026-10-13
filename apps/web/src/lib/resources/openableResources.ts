@@ -1,4 +1,3 @@
-import type { Presence } from "@/lib/api/presence";
 import { apiFetch } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import type { ResourceScheme } from "@/lib/resourceGraph/resourceRef";
@@ -6,7 +5,7 @@ import type { ResourceScheme } from "@/lib/resourceGraph/resourceRef";
 export async function searchOpenableResources(
   request: {
     q: string;
-    schemes: Presence<readonly ResourceScheme[]>;
+    schemes: readonly ResourceScheme[] | null;
     signal?: AbortSignal;
   },
 ) {

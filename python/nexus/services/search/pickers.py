@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import PassageAnchor
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.schemas.presence import Present
 from nexus.schemas.resource_search import (
     ResourceOpenableSearchRequest,
     ResourceOpenableSearchResponse,
@@ -218,7 +217,7 @@ def search_openables(
     db: Session, *, viewer_id: UUID, request: ResourceOpenableSearchRequest
 ) -> ResourceOpenableSearchResponse:
     """Up to 20 visible, route-activatable direct resources; lexical, from one character."""
-    schemes = set(request.schemes.value) if isinstance(request.schemes, Present) else None
+    schemes = set(request.schemes) if request.schemes is not None else None
     exact = parse_resource_ref(request.q)
     if isinstance(exact, ResourceRef):
         refs = [exact]

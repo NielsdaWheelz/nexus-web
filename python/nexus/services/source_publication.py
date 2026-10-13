@@ -16,7 +16,6 @@ from nexus.jobs.queue import JobExecutionContext, lock_running_job_claim
 from nexus.logging import get_logger
 from nexus.schemas.import_history import SourceStageChanged, Stage
 from nexus.schemas.media import SourceCountedProgress, SourceProgress, SourceStageProgress
-from nexus.schemas.presence import absent, present
 from nexus.services.import_history import append_processing_event
 
 _NONTERMINAL = {"accepted", "queued", "running"}
@@ -199,8 +198,8 @@ def _record_stage_changed(
         facts=SourceStageChanged(
             source_attempt_id=fence.attempt_id, execution_id=fence.execution_id
         ),
-        stage=present(stage),
-        failure_code=absent(),
+        stage=stage,
+        failure_code=None,
     )
 
 

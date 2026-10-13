@@ -1,7 +1,7 @@
 """Shared replay-ledger mechanics for ``resource_mutations`` (spec
 lectern-player-lifecycle-hard-cutover.md §5).
 
-Every command surface keyed by one bounded ``clientMutationId`` shares this
+Every command surface keyed by one bounded ``client_mutation_id`` shares this
 lookup/record shape: same ``(viewer_id, mutation_scope, client_mutation_id)``
 key with the same request bytes returns the memoized response without
 writing; the same key with different request bytes is
@@ -9,8 +9,7 @@ writing; the same key with different request bytes is
 
 This module owns hashing, lookup, mismatch classification, and recording. It
 deliberately does NOT own the request-to-bytes dump choice: each caller
-produces its own canonical payload (``by_alias=True`` or ``False``, a
-BaseModel dump, or a hand-built dict) and passes it through
+produces its own canonical payload (a BaseModel dump or a hand-built dict) and passes it through
 ``canonical_json_bytes``, then hands the resulting bytes to ``lookup_replay``/
 ``record_replay``. Keeping that choice at the caller is what keeps every
 existing scope's stored ``request_hash`` byte-for-byte identical to its

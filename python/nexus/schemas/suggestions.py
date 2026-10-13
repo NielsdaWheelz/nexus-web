@@ -4,41 +4,40 @@ from typing import Annotated, Literal
 
 from pydantic import ConfigDict, Field
 
-from nexus.schemas.consumption import CamelOut
+from nexus.schemas.consumption import Closed
 from nexus.schemas.media_summary import MediaSummaryOut
-from nexus.schemas.presence import Presence
 
 
-class MediaSuggestionTargetOut(CamelOut):
+class MediaSuggestionTargetOut(Closed):
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
     kind: Literal["Media"] = "Media"
     ref: str
     media_summary: MediaSummaryOut
-    image_url: Presence[str]
+    image_url: str | None
     href: str
 
 
-class PodcastSuggestionTargetOut(CamelOut):
+class PodcastSuggestionTargetOut(Closed):
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
     kind: Literal["Podcast"] = "Podcast"
     ref: str
     title: str
-    subtitle: Presence[str]
-    image_url: Presence[str]
+    subtitle: str | None
+    image_url: str | None
     href: str
 
 
-class SuggestionItemOut(CamelOut):
+class SuggestionItemOut(Closed):
     target: Annotated[
         MediaSuggestionTargetOut | PodcastSuggestionTargetOut, Field(discriminator="kind")
     ]
 
 
-class SuggestionsOut(CamelOut):
+class SuggestionsOut(Closed):
     items: list[SuggestionItemOut] = Field(max_length=10)
 
 
-class QuickReadsOut(CamelOut):
+class QuickReadsOut(Closed):
     items: list[SuggestionItemOut] = Field(max_length=5)

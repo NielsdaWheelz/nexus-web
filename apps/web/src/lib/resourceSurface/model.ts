@@ -19,7 +19,7 @@ export type ResourceSurfaceCommand =
   | { type: "reverse_edit"; receiptId: string };
 
 export function resourceSurfaceLaneVersion(item: ResourceItem, lane: "title" | "body" | "links"): number {
-  const value = item.versionByLane[lane];
+  const value = item.version_by_lane[lane];
   if (typeof value !== "number") throw new Error(`Resource surface is missing ${lane} version for ${item.ref}`);
   return value;
 }
@@ -50,7 +50,7 @@ function requireLink(surface: ResourceSurface, linkId: string): ResourceSurfaceO
 function createdNode(surface: ResourceSurface, noteId: string, bodyPmJson: Record<string, unknown>): ResourceSurfaceNode {
   const ref = `note_block:${noteId}`;
   return {
-    item: { ...surface.source.item, ref, scheme: "note_block", id: noteId, label: "", summary: "", route: `/notes/${noteId}`, activation: { resource_ref: ref, kind: "route", href: `/notes/${noteId}`, unresolved_reason: null }, versionByLane: { body: 0, links: 0 } },
+    item: { ...surface.source.item, ref, scheme: "note_block", id: noteId, label: "", summary: "", route: `/notes/${noteId}`, activation: { resource_ref: ref, kind: "route", href: `/notes/${noteId}`, unresolved_reason: null }, version_by_lane: { body: 0, links: 0 } },
     content: { kind: "note_body", bodyPmJson, bodyText: "" },
   };
 }

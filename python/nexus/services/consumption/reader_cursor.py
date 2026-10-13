@@ -281,9 +281,9 @@ def _admit_epub(db: Session, media_id: UUID, locator: EpubReaderResumeState) -> 
     if offset is not None:
         if offset > source.char_count:
             raise InvalidRequestError(message="EPUB cursor offset exceeds its source fragment")
-    elif anchor.kind == "Absent":
+    elif anchor is None:
         raise InvalidRequestError(message="EPUB cursor requires an exact offset or source anchor")
-    elif anchor.value not in canonicalize_structure(source.html_sanitized).anchors:
+    elif anchor not in canonicalize_structure(source.html_sanitized).anchors:
         raise InvalidRequestError(message="EPUB cursor anchor must identify one source element")
 
 

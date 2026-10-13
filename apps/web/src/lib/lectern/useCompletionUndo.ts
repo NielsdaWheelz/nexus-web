@@ -17,7 +17,6 @@ import {
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
-import { absent, present, type Presence } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type {
   FinishId,
@@ -32,7 +31,7 @@ export interface CompletionUndoInput {
   /** The Lectern before the finish. */
   before: Pick<LecternSnapshot, "items">;
   /** The finish's `finishId`; without one there is nothing to undo. */
-  finishId: Presence<FinishId>;
+  finishId: FinishId | null;
   /** The finish was a done, which removed the row. */
   done: boolean;
 }
@@ -75,9 +74,9 @@ export function useCompletionUndo(
 
   const undo = useCallback(
     async (input: CompletionUndoInput, finishId: FinishId) => {
-      let restore: Presence<UndoRestore> = absent();
+      let restore: UndoRestore | null = null;
       const index = input.before.items.findIndex(
-        (item) => item.mediaSummary.mediaId === input.mediaId,
+        (item) => item.mediaSummary.media_id === input.mediaId,
       );
       if (input.done && index >= 0) {
         const now = new Set(
@@ -88,11 +87,11 @@ export function useCompletionUndo(
           .reverse()
           .find((item) => now.has(item.itemId));
         const { itemId, addedAt } = input.before.items[index];
-        restore = present({
+        restore = {
           itemId,
           addedAt,
-          after: after ? present(after.itemId) : absent(),
-        });
+          after: after ? after.itemId : null,
+        };
       }
       try {
         await undoFinish({
@@ -120,9 +119,9 @@ export function useCompletionUndo(
   const offer = useCallback(
     (input: CompletionUndoInput) => {
       const { finishId } = input;
-      const action = finishId.kind === "Present" && {
+      const action = finishId !== null && {
         label: "Undo",
-        onClick: () => void undo(input, finishId.value),
+        onClick: () => void undo(input, finishId),
       };
       publish({
         kind: "Hud",

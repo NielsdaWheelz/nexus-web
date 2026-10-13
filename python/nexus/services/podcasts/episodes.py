@@ -17,7 +17,6 @@ from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas import podcast as wire
 from nexus.schemas.collection_page import CollectionPage
-from nexus.schemas.presence import presence_from_nullable
 from nexus.services import media as media_service
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
 from nexus.services.consumption import projection
@@ -142,11 +141,11 @@ def list_episodes(
         items=[
             wire.PodcastEpisodeListItemOut(
                 id=episode.id,
-                mediaSummary=episode.summary,
+                media_summary=episode.summary,
                 transcript_state=TranscriptState(episode.transcript_state or "not_requested"),
                 has_show_notes=page[episode.id]["has_show_notes"],
             )
             for episode in media
         ],
-        nextCursor=presence_from_nullable(next_cursor),
+        next_cursor=next_cursor,
     )

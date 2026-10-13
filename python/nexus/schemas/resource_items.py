@@ -1,8 +1,6 @@
 """Wire schemas for resource items.
 
-Item / capability / locator / mutation models are camelCase on the wire
-(:class:`CamelModel`). The shared activation, surface and command models stay
-snake_case; a blanket alias generator would break their contracts.
+Every key is snake_case on the wire.
 """
 
 from __future__ import annotations
@@ -13,15 +11,12 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import (
-    AliasChoices,
-    AliasGenerator,
     BaseModel,
     ConfigDict,
     Field,
     field_validator,
     model_validator,
 )
-from pydantic.alias_generators import to_camel
 
 from nexus.services.resource_graph.refs import (
     RESOURCE_SCHEMES,
@@ -66,24 +61,6 @@ class NoteBodyVersionsOut(BaseModel):
     links: int = Field(ge=0)
 
     model_config = ConfigDict(extra="forbid")
-
-
-class CamelModel(BaseModel):
-    """Accepts snake_case or camelCase; emits camelCase under ``by_alias=True``.
-
-    Validation keeps the snake name first so a request body's declared schema stays
-    snake_case, which is what the web sends.
-    """
-
-    model_config = ConfigDict(
-        alias_generator=AliasGenerator(
-            validation_alias=lambda field: (
-                AliasChoices(field, to_camel(field)) if to_camel(field) != field else field
-            ),
-            serialization_alias=to_camel,
-        ),
-        populate_by_name=True,
-    )
 
 
 def is_object_type(value: str) -> TypeGuard[OBJECT_TYPES]:
@@ -227,7 +204,7 @@ def _validate_pm_attrs(node_type: str, attrs: dict[str, Any] | None, *, path: st
             raise ValueError(f"{path}.title must be a string or null")
 
 
-class ResourceItemCapabilitiesOut(CamelModel):
+class ResourceItemCapabilitiesOut(BaseModel):
     sharing: Literal["None", "CopyOnly", "ResourceGrants", "HighlightGrants", "LibraryMembership"]
     library_placement: Literal["None", "ManageEntries"]
     link_mode: Literal["none", "direct", "materialize_passage"]
@@ -267,7 +244,7 @@ class ResourceActivationOut(BaseModel):
         return self
 
 
-class ResourceItemOut(CamelModel):
+class ResourceItemOut(BaseModel):
     ref: str
     scheme: ResourceScheme
     id: UUID
@@ -313,7 +290,7 @@ class ResourceLocatorResolveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ResourceLocatorResolutionOut(CamelModel):
+class ResourceLocatorResolutionOut(BaseModel):
     locator: ResourceLocatorIn
     resource_item: ResourceItemOut
     canonical_href: str | None
@@ -597,7 +574,7 @@ class ResourceSurfaceCommandOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ResourceBodyMutationRequest(CamelModel):
+class ResourceBodyMutationRequest(BaseModel):
     client_mutation_id: str = Field(min_length=1, max_length=120)
     base_versions: list[ResourceLaneVersionIn] = Field(default_factory=list)
     body_pm_json: dict[str, Any]
@@ -610,7 +587,7 @@ class ResourceBodyMutationRequest(CamelModel):
         return validate_note_body_pm_json(value) or value
 
 
-class ResourceTitleMutationRequest(CamelModel):
+class ResourceTitleMutationRequest(BaseModel):
     client_mutation_id: str = Field(min_length=1, max_length=120)
     base_versions: list[ResourceLaneVersionIn] = Field(default_factory=list)
     title: str = Field(min_length=1, max_length=200)
@@ -618,7 +595,7 @@ class ResourceTitleMutationRequest(CamelModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ResourceBodyMutationOut(CamelModel):
+class ResourceBodyMutationOut(BaseModel):
     client_mutation_id: str
     item: ResourceItemOut
     body_pm_json: dict[str, Any]
@@ -627,7 +604,7 @@ class ResourceBodyMutationOut(CamelModel):
     updated_at: datetime
 
 
-class ResourceTitleMutationOut(CamelModel):
+class ResourceTitleMutationOut(BaseModel):
     client_mutation_id: str
     item: ResourceItemOut
     versions: dict[str, dict[str, int]]

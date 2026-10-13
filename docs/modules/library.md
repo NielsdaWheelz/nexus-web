@@ -92,11 +92,11 @@ refreshes cannot reopen admission while a sent command remains pending. see
 [library command settlement](library-command-settlement.md).
 
 The admin member and pending-invitation reads return exact
-`{data, page: {nextCursor: Presence<string>}}` envelopes. Members traverse
+`{data, page: {next_cursor: string | null}}` envelopes. Members traverse
 immutable `user_id ASC`; invitations traverse the indexed
 `created_at DESC, id DESC` keyset. Their opaque cursors are bound to viewer,
 Library, endpoint, and invitation status. Member, invitation, and user-search
-person fields preserve semantic absence as `Presence`; governance commands
+person fields carry absence as `null`; governance commands
 return fully hydrated projections and use the standard serializable retry
 boundary.
 

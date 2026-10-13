@@ -113,9 +113,8 @@ one optional backend-only client, `nexus-owner`, connects to Jarvis's private
 streamable-http MCP endpoint. its private deployment JSON names one authenticated
 viewer UUID, its bearer, independent read connection and note admission, and the
 explicitly authorized model processor labels. `MEMORY_CLIENT_CONFIG_PATH` names
-that file; omission denies access. the file uses Nexus's closed owned-absence
-encoding: `{kind:"Absent"}` or `{kind:"Present",value:{client,owner_user_id,
-mcp_url,bearer,connect,admit,processors}}`. dev-server renders it from the same stopped
+that file; omission denies access. the file holds `null` or the config object
+`{client,owner_user_id,mcp_url,bearer,connect,admit,processors}`. dev-server renders it from the same stopped
 sharing declaration that Jarvis validates. no credential enters the browser,
 model arguments, prompt, chat history or ordinary logs.
 

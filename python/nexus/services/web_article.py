@@ -22,7 +22,6 @@ from nexus.config import get_settings
 from nexus.db.models import Fragment, FragmentBlock, Media, MediaKind, MediaSourceAttempt
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.schemas.presence import Present, present
 from nexus.schemas.publication_dates import normalize_source_publication_date
 from nexus.services import contributor_taxonomy as taxonomy
 from nexus.services import document_embeds as embeds
@@ -104,7 +103,7 @@ def publish_fetched_article(
     if winner_id is not None:
         return SourceRunOutcome(
             diagnostics={"status": "deduped", "canonical_url": canonical_url},
-            superseded_by_media_id=present(winner_id),
+            superseded_by_media_id=winner_id,
         )
     metadata = ArticleMetadata(
         page["title"], page["byline"], page["excerpt"], page["site_name"], page["published_time"]
@@ -136,7 +135,7 @@ def publish_fetched_article(
             observation=byline_observation(page["byline"]),
             source="web_article_byline",
         ),
-        metadata_enrichment=present(True),
+        metadata_enrichment=True,
     )
 
 
@@ -210,8 +209,8 @@ def publish_article(
             if site_name and not media.publisher:
                 media.publisher = site_name[:255]
             edition = normalize_source_publication_date(metadata.published_time)
-            if isinstance(edition, Present):
-                media.edition_published_date = edition.value
+            if edition is not None:
+                media.edition_published_date = edition
         return fragment_id
 
     return run_source_publication_phase(

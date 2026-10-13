@@ -27,7 +27,7 @@ import { useWorkspaceStore } from "@/lib/workspace/store";
 import styles from "./ShareOverlay.module.css";
 
 type Snapshot = Schema<"ResourceShareSnapshotOut">;
-type Person = Pick<Schema<"ShareUserOut">, "userHandle" | "email" | "displayName">;
+type Person = Pick<Schema<"ShareUserOut">, "user_handle" | "email" | "display_name">;
 type SharesJson<M extends "get" | "post"> = ApiJson<"/resource-items/{resource_ref}/shares", M>;
 
 const MODE_INTRO: Record<ShareMode, string> = {
@@ -56,8 +56,8 @@ function sharesPath(ref: CanonicalResourceRef): ApiPath {
 }
 
 function personLabel(person: Person): string {
-  if (person.displayName.kind === "Present") return person.displayName.value;
-  return person.email.kind === "Present" ? person.email.value : person.userHandle;
+  if (person.display_name !== null) return person.display_name;
+  return person.email !== null ? person.email : person.user_handle;
 }
 
 /** The notice for a failed load or change, or null after a 401 went to the auth boundary. */
@@ -90,7 +90,7 @@ export default function ShareOverlay(props: { session: ShareSession | null; onCl
   const fallback = session?.options.returnFocusFallback;
   const focus = {
     returnFocusTo: session?.options.returnFocusTo,
-    returnFocusFallback: fallback?.kind === "Present" ? fallback.value : undefined,
+    returnFocusFallback: fallback ?? undefined,
   };
   const panel = session && <SharePanel key={session.key} session={session} onClose={onClose} />;
   return (
@@ -207,16 +207,16 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
   const href =
     target.kind === "Route"
       ? new URL(target.href, process.env.NEXT_PUBLIC_APP_PUBLIC_ORIGIN).toString()
-      : (snapshot?.authenticatedHref ?? null);
+      : (snapshot?.authenticated_href ?? null);
   const label = target.kind === "Route" ? target.label : `${target.ref.split(":")[0]} link`;
-  const members = snapshot?.members.kind === "Present" ? snapshot.members.value : null;
+  const members = snapshot?.members != null ? snapshot.members : null;
 
   const manageMembers = () => {
     if (!snapshot) return;
     const result = workspace.activateWorkspaceTarget({
-      originPaneId: workspace.state.activePrimaryPaneId,
+      originPaneId: workspace.state.active_primary_pane_id,
       target: {
-        href: snapshot.authenticatedHref,
+        href: snapshot.authenticated_href,
         secondaryActivation: { surfaceId: "resource-members" },
       },
       disposition: { kind: "Follow" },
@@ -279,11 +279,11 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
           id="share-library-members"
           title="People"
           note={
-            members.canManage
+            members.can_manage
               ? "Manage people, invitations, roles, and ownership in the Library pane."
               : "Members are managed by library admins."
           }
-          aside={members.canManage ? <Small onClick={manageMembers}>Manage members</Small> : null}
+          aside={members.can_manage ? <Small onClick={manageMembers}>Manage members</Small> : null}
         />
       ) : null}
       {actionError ? <FeedbackNotice content={actionError} announcement="Assertive" /> : null}
@@ -342,7 +342,7 @@ function GrantEditor(props: {
   }
   const link = snapshot.shares.find((s): s is Schema<"LinkShareOut"> => s.kind === "Link");
   const people = snapshot.shares.filter((s): s is Schema<"UserShareOut"> => s.kind === "User");
-  const { user: userAvailability, link: linkAvailability } = snapshot.creationAvailability;
+  const { user: userAvailability, link: linkAvailability } = snapshot.creation_availability;
   const includesHighlight = snapshot.sharing === "HighlightGrants";
 
   const create = async (
@@ -378,7 +378,7 @@ function GrantEditor(props: {
       onChange({
         ...snapshot,
         shares: snapshot.shares.filter((share) => share.handle !== handle),
-        receivedAccess: snapshot.receivedAccess.filter((share) => share.handle !== handle),
+        received_access: snapshot.received_access.filter((share) => share.handle !== handle),
       });
       setConfirm(null);
       actions.announce(message);
@@ -460,8 +460,8 @@ function GrantEditor(props: {
               onSelect={(person) => {
                 const name = personLabel(person);
                 void create(
-                  { kind: "User", userHandle: person.userHandle },
-                  person.userHandle,
+                  { kind: "User", user_handle: person.user_handle },
+                  person.user_handle,
                   [`Shared with ${name}.`, `${name} already has this share.`],
                   "Access could not be shared.",
                 ).then((created) => created && setQuery(""));
@@ -488,16 +488,16 @@ function GrantEditor(props: {
         ))}
       </Section>
 
-      {snapshot.receivedAccess.length > 0 ? (
+      {snapshot.received_access.length > 0 ? (
         <Section
           id="share-received"
           title="Shared with you"
           note="Declining removes only the access path shown here."
         >
-          {snapshot.receivedAccess.map((share) => (
+          {snapshot.received_access.map((share) => (
             <div key={share.handle} className={styles.row}>
               <span>
-                {personLabel(share.sharedBy)} shared this {share.subject.split(":")[0]}
+                {personLabel(share.shared_by)} shared this {share.subject.split(":")[0]}
               </span>
               {revocation(share.handle, {
                 label: "Decline",
@@ -522,7 +522,7 @@ function GrantEditor(props: {
             <span className={styles.actions}>
               <Small
                 icon={<Copy size={15} />}
-                onClick={() => void actions.copy(link.publicHref, "Public link")}
+                onClick={() => void actions.copy(link.public_href, "Public link")}
               >
                 Copy public link
               </Small>
@@ -536,7 +536,7 @@ function GrantEditor(props: {
                     ["Continue to share", "Cancel"],
                     async () => {
                       setBusy("Native");
-                      const shared = actions.nativeShare(link.publicHref, "Shared from Nexus");
+                      const shared = actions.nativeShare(link.public_href, "Shared from Nexus");
                       if (await shared) setConfirm(null);
                       setBusy(null);
                     },
@@ -552,7 +552,7 @@ function GrantEditor(props: {
                 ["Continue to X", "Cancel"],
                 () => {
                   // With noopener, window.open returns null whether or not the tab opened.
-                  const intent = `https://x.com/intent/post?url=${encodeURIComponent(link.publicHref)}`;
+                  const intent = `https://x.com/intent/post?url=${encodeURIComponent(link.public_href)}`;
                   window.open(intent, "_blank", "noopener,noreferrer");
                   setConfirm(null);
                 },

@@ -36,8 +36,8 @@ type Session = Schema<"ActivitySessionOut">;
 type Exclusion = Schema<"ActiveExclusionOut">;
 type Committed = { query: string; state: StatsUrlState; data: Stats };
 type Correction =
-  | Omit<Schema<"ExcludeActivityIn">, "clientMutationId">
-  | Omit<Schema<"RestoreActivityExclusionIn">, "clientMutationId">;
+  | Omit<Schema<"ExcludeActivityIn">, "client_mutation_id">
+  | Omit<Schema<"RestoreActivityExclusionIn">, "client_mutation_id">;
 type OnFilter = (key: FilterKey, value: string) => void;
 type OnRestore = (row: Exclusion) => void;
 /** A table row: its React key, its row header, then its cells. */
@@ -45,16 +45,16 @@ type Row = [key: string, header: ReactNode, ...cells: ReactNode[]];
 type SectionProps = {
   title: string;
   description?: string;
-  scope?: { appliedFilters: string[]; inapplicableFilters: string[] };
+  scope?: { applied_filters: string[]; inapplicable_filters: string[] };
   children: ReactNode;
 };
 
 const PERIOD_LABEL = { day: "Day", week: "Week", month: "Month", year: "Year", all: "All time" };
 const MODALITIES = ["Reading", "Listening", "Viewing"] as const;
 const MODALITY_MS = {
-  Reading: "readingActiveMs",
-  Listening: "listeningActiveMs",
-  Viewing: "viewingActiveMs",
+  Reading: "reading_active_ms",
+  Listening: "listening_active_ms",
+  Viewing: "viewing_active_ms",
 } as const;
 const SHORT_DATE = { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" } as const;
 const RETRY = { title: "Activity wasn’t changed", message: "Check your connection and retry." };
@@ -99,9 +99,9 @@ function utcOffset(minutes: number): string {
 }
 
 /** The first row with the most active time, if any row has some. */
-function peak<T extends { activeMs: number }>(rows: T[]): T | undefined {
+function peak<T extends { active_ms: number }>(rows: T[]): T | undefined {
   return rows.reduce<T | undefined>(
-    (best, row) => (row.activeMs > (best?.activeMs ?? 0) ? row : best),
+    (best, row) => (row.active_ms > (best?.active_ms ?? 0) ? row : best),
     undefined,
   );
 }
@@ -121,13 +121,13 @@ function Facts(props: { className: string; label?: string; facts: [string, React
 }
 
 function Section({ title, description, scope, children }: SectionProps) {
-  const notApplied = scope?.inapplicableFilters.join(", ");
+  const notApplied = scope?.inapplicable_filters.join(", ");
   return (
     <PaneSection className={styles.section} title={title} description={description}>
       {children}
       {scope ? (
         <p className={styles.scope}>
-          <strong>Applies:</strong> {scope.appliedFilters.join(", ")}.
+          <strong>Applies:</strong> {scope.applied_filters.join(", ")}.
           {notApplied ? <> <strong>Not applied:</strong> {notApplied}.</> : null}
         </p>
       ) : null}
@@ -181,9 +181,9 @@ function WorkLink({ mediaRef, title }: { mediaRef: string; title: string }) {
 /** A session or exclusion: its work, "modality · device · start", and its one correction. */
 function SessionCell(props: { title: ReactNode; row: Session | Exclusion; action: ReactNode }) {
   const { row } = props;
-  const when = `${row.modality} · ${row.device.label} · ${shortDate(row.startedAt)}`;
+  const when = `${row.modality} · ${row.device.label} · ${shortDate(row.started_at)}`;
   const clipped =
-    "continuesBeforeRange" in row && (row.continuesBeforeRange || row.continuesAfterRange);
+    "continues_before_range" in row && (row.continues_before_range || row.continues_after_range);
   return (
     <div className={styles.sessionCell}>
       <div>
@@ -197,7 +197,7 @@ function SessionCell(props: { title: ReactNode; row: Session | Exclusion; action
 
 function Timeline({ data }: { data: Stats }) {
   const rows = data.activity.timeline;
-  const max = Math.max(...rows.map((row) => row.activeMs), 1);
+  const max = Math.max(...rows.map((row) => row.active_ms), 1);
   const width = 320 / Math.max(rows.length, 1);
   return (
     <Section
@@ -232,11 +232,11 @@ function Timeline({ data }: { data: Stats }) {
         rows={rows.map((row) => [
           `${row.start}-${row.end}`,
           <>
-            {row.localLabel}{" "}
-            <span className={styles.muted}>({utcOffset(row.utcOffsetMinutes)})</span>
+            {row.local_label}{" "}
+            <span className={styles.muted}>({utcOffset(row.utc_offset_minutes)})</span>
           </>,
           ...MODALITIES.map((modality) => duration(row[MODALITY_MS[modality]])),
-          duration(row.activeMs),
+          duration(row.active_ms),
         ])}
       />
     </Section>
@@ -244,9 +244,9 @@ function Timeline({ data }: { data: Stats }) {
 }
 
 function DaysAndHours({ data }: { data: Stats }) {
-  const { localDays, localHours } = data.activity;
-  const dayMax = Math.max(...localDays.map((row) => row.activeMs), 1);
-  const hourMax = Math.max(...localHours.map((row) => row.activeMs), 1);
+  const { local_days: localDays, local_hours: localHours } = data.activity;
+  const dayMax = Math.max(...localDays.map((row) => row.active_ms), 1);
+  const hourMax = Math.max(...localHours.map((row) => row.active_ms), 1);
   return (
     <div className={styles.grid}>
       <Section
@@ -258,14 +258,14 @@ function DaysAndHours({ data }: { data: Stats }) {
           {localDays.map((row) => (
             <span
               key={row.date}
-              style={{ opacity: 0.15 + (row.activeMs / dayMax) * 0.85 }}
-              title={`${dayLabel(row.date)}: ${duration(row.activeMs)}`}
+              style={{ opacity: 0.15 + (row.active_ms / dayMax) * 0.85 }}
+              title={`${dayLabel(row.date)}: ${duration(row.active_ms)}`}
             />
           ))}
         </div>
         <Table
           head={["Date", "Active time"]}
-          rows={localDays.map((row) => [row.date, dayLabel(row.date), duration(row.activeMs)])}
+          rows={localDays.map((row) => [row.date, dayLabel(row.date), duration(row.active_ms)])}
         />
       </Section>
       <Section title="Time of day" description="Active time by local hour." scope={data.activity}>
@@ -273,7 +273,7 @@ function DaysAndHours({ data }: { data: Stats }) {
           {localHours.map((row) => (
             <span
               key={row.hour}
-              style={{ height: `${Math.max(3, (row.activeMs / hourMax) * 100)}%` }}
+              style={{ height: `${Math.max(3, (row.active_ms / hourMax) * 100)}%` }}
             />
           ))}
         </div>
@@ -282,7 +282,7 @@ function DaysAndHours({ data }: { data: Stats }) {
           rows={localHours.map((row) => [
             `${row.hour}`,
             hourLabel(row.hour),
-            duration(row.activeMs),
+            duration(row.active_ms),
           ])}
         />
       </Section>
@@ -313,18 +313,18 @@ function Breakdowns({ data, onFilter }: { data: Stats; onFilter?: OnFilter }) {
       <Section
         title="Top works"
         description={
-          media.otherActiveMs ? `${duration(media.otherActiveMs)} in other works.` : undefined
+          media.other_active_ms ? `${duration(media.other_active_ms)} in other works.` : undefined
         }
         scope={data.activity}
       >
         <Table
           head={["Work", "Active time", "Forward movement", ...actions]}
           rows={media.rows.map((row) => [
-            row.mediaRef,
-            <WorkLink key="work" mediaRef={row.mediaRef} title={row.title} />,
-            duration(row.activeMs),
-            movement(row.forwardWordPosition, row.forwardMediaPositionMs),
-            ...filter(`work: ${row.title}`, "media", row.mediaRef),
+            row.media_ref,
+            <WorkLink key="work" mediaRef={row.media_ref} title={row.title} />,
+            duration(row.active_ms),
+            movement(row.forward_word_position, row.forward_media_position_ms),
+            ...filter(`work: ${row.title}`, "media", row.media_ref),
           ])}
         />
       </Section>
@@ -336,11 +336,11 @@ function Breakdowns({ data, onFilter }: { data: Stats; onFilter?: OnFilter }) {
         <Table
           head={["Contributor", "Roles", "Active time", ...actions]}
           rows={contributors.rows.map((row) => [
-            row.contributorHandle,
-            row.displayName,
+            row.contributor_handle,
+            row.display_name,
             row.roles.join(", ") || "—",
-            duration(row.activeMs),
-            ...filter(`contributor: ${row.displayName}`, "contributor", row.contributorHandle),
+            duration(row.active_ms),
+            ...filter(`contributor: ${row.display_name}`, "contributor", row.contributor_handle),
           ])}
         />
       </Section>
@@ -353,11 +353,11 @@ function Breakdowns({ data, onFilter }: { data: Stats; onFilter?: OnFilter }) {
           <Table
             head={["Device", "Active time", "Current", ...actions]}
             rows={devices.map((row) => [
-              row.deviceHandle,
+              row.device_handle,
               row.label,
-              duration(row.activeMs),
-              row.isCurrent ? "Current device" : "",
-              ...filter(`device: ${row.label}`, "device", row.deviceHandle),
+              duration(row.active_ms),
+              row.is_current ? "Current device" : "",
+              ...filter(`device: ${row.label}`, "device", row.device_handle),
             ])}
           />
         </Section>
@@ -375,9 +375,9 @@ function Sessions(props: {
 }) {
   const { sessions, correcting } = props;
   const exclude = (row: Session) =>
-    row.continuesBeforeRange || row.continuesAfterRange ? null : (
+    row.continues_before_range || row.continues_after_range ? null : (
       <ActionMenu
-        label={`Actions for ${row.title}, ${row.modality}, ${shortDate(row.startedAt)}`}
+        label={`Actions for ${row.title}, ${row.modality}, ${shortDate(row.started_at)}`}
         triggerDisabled={correcting}
         triggerDisabledReason="Another activity correction is in progress"
         options={[
@@ -399,15 +399,15 @@ function Sessions(props: {
       <Table
         head={["Session", "Active time", "Movement"]}
         rows={sessions.items.map((row) => [
-          [row.mediaRef, row.modality, row.device.deviceHandle, row.startedAt].join(),
+          [row.media_ref, row.modality, row.device.device_handle, row.started_at].join(),
           <SessionCell
             key="session"
-            title={<WorkLink mediaRef={row.mediaRef} title={row.title} />}
+            title={<WorkLink mediaRef={row.media_ref} title={row.title} />}
             row={row}
             action={exclude(row)}
           />,
-          duration(row.activeMs),
-          movement(row.forwardWordPosition, row.forwardMediaPositionMs),
+          duration(row.active_ms),
+          movement(row.forward_word_position, row.forward_media_position_ms),
         ])}
       />
       {sessions.error !== null ? (
@@ -430,7 +430,7 @@ function Sessions(props: {
 }
 
 function Exclusions(props: { data: Stats; correcting: boolean; onRestore: OnRestore }) {
-  const { activeExclusions } = props.data.activity;
+  const { active_exclusions: activeExclusions } = props.data.activity;
   if (activeExclusions.length === 0) return null;
   return (
     <Section
@@ -441,7 +441,7 @@ function Exclusions(props: { data: Stats; correcting: boolean; onRestore: OnRest
       <Table
         head={["Session", "Excluded time"]}
         rows={activeExclusions.map((row) => [
-          row.exclusionHandle,
+          row.exclusion_handle,
           <SessionCell
             key="session"
             title={row.title}
@@ -450,7 +450,7 @@ function Exclusions(props: { data: Stats; correcting: boolean; onRestore: OnRest
               <Button
                 size="sm"
                 variant="ghost"
-                aria-label={`Restore ${row.title} session from ${shortDate(row.startedAt)}`}
+                aria-label={`Restore ${row.title} session from ${shortDate(row.started_at)}`}
                 disabled={props.correcting}
                 onClick={() => props.onRestore(row)}
               >
@@ -458,7 +458,7 @@ function Exclusions(props: { data: Stats; correcting: boolean; onRestore: OnRest
               </Button>
             }
           />,
-          duration(row.excludedActiveMs),
+          duration(row.excluded_active_ms),
         ])}
       />
     </Section>
@@ -466,7 +466,7 @@ function Exclusions(props: { data: Stats; correcting: boolean; onRestore: OnRest
 }
 
 function Outcomes({ data }: { data: Stats }) {
-  const { completion, retainedArtifacts: kept } = data;
+  const { completion, retained_artifacts: kept } = data;
   return (
     <>
       <Section
@@ -480,16 +480,16 @@ function Outcomes({ data }: { data: Stats }) {
         <Table
           head={["Work", "Completions"]}
           rows={completion.media.map((row) => [
-            row.mediaRef,
-            <WorkLink key="work" mediaRef={row.mediaRef} title={row.title} />,
+            row.media_ref,
+            <WorkLink key="work" mediaRef={row.media_ref} title={row.title} />,
             count(row.total),
           ])}
         />
         <Table
           head={["Contributor", "Roles", "Completions"]}
           rows={completion.contributors.map((row) => [
-            row.contributorHandle,
-            row.displayName,
+            row.contributor_handle,
+            row.display_name,
             row.roles.join(", ") || "—",
             count(row.total),
           ])}
@@ -504,8 +504,8 @@ function Outcomes({ data }: { data: Stats }) {
           className={styles.artifacts}
           facts={[
             ["Highlights", count(kept.highlights)],
-            ["Note blocks", count(kept.noteBlocks)],
-            ["Links", count(kept.neutralLinks)],
+            ["Note blocks", count(kept.note_blocks)],
+            ["Links", count(kept.neutral_links)],
           ]}
         />
       </Section>
@@ -514,11 +514,18 @@ function Outcomes({ data }: { data: Stats }) {
 }
 
 function YearInReading({ data, year }: { data: Stats; year: number }) {
-  const { localDays, localHours, longestSession, media, timeline, totals } = data.activity;
+  const {
+    local_days: localDays,
+    local_hours: localHours,
+    longest_session: longestSession,
+    media,
+    timeline,
+    totals,
+  } = data.activity;
   const peakDay = peak(localDays);
   const peakHour = peak(localHours);
   const cover = media.rows[0]?.title;
-  const longest = longestSession.kind === "Present" ? longestSession.value : null;
+  const longest = longestSession;
   return (
     <div>
       <header className={styles.yearHero}>
@@ -531,15 +538,15 @@ function YearInReading({ data, year }: { data: Stats; year: number }) {
         </div>
         <h2>{year}</h2>
         <span>Observed time</span>
-        <strong>{duration(totals.activeMs)}</strong>
+        <strong>{duration(totals.active_ms)}</strong>
       </header>
       <Facts
         className={styles.summary}
         facts={[
-          ["Peak day", peakDay ? `${dayLabel(peakDay.date)} · ${duration(peakDay.activeMs)}` : "—"],
+          ["Peak day", peakDay ? `${dayLabel(peakDay.date)} · ${duration(peakDay.active_ms)}` : "—"],
           [
             "Peak hour",
-            peakHour ? `${hourLabel(peakHour.hour)} · ${duration(peakHour.activeMs)}` : "—",
+            peakHour ? `${hourLabel(peakHour.hour)} · ${duration(peakHour.active_ms)}` : "—",
           ],
           ["Completions", count(data.completion.total)],
         ]}
@@ -560,7 +567,7 @@ function YearInReading({ data, year }: { data: Stats; year: number }) {
           <p className={styles.longest}>
             <strong>{longest.title}</strong>
             <span>
-              {duration(longest.activeMs)} · {longest.modality} · {shortDate(longest.startedAt)}
+              {duration(longest.active_ms)} · {longest.modality} · {shortDate(longest.started_at)}
             </span>
           </p>
         </Section>
@@ -793,7 +800,10 @@ export default function StatsPaneBody() {
       feedback.publish({ kind: "Hud", key: "consumption-activity-correction", content });
     setCorrecting(true);
     try {
-      const init = { method: "POST", body: JSON.stringify({ ...command, clientMutationId }) };
+      const init = {
+        method: "POST",
+        body: JSON.stringify({ ...command, client_mutation_id: clientMutationId }),
+      };
       await apiFetch<ApiJson<"/consumption/activity-exclusions", "post">>(
         "/api/consumption/activity-exclusions",
         init,
@@ -812,23 +822,23 @@ export default function StatsPaneBody() {
       setCorrecting(false);
     }
   };
-  const exclude = ({ mediaRef, modality, device, startedAt, endedAt, activeMs }: Session) =>
+  const exclude = ({ media_ref, modality, device, started_at, ended_at, active_ms }: Session) =>
     void correct(
       {
         kind: "Exclude",
-        mediaRef,
+        media_ref,
         modality,
-        deviceHandle: device.deviceHandle,
-        startedAt,
-        endedAt,
+        device_handle: device.device_handle,
+        started_at,
+        ended_at,
       },
-      `Don’t count this ${duration(activeMs)} session?`,
+      `Don’t count this ${duration(active_ms)} session?`,
       "Session excluded",
     );
   const restore = (row: Exclusion) =>
     void correct(
-      { kind: "Restore", exclusionHandle: row.exclusionHandle },
-      `Count this ${duration(row.excludedActiveMs)} session again?`,
+      { kind: "Restore", exclusion_handle: row.exclusion_handle },
+      `Count this ${duration(row.excluded_active_ms)} session again?`,
       "Session restored",
     );
   if (correctionDefect !== null) throw correctionDefect;
@@ -844,20 +854,20 @@ export default function StatsPaneBody() {
     const activity = data?.activity;
     const label =
       key === "media"
-        ? activity?.media.rows.find((row) => row.mediaRef === value)?.title
+        ? activity?.media.rows.find((row) => row.media_ref === value)?.title
         : key === "contributor"
-          ? activity?.contributors.rows.find((row) => row.contributorHandle === value)?.displayName
-          : activity?.devices.find((row) => row.deviceHandle === value)?.label;
+          ? activity?.contributors.rows.find((row) => row.contributor_handle === value)?.display_name
+          : activity?.devices.find((row) => row.device_handle === value)?.label;
     return label ?? `Selected ${key === "media" ? "work" : key}`;
   };
   const totals = data?.activity.totals;
-  const kept = data?.retainedArtifacts;
+  const kept = data?.retained_artifacts;
   const wholeEmpty =
     data !== null &&
-    totals!.activeMs === 0 &&
+    totals!.active_ms === 0 &&
     data.completion.total === 0 &&
-    kept!.highlights + kept!.noteBlocks + kept!.neutralLinks === 0 &&
-    data.activity.activeExclusions.length === 0;
+    kept!.highlights + kept!.note_blocks + kept!.neutral_links === 0 &&
+    data.activity.active_exclusions.length === 0;
   const retry = resource.status === "error" && (
     <Button size="sm" variant="secondary" onClick={resource.retry}>
       Retry
@@ -894,9 +904,9 @@ export default function StatsPaneBody() {
           Could not refresh this view. Showing the last loaded result. {retry}
         </p>
       ) : null}
-      {totals?.recordedActiveMs === 0 ? (
+      {totals?.recorded_active_ms === 0 ? (
         <section className={styles.state}>
-          {data!.activity.appliedFilters.length > 1 ? (
+          {data!.activity.applied_filters.length > 1 ? (
             <>
               <h2>No activity matches this view</h2>
               <p>Try a broader period.</p>
@@ -914,7 +924,7 @@ export default function StatsPaneBody() {
       ) : null}
       {data === null || totals === undefined || wholeEmpty ? null : yearView ? (
         <YearInReading data={data} year={state.year} />
-      ) : totals.activeMs === 0 ? (
+      ) : totals.active_ms === 0 ? (
         <>
           <Exclusions data={data} correcting={correcting} onRestore={restore} />
           <Outcomes data={data} />
@@ -925,19 +935,19 @@ export default function StatsPaneBody() {
             className={styles.summary}
             label="Activity summary"
             facts={[
-              ["Observed time", duration(totals.activeMs)],
-              ["Active days", count(totals.activeDays)],
+              ["Observed time", duration(totals.active_ms)],
+              ["Active days", count(totals.active_days)],
               [
                 live ? "Current streak" : "Ending streak",
                 <>
-                  {count(totals.streak)} days <small>best {count(totals.longestStreak)}</small>
+                  {count(totals.streak)} days <small>best {count(totals.longest_streak)}</small>
                 </>,
               ],
-              ["Sessions", count(totals.sessionCount)],
+              ["Sessions", count(totals.session_count)],
               [
                 "Forward movement",
-                totals.forwardWordPosition > 0 || totals.forwardMediaPositionMs > 0
-                  ? movement(totals.forwardWordPosition, totals.forwardMediaPositionMs)
+                totals.forward_word_position > 0 || totals.forward_media_position_ms > 0
+                  ? movement(totals.forward_word_position, totals.forward_media_position_ms)
                   : "—",
               ],
               ["Completions", count(data.completion.total)],

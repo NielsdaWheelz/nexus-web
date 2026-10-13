@@ -45,7 +45,6 @@ from nexus.schemas.contributors import (
     PodcastContributorWorkItemOut,
     ResourceActionSubjectOut,
 )
-from nexus.schemas.presence import Present, presence_from_nullable
 from nexus.services.capabilities import can_edit_media_authors
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
 from nexus.services.contributor_credits import load_contributor_credits_for_catalogue
@@ -364,9 +363,7 @@ def list_contributor_works(
                     role_facts=facts,
                 )
             )
-    return CollectionPage[ContributorWorkItemOut](
-        items=items, nextCursor=presence_from_nullable(next_cursor)
-    )
+    return CollectionPage[ContributorWorkItemOut](items=items, next_cursor=next_cursor)
 
 
 def _subject(scheme: Literal["media", "podcast"], target_id: UUID) -> ResourceActionSubjectOut:
@@ -493,7 +490,7 @@ def prepare_observed_role_slices_in_current_transaction(
         ).all()
         handles = {handle for _, handle in credited}
         if any(
-            isinstance(c.contributor_handle, Present) and c.contributor_handle.value not in handles
+            c.contributor_handle is not None and c.contributor_handle not in handles
             for c in observation.credits
         ):
             raise ContributorObservationRejected(
@@ -547,7 +544,7 @@ def _write(db: Session, prepared: PreparedContributorPublication) -> bool:
     )
     if changed:
         for person, credit in pairs:
-            if not isinstance(credit.contributor_handle, Present):
+            if credit.contributor_handle is None:
                 ensure_alias(
                     db,
                     contributor_id=person.contributor_id,
@@ -600,8 +597,7 @@ def _put_media_authors(
         raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Only the media creator can edit authors")
     scope = f"media:{media_id}:authors"
     mutation_id = request.client_mutation_id
-    # Hashed by field name, not wire alias: the memo is keyed to the request's meaning.
-    request_bytes = canonical_json_bytes(request.model_dump(mode="json", by_alias=False))
+    request_bytes = canonical_json_bytes(request.model_dump(mode="json"))
     stored = lookup_replay(
         db,
         viewer_id=viewer_id,
@@ -610,8 +606,7 @@ def _put_media_authors(
         request_bytes=request_bytes,
     )
     if stored is not None:
-        # Every memo, old or new, carries authorMode.
-        return MediaAuthorsOut.model_validate({"authorMode": stored["authorMode"]})
+        return MediaAuthorsOut.model_validate({"author_mode": stored["author_mode"]})
     target = MediaTarget(media_id)
     if isinstance(request, ManualMediaAuthorsRequest):
         replace_role_slices(
@@ -630,7 +625,7 @@ def _put_media_authors(
         scope=scope,
         client_mutation_id=mutation_id,
         request_bytes=request_bytes,
-        response_json=response.model_dump(mode="json", by_alias=True),
+        response_json=response.model_dump(mode="json"),
     )
     db.commit()
     return response

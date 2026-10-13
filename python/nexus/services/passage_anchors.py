@@ -37,7 +37,6 @@ from nexus.schemas.passage_anchors import (
     PdfPassageTarget,
     TimePassageTarget,
 )
-from nexus.schemas.presence import Presence, absent, present
 from nexus.services import locator_resolver, note_bodies, text_quote
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
@@ -320,7 +319,7 @@ def get_navigation_target(
     viewer_id: UUID,
     passage_anchor_id: UUID,
     owner: ResourceRef,
-) -> Presence[PassageTarget]:
+) -> PassageTarget | None:
     """Authorize both identities, then resolve the quote without persisting offsets."""
     anchor = db.get(PassageAnchor, passage_anchor_id)
     if (
@@ -338,25 +337,19 @@ def get_navigation_target(
         db, viewer_id=viewer_id, passage_anchor_id=passage_anchor_id
     )
     if location is None or location.locator is None:
-        return absent()
+        return None
     locator = location.locator
     if owner.scheme == "note_block":
-        return present(
-            NotePassageTarget(
-                start_offset=locator["start_offset"], end_offset=locator["end_offset"]
-            )
+        return NotePassageTarget(
+            start_offset=locator["start_offset"], end_offset=locator["end_offset"]
         )
     if locator["kind"] == "text":
-        return present(
-            FragmentPassageTarget(
-                fragment_id=UUID(locator["fragment_id"]),
-                start_offset=locator["start_offset"],
-                end_offset=locator["end_offset"],
-            )
+        return FragmentPassageTarget(
+            fragment_id=UUID(locator["fragment_id"]),
+            start_offset=locator["start_offset"],
+            end_offset=locator["end_offset"],
         )
     if locator["kind"] == "time":
-        return present(
-            TimePassageTarget(start_ms=locator["t_start_ms"], end_ms=locator["t_end_ms"])
-        )
+        return TimePassageTarget(start_ms=locator["t_start_ms"], end_ms=locator["t_end_ms"])
     # A matching page does not prove stored geometry survived content replacement.
-    return present(PdfPassageTarget(page_number=locator["page_number"]))
+    return PdfPassageTarget(page_number=locator["page_number"])

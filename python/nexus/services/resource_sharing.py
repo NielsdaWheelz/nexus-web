@@ -14,7 +14,6 @@ from nexus.db.models import Highlight, MediaTeardownIntent, ResourceGrant, User
 from nexus.db.retries import retry_serializable
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.schemas.presence import absent, presence_from_nullable, present
 from nexus.schemas.resource_sharing import (
     AudienceAvailableOut,
     AudienceUnavailableOut,
@@ -52,8 +51,8 @@ def _href(path: str) -> str:
 def _user(user: User) -> ShareUserOut:
     return ShareUserOut(
         user_handle=seal_user(user.id),
-        email=presence_from_nullable(user.email),
-        display_name=presence_from_nullable(user.display_name),
+        email=user.email,
+        display_name=user.display_name,
     )
 
 
@@ -103,14 +102,14 @@ def get_share_snapshot(
     mode = capability_for_ref(subject).sharing
     user = _unavailable(db, viewer_user_id, subject, lock=False)
     link = user or public_resource_sharing.link_readiness(db, subject)
-    members = absent()
+    members = None
     if mode == "LibraryMembership":
         library = library_out(
             lock_library_for_member(db, viewer_user_id, subject.id, lock=False),
             viewer_id=viewer_user_id,
         )
         if not library.is_default and library.system_key is None:
-            members = present(ShareMembersOut(can_manage=library.can_manage_members))
+            members = ShareMembersOut(can_manage=library.can_manage_members)
     # Only media and highlights have grant rows, so other subjects list none.
     owned = resource_grants.creator_grants(db, creator_id=viewer_user_id, subject=subject)
     received = resource_grants.received_grants(db, recipient_id=viewer_user_id, subject=subject)

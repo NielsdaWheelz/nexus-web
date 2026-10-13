@@ -6,7 +6,6 @@ import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
 import ChoiceField from "@/components/ui/ChoiceField";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
-import { absent, present } from "@/lib/api/presence";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { FIND_LIMIT } from "@/lib/find/find";
 import type { FindController, FindResult } from "@/lib/find/useFind";
@@ -199,15 +198,15 @@ export function FindResults({
       title: { text, segments: row.snippet },
       context:
         row.context.length > 0
-          ? present({
+          ? {
               kind: "Snippet",
               segments: [{ text: row.context.join(" / "), emphasized: false }],
-            })
-          : absent(),
+            }
+          : null,
       contributors: [],
-      publicationDate: absent(),
-      activity: absent(),
-      exceptionalStatus: absent(),
+      publicationDate: null,
+      activity: null,
+      exceptionalStatus: null,
       actionSubject: null,
       selected: current,
     };

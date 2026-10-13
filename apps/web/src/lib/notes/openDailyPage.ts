@@ -77,7 +77,7 @@ export function useOpenDailyPage(): (
       const localDate = resolveLocalDate(target.date);
       const activationId = crypto.randomUUID();
       const result = activateWorkspaceTarget({
-        originPaneId: state.activePrimaryPaneId,
+        originPaneId: state.active_primary_pane_id,
         target: { href: `/daily/${localDate}` },
         disposition: activation.disposition,
         paneEntryActivation: {
@@ -98,7 +98,7 @@ export function useOpenDailyPage(): (
     [
       activateWorkspaceTarget,
       resolveLocalDate,
-      state.activePrimaryPaneId,
+      state.active_primary_pane_id,
     ],
   );
 }

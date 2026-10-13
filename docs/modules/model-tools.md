@@ -114,7 +114,7 @@ at `?generation_id=&tool_call_id=`).
 
 ## Shared memory
 
-Production runs with memory `Absent`. `MEMORY_CLIENT_CONFIG_PATH` names the private
+Production runs with memory unconfigured (the config file holds `null`). `MEMORY_CLIENT_CONFIG_PATH` names the private
 owner declaration (`memory.MemoryClientConfig`); policy grants a memory plan only
 to its owner on a processor chain it allows. One MCP session per call, never
 resent; the server must answer one bounded text item. `memory.save_note` is a Write
@@ -150,7 +150,7 @@ completion and undo cannot reverse a central note.
 
 ## Stale tabs
 
-The browser sends `X-Nexus-Chat-Contract` ("5") and `X-Nexus-Tool-Projection` (the
+The browser sends `X-Nexus-Chat-Contract` ("6") and `X-Nexus-Tool-Projection` (the
 generated `contract.PROJECTION_REVISION`, a hash of the effects, error types and
 presentation) on chat paths; a mismatch is 409 "Reload Nexus to continue".
 `scripts/generate_tool_contract_projection.py` writes and checks the revision.

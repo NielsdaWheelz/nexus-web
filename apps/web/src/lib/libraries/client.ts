@@ -51,7 +51,7 @@ export async function listMemberLibraries({
       signal,
     });
     libraries.push(...page.items);
-    cursor = page.nextCursor.kind === "Present" ? page.nextCursor.value : null;
+    cursor = page.next_cursor;
   } while (cursor !== null);
   return libraries;
 }

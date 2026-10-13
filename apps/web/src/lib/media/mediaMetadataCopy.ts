@@ -66,11 +66,11 @@ export function metadataOperationSummary(
     case "recovering":
       return `recovering interrupted ${name}`;
     case "waiting":
-      return operation.until.kind === "Present" && formatTime !== undefined
-        ? `${name} will retry ${formatTime(operation.until.value)}`
+      return operation.until !== null && formatTime !== undefined
+        ? `${name} will retry ${formatTime(operation.until)}`
         : `${name} will retry`;
     case "no_findings":
-      return operation.reviewed_at.kind === "Present"
+      return operation.reviewed_at !== null
         ? "no metadata found · reviewed"
         : "no metadata found";
     case "failed":
@@ -92,14 +92,14 @@ export function metadataResearchLabel(
   purpose: MetadataPurpose,
 ): string {
   if (purpose === "title") {
-    if (operation.kind === "Absent" || operation.value.purpose !== "title")
+    if (operation === null || operation.purpose !== "title")
       return "generate title";
-    return operation.value.status === "failed"
+    return operation.status === "failed"
       ? "retry title generation"
       : "generate title again";
   }
-  if (operation.kind === "Absent") return "research metadata";
-  return operation.value.status === "failed"
+  if (operation === null) return "research metadata";
+  return operation.status === "failed"
     ? "retry metadata research"
     : "research again";
 }
@@ -124,11 +124,11 @@ export function xSourceCoverage(context: Schema<"XSourceContext">): string {
 export function earlierMetadataRuns(view: MetadataEnrichmentView): number {
   const latest = view.operation;
   const latestUnfinished =
-    latest.kind === "Present" &&
-    (latest.value.status === "queued" ||
-      latest.value.status === "running" ||
-      latest.value.status === "recovering" ||
-      latest.value.status === "waiting");
+    latest !== null &&
+    (latest.status === "queued" ||
+      latest.status === "running" ||
+      latest.status === "recovering" ||
+      latest.status === "waiting");
   return view.unfinished_count - (latestUnfinished ? 1 : 0);
 }
 

@@ -18,7 +18,6 @@ from nexus.config import get_settings
 from nexus.db.models import Media
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.schemas.presence import Present, present
 from nexus.schemas.publication_dates import normalize_source_publication_date
 from nexus.services import contributor_taxonomy as taxonomy
 from nexus.services.net.http_retry import get_json_with_retry
@@ -58,8 +57,8 @@ def run_youtube_video_ingest(
         if snippet.get("channel_title") and not media.publisher:
             media.publisher = snippet["channel_title"][:255]
         edition = normalize_source_publication_date(snippet.get("published_at"))
-        if isinstance(edition, Present):
-            media.edition_published_date = edition.value
+        if edition is not None:
+            media.edition_published_date = edition
         if not snippet.get("channel_title"):
             return taxonomy.NOT_OBSERVED
         channel_id = snippet.get("channel_id")
@@ -91,7 +90,7 @@ def run_youtube_video_ingest(
         observations=source_contributor_observations(
             media_id=media_id, observation=observation, source="youtube_metadata"
         ),
-        metadata_enrichment=present(True),
+        metadata_enrichment=True,
     )
 
 

@@ -40,7 +40,7 @@ def update_title(
         if page is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Page not found")
         scope = f"resource:{ref.uri}:title"
-        request_bytes = canonical_json_bytes(request.model_dump(mode="json", by_alias=True))
+        request_bytes = canonical_json_bytes(request.model_dump(mode="json"))
         replay = lookup_replay(
             db,
             viewer_id=viewer_id,
@@ -71,7 +71,7 @@ def update_title(
             scope=scope,
             client_mutation_id=request.client_mutation_id,
             request_bytes=request_bytes,
-            response_json=response.model_dump(mode="json", by_alias=True),
+            response_json=response.model_dump(mode="json"),
         )
         db.commit()
         return response
@@ -94,7 +94,7 @@ def update_body(
         if existing is not None and existing.user_id != viewer_id:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
         scope = f"resource:{ref.uri}:body"
-        request_bytes = canonical_json_bytes(request.model_dump(mode="json", by_alias=True))
+        request_bytes = canonical_json_bytes(request.model_dump(mode="json"))
         replay = lookup_replay(
             db,
             viewer_id=viewer_id,
@@ -131,7 +131,7 @@ def update_body(
             scope=scope,
             client_mutation_id=request.client_mutation_id,
             request_bytes=request_bytes,
-            response_json=response.model_dump(mode="json", by_alias=True),
+            response_json=response.model_dump(mode="json"),
         )
         db.commit()
         return response
@@ -154,7 +154,7 @@ def _require_base_version(
             "Resource version base is required",
             details={
                 "current": surfaces.resource_item_out(db, viewer_id=viewer_id, ref=ref).model_dump(
-                    mode="json", by_alias=True
+                    mode="json"
                 )
             },
         )
@@ -165,7 +165,7 @@ def _require_base_version(
             "Resource version is stale",
             details={
                 "current": surfaces.resource_item_out(db, viewer_id=viewer_id, ref=ref).model_dump(
-                    mode="json", by_alias=True
+                    mode="json"
                 )
             },
         )

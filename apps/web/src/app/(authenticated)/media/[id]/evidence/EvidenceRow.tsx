@@ -133,7 +133,7 @@ function NoteEditorHost({
           // justify-defect: a note surface projects the requested note body.
           throw new TypeError("Link note surface has the wrong identity or content");
         }
-        const { body, links } = source.item.versionByLane;
+        const { body, links } = source.item.version_by_lane;
         if (body === undefined || links === undefined) {
           // justify-defect: an editable note exposes both owned version lanes.
           throw new TypeError("Link note surface is missing note versions");
@@ -261,15 +261,15 @@ export default function EvidenceRow({
         <MachineText variant="inline" origin={{ label: item.origin === "discovery" ? "Connection discovery" : "Assistant" }}>
           {item.rationale}
         </MachineText>
-      ) : item.kind !== "SourceReference" && !highlight && item.excerpt.kind === "Present" && item.excerpt.value !== item.label ? (
-        <p className={styles.excerpt}>{item.excerpt.value}</p>
+      ) : item.kind !== "SourceReference" && !highlight && item.excerpt !== null && item.excerpt !== item.label ? (
+        <p className={styles.excerpt}>{item.excerpt}</p>
       ) : null}
       {"creation" in item && item.creation ? <ConnectionCreation creation={item.creation} /> : null}
       {"mutation" in item && item.mutation?.kind === "dismiss_discovery" ? <p className={styles.kind}>Dismissing hides this link and prevents rediscovery of this pair.</p> : null}
       {highlight && !editing
         ? notes.map((note) => (
             <p key={note.note_block_id} className={styles.note}>
-              {note.excerpt.kind === "Present" ? note.excerpt.value : ""}
+              {note.excerpt !== null ? note.excerpt : ""}
             </p>
           ))
         : null}
@@ -282,7 +282,7 @@ export default function EvidenceRow({
       {item.kind === "SourceReference"
         ? item.target_refs.map((ref) => {
             const target = actions.sources.get(ref)!;
-            const name = target.label.kind === "Present" ? target.label.value : null;
+            const name = target.label;
             const text = target.content.kind === "Unavailable" ? null : target.content.text;
             const expandable = text !== null && text.length > 240;
             const expanded = expandedSources.has(ref);

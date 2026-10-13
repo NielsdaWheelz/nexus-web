@@ -25,7 +25,6 @@ from nexus.schemas.metadata_enrichment import (
     MetadataEnrichmentOutput,
     MetadataField,
 )
-from nexus.schemas.presence import Present, absent, presence_from_nullable, present
 from nexus.services.contributor_credits import load_contributor_credits_for_media
 from nexus.services.contributor_taxonomy import parse_contributor_handle
 from nexus.services.generation.contract import InvalidOutput
@@ -123,46 +122,44 @@ def metadata_enrichment_agent_definition() -> tuple[str, dict[str, object]]:
 def validate_structured_enrichment(
     payload: object, *, admitted_handles: frozenset[str] = frozenset()
 ) -> AcceptedMetadataEnrichment:
-    """Accept one generated result; unknown values become owned absence immediately."""
+    """Accept one generated result; unknown values become null immediately."""
     try:
         output = MetadataEnrichmentOutput.model_validate(payload)
-        contributors = absent()
+        contributors = None
         if output.contributors is not None:
             slices: list[AcceptedMetadataContributorRoleSlice] = []
             for role_slice in output.contributors:
                 credits: list[AcceptedMetadataContributorCredit] = []
                 for credit in role_slice.credits:
-                    handle = absent()
+                    handle = None
                     if credit.contributor_handle is not None:
                         if credit.contributor_handle not in admitted_handles:
                             raise ValueError("contributor handle was not supplied for this item")
-                        handle = present(parse_contributor_handle(credit.contributor_handle))
+                        handle = parse_contributor_handle(credit.contributor_handle)
                     credits.append(
                         AcceptedMetadataContributorCredit(
                             contributor_handle=handle,
                             credited_name=credit.credited_name,
-                            raw_role=absent()
-                            if credit.raw_role is None
-                            else present(credit.raw_role),
+                            raw_role=credit.raw_role,
                         )
                     )
                 slices.append(
                     AcceptedMetadataContributorRoleSlice(role=role_slice.role, credits=credits)
                 )
-            contributors = present(slices)
+            contributors = slices
         return AcceptedMetadataEnrichment(
-            title=absent() if output.title is None else present(output.title),
+            title=output.title,
             contributors=contributors,
-            original_published_date=absent()
+            original_published_date=None
             if output.original_published_date is None
-            else present(output.original_published_date),
-            edition_published_date=absent()
+            else output.original_published_date,
+            edition_published_date=None
             if output.edition_published_date is None
-            else present(output.edition_published_date),
-            edition_isbn=absent() if output.edition_isbn is None else present(output.edition_isbn),
-            publisher=absent() if output.publisher is None else present(output.publisher),
-            language=absent() if output.language is None else present(output.language),
-            description=absent() if output.description is None else present(output.description),
+            else output.edition_published_date,
+            edition_isbn=output.edition_isbn,
+            publisher=output.publisher,
+            language=output.language,
+            description=output.description,
         )
     except (ValidationError, ValueError) as exc:
         raise MetadataInvalidOutput("generated metadata violates its output contract") from exc
@@ -270,9 +267,7 @@ def build_metadata_research_input(db: Session, media: Media) -> MetadataResearch
     if media.kind in {"video", "podcast_episode"}:
         source["content_revision"] = read_transcript_content_revision(db, media_id=media.id)
     else:
-        source["reader_generation"] = presence_from_nullable(
-            read_publication_generation(db, media_id=media.id)
-        ).model_dump(mode="json")
+        source["reader_generation"] = read_publication_generation(db, media_id=media.id)
     if media.kind == "podcast_episode":
         source["rss_metadata_fingerprint"] = db.execute(
             select(PodcastEpisode.rss_metadata_fingerprint).where(
@@ -340,9 +335,9 @@ def merge_enrichment(
 ) -> list[MetadataField]:
     """Apply changed, present scalars; the operation owns credits, stamps and outcomes."""
     changed: list[MetadataField] = []
-    if isinstance(enrichment.title, Present) and enrichment.title.value != media.title:
-        if not replace_reader_document_title(db, media=media, title=enrichment.title.value):
-            media.title = enrichment.title.value
+    if enrichment.title is not None and enrichment.title != media.title:
+        if not replace_reader_document_title(db, media=media, title=enrichment.title):
+            media.title = enrichment.title
         changed.append("title")
     scalar_fields: tuple[MetadataField, ...] = (
         "original_published_date",
@@ -354,7 +349,7 @@ def merge_enrichment(
     )
     for field in scalar_fields:
         value = getattr(enrichment, field)
-        if isinstance(value, Present) and value.value != getattr(media, field):
-            setattr(media, field, value.value)
+        if value is not None and value != getattr(media, field):
+            setattr(media, field, value)
             changed.append(field)
     return changed

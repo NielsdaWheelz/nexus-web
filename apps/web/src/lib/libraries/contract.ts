@@ -6,10 +6,9 @@ export type LibraryInvitation = Schema<"LibraryInvitationOut">;
 export type ViewerLibraryInvitation = Schema<"ViewerLibraryInvitationOut">;
 export type LibraryRole = LibraryMember["role"];
 export type LibraryInvitationStatus = LibraryInvitation["status"];
-export type LibraryGovernanceCursor = Extract<
-  Schema<"LibraryGovernancePageInfo">["nextCursor"],
-  { kind: "Present" }
->["value"];
+export type LibraryGovernanceCursor = NonNullable<
+  Schema<"LibraryGovernancePageInfo">["next_cursor"]
+>;
 export type LibraryGovernancePageInfo = Schema<"LibraryGovernancePageInfo">;
 export type LibraryGovernancePage<T> = Omit<
   ApiJson<"/libraries/{library_id}/members", "get">,

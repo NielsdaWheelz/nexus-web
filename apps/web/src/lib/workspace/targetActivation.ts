@@ -87,7 +87,7 @@ export function planWorkspaceTarget(
       : target.id === "page" && daily.value.pageId === target.params.pageId;
   };
   const matches = state.panes.flatMap((pane) => {
-    const route = resolvePaneRouteModel(pane.currentVisit.href);
+    const route = resolvePaneRouteModel(pane.current_visit.href);
     if (route.routeKey === target.routeKey) return [{ pane, exact: false }];
     return sameDay(pane.id, route) ? [{ pane, exact: true }] : [];
   });
@@ -106,7 +106,7 @@ export function planWorkspaceTarget(
       : create;
   }
   const { pane } = match;
-  if (!match.exact && pane.currentVisit.href !== href) {
+  if (!match.exact && pane.current_visit.href !== href) {
     return { kind: "NavigatedExisting", paneId: pane.id, href };
   }
   const kind = pane === origin ? "Unchanged" : "ActivatedExisting";

@@ -210,9 +210,9 @@ function AnnotationBody({
         );
         previous = {
           note_block_id: block.id,
-          body_pm_json: block.bodyPmJson,
-          body_text: block.bodyText,
-          version_by_lane: { body: block.versionByLane.body, links: block.versionByLane.links },
+          body_pm_json: block.body_pm_json,
+          body_text: block.body_text,
+          version_by_lane: { body: block.version_by_lane.body, links: block.version_by_lane.links },
         };
         if (previous.note_block_id !== noteBlockId) throw new TypeError("saved annotation changed note identity");
       }
@@ -345,7 +345,7 @@ function AnnotationBody({
     if (!parseResourceRef(ref)) return;
     try {
       const resolved = await resolveResourceLocator({ kind: "resource_ref", ref });
-      if (resolved.resourceItem.route) onOpenLink(resolved.resourceItem.route, disposition);
+      if (resolved.resource_item.route) onOpenLink(resolved.resource_item.route, disposition);
     } catch (error: unknown) {
       if (handleUnauthenticatedApiError(error)) return;
       if (!isApiError(error) || isSameSystemApiDefect(error)) { setDefect({ error }); return; }

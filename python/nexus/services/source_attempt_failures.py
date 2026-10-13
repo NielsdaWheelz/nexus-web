@@ -17,7 +17,6 @@ from nexus.schemas.import_history import (
     assume_safe_failure_code,
     queue_failure_code,
 )
-from nexus.schemas.presence import Presence, present
 from nexus.services import media_source_types as source_types
 from nexus.services.import_history import append_processing_event
 from nexus.services.media_processing_state import (
@@ -50,8 +49,8 @@ class SourceAttemptFailure:
     error_code: str
     error_message: str
     now: datetime
-    execution_id: Presence[UUID]
-    """The worker execution that observed the failure; Absent when the failure
+    execution_id: UUID | None
+    """The worker execution that observed the failure; null when the failure
     was published outside any execution (acceptance or enqueue time)."""
 
 
@@ -116,12 +115,10 @@ def publish_source_attempt_failure(db: Session, failure: SourceAttemptFailure) -
                 progress_unit=attempt["progress_unit"],
             ),
         ),
-        stage=present(
-            source_history_stage(
-                source_type=source_type, processing_stage=attempt["processing_stage"]
-            )
+        stage=source_history_stage(
+            source_type=source_type, processing_stage=attempt["processing_stage"]
         ),
-        failure_code=present(assume_safe_failure_code(failure.error_code)),
+        failure_code=assume_safe_failure_code(failure.error_code),
     )
 
     if source_type == source_types.PODCAST_EPISODE_TRANSCRIPT:
@@ -219,6 +216,6 @@ def on_dead_letter(db: Session, job: JobRow) -> None:
             error_code=queue_failure_code(job.error_code),
             error_message=message,
             now=db.scalar(text("SELECT clock_timestamp()")),
-            execution_id=present(job.execution_id),
+            execution_id=job.execution_id,
         ),
     )

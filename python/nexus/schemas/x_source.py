@@ -6,8 +6,6 @@ from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
-from nexus.schemas.presence import Presence
-
 Nonempty = Annotated[str, Field(min_length=1)]
 
 
@@ -23,18 +21,18 @@ class XSourceAuthor(_SourceModel):
 
 class XSourceUrl(_SourceModel):
     url: Nonempty
-    expanded_url: Presence[str]
-    display_url: Presence[str]
-    title: Presence[str]
-    attachment_media_key: Presence[str]
+    expanded_url: str | None
+    display_url: str | None
+    title: str | None
+    attachment_media_key: str | None
 
 
 class XSourceAttachment(_SourceModel):
     media_key: Nonempty
     type: Nonempty
-    url: Presence[str]
-    preview_image_url: Presence[str]
-    alt_text: Presence[str]
+    url: str | None
+    preview_image_url: str | None
+    alt_text: str | None
 
 
 class XSourceReference(_SourceModel):
@@ -47,8 +45,8 @@ class XSourcePost(_SourceModel):
     id: Nonempty
     author: XSourceAuthor
     text: str
-    created_at: Presence[AwareDatetime]
-    language: Presence[str]
+    created_at: AwareDatetime | None
+    language: str | None
     urls: tuple[XSourceUrl, ...]
     attachments: tuple[XSourceAttachment, ...]
     references: tuple[XSourceReference, ...]

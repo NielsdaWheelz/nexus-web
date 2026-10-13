@@ -1,4 +1,4 @@
-"""Resource-item routes: parse the ref, delegate, envelope camelCase.
+"""Resource-item routes: parse the ref, delegate, envelope the result.
 
 The static paths are registered before ``/{resource_ref}/…`` so they are not swallowed
 by the ref parameter.

@@ -68,7 +68,6 @@ from nexus.schemas.imports import (
     WaitingReason,
 )
 from nexus.schemas.media import MediaOut
-from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
 from nexus.schemas.source_issues import SOURCE_ISSUES
 from nexus.services.collection_keyset import (
     KeysetValueKind,
@@ -571,14 +570,14 @@ def read_import_page(db: Session, *, viewer_id: UUID, query: ImportListQuery) ->
                 row,
                 media=_linked_media(row, media),
                 matched_event=(
-                    present(matched[row["matched_id"]])
+                    matched[row["matched_id"]]
                     if query.view == "History" and row["matched_precedes_newest"]
-                    else absent()
+                    else None
                 ),
             )
             for row in page
         ],
-        next_cursor=presence_from_nullable(next_cursor),
+        next_cursor=next_cursor,
     )
 
 
@@ -603,9 +602,7 @@ def _import_row(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) -> RowMap
 
 def _history_owner(row: RowMapping) -> HistoryOwner:
     if row["ref_kind"] == "upload":
-        return UploadHistoryOwner(
-            session_id=row["session_id"], media_id=presence_from_nullable(_media_id(row))
-        )
+        return UploadHistoryOwner(session_id=row["session_id"], media_id=_media_id(row))
     return MediaHistoryOwner(media_id=row["media_id"])
 
 
@@ -614,16 +611,14 @@ def read_import_detail(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) ->
     row = _import_row(db, viewer_id=viewer_id, ref=ref)
     media = _linked_media(row, _hydrate_media(db, viewer_id=viewer_id, rows=[row]))
     return ImportDetail(
-        item=_item(row, media=media, matched_event=absent()),
+        item=_item(row, media=media, matched_event=None),
         history_coverage=history_coverage(db, owner=_history_owner(row)),
         source_issues=(
-            absent()
+            None
             if row["publication_generation"] is None
-            else present(
-                ImportSourceIssues(
-                    generation=int(row["publication_generation"]),
-                    issues=SOURCE_ISSUES.validate_python(row["source_issues"]),
-                )
+            else ImportSourceIssues(
+                generation=int(row["publication_generation"]),
+                issues=SOURCE_ISSUES.validate_python(row["source_issues"]),
             )
         ),
     )
@@ -639,18 +634,18 @@ def read_import_history(
         "viewer": viewer_id,
         "ref": format_import_ref(ref),
     }
-    before: Absent | Present[tuple[datetime, str]] = absent()
+    before: tuple[datetime, str] | None = None
     if cursor is not None:
         occurred_at, event_id = decode_keyset_cursor(cursor, binding, _EVENT_PAGE_PLAN)
-        before = present((cast(datetime, occurred_at), cast(str, event_id)))
+        before = (cast(datetime, occurred_at), cast(str, event_id))
     entries = read_history_page(
         db, viewer_id=viewer_id, owner=_history_owner(row), before=before, limit=limit + 1
     )
     page = entries[:limit]
-    next_cursor: Absent | Present[str] = absent()
+    next_cursor: str | None = None
     if len(entries) > limit and page:
         last = {"occurred_at": page[-1].occurred_at, "id": page[-1].id}
-        next_cursor = present(encode_keyset_cursor(binding, _EVENT_PAGE_PLAN, last))
+        next_cursor = encode_keyset_cursor(binding, _EVENT_PAGE_PLAN, last)
     return HistoryPage(entries=page, next_cursor=next_cursor)
 
 
@@ -682,16 +677,16 @@ def _stage(raw: str) -> Stage:
 
 def _waiting_reason(
     row: RowMapping, *, job_prefix: Literal["source_job", "index_job"]
-) -> Absent | Present[WaitingReason]:
+) -> WaitingReason | None:
     job_id = row[f"{job_prefix}_id"]
     status = row[f"{job_prefix}_status"]
     if job_id is None or status not in {"pending", "failed"}:
-        return absent()
+        return None
     if row[f"{job_prefix}_available_at"] > row["database_now"]:
-        return present("RetryBackoff")
+        return "RetryBackoff"
     if row["capacity_job_id"] is not None and row["capacity_job_id"] != job_id:
-        return present("Capacity")
-    return present("Queue")
+        return "Capacity"
+    return "Queue"
 
 
 def _work_state(
@@ -705,7 +700,7 @@ def _work_state(
         code = row[f"{obligation}_failure_code"]
         return ImportStateNeedsAttention(
             stage=stage,
-            failure_code=absent() if code is None else present(assume_safe_failure_code(code)),
+            failure_code=None if code is None else assume_safe_failure_code(code),
         )
     if classification != "Active":
         raise AssertionError(f"unknown {obligation} classification {classification!r}")
@@ -713,9 +708,9 @@ def _work_state(
         return ImportStateActive(
             status="Queued",
             stage=stage,
-            waiting_reason=present("AwaitingUploadConfirmation"),
-            progress=absent(),
-            next_retry_at=absent(),
+            waiting_reason="AwaitingUploadConfirmation",
+            progress=None,
+            next_retry_at=None,
         )
     prefix = "source_job" if obligation == "source" else "index_job"
     waiting = _waiting_reason(row, job_prefix=prefix)
@@ -723,12 +718,8 @@ def _work_state(
         status="Processing" if row[f"{prefix}_status"] == "running" else "Queued",
         stage=stage,
         waiting_reason=waiting,
-        progress=media.source_progress if obligation == "source" else absent(),
-        next_retry_at=(
-            present(row[f"{prefix}_available_at"])
-            if isinstance(waiting, Present) and waiting.value == "RetryBackoff"
-            else absent()
-        ),
+        progress=media.source_progress if obligation == "source" else None,
+        next_retry_at=row[f"{prefix}_available_at"] if waiting == "RetryBackoff" else None,
     )
 
 
@@ -743,51 +734,43 @@ def _state(row: RowMapping, media: MediaOut | None) -> ImportState:
     metadata = media.metadata_enrichment
     if row["classification"] == "NeedsAttention":
         operation = metadata.operation
-        if not isinstance(operation, Present):
+        if operation is None:
             raise AssertionError("metadata attention requires a retained operation")
-        match operation.value.status:
+        match operation.status:
             case "failed":
-                return ImportStateNeedsAttention(
-                    stage="Metadata", failure_code=present(operation.value.code)
-                )
+                return ImportStateNeedsAttention(stage="Metadata", failure_code=operation.code)
             case "no_findings":
-                return ImportStateNeedsAttention(stage="Metadata", failure_code=absent())
+                return ImportStateNeedsAttention(stage="Metadata", failure_code=None)
             case _:
                 raise AssertionError("metadata attention disagrees with its operation")
     operation = metadata.unfinished_operation
-    if not isinstance(operation, Present):
+    if operation is None:
         raise AssertionError("active metadata requires an unfinished operation")
-    running = operation.value.status == "running"
-    waiting = operation.value.status == "waiting"
+    running = operation.status == "running"
+    waiting = operation.status == "waiting"
     return ImportStateActive(
         status="Processing" if running else "Queued",
         stage="Metadata",
-        waiting_reason=absent() if running else present("RetryBackoff" if waiting else "Queue"),
-        progress=absent(),
-        next_retry_at=operation.value.until if operation.value.status == "waiting" else absent(),
+        waiting_reason=None if running else ("RetryBackoff" if waiting else "Queue"),
+        progress=None,
+        next_retry_at=operation.until if operation.status == "waiting" else None,
     )
 
 
-def _source_obligation(
-    row: RowMapping, media: MediaOut | None
-) -> Absent | Present[SourceImportObligation]:
+def _source_obligation(row: RowMapping, media: MediaOut | None) -> SourceImportObligation | None:
     if row["source_classification"] is None:
-        return absent()
+        return None
     state = _work_state(row, media, obligation="source")
     if media is None:
         rejected = row["derived_state"] == "VerificationFailed"
-        return present(
-            SourceImportObligation.model_validate(
-                {
-                    "state": state.model_dump(),
-                    "recovery": absent()
-                    if rejected or row["origin_kind"] == "BrowserCapture"
-                    else present(
-                        RetryUploadOffer(expected_generation=int(row["upload_generation"]))
-                    ),
-                    "unavailable_reason": present("UploadRejected") if rejected else absent(),
-                }
-            )
+        return SourceImportObligation.model_validate(
+            {
+                "state": state.model_dump(),
+                "recovery": None
+                if rejected or row["origin_kind"] == "BrowserCapture"
+                else RetryUploadOffer(expected_generation=int(row["upload_generation"])),
+                "unavailable_reason": "UploadRejected" if rejected else None,
+            }
         )
     answer = source_recovery(
         SourceRecoveryFacts(
@@ -803,22 +786,18 @@ def _source_obligation(
         )
     )
     offered = isinstance(answer, RetrySourceOffer | RepairSourceOffer)
-    return present(
-        SourceImportObligation.model_validate(
-            {
-                "state": state.model_dump(),
-                "recovery": present(answer) if offered else absent(),
-                "unavailable_reason": absent() if offered or answer is None else present(answer),
-            }
-        )
+    return SourceImportObligation.model_validate(
+        {
+            "state": state.model_dump(),
+            "recovery": answer if offered else None,
+            "unavailable_reason": None if offered else answer,
+        }
     )
 
 
-def _search_obligation(
-    row: RowMapping, media: MediaOut | None
-) -> Absent | Present[SearchImportObligation]:
+def _search_obligation(row: RowMapping, media: MediaOut | None) -> SearchImportObligation | None:
     if row["search_classification"] is None:
-        return absent()
+        return None
     answer = search_recovery(
         SearchRecoveryFacts(
             revision=int(row["index_revision"]),
@@ -827,14 +806,12 @@ def _search_obligation(
             ready_for_reading=row["processing_status"] == "ready_for_reading",
         )
     )
-    return present(
-        SearchImportObligation.model_validate(
-            {
-                "state": _work_state(row, media, obligation="search").model_dump(),
-                "recovery": present(answer) if isinstance(answer, RepairSearchOffer) else absent(),
-                "unavailable_reason": present(answer) if answer == "NotOwner" else absent(),
-            }
-        )
+    return SearchImportObligation.model_validate(
+        {
+            "state": _work_state(row, media, obligation="search").model_dump(),
+            "recovery": answer if isinstance(answer, RepairSearchOffer) else None,
+            "unavailable_reason": answer if answer == "NotOwner" else None,
+        }
     )
 
 
@@ -842,7 +819,7 @@ def _item(
     row: RowMapping,
     *,
     media: MediaOut | None,
-    matched_event: Absent | Present[HistoryEntry],
+    matched_event: HistoryEntry | None,
 ) -> ImportItem:
     if row["source_job_id"] is not None and (
         row["source_job_kind"] != "ingest_media_source" or not row["source_job_exact"]
@@ -865,10 +842,10 @@ def _item(
     return ImportItem(
         ref=ref,
         title=row["title"],
-        original_filename=presence_from_nullable(row["original_filename"]),
+        original_filename=row["original_filename"],
         media_kind=MediaKind(row["media_kind"]),
-        source_label=absent() if host is None else present(str(host)),
-        media_ref=absent() if media is None else present(f"media:{media.id}"),
+        source_label=None if host is None else str(host),
+        media_ref=None if media is None else f"media:{media.id}",
         readiness=ImportReadiness(
             can_read=media.capabilities.can_read if media is not None else False,
             can_search=media.capabilities.can_search if media is not None else False,
@@ -884,7 +861,7 @@ def _item(
         obligations=ImportObligations(
             source=_source_obligation(row, media),
             search=_search_obligation(row, media),
-            metadata=present(media.metadata_enrichment) if media is not None else absent(),
+            metadata=media.metadata_enrichment if media is not None else None,
         ),
         source_issue_count=int(row["source_issue_count"]),
     )

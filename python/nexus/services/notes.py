@@ -28,7 +28,6 @@ from nexus.schemas.notes import (
     NotePageSummaryOut,
     UpdatePageRequest,
 )
-from nexus.schemas.presence import presence_from_nullable
 from nexus.schemas.resource_items import ExpectedNoteBody
 from nexus.services import note_bodies, passage_anchors
 from nexus.services.content_indexing import IndexOwner, delete_content_index
@@ -288,7 +287,7 @@ def capture_daily_page_note_in_current_transaction(
             ApiErrorCode.E_EMPTY_NOTE_BODY, "Daily capture requires a meaningful note body"
         )
     request_bytes = canonical_json_bytes(
-        {**request.model_dump(mode="json", by_alias=True), "localDate": local_date.isoformat()}
+        {**request.model_dump(mode="json"), "local_date": local_date.isoformat()}
     )
     replay = lookup_replay(
         db,
@@ -332,7 +331,7 @@ def capture_daily_page_note_in_current_transaction(
         scope="daily:capture",
         client_mutation_id=request.client_mutation_id,
         request_bytes=request_bytes,
-        response_json=response.model_dump(mode="json", by_alias=True),
+        response_json=response.model_dump(mode="json"),
     )
     db.flush()
     return response
@@ -456,7 +455,7 @@ def set_highlight_note_body_pm_json_in_current_transaction(
         scope=scope,
         client_mutation_id=client_mutation_id,
         request_bytes=request_bytes,
-        response_json=response.model_dump(mode="json", by_alias=True),
+        response_json=response.model_dump(mode="json"),
     )
     db.flush()
     return response
@@ -582,9 +581,7 @@ def _page_out(db: Session, viewer_id: UUID, page: Page) -> NotePageOut:
         id=page.id,
         title=page.title,
         updated_at=page.updated_at,
-        daily_page=presence_from_nullable(
-            None if local_date is None else DailyPageSummaryOut(local_date=local_date)
-        ),
+        daily_page=None if local_date is None else DailyPageSummaryOut(local_date=local_date),
     )
 
 

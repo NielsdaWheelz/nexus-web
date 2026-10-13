@@ -36,7 +36,7 @@ export function useContributorFilterLabels(handles: readonly string[]) {
         (detail) =>
           setLabels((current) => ({
             ...current,
-            [handle]: detail.displayName,
+            [handle]: detail.display_name,
           })),
         () => {},
       );
@@ -44,7 +44,7 @@ export function useContributorFilterLabels(handles: readonly string[]) {
     return () => controller.abort();
   }, [key]);
   const remember = useCallback((item: ContributorSearchItem) => {
-    setLabels((current) => ({ ...current, [item.handle]: item.displayName }));
+    setLabels((current) => ({ ...current, [item.handle]: item.display_name }));
   }, []);
   return { labels, remember };
 }
@@ -98,7 +98,7 @@ export default function ContributorFilter({
                 setQuery("");
               }}
             >
-              {item.displayName}
+              {item.display_name}
             </Button>
           ))}
         </div>

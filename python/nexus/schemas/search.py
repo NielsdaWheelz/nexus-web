@@ -7,7 +7,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaSummaryOut
-from nexus.schemas.presence import Presence
 from nexus.schemas.publication_dates import PublicationDate
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import (
@@ -23,7 +22,7 @@ class SearchResultSourceOut(BaseModel):
     media_kind: str
     title: str
     contributors: list[ContributorCreditOut]
-    original_published_date: Presence[PublicationDate]
+    original_published_date: PublicationDate | None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -41,12 +40,12 @@ class SearchResultBaseOut(BaseModel):
     snippet: str
     resource_ref: str
     owner_resource_ref: str
-    action_subject_ref: str = Field(alias="actionSubjectRef")
+    action_subject_ref: str
     activation: ResourceActivationOut
     citation_target: str | None
     context_ref: SearchResultContextRefOut
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(extra="forbid")
 
 
 class SearchResultTitledOut(SearchResultBaseOut):
@@ -71,7 +70,7 @@ class SearchResultMediaOut(SearchResultBaseOut):
 
     type: Literal["media", "episode", "video"]
     id: UUID
-    media_summary: MediaSummaryOut = Field(alias="mediaSummary")
+    media_summary: MediaSummaryOut
 
 
 class SearchResultPodcastOut(SearchResultTitledOut):

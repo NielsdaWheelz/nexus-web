@@ -87,7 +87,7 @@ def create_link(db: Session, *, viewer_id: UUID, request: CreateLinkRequest) -> 
             ),
         )
 
-    body = request.model_dump(mode="json", by_alias=True)
+    body = request.model_dump(mode="json")
     key = request.client_mutation_id
     return _replayed(db, viewer_id, _LINK_SCOPE, key, body, CreateLinkOut.model_validate, op)
 
@@ -159,7 +159,7 @@ def put_link_note(
         )
 
     scope = f"link_note:{link_id}"
-    body = request.model_dump(mode="json", by_alias=True)
+    body = request.model_dump(mode="json")
     key = request.client_mutation_id
     return _replayed(db, viewer_id, scope, key, body, LinkNoteOut.model_validate, op)
 
@@ -257,7 +257,7 @@ def _replayed[T: BaseModel | None](
             scope=scope,
             client_mutation_id=client_mutation_id,
             request_bytes=request_bytes,
-            response_json=response.model_dump(mode="json", by_alias=True)
+            response_json=response.model_dump(mode="json")
             if isinstance(response, BaseModel)
             else {},
         )

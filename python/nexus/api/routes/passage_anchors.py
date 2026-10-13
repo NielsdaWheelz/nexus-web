@@ -10,7 +10,6 @@ from nexus.db.session import DbSession
 from nexus.errors import InvalidRequestError
 from nexus.responses import Data
 from nexus.schemas.passage_anchors import PassageTarget
-from nexus.schemas.presence import Presence
 from nexus.services import passage_anchors
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 
@@ -24,7 +23,7 @@ def resolve_passage_anchor(
     response: Response,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-) -> Data[Presence[PassageTarget]]:
+) -> Data[PassageTarget | None]:
     owner = parse_resource_ref(owner_ref)
     if isinstance(owner, ResourceRefParseFailure) or owner.scheme not in ("media", "note_block"):
         raise InvalidRequestError(message="Passage owner must be a media or note_block ref")

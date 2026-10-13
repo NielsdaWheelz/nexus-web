@@ -79,7 +79,7 @@ def restore(viewer_id: UUID, *, command: RestoreActivityExclusionIn) -> Activity
 
 
 def _result(outcome: str, exclusion_id: UUID) -> dict[str, str]:
-    return {"outcome": outcome, "exclusionHandle": seal(EXCLUSION, exclusion_id)}
+    return {"outcome": outcome, "exclusion_handle": seal(EXCLUSION, exclusion_id)}
 
 
 def _replayed(
@@ -87,7 +87,7 @@ def _replayed(
     command: ExcludeActivityIn | RestoreActivityExclusionIn,
     apply: Callable[[Session], dict[str, str]],
 ) -> ActivityExclusionResultOut:
-    """One exclusion write, replayed by ``clientMutationId``; its memo is the result itself."""
+    """One exclusion write, replayed by ``client_mutation_id``; its memo is the result itself."""
     return replayed_command(
         "apply_activity_exclusion",
         "Consumption.ActivityExclusions",

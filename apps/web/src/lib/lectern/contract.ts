@@ -1,7 +1,6 @@
 /** Lectern and player wire, projected once into branded domain values. */
 
 import type { Schema } from "@/lib/api/wire";
-import type { Presence } from "@/lib/api/presence";
 import {
   type MediaSummary,
 } from "@/lib/media/mediaSummary";
@@ -41,8 +40,8 @@ export type ConsumptionInfo = Schema<"ConsumptionOut">;
 export type ConsumptionState = ConsumptionInfo["state"];
 export type ChapterOut = Schema<"ChapterOut">;
 export type ListeningIn = Schema<"ListeningIn">;
-export type PlayerDescriptor = Omit<Schema<"PlayerDescriptor">, "mediaId"> & {
-  mediaId: MediaId;
+export type PlayerDescriptor = Omit<Schema<"PlayerDescriptor">, "media_id"> & {
+  media_id: MediaId;
 };
 export type Activation =
   | { kind: "FooterAudio"; descriptor: PlayerDescriptor }
@@ -74,43 +73,43 @@ export interface LecternResult {
 export type ListeningPosition = Schema<"ListeningPositionOut">;
 export interface MediaProgressState {
   mediaId: MediaId;
-  readerCursor: Schema<"MediaProgressState">["readerCursor"];
-  listeningState: Presence<ListeningPosition>;
+  readerCursor: Schema<"MediaProgressState">["reader_cursor"];
+  listeningState: ListeningPosition | null;
 }
 export interface ConsumptionResult {
   outcome: "Done" | "Superseded" | "Gone";
   lectern: LecternSnapshot;
-  nextItem: Presence<LecternItem>;
-  finishId: Presence<FinishId>;
-  progressState: Presence<MediaProgressState>;
+  nextItem: LecternItem | null;
+  finishId: FinishId | null;
+  progressState: MediaProgressState | null;
 }
 export interface NaturalEnd {
   mediaId: MediaId;
   terminalListening: ListeningIn;
-  expectedConsumptionOverrideRevision: Presence<number>;
+  expectedConsumptionOverrideRevision: number | null;
 }
 export interface UndoRestore {
   itemId: LecternItemId;
   addedAt: string;
-  after: Presence<LecternItemId>;
+  after: LecternItemId | null;
 }
 
 export function playerDescriptorFromWire(
   descriptor: Schema<"PlayerDescriptor">,
 ): PlayerDescriptor {
-  return { ...descriptor, mediaId: parseMediaId(descriptor.mediaId) };
+  return { ...descriptor, media_id: parseMediaId(descriptor.media_id) };
 }
 
 export function lecternItemFromWire(
   item: Schema<"LecternItemOut">,
 ): LecternItem {
-  const mediaSummary = item.mediaSummary;
+  const mediaSummary = item.media_summary;
   const activation = item.activation;
   return {
-    itemId: parseLecternItemId(item.itemId),
+    itemId: parseLecternItemId(item.item_id),
     mediaSummary,
     href: assumeAppHref(item.href),
-    addedAt: item.addedAt,
+    addedAt: item.added_at,
     activation:
       activation.kind === "FooterAudio"
         ? {
@@ -119,7 +118,7 @@ export function lecternItemFromWire(
           }
         : activation,
     actionSubject: {
-      ref: canonicalResourceRef({ scheme: "media", id: mediaSummary.mediaId }),
+      ref: canonicalResourceRef({ scheme: "media", id: mediaSummary.media_id }),
     },
   };
 }
@@ -127,34 +126,31 @@ export function lecternItemFromWire(
 export function lecternSnapshotFromWire(
   snapshot: Schema<"LecternSnapshot">,
 ): LecternSnapshot {
-  return { items: snapshot.items.map(lecternItemFromWire), atCapacity: snapshot.atCapacity };
+  return { items: snapshot.items.map(lecternItemFromWire), atCapacity: snapshot.at_capacity };
 }
 
 export function consumptionResultFromWire(
   result: Schema<"ConsumptionResult">,
 ): ConsumptionResult {
-  const { nextItem, finishId, progressState } = result;
+  const { next_item: nextItem, finish_id: finishId, progress_state: progressState } = result;
   return {
     outcome: result.outcome,
     lectern: lecternSnapshotFromWire(result.lectern),
     nextItem:
-      nextItem.kind === "Present"
-        ? { kind: "Present", value: lecternItemFromWire(nextItem.value) }
+      nextItem !== null
+        ? lecternItemFromWire(nextItem)
         : nextItem,
     finishId:
-      finishId.kind === "Present"
-        ? { kind: "Present", value: uuid<FinishId>(finishId.value, "FinishId") }
+      finishId !== null
+        ? (uuid<FinishId>(finishId, "FinishId"))
         : finishId,
     progressState:
-      progressState.kind === "Present"
+      progressState !== null
         ? {
-            kind: "Present",
-            value: {
-              mediaId: parseMediaId(progressState.value.mediaId),
-              readerCursor: progressState.value.readerCursor,
-              listeningState: progressState.value.listeningState,
-            },
-          }
+              mediaId: parseMediaId(progressState.media_id),
+              readerCursor: progressState.reader_cursor,
+              listeningState: progressState.listening_state,
+            }
         : progressState,
   };
 }

@@ -53,7 +53,7 @@ export async function loadDailySurface(
 ): Promise<DailySurfaceLoad> {
   const descriptor = await readDailyPage(owner.localDate);
   return descriptor.kind === "Latent"
-    ? { kind: "Latent", title: descriptor.defaultTitle }
+    ? { kind: "Latent", title: descriptor.default_title }
     : {
         kind: "Materialized",
         pageId: descriptor.page.id,
@@ -157,24 +157,24 @@ export function provisionalDailyOccurrence(input: {
         },
         missing: false,
         capabilities: {
-          linkMode: "none",
+          link_mode: "none",
           sharing: "None",
-          libraryPlacement: "None",
+          library_placement: "None",
           attachable: false,
-          chatSubject: "none",
+          chat_subject: "none",
           readable: "none",
           inspectable: "none",
-          citableResultType: null,
-          citationOutputSource: false,
-          appSearchScope: false,
-          conversationSearchScope: false,
-          promptRender: "none",
-          expansionPolicy: "none",
+          citable_result_type: null,
+          citation_output_source: false,
+          app_search_scope: false,
+          conversation_search_scope: false,
+          prompt_render: "none",
+          expansion_policy: "none",
           expandable: false,
-          adjacencySource: false,
-          adjacencyTarget: false,
+          adjacency_source: false,
+          adjacency_target: false,
         },
-        versionByLane: { body: 0, links: 0 },
+        version_by_lane: { body: 0, links: 0 },
       },
       content: {
         kind: "note_body",

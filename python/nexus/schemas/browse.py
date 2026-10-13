@@ -10,14 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaSummaryOut
-from nexus.schemas.presence import Presence
 from nexus.services.sealed_handles import DiscoveryTargetHandle
 
 
 class _Out(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
-        populate_by_name=True,
         strict=True,
         json_schema_serialization_defaults_required=True,
     )
@@ -70,14 +68,14 @@ class BrowsePreviewQuery(BaseModel):
 class InNexusMediaResolution(_Out):
     kind: Literal["InNexusMedia"] = "InNexusMedia"
     href: str
-    action_subject_ref: str = Field(serialization_alias="actionSubjectRef")
-    media_summary: MediaSummaryOut = Field(serialization_alias="mediaSummary")
+    action_subject_ref: str
+    media_summary: MediaSummaryOut
 
 
 class InNexusPodcastResolution(_Out):
     kind: Literal["InNexusPodcast"] = "InNexusPodcast"
     href: str
-    action_subject_ref: str = Field(serialization_alias="actionSubjectRef")
+    action_subject_ref: str
 
 
 class PreviewResolution(_Out):
@@ -92,20 +90,20 @@ type BrowseResolution = Annotated[
 
 
 class EpubFacts(_Out):
-    ebook_ref: Presence[str] = Field(serialization_alias="ebookRef")
+    ebook_ref: str | None
 
 
 class WebArticleFacts(_Out):
-    site_name: Presence[str] = Field(serialization_alias="siteName")
+    site_name: str | None
 
 
 class VideoFacts(_Out):
-    video_ref: Presence[str] = Field(serialization_alias="videoRef")
-    channel_title: Presence[str] = Field(serialization_alias="channelTitle")
+    video_ref: str | None
+    channel_title: str | None
 
 
 class PodcastFacts(_Out):
-    podcast_ref: str = Field(serialization_alias="podcastRef")
+    podcast_ref: str
 
 
 class _Candidate[Source: BrowseSource](_Out):
@@ -113,41 +111,41 @@ class _Candidate[Source: BrowseSource](_Out):
     resolution: BrowseResolution
     title: str
     contributors: list[ContributorCreditOut]
-    description: Presence[str]
-    published_at: Presence[datetime] = Field(serialization_alias="publishedAt")
-    image: Presence[str]
+    description: str | None
+    published_at: datetime | None
+    image: str | None
 
 
 class EpubCandidate(_Candidate[Literal[BrowseSource.ProjectGutenberg]]):
     source: Literal[BrowseSource.ProjectGutenberg] = BrowseSource.ProjectGutenberg
     kind: Literal[BrowseKind.Epub] = BrowseKind.Epub
-    kind_facts: EpubFacts = Field(serialization_alias="kindFacts")
+    kind_facts: EpubFacts
 
 
 class WebArticleCandidate(_Candidate[Literal[BrowseSource.Brave]]):
     source: Literal[BrowseSource.Brave] = BrowseSource.Brave
     kind: Literal[BrowseKind.WebArticle] = BrowseKind.WebArticle
-    kind_facts: WebArticleFacts = Field(serialization_alias="kindFacts")
+    kind_facts: WebArticleFacts
 
 
 class VideoCandidate(_Candidate[Literal[BrowseSource.YouTube]]):
     source: Literal[BrowseSource.YouTube] = BrowseSource.YouTube
     kind: Literal[BrowseKind.Video] = BrowseKind.Video
-    kind_facts: VideoFacts = Field(serialization_alias="kindFacts")
+    kind_facts: VideoFacts
 
 
 class PodcastCandidate(_Candidate[Literal[BrowseSource.PodcastIndex]]):
     source: Literal[BrowseSource.PodcastIndex] = BrowseSource.PodcastIndex
     kind: Literal[BrowseKind.Podcast] = BrowseKind.Podcast
-    kind_facts: PodcastFacts = Field(serialization_alias="kindFacts")
+    kind_facts: PodcastFacts
 
 
 class OwnedMediaCandidate(_Out):
     kind: Literal["OwnedMedia"] = "OwnedMedia"
     source: Literal[BrowseSource.Nexus] = BrowseSource.Nexus
     resolution: InNexusMediaResolution
-    description: Presence[str]
-    image: Presence[str]
+    description: str | None
+    image: str | None
 
 
 type BrowseCandidate = Annotated[
@@ -160,96 +158,96 @@ class BrowsePage(_Out):
     query: str
     kind: BrowseKind
     source: BrowseSource
-    sort: Presence[BrowseSort]
+    sort: BrowseSort | None
     items: list[BrowseCandidate]
-    next_cursor: Presence[str] = Field(serialization_alias="nextCursor")
+    next_cursor: str | None
 
 
 class EpubPreviewFacts(_Out):
-    ebook_ref: str = Field(serialization_alias="ebookRef")
-    import_href: str = Field(serialization_alias="importHref")
+    ebook_ref: str
+    import_href: str
 
 
 class WebArticlePreviewFacts(_Out):
-    canonical_url: str = Field(serialization_alias="canonicalUrl")
-    site_name: Presence[str] = Field(serialization_alias="siteName")
+    canonical_url: str
+    site_name: str | None
 
 
 class VideoPreviewFacts(_Out):
-    video_ref: str = Field(serialization_alias="videoRef")
-    channel_title: Presence[str] = Field(serialization_alias="channelTitle")
-    embed_href: str = Field(serialization_alias="embedHref")
+    video_ref: str
+    channel_title: str | None
+    embed_href: str
 
 
 class PodcastPreviewFacts(_Out):
-    podcast_ref: str = Field(serialization_alias="podcastRef")
-    feed_href: str = Field(serialization_alias="feedHref")
-    website_href: Presence[str] = Field(serialization_alias="websiteHref")
+    podcast_ref: str
+    feed_href: str
+    website_href: str | None
 
 
 class EpisodePreviewFacts(_Out):
-    podcast_ref: str = Field(serialization_alias="podcastRef")
-    episode_ref: str = Field(serialization_alias="episodeRef")
-    podcast_title: str = Field(serialization_alias="podcastTitle")
-    audio_href: str = Field(serialization_alias="audioHref")
-    duration_seconds: Presence[int] = Field(serialization_alias="durationSeconds")
+    podcast_ref: str
+    episode_ref: str
+    podcast_title: str
+    audio_href: str
+    duration_seconds: int | None
 
 
 class PodcastPreviewEpisode(_Out):
     target: DiscoveryTargetHandle
     title: str
     contributors: list[ContributorCreditOut]
-    description: Presence[str]
-    published_at: Presence[datetime] = Field(serialization_alias="publishedAt")
-    image: Presence[str]
-    kind_facts: EpisodePreviewFacts = Field(serialization_alias="kindFacts")
+    description: str | None
+    published_at: datetime | None
+    image: str | None
+    kind_facts: EpisodePreviewFacts
 
 
 class PodcastPreviewEpisodePage(_Out):
     items: list[PodcastPreviewEpisode]
-    next_cursor: Presence[str] = Field(serialization_alias="nextCursor")
+    next_cursor: str | None
 
 
 class _Preview(_Out):
     target: DiscoveryTargetHandle
     title: str
     contributors: list[ContributorCreditOut]
-    description: Presence[str]
-    published_at: Presence[datetime] = Field(serialization_alias="publishedAt")
-    image: Presence[str]
-    source_href: str = Field(serialization_alias="sourceHref")
+    description: str | None
+    published_at: datetime | None
+    image: str | None
+    source_href: str
     resolution: BrowseResolution
 
 
 class EpubPreview(_Preview):
     kind: Literal["Epub"] = "Epub"
     source: Literal[BrowseSource.ProjectGutenberg] = BrowseSource.ProjectGutenberg
-    kind_facts: EpubPreviewFacts = Field(serialization_alias="kindFacts")
+    kind_facts: EpubPreviewFacts
 
 
 class WebArticlePreview(_Preview):
     kind: Literal["WebArticle"] = "WebArticle"
     source: Literal[BrowseSource.Brave] = BrowseSource.Brave
-    kind_facts: WebArticlePreviewFacts = Field(serialization_alias="kindFacts")
+    kind_facts: WebArticlePreviewFacts
 
 
 class VideoPreview(_Preview):
     kind: Literal["Video"] = "Video"
     source: Literal[BrowseSource.YouTube] = BrowseSource.YouTube
-    kind_facts: VideoPreviewFacts = Field(serialization_alias="kindFacts")
+    kind_facts: VideoPreviewFacts
 
 
 class PodcastPreview(_Preview):
     kind: Literal["Podcast"] = "Podcast"
     source: Literal[BrowseSource.PodcastIndex] = BrowseSource.PodcastIndex
-    kind_facts: PodcastPreviewFacts = Field(serialization_alias="kindFacts")
+    kind_facts: PodcastPreviewFacts
     episodes: PodcastPreviewEpisodePage
 
 
 class EpisodePreview(_Preview):
     kind: Literal["Episode"] = "Episode"
     source: Literal[BrowseSource.PodcastIndex] = BrowseSource.PodcastIndex
-    kind_facts: EpisodePreviewFacts = Field(serialization_alias="kindFacts")
+    kind_facts: EpisodePreviewFacts
 
 
 type BrowsePreview = Annotated[

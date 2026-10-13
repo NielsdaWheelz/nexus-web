@@ -5,8 +5,6 @@ from uuid import UUID
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 
-from nexus.schemas.presence import Presence
-
 ThemeValue = Literal["light", "dark"]
 FontFamilyValue = Literal["serif", "sans"]
 FocusModeValue = Literal["off", "distraction_free", "paragraph", "sentence"]
@@ -76,7 +74,7 @@ class EpubTextOffsetsTargetOut(ReaderTextOffsets):
 class TranscriptTextOffsetsTargetOut(ReaderTextOffsets):
     kind: Literal["TranscriptTextOffsets"] = "TranscriptTextOffsets"
     fragment_id: UUID
-    time_range: Presence[ReaderTimeRange]
+    time_range: ReaderTimeRange | None
 
 
 class PdfPageGeometryTargetOut(ReaderTargetModel):
@@ -196,7 +194,7 @@ class ReaderFragmentTarget(ReaderStateModel):
 class ReaderEpubTarget(ReaderStateModel):
     fragment_id: UUID
     href_path: NonBlankStr
-    anchor_id: Presence[Annotated[str, Field(min_length=1), AfterValidator(_non_blank)]]
+    anchor_id: Annotated[str, Field(min_length=1), AfterValidator(_non_blank)] | None
 
 
 class PdfReaderResumeState(ReaderStateModel):

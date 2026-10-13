@@ -13,7 +13,6 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Media
-from nexus.schemas.presence import Presence, Present, absent, present
 from nexus.services.generation.contract import GenerationIntent, InvalidOutput, JsonSchemaOutput
 from nexus.services.generation.policy import policy
 from nexus.services.x_source import authored_text, load_x_source, source_label
@@ -81,7 +80,7 @@ class XTitleInput:
     user_content: str
     fingerprint: str
     source_label: str
-    primary_language_hint: Presence[str]
+    primary_language_hint: str | None
 
 
 class XTitleSourceRejected(ValueError):
@@ -101,17 +100,17 @@ def build_x_title_input(db: Session, media: Media, *, source_attempt_id: UUID) -
     if media.provider != "x" or media.kind != "web_article":
         raise XTitleSourceRejected("no_longer_eligible")
     source = load_x_source(db, media_id=media.id)
-    if not isinstance(source, Present):
+    if source is None:
         raise XTitleSourceRejected("source_context_missing")
-    if source.value.source_attempt_id != source_attempt_id:
+    if source.source_attempt_id != source_attempt_id:
         raise XTitleSourceRejected("stale_input")
-    snapshot = source.value.snapshot
+    snapshot = source.snapshot
     language_hints = {
-        language.value.lower()
+        language.lower()
         for post_id in snapshot.primary_post_ids
-        if isinstance(language := snapshot.posts[post_id].language, Present)
-        and re.fullmatch(r"[a-z]{2,3}(?:-[a-z0-9]{2,8})*", language.value, re.IGNORECASE)
-        and language.value.lower().split("-", 1)[0] not in {"und", "zxx", "mul"}
+        if (language := snapshot.posts[post_id].language) is not None
+        and re.fullmatch(r"[a-z]{2,3}(?:-[a-z0-9]{2,8})*", language, re.IGNORECASE)
+        and language.lower().split("-", 1)[0] not in {"und", "zxx", "mul"}
     }
     evidence = snapshot.model_dump(
         mode="json",
@@ -122,7 +121,7 @@ def build_x_title_input(db: Session, media: Media, *, source_attempt_id: UUID) -
         evidence["posts"][post_id]["urls"] = [
             entity.model_dump(mode="json")
             for entity in post.urls
-            if not isinstance(entity.attachment_media_key, Present)
+            if entity.attachment_media_key is None
         ]
     user_content = json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
     if len(user_content.encode("utf-8")) > policy("media_title").input_max_bytes:
@@ -140,17 +139,15 @@ def build_x_title_input(db: Session, media: Media, *, source_attempt_id: UUID) -
             )
         ).hexdigest(),
         source_label=source_label(snapshot),
-        primary_language_hint=present(next(iter(language_hints)))
-        if len(language_hints) == 1
-        else absent(),
+        primary_language_hint=next(iter(language_hints)) if len(language_hints) == 1 else None,
     )
 
 
 def x_title_intent(source: XTitleInput) -> GenerationIntent:
     language_target = (
-        f"Target title language code: {source.primary_language_hint.value}. "
+        f"Target title language code: {source.primary_language_hint}. "
         "This is the captured primary-post language hint; use it when it agrees with the primary prose."
-        if isinstance(source.primary_language_hint, Present)
+        if source.primary_language_hint is not None
         else "The primary posts have no single usable captured language hint. "
         "Determine the title language from their substantive prose."
     )

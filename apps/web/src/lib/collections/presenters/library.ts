@@ -1,6 +1,5 @@
 /** Pure semantic projection for one library row. */
 
-import { absent, present } from "@/lib/api/presence";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { libraryPresentation } from "@/lib/libraries/presentation";
 import type { CollectionRowView } from "@/lib/collections/types";
@@ -8,10 +7,10 @@ import type { CollectionRowView } from "@/lib/collections/types";
 export interface LibraryPresenterItem {
   id: string;
   name: string;
-  isDefault: boolean;
+  is_default: boolean;
   role: string;
-  canRename: boolean;
-  canDelete: boolean;
+  can_rename: boolean;
+  can_delete: boolean;
 }
 
 export function presentLibrary(
@@ -19,7 +18,7 @@ export function presentLibrary(
 ): CollectionRowView {
   const href = `/libraries/${item.id}`;
   const presentation = libraryPresentation({
-    isDefault: item.isDefault,
+    is_default: item.is_default,
     name: item.name,
     role: item.role,
   });
@@ -33,13 +32,13 @@ export function presentLibrary(
     },
     title: { text: presentation.name },
     contributors: [],
-    publicationDate: absent(),
-    context: present({
+    publicationDate: null,
+    context: {
       kind: "Text",
       text: presentation.context,
-    }),
-    activity: absent(),
-    exceptionalStatus: absent(),
+    },
+    activity: null,
+    exceptionalStatus: null,
     actionSubject: {
       ref: canonicalResourceRef({ scheme: "library", id: item.id }),
     },

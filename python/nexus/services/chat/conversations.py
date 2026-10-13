@@ -21,7 +21,6 @@ from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundEr
 from nexus.jobs.queue import revoke_jobs_by_dedupe_keys
 from nexus.schemas.collection_page import CollectionPage, parse_collection_query
 from nexus.schemas.conversation import ConversationListItemOut, ConversationOut, MessageDeleteOut
-from nexus.schemas.presence import presence_from_nullable
 from nexus.schemas.resource_graph import LinkPassageEndpoint, LinkResourceEndpoint
 from nexus.services.chat import quotes, reads
 from nexus.services.collection_keyset import (
@@ -147,7 +146,7 @@ def index(
             )
             for row in rows
         ],
-        nextCursor=presence_from_nullable(cursor),
+        next_cursor=cursor,
     )
 
 
@@ -222,7 +221,7 @@ def delete_message(db: Session, *, viewer_id: UUID, message_id: UUID) -> Message
             raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
         deleted = _delete(db, conversation_id, message_id)
         db.commit()
-        return MessageDeleteOut(conversationId=conversation_id, conversationDeleted=deleted)
+        return MessageDeleteOut(conversation_id=conversation_id, conversation_deleted=deleted)
 
     return retry_read_committed(db, "delete_message", attempt)
 

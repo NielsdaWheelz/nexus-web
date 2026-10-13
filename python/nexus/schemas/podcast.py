@@ -5,17 +5,15 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from pydantic.alias_generators import to_camel
 
 from nexus.db.models import TranscriptState
 from nexus.schemas.consumption import PauseShorteningMode, PlaybackRate
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaSummaryOut
-from nexus.schemas.presence import Presence, absent
 from nexus.services.sealed_handles import DiscoveryTargetHandle
 
 # The web reads exact key sets, so each model's casing is load-bearing.
-_CAMEL = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+_CLOSED = ConfigDict(extra="forbid")
 _SNAKE = ConfigDict(extra="forbid")
 _SNAKE_OUT = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
@@ -35,13 +33,13 @@ class PodcastCanonicalCommitTarget(BaseModel):
     kind: Literal["Canonical"] = "Canonical"
     podcast_id: UUID
 
-    model_config = _CAMEL
+    model_config = _CLOSED
 
 
 class PodcastReplacementConfirmation(BaseModel):
     conflict_fingerprint: str = Field(min_length=64, max_length=64)
 
-    model_config = _CAMEL
+    model_config = _CLOSED
 
 
 class PodcastSubscribeRequest(BaseModel):
@@ -49,16 +47,16 @@ class PodcastSubscribeRequest(BaseModel):
         PodcastDiscoveryCommitTarget | PodcastCanonicalCommitTarget, Field(discriminator="kind")
     ]
     named_library_ids: list[UUID] = Field(default_factory=list)
-    replacement_confirmation: Presence[PodcastReplacementConfirmation]
+    replacement_confirmation: PodcastReplacementConfirmation | None
 
-    model_config = _CAMEL
+    model_config = _CLOSED
 
 
 class PodcastEpisodeFromDiscoveryRequest(BaseModel):
     target: DiscoveryTargetHandle
     named_library_ids: list[UUID] = Field(default_factory=list)
 
-    model_config = _CAMEL
+    model_config = _CLOSED
 
 
 class PodcastBackfillOut(BaseModel):
@@ -67,7 +65,7 @@ class PodcastBackfillOut(BaseModel):
     processed_count: int = Field(ge=0)
     added_count: int = Field(ge=0)
 
-    model_config = _CAMEL
+    model_config = _CLOSED
 
 
 class PodcastBackfillRetryOut(BaseModel):
@@ -75,14 +73,14 @@ class PodcastBackfillRetryOut(BaseModel):
     outcome: Literal["Retried", "NotEligible"]
     backfill: PodcastBackfillOut
 
-    model_config = _CAMEL
+    model_config = _CLOSED
 
 
 class PodcastDestinationOutcomeOut(BaseModel):
     library_id: UUID
     outcome: Literal["Added", "AlreadyPresent", "IncludedThroughPodcast"]
 
-    model_config = _CAMEL
+    model_config = _CLOSED
 
 
 class PodcastSubscribeOut(BaseModel):
@@ -92,7 +90,7 @@ class PodcastSubscribeOut(BaseModel):
     destinations: list[PodcastDestinationOutcomeOut]
     backfill: PodcastBackfillOut
 
-    model_config = _CAMEL
+    model_config = _CLOSED
 
 
 class PodcastEpisodeFromDiscoveryOut(BaseModel):
@@ -100,12 +98,12 @@ class PodcastEpisodeFromDiscoveryOut(BaseModel):
     media_id: UUID
     destination_outcomes: list[PodcastDestinationOutcomeOut]
 
-    model_config = _CAMEL
+    model_config = _CLOSED
 
 
 class PodcastSubscriptionSettingsPatchRequest(BaseModel):
-    default_playback_speed: Presence[PlaybackRate] = Field(default_factory=absent)
-    pause_shortening_mode: Presence[PauseShorteningMode] = Field(default_factory=absent)
+    default_playback_speed: PlaybackRate | None = None
+    pause_shortening_mode: PauseShorteningMode | None = None
     # A factory, not a default: an absent field means "unchanged", never false.
     auto_queue: bool = Field(default_factory=lambda: False)
 
@@ -121,8 +119,8 @@ class PodcastSubscriptionSettingsPatchRequest(BaseModel):
 class PodcastSubscriptionStatusOut(BaseModel):
     user_id: UUID
     podcast_id: UUID
-    default_playback_speed: Presence[PlaybackRate]
-    pause_shortening_mode: Presence[PauseShorteningMode]
+    default_playback_speed: PlaybackRate | None
+    pause_shortening_mode: PauseShorteningMode | None
     auto_queue: bool = False
     sync_status: PodcastSyncStatus
     sync_error_code: str | None = None
@@ -144,7 +142,7 @@ class PodcastSubscriptionLifecycleSnapshotOut(BaseModel):
     sync_status: PodcastSyncStatus
     backfill: PodcastBackfillOut
 
-    model_config = _CAMEL
+    model_config = _CLOSED
 
 
 class PodcastListItemOut(BaseModel):
@@ -173,9 +171,9 @@ class PodcastSubscriptionListItemOut(BaseModel):
     title: str
     contributors: list[ContributorCreditOut] = Field(default_factory=list)
     unplayed_count: int = Field(ge=0)
-    latest_episode_published_at: Presence[datetime]
-    default_playback_speed: Presence[PlaybackRate]
-    pause_shortening_mode: Presence[PauseShorteningMode]
+    latest_episode_published_at: datetime | None
+    default_playback_speed: PlaybackRate | None
+    pause_shortening_mode: PauseShorteningMode | None
     auto_queue: bool
     sync_status: PodcastSyncStatus
 
@@ -184,11 +182,11 @@ class PodcastSubscriptionListItemOut(BaseModel):
 
 class PodcastEpisodeListItemOut(BaseModel):
     id: UUID
-    media_summary: MediaSummaryOut = Field(alias="mediaSummary")
+    media_summary: MediaSummaryOut
     transcript_state: TranscriptState
     has_show_notes: bool
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(extra="forbid")
 
 
 class PodcastEpisodeSelection(BaseModel):
@@ -201,7 +199,7 @@ class PodcastEpisodeMarkPlayedOut(BaseModel):
     matched_count: int = Field(ge=0)
     changed_count: int = Field(ge=0)
 
-    model_config = _CAMEL
+    model_config = _CLOSED
 
 
 class PodcastEpisodeQueryTranscriptTarget(BaseModel):
@@ -210,28 +208,28 @@ class PodcastEpisodeQueryTranscriptTarget(BaseModel):
     selection: PodcastEpisodeSelection
     reason: Literal["search", "highlight", "quote"]
 
-    model_config = _CAMEL
+    model_config = _CLOSED
 
 
 class PodcastEpisodeQueryTranscriptForecastOut(BaseModel):
     eligible_count: int = Field(ge=0)
     selection_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
 
-    model_config = _CAMEL
+    model_config = _CLOSED
 
 
 class PodcastEpisodeQueryTranscriptRequest(BaseModel):
     target: PodcastEpisodeQueryTranscriptTarget
     selection_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
 
-    model_config = _CAMEL
+    model_config = _CLOSED
 
 
 class PodcastEpisodeQueryTranscriptRequestOut(BaseModel):
     matched_count: int = Field(ge=0)
     queued_count: int = Field(ge=0)
 
-    model_config = _CAMEL
+    model_config = _CLOSED
 
 
 class PodcastUnsubscribeOut(BaseModel):
@@ -247,7 +245,7 @@ class PodcastRefreshPodcastScope(BaseModel):
     kind: Literal["Podcast"] = "Podcast"
     podcast_id: UUID
 
-    model_config = _CAMEL
+    model_config = _CLOSED
 
 
 class PodcastRefreshPodcastsScope(BaseModel):
@@ -260,7 +258,7 @@ class PodcastRefreshLibraryScope(BaseModel):
     kind: Literal["Library"] = "Library"
     library_id: UUID
 
-    model_config = _CAMEL
+    model_config = _CLOSED
 
 
 PodcastRefreshManualScope = Annotated[
@@ -272,4 +270,4 @@ PodcastRefreshManualScope = Annotated[
 class PodcastRefreshAcceptedOut(BaseModel):
     requested_count: int = Field(ge=0)
 
-    model_config = _CAMEL
+    model_config = _CLOSED

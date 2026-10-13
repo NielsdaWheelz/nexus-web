@@ -16,7 +16,7 @@ import unicodedata
 import zipfile
 from collections.abc import Callable, Iterator
 from contextlib import closing
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from html.entities import name2codepoint
 from pathlib import Path
@@ -45,7 +45,6 @@ from nexus.db.models import (
 from nexus.errors import ApiErrorCode, ResourceFailureDimension
 from nexus.ids import new_uuid7
 from nexus.schemas.isbn import Isbn13, normalize_source_isbn
-from nexus.schemas.presence import Presence, Present, absent, nullable_from_presence, present
 from nexus.schemas.publication_dates import PublicationDate, normalize_source_publication_date
 from nexus.schemas.reader_apparatus import NotesGroup
 from nexus.schemas.source_issues import (
@@ -179,8 +178,8 @@ class EpubExtractionResult:
     publisher: str | None = None
     language: str | None = None
     description: str | None = None
-    edition_published_date: Presence[PublicationDate] = field(default_factory=absent)
-    edition_isbn: Presence[Isbn13] = field(default_factory=absent)
+    edition_published_date: PublicationDate | None = None
+    edition_isbn: Isbn13 | None = None
 
 
 @dataclass(frozen=True)
@@ -949,13 +948,11 @@ def publish_epub_extraction_plan(
                 label=nav.label,
                 fragment_idx=nav.fragment_idx,
                 href_path=nav.href_path,
-                href_fragment=nullable_from_presence(nav.href_fragment),
+                href_fragment=nav.href_fragment,
                 start_offset=nav.start_offset,
-                parent_section_id=nullable_from_presence(nav.parent_section_id),
-                end_fragment_idx=nav.end.value.fragment_idx
-                if isinstance(nav.end, Present)
-                else None,
-                end_offset=nav.end.value.offset if isinstance(nav.end, Present) else None,
+                parent_section_id=nav.parent_section_id,
+                end_fragment_idx=nav.end.fragment_idx if nav.end is not None else None,
+                end_offset=nav.end.offset if nav.end is not None else None,
                 source=nav.source,
                 created_at=plan.now,
             )
@@ -1151,19 +1148,19 @@ def _extract_opf_metadata(opf: ET.Element) -> EpubExtractionResult:
     publication_dates: set[str] = set()
     for element in publication_elements:
         normalized = normalize_source_publication_date(element.text)
-        if isinstance(normalized, Present):
-            publication_dates.add(normalized.value)
+        if normalized is not None:
+            publication_dates.add(normalized)
 
     isbns: set[str] = set()
     primary_isbns: set[str] = set()
     primary_id = opf.get("unique-identifier")
     for identifier in opf.findall(".//opf:metadata/dc:identifier", _NS):
         value = normalize_source_isbn(identifier.text or "")
-        if not isinstance(value, Present):
+        if value is None:
             continue
-        isbns.add(value.value)
+        isbns.add(value)
         if primary_id is not None and identifier.get("id") == primary_id:
-            primary_isbns.add(value.value)
+            primary_isbns.add(value)
     selected = primary_isbns or isbns
 
     return EpubExtractionResult(
@@ -1173,10 +1170,10 @@ def _extract_opf_metadata(opf: ET.Element) -> EpubExtractionResult:
         publisher=publisher.strip() or None if publisher is not None else None,
         language=language.strip() or None if language is not None else None,
         description=description.strip() or None if description is not None else None,
-        edition_published_date=present(next(iter(publication_dates)))
+        edition_published_date=next(iter(publication_dates))
         if len(publication_dates) == 1
-        else absent(),
-        edition_isbn=present(next(iter(selected))) if len(selected) == 1 else absent(),
+        else None,
+        edition_isbn=next(iter(selected)) if len(selected) == 1 else None,
     )
 
 

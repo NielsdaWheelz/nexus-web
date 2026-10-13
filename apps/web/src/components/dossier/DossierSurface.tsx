@@ -70,15 +70,13 @@ export default function DossierSurface({
     );
 
   const { revision, active_build, last_failure, media_abstract } = head.value;
-  const building = active_build.kind === "Present" ? active_build.value : null;
-  const failure =
-    !building && last_failure.kind === "Present" ? last_failure.value : null;
-  const rev = revision.kind === "Present" ? revision.value : null;
+  const building = active_build;
+  const failure = building ? null : last_failure;
+  const rev = revision;
   // The media's current abstract: subordinate to the dossier, never a build.
-  const abstract =
-    media_abstract.kind === "Present" ? media_abstract.value : null;
+  const abstract = media_abstract;
   const status = building
-    ? building.phase.kind === "Present" && building.phase.value === "Suspended"
+    ? building.phase === "Suspended"
       ? "Generation stopped; it needs attention."
       : rev
         ? "Regenerating — the current dossier stays readable."
@@ -95,10 +93,10 @@ export default function DossierSurface({
           <span className={styles.label}>
             {abstract.status === "Stale" ? "Abstract · outdated" : "Abstract"}
           </span>
-          {abstract.summary_md.kind === "Present" ? (
+          {abstract.summary_md !== null ? (
             <>
               <MachineText origin={{ label: "Media abstract" }}>
-                <MarkdownMessage content={abstract.summary_md.value} />
+                <MarkdownMessage content={abstract.summary_md} />
               </MachineText>
               <Button
                 variant="ghost"
@@ -119,9 +117,9 @@ export default function DossierSurface({
       <p role="status" className={status ? styles.banner : "sr-only"}>
         {status}
       </p>
-      {failure?.failure_code.kind === "Present" ? (
+      {failure?.failure_code != null ? (
         <p role="alert" className={`${styles.banner} ${styles.alert}`}>
-          {FAILURE_COPY[failure.failure_code.value]}
+          {FAILURE_COPY[failure.failure_code]}
         </p>
       ) : null}
       {building ? (
@@ -154,7 +152,7 @@ export default function DossierSurface({
       {building ? null : (
         <InstructionForm
           key={failure?.handle ?? rev?.revision_ref ?? ""}
-          initial={instruction?.kind === "Present" ? instruction.value : ""}
+          initial={instruction ?? ""}
           submit={rev ? "Regenerate" : "Generate dossier"}
           disabled={busy !== null}
           onSubmit={dossier.generate}
@@ -182,17 +180,17 @@ export default function DossierSurface({
           <Fact label="Provenance">
             {[
               rev.by_viewer ? "You" : "A library member",
-              rev.model.kind === "Present" ? rev.model.value : null,
-              rev.total_tokens.kind === "Present"
-                ? `${formatDisplayNumber(rev.total_tokens.value, env)} tokens`
+              rev.model,
+              rev.total_tokens !== null
+                ? `${formatDisplayNumber(rev.total_tokens, env)} tokens`
                 : null,
               formatDisplayDate(rev.generated_at, env, { dateStyle: "medium" }),
             ]
               .filter(Boolean)
               .join(" · ")}
           </Fact>
-          {rev.instruction.kind === "Present" ? (
-            <Fact label="Instruction">{rev.instruction.value}</Fact>
+          {rev.instruction !== null ? (
+            <Fact label="Instruction">{rev.instruction}</Fact>
           ) : null}
         </div>
       ) : building ? null : (
