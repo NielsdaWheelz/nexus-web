@@ -56,6 +56,7 @@ CODEX_STATE_DEVICE = "/dev/mapper/nexus-codex-state"
 CODEX_CREDENTIAL = f"{CODEX_STATE}/codex/codex-personal/auth.json"
 CODEX_ACCOUNT_ROOT = f"{CODEX_STATE}/codex/codex-personal"
 CODEX_AGENT_HOST = "nexus-codex-agent-host"
+LEGACY_CODEX_HOST_SOURCE_SHA = "7dc68929b4d5ddfd77eb1a50228d477fa0148b5d"
 CODEX_PRIVATE_NETWORK = "nexus_codex_private"
 BACKUP_STATE_ROOT = "/var/backups/nexus/r2"
 PRE_MODEL_HISTORY_CUTOVER_REVISIONS = frozenset(f"{number:04d}" for number in range(236, 246))
@@ -681,11 +682,47 @@ def release(source_sha: str, workspace: Path, model_cutover_snapshot: Path | Non
             continue
         if CONTAINER_ID.fullmatch(stopped_container) is None:
             raise Failure(f"{service} has ambiguous containers")
-        stopped_state = inspect(stopped_container)["State"]
-        if stopped_state["Status"] != "exited" or stopped_state["ExitCode"] != 0:
+        stopped = inspect(stopped_container)
+        stopped_state = stopped["State"]
+        # This retired host's uvicorn re-raises SIGTERM before its caller's
+        # cleanup. Only the reviewed reset may preserve its unknown outcomes
+        # and retire that exact immutable image after signal termination.
+        legacy_host_sigterm = (
+            crossing_model_cutover
+            and reviewed is not None
+            and reviewed.deployed_source_sha == LEGACY_CODEX_HOST_SOURCE_SHA
+            and service == CODEX_AGENT_HOST
+            and stopped_state["ExitCode"] == 143
+            and (inspect(stopped["Image"])["Config"].get("Labels") or {}).get(
+                "org.opencontainers.image.revision"
+            )
+            == LEGACY_CODEX_HOST_SOURCE_SHA
+        )
+        if (
+            stopped_state["Status"] != "exited"
+            or stopped_state["Running"]
+            or stopped_state["Pid"] != 0
+            or stopped_state["OOMKilled"]
+            or stopped_state["Error"]
+            or (stopped_state["ExitCode"] != 0 and not legacy_host_sigterm)
+        ):
             raise Failure(
                 f"{service} did not stop cleanly: "
-                f"status={stopped_state['Status']} exit_code={stopped_state['ExitCode']}"
+                f"status={stopped_state['Status']} exit_code={stopped_state['ExitCode']} "
+                f"running={stopped_state['Running']} pid={stopped_state['Pid']} "
+                f"oom_killed={stopped_state['OOMKilled']} "
+                f"runtime_error={bool(stopped_state['Error'])}"
+            )
+        if legacy_host_sigterm:
+            running_jobs = psql("SELECT count(*) FROM background_jobs WHERE status = 'running'")
+            if running_jobs != "0":
+                raise Failure(
+                    "legacy codex host SIGTERM requires zero running background jobs; "
+                    f"observed {running_jobs!r}"
+                )
+            note(
+                "legacy codex host stopped by expected SIGTERM (143); outer cleanup did not run; "
+                "original uncertain outcomes require reviewed archival"
             )
     if starting_revision in {"0241", "0242", "0243", "0244"}:
         missing = psql("""

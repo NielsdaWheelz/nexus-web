@@ -203,8 +203,9 @@ it binds, and re-proves the public `/version`.
    candidate head (crossing 0262: stop `api` first and wait, up to 20 minutes,
    until the old workers have finished every oracle job), stop `api`,
    `worker-interactive` and `worker-background`,
-   then stop the codex host with at least 45 seconds of grace and require clean
-   exit from every writer and host before running
+   then stop the codex host with at least 45 seconds of grace and require exit 0
+   from every writer and host (the reviewed legacy exception below records the
+   actual signal termination) before running
    `nexus.release_backup create`: one pass that streams `pg_dump`
    into a private R2 multipart upload, reads the remote bytes back through
    `pg_restore`, publishes a `database.json` recovery manifest beside the
@@ -232,7 +233,7 @@ crossing 0246 requires the optional input above. this is one current, strict
 census; it grants no disposal authority. keep the no-use window closed through
 this finite operator sequence:
 
-1. drain admissions and stop all writers and the native host cleanly. preserve
+1. drain admissions and stop all writers and the native host. preserve
    all original unknown provider outcomes; remote calls may still bill.
 2. collect a fresh exact starting census. take a fresh backup with the existing
    `nexus.release_backup create` owner for the chosen target sha, source database
@@ -254,6 +255,21 @@ this finite operator sequence:
    effect preservation, archival audit, queue-claim retirement and entire reset
    share the existing migration transaction. any later refusal rolls back all
    of them. the production cli has no restored-copy identity override.
+
+the retired codex host at `7dc68929b4d5ddfd77eb1a50228d477fa0148b5d` uses uvicorn
+0.40.0, which re-raises SIGTERM after server shutdown, before its caller's outer
+cleanup. the controller accepts its actual exit 143 only for this reviewed
+pre-0246 reset: the deployed source and immutable image's OCI revision must both
+match that sha; the container must be exited, non-running, pid 0, without OOM or
+runtime error; and the database must have zero running background jobs. this is
+signal termination with skipped outer cleanup, not proof of settled remote
+provider outcomes. preserve those unknown outcomes in the reviewed archive.
+every other host and every writer still requires exit 0.
+
+if recovering to that old host before or after migration, restore its shared
+socket directory mode to `0770` before starting it; the new host requires `0700`.
+preserve the socket volume and encrypted codex state. a schema rollback also
+requires restoring the matched backup before starting the old applications.
 
 the census includes settled and unknown parents, model turns, continuations,
 positions, all chat runs, generation-bearing jobs of every status and every
