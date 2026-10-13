@@ -124,13 +124,8 @@ function MediaPane({ id }: { readonly id: string }) {
       }),
       [chrome, entry, id],
     ),
+    readable,
   );
-  const readableRef = useRef(readable);
-  useEffect(() => {
-    // A publication that became readable (processing, a transcript) is read now.
-    if (readable && !readableRef.current) reader.reload();
-    readableRef.current = readable;
-  }, [readable, reader]);
   const doc = useReaderState(reader, (s) => (s.document.status === "ready" ? s.document.doc : null));
   // A lectern progress reset: this reader's unsaved progress settles first, then
   // the reset cursor installs.

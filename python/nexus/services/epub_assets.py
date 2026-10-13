@@ -3,9 +3,10 @@
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import BinaryIO
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
@@ -13,7 +14,7 @@ from nexus.db.models import Media, MediaKind
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.services.capabilities import is_document_status_ready
 from nexus.services.epub_ingest import SUPPORTED_IMAGE_TYPES
-from nexus.storage.client import StorageError, get_storage_client, read_object_checked
+from nexus.storage.client import StorageError, get_storage_client, write_object_checked
 
 _ASSET_KEY_RE = re.compile(r"^[a-zA-Z0-9_./-]+$")
 _SVG_CONTENT_TYPE = "image/svg+xml"
@@ -23,7 +24,7 @@ _PUBLIC_CONTENT_TYPES = SUPPORTED_IMAGE_TYPES - {_SVG_CONTENT_TYPE}
 
 @dataclass(frozen=True)
 class EpubAssetOut:
-    data: bytes
+    size_bytes: int
     content_type: str
     cache_control: str
     content_security_policy: str | None
@@ -73,12 +74,15 @@ def get_epub_asset_for_viewer(
     viewer_id: UUID,
     media_id: UUID,
     asset_key: str,
+    output: BinaryIO,
 ) -> EpubAssetOut:
-    """Authorize, resolve metadata, release the session, then read the exact bytes."""
+    """Authorize, release the session, then copy the exact bytes to caller-owned storage."""
     with session_factory() as db:
         if not can_read_media(db, viewer_id, media_id):
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        media = db.get(Media, media_id)
+        media = db.execute(
+            select(Media.kind, Media.processing_status).where(Media.id == media_id)
+        ).one_or_none()
         if media is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
         if media.kind != MediaKind.epub.value:
@@ -110,14 +114,16 @@ def get_epub_asset_for_viewer(
         size_bytes = int(row["size_bytes"])
 
     try:
-        data = read_object_checked(get_storage_client(), storage_path, expected_size=size_bytes)
+        write_object_checked(
+            get_storage_client(), storage_path, output=output, expected_size=size_bytes
+        )
     except StorageError as exc:
         raise ApiError(
             ApiErrorCode.E_STORAGE_ERROR, "Stored EPUB asset object is missing or unreadable"
         ) from exc
 
     return EpubAssetOut(
-        data=data,
+        size_bytes=size_bytes,
         content_type=content_type,
         cache_control="private, max-age=86400",
         # SVG can carry script; lock served EPUB SVG assets down at the response level.

@@ -4,6 +4,7 @@ Both own static ``/media/<literal>`` prefixes, so this router is registered
 before the media router (see create_api_router).
 """
 
+from tempfile import TemporaryFile
 from typing import Annotated
 from uuid import UUID
 
@@ -61,6 +62,52 @@ class _ProxiedImageResponse(Response):
             await send({"type": "http.response.body", "body": b"", "more_body": False})
 
 
+class _EpubAssetResponse(Response):
+    def __init__(self, *, viewer_id: UUID, media_id: UUID, asset_key: str) -> None:
+        super().__init__()
+        self.viewer_id = viewer_id
+        self.media_id = media_id
+        self.asset_key = asset_key
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # Hold the image slot from storage acquisition through response delivery.
+        # Disk spooling verifies the whole object before success headers without
+        # retaining a full image in RAM. Both the slot and file leave on failure.
+        async with _image_fetch_slots:
+            with TemporaryFile() as output:
+
+                def fetch() -> epub_assets.EpubAssetOut:
+                    result = epub_assets.get_epub_asset_for_viewer(
+                        session_factory=get_session_factory(),
+                        viewer_id=self.viewer_id,
+                        media_id=self.media_id,
+                        asset_key=self.asset_key,
+                        output=output,
+                    )
+                    output.seek(0)
+                    return result
+
+                result = await to_thread.run_sync(fetch)
+                headers = {
+                    "Cache-Control": result.cache_control,
+                    "Content-Length": str(result.size_bytes),
+                    "X-Content-Type-Options": "nosniff",
+                }
+                if result.content_security_policy:
+                    headers["Content-Security-Policy"] = result.content_security_policy
+                response = Response(media_type=result.content_type, headers=headers)
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": response.status_code,
+                        "headers": response.raw_headers,
+                    }
+                )
+                while chunk := await to_thread.run_sync(output.read, _WRITE_CHUNK_BYTES):
+                    await send({"type": "http.response.body", "body": chunk, "more_body": True})
+                await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+
 @router.get("/media/image")
 async def get_proxied_image(url: str, viewer: Annotated[Viewer, Depends(get_viewer)]) -> Response:
     """Proxy one external image behind SSRF validation; the browser caches it for a day."""
@@ -68,21 +115,8 @@ async def get_proxied_image(url: str, viewer: Annotated[Viewer, Depends(get_view
 
 
 @router.get("/media/{media_id}/assets/{asset_key:path}")
-def get_epub_asset(
+async def get_epub_asset(
     media_id: UUID, asset_key: str, viewer: Annotated[Viewer, Depends(get_viewer)]
 ) -> Response:
     """Serve one private EPUB image asset; the service owns every policy decision."""
-    result = epub_assets.get_epub_asset_for_viewer(
-        session_factory=get_session_factory(),
-        viewer_id=viewer.user_id,
-        media_id=media_id,
-        asset_key=asset_key,
-    )
-    headers = {
-        "Cache-Control": result.cache_control,
-        "Content-Length": str(len(result.data)),
-        "X-Content-Type-Options": "nosniff",
-    }
-    if result.content_security_policy:
-        headers["Content-Security-Policy"] = result.content_security_policy
-    return Response(content=result.data, media_type=result.content_type, headers=headers)
+    return _EpubAssetResponse(viewer_id=viewer.user_id, media_id=media_id, asset_key=asset_key)

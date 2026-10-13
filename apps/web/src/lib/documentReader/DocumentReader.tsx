@@ -102,14 +102,19 @@ export interface DocumentReaderViewProps {
   readonly end?: ReactNode;
 }
 
-/** A new reader per key (hosted: media id; public: token; shelf: copy). */
-export function useDocumentReader(key: string, options: ReaderOptions): Reader {
+/** A new reader per key; hosted readers wait until their publication is readable. */
+export function useDocumentReader(
+  key: string,
+  options: ReaderOptions,
+  enabled = true,
+): Reader {
   const current = useRef<{ key: string; runtime: ReaderRuntime } | null>(null);
   if (current.current?.key !== key) {
     current.current = { key, runtime: createReaderRuntime(options) };
   }
   const { runtime } = current.current;
   useEffect(() => {
+    if (!enabled) return;
     const unmount = runtime.mount();
     const revalidate = () => {
       if (document.visibilityState === "visible") runtime.revalidate();
@@ -133,7 +138,7 @@ export function useDocumentReader(key: string, options: ReaderOptions): Reader {
         target.removeEventListener(name, listener);
       unmount();
     };
-  }, [runtime]);
+  }, [enabled, runtime]);
   return runtime;
 }
 
