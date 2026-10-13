@@ -148,12 +148,15 @@ function MediaPane({ id }: { readonly id: string }) {
   const stamp = metadata.view?.last_enriched_at.kind === "Present" ? metadata.view.last_enriched_at.value : null;
   useEffect(() => {
     if (!stamp || !media || media.metadata_enriched_at === stamp) return;
+    let active = true;
     void apiFetch<ApiJson<"/media/{media_id}", "get">>(`/api/media/${id}`).then((response) => {
+      if (!active) return;
       const detail = mediaDetailFromResponse(response, id);
       setMedia(detail);
       // The readiness transition owns the first load; metadata refreshes an existing publication.
       if (readable && detail.capabilities.can_read && !transcript) reader.reload();
     });
+    return () => { active = false; };
   }, [id, media, readable, reader, stamp, transcript]);
 
   // ---- annotations ----
