@@ -66,15 +66,15 @@ def upgrade() -> None:
             UNION ALL
             SELECT 'chat_run_events context_ref_added', e.id FROM chat_run_events e
             WHERE e.event_type = 'context_ref_added'
-              AND NOT (e.payload->'activation' ?& ARRAY['href', 'unresolved_reason'])
+              AND (e.payload->'activation' ?& ARRAY['href', 'unresolved_reason']) IS NOT TRUE
             UNION ALL
             SELECT 'oracle_reading_events passage', e.id FROM oracle_reading_events e
             WHERE e.event_type = 'passage' AND jsonb_typeof(e.payload->'citation') = 'object'
-              AND NOT (e.payload->'citation' ?& ARRAY['media_id', 'locator', 'deep_link', 'snapshot']
+              AND (e.payload->'citation' ?& ARRAY['media_id', 'locator', 'deep_link', 'snapshot']
                 AND e.payload->'citation'->'activation' ?& ARRAY['href', 'unresolved_reason']
                 AND (jsonb_typeof(e.payload->'citation'->'snapshot') <> 'object'
                   OR e.payload->'citation'->'snapshot' ?& ARRAY['title', 'excerpt',
-                     'section_label', 'result_type', 'summary_md']))
+                     'section_label', 'result_type', 'summary_md'])) IS NOT TRUE
         )
         SELECT what, count(*), (array_agg(id ORDER BY id))[1:10] FROM bad GROUP BY what ORDER BY what
         """)
