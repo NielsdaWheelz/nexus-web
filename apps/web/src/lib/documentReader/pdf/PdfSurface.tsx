@@ -4,7 +4,7 @@
 // page), so they survive zoom. Links and destinations inside the pdf become
 // reader jumps. A failed open refreshes the file once and reopens at the
 // last placement. Marks are page-space quads drawn under the text layer.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type {
   PDFDocumentLoadingTask,
   PDFDocumentProxy,
@@ -73,10 +73,12 @@ export default function PdfSurface({
   runtime,
   doc,
   view,
+  scrollIndicator,
 }: {
   readonly runtime: ReaderRuntime;
   readonly doc: PdfDocument;
   readonly view: DocumentReaderViewProps;
+  readonly scrollIndicator: RefObject<HTMLDivElement | null>;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const host = useRef<HTMLDivElement>(null);
@@ -181,7 +183,7 @@ export default function PdfSurface({
       state,
     );
   }, [capture, pdfState, runtime]);
-  useScrollport(container, runtime, measure);
+  useScrollport(container, runtime, measure, scrollIndicator);
 
   const paint = useCallback(
     (page: number) => {

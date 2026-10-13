@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
   type MouseEvent,
+  type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
 import HtmlRenderer from "@/components/HtmlRenderer";
@@ -48,11 +49,13 @@ export default function TextSurface({
   doc,
   structure,
   view,
+  scrollIndicator,
 }: {
   readonly runtime: ReaderRuntime;
   readonly doc: TextDocument;
   readonly structure: Structure;
   readonly view: DocumentReaderViewProps;
+  readonly scrollIndicator: RefObject<HTMLDivElement | null>;
 }) {
   const scrollport = useRef<HTMLDivElement>(null);
   const lead = useRef<HTMLDivElement>(null);
@@ -88,7 +91,7 @@ export default function TextSurface({
       selecting.current,
     );
   }, [runtime]);
-  useScrollport(scrollport, runtime, measure);
+  useScrollport(scrollport, runtime, measure, scrollIndicator);
 
   useLayoutEffect(() => {
     const port = scrollport.current!;

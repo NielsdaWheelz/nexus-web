@@ -110,12 +110,83 @@
   overflow: auto;
   overscroll-behavior-y: contain;
   scroll-padding-top: var(--space-12);
-  scrollbar-width: thin;
 }
 
 .scrollport:focus-visible {
   outline: 2px solid var(--reader-accent, var(--accent));
   outline-offset: -2px;
+}
+
+/* The shared touch indicator stays outside both native scroll containers. */
+.scrollIndicator {
+  --scroll-indicator-height: 0px;
+  --scroll-indicator-width: 0px;
+  --scroll-indicator-top: 0px;
+  --scroll-indicator-left: 0px;
+  --scroll-indicator-inset-top: var(--mobile-pane-content-offset, 0px);
+  --scroll-indicator-inset-bottom: var(--mobile-content-bottom-clearance, 0px);
+  display: none;
+  position: absolute;
+  z-index: 1;
+  inset-block-start: calc(var(--scroll-indicator-inset-top) + var(--space-2));
+  inset-block-end: calc(var(--scroll-indicator-inset-bottom) + var(--space-2));
+  inset-inline: var(--space-1);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--duration-base) linear;
+}
+
+.scrollIndicator[data-scrolling] {
+  opacity: 0.7;
+  transition: none;
+}
+
+.scrollIndicatorVertical,
+.scrollIndicatorHorizontal {
+  position: absolute;
+  border-radius: var(--radius-full);
+  background: var(--reader-text-secondary);
+  box-shadow: 0 0 0 1px var(--reader-bg);
+}
+
+.scrollIndicatorVertical {
+  display: var(--scroll-indicator-vertical-display, none);
+  top: 0;
+  right: 0;
+  width: 3px;
+  height: var(--scroll-indicator-height);
+  transform: translateY(var(--scroll-indicator-top));
+}
+
+.scrollIndicatorHorizontal {
+  display: var(--scroll-indicator-horizontal-display, none);
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  width: var(--scroll-indicator-width);
+  transform: translateX(var(--scroll-indicator-left));
+}
+
+@media not ((hover: hover) and (pointer: fine)) {
+  .scrollIndicator {
+    display: block;
+  }
+
+  .scrollport,
+  .pdfScrollport {
+    scrollbar-width: none;
+  }
+
+  .scrollport::-webkit-scrollbar,
+  .pdfScrollport::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrollIndicator {
+    transition: none;
+  }
 }
 
 .column {

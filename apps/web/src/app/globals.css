@@ -411,58 +411,62 @@ textarea {
   background: color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: var(--surface-2);
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--edge);
-  border-radius: var(--radius-sm);
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--ink-faint);
-}
-
-/* The Solar's brass rod. */
-[data-theme="elvish"] ::-webkit-scrollbar-track {
-  background: var(--surface-sunken);
-}
-
-[data-theme="elvish"] ::-webkit-scrollbar-thumb {
-  background: linear-gradient(
-    90deg,
-    var(--gilt-a),
-    var(--gilt-b) 45%,
-    var(--gilt-a)
-  );
-  border: 2px solid var(--surface-canvas);
-  border-radius: var(--radius-full);
-}
-
-[data-theme="elvish"] ::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(
-    90deg,
-    var(--gilt-a),
-    var(--gilt-hi) 45%,
-    var(--gilt-a)
-  );
-}
-
-/* Engines without the ::-webkit pseudos (Firefox). Chromium must never see a
-   non-auto scrollbar-color: it would disable every rule above. */
-@supports not selector(::-webkit-scrollbar) {
-  html {
-    scrollbar-color: var(--edge) var(--surface-2);
+/* Touch keeps platform scrollbar behavior at every viewport width. Matching a
+   webkit scrollbar rule selects custom scrollbars even if its width is reset. */
+@media (hover: hover) and (pointer: fine) {
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
   }
 
-  [data-theme="elvish"] {
-    scrollbar-color: var(--gilt-b) var(--surface-sunken);
+  ::-webkit-scrollbar-track {
+    background: var(--surface-2);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--edge);
+    border-radius: var(--radius-sm);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--ink-faint);
+  }
+
+  /* The Solar's brass rod. */
+  [data-theme="elvish"] ::-webkit-scrollbar-track {
+    background: var(--surface-sunken);
+  }
+
+  [data-theme="elvish"] ::-webkit-scrollbar-thumb {
+    background: linear-gradient(
+      90deg,
+      var(--gilt-a),
+      var(--gilt-b) 45%,
+      var(--gilt-a)
+    );
+    border: 2px solid var(--surface-canvas);
+    border-radius: var(--radius-full);
+  }
+
+  [data-theme="elvish"] ::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(
+      90deg,
+      var(--gilt-a),
+      var(--gilt-hi) 45%,
+      var(--gilt-a)
+    );
+  }
+
+  /* Engines without the ::-webkit pseudos (Firefox). Chromium must never see a
+     non-auto scrollbar-color: it would disable every rule above. */
+  @supports not selector(::-webkit-scrollbar) {
+    html {
+      scrollbar-color: var(--edge) var(--surface-2);
+    }
+
+    [data-theme="elvish"] {
+      scrollbar-color: var(--gilt-b) var(--surface-sunken);
+    }
   }
 }
 

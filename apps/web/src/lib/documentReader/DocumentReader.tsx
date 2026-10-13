@@ -167,6 +167,7 @@ export default function DocumentReaderView(
   const runtime = props.reader as ReaderRuntime;
   const publication = useReaderState(runtime, (state) => state.document);
   const tracked = useReaderState(runtime, (state) => state.progress !== null);
+  const scrollIndicator = useRef<HTMLDivElement>(null);
   let body: ReactNode;
   if (publication.status === "loading") {
     body = (
@@ -188,7 +189,14 @@ export default function DocumentReaderView(
       </p>
     );
   } else if (publication.doc.kind === "pdf") {
-    body = <PdfSurface runtime={runtime} doc={publication.doc} view={props} />;
+    body = (
+      <PdfSurface
+        runtime={runtime}
+        doc={publication.doc}
+        view={props}
+        scrollIndicator={scrollIndicator}
+      />
+    );
   } else {
     body = (
       <TextSurface
@@ -196,6 +204,7 @@ export default function DocumentReaderView(
         doc={publication.doc}
         structure={publication.structure}
         view={props}
+        scrollIndicator={scrollIndicator}
       />
     );
   }
@@ -208,6 +217,14 @@ export default function DocumentReaderView(
     >
       {tracked ? <StatusStrip reader={runtime} /> : null}
       {body}
+      <div
+        ref={scrollIndicator}
+        className={styles.scrollIndicator}
+        aria-hidden="true"
+      >
+        <div className={styles.scrollIndicatorVertical} />
+        <div className={styles.scrollIndicatorHorizontal} />
+      </div>
     </div>
   );
 }
