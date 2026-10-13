@@ -1,4 +1,4 @@
-/** Pure semantic projection for one settings row. */
+/** One settings row: a link to a section, or a static row with its own commands. */
 
 import type { CollectionRowView } from "@/lib/collections/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
@@ -12,11 +12,10 @@ export interface SettingsPresenterItem {
   actions?: readonly ActionDescriptor[];
 }
 
-export function presentSettingsRow(item: SettingsPresenterItem): CollectionRowView {
-  const context = [item.description, item.meta].filter(
-    (value): value is string => value !== undefined && value.length > 0,
-  );
-
+export function presentSettingsRow(
+  item: SettingsPresenterItem,
+): CollectionRowView {
+  const context = [item.description, item.meta].filter(Boolean).join(" · ");
   return {
     id: item.id ?? item.href ?? item.title,
     kind: "settings_row",
@@ -26,14 +25,10 @@ export function presentSettingsRow(item: SettingsPresenterItem): CollectionRowVi
     title: { text: item.title },
     contributors: [],
     publicationDate: null,
-    context:
-      context.length > 0
-        ? { kind: "Text", text: context.join(" · ") }
-        : null,
+    context: context ? { kind: "Text", text: context } : null,
     activity: null,
     exceptionalStatus: null,
-    // Settings rows are not resources: they carry an explicit, non-resource flat
-    // menu (no snapshot, no canonical resource dropdown).
+    // not a resource: an explicit flat menu, no action snapshot
     actionSubject: null,
     flatActions: item.actions,
     selected: false,

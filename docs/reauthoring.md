@@ -36,7 +36,7 @@ components; its two new profile components equal the qualified ones. final sourc
 `04a6960a` adds only an AST-equivalent formatter correction and passes `./scripts/test`.
 this is source composition, not a new browser run. bare `/daily` was then the
 observed unsupported entry (since fixed by the workspace reauthoring);
-[name-bound alignment](tickets/account-display-name-has-conflicting-length-bounds.md)
+name-bound alignment
 is deferred. provider, mail delivery, device and production checks were not run.
 
 baseline/base counts read immutable tracked utf-8 git blobs; precommit candidate

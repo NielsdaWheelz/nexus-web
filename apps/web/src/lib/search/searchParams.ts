@@ -1,61 +1,56 @@
-// SearchQuery ↔ URLSearchParams. Preserves the omitted-vs-empty
-// `kinds` distinction: requestedKinds === null omits the param (⇒ all); an empty set
-// emits `kinds=` (⇒ no results).
+// SearchQuery <-> its canonical url params (I1): kinds in SEARCH_KINDS order,
+// omitted for every kind and `kinds=` for none; list values deduped in order.
 
 import {
   SEARCH_KINDS,
   normalizeFormat,
   normalizeKind,
-  type MediaFormat,
   type SearchKind,
 } from "./kinds";
 import type { SearchQuery } from "./query";
 
-function csv(value: string | null): string[] {
-  if (!value) return [];
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
+const list = (value: string | null): string[] =>
+  [...new Set((value ?? "").split(",").map((item) => item.trim()))].filter(
+    Boolean,
+  );
 
 export function searchQueryToParams(query: SearchQuery): URLSearchParams {
   const params = new URLSearchParams();
   const text = query.text.trim();
+  const kinds = query.requestedKinds;
   if (text) params.set("q", text);
-  if (query.requestedKinds !== null) {
-    const requested = query.requestedKinds;
-    params.set("kinds", SEARCH_KINDS.filter((kind) => requested.has(kind)).join(","));
-  }
+  if (kinds !== null)
+    params.set(
+      "kinds",
+      SEARCH_KINDS.filter((kind) => kinds.has(kind)).join(","),
+    );
   if (query.formats.length > 0) params.set("formats", query.formats.join(","));
   if (query.authors.length > 0) params.set("authors", query.authors.join(","));
   if (query.roles.length > 0) params.set("roles", query.roles.join(","));
-  if (query.scope && query.scope !== "all") params.set("scope", query.scope);
+  if (query.scope !== "all") params.set("scope", query.scope);
   return params;
 }
 
 export function searchQueryFromParams(params: URLSearchParams): SearchQuery {
-  const kindsParam = params.get("kinds");
-  const requestedKinds: ReadonlySet<SearchKind> | null =
-    kindsParam === null
+  const raw = params.get("kinds");
+  const kinds: Set<SearchKind> | null =
+    raw === null
       ? null
-      : new Set(csv(kindsParam).map(normalizeKind).filter((k): k is SearchKind => k !== null));
-  const formats = csv(params.get("formats"))
-    .map(normalizeFormat)
-    .filter((f): f is MediaFormat => f !== null);
+      : new Set(list(raw).flatMap((t) => normalizeKind(t) ?? []));
   return {
     text: params.get("q") ?? "",
-    requestedKinds,
-    formats,
-    authors: csv(params.get("authors")),
-    roles: csv(params.get("roles")),
-    scope: params.get("scope") ?? "all",
+    requestedKinds: kinds?.size === SEARCH_KINDS.length ? null : kinds,
+    formats: list(params.get("formats")).flatMap(
+      (t) => normalizeFormat(t) ?? [],
+    ),
+    authors: list(params.get("authors")),
+    roles: list(params.get("roles")),
+    scope: params.get("scope") || "all",
   };
 }
 
-// Build a /search href for "See all results" round-trips and pane navigation.
+/** The search pane's href for a query ("See all results", the pane's own url). */
 export function searchHref(query: SearchQuery): string {
-  const params = searchQueryToParams(query);
-  const queryString = params.toString();
-  return queryString ? `/search?${queryString}` : "/search";
+  const params = searchQueryToParams(query).toString();
+  return params ? `/search?${params}` : "/search";
 }

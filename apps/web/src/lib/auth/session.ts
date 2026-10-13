@@ -313,9 +313,9 @@ export async function liveSession(): Promise<LiveSession> {
 // a server action that calls the provider as the viewer. the action owns its
 // response, so it publishes through next's cookie store: the rotation first
 // (a spent refresh token must never be lost to a later failure), then the
-// operation's writes. null: no live session (an ended one is cleared, with
-// feedback, and so is one the provider ends under the operation) or the
-// provider is unavailable.
+// operation's writes. "Ended": no live session (an ended one is cleared, with
+// feedback, and so is one the provider ends under the operation);
+// "Unavailable": the provider could not be reached.
 export async function withActionSession<
   T extends {
     readonly outcome: string;
@@ -323,23 +323,23 @@ export async function withActionSession<
   },
 >(
   operation: (cookies: readonly CookieValue[]) => Promise<T>,
-): Promise<T | null> {
+): Promise<T | "Ended" | "Unavailable"> {
   const store = await cookies();
   let live: LiveSession;
   try {
     live = await liveSession();
   } catch (error) {
     if (!(error instanceof AuthUnavailable)) throw error;
-    return null;
+    return "Unavailable";
   }
   if (live.kind === "Ended") applyEffect(store, ended(live.cookieNames));
-  if (live.kind !== "Live") return null;
+  if (live.kind !== "Live") return "Ended";
   applyEffect(store, { kind: "Write", writes: live.writes });
   const result = await operation(live.cookies);
   if (result.outcome === "SessionEnded") {
     const names = [...live.cookieNames, ...result.writes.map((w) => w.name)];
     applyEffect(store, ended(names));
-    return null;
+    return "Ended";
   }
   applyEffect(store, { kind: "Write", writes: result.writes });
   return result;

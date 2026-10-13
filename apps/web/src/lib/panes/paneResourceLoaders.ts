@@ -11,7 +11,6 @@ import {
   lecternSuggestionsResource,
   mediaResource,
   notePagesResource,
-  settingsAccountResource,
   type ConversationIndexResourceParams,
   type NotePagesResourceParams,
 } from "@/lib/api/resource";
@@ -113,9 +112,5 @@ export const paneResourceLoaders: Partial<
       >(conversationsInitialResource, {});
       return response.data;
     },
-  },
-  settingsAccount: {
-    cacheKey: () => settingsAccountResource.cacheKey({}),
-    load: (request) => request(settingsAccountResource, {}),
   },
 };
