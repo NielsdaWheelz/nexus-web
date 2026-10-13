@@ -20,3 +20,38 @@ index or an earlier filter would bound.
 
 acceptance: recorded plans and timings under the api's statement timeout, with
 the slates returning the same json before and after any fix.
+
+production evidence, 2026-10-13 release: on source `3ea1b8e6`, nine
+`GET /lectern/suggestions` responses between 21:04:13z and 21:06:11z
+took 30.96–47.78 seconds (all 200). one completed after shutdown began;
+the api subsequently exceeded its 30-second stop grace. the precise
+connection that prevented shutdown is not established. private evidence:
+`release/attempts/16763c3cd/shutdown-failure/api.log`.
+
+the api termination fix is separate from query performance. reproduce the
+ordinary slate read on the restored production copy and retain the query plan
+before changing the responsible query. no higher statement timeout or result
+truncation qualifies as resolution.
+
+restored production diagnosis, 2026-10-13: exact source `16763c3c` took
+33.82 seconds for the lectern read. five serial similarity statements cost
+31.81 seconds; the graph/ranking statement cost 0.52 seconds. each similarity
+plan read 637,712 chunk embeddings before its exact per-family top-400 sort.
+`_similar` now ranks all media anchors in one query, preserving active embedding
+identity, target eligibility, distance/owner/chunk order, and each anchor/family
+limit. filtering the existing distance threshold before ranking cannot displace
+an admitted chunk. the prototype retained every similarity row in 6.12 seconds;
+its plan materialized five anchor vectors, sorted four admitted chunks in 25 kb,
+and used no temp blocks on the unchanged 512 mib postgres clone.
+
+five full responses (lectern, quick reads, two ordinary libraries and the
+default library) remain byte-identical. nine empty/identity/limit controls
+pass, and all 800 ordered chunk identities at two filled top-400 boundaries
+match. full ordered candidate lists also match: 43 lectern, 11 quick-read
+and 20 ordinary-library candidates. the complete lectern read fell from 31.71 to 6.60 seconds; ordinary
+library reads fell from 32.43–34.15 to 7.19–7.36 seconds.
+
+qualification receipts are under
+`release/suggestions-query-qualification/`. the whole-graph lane and synapse
+exclusion query remain separate open work; this correction does not qualify
+those broader scaling claims.
