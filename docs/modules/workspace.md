@@ -41,15 +41,14 @@ row is absent. invalid present state raises `500 E_INTERNAL` and remains intact;
 entry cannot install a default store over it.
 which inspector group a route offers is the web's rule, applied on every write.
 
-`GET /me/workspace-session?device_id=` returns
+`GET /me/workspace-session` returns
 `Data[WorkspaceSessionsOut]` = `{data:{own, most_recent_elsewhere}}`, each a
 `WorkspaceState` or null; elsewhere is the same user's newest other-device row
-(`updated_at DESC, id DESC`). `PUT /me/workspace-session?device_id=` takes a
-`WorkspaceState` body and answers 204; a model violation is 400
-`E_INVALID_REQUEST`. the browser
-[put](../../apps/web/src/app/api/me/workspace-session/route.ts) forwards the body
-untouched and sets the query from the server-owned httpOnly `nx_device` cookie, so
-a client cannot name a device; an absent cookie is a 500 `E_INTERNAL` defect.
+(`updated_at DESC, id DESC`). `PUT /me/workspace-session` takes a
+`WorkspaceState` body and answers 204 (last write wins); a model violation is
+400 `E_INVALID_REQUEST`. the device is `X-Nexus-Device`, which only the bff and
+`callFastAPI` stamp from the server-owned httpOnly `nx_device` cookie, so a
+client cannot name one; without it the api answers 400.
 
 [`bootstrap.server.ts`](../../apps/web/src/lib/workspace/bootstrap.server.ts)
 reads the account, reader profile and sessions concurrently on the normal 30 s

@@ -14,7 +14,7 @@ import {
   type MutationIntent,
 } from "@/lib/actions/mutationIntent";
 import { publishImportsInvalidation } from "@/lib/imports/api";
-import { sseClientDirect } from "@/lib/api/sse-client";
+import { openStream } from "@/lib/api/stream";
 
 export type MetadataEnrichmentView = Schema<"MetadataEnrichmentView">;
 export type MetadataOperation = Schema<"MetadataOperationOut">;
@@ -86,14 +86,14 @@ function publish(entry: Entry, snapshot: Observation): void {
 }
 
 function connect(mediaId: string, entry: Entry): void {
-  entry.stop = sseClientDirect<MetadataEnrichmentView>({
-    path: `/stream/media/${encodeURIComponent(mediaId)}/metadata/events`,
+  entry.stop = openStream<MetadataEnrichmentView, MetadataEnrichmentView>({
+    path: `/api/stream/media/${encodeURIComponent(mediaId)}/metadata/events`,
     decode: (type, data) => {
       if (type !== "state") {
         // justify-defect: this same-deploy endpoint has one registered event type.
         throw new TypeError(`Unknown metadata event: ${type}`);
       }
-      return data as MetadataEnrichmentView;
+      return data;
     },
     // Absent and settled operations must keep observing later automatic jobs.
     isTerminal: () => false,
@@ -130,9 +130,8 @@ function connect(mediaId: string, entry: Entry): void {
         );
       if (summaryChanged) publishChange("Metadata");
     },
-    onReconnect: async () => {
+    onReconnect: () => {
       publish(entry, { ...entry.snapshot, disconnected: true });
-      return "continue";
     },
     // The stream is over: the next observer opens a new one.
     onError: () => {

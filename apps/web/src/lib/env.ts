@@ -91,6 +91,10 @@ export function getEnv(): ResolvedEnv {
   }
   const fastApiBaseUrl =
     process.env.FASTAPI_BASE_URL?.trim() || (deployed ? "" : "http://localhost:8000");
+  const fastApi = parseWebOrigin(fastApiBaseUrl);
+  if (deployed && (!fastApi || (fastApi.protocol !== "https:" && !fastApi.isLocalhost))) {
+    throw new Error(`FASTAPI_BASE_URL must be an https origin in staging/prod: ${fastApiBaseUrl}`);
+  }
   const appPublicOrigin = resolveAppPublicOrigin(deployed);
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "";
@@ -148,48 +152,29 @@ function resolveAppPublicOrigin(deployed: boolean): string {
 }
 
 /**
- * External browser-connect origins: the FASTAPI_BASE_URL origin plus the shared
- * R2_S3_API_ORIGIN origin for presigned storage. In a deployed env both are required,
- * origin-only, HTTPS, and R2 must be the Cloudflare R2 host — otherwise this throws (a
- * misconfiguration is a hard error, never a silent `connect-src 'self'` fallback).
+ * External browser-connect origins: the R2_S3_API_ORIGIN origin for presigned
+ * storage (the api itself is reached only through the bff). In a deployed env it
+ * is required, origin-only, HTTPS and the Cloudflare R2 host, otherwise this
+ * throws (a misconfiguration is a hard error, never a silent `connect-src 'self'`).
  */
 function resolveConnectOrigins(deployed: boolean): readonly string[] {
-  const origins = new Set<string>();
-
-  const fastApiBaseUrl = process.env.FASTAPI_BASE_URL?.trim();
-  if (fastApiBaseUrl) {
-    const origin = parseWebOrigin(fastApiBaseUrl);
-    if (origin) {
-      if (deployed && origin.protocol !== "https:" && !origin.isLocalhost) {
-        throw new Error(`Invalid FASTAPI_BASE_URL for CSP connect-src: ${fastApiBaseUrl}`);
-      }
-      origins.add(origin.origin);
-    } else if (deployed) {
-      throw new Error(`Invalid FASTAPI_BASE_URL for CSP connect-src: ${fastApiBaseUrl}`);
-    }
-  } else if (deployed) {
-    throw new Error("FASTAPI_BASE_URL is required in staging/prod for CSP connect-src");
-  }
-
   const r2S3ApiOrigin = process.env.R2_S3_API_ORIGIN?.trim();
-  if (r2S3ApiOrigin) {
-    const origin = parseWebOrigin(r2S3ApiOrigin);
-    if (origin) {
-      if (deployed && origin.protocol !== "https:" && !origin.isLocalhost) {
-        throw new Error(`Invalid R2_S3_API_ORIGIN for CSP connect-src: ${r2S3ApiOrigin}`);
-      }
-      if (deployed && !origin.hostname.endsWith(".r2.cloudflarestorage.com")) {
-        throw new Error(`Invalid R2_S3_API_ORIGIN for CSP connect-src: ${r2S3ApiOrigin}`);
-      }
-      origins.add(origin.origin);
-    } else if (deployed) {
-      throw new Error(`Invalid R2_S3_API_ORIGIN for CSP connect-src: ${r2S3ApiOrigin}`);
+  if (!r2S3ApiOrigin) {
+    if (deployed) {
+      throw new Error("R2_S3_API_ORIGIN is required in staging/prod for CSP connect-src");
     }
-  } else if (deployed) {
-    throw new Error("R2_S3_API_ORIGIN is required in staging/prod for CSP connect-src");
+    return [];
   }
-
-  return [...origins];
+  const origin = parseWebOrigin(r2S3ApiOrigin);
+  if (
+    deployed &&
+    (!origin ||
+      (origin.protocol !== "https:" && !origin.isLocalhost) ||
+      !origin.hostname.endsWith(".r2.cloudflarestorage.com"))
+  ) {
+    throw new Error(`Invalid R2_S3_API_ORIGIN for CSP connect-src: ${r2S3ApiOrigin}`);
+  }
+  return origin ? [origin.origin] : [];
 }
 
 // NEXUS_EXTENSION_REDIRECT_ORIGINS keeps its plural name and holds exactly one

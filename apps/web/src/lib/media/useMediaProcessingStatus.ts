@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Schema } from "@/lib/api/wire";
-import { openGenerationRunStream } from "@/lib/api/generationRunStream";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { openStream } from "@/lib/api/stream";
 
 export type MediaProcessingSnapshot = Schema<"MediaProcessingSnapshotOut">;
 
@@ -31,30 +30,19 @@ export function useMediaProcessingStatus(
 
   useEffect(() => {
     if (streamId === null) return;
-    const controller = new AbortController();
-    const failed = (error: unknown) => {
-      if (controller.signal.aborted || handleUnauthenticatedApiError(error))
-        return;
-      console.error("Generation run stream failed (media):", error);
-    };
-    openGenerationRunStream<MediaEvent>("media", streamId, {
+    return openStream<MediaEvent, MediaProcessingSnapshot>({
+      path: `/api/stream/media/${encodeURIComponent(streamId)}/events`,
       decode: (type, data) => {
         if (type !== "state" && type !== "done") {
-          throw new Error(`Unknown SSE event type: ${type}`);
+          throw new Error(`Unknown media event type: ${type}`);
         }
-        // justify-type-assertion: the same deploy serializes every payload as
-        // MediaProcessingSnapshotOut.
-        return { type, data: data as MediaProcessingSnapshot };
+        return { type, data };
       },
       isTerminal: (event) => event.type === "done",
-      onEvent: (event) => {
-        if (controller.signal.aborted) return;
-        setLatest({ mediaId: streamId, snapshot: event.data });
-      },
-      onError: failed,
-      signal: controller.signal,
-    }).catch(failed);
-    return () => controller.abort();
+      onEvent: (event) => setLatest({ mediaId: streamId, snapshot: event.data }),
+      onError: (error) =>
+        console.error("Media processing stream failed:", error),
+    });
   }, [streamId]);
 
   return { snapshot: latest?.mediaId === mediaId ? latest.snapshot : null };

@@ -1,4 +1,5 @@
-import { proxyResourceShareToFastAPI } from "@/lib/api/proxy";
+// The anonymous share reader's lane.
+import { proxyShare } from "@/lib/api/proxy";
 
 export const runtime = "nodejs";
 
@@ -6,8 +7,12 @@ export const runtime = "nodejs";
 const SHAPE = /^(?:\/file|\/document|\/assets\/nxpa1_[A-Za-z0-9_-]{48})?$/;
 const MASKED = { error: { code: "E_NOT_FOUND", message: "Share unavailable" } };
 
-export async function GET(request: Request, { params }: { params: Promise<{ path?: string[] }> }) {
-  const suffix = ((await params).path ?? []).map((segment) => `/${segment}`).join("");
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ path?: string[] }> },
+): Promise<Response> {
+  const segments = (await params).path ?? [];
+  const suffix = segments.map((segment) => `/${segment}`).join("");
   if (!SHAPE.test(suffix)) return Response.json(MASKED, { status: 404 });
-  return proxyResourceShareToFastAPI(request, `/public/resource-share${suffix}`);
+  return proxyShare(request, `/public/resource-share${suffix}`);
 }

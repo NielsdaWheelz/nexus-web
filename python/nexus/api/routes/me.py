@@ -7,6 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
+from nexus.api.deps import DeviceId
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.config import Settings, get_settings
 from nexus.db.session import DbSession
@@ -18,11 +19,7 @@ from nexus.schemas.nexus_history import (
 )
 from nexus.schemas.reader import ReaderProfileOut, ReaderProfilePatch
 from nexus.schemas.user import UpdateProfileRequest, UserProfileOut
-from nexus.schemas.workspace_session import (
-    DEVICE_ID_MAX_LENGTH,
-    WorkspaceSessionsOut,
-    WorkspaceState,
-)
+from nexus.schemas.workspace_session import WorkspaceSessionsOut, WorkspaceState
 from nexus.services import nexus_history as nexus_history_service
 from nexus.services import reader_profile as reader_profile_service
 from nexus.services import users as users_service
@@ -46,11 +43,7 @@ def get_me(
     profile = users_service.get_user_profile(
         db, viewer.user_id, viewer.default_library_id, viewer.email
     )
-    if (
-        settings.email_ingest_enabled
-        and settings.email_ingest_address_slug
-        and settings.email_ingest_domain
-    ):
+    if settings.email_ingest_address_slug and settings.email_ingest_domain:
         profile.email_ingest_address = (
             f"{settings.email_ingest_address_slug}@{settings.email_ingest_domain}"
         )
@@ -111,9 +104,6 @@ def post_nexus_selection(
     return Data(
         data=nexus_history_service.record_selection_for_viewer(db, viewer.user_id, request=body)
     )
-
-
-DeviceId = Annotated[str, Query(min_length=1, max_length=DEVICE_ID_MAX_LENGTH)]
 
 
 @router.get("/me/workspace-session")

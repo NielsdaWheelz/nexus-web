@@ -26,6 +26,8 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 internal const val NEXUS_ORIGIN_CALL_DEADLINE_MS = 20_000L
+// the server builds a reading copy before it answers
+private const val READING_COPY_DEADLINE_MINUTES = 5L
 // a settle answer carries the whole lectern (at most 2,000 rows)
 private const val MAX_ORIGIN_RESPONSE_BYTES = 4 * 1024 * 1024L
 
@@ -109,6 +111,10 @@ internal class NexusOriginClient(
         .followRedirects(false)
         .followSslRedirects(false)
         .build()
+    private val copyClient = client.newBuilder()
+        .callTimeout(READING_COPY_DEADLINE_MINUTES, TimeUnit.MINUTES)
+        .readTimeout(READING_COPY_DEADLINE_MINUTES, TimeUnit.MINUTES)
+        .build()
 
     init {
         require(base.username.isEmpty() && base.password.isEmpty())
@@ -119,10 +125,13 @@ internal class NexusOriginClient(
     /** The account the WebView session cookie belongs to. */
     suspend fun me(): UUID = UUID.fromString(data(Request.Builder().url(api("me")).get()).getString("user_id"))
 
-    /** `token` and `stream_base_url` for one direct call to the stream lane. */
-    suspend fun mintStreamToken(): Pair<String, String> =
-        data(Request.Builder().url(api("stream-token")).post("{}".toRequestBody(JSON)))
-            .let { it.getString("token") to it.getString("stream_base_url") }
+    /** A fresh offline reading copy `{url, expires_at, generation}`; the url needs no credentials. */
+    suspend fun readingCopy(mediaId: UUID): JSONObject =
+        data(
+            Request.Builder().url(api("media", mediaId.toString(), "reading-copy"))
+                .post("{}".toRequestBody(JSON)),
+            copyClient,
+        )
 
     /** The reader cursor snapshot `{state, revision, locator?}`. */
     suspend fun getReaderState(mediaId: UUID): JSONObject =
@@ -156,12 +165,12 @@ internal class NexusOriginClient(
     private fun api(vararg segments: String): HttpUrl =
         base.newBuilder().addPathSegment("api").apply { segments.forEach { addPathSegment(it) } }.build()
 
-    private suspend fun data(request: Request.Builder): JSONObject =
-        call(request) ?: throw IOException("origin answered without data")
+    private suspend fun data(request: Request.Builder, http: OkHttpClient = client): JSONObject =
+        call(request, http) ?: throw IOException("origin answered without data")
 
     /** The envelope's `data`, or null for an empty 2xx; any other status throws [NexusOriginError]. */
-    private suspend fun call(request: Request.Builder): JSONObject? {
-        val response = execute(request)
+    private suspend fun call(request: Request.Builder, http: OkHttpClient = client): JSONObject? {
+        val response = execute(request, http)
         try {
             if (response.status !in 200..299) {
                 val error = try {
@@ -182,11 +191,13 @@ internal class NexusOriginClient(
 
     private suspend fun execute(
         requestBuilder: Request.Builder,
+        http: OkHttpClient,
     ): NexusOriginResponse = suspendCancellableCoroutine { continuation ->
         val cookie = cookies.cookiesFor(origin)
         val request = requestBuilder
             .header("Origin", origin)
             .header("Accept", "application/json")
+            .header("X-Nexus-Wire", BuildConfig.NEXUS_WIRE.toString())
             .header("Cache-Control", "no-store")
             .apply {
                 if (!cookie.isNullOrBlank()) {
@@ -194,7 +205,7 @@ internal class NexusOriginClient(
                 }
             }
             .build()
-        val call = client.newCall(request)
+        val call = http.newCall(request)
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(
             object : Callback {

@@ -1,9 +1,17 @@
-"""Reader target, profile, and persisted resume-state schemas."""
+"""Reader target, profile, persisted resume-state and reading-copy schemas."""
 
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, FiniteFloat, model_validator
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    FiniteFloat,
+    model_validator,
+)
 
 ThemeValue = Literal["light", "dark"]
 FontFamilyValue = Literal["serif", "sans"]
@@ -261,3 +269,12 @@ class CursorWrite(BaseModel):
     base_revision: int = Field(ge=0)
     expected_reader_generation: int | None = Field(default=None, ge=1)
     """Android's offline position names the generation it was read in (I9)."""
+
+
+class ReadingCopyOut(BaseModel):
+    """An offline reading copy (a zip) in object storage: a signed url to fetch it without
+    credentials until ``expires_at``, and the publication generation it was built from."""
+
+    url: str
+    expires_at: AwareDatetime
+    generation: int

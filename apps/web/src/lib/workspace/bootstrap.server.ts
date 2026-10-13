@@ -1,12 +1,11 @@
 import "server-only";
 
-import { cookies, headers } from "next/headers";
+import { headers } from "next/headers";
 import { isApiError, type ApiError } from "@/lib/api/client";
 import type { DehydratedResources } from "@/lib/api/resourceCache";
 import { serverResourceFetcher } from "@/lib/api/resourceTransport.server";
 import { callFastAPI } from "@/lib/api/server";
 import type { ApiJson } from "@/lib/api/wire";
-import { readDeviceId } from "@/lib/auth/deviceCookie";
 import { REQUEST_PATH_HEADER } from "@/lib/auth/urls";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
@@ -26,16 +25,15 @@ import {
  */
 export async function loadWorkspaceBootstrap(): Promise<WorkspaceBootstrap> {
   const requestPath = (await headers()).get(REQUEST_PATH_HEADER);
-  const deviceId = readDeviceId(await cookies());
-  if (requestPath === null || !deviceId) {
-    // justify-defect: middleware stamps both on every protected request.
-    throw new Error("Workspace request path or device cookie missing");
+  if (requestPath === null) {
+    // justify-defect: middleware stamps it on every protected request.
+    throw new Error("Workspace request path missing");
   }
   const [me, profile, sessions] = await Promise.all([
     callFastAPI<ApiJson<"/me", "get">>("/me"),
     callFastAPI<ApiJson<"/me/reader-profile", "get">>("/me/reader-profile"),
     callFastAPI<ApiJson<"/me/workspace-session", "get">>(
-      `/me/workspace-session?device_id=${encodeURIComponent(deviceId)}`,
+      "/me/workspace-session",
     ),
   ]);
   const zone = me.data.calendar_time_zone;

@@ -42,7 +42,6 @@ export type ChatState = Readonly<{
   /** Assistant ids with a rerun or regenerate in flight. */
   busy: ReadonlySet<string>;
   error: FeedbackContent | null;
-  reloadRequestId: string | null;
   /** Rethrown by the pane during render. */
   defect: { error: unknown } | null;
   /** Bumps whenever a read settles a pending answer (its context refs commit with it). */
@@ -63,7 +62,6 @@ export function createChatStore(conversationId: string | null) {
     live: {},
     busy: new Set(),
     error: null,
-    reloadRequestId: null,
     defect: null,
     contextVersion: 0,
   };
@@ -94,8 +92,7 @@ export function createChatStore(conversationId: string | null) {
     if (live) setLive(id, { ...live, link });
   };
   const report = (failure: ChatFailure) => {
-    if (failure.kind === "Reload") set({ reloadRequestId: failure.requestId });
-    else if (failure.kind === "Defect")
+    if (failure.kind === "Defect")
       set({ defect: { error: failure.error } });
     else if (failure.kind === "Feedback") set({ error: failure.feedback });
   };

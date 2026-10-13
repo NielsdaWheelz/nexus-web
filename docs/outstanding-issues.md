@@ -94,7 +94,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] chat tool runtime / codex · 2026-10-10 generation rewrite · codex calls with invalid arguments (and repeated call ids) leave no tool row: [ticket](tickets/codex-invalid-tool-arguments-invisible.md).
 - [open] chat tool runtime / codex · 2026-10-10 model tools rewrite · p2 · a codex call to an unpublished tool ends the answer `policy_violation` (provider-runtime + kernel containment; T4e): [ticket](tickets/codex-unpublished-tool-call-ends-the-answer.md).
 - [open] chat wire · 2026-10-10 model tools rewrite · p3 · `tool_call_done` repeats `tool_call_start` plus an `input` no client reads: [ticket](tickets/tool-call-done-frame-duplicates-start.md).
-- [open] chat wire · 2026-10-10 model tools rewrite · p3 · two headers (chat contract, tool projection) gate the same stale-tab check: [ticket](tickets/two-stale-tab-headers.md).
 - [open] chat tool runtime · 2026-10-10 model tools rewrite · p3 · `tool_calls.arguments` is written and never read: [ticket](tickets/tool-call-arguments-unread.md).
 - [open] web server state · 2026-10-10 model tools rewrite · p3 · a server value keyed `""` loads once and never refetches: [ticket](tickets/server-state-empty-key-never-refetches.md).
 - [open] ingest / egress · 2026-10-10 url acquisition reauthor · `getaddrinfo` runs with no timeout, so resolver limits, not the fetch deadline, bound resolution: [ticket](tickets/egress-dns-resolution-outside-the-deadline.md).
@@ -105,7 +104,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] ingest / source admission · 2026-10-09 ingest-url harness · re-adding a known web url answers 202 with a new media id that is then superseded and 404s: [ticket](tickets/readded-url-returns-a-media-id-that-is-then-superseded.md).
 - [open] transcripts / youtube · 2026-10-09 ingest-url harness · the explicit youtube transcript request imports captions inside the api request: [ticket](tickets/youtube-caption-import-blocks-the-api-request.md).
 - [open] ingest / media capabilities · 2026-10-09 python dead-code sweep · `can_refresh_source` sql hand-lists source types (omits `email_message`) and storage errors differently from the refresh admission: [ticket](tickets/source-refresh-capability-disagrees-with-admission.md).
-- [open] native / defect correlation · 2026-10-04 live qualification · generic defect bodies lose request ID after middleware clears context; header omission source-only, optional client routing unchanged: [ticket](tickets/native-defect-responses-lose-request-id.md).
 - [open] ingest / x thread acquisition · 2026-10-04 spec review · distinct keys can create duplicate thread media/jobs because nullable source identity has no unique constraint or lock; source-qualified: [ticket](tickets/concurrent-x-author-admission-duplicates-media.md).
 - [open] ingest / reuse deletion race · 2026-10-04 spec review · lookup may outlive a hard delete while the missing-row reference barrier silently continues into a foreign key or refresh defect; source-qualified: [ticket](tickets/url-reuse-after-hard-delete-raises-foreign-key.md).
 - [open] ingest / canonical teardown replay · 2026-10-04 source audit · loser teardown deletes the attempt carrying the original viewer/key, losing admission identity while history survives: [ticket](tickets/canonical-source-teardown-deletes-admission-replay.md).
@@ -262,7 +260,6 @@ unexpected timeouts. See
 - [open] oi-080 · web ingest · 2026-09-12 source review · new imports retain authored anchors; older stored imports still need source-evidenced repair and cursor reconciliation: [ticket](tickets/web-ingest-replaces-authored-heading-anchors.md).
 - [open] oi-085 · epub extraction · 2026-09-12 memory review · utf-8 output caps do not bound retained unicode string memory: [ticket](tickets/epub-utf8-output-cap-does-not-bound-resident-text.md).
 - [open] oi-087 · ci actions · 2026-09-12 reader publication · the pinned buildx action targets a deprecated node runtime: [ticket](tickets/ci-buildx-action-deprecated-node-runtime.md).
-- [open] client telemetry malformed json · 2026-09-17 telemetry cleanup · malformed beacons return an unstructured 500 before authentication or backend validation: [ticket](tickets/client-defect-telemetry-malformed-json-returns-500.md).
 
 - [open] resource actions · 2026-09-14 highlight popup verification · manual follow-up must distinguish a mobile navigation defect from the removed journey's readiness race: [ticket](tickets/resource-action-parity-mobile-pane-readiness.md).
 - [open] agent tools · 2026-09-14 pr #246 memory review · resource reads load full bodies before enforcing their output limit: [ticket](tickets/resource-reader-loads-full-body-before-limit.md).
@@ -296,7 +293,6 @@ unexpected timeouts. See
 - [deferred] nexus error policy · 2026-09-28 launcher rewrite (F19, owner decision) · an openables or `/search` defect or 500 replaces the whole workspace: [ticket](tickets/nexus-retrieval-defects-replace-the-workspace.md).
 - [open] oi-131 · background memory · 2026-09-15 ecbe observation · p2 · retained peak447.902/448 mib leaves100 kib margin, without observed oom: [ticket](tickets/background-worker-production-memory-margin.md).
 
-- [open] oi-132 · api observability · 2026-09-15 reader oom diagnosis · p2 · access logs label headers as completion and omit requests killed before headers: [ticket](tickets/api-request-logs-stop-at-response-headers.md).
 - [open] oi-133 · dependency maintenance · 2026-09-15 pr #270 · p2 · integrate the isolated embedding import fix from published maintenance revisions into upstream main: [ticket](tickets/embedding-memory-maintenance-pins-need-upstream-integration.md).
 - [open] oi-134 · search · 2026-09-15 pr #270 diagnosis · p1 · query fixes deployed; native and production search still exceeds the 30-second web deadline: [ticket](tickets/semantic-document-search-times-out-on-restored-corpus.md).
 - [open] oi-135 · search memory · 2026-09-15 pr #270 review · p2 · selected result pages still retain complete fragment quotes without an aggregate byte bound: [ticket](tickets/search-result-pages-retain-full-fragment-quotes.md).
@@ -332,8 +328,6 @@ unexpected timeouts. See
 - [deferred] 2026-09-26 notes bullets acceptance · physical android webview b7 is not run until the stacked prs are reviewable: [ticket](tickets/notes-bullets-android-acceptance-deferred.md).
 - [open] 2026-09-27 epub apparatus identity · one note with distinct id/name aliases can become two target items with one dom stamp: [ticket](tickets/epub-note-id-name-alias-duplicates-target.md).
 - [open] 2026-09-26 notes bullets cache review · non-note card labels lack a revision for ordering concurrent reads: [ticket](tickets/resource-surface-card-labels-have-no-revision.md).
-- [open] 2026-09-28 sse transport · the listen cap's 429 E_RATE_LIMITED is misnamed and the sse client treats it as fatal: [ticket](tickets/sse-listen-cap-rejection-is-misnamed-and-fatal.md).
-- [open] 2026-09-28 api / bff observability · server-timing phases outlived the tests that read them; keep or delete at the api/auth/bff reauthor: [ticket](tickets/server-timing-phases-outlived-their-tests.md).
 - [open] search / typed wire · 2026-09-28 cleanup pr-08 · remaining always-sent locator output keys need a closure census and precise output views; compacted input/storage omissions remain intentional: [ticket](tickets/retrieval-locator-defaults-generate-optional-fields.md).
 - [open] dossiers / production migration · 2026-09-28 cleanup pr-08 · correct 0250's sql null guard omission, then record missing facts and loss counts read-only before deploy: [ticket](tickets/dossier-latest-revision-0250-production-preflight.md).
 - [open] dossiers / production migration · 2026-10-04 dossier reauthor · run 0259's refusal query and loss counts read-only against production before the release: [ticket](tickets/dossier-0259-production-preflight.md).
@@ -392,7 +386,6 @@ unexpected timeouts. See
 - [deferred] account / display-name bounds · 2026-10-05 source audit · web allows 80 UTF-16 units while native allows 100 code points; choose and align the product contract: [ticket](tickets/account-display-name-has-conflicting-length-bounds.md).
 - [verification credentials require owner rotation](tickets/connections-verification-credential-rotation.md).
 - [open] player / mini progress · 2026-10-09 web dead-code sweep · the mini player progress fill span has no class, so `.miniFill` never applies and no fill shows: [ticket](tickets/player-mini-progress-fill-is-unstyled.md).
-- [open] telemetry / client defects · 2026-10-09 web dead-code sweep · the python request schema still accepts `Admission`/`Read` phases and `command_id`/`run_id`, which the web no longer sends: [ticket](tickets/client-defect-schema-accepts-unsent-fields.md).
 - [open] search performance · 2026-10-10 search reauthor · the ivfflat index may hold centroids trained before the corpus arrived; semantic recall is unmeasured in production: [ticket](tickets/ivfflat-index-may-predate-corpus.md).
 - [deferred] search · 2026-10-10 search reauthor · ANN post-filtering can thin semantic hits under medium-selectivity scopes until iterative scans are enabled: [ticket](tickets/semantic-recall-under-filtered-scopes.md).
 - [open] search verification · 2026-10-10 search reauthor · video, episode and podcast search, `format:video|episode` and episode citation have no live proof: [ticket](tickets/search-video-episode-paths-lack-live-proof.md).

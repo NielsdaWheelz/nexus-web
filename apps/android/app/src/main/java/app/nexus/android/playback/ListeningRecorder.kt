@@ -301,7 +301,9 @@ internal class ListeningRecorder(
         }
     }
 
-    private fun retryable(status: Int): Boolean = status == 401 || status == 408 || status == 429 || status >= 500
+    // 426: this app was built for another wire; the queue waits for its update
+    private fun retryable(status: Int): Boolean =
+        status == 401 || status == 408 || status == 426 || status == 429 || status >= 500
 
     private fun retryLater() {
         failures += 1

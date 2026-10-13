@@ -4,6 +4,8 @@
 // typed failure. The storage PUT is a separate function that never sees the
 // bearer. Source urls are data: nothing here logs, and no message quotes one.
 
+import { WIRE_HEADER } from "@/lib/api/client";
+import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import { isAbortError } from "@/lib/errors";
 import {
   decodeWritableLibraryDestinationPage,
@@ -78,6 +80,10 @@ function invalidResponse(detail: string): CaptureFailureError {
 }
 
 async function responseFailure(response: Response): Promise<CaptureFailureError> {
+  if (response.status === 426) {
+    const failure = captureFailure("E_WIRE_MISMATCH", "Update the Nexus extension to keep capturing.");
+    return new CaptureFailureError(failure, 426);
+  }
   let body: unknown = null;
   try {
     body = await response.json();
@@ -120,6 +126,7 @@ export function captureClient(token: string): CaptureClient {
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: "application/json",
+          [WIRE_HEADER]: String(WIRE_REVISION),
           ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
           ...options.headers,
         },

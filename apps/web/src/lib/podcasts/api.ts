@@ -6,7 +6,7 @@
 
 import { apiFetch } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
-import { sseClientDirect } from "@/lib/api/sse-client";
+import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 
 export type PodcastDetail = Schema<"PodcastDetailOut">;
@@ -71,8 +71,8 @@ export function observeSubscription(
   onLost: (error: Error) => void,
 ): void {
   type Frame = { readonly type: string; readonly data: PodcastLifecycle };
-  sseClientDirect<Frame, PodcastLifecycle>({
-    path: `/stream/podcast-subscriptions/${podcastId}/events`,
+  openStream<Frame, PodcastLifecycle>({
+    path: `/api/stream/podcast-subscriptions/${encodeURIComponent(podcastId)}/events`,
     signal,
     decode: (type, data) => ({ type, data }),
     isTerminal: (frame) => frame.type === "done",

@@ -135,7 +135,7 @@ framed. Browse and Preview write no Media, source attempt, Library entry, job,
 or progress/activity fact.
 
 Owned collisions open the canonical Media pane. External Add supplies the
-server-resolved canonical URL to `/media/from_url`, so the existing URL
+server-resolved canonical URL to `/media/from-url`, so the existing URL
 validation, safe fetch, dedupe, source-attempt, Library assignment, and worker
 owners above remain the acquisition path. The read-only Brave helper may also
 be composed by chat/Dossier web research; that does not recreate a standalone

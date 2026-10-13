@@ -1,8 +1,9 @@
 """Post Room: the public email ingress.
 
-Mounted only when ``EMAIL_INGEST_ENABLED``. Authenticated by an HMAC body
-signature from the Cloudflare Email Worker plus a capability slug, never by
-session, bearer or internal header: this is a PUBLIC_PATHS member.
+Authenticated by an HMAC body signature from the Cloudflare Email Worker plus a
+capability slug, never by session, bearer or internal header: this is a
+PUBLIC_PATHS member. Unless its secret, slug, domain and owner are all set it
+answers 503 before reading anything.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from starlette.concurrency import run_in_threadpool
 
 from nexus.config import Settings, get_settings
 from nexus.db.session import DbSession
+from nexus.logging import get_request_id
 from nexus.responses import success_response
 from nexus.services.email_ingest_service import accept_email_message, verify_email_signature
 
@@ -31,23 +33,22 @@ async def post_email_ingest(
     x_nexus_email_signature: Annotated[str | None, Header(alias="x-nexus-email-signature")] = None,
     x_nexus_email_recipient: Annotated[str | None, Header(alias="x-nexus-email-recipient")] = None,
 ) -> JSONResponse:
-    """Size, then signature, then recipient, then owner — all before any MIME parse."""
+    """Configuration, size, signature, recipient, owner — all before any MIME parse."""
+    secret = settings.email_ingest_hmac_secret
+    slug = settings.email_ingest_address_slug
+    owner = settings.email_ingest_owner_user_id
+    if not (secret and slug and settings.email_ingest_domain and owner):
+        return JSONResponse({"data": {"error": "email_ingest_not_configured"}}, status_code=503)
     raw_body = await request.body()
     if len(raw_body) > settings.email_ingest_max_bytes:
         return JSONResponse({"data": {"error": "payload_too_large"}}, status_code=413)
-    if not verify_email_signature(
-        raw_body, x_nexus_email_signature, settings.email_ingest_hmac_secret or ""
-    ):
+    if not verify_email_signature(raw_body, x_nexus_email_signature, secret):
         return JSONResponse({"data": {"error": "invalid_signature"}}, status_code=401)
     recipient = (x_nexus_email_recipient or "").split("@")[0]
-    if not hmac.compare_digest(
-        (settings.email_ingest_address_slug or "").lower(), recipient.lower()
-    ):
+    if not hmac.compare_digest(slug.lower(), recipient.lower()):
         return JSONResponse({"data": {"error": "recipient_mismatch"}}, status_code=403)
-    # Staging and production validate the owner at boot; local and CI can enable
-    # the flag without it, so fail legibly instead of on UUID("").
     try:
-        owner_user_id = UUID((settings.email_ingest_owner_user_id or "").strip())
+        owner_user_id = UUID(owner.strip())
     except ValueError:
         return JSONResponse(
             {"data": {"error": "email_ingest_owner_not_configured"}}, status_code=503
@@ -57,7 +58,7 @@ async def post_email_ingest(
         db=db,
         raw_body=raw_body,
         owner_user_id=owner_user_id,
-        request_id=request.headers.get("x-request-id"),
+        request_id=get_request_id(),
     )
     return JSONResponse(
         success_response({"outcome": result.outcome, "media_id": str(result.media_id)})

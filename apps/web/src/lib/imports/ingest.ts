@@ -408,7 +408,7 @@ export async function addMediaFromUrl({
   idempotencyKey?: string;
   signal?: AbortSignal;
 }): Promise<AcceptedIngest> {
-  const { data } = await apiFetch<ApiJson<"/media/from_url", "post">>(
+  const { data } = await apiFetch<ApiJson<"/media/from-url", "post">>(
     "/api/media/from-url",
     {
       method: "POST",

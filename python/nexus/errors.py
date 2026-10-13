@@ -1,19 +1,15 @@
-"""API error definitions.
+"""The api's closed error vocabulary and the exceptions that carry it.
 
-All API errors are defined here with their corresponding HTTP status codes.
+Every code carries its HTTP status, so the envelope (``nexus.responses``) derives the
+status from the code and a client branches on the code alone.
 """
 
 from enum import Enum
 from typing import Any, Literal
 
-_ERROR_DETAIL_MAX_CHARS = 1000
-
 
 class ApiErrorCode(str, Enum):
-    """Standardized error codes for the API.
-
-    Format: E_CATEGORY_NAME. Each member carries its HTTP status.
-    """
+    """``E_CATEGORY_NAME``; each member carries its HTTP status."""
 
     status: int
 
@@ -84,8 +80,6 @@ class ApiErrorCode(str, Enum):
     E_DOSSIER_GENERATION_IN_PROGRESS = ("E_DOSSIER_GENERATION_IN_PROGRESS", 409)
     E_DOSSIER_BUILD_NOT_ACTIVE = ("E_DOSSIER_BUILD_NOT_ACTIVE", 409)
     E_SELECTION_CHANGED = ("E_SELECTION_CHANGED", 409)
-    E_TOOL_PROJECTION_RELOAD_REQUIRED = ("E_TOOL_PROJECTION_RELOAD_REQUIRED", 409)
-    E_CHAT_CONTRACT_RELOAD_REQUIRED = ("E_CHAT_CONTRACT_RELOAD_REQUIRED", 409)
     E_PODCAST_REPLACES_EPISODES = ("E_PODCAST_REPLACES_EPISODES", 409)
     E_PODCAST_EPISODE_IDENTITY_CONFLICT = ("E_PODCAST_EPISODE_IDENTITY_CONFLICT", 409)
     E_PODCAST_SUBSCRIPTION_REQUIRED = ("E_PODCAST_SUBSCRIPTION_REQUIRED", 409)
@@ -105,7 +99,7 @@ class ApiErrorCode(str, Enum):
     # Indexing: the embedding provider stayed unavailable through its transient retries.
     E_EMBEDDING_PROVIDER_UNAVAILABLE = ("E_EMBEDDING_PROVIDER_UNAVAILABLE", 503)
     E_MESSAGE_TOO_LONG = ("E_MESSAGE_TOO_LONG", 400)  # Message exceeds 20,000 char limit
-    E_RATE_LIMITED = ("E_RATE_LIMITED", 429)  # SSE listener capacity exhausted (db/listen.py)
+    E_RATE_LIMITED = ("E_RATE_LIMITED", 429)  # live-stream listener capacity (db/listen.py)
     E_IDEMPOTENCY_KEY_REPLAY_MISMATCH = (
         "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH",
         409,
@@ -127,10 +121,9 @@ class ApiErrorCode(str, Enum):
     E_STALE_LISTENING_REVISION = ("E_STALE_LISTENING_REVISION", 409)  # heartbeat CAS mismatch
     E_LIMIT = ("E_LIMIT", 409)  # Lectern aggregate row limit exceeded
 
-    # Streaming errors
-    E_CLIENT_DISCONNECT = ("E_CLIENT_DISCONNECT", 499)  # stream aborted by client
-    E_STREAM_TOKEN_EXPIRED = ("E_STREAM_TOKEN_EXPIRED", 401)  # token past expiry
-    E_STREAM_TOKEN_INVALID = ("E_STREAM_TOKEN_INVALID", 401)  # signature or claims failed
+    # Transport errors (the edge middleware)
+    E_CLIENT_DISCONNECT = ("E_CLIENT_DISCONNECT", 499)
+    E_WIRE_MISMATCH = ("E_WIRE_MISMATCH", 426)  # the client was built for another wire
 
     # EPUB errors
     E_RETRY_INVALID_STATE = ("E_RETRY_INVALID_STATE", 409)
@@ -213,39 +206,12 @@ class ApiErrorCode(str, Enum):
     E_SANITIZATION_FAILED = ("E_SANITIZATION_FAILED", 500)
 
 
-def exception_error_detail(
-    exc: BaseException,
-    *,
-    provider_request_id: str | None = None,
-    max_chars: int = _ERROR_DETAIL_MAX_CHARS,
-) -> str:
-    """Operator-facing terminal detail with provider request id when available."""
-    request_id = provider_request_id
-    detail = f"{type(exc).__name__}: {exc}"
-    if request_id is None:
-        return detail[:max_chars]
-    suffix = f" (provider_request_id={request_id})"
-    if max_chars <= len(suffix):
-        return suffix[:max_chars]
-    return f"{detail[: max_chars - len(suffix)]}{suffix}"
-
-
 class ApiError(Exception):
-    """Base exception for API errors.
-
-    Attributes:
-        code: The error code enum value
-        message: Human-readable error message
-        status_code: HTTP status code (derived from code)
-    """
+    """A modeled failure: its code (and so its status), a message and optional details."""
 
     def __init__(
-        self,
-        code: ApiErrorCode,
-        message: str,
-        *,
-        details: dict[str, Any] | None = None,
-    ):
+        self, code: ApiErrorCode, message: str, *, details: dict[str, Any] | None = None
+    ) -> None:
         self.code = code
         self.message = message
         self.details = details
@@ -254,15 +220,11 @@ class ApiError(Exception):
 
 
 class NotFoundError(ApiError):
-    """Resource not found error."""
-
     def __init__(self, code: ApiErrorCode = ApiErrorCode.E_NOT_FOUND, message: str = "Not found"):
         super().__init__(code, message)
 
 
 class ForbiddenError(ApiError):
-    """Authorization failure error."""
-
     def __init__(self, code: ApiErrorCode = ApiErrorCode.E_FORBIDDEN, message: str = "Forbidden"):
         super().__init__(code, message)
 
@@ -284,8 +246,6 @@ class ResourceLimitError(ApiError):
 
 
 class ConflictError(ApiError):
-    """Conflict error (409)."""
-
     def __init__(
         self,
         code: ApiErrorCode = ApiErrorCode.E_INVITE_NOT_PENDING,
@@ -297,8 +257,6 @@ class ConflictError(ApiError):
 
 
 class InvalidRequestError(ApiError):
-    """Invalid request error."""
-
     def __init__(
         self, code: ApiErrorCode = ApiErrorCode.E_INVALID_REQUEST, message: str = "Invalid request"
     ):

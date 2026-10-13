@@ -66,8 +66,8 @@ function serialize(
   return policy.join("; ");
 }
 
-// connect: the fastapi/sse and presigned storage origins; media: explicit
-// media origins beyond https:.
+// connect: the presigned storage origin (the api is reached only through the
+// bff); media: explicit media origins beyond https:.
 export const appCsp = (
   request: PolicyRequest & {
     readonly connect: readonly string[];

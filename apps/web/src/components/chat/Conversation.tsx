@@ -276,7 +276,6 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
               if (code === "E_READER_SELECTION_STALE") retryQuote();
               if (code === "E_CONVERSATION_NO_LONGER_EMPTY") void store.load();
             }}
-            reloadRequestId={state.reloadRequestId}
             initialText={params.get("draft") ?? ""}
             focusKey={focusKey ?? (quote ? `quote:${hash}` : null)}
             isPaneActive={isPaneActive}

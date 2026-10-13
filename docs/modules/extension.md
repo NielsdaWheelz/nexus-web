@@ -228,8 +228,10 @@ page gone, account mismatch) offer discard only; everything else offers retry.
 
 ## server api
 
-Every call goes through the web app's `/api/extension/...` proxy; the
-extension token authorizes exactly these routes. Capture operations load the
+Every call goes through the web app's `/api/extension/...` proxy with the
+build's `X-Nexus-Wire`; the extension token authorizes exactly these routes. An
+extension built for another wire is refused with 426 and says "Update the Nexus
+extension to keep capturing." Capture operations load the
 session by `created_by_user_id` and `input_origin.kind = "BrowserCapture"`
 (provenance, not the http `Origin`).
 

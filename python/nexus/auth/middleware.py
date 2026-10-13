@@ -8,7 +8,6 @@ Provides:
 import asyncio
 import hmac
 import logging
-import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
@@ -24,7 +23,6 @@ from nexus.auth.bearer import parse_bearer_token
 from nexus.auth.verifier import TokenVerifier
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import error_response
-from nexus.stream_paths import is_stream_path
 
 logger = logging.getLogger(__name__)
 
@@ -123,12 +121,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if request.url.path in PUBLIC_PATHS:
             return await call_next(request)
 
-        # Stream routes authenticate via the stream-token bearer (get_stream_viewer)
-        # instead of Supabase auth. The iss/aud requirement on stream tokens prevents
-        # accidental acceptance of supabase JWTs if one hits a stream endpoint.
-        if is_stream_path(request.url.path):
-            return await call_next(request)
-
         # Step 1: Check internal header if required
         if self.requires_internal_header:
             error_response_obj = self._verify_internal_header(request)
@@ -153,8 +145,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
             "/public/resource-share/"
         ):
             return await call_next(request)
-
-        auth_started_at = time.monotonic()
 
         # Step 2: Extract bearer token
         token, error_response_obj = self._extract_bearer_token(request)
@@ -204,10 +194,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             default_library_id=default_library_id,
             email=email,
         )
-        auth_duration_ms = (time.monotonic() - auth_started_at) * 1000
-        response = await call_next(request)
-        response.headers.append("Server-Timing", f"nexus_auth;dur={auth_duration_ms:.2f}")
-        return response
+        return await call_next(request)
 
     @staticmethod
     def _consume_bootstrap_task_result(task: asyncio.Task[UUID]) -> None:

@@ -1,21 +1,25 @@
 "use client";
 
 import { Component, type ReactNode } from "react";
+import Button from "@/components/ui/Button";
+import { isStaleBuild, STALE_BUILD_COPY } from "@/lib/api/client";
 import styles from "./layout.module.css";
 
 /**
  * The whole authenticated workspace's boundary: bootstrap and live workspace
- * defects. Expected bootstrap transport failures are handled before this boundary.
- * #entry-failure is the notice return-focus target, shared with root containment.
+ * defects, and a stale build's 426 (the update copy and a reload; not a
+ * defect). Expected bootstrap transport failures are handled before this
+ * boundary. #entry-failure is the notice return-focus target, shared with root
+ * containment.
  */
 export class AuthenticatedWorkspaceErrorBoundary extends Component<
   { children: ReactNode },
-  { failed: boolean }
+  { failed: boolean; stale: boolean }
 > {
-  state = { failed: false };
+  state = { failed: false, stale: false };
 
-  static getDerivedStateFromError() {
-    return { failed: true };
+  static getDerivedStateFromError(error: unknown) {
+    return { failed: true, stale: isStaleBuild(error) };
   }
 
   componentDidCatch(error: unknown): void {
@@ -40,7 +44,14 @@ export class AuthenticatedWorkspaceErrorBoundary extends Component<
         className={styles.error}
       >
         <h1 id="workspace-error-heading">something went wrong in the workspace</h1>
-        <p>nexus needs a fix before this can continue.</p>
+        {this.state.stale ? (
+          <>
+            <p>{STALE_BUILD_COPY}</p>
+            <Button onClick={() => window.location.reload()}>reload</Button>
+          </>
+        ) : (
+          <p>nexus needs a fix before this can continue.</p>
+        )}
       </main>
     );
   }

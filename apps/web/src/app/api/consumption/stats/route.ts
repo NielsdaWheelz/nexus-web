@@ -1,7 +1,0 @@
-import { proxyConsumptionRead } from "@/lib/consumption/historyBff.server";
-
-export const runtime = "nodejs";
-
-export function GET(request: Request): Promise<Response> {
-  return proxyConsumptionRead(request, "/consumption/stats");
-}

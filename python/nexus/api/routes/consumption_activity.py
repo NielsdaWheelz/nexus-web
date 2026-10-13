@@ -1,11 +1,12 @@
-"""Activity exclusions and personal history; the BFF injects ``current_device_id`` from the device
-cookie. Capture lives with the player routes."""
+"""Activity exclusions and personal history; "this device" is the one the bff names
+(``X-Nexus-Device``). Capture lives with the player routes."""
 
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 
+from nexus.api.deps import DeviceId
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import RepeatableReadDbSession
 from nexus.errors import InvalidRequestError
@@ -37,7 +38,7 @@ def _scope(
     db: RepeatableReadDbSession,
     end: Annotated[ConsumptionDate, Query()],
     time_zone: Annotated[str, Query(min_length=1, max_length=100)],
-    current_device_id: Annotated[str, Query(min_length=1, max_length=200)],
+    current_device_id: DeviceId,
     start: Annotated[ConsumptionDate | None, Query()] = None,
     modality: Annotated[ActivityModality | None, Query()] = None,
     media_ref: Annotated[str | None, Query(max_length=100)] = None,

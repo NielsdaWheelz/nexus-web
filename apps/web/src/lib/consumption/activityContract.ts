@@ -5,8 +5,8 @@ export type MediaRef = string & { readonly __mediaRef: unique symbol };
 export type ActivityModality = "Reading" | "Listening" | "Viewing";
 export type ActivityDeviceClass = "Desktop" | "Mobile";
 
-/** The capture body the web uploader and the Android app post; the BFF adds `device_id`. */
-export type ActivityRequest = Omit<Schema<"ActivityRecordIn">, "device_id">;
+/** The capture body the web uploader and the Android app post; the bff names the device. */
+export type ActivityRequest = Schema<"ActivityRecordIn">;
 
 /** One span body per modality, as the capture body carries it. */
 export interface ActivitySpanBodies {

@@ -3,15 +3,22 @@
 // Saves this device's workspace 1 s after the last change, and with keepalive
 // when the page hides. One request at a time; a newer state always follows and
 // a success acknowledges exactly the state sent. Transport failures keep a
-// Retry notice up; anything else is a defect for the workspace boundary.
+// Retry notice up; a stale build (426) keeps the update notice up and the
+// workspace with it; anything else is a defect for the workspace boundary.
 import { useEffect, useState } from "react";
 import { useFeedback } from "@/components/feedback/Feedback";
-import { apiCommand204, isApiError } from "@/lib/api/client";
+import {
+  apiCommand204,
+  apiTransportFeedback,
+  isApiError,
+  isStaleBuild,
+} from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { WorkspaceState } from "@/lib/workspace/model";
 import type { WorkspaceStore } from "@/lib/workspace/store";
 
 const NOTICE = "workspace-session-save";
+const TITLE = "Workspace save wasn’t confirmed";
 const TRANSPORT = [
   "E_NETWORK",
   "E_UPSTREAM",
@@ -50,6 +57,18 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
         })
         .catch((error: unknown) => {
           if (!live || handleUnauthenticatedApiError(error)) return;
+          // every save is refused until a reload; a background save never
+          // takes the workspace down with text a leave-page prompt kept
+          const update =
+            isStaleBuild(error) && apiTransportFeedback(error, TITLE);
+          if (update) {
+            return publish({
+              kind: "Persistent",
+              key: NOTICE,
+              content: update,
+              announcement: "Assertive",
+            });
+          }
           if (!isApiError(error) || !TRANSPORT.includes(error.code)) {
             live = false;
             return setDefect({ error });
@@ -59,7 +78,7 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
             key: NOTICE,
             content: {
               tone: "Danger",
-              title: "Workspace save wasn’t confirmed",
+              title: TITLE,
               message: "Retry to save your latest workspace changes.",
               requestId: error.requestId,
             },

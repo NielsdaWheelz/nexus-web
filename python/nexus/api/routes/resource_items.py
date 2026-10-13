@@ -4,10 +4,9 @@ The static paths are registered before ``/{resource_ref}/…`` so they are not s
 by the ref parameter.
 """
 
-import time
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
@@ -91,13 +90,9 @@ def search_resource_targets(
 
 @router.post("/openables/search")
 def search_openable_resources(
-    request: ResourceOpenableSearchRequest, response: Response, viewer: ViewerDep, db: DbSession
+    request: ResourceOpenableSearchRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[ResourceOpenableSearchResponse]:
-    started_at = time.monotonic()
-    result = pickers.search_openables(db, viewer_id=viewer.user_id, request=request)
-    duration_ms = (time.monotonic() - started_at) * 1000
-    response.headers.append("Server-Timing", f"nexus_openables;dur={duration_ms:.2f}")
-    return Data(data=result)
+    return Data(data=pickers.search_openables(db, viewer_id=viewer.user_id, request=request))
 
 
 @router.get("/{resource_ref}/surface")
