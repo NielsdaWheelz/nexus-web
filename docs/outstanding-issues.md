@@ -29,6 +29,7 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+- [open] release / credentials · 2026-10-13 release investigation · private credential files were printed into session tool results; assess retained-result access while preserving android signing continuity: [ticket](tickets/release-session-credential-output.md).
 - [open] release / lists · 2026-10-10 collection-revision cut · web and api together; 0275 drops viewer_collection_revisions (irreversible, no preflight); old tabs and held cursors fail once: [ticket](tickets/collection-keyset-continuations-release-steps.md).
 - [open] lists / pagination · 2026-10-10 collection-revision cut · p3 · five python cursor codecs, three page envelopes and two more web page hooks remain beside the one keyset codec: [ticket](tickets/list-cursor-codecs-diverge.md).
 - [open] lists / model tools · 2026-10-10 colrev rebase · p3 · an assistant write undo publishes no change topic, so a mounted library or queue view keeps the undone row: [ticket](tickets/assistant-write-undo-publishes-no-change.md).
