@@ -360,8 +360,8 @@ def rank(db: Session, r: Retrieval, family: str) -> list[Hit]:
         near = [(chunk_id, cosine) for chunk_id, cosine in near if cosine >= 0.5]
         params |= {"ann_ids": [n[0] for n in near], "ann_cos": [n[1] for n in near]}
     if family == "content_chunk" and r.terms:  # never scan the whole chunk table
-        where += f""" AND cc.id IN (SELECT id FROM content_chunks WHERE chunk_text_tsv @@ {TSQ}
-            UNION ALL SELECT unnest(CAST(:ann_ids AS uuid[])))"""
+        where += f""" AND (cc.chunk_text_tsv @@ {TSQ}
+            OR cc.id = ANY(CAST(:ann_ids AS uuid[])))"""
     cosine = "s.cosine" if semantic else "NULL"
     score = f"""CAST(((CASE WHEN lower(s.label) = lower(:q) THEN 3 WHEN s.label ILIKE :prefix THEN 2
             WHEN s.label ILIKE :contains THEN 1 ELSE 0 END) + CASE WHEN s.doc @@ {TSQ}
