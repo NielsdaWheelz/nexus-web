@@ -73,6 +73,11 @@ class StorageClient:
         s3_client: BaseClient | None = None,
     ):
         self._bucket = bucket
+        # Botocore reloads CA certificates into its shared TLS context when it
+        # opens a connection. Serialize SDK calls and streaming-body I/O so
+        # context mutation cannot race another operation's TLS use. Never hold
+        # the lock while yielding bytes to a caller.
+        self._operation_lock = Lock()
         self._client = s3_client or Session().client(
             "s3",
             endpoint_url=endpoint_url.rstrip("/"),
@@ -90,41 +95,45 @@ class StorageClient:
         )
 
     def close(self) -> None:
-        self._client.close()
+        with self._operation_lock:
+            self._client.close()
 
     def sign_upload(
         self, path: str, *, content_type: str, size_bytes: int, expires_in: int = 300
     ) -> SignedUpload:
         try:
-            upload_url = self._client.generate_presigned_url(
-                "put_object",
-                Params={
-                    "Bucket": self._bucket,
-                    "Key": path,
-                    "ContentType": content_type,
-                    "ContentLength": int(size_bytes),
-                },
-                ExpiresIn=expires_in,
-                HttpMethod="PUT",
-            )
+            with self._operation_lock:
+                upload_url = self._client.generate_presigned_url(
+                    "put_object",
+                    Params={
+                        "Bucket": self._bucket,
+                        "Key": path,
+                        "ContentType": content_type,
+                        "ContentLength": int(size_bytes),
+                    },
+                    ExpiresIn=expires_in,
+                    HttpMethod="PUT",
+                )
         except (BotoCoreError, ClientError) as exc:
             raise StorageError(f"Failed to sign upload for {path}") from exc
         return SignedUpload(path=path, upload_url=upload_url)
 
     def sign_download(self, path: str, *, expires_in: int = 300) -> str:
         try:
-            return self._client.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": self._bucket, "Key": path},
-                ExpiresIn=expires_in,
-                HttpMethod="GET",
-            )
+            with self._operation_lock:
+                return self._client.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": self._bucket, "Key": path},
+                    ExpiresIn=expires_in,
+                    HttpMethod="GET",
+                )
         except (BotoCoreError, ClientError) as exc:
             raise StorageError(f"Failed to sign download for {path}") from exc
 
     def head_object(self, path: str) -> ObjectMetadata | None:
         try:
-            response = self._client.head_object(Bucket=self._bucket, Key=path)
+            with self._operation_lock:
+                response = self._client.head_object(Bucket=self._bucket, Key=path)
         except ClientError as exc:
             if _client_error_is_missing(exc):
                 return None
@@ -156,7 +165,8 @@ class StorageClient:
         if range_header is not None:
             params["Range"] = range_header
         try:
-            response = self._client.get_object(**params)
+            with self._operation_lock:
+                response = self._client.get_object(**params)
         except ClientError as exc:
             if _client_error_is_missing(exc):
                 raise StorageError(f"Object not found: {path}", code="E_STORAGE_MISSING") from exc
@@ -173,7 +183,8 @@ class StorageClient:
                         if remaining is None
                         else min(_READ_CHUNK_BYTES, remaining)
                     )
-                    chunk = body.read(want)
+                    with self._operation_lock:
+                        chunk = body.read(want)
                     if not chunk:
                         if remaining is None:
                             return
@@ -186,7 +197,8 @@ class StorageClient:
         finally:
             close = getattr(body, "close", None)
             if close:
-                close()
+                with self._operation_lock:
+                    close()
 
     def put_object(
         self, path: str, content: bytes, content_type: str = "application/octet-stream"
@@ -196,9 +208,10 @@ class StorageClient:
         delay_seconds = 0.2
         for attempt in range(1, _PUT_OBJECT_ATTEMPTS + 1):
             try:
-                self._client.put_object(
-                    Bucket=self._bucket, Key=path, Body=content, ContentType=content_type
-                )
+                with self._operation_lock:
+                    self._client.put_object(
+                        Bucket=self._bucket, Key=path, Body=content, ContentType=content_type
+                    )
                 return
             except (BotoCoreError, ClientError) as exc:
                 if attempt == _PUT_OBJECT_ATTEMPTS:
@@ -211,19 +224,21 @@ class StorageClient:
     ) -> None:
         # No retry: the stream body is not replayable after a partial send.
         try:
-            self._client.put_object(
-                Bucket=self._bucket, Key=path, Body=content, ContentType=content_type
-            )
+            with self._operation_lock:
+                self._client.put_object(
+                    Bucket=self._bucket, Key=path, Body=content, ContentType=content_type
+                )
         except (BotoCoreError, ClientError) as exc:
             raise StorageError(f"Failed to upload object {path}: {exc}") from exc
 
     def copy_object(self, source_path: str, destination_path: str) -> None:
         try:
-            self._client.copy_object(
-                Bucket=self._bucket,
-                Key=destination_path,
-                CopySource={"Bucket": self._bucket, "Key": source_path},
-            )
+            with self._operation_lock:
+                self._client.copy_object(
+                    Bucket=self._bucket,
+                    Key=destination_path,
+                    CopySource={"Bucket": self._bucket, "Key": source_path},
+                )
         except ClientError as exc:
             if _client_error_is_missing(exc):
                 raise StorageError(
@@ -239,7 +254,8 @@ class StorageClient:
 
     def delete_object(self, path: str) -> None:
         try:
-            self._client.delete_object(Bucket=self._bucket, Key=path)
+            with self._operation_lock:
+                self._client.delete_object(Bucket=self._bucket, Key=path)
         except (BotoCoreError, ClientError) as exc:
             raise StorageError(f"Failed to delete object {path}") from exc
 
@@ -248,7 +264,8 @@ class StorageClient:
         if continuation_token is not None:
             params["ContinuationToken"] = continuation_token
         try:
-            response = self._client.list_objects_v2(**params)
+            with self._operation_lock:
+                response = self._client.list_objects_v2(**params)
         except (BotoCoreError, ClientError) as exc:
             raise StorageError(f"Failed to list objects under {prefix}") from exc
 
@@ -296,9 +313,8 @@ def write_object_checked(
 
 
 def get_storage_client() -> StorageClient:
-    """One process-owned S3 client, shared across threads and closed at process exit.
+    """One process-owned S3 client with serialized operations and a final close.
 
-    Boto clients support concurrent requests; session/client construction does not.
     Serialize cold creation too: lru_cache alone can run its factory concurrently.
     """
     with _client_lock:
