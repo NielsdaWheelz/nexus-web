@@ -1,102 +1,103 @@
 # add content
 
-status: current contract; reauthored with imports (cleanup/imports-reauthor).
-scope: add panel/session and acquisition (`lib/imports/ingest.ts`). existing
-backend storage, publication and recovery behavior stays owned by its services.
+status: current contract; single-screen add/import.
+scope: the browser-local add task and its existing acquisition/placement owners.
+[implementation and qualification](../add-import-plan.md).
 
-## behavior
+## editor
 
-one browser-local session starts from an optional url draft and destination
-libraries. desktop focuses the Links box; mobile the heading.
-review extracts distinct valid http/https links in source order. intake accepts
-nonempty pdfs through 100 mib and epubs through 50 mib; invalid files stay visible.
-all rows count toward twenty; overflow stages nothing. staging clears its input
-and focuses the queue. defaults update every draft; rows can override them.
+one ordered list contains editable url drafts, file drafts, frozen work and saved
+receipts, followed by one insertion row. typing promotes that row without changing
+its identity or input element. empty url drafts retain identity and libraries but
+use no capacity, ready/attention count or leave warning. twenty populated rows is
+the limit, including invalid inputs and saved receipts; intake overflow is atomic.
 
-submission freezes source, destinations and idempotency key, with concurrency
-two and one mutation per session. source acceptance differs from processing
-success; upload publication proves verified bytes. accepted rows release file
-bytes and retain identity, duplicate/processing facts and open controls.
-unresolved status/retry resends the frozen intent; restage allocates a fresh key.
-every sent intent ending in auth or defect stays frozen: urls unresolved, files
-retaining exact replay or pointing to imports. one mapping serves submit/check.
-idle implies no submitting row. known feedback and request ids stay visible;
-auth recovery runs first and defects reach the existing boundary unchanged.
-editor create-and-add handles known creation failures there; auth/abort escape
-without becoming defects. library creation reuses its allocated id after response
-loss. acquisition returns one `AcceptedIngest {kind, mediaId, duplicate,
-processing}` to add, notes, connections, browse and capture; each surface's
-outcome copy sits beside the failure catalog in `lib/imports/copy.ts`.
+`addInput.ts` owns raw-list parsing and draft validation. clipboard outer whitespace
+is trimmed before splitting at newline, tab or comma followed by whitespace;
+separator commas are consumed. ordinary single-value paste uses native selection
+and caret behavior. a partly selected populated field refuses list paste.
+prose/markdown stays editable invalid text. valid http/https spelling and
+punctuation stay intact; ambiguous no-space commas offer an explicit split.
+file validation reuses `lib/imports/ingest.ts`: nonempty pdf through 100 MiB, epub
+through 50 MiB. rejected files remain rows. file selection/drop appends in order;
+recognized drops prevent native navigation even while intake is unavailable.
 
-stop/discard/reset/unmount fence all old reads and writes. stop returns unsent
-submissions to draft, started urls to unresolved and started files to imports.
-accepted rows remain accepted. confirmations, keep-working and focus stay as
-observed; only active mutations warn on unload. reload loses browser drafts/files
-while durable work remains in imports.
+`useAddContentSession` owns the immutable snapshot and its synchronous ref. the
+panel renders its commands; it never calls acquisition or allocates replay keys.
+row destinations, the new-item seed and the bulk header have separate scopes.
+header deltas add/remove one library on populated drafts and seed, preserving
+other selections. mixed coverage is derived; sent/saved rows are excluded.
+`All` membership is implicit.
 
-accepted aliases share placement by media identity. bulk work deduplicates ids,
-excludes unavailable media and initially rereads eligibility. only admitted
-direct/absent relations change. add admission creates/reuses only video, article,
-pdf and epub media; the sole podcast-episode writer allocates new episode rows,
-so parent-show inheritance cannot enter this session.
+`LibraryDestinationPicker` owns shared search/create, with item selection or native
+all/some/none checkboxes. query changes synchronously retire continuation authority;
+every settlement belongs to its query, cursor and generation. deactivation clears
+loading and fences late replies. the shared chooser keeps keyboard-active options
+inside its own scrollport. busy search is read-only, preserving focus.
 
-transport-class failure, sent defect or stop-after-send retains each exact
-(media, destination, verb) and inventory. retry sends only those retained triples,
-without an inventory prerequisite or changed-selection inference. refusals settle
-with feedback and no resend; media-not-found is terminal unavailable. unavailable
-rows have no retry and contribute neither bulk options nor bulk error banners.
-reads never erase uncertainty. only settled retry, a later write command's
-successful eligibility read, last-alias removal or session end clears it.
-editor-open/refresh reads do not count. per-media reads and writes exclude each
-other; late completion cannot overwrite a newer owner.
-retry auth restores the original uncertainty; sent defects reach the boundary
-after retaining their exact command.
+one active picker belongs to a row or header. desktop uses the responsive anchored
+surface; add on mobile uses an inline region in the scrolling body. header chooser
+content sits at the body's top. escape/back closes the picker first. inline
+regions omit outside-pointerdown dismissal so the intended click can complete.
+retarget resets search; removal/submission/session replacement cannot revive an
+old target or restore focus to its removed anchor. creation locks picker dismissal
+while task close retains the stop guard. other picker consumers remain responsive.
 
-send is recorded synchronously before dispatch; acknowledgement installs the
-confirmed relation in the same continuation, without await or follow-up read.
-stop/admission use that synchronous snapshot. queued retries restore their prior
-uncertainty unchanged; sent unacknowledged writes keep their exact triple.
-acknowledgement cannot be demoted by a later read. direct retry is essential:
-removing the viewer's last readable path makes inventory return 404 although
-the exact delete still succeeds (`services/library_entries.py:578-580,761-782`).
+## acceptance and leaving
 
-## ownership and qualification
+submission revalidates the ready subset, captures destinations and a new key per
+row synchronously, then admits two at a time within one mutation slot. invalid and
+empty drafts send nothing. saved receipts remain in the task; ordinary completion
+neither navigates nor closes it. acceptance proves saving; upload publication
+proves verified bytes. neither proves completed extraction.
 
-`useAddContentSession` owns one immutable snapshot shared with its synchronous
-ref; item/placement variants own progress; one placement read and one read-failure
-classification serve refresh, bulk eligibility and the row editor. the panel
-renders that contract through existing ui/library primitives, and one
-`AddDismissalDialog` asks the leave question for the panel and its defect
-boundary. generated native types own success shapes. the independent extension
-owns its `uploadSessionContract` decoding and the upload verification/transport
-vocabularies it speaks. `lib/imports/ingest.ts` owns the upload-session
-protocol: a capability whose window closed in its own signing round trip is
-re-signed once by replaying the key; the PUT runs under min(240 s, capability
-expiry) (`DIRECT_UPLOAD_PUT_TIMEOUT_MS`, pinned by `python/nexus/config.py`);
-a timeout, a caller abort, a network failure and a non-2xx are each reported to
-`…/transport-failure`; confirmation publishes. its raw storage fetch, without
-nexus credentials, owns credential separation.
+known refusals stay on their row, including revoked destination access. auth and
+sent defects retain their frozen request before the existing handoff. check/retry
+replays exactly that intent; edit/new attempt returns to draft and receives a new
+key only on submission. stopped unsent rows return to drafts; started urls remain
+unconfirmed and files retain the existing upload/imports recovery semantics.
+accepted file rows release browser file handles. stop/reset/discard/unmount fence
+all older callbacks. reload loses browser drafts/files.
 
-live qualification: the imports harness (`campaign-artifacts/2026-10-09/imports/
-harness`, journeys A1–A21, S1–S2, C1) drives links, files, every upload transport
-arm (403, dropped bytes, network, the 240 s deadline, stop), lost acknowledgements,
-restage, placement uncertainty/refusal/unavailability and the defect boundary.
-earlier baseline (`f2167baf3`): real task-owned auth/bff/api/postgres/storage passed twenty old/new public api
-cases, six exact serializer comparisons, five moved extension decoder variants
-and final url create/replay/provider reuse checks. mounted ui passed mixed
-url/pdf, lost file publication/defect recovery, two-account last-readable delete,
-terminal404 with continuing bulk, desktop/mobile focus and overflow checks.
-the mounted public hook passed five rows/four media dedup, frozen retry after
-selection changes, ack/sent/queued stop, alias retention, old-response/reset
-fences, sent defects and retry401 with real login redirect. faults/401 came from
-external egress injection; native producer faults are not claimed. browser
-errors were empty. worker/provider extraction, permissions changing during retry,
-file-stop phases, reload/imports ui and every admission-limit variant were reviewed
-in source only. `./scripts/test` is the sole static gate.
+`leaveReason` prioritizes active stop, unresolved acceptance/placement, unfinished
+draft/refused work, then no warning. empty drafts, seed-only changes and settled
+receipts are clean. normal and defect-boundary dismissal use the same confirmation.
+explicit leave discards browser state and never promises to undo a server commit.
+add has no back-to-launcher step.
 
-intentional changes: frozen auth/defect recovery, terminal unavailable/refusal
-classification, retained per-media uncertainty and explicit placement retry
-replace their defective baseline paths. retry may need one extra action; other
-panes may remain stale until a successful retry publishes or another revision.
-successful duplicate adds may advance revisions twice. remove the unread
-`?duplicate=true` parameter; retain the duplicate status fact.
+## saved placement
+
+accepted aliases share actual placement inventory by media id. reads are lazy;
+submitted destinations never substitute for inventory. bulk work deduplicates
+media ids, rereads eligibility and excludes unavailable targets. only admitted
+direct/absent relations change. closing a picker leaves uncertain changes visible
+on their receipts and in the attention count. admission/check closes saved-item
+pickers; reopening performs the existing authoritative read.
+
+one placement read/write owner per media excludes stale completion. send is
+recorded synchronously; acknowledgement installs the confirmed relation before
+another await. a transport failure, sent defect or stop after send retains the
+exact media/destination/verb and inventory. retry sends those retained commands
+without an inventory prerequisite or changed-selection inference. reads never
+erase uncertainty. queued retries preserve the prior uncertain command; retry
+auth restores it. refused changes settle with feedback; media-not-found is terminal
+unavailable. this remains the existing placement controller, without a new cache
+or consolidation layer.
+
+## acquisition boundary
+
+`lib/imports/ingest.ts` owns the public url/upload protocol and one
+`AcceptedIngest { kind, mediaId, duplicate, processing }` result. imports copy is
+owned by `lib/imports/copy.ts`; native success shapes come from generated types.
+the independent extension owns its capture decoding.
+
+an upload capability whose signing round trip exhausts its window is re-signed
+once by replaying the same key. the storage put runs under the lesser of 240 s and
+capability expiry. timeout, caller abort, network failure and non-2xx are reported
+to the transport-failure endpoint; confirmation publishes verified bytes. storage
+requests carry no nexus credentials. exceptional durable recovery remains in
+imports. backend source execution/publication/replay defects retain their own
+owners and tickets.
+
+`./scripts/test` remains the permanent static gate. temporary isolated live tests
+are removed after green and review; the plan links retained observations and limits.

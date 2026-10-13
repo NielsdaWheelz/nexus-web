@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type {
   LibraryDestination,
   LibraryDestinationPage,
@@ -50,7 +50,8 @@ export function useLibraryDestinationSearch<Failure>({
     signal: AbortSignal;
   }) => Promise<LibraryDestinationSearchResult<Failure>>;
 }): LibraryDestinationSearch<Failure> {
-  const [query, setQuery] = useState("");
+  const [query, setQueryText] = useState("");
+  const [request, setRequest] = useState({ query: "", immediate: true });
   const [results, setResults] = useState<readonly LibraryDestination[]>([]);
   const [resultsQuery, setResultsQuery] = useState("");
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -60,40 +61,73 @@ export function useLibraryDestinationSearch<Failure>({
     failure: Failure;
     during: "search" | "more";
   } | null>(null);
-  const [retryNonce, setRetryNonce] = useState(0);
   const generation = useRef(0);
   const abort = useRef<AbortController | null>(null);
+  const requestedQuery = useRef("");
+  const installed = useRef<{
+    generation: number;
+    query: string;
+    cursor: string | null;
+  } | null>(null);
   const wasActive = useRef(false);
-  const lastRetryNonce = useRef(retryNonce);
-  const normalizedQuery = query.trim().toLowerCase();
+  const normalizedQuery = request.query;
 
-  useEffect(() => () => abort.current?.abort(), []);
-
-  useEffect(() => {
-    const immediate =
-      (active && !wasActive.current) || retryNonce !== lastRetryNonce.current;
-    wasActive.current = active;
-    lastRetryNonce.current = retryNonce;
-    const current = ++generation.current;
+  function retire() {
+    ++generation.current;
     abort.current?.abort();
     abort.current = null;
+    installed.current = null;
+  }
+
+  function requestSearch(next: { query: string; immediate: boolean }) {
+    // The event retires continuation authority before React commits or the
+    // replacement search debounces. Cancellation alone cannot fence extension replies.
+    requestedQuery.current = next.query;
+    retire();
+    setNextCursor(null);
+    setLoading(active);
+    setLoadingMore(false);
+    setFailure(null);
+    setRequest(next);
+  }
+
+  function setQuery(nextQuery: string) {
+    setQueryText(nextQuery);
+    const normalized = nextQuery.trim().toLowerCase();
+    if (normalized !== requestedQuery.current) {
+      requestSearch({ query: normalized, immediate: false });
+    }
+  }
+
+  useLayoutEffect(() => {
+    const immediate =
+      (active && !wasActive.current) || request.immediate;
+    wasActive.current = active;
+    retire();
+    const current = generation.current;
+    setNextCursor(null);
+    setLoading(active);
     setLoadingMore(false);
     if (!active) return;
+    setFailure(null);
     const run = () => {
+      if (current !== generation.current) return;
       const controller = new AbortController();
       abort.current = controller;
-      setLoading(true);
-      setFailure(null);
-      // a new search supersedes the prior page's Load More until it commits
-      setNextCursor(null);
-      void search({ q: normalizedQuery, cursor: null, signal: controller.signal }).then(
+      void search({ q: request.query, cursor: null, signal: controller.signal }).then(
         (result) => {
-          if (current !== generation.current) return;
+          if (current !== generation.current || controller.signal.aborted) return;
+          abort.current = null;
           setLoading(false);
           if (result.kind === "handled") return;
           if (result.kind === "page") {
+            installed.current = {
+              generation: current,
+              query: request.query,
+              cursor: result.page.page.next_cursor,
+            };
             setResults(result.page.data);
-            setResultsQuery(normalizedQuery);
+            setResultsQuery(request.query);
             setNextCursor(result.page.page.next_cursor);
           } else {
             setResults([]);
@@ -102,25 +136,41 @@ export function useLibraryDestinationSearch<Failure>({
         },
       );
     };
-    if (immediate || normalizedQuery === "") {
+    let timer: number | null = null;
+    if (immediate || request.query === "") {
       run();
-      return;
+    } else {
+      timer = window.setTimeout(run, QUERY_DELAY_MS);
     }
-    const timer = window.setTimeout(run, QUERY_DELAY_MS);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: `search` is the caller's transport, a fresh closure per render, not an input of the search state.
-  }, [active, normalizedQuery, retryNonce]);
+    return () => {
+      if (timer !== null) window.clearTimeout(timer);
+      retire();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: request is the search input; search is a fresh transport closure and retire only invalidates stable refs.
+  }, [active, request]);
 
   function loadMore() {
-    if (nextCursor === null || loadingMore) return;
-    const current = generation.current;
+    const page = installed.current;
+    if (
+      !active ||
+      page === null ||
+      page.cursor === null ||
+      page.query !== requestedQuery.current ||
+      page.generation !== generation.current ||
+      abort.current !== null
+    ) return;
     const controller = new AbortController();
     abort.current = controller;
     setLoadingMore(true);
     setFailure(null);
-    void search({ q: resultsQuery, cursor: nextCursor, signal: controller.signal }).then(
+    void search({ q: page.query, cursor: page.cursor, signal: controller.signal }).then(
       (result) => {
-        if (current !== generation.current) return;
+        if (
+          page !== installed.current ||
+          page.generation !== generation.current ||
+          controller.signal.aborted
+        ) return;
+        abort.current = null;
         setLoadingMore(false);
         if (result.kind === "handled") return;
         if (result.kind === "page") {
@@ -128,6 +178,7 @@ export function useLibraryDestinationSearch<Failure>({
             const seen = new Set(prior.map((destination) => destination.id));
             return [...prior, ...result.page.data.filter((d) => !seen.has(d.id))];
           });
+          installed.current = { ...page, cursor: result.page.page.next_cursor };
           setNextCursor(result.page.page.next_cursor);
         } else {
           setFailure({ failure: result.failure, during: "more" });
@@ -146,8 +197,11 @@ export function useLibraryDestinationSearch<Failure>({
     loading,
     loadingMore,
     failure: failure?.failure ?? null,
-    retry: () =>
-      failure?.during === "more" ? loadMore() : setRetryNonce((nonce) => nonce + 1),
+    retry: () => {
+      if (!active) return;
+      if (failure?.during === "more") loadMore();
+      else requestSearch({ query: requestedQuery.current, immediate: true });
+    },
     loadMore,
   };
 }
