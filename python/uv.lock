@@ -494,7 +494,7 @@ wheels = [
 [[package]]
 name = "llm-agent-kernel"
 version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=1b962a661feaccaf4389a5370b1a54a98e08c6bb#1b962a661feaccaf4389a5370b1a54a98e08c6bb" }
+source = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=4ac3f4b8897d7463e2db3e2899fa95ba28a23f50#4ac3f4b8897d7463e2db3e2899fa95ba28a23f50" }
 dependencies = [
     { name = "llm-tools" },
     { name = "provider-runtime" },
@@ -504,7 +504,7 @@ dependencies = [
 [[package]]
 name = "llm-tools"
 version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/llm-tools.git?rev=73056dfb23733e68bd32b6765cc34880f69674bd#73056dfb23733e68bd32b6765cc34880f69674bd" }
+source = { git = "https://github.com/NielsdaWheelz/llm-tools.git?rev=5a37102bc73c1af0c23e63c5b70df320661f63ed#5a37102bc73c1af0c23e63c5b70df320661f63ed" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
@@ -659,13 +659,13 @@ requires-dist = [
     { name = "html5lib", specifier = "==1.1" },
     { name = "httpcore", specifier = ">=1.0.9" },
     { name = "httpx", specifier = ">=0.28.0" },
-    { name = "llm-agent-kernel", git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=1b962a661feaccaf4389a5370b1a54a98e08c6bb" },
-    { name = "llm-tools", git = "https://github.com/NielsdaWheelz/llm-tools.git?rev=73056dfb23733e68bd32b6765cc34880f69674bd" },
+    { name = "llm-agent-kernel", git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=4ac3f4b8897d7463e2db3e2899fa95ba28a23f50" },
+    { name = "llm-tools", git = "https://github.com/NielsdaWheelz/llm-tools.git?rev=5a37102bc73c1af0c23e63c5b70df320661f63ed" },
     { name = "lxml", specifier = ">=5.0.0" },
     { name = "mcp", specifier = "==2.3.0" },
     { name = "openai-codex-cli-bin", marker = "extra == 'codex-agent'", specifier = "==0.160.0" },
     { name = "pillow", specifier = ">=10.0.0" },
-    { name = "provider-runtime", git = "https://github.com/NielsdaWheelz/llm-calling.git?rev=d9550d9c53af3d7b608250d9a0db131d78dccf64" },
+    { name = "provider-runtime", git = "https://github.com/NielsdaWheelz/llm-calling.git?rev=ac547ad2a0be0523b32c7f54a831038b0191d6cd" },
     { name = "psycopg-binary", specifier = ">=3.1.0" },
     { name = "pydantic-settings", specifier = ">=2.6.0" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.15.1" },
@@ -675,7 +675,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "sqlalchemy", extras = ["asyncio", "postgresql-psycopg"], specifier = ">=2.0.36" },
     { name = "structlog", specifier = ">=24.1.0" },
-    { name = "universal-memory", git = "https://github.com/NielsdaWheelz/universal-memory.git?rev=d824d33df9c136952f1d01f7c4a4ad389df42ef1" },
+    { name = "universal-memory", git = "https://github.com/NielsdaWheelz/universal-memory.git?rev=5d52e6a266c9769dafa318a24c21236db8929903" },
     { name = "uuid6", specifier = ">=2025.0.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
     { name = "youtube-transcript-api", specifier = ">=1.2.4" },
@@ -788,7 +788,7 @@ wheels = [
 [[package]]
 name = "provider-runtime"
 version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/llm-calling.git?rev=d9550d9c53af3d7b608250d9a0db131d78dccf64#d9550d9c53af3d7b608250d9a0db131d78dccf64" }
+source = { git = "https://github.com/NielsdaWheelz/llm-calling.git?rev=ac547ad2a0be0523b32c7f54a831038b0191d6cd#ac547ad2a0be0523b32c7f54a831038b0191d6cd" }
 dependencies = [
     { name = "anthropic" },
     { name = "google-genai" },
@@ -1302,7 +1302,7 @@ wheels = [
 [[package]]
 name = "universal-memory"
 version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/universal-memory.git?rev=d824d33df9c136952f1d01f7c4a4ad389df42ef1#d824d33df9c136952f1d01f7c4a4ad389df42ef1" }
+source = { git = "https://github.com/NielsdaWheelz/universal-memory.git?rev=5d52e6a266c9769dafa318a24c21236db8929903#5d52e6a266c9769dafa318a24c21236db8929903" }
 dependencies = [
     { name = "llm-tools" },
     { name = "pgvector" },

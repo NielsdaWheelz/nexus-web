@@ -2,7 +2,7 @@
 
 ``run_tool`` is the only callback generation core holds. A granted call writes its row
 (and, in a chat, its start frames) before it runs, then completes the row in the
-transaction that commits its effects, under the fence: generation open, job claim
+transaction that commits its local effects, under the fence: generation open, job claim
 live, chat run running. Nothing is replayed; a repeated call runs again.
 """
 
@@ -343,11 +343,11 @@ async def _dispatch(
 
 
 def _complete(call: Call, position: int, result: ToolResult) -> str:
-    """Complete the row with the call's effects (none on Failure), then the chat's view."""
+    """Complete the row with locally staged effects, then the chat's view."""
 
     db = call.db
     if result["type"] == "Failure":
-        db.rollback()  # a refused or timed-out call leaves no effect
+        db.rollback()  # local effects only; a remote memory save may have committed
         call.created_refs, call.retrieved, call.selected = [], [], []
     encoded = canonical_json_bytes(result)
     if len(encoded) > call.grant.limits.max_output_bytes:
