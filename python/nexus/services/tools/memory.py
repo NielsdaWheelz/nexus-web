@@ -177,6 +177,10 @@ async def _call_memory(
 ) -> Any:
     """One protocol session per call; a call is never resent."""
 
+    async def read_request(request: httpx2.Request) -> None:
+        # SDK redirects copy streams without caching request.content.
+        await request.aread()
+
     async def check_response(response: httpx2.Response) -> None:
         if response.request.method != "POST":
             return
@@ -233,7 +237,7 @@ async def _call_memory(
             timeout=httpx2.Timeout(20.0, connect=10.0),
             follow_redirects=False,
             trust_env=False,
-            event_hooks={"response": [check_response]},
+            event_hooks={"request": [read_request], "response": [check_response]},
         ) as http:
             async with streamable_http_client(str(config.mcp_url), http_client=http) as (
                 read,
@@ -349,7 +353,7 @@ def family(config: Presence[MemoryClientConfig]) -> ToolFamily:
                 spec=spec,
                 execute=execute,
                 replay_policy=ReplayPolicy.ReDispatchable,
-                implementation_revision="nexus-shared-memory-v2",
+                implementation_revision="nexus-shared-memory-v3",
                 policy_epoch=PolicyEpoch("nexus-shared-memory-v1"),
                 policy_inputs={},
             )
