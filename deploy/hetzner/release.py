@@ -471,7 +471,7 @@ def migrate(candidate: CandidateManifest, reviewed: ReviewedModelCutover | None)
         compose(
             candidate,
             "run --rm --no-deps --no-TTY --interactive migration"
-            " /app/.venv/bin/python -m nexus.model_cutover_archive",
+            " /app/.venv/bin/python -m nexus.ops.model_cutover",
             profile="release",
             stdin=reviewed.model_dump_json().encode(),
             timeout=1800,

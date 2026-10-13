@@ -8,22 +8,16 @@ in the restored, verified backup.
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
-import sys
 from dataclasses import dataclass
-from pathlib import Path
 from uuid import UUID
 
 import sqlalchemy as sa
-from alembic import command
-from alembic.config import Config
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Connection
 
-from nexus.release_artifact import load_runtime_identity
 from nexus.release_backup import BackupEvidence
 
 
@@ -431,26 +425,3 @@ def archive_model_cutover(connection: Connection, authority: ModelCutoverAuthori
         sa.text("DELETE FROM background_jobs WHERE id=ANY(:ids)"),
         {"ids": list(reviewed.retire_job_ids)},
     )
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.parse_args()
-    reviewed = ReviewedModelCutover.model_validate_json(sys.stdin.buffer.read())
-    runtime = load_runtime_identity(Path("/app/runtime-identity.json"))
-    if (
-        runtime.source_sha != reviewed.target_source_sha
-        or runtime.expected_database_revision != reviewed.restore.target_revision
-    ):
-        raise ValueError("model cutover restore proof names different installed target bytes")
-    config = Config("/app/migrations/alembic.ini")
-    config.set_main_option("script_location", "/app/migrations/alembic")
-    config.attributes["model_cutover_authority"] = ModelCutoverAuthority(
-        reviewed=reviewed,
-        execution_database_identity=reviewed.source_database_identity,
-    )
-    command.upgrade(config, "head")
-
-
-if __name__ == "__main__":
-    main()
