@@ -99,7 +99,8 @@ async function forward({
     // Intermediaries can answer without the API's JSON envelope. Claimed JSON
     // stays untouched: an invalid same-system payload is still a defect.
     if ([502, 503, 504].includes(upstream.status) && contentType !== "application/json") {
-      await upstream.body?.cancel();
+      // Release the exchange even when its body has already errored.
+      controller.abort();
       const response = upstream.status === 504
         ? proxyError(responseId, 504, "E_UPSTREAM_TIMEOUT", "Backend service timed out")
         : proxyError(responseId, upstream.status, "E_UPSTREAM", "Backend service unavailable");
