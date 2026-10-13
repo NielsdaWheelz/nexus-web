@@ -5,10 +5,13 @@ any handle or Range is read. app.py's middleware stamps the public security
 headers on every response under this prefix, errors included.
 """
 
+from collections.abc import Generator
 from typing import Annotated
 
+from anyio import CancelScope, to_thread
 from fastapi import APIRouter, Header, Response
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.types import Receive, Scope, Send
 
 from nexus.db.session import DbSession
 from nexus.errors import ApiErrorCode
@@ -21,6 +24,28 @@ from nexus.storage.client import get_storage_client
 
 router = APIRouter(prefix="/public/resource-share", tags=["public-resource-sharing"])
 ShareToken = Annotated[str, Header(alias="X-Nexus-Share-Token")]
+
+
+class _PdfResponse(StreamingResponse):
+    def __init__(
+        self,
+        content: Generator[bytes, None, None],
+        *,
+        headers: dict[str, str],
+        status_code: int = 200,
+    ) -> None:
+        super().__init__(
+            content, status_code=status_code, media_type="application/pdf", headers=headers
+        )
+        self._content = content
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            # Starlette does not close the original sync iterator on disconnect.
+            with CancelScope(shield=True):
+                await to_thread.run_sync(self._content.close)
 
 
 @router.get("")
@@ -53,9 +78,8 @@ def get_public_resource_share_file(
     size = source.size_bytes
     headers = {"Accept-Ranges": "bytes", "Content-Disposition": 'inline; filename="document.pdf"'}
     if range_header is None:
-        return StreamingResponse(
+        return _PdfResponse(
             get_storage_client().stream_object(source.storage_path),
-            media_type="application/pdf",
             headers={**headers, "Content-Length": str(size)},
         )
     try:
@@ -66,12 +90,11 @@ def get_public_resource_share_file(
             status_code=416,
             headers={"Accept-Ranges": "bytes", "Content-Range": f"bytes */{size}"},
         )
-    return StreamingResponse(
+    return _PdfResponse(
         get_storage_client().stream_object_range(
             source.storage_path, start=byte_range.start, end_inclusive=byte_range.end
         ),
         status_code=206,
-        media_type="application/pdf",
         headers={
             **headers,
             "Content-Length": str(byte_range.length),
