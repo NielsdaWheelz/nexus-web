@@ -116,11 +116,12 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
           onDefect={controller.reportAddDefect}
         >
           <AddPanel
+            key={page.sessionId}
             session={controller.addSession}
+            mobile={mobile}
             dismissalConfirmation={controller.dismissalConfirmation}
             onOpen={controller.openAddTarget}
             onClose={controller.close}
-            onBack={controller.back}
             onKeepWorking={controller.keepWorking}
             onConfirmDismissal={controller.confirmDismissal}
             onDefect={controller.reportAddDefect}

@@ -94,7 +94,7 @@ export function useNexusController() {
   const [list, setList] = useState(EMPTY_LIST);
   const [menuRequest, setMenuRequest] = useState<{ readonly seq: number; readonly key: string } | null>(null);
   const [announcement, setAnnouncement] = useState("");
-  const [pendingExit, setPendingExit] = useState<{ readonly confirmation: "Discard" | "Stop"; readonly exit: Exit } | null>(null);
+  const [pendingExit, setPendingExit] = useState<{ readonly confirmation: NonNullable<AddDismissalConfirmation>["kind"]; readonly exit: Exit } | null>(null);
   const [addDefect, setAddDefect] = useState<{ readonly sessionId: string; readonly error: unknown } | null>(null);
   const [defect, setDefect] = useState<{ readonly error: unknown } | null>(null);
   const todayDate = resolveDailyLocalDate({ kind: "Today" }, calendarTimeZone);
@@ -322,7 +322,7 @@ export function useNexusController() {
   function guardExit(exit: Exit): DismissDecision {
     if (pendingExit) return "blocked";
     if (page.kind !== "Add") return "accepted";
-    const confirmation = addSession.state.mutation.kind === "Running" ? "Stop" : addSession.dirty ? "Discard" : null;
+    const confirmation = addSession.leaveReason;
     if (confirmation === null) return "accepted";
     setPendingExit({ confirmation, exit });
     return "blocked";
@@ -345,10 +345,13 @@ export function useNexusController() {
   /** An open request resets to Root or Add; a Root request only reopens a tab-limit page. */
   function openIntent(intent: NexusOpenIntent) {
     if (intent.kind === "Root" && (page.kind === "Blocked" || page.kind === "ManageTabs")) return setOpen(true);
-    addSession.discard();
+    const nextPage: NexusPage = intent.kind === "Add"
+      ? { kind: "Add", sessionId: addSession.start(intent.seed), activation: ADOPT }
+      : { kind: "Root" };
+    if (intent.kind !== "Add") addSession.discard();
     setQueryState("");
     setList(EMPTY_LIST);
-    setPage(intent.kind === "Add" ? { kind: "Add", sessionId: addSession.start(intent.seed), activation: ADOPT } : { kind: "Root" });
+    setPage(nextPage);
     setOpen(true);
     if (intent.kind === "QuickAction") run(NEXUS_COMMANDS[intent.actionId].target(""), ADOPT, null);
   }
@@ -369,7 +372,8 @@ export function useNexusController() {
 
   function back() {
     setAnnouncement("");
-    if (page.kind === "ManageTabs" && page.retained) setPage({ kind: "Blocked", retained: page.retained });
+    if (page.kind === "Add") requestExit({ kind: "Close" });
+    else if (page.kind === "ManageTabs" && page.retained) setPage({ kind: "Blocked", retained: page.retained });
     else if (page.kind === "Blocked") setPage({ kind: "Root" });
     else requestExit({ kind: "Root" });
   }
@@ -456,12 +460,14 @@ export function useNexusController() {
       kind: pendingExit.confirmation,
       actionLabel:
         pendingExit.confirmation === "Discard"
-          ? "Discard"
-          : pendingExit.exit.kind === "Close" || pendingExit.exit.kind === "Navigate"
-            ? "Stop and close"
-            : pendingExit.exit.kind === "Replace"
-              ? "Stop and continue"
-              : "Stop and go back",
+          ? "discard"
+          : pendingExit.confirmation === "Unconfirmed"
+            ? "leave"
+            : pendingExit.exit.kind === "Close" || pendingExit.exit.kind === "Navigate"
+              ? "stop and close"
+              : pendingExit.exit.kind === "Replace"
+                ? "stop and continue"
+                : "stop and go back",
     }) satisfies AddDismissalConfirmation,
     panes,
     closedPanes: workspace.recentlyClosedPanes.map((snapshot) => ({
@@ -486,6 +492,7 @@ export function useNexusController() {
     /** Mobile Back: clear the query, leave a page, then close (from a tab-limit page, close at once). */
     guardClose(): DismissDecision {
       setAnnouncement("");
+      if (page.kind === "Add") return guardExit({ kind: "Close" });
       if (page.kind === "Root" && query.trim()) {
         setQuery("");
         return "blocked";

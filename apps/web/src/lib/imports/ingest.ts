@@ -171,7 +171,7 @@ export function getFileUploadError(file: File): string | null {
   if (file.size === 0) return `${kind.toUpperCase()} files must not be empty.`;
   const maxMb = kind === "Pdf" ? 100 : 50;
   return file.size > maxMb * 1024 * 1024
-    ? `${kind.toUpperCase()} files must be ${maxMb} MB or smaller.`
+    ? `${kind.toUpperCase()} files must be ${maxMb} MiB or smaller.`
     : null;
 }
 

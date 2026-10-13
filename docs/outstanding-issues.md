@@ -29,6 +29,8 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+- [open] web / workspace persistence · 2026-10-13 add/import live verification · p2 · context teardown can reach workspace save without its body: [ticket](tickets/workspace-session-unload-can-send-empty-body.md).
+- [deferred] nexus query / share extraction · 2026-10-13 add/import cutover · shared prose extraction still combines ambiguous urls and strips valid punctuation; add is repaired: [ticket](tickets/add-link-paste-mutates-url-input.md).
 - [open] release / native host · 2026-10-13 release · legacy uvicorn exits 143 before outer cleanup; qualify the exact-image reviewed-reset exception and preserve uncertain outcomes: [ticket](tickets/legacy-codex-host-sigterm-cutover.md).
 - [open] release / credentials · 2026-10-13 release investigation · private credential files were printed into session tool results; assess retained-result access while preserving android signing continuity: [ticket](tickets/release-session-credential-output.md).
 - [open] release / lists · 2026-10-10 collection-revision cut · web and api together; 0275 drops viewer_collection_revisions (irreversible, no preflight); old tabs and held cursors fail once: [ticket](tickets/collection-keyset-continuations-release-steps.md).
@@ -380,8 +382,6 @@ unexpected timeouts. See
 - [deferred] resource surface / mounted title actions · 2026-10-04 source review · mounted title retry loses its mutation lease: [ticket](tickets/mounted-title-retry-loses-mutation-lease.md).
 - [deferred] resource surface / retained body recovery · 2026-10-04 source review · shared body recovery rejects a secondary surface: [ticket](tickets/shared-body-recovery-rejects-secondary-surface.md).
 - [deferred] daily / handoff ownership · 2026-10-04 source review · daily seedless handoff can reappend after remount: [ticket](tickets/daily-seedless-handoff-can-reappend-after-remount.md).
-- [deferred] library / destination search · 2026-10-05 source review · a debounce-gap continuation can append another query's page: [ticket](tickets/library-destination-search-cross-query-page.md).
-- [deferred] library / destination search · 2026-10-05 source review · deactivation retains initial loading; visible impact unqualified: [ticket](tickets/library-destination-search-deactivation-loading.md).
 - [deferred] library / web output aliases · 2026-10-05 source census · two exported entry aliases have no caller; native output remains live: [ticket](tickets/library-entry-unused-export-aliases.md).
 - [deferred] account / display-name bounds · 2026-10-05 source audit · web allows 80 UTF-16 units while native allows 100 code points; choose and align the product contract: [ticket](tickets/account-display-name-has-conflicting-length-bounds.md).
 - [verification credentials require owner rotation](tickets/connections-verification-credential-rotation.md).

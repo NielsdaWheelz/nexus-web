@@ -42,23 +42,24 @@ export default function LibraryDestinationField({
       <LibraryDestinationTrigger
         ref={triggerRef}
         label={label}
+        accessibleLabel={label}
         emptyLabel={emptyLabel}
         selected={selected}
         expanded={open}
-        disabled={interaction.kind === "Disabled" && !open}
+        disabled={creating || (interaction.kind === "Disabled" && !open)}
         onToggle={() => setOpen((current) => !current)}
         discloses={{ kind: "dialog" }}
       />
       <LibraryDestinationPicker
         open={open}
+        presentation="Responsive"
         onClose={() => {
           if (!creating) setOpen(false);
         }}
         anchor={() => triggerRef.current}
         title={label}
         selectedGroupLabel="Selected"
-        selected={selected}
-        onChange={onChange}
+        selection={{ kind: "Item", selected, onChange }}
         interaction={interaction}
         onCreateDestination={onCreateDestination}
       />
