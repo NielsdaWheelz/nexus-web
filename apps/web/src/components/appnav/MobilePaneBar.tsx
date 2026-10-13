@@ -68,6 +68,7 @@ export default function MobilePaneBar() {
               { id: "View", actions: menuActions },
             ]}
             actionSubject={chrome.actionSubject}
+            onDefect={chrome.onDefect}
             triggerAttributes={{ "data-pane-menu-trigger": chrome.paneId }}
             renderTrigger={(props) => (
               <button {...props} className={cx(props.className, styles.topBarButton)}>

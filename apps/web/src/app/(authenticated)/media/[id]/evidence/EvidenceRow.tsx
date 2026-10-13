@@ -29,7 +29,7 @@ type EvidenceObject = Schema<"ReaderEvidenceDirectlyAttachedOut">["object"];
 export interface EvidenceActions {
   readonly verbs: Pick<
     AnnotationVerbs,
-    "noteEdit" | "hovered" | "hover" | "closeNoteEdit" | "noteAccepted" | "noteMutation"
+    "noteEdit" | "hovered" | "hover" | "closeNoteEdit"
   >;
   readonly sources: ReadonlyMap<string, SourceTarget>;
   readonly open: (
@@ -167,8 +167,7 @@ function NoteEditorHost({
           target={{ ...target, ownerKey: `${target.kind}:${target.id}` }}
           note={note}
           editable
-          onEditAccepted={target.kind === "highlight" ? verbs.noteAccepted : undefined}
-          onMutationStarted={target.kind === "highlight" ? verbs.noteMutation : undefined}
+          focusRequest={verbs.noteEdit?.kind === target.kind && verbs.noteEdit.id === target.id ? verbs.noteEdit.request : 0}
           onSaved={(_targetId, saved) => { setNote(saved); actions.refresh(); }}
           onDetached={() => { setNote(null); actions.refresh(); }}
           onOpenLink={actions.openLink}

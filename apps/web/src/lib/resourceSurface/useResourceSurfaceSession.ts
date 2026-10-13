@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import type { NoteBodyEdit, NoteBodyEditorDocument, NoteBodySelection } from "@/components/notes/NoteBodyEditor";
 import { isApiError } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
-import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   acknowledgeDailyDraftHandoff,
@@ -34,8 +33,7 @@ import {
   type WritingStatus,
 } from "@/lib/notes/writingSession";
 import { subscribeLinkMutations, type LinkMutation } from "@/lib/resourceGraph/links";
-import { resolveResourceLocator } from "@/lib/resources/resourceLocators";
-import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
+import { resolveResourceItem } from "@/lib/resources/items";
 import { copyText } from "@/lib/ui/copyText";
 import type { ResourceSurface, ResourceSurfaceNode } from "@/lib/resources/resourceItems";
 import {
@@ -84,8 +82,6 @@ type PersistedOptions = {
   sourceRef: string;
   initialSurface: ResourceSurface;
   onError?: (error: unknown) => void;
-  onTitleMutationStarted?: () => MountedEditorMutationLease | null;
-  onSourceBodyMutationStarted?: () => MountedEditorMutationLease | null;
 };
 
 type RestoreSelection = { token: number; selection: NoteBodySelection };
@@ -353,7 +349,6 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
         initial: { body: bodyFromJson(node.content.bodyPmJson), version: fresh ? null : resourceSurfaceLaneVersion(node.item, "body") },
         adapter: noteBodyAdapter(), awaitExternalCreation: fresh,
         onError: (error) => inputRef.current.onError?.(error),
-        ...(node.item.ref === acknowledged?.source.item.ref ? { onMutationStarted: () => inputRef.current.onSourceBodyMutationStarted?.() ?? null } : {}),
       });
       const body = session.getSnapshot(node.item.ref).document.body;
       bodyMap.set(node.item.ref, { ...body, clientMutationId: "" });
@@ -689,24 +684,13 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
 
   function enqueue(operation: SurfaceOperation): string {
     const key = operation.kind === "capture" ? "capture:" + ownerKey : operation.kind + ":" + operation.sourceRef;
-    let lease: MountedEditorMutationLease | null = null;
     const result = session.enqueueOperation({
       ownerKey,
       key,
       intent: operation,
-      prepare: (raw) => {
-        const request = prepareOperation(raw);
-        if (asOperation(raw).kind === "title") lease = inputRef.current.onTitleMutationStarted?.() ?? null;
-        return request;
-      },
-      deliver: surfaceDelivery(() => { void lease?.committed(); }),
-      onError: (error) => {
-        if (isApiError(error) && error.status >= 400 && error.status < 500 && error.code !== "E_NETWORK") {
-          lease?.failed();
-          lease = null;
-        }
-        onOperationError(error);
-      },
+      prepare: prepareOperation,
+      deliver: surfaceDelivery(),
+      onError: onOperationError,
     });
     owner.retained &&= result.retained;
     if (!result.retained) owner.failure = "storage_failed";
@@ -726,26 +710,28 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
     if (dailyStorageUnavailable) return;
     const current = inputRef.current;
     if (!("daily" in current)) return;
+    const entry = delivery.entry;
+    if (entry.kind !== "AppendNote") return;
     deliveredIdsRef.current.add(delivery.activationId);
-    let next = dailyDraftRef.current ?? createDailyDraft({ accountId: dailyAccountId, localDate: dailyLocalDate }, delivery.entry.noteId, delivery.entry.clientMutationId);
+    let next = dailyDraftRef.current ?? createDailyDraft({ accountId: dailyAccountId, localDate: dailyLocalDate }, entry.noteId, entry.clientMutationId);
     let changed = dailyDraftRef.current === null;
-    if (next.noteId !== delivery.entry.noteId || next.clientMutationId !== delivery.entry.clientMutationId) {
+    if (next.noteId !== entry.noteId || next.clientMutationId !== entry.clientMutationId) {
       throw new Error("daily delivery identity differs from retained draft");
     }
     if (next.handoff.kind !== "Buffered") {
       if (next.seedBody) {
-        const appended = appendDailyDraftText(next, delivery.entry.initialText);
+        const appended = appendDailyDraftText(next, entry.initialText);
         if (appended.kind === "Unavailable") throw new Error("daily delivery cannot append to an atomic draft");
         next = appended.draft;
         changed = true;
-      } else if (delivery.entry.initialText.length > 0) {
-        const length = delivery.entry.initialText.length;
+      } else if (entry.initialText.length > 0) {
+        const length = entry.initialText.length;
         next = {
           ...next,
           handoff: {
             kind: "Buffered",
             handoffId: delivery.activationId,
-            text: delivery.entry.initialText,
+            text: entry.initialText,
             selectionStart: length,
             selectionEnd: length,
             composition: "Complete",
@@ -980,8 +966,8 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
   async function resolveNode(ref: string): Promise<void> {
     if (ref.startsWith("note_block:") || ref.startsWith("page:")) { await loadNeighborhood(ref); return; }
     if (owner.graph.nodes.has(ref) || owner.graph.surfaces.has(ref) || [...owner.graph.surfaces.values()].some((surface) => surface.orderedItems.some((row) => row.target.item.ref === ref))) return;
-    const resolved = await resolveResourceLocator({ kind: "resource_ref", ref: assumeCanonicalResourceRef(ref) });
-    acceptGraphNode(owner.graph, { item: resolved.resource_item, content: { kind: "resource_summary" } });
+    const item = await resolveResourceItem(ref);
+    acceptGraphNode(owner.graph, { item, content: { kind: "resource_summary" } });
   }
 
 

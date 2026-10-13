@@ -33,9 +33,6 @@ from nexus.schemas.resource_items import (
     PasteOutlineSurfaceCommand,
     RelinkSurfaceCommand,
     RemoveOccurrenceSurfaceCommand,
-    ResourceActivationOut,
-    ResourceItemCapabilitiesOut,
-    ResourceItemOut,
     ResourceLaneVersionIn,
     ResourceSummarySurfaceContent,
     ResourceSurfaceCommandOut,
@@ -56,23 +53,18 @@ from nexus.services.resource_graph import edges as graph_edges
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
-    ResourceScheme,
     parse_resource_ref,
 )
-from nexus.services.resource_graph.resolve import ResolvedResource, assert_ref_visible, resolve_refs
+from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_items import versions
-from nexus.services.resource_items.capabilities import (
-    capability_for_ref,
-    resource_can_own_ordered_adjacency,
-    resource_link_mode,
-)
-from nexus.services.resource_items.routing import resource_activations_for_refs
+from nexus.services.resource_items.capabilities import capability
+from nexus.services.resource_items.items import resource_items_out
 from nexus.services.resource_mutation_replay import canonical_json_bytes, lookup_replay
 
 
 def get_surface(db: Session, *, viewer_id: UUID, source: ResourceRef) -> ResourceSurfaceOut:
     assert_ref_visible(db, viewer_id=viewer_id, ref=source)
-    if not resource_can_own_ordered_adjacency(source):
+    if not capability(source.scheme).adjacency_source:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot own a surface")
     links = graph_adjacency.ordered_edges(db, user_id=viewer_id, source=source)
     refs = [source, *[graph_adjacency.other_endpoint(edge, source) for edge in links]]
@@ -158,7 +150,7 @@ def execute_surface_command(
 
     def op() -> ResourceSurfaceCommandOut:
         assert_ref_visible(db, viewer_id=viewer_id, ref=source)
-        if not resource_can_own_ordered_adjacency(source):
+        if not capability(source.scheme).adjacency_source:
             raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot own a surface")
         replay = lookup_replay(
             db,
@@ -305,7 +297,7 @@ def execute_surface_command(
                         new_refs.add(ref)
                     else:
                         assert_ref_visible(db, viewer_id=viewer_id, ref=ref)
-                        if resource_link_mode(ref) != "direct":
+                        if capability(ref.scheme).link_mode != "direct":
                             raise ApiError(
                                 ApiErrorCode.E_INVALID_REQUEST,
                                 "Outline resources must be durable link endpoints",
@@ -393,7 +385,7 @@ def execute_surface_command(
             surfaces=[
                 get_surface(db, viewer_id=viewer_id, source=ref)
                 for ref in refs
-                if resource_can_own_ordered_adjacency(ref)
+                if capability(ref.scheme).adjacency_source
             ],
         )
         db.add(
@@ -674,7 +666,7 @@ def _restore(
         if rows == before["orders"].get(uri):
             continue
         ref = _parse_ref_or_error(uri)
-        if not resource_can_own_ordered_adjacency(ref) and ref.scheme != "conversation":
+        if not capability(ref.scheme).adjacency_source and ref.scheme != "conversation":
             continue
         graph_adjacency.restore_endpoint_order(
             db,
@@ -729,10 +721,6 @@ def _raise_surface_conflict(db: Session, *, viewer_id: UUID, source: ResourceRef
     )
 
 
-def resource_item_out(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> ResourceItemOut:
-    return resource_items_out(db, viewer_id=viewer_id, refs=[ref])[0]
-
-
 def _note_rows(
     db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]
 ) -> dict[UUID, NoteBlock]:
@@ -755,88 +743,6 @@ def _target_content(
         raise AssertionError("justify-defect: visible note surface target has no note body")
     return NoteBodySurfaceContent(
         kind="note_body", body_pm_json=note.body_pm_json, body_text=note.body_text
-    )
-
-
-def resource_items_out(
-    db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]
-) -> list[ResourceItemOut]:
-    resolved = resolve_refs(db, viewer_id=viewer_id, refs=refs)
-    missing = {ref.uri for ref, item in zip(refs, resolved, strict=True) if item.missing}
-    activations = resource_activations_for_refs(
-        db,
-        viewer_id=viewer_id,
-        refs=refs,
-        missing_ref_uris=missing,
-    )
-    version_rows = db.execute(
-        select(
-            ResourceVersion.resource_scheme,
-            ResourceVersion.resource_id,
-            ResourceVersion.lane,
-            ResourceVersion.version,
-        ).where(
-            ResourceVersion.user_id == viewer_id,
-            ResourceVersion.resource_scheme.in_({ref.scheme for ref in refs}),
-            ResourceVersion.resource_id.in_({ref.id for ref in refs}),
-        )
-    ).all()
-    version_by_ref: dict[str, dict[str, int]] = {ref.uri: {} for ref in refs}
-    for scheme, resource_id, lane, version in version_rows:
-        ref = ResourceRef(scheme=cast(ResourceScheme, scheme), id=resource_id)
-        if ref.uri in version_by_ref:
-            version_by_ref[ref.uri][str(lane)] = int(version)
-    return [
-        _resource_item_out(
-            ref=ref,
-            resolved=item,
-            activation=activations[ref.uri],
-            version_by_lane=version_by_ref[ref.uri],
-        )
-        for ref, item in zip(refs, resolved, strict=True)
-    ]
-
-
-def _resource_item_out(
-    *,
-    ref: ResourceRef,
-    resolved: ResolvedResource,
-    activation: ResourceActivationOut,
-    version_by_lane: dict[str, int],
-) -> ResourceItemOut:
-    capability = capability_for_ref(ref)
-    version_by_lane.setdefault("links", 1)
-    if ref.scheme in {"page", "note_block"}:
-        for lane in ("links", "title" if ref.scheme == "page" else "body"):
-            version_by_lane.setdefault(lane, 1)
-    return ResourceItemOut(
-        ref=ref.uri,
-        scheme=ref.scheme,
-        id=ref.id,
-        label=resolved.label,
-        summary=resolved.summary,
-        route=activation.href if activation.kind == "route" else None,
-        activation=activation,
-        missing=resolved.missing,
-        capabilities=ResourceItemCapabilitiesOut(
-            sharing=capability.sharing,
-            library_placement=capability.library_placement,
-            link_mode=capability.link_mode,
-            attachable=capability.attachable,
-            chat_subject=capability.chat_subject,
-            readable=capability.readable,
-            inspectable=capability.inspectable,
-            citable_result_type=capability.citable_result_type,
-            citation_output_source=capability.citation_output_source,
-            app_search_scope=capability.app_search_scope,
-            conversation_search_scope=capability.conversation_search_scope,
-            prompt_render=capability.prompt_render,
-            expansion_policy=capability.expansion_policy,
-            expandable=capability.expandable,
-            adjacency_source=capability.adjacency_source,
-            adjacency_target=capability.adjacency_target,
-        ),
-        version_by_lane=version_by_lane,
     )
 
 

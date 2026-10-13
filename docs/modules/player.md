@@ -146,9 +146,9 @@ changes state only; the row stays where it is.
 - `app/(authenticated)/lectern/LecternPaneBody.tsx` — **On the lectern** (play
   rows, sort, filter, drag reorder in Custom view), Quick reads, At hand.
 - `components/collections/LecternAddControl.tsx` — shared quick-read/transcript
-  add, frozen-request check and fresh membership status. receipt invalidates
-  action facts through `ensureAcknowledged`; only a fresh action snapshot supplies
-  presence/absence. unrelated edits remain available after uncertainty. dismissal
+  add, frozen-request check and fresh membership status. it reads the media's
+  verbs on mount and again when its lectern membership changes (a receipt installs
+  the snapshot that changes it); only that fresh read supplies presence/absence. unrelated edits remain available after uncertainty. dismissal
   hides recovery without discarding identity; account teardown/reload ends it.
 - `lib/player/playerRuntime.tsx` — `GlobalPlayerProvider`: engine choice, the
   state/timeline context split, device history (previous restarts after 3 s,

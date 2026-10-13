@@ -29,7 +29,6 @@ import {
   type DailyResourceSurfaceSession,
   type ResourceSurfaceSession,
 } from "@/lib/resourceSurface/useResourceSurfaceSession";
-import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 import { draftNoteRef } from "@/lib/resourceSurface/dailySurfacePersistence";
 import {
   DailyDraftStorageError,
@@ -39,7 +38,7 @@ import {
 } from "@/lib/notes/dailyDraftStore";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { resolveResourceLocator } from "@/lib/resources/resourceLocators";
+import { resolveResourceItem } from "@/lib/resources/items";
 import type { ResourceSurface } from "@/lib/resources/resourceItems";
 import type {
   PaneEntryDelivery,
@@ -186,10 +185,6 @@ type ResourceSurfaceEditorProps = (
   focusBodySerial?: number;
   onSurfaceChange?: (surface: ResourceSurface) => void;
   onDailyTitleChange?: (title: string | null) => void;
-  onTitleMutationStarted?: () => MountedEditorMutationLease | null;
-  onTitleEditAborted?: () => void;
-  onSourceBodyMutationStarted?: () => MountedEditorMutationLease | null;
-  onSourceBodyEditAborted?: () => void;
   activateTarget: (input: {
     target: WorkspaceTarget;
     disposition: WorkspaceTargetDisposition;
@@ -206,10 +201,6 @@ export default function ResourceSurfaceEditor({
   focusBodySerial = 0,
   onSurfaceChange,
   onDailyTitleChange,
-  onTitleMutationStarted,
-  onTitleEditAborted,
-  onSourceBodyMutationStarted,
-  onSourceBodyEditAborted,
   activateTarget,
   notePulseTarget,
 }: ResourceSurfaceEditorProps) {
@@ -322,10 +313,6 @@ export default function ResourceSurfaceEditor({
         notePulseTarget={notePulseTarget}
         onSurfaceChange={onSurfaceChange}
         onDailyTitleChange={onDailyTitleChange}
-        onTitleMutationStarted={onTitleMutationStarted}
-        onTitleEditAborted={onTitleEditAborted}
-        onSourceBodyMutationStarted={onSourceBodyMutationStarted}
-        onSourceBodyEditAborted={onSourceBodyEditAborted}
       />
     );
   }
@@ -359,10 +346,6 @@ export default function ResourceSurfaceEditor({
       activateTarget={activateTarget}
       notePulseTarget={notePulseTarget}
       onSurfaceChange={onSurfaceChange}
-      onTitleMutationStarted={onTitleMutationStarted}
-      onTitleEditAborted={onTitleEditAborted}
-      onSourceBodyMutationStarted={onSourceBodyMutationStarted}
-      onSourceBodyEditAborted={onSourceBodyEditAborted}
     />
   );
 }
@@ -384,10 +367,6 @@ function LoadedResourceSurfaceEditor({
   notePulseTarget,
   onSurfaceChange,
   onDailyTitleChange,
-  onTitleMutationStarted,
-  onTitleEditAborted,
-  onSourceBodyMutationStarted,
-  onSourceBodyEditAborted,
 }: {
   sourceRef?: string;
   daily?: DailyResourceSurfaceEditorSource;
@@ -410,10 +389,6 @@ function LoadedResourceSurfaceEditor({
   notePulseTarget?: NotePulseEditorTarget | null;
   onSurfaceChange?: (surface: ResourceSurface) => void;
   onDailyTitleChange?: (title: string | null) => void;
-  onTitleMutationStarted?: () => MountedEditorMutationLease | null;
-  onTitleEditAborted?: () => void;
-  onSourceBodyMutationStarted?: () => MountedEditorMutationLease | null;
-  onSourceBodyEditAborted?: () => void;
 }) {
   const { accountId } = useAuthenticatedAccount();
   const editorSessionKey = daily
@@ -424,8 +399,6 @@ function LoadedResourceSurfaceEditor({
   const sessionRef = useRef<
     ResourceSurfaceSession | DailyResourceSurfaceSession | null
   >(null);
-  const titleChangedSinceFocusRef = useRef(false);
-  const sourceBodyChangedSinceFocusRef = useRef(false);
   const [defectState, setDefectState] = useState<{ error: unknown } | null>(
     null,
   );
@@ -484,16 +457,12 @@ function LoadedResourceSurfaceEditor({
             : {}),
           onDeliveryClaimed: claimDelivery,
           onError: reportError,
-          onTitleMutationStarted,
-          onSourceBodyMutationStarted,
         }
       : {
           accountId,
           sourceRef: sourceRef!,
           initialSurface: initialSurface!,
           onError: reportError,
-          onTitleMutationStarted,
-          onSourceBodyMutationStarted,
         },
   );
   const copyRecovery = useCallback(() => {
@@ -530,7 +499,6 @@ function LoadedResourceSurfaceEditor({
 
   useEffect(() => {
     if (!focusMastheadSerial) return;
-    titleChangedSinceFocusRef.current = false;
     titleRef.current?.focus();
     titleRef.current?.select();
   }, [focusMastheadSerial, titleRef]);
@@ -538,7 +506,6 @@ function LoadedResourceSurfaceEditor({
   const firstOutlineRowId = session.outline.rows[0]?.occurrenceId ?? null;
   useEffect(() => {
     if (!focusBodySerial) return;
-    sourceBodyChangedSinceFocusRef.current = false;
     setBodyFocus({
       occurrenceId: firstOutlineRowId,
       serial: focusBodySerial,
@@ -590,19 +557,12 @@ function LoadedResourceSurfaceEditor({
       const ref = `${objectType}:${objectId}`;
       if (!parseResourceRef(ref)) return;
       try {
-        const resolved = await resolveResourceLocator({
-          kind: "resource_ref",
-          ref,
-        });
-        const href = resolved.resource_item.route;
-        if (!href) {
+        const item = await resolveResourceItem(ref);
+        if (!activateResource(item.activation, { disposition, activateTarget }))
           setFeedback({
             tone: "Warning",
             title: "Linked object couldn’t be opened",
           });
-          return;
-        }
-        activateTarget({ target: { href }, disposition });
       } catch (error: unknown) {
         presentFailure(error, "OpenLinkedObject");
       }
@@ -620,15 +580,9 @@ function LoadedResourceSurfaceEditor({
         ref={titleRef}
         className={styles.title}
         value={source.content.title}
-        onChange={(event) => {
-          titleChangedSinceFocusRef.current = true;
-          session.updateTitle(event.currentTarget.value);
-        }}
+        onChange={(event) => session.updateTitle(event.currentTarget.value)}
         onKeyDown={onTitleKeyDown}
-        onBlur={() => {
-          session.flush();
-          if (!titleChangedSinceFocusRef.current) onTitleEditAborted?.();
-        }}
+        onBlur={() => session.flush()}
         aria-label="Page title"
         readOnly={!editable}
       />
@@ -641,20 +595,14 @@ function LoadedResourceSurfaceEditor({
         ariaLabel="Note content"
         notePulseTarget={notePulseTarget}
         focusRequest={focusBodySerial + rootReturnSerial}
-        onEdit={(edit) => {
-          sourceBodyChangedSinceFocusRef.current = true;
-          session.editBody({ occurrenceId: source.item.ref, edit });
-        }}
+        onEdit={(edit) =>
+          session.editBody({ occurrenceId: source.item.ref, edit })
+        }
         onSelectionChange={(selection) => session.selection({ occurrenceId: source.item.ref, selection })}
         onHistoryBoundary={() => session.boundary(source.item.ref)}
         onUndoRequest={() => session.undo(source.item.ref)}
         onRedoRequest={() => session.redo(source.item.ref)}
         onFlushRequest={session.flush}
-        onFocusChange={(focused) => {
-          if (!focused && !sourceBodyChangedSinceFocusRef.current) {
-            onSourceBodyEditAborted?.();
-          }
-        }}
         onOpenObject={openObject}
         onFeedback={setFeedback}
         onError={(error) => presentFailure(error, "Edit")}

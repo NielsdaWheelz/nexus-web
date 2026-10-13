@@ -10,7 +10,6 @@ import {
 import Button from "@/components/ui/Button";
 import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
@@ -19,10 +18,11 @@ import { emptyNoteBody } from "@/lib/notes/prosemirror/schema";
 import { useNoteEditorSession } from "@/lib/notes/useNoteEditorSession";
 import { getWritingSession, WritingStorageError, WritingUnknownOutcomeError, type BodyAdapter, type OperationCallbacks, type PendingBodyIdentity, type RecoveryCandidate } from "@/lib/notes/writingSession";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { resolveResourceLocator } from "@/lib/resources/resourceLocators";
+import { activateResource } from "@/lib/resources/activation";
+import { resolveResourceItem } from "@/lib/resources/items";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { expectExactRecord, expectOneOf, expectRecord, expectString } from "@/lib/validation";
-import NoteBodyEditor, { type NoteBodyEdit } from "@/components/notes/NoteBodyEditor";
+import NoteBodyEditor from "@/components/notes/NoteBodyEditor";
 import NoteDraftRecovery from "@/components/notes/NoteDraftRecovery";
 import styles from "./HighlightNoteEditor.module.css";
 
@@ -43,8 +43,8 @@ export interface HighlightNoteEditorProps {
   onSaved: (targetId: string, note: HighlightLinkedNoteBlock) => void;
   onDetached: (targetId: string, noteBlockId: string) => void;
   onOpenLink: (href: string, disposition: WorkspaceTargetDisposition) => void;
-  onEditAccepted?: (noteRef: string, hasPending: () => boolean) => void;
-  onMutationStarted?: (noteRef: string) => MountedEditorMutationLease | null;
+  /** Each new positive value focuses the note body. */
+  focusRequest?: number;
   onDone?: () => void;
 }
 
@@ -146,8 +146,7 @@ function AnnotationBody({
   onSaved,
   onDetached,
   onOpenLink,
-  onEditAccepted,
-  onMutationStarted,
+  focusRequest,
   onDone,
 }: HighlightNoteEditorProps & {
   accountId: string;
@@ -161,7 +160,6 @@ function AnnotationBody({
   const [targetFailure, setTargetFailure] = useState(false);
   const [attachedNote, setAttachedNote] = useState(note);
   const [detachOperationId, setDetachOperationId] = useState<string | null>(null);
-  const detachLease = useRef<MountedEditorMutationLease | null>(null);
   const [detachFailure, setDetachFailure] = useState<FeedbackContent | null>(null);
   const [detachConflict, setDetachConflict] = useState(false);
   const [recoveryFailure, setRecoveryFailure] = useState(false);
@@ -241,7 +239,6 @@ function AnnotationBody({
     initial,
     adapter,
     awaitExternalCreation: target.id === null,
-    onMutationStarted: onMutationStarted ? () => onMutationStarted(noteRef) : undefined,
     onError: (error) => {
       if (error instanceof WritingUnknownOutcomeError) return;
       if (handleUnauthenticatedApiError(error)) return;
@@ -249,28 +246,6 @@ function AnnotationBody({
     },
   });
   const { recover, setAdapter, status } = session;
-  const hasPending = useCallback(() => {
-    const snapshot = getWritingSession(accountId).peekSnapshot(noteRef);
-    return snapshot !== null && snapshot.localRetained &&
-      (snapshot.status === "dirty" || snapshot.status === "saving");
-  }, [accountId, noteRef]);
-  const edit = useCallback((value: NoteBodyEdit) => {
-    const store = getWritingSession(accountId);
-    const before = store.peekSnapshot(noteRef)?.document.revision;
-    const accepted = session.edit(value);
-    if (accepted && store.peekSnapshot(noteRef)?.document.revision !== before) onEditAccepted?.(noteRef, hasPending);
-    return accepted;
-  }, [accountId, hasPending, noteRef, onEditAccepted, session]);
-  const undo = useCallback(() => {
-    const selection = session.undo();
-    if (selection) onEditAccepted?.(noteRef, hasPending);
-    return selection;
-  }, [hasPending, noteRef, onEditAccepted, session]);
-  const redo = useCallback(() => {
-    const selection = session.redo();
-    if (selection) onEditAccepted?.(noteRef, hasPending);
-    return selection;
-  }, [hasPending, noteRef, onEditAccepted, session]);
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -344,8 +319,11 @@ function AnnotationBody({
     const ref = `${objectType}:${objectId}`;
     if (!parseResourceRef(ref)) return;
     try {
-      const resolved = await resolveResourceLocator({ kind: "resource_ref", ref });
-      if (resolved.resource_item.route) onOpenLink(resolved.resource_item.route, disposition);
+      const item = await resolveResourceItem(ref);
+      activateResource(item.activation, {
+        disposition,
+        activateTarget: ({ target }) => onOpenLink(target.href, disposition),
+      });
     } catch (error: unknown) {
       if (handleUnauthenticatedApiError(error)) return;
       if (!isApiError(error) || isSameSystemApiDefect(error)) { setDefect({ error }); return; }
@@ -372,13 +350,8 @@ function AnnotationBody({
       setDetachConflict(false);
       setAttachedNote((current) => current?.note_block_id === intent.noteBlockId ? null : current);
       detachedCallback.current(intent.targetId, intent.noteBlockId);
-      const lease = detachLease.current;
-      detachLease.current = null;
-      void lease?.committed().catch((error: unknown) => setDefect({ error }));
     }),
     onError: (error) => {
-      detachLease.current?.failed();
-      detachLease.current = null;
       if (error instanceof WritingUnknownOutcomeError) {
         setDetachFailure({ tone: "Danger", title: "Removal outcome unknown", message: "Retry the same removal request to confirm it." });
         return;
@@ -400,20 +373,11 @@ function AnnotationBody({
     const store = getWritingSession(accountId);
     const operation = store.pendingOperations(activeOwnerKey).find((item) => item.id === detachOperationId);
     if (!operation) return;
-    let intent: DetachIntent;
-    try { intent = decodeDetachIntent(operation.intent); }
+    try { decodeDetachIntent(operation.intent); }
     catch { setRecoveryFailure(true); return; }
-    const operationNoteRef = `note_block:${intent.noteBlockId}`;
-    onEditAccepted?.(operationNoteRef, () => store.pendingOperations(activeOwnerKey)
-      .some((item) => item.id === detachOperationId && item.paused === null));
-    detachLease.current = onMutationStarted?.(operationNoteRef) ?? null;
     setDetachFailure(null);
     session.retryOperation(detachOperationId);
-    if (!store.pendingOperations(activeOwnerKey).some((item) => item.id === detachOperationId && item.paused === null)) {
-      detachLease.current?.failed();
-      detachLease.current = null;
-    }
-  }, [accountId, activeOwnerKey, detachOperationId, onEditAccepted, onMutationStarted, session]);
+  }, [accountId, activeOwnerKey, detachOperationId, session]);
 
   const detach = useCallback(() => {
     const attached = attachedNote;
@@ -421,23 +385,16 @@ function AnnotationBody({
     if (!attached || !targetId || detachOperationId) return;
     session.flush();
     const intent: DetachIntent = { targetId, noteBlockId: attached.note_block_id, clientMutationId: createRandomId(), kind: target.kind };
-    let operationId: string | null = null;
-    onEditAccepted?.(noteRef, () => operationId !== null && getWritingSession(accountId).pendingOperations(activeOwnerKey)
-      .some((operation) => operation.id === operationId && operation.paused === null));
-    detachLease.current = onMutationStarted?.(noteRef) ?? null;
     const operation = session.submitOperation({
       key: `annotation-detach:${target.kind}:${targetId}:${attached.note_block_id}`,
       intent,
       ...detachCallbacks(intent),
     });
-    operationId = operation.id;
     setDetachOperationId(operation.id);
     if (!operation.retained) {
-      detachLease.current?.failed();
-      detachLease.current = null;
       setDetachFailure({ tone: "Danger", title: "Removal isn’t retained on this device", message: "Keep this tab open until the request finishes." });
     }
-  }, [accountId, activeOwnerKey, attachedNote, detachCallbacks, detachOperationId, noteRef, onEditAccepted, onMutationStarted, resolvedTargetId, session, target.kind]);
+  }, [attachedNote, detachCallbacks, detachOperationId, resolvedTargetId, session, target.kind]);
 
   useEffect(() => {
     const store = getWritingSession(accountId);
@@ -446,7 +403,6 @@ function AnnotationBody({
       try {
         const intent = decodeDetachIntent(operation.intent);
         if (intent.kind !== target.kind || intent.targetId !== resolvedTargetId) continue;
-        detachLease.current ??= onMutationStarted?.(`note_block:${intent.noteBlockId}`) ?? null;
         store.attachOperation(operation.id, detachCallbacks(intent));
         setDetachOperationId(operation.id);
         setDetachFailure({ tone: "Danger", title: "Removal is still pending", message: "Retry the same removal request. A different note attachment is safe." });
@@ -454,7 +410,7 @@ function AnnotationBody({
         setRecoveryFailure(true);
       }
     }
-  }, [accountId, activeOwnerKey, detachCallbacks, onMutationStarted, resolvedTargetId, target.kind]);
+  }, [accountId, activeOwnerKey, detachCallbacks, resolvedTargetId, target.kind]);
 
   const recoverDetach = useCallback((candidate: RecoveryCandidate) => {
     try {
@@ -484,11 +440,12 @@ function AnnotationBody({
         editable={editable}
         ariaLabel={target.kind === "highlight" ? "Highlight note" : "Link note"}
         compact
-        onEdit={edit}
+        focusRequest={focusRequest}
+        onEdit={session.edit}
         onSelectionChange={session.selection}
         onHistoryBoundary={session.boundary}
-        onUndoRequest={undo}
-        onRedoRequest={redo}
+        onUndoRequest={session.undo}
+        onRedoRequest={session.redo}
         onFlushRequest={session.flush}
         onOpenObject={openObject}
         onFeedback={(content) => setAttachmentFeedback({ content, announcement: content.tone === "Danger" ? "Assertive" : "Polite" })}
@@ -522,16 +479,8 @@ function AnnotationBody({
         localRetained={session.localRetained}
         hasRecoveredDraft={session.hasRecoveredDraft}
         conflict={session.conflict}
-        onRetry={() => {
-          onEditAccepted?.(noteRef, hasPending);
-          session.retry();
-          if (!hasPending()) onMutationStarted?.(noteRef)?.failed();
-        }}
-        onReapply={() => {
-          onEditAccepted?.(noteRef, hasPending);
-          session.reapply();
-          if (!hasPending()) onMutationStarted?.(noteRef)?.failed();
-        }}
+        onRetry={session.retry}
+        onReapply={session.reapply}
         onDiscard={session.discard}
         onExport={() => exportText("annotation-note.txt", session.document.body.bodyText)}
       />

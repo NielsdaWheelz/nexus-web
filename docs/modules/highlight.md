@@ -14,8 +14,9 @@ Backend owners are `python/nexus/services/highlights.py`,
 `python/nexus/schemas/highlights.py`.
 
 Frontend owners are the hosted media pane's `annotations.ts` (reads and
-writes), `useAnnotationVerbs.ts` and `SelectionDock.tsx` (the verbs), and
-`apps/web/src/lib/highlights/actionIntent.ts` (app-global highlight intents).
+writes) and `useAnnotationVerbs.ts` and `SelectionDock.tsx` (the verbs;
+`useAnnotationVerbs` also serves the highlight pane entries a resource menu
+hands the pane).
 Paint and hit-testing live in the reader module, and chat run assembly lives in
 the chat module.
 
@@ -195,8 +196,8 @@ mutation behavior.
 
 A fresh reader selection has no Highlight yet: the pane's `SelectionDock` offers
 this pre-resource gesture. Materialized Highlights mount `ResourceActionMenu`,
-whose snapshot, catalog, planner, and runtime own the same action list in every
-representation. Clicking one mark in reader text or a PDF opens that menu at the
+which reads the highlight's verbs when it opens, so every representation lists
+the same actions. Clicking one mark in reader text or a PDF opens that menu at the
 click; where marks overlap, a *Highlights here* chooser lists them topmost
 first. Rows in Evidence retain their overflow trigger.
 The selection actions use the fixed names

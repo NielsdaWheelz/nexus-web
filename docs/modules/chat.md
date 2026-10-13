@@ -159,9 +159,9 @@ edits the Dossier.
 
 There is no inline reader-chat adapter. Reader Highlight quotes launch through
 the typed intent owned by `Conversation` (see Reader Quote-To-Chat below);
-generic resource-context chats go through `executeResourceChat`
-(`lib/resources/resourceActionExecution.ts`), which creates a context-bearing
-conversation via `POST /conversations` and opens it as a `Conversation` pane.
+generic resource-context chats go through `createConversationAbout`
+(`lib/chat/conversationIndex.ts`), which creates a context-bearing
+conversation via `POST /conversations`; the menu opens it as a `Conversation` pane.
 
 A missing or foreign conversation is `404 E_CONVERSATION_NOT_FOUND`; the pane
 shows "This chat couldn’t be opened." with the server's copy. `chatFailure`

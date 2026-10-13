@@ -17,7 +17,7 @@ import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
 import LecternNextPrompt from "@/components/LecternNextPrompt";
 import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { useResourceActionCompletionUndo } from "@/lib/actions/resourceActionRuntime";
+import { useCompletionUndo } from "@/lib/lectern/useCompletionUndo";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import { mediaResource } from "@/lib/api/resource";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
@@ -89,7 +89,7 @@ function MediaPane({ id }: { readonly id: string }) {
   const feedback = useFeedback();
   const { profile } = useReaderContext();
   const lectern = useLectern();
-  const offerUndo = useResourceActionCompletionUndo();
+  const offerUndo = useCompletionUndo();
   const { seekTo, resume } = usePlayerCommands();
   const root = useRef<HTMLDivElement>(null);
 
@@ -191,7 +191,8 @@ function MediaPane({ id }: { readonly id: string }) {
     [requestSecondarySurface],
   );
   const canQuote = media?.capabilities?.can_quote === true;
-  const verbs = useAnnotationVerbs({ mediaId: id, store, marks: annotations.decorations.marks, canQuote, openEvidence });
+  const marks = annotations.map.status === "ready" ? annotations.decorations.marks : null;
+  const verbs = useAnnotationVerbs({ mediaId: id, store, marks, canQuote, openEvidence });
 
   // ---- playback: the global player, or a video's own embed ----
   const [videoAt, setVideoAt] = useState<number | null>(null);
@@ -270,10 +271,10 @@ function MediaPane({ id }: { readonly id: string }) {
   const find = useFind({ ownerKey: paneSourceKey(runtime), source: findSource });
 
   // ---- evidence and chrome ----
-  const { noteEdit, hovered, hover, focus, closeNoteEdit, noteAccepted, noteMutation } = verbs;
+  const { noteEdit, hovered, hover, focus, closeNoteEdit } = verbs;
   const actions = useMemo<EvidenceActions>(
     () => ({
-      verbs: { noteEdit, hovered, hover, closeNoteEdit, noteAccepted, noteMutation },
+      verbs: { noteEdit, hovered, hover, closeNoteEdit },
       sources: new Map(
         annotations.map.status !== "loading" && annotations.map.data
           ? annotations.map.data.evidence.source_targets.map((target) => [target.ref, target])
@@ -288,7 +289,7 @@ function MediaPane({ id }: { readonly id: string }) {
       refresh: store.refresh,
       openLink: (href, disposition) => activateTarget({ target: { href }, disposition }),
     }),
-    [activateTarget, annotations.map, closeNoteEdit, hover, hovered, noteAccepted, noteEdit, noteMutation, reader, store],
+    [activateTarget, annotations.map, closeNoteEdit, hover, hovered, noteEdit, reader, store],
   );
   const onJump = useCallback(
     (group: Parameters<ComponentProps<typeof EvidencePane>["onJump"]>[0]) => {

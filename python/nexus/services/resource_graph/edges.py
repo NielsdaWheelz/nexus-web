@@ -24,11 +24,7 @@ from nexus.schemas.resource_graph import EDGE_KINDS, CitationSnapshot, EdgeKind,
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_items import versions
-from nexus.services.resource_items.capabilities import (
-    resource_can_be_citation_output_source,
-    resource_can_own_ordered_adjacency,
-    resource_link_mode,
-)
+from nexus.services.resource_items.capabilities import capability
 
 Pair = tuple[str, UUID]
 CONNECTION_DISCOVERY_SOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
@@ -105,7 +101,7 @@ def _validate(db: Session, viewer_id: UUID, edge: EdgeCreate) -> None:
     if edge.ordinal is not None:
         if edge.origin != "citation" or edge.ordinal < 1 or edge.snapshot is None:
             _invalid("Only citation edges carry an ordinal >= 1, with a snapshot")
-        if not resource_can_be_citation_output_source(edge.source):
+        if not capability(edge.source.scheme).citation_output_source:
             _invalid("Citation ordinals must start from a generated output resource")
     elif rationale:
         if edge.snapshot is None or not (edge.snapshot.excerpt or "").strip():
@@ -218,7 +214,10 @@ def _link(
 ) -> EdgeWrite:
     if source == target:
         _invalid("An edge cannot relate a resource to itself")
-    if resource_link_mode(source) != "direct" or resource_link_mode(target) != "direct":
+    if (
+        capability(source.scheme).link_mode != "direct"
+        or capability(target.scheme).link_mode != "direct"
+    ):
         _invalid("Resource cannot be linked")
     assert_ref_visible(db, viewer_id=viewer_id, ref=target)
     assert_ref_visible(db, viewer_id=viewer_id, ref=source)
@@ -254,7 +253,7 @@ def _link(
             key = conversation_rank(
                 db, viewer_id=viewer_id, conversation_id=endpoint.id, target=other
             )
-        elif resource_can_own_ordered_adjacency(endpoint):
+        elif capability(endpoint.scheme).adjacency_source:
             keys = db.scalars(
                 select(ResourceViewState.order_key).where(
                     ResourceViewState.user_id == viewer_id,

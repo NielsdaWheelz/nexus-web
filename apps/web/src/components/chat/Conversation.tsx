@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
+import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { parseReaderSelectionHash } from "@/lib/chat/readerIntent";
 import { chatView, type BranchDraft } from "@/lib/chat/tree";
@@ -11,6 +12,7 @@ import { useFind } from "@/lib/find/useFind";
 import {
   paneSourceKey,
   requirePaneRuntime,
+  usePaneEntryDelivery,
   usePaneHash,
   usePaneIsActive,
   usePaneParam,
@@ -29,6 +31,7 @@ import {
   type ResourceActivation,
 } from "@/lib/resources/activation";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
+import { useLatestWorkspace } from "@/lib/workspace/store";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import ChatComposer from "./ChatComposer";
 import ChatSurface, {
@@ -126,6 +129,47 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   useEffect(() => {
     if (ready && targetMessageId) void store.reveal(targetMessageId);
   }, [ready, targetMessageId, store]);
+
+  // A message verb from a resource menu (its href names ?message=), served
+  // once the message is on the shown path; a deleted last message settles
+  // the conversation's panes here.
+  const { delivery, claim } = usePaneEntryDelivery();
+  const feedback = useFeedback();
+  const workspace = useLatestWorkspace();
+  useEffect(() => {
+    if (delivery === null || !("messageId" in delivery.entry) || !ready) return;
+    const { entry } = delivery;
+    const message = messages.get(entry.messageId);
+    if (message && !view.path.some((m) => m.id === message.id)) return;
+    if (!claim(delivery)) return;
+    if (!message)
+      return feedback.publish({
+        kind: "Hud",
+        content: { tone: "Neutral", title: "This message is no longer available." },
+      });
+    if (entry.kind === "DeleteMessage") {
+      void store.deleteMessage(message.id).then((receipt) => {
+        if (!receipt.conversation_deleted) return;
+        settleDeletedResourcePanes({
+          workspace: workspace(),
+          deletedRef: `conversation:${receipt.conversation_id}`,
+          fallbackHref: "/conversations",
+        });
+      }, () => undefined); // the store reported the failure
+    } else if (message.role !== "assistant") {
+      return;
+    } else if (entry.kind === "ForkMessage") {
+      actions.fork({
+        parentId: message.id,
+        anchor: { kind: "assistant_message", message_id: message.id },
+        quote: "",
+      });
+    } else if (entry.kind === "WalkMessageSources") {
+      if (message.citations.length >= 2) actions.walk(message);
+    } else {
+      void store.repeat(entry.kind === "RerunMessage" ? "rerun" : "regenerate", message.id);
+    }
+  }, [actions, claim, delivery, feedback, messages, ready, store, view.path, workspace]);
   const ownerKey = paneSourceKey(runtime);
   const findSource = useConversationFindSource({
     ownerKey,

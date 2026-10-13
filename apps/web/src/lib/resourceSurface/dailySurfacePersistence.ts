@@ -12,7 +12,6 @@ import {
   noteBodyValueFromDoc,
   type NoteBodyValue,
 } from "@/lib/notes/prosemirror/schema";
-import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 
 export interface DailySurfaceOwner {
   accountId: string;
@@ -34,8 +33,6 @@ export interface DailySurfaceSessionOptions {
     claimedNoteId: string,
   ) => void;
   onError?: (error: unknown) => void;
-  onTitleMutationStarted?: () => MountedEditorMutationLease | null;
-  onSourceBodyMutationStarted?: () => MountedEditorMutationLease | null;
 }
 
 export type DailySurfaceLoad =
@@ -148,32 +145,12 @@ export function provisionalDailyOccurrence(input: {
         id: noteId,
         label: "",
         summary: "",
-        route: `/notes/${noteId}`,
         activation: {
           resource_ref: input.noteRef,
           kind: "route",
           href: `/notes/${noteId}`,
-          unresolved_reason: null,
         },
         missing: false,
-        capabilities: {
-          link_mode: "none",
-          sharing: "None",
-          library_placement: "None",
-          attachable: false,
-          chat_subject: "none",
-          readable: "none",
-          inspectable: "none",
-          citable_result_type: null,
-          citation_output_source: false,
-          app_search_scope: false,
-          conversation_search_scope: false,
-          prompt_render: "none",
-          expansion_policy: "none",
-          expandable: false,
-          adjacency_source: false,
-          adjacency_target: false,
-        },
         version_by_lane: { body: 0, links: 0 },
       },
       content: {

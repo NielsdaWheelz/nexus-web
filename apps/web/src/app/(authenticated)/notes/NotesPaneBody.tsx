@@ -52,6 +52,7 @@ import {
   type NotePageSummary,
 } from "@/lib/notes/pageContract";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
+import { useChangeStamp } from "@/lib/api/changes";
 import { useResource } from "@/lib/api/useResource";
 import {
   matchesPaneFilterQuery,
@@ -67,6 +68,7 @@ const EMPTY_NOTE_PAGES: readonly NotePageSummary[] = [];
 interface CommittedPagesView {
   readonly view: UpdatedTitleIndexView;
   readonly pages: readonly NotePageSummary[];
+  readonly notesStamp: string;
 }
 
 type NotesOperation = "Load" | "CreatePage" | "OpenToday";
@@ -217,10 +219,13 @@ export default function NotesPaneBody() {
   // The canonical view is the route's server seed (whose resource key this one
   // matches); every other exact view owns its own request. An invalid view
   // requests nothing at all.
+  // A page deleted elsewhere ("Notes") refetches the view.
+  const notesStamp = useChangeStamp("Notes");
   const requestsFirstPage =
     view === null ||
     committed === null ||
-    requestedViewKey !== committedViewKey;
+    requestedViewKey !== committedViewKey ||
+    committed.notesStamp !== notesStamp;
   const pagesResource = useResource<readonly NotePageSummary[]>({
     cacheKey: requestsFirstPage && !invalidView ? requestedViewKey : null,
     load: async (signal) => {
@@ -235,7 +240,7 @@ export default function NotesPaneBody() {
   // current request identity, so a superseded view can never install its rows.
   useEffect(() => {
     if (pagesResource.status === "ready" && view !== null) {
-      setCommitted({ view, pages: pagesResource.data });
+      setCommitted({ view, pages: pagesResource.data, notesStamp });
       return;
     }
     if (
@@ -244,7 +249,7 @@ export default function NotesPaneBody() {
     ) {
       setViewInvalid(true);
     }
-  }, [pagesResource, view]);
+  }, [notesStamp, pagesResource, view]);
   // A newly requested view retires the previous view's rejection.
   useEffect(() => setViewInvalid(false), [requestedViewKey]);
   usePaneReturnReady(

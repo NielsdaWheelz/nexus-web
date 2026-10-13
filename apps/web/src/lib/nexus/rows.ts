@@ -17,7 +17,7 @@ import {
   getPaneRouteIcon,
   resolveWorkspaceActivationRouteId,
 } from "@/lib/panes/paneRouteModel";
-import type { ResourceItem } from "@/lib/resources/resourceItems";
+import type { ResourceItem } from "@/lib/resources/items";
 import { searchHref } from "@/lib/search/searchParams";
 import { SEARCH_TYPE_ICON } from "@/lib/search/searchTypeIcon";
 import type { SearchResultRowViewModel } from "@/lib/search/types";

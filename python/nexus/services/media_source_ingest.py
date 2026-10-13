@@ -71,11 +71,8 @@ from nexus.schemas.media import (
 from nexus.services import library_entries, library_governance
 from nexus.services import media_source_types as source_types
 from nexus.services.capabilities import (
-    OperatorRecovery,
-    RecoveryActor,
     SourceRecoveryAnswer,
     SourceRecoveryRestriction,
-    ViewerRecovery,
     is_same_source_terminal_error,
 )
 from nexus.services.contributor_writes import MediaTarget
@@ -128,6 +125,23 @@ from nexus.storage.client import StorageError, get_storage_client
 from nexus.storage.paths import get_file_extension
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerRecovery:
+    """A viewer's recovery command, replayed by their ``client_mutation_id``."""
+
+    viewer_id: UUID
+    client_mutation_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class OperatorRecovery:
+    """An internal operator route: operator authority, no viewer, no replay ledger."""
+
+
+type RecoveryActor = ViewerRecovery | OperatorRecovery
+
 
 ACCEPTED = "accepted"
 QUEUED = "queued"

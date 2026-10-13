@@ -26,7 +26,7 @@ from nexus.services.locator_resolver import evidence_resolution, locator_from_re
 from nexus.services.media import list_collection_media_for_viewer_by_ids
 from nexus.services.resource_graph.highlight_notes import highlight_excerpts_for_note_blocks
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
-from nexus.services.resource_items.capabilities import resource_citation_result_type
+from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.routing import resource_activations_for_refs
 from nexus.services.search.sources import Hit, hydrate
 
@@ -213,7 +213,7 @@ def project(
             "owner_resource_ref": owner.uri,
             "action_subject_ref": (owner if t in _PASSAGES else ref).uri,
             "activation": activation,
-            "citation_target": ref.uri if resource_citation_result_type(ref) else None,
+            "citation_target": ref.uri if capability(ref.scheme).citable_result_type else None,
             "context_ref": SearchResultContextRefOut(
                 type="media" if t in MEDIA_TYPES else t,
                 id=handle or rid,

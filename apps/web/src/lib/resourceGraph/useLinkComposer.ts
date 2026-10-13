@@ -10,7 +10,8 @@ import {
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
-import { resolveResourceLocator } from "@/lib/resources/resourceLocators";
+import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities";
+import { resolveResourceItem } from "@/lib/resources/items";
 import {
   createLink,
   deleteLink,
@@ -286,11 +287,9 @@ function createLinkComposer(feedback: FeedbackContextValue) {
 
   async function openResourceLink(ref: string): Promise<void> {
     try {
-      const { resource_item: item } = await resolveResourceLocator({
-        kind: "resource_ref",
-        ref,
-      });
-      if (item.missing || item.capabilities.link_mode === "none") {
+      const item = await resolveResourceItem(ref);
+      const linkMode = RESOURCE_CAPABILITIES[item.scheme].link_mode;
+      if (item.missing || linkMode === "none") {
         feedback.publish({
           kind: "Hud",
           content: { tone: "Warning", title: "This item can’t be linked." },
@@ -299,7 +298,7 @@ function createLinkComposer(feedback: FeedbackContextValue) {
       }
       openLink({
         source:
-          item.capabilities.link_mode === "materialize_passage"
+          linkMode === "materialize_passage"
             ? { kind: "passage", candidate_ref: item.ref }
             : { kind: "resource", ref: item.ref },
         sourceRef: item.ref,

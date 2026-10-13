@@ -32,7 +32,7 @@ from nexus.services.resource_graph.refs import (
     ResourceRefParseFailure,
     parse_resource_ref,
 )
-from nexus.services.resource_items.capabilities import resource_citation_result_type
+from nexus.services.resource_items.capabilities import capability
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,7 +62,10 @@ def citable_target(result_ref: dict[str, Any]) -> ResourceRef | None:
     if raw is None:
         return None
     target = parse_resource_ref(str(raw))
-    if isinstance(target, ResourceRefParseFailure) or resource_citation_result_type(target) is None:
+    if (
+        isinstance(target, ResourceRefParseFailure)
+        or capability(target.scheme).citable_result_type is None
+    ):
         raise AssertionError(f"retrieval citation_target is not citable: {raw!r}")
     return target
 

@@ -1,0 +1,271 @@
+"""The verbs one viewer has on one resource right now.
+
+Facts only: which verbs exist and whether the server blocks them. Inapplicable verbs
+are omitted; applicable but forbidden ones are present with ``blocked``. Labels,
+order, confirmation and client state belong to the web catalog. Visibility is the
+resolver's verdict for every scheme; each scheme's facts come from its owner.
+"""
+
+from __future__ import annotations
+
+from typing import assert_never, cast
+from uuid import UUID
+
+from sqlalchemy.orm import Session
+
+from nexus.schemas.metadata_enrichment import MetadataRetryAllowed
+from nexus.schemas.resource_items import (
+    BlockReason,
+    ConsumptionAction,
+    DownloadAction,
+    DownloadKind,
+    HighlightNoteAction,
+    LecternMembershipAction,
+    OpenSourceAction,
+    PlaybackAction,
+    PodcastSubscriptionAction,
+    RecoveryAction,
+    RefreshSourceAction,
+    ResourceActionOut,
+    ResourceActionsOut,
+    RetryMetadataAction,
+    ReviewMetadataResultAction,
+    SimpleAction,
+    SimpleActionKind,
+    TranscriptAction,
+    TranscriptState,
+)
+from nexus.services import highlights, library_governance
+from nexus.services.chat import conversations
+from nexus.services.consumption import lectern, projection
+from nexus.services.dossier import engine as dossier_engine
+from nexus.services.media import list_collection_media_for_viewer_by_ids
+from nexus.services.podcasts.subscriptions_query import podcast_states
+from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.resolve import resolve_refs
+from nexus.services.resource_items.capabilities import capability
+from nexus.services.resource_items.routing import resource_activation_for_ref
+
+_METADATA_BLOCKED: dict[str, BlockReason] = {
+    "not_creator": "PermissionDenied",
+    "not_eligible": "TemporarilyUnavailable",
+    "active": "Processing",
+    "source_context_missing": "TemporarilyUnavailable",
+}
+
+
+def resource_actions(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> ResourceActionsOut:
+    [resolved] = resolve_refs(
+        db, viewer_id=viewer_id, refs=[ref], include_media_document_summary=False
+    )
+    missing = resolved.missing
+    # A confirmation quotes a media by its bare title; the resolver's label adds authors.
+    label = resolved.title if ref.scheme == "media" and resolved.title else resolved.label
+    activation = resource_activation_for_ref(db, viewer_id=viewer_id, ref=ref, missing=missing)
+    actions: list[ResourceActionOut] = []
+    if not missing:
+        policy = capability(ref.scheme)
+        if activation.kind != "none":
+            actions.append(_simple("Open"))
+        if activation.kind == "route":
+            actions.append(_simple("OpenInNewPane"))
+            if policy.sharing != "None":
+                actions.append(_simple("Share"))
+        if policy.link_mode != "none":
+            actions.append(_simple("LinkResource"))
+            if policy.chat_subject != "none":
+                actions.append(_simple("Chat"))
+        actions += _scheme_actions(db, viewer_id=viewer_id, ref=ref)
+    return ResourceActionsOut(
+        ref=ref.uri,
+        label=label,
+        activation=activation,
+        missing=missing,
+        actions=actions,
+    )
+
+
+def _scheme_actions(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> list[ResourceActionOut]:
+    match ref.scheme:
+        case "media":
+            return _media(db, viewer_id, ref.id)
+        case "library":
+            return _library(db, viewer_id, ref.id)
+        case "podcast":
+            return _podcast(db, viewer_id, ref.id)
+        case "highlight":
+            return _highlight(db, viewer_id, ref.id)
+        case "message":
+            return _message(db, viewer_id, ref.id)
+        case "artifact":
+            active = dossier_engine.has_active_build(db, artifact_id=ref.id)
+            return [_simple("RegenerateArtifact", "Processing" if active else None)]
+        case "page":
+            return [_simple("EditPageTitle"), _simple("DeletePage")]
+        case "note_block":
+            return [_simple("EditNoteBody")]
+        case "conversation":
+            return [_simple("DeleteConversation")]
+        case (
+            "evidence_span"
+            | "content_chunk"
+            | "fragment"
+            | "oracle_reading"
+            | "oracle_passage_anchor"
+            | "artifact_revision"
+            | "external_snapshot"
+            | "contributor"
+            | "reader_apparatus_item"
+            | "passage_anchor"
+        ):
+            return []
+        case _ as unreachable:
+            assert_never(unreachable)
+
+
+def _media(db: Session, viewer_id: UUID, media_id: UUID) -> list[ResourceActionOut]:
+    found = list_collection_media_for_viewer_by_ids(db, viewer_id=viewer_id, media_ids=[media_id])
+    if not found:
+        return []
+    media = found[0]
+    ops = media.capabilities
+    kind = media.summary.media_kind.value
+    actions: list[ResourceActionOut] = [_simple("MediaMetadata")]
+    if media.canonical_source_url:
+        actions.append(OpenSourceAction(blocked=None, href=media.canonical_source_url))
+    descriptors = projection.player_descriptors(db, viewer_id=viewer_id, media_ids=[media_id])
+    if media_id in descriptors:
+        actions.append(PlaybackAction(blocked=None, player_descriptor=descriptors[media_id]))
+        actions.append(_simple("PlayNext"))
+    if media.has_original_file:
+        actions.append(_simple("DownloadOriginal"))
+    # Each obligation's own offer is actionable; a creator's stays discoverable but blocked.
+    for own, applicable in (
+        (media.source_recovery, media.applicable_source_recovery),
+        (media.search_recovery, media.applicable_search_recovery),
+    ):
+        if own is not None:
+            actions.append(RecoveryAction(blocked=None, offer=own))
+        elif applicable is not None:
+            actions.append(RecoveryAction(blocked="PermissionDenied", offer=applicable))
+    if ops.refresh_source_applicable:
+        actions.append(
+            RefreshSourceAction(
+                blocked="PermissionDenied"
+                if not media.refresh_source_authorized
+                else None
+                if ops.can_refresh_source
+                else "TemporarilyUnavailable",
+                expected_attempt_id=media.refresh_source_attempt_id,
+            )
+        )
+    if ops.retry_metadata_applicable:
+        retry = media.metadata_retry
+        blocked = (
+            None if isinstance(retry, MetadataRetryAllowed) else _METADATA_BLOCKED[retry.reason]
+        )
+        actions.append(RetryMetadataAction(blocked=blocked, retry=retry))
+    if media.reviewable_metadata_job_id is not None:
+        actions.append(
+            ReviewMetadataResultAction(blocked=None, job_id=media.reviewable_metadata_job_id)
+        )
+    if ops.edit_authors_applicable:
+        actions.append(_simple("EditAuthors", _owner(ops.can_edit_authors)))
+    actions.append(_simple("RemoveMedia", _owner(ops.can_delete)))
+    if media.progress_resettable:
+        actions.append(_simple("ResetProgress"))
+    actions.append(
+        ConsumptionAction(
+            blocked=None,
+            finished=media.summary.consumption.state == "Finished",
+            episode=kind == "podcast_episode",
+        )
+    )
+    if kind in ("podcast_episode", "video"):
+        state = cast(TranscriptState, media.transcript_state or "not_requested")
+        actions.append(TranscriptAction(blocked=None, state=state))
+    item_ids = lectern.item_ids_for_media(db, viewer_id=viewer_id, media_ids=[media_id])
+    actions.append(LecternMembershipAction(blocked=None, lectern_item_id=item_ids.get(media_id)))
+    actions.append(_simple("LibraryPlacement"))
+    readable_copy = kind in ("web_article", "epub", "pdf") and (
+        media.summary.processing_status == "ready_for_reading"
+    )
+    if media.audio_url is not None or readable_copy:
+        actions.append(
+            DownloadAction(
+                blocked=None,
+                media_kind=cast(DownloadKind, kind),
+                title=media.summary.title,
+                audio_url=media.audio_url,
+            )
+        )
+    return actions
+
+
+def _library(db: Session, viewer_id: UUID, library_id: UUID) -> list[ResourceActionOut]:
+    facts = library_governance.library_management_facts(
+        db, viewer_id=viewer_id, library_ids=[library_id]
+    ).get(library_id)
+    if facts is None or not facts.mutable:
+        return []
+    return [
+        _simple("LibrarySettings", _owner(facts.can_manage_settings)),
+        _simple("DeleteLibrary", _owner(facts.can_delete)),
+    ]
+
+
+def _podcast(db: Session, viewer_id: UUID, podcast_id: UUID) -> list[ResourceActionOut]:
+    state = podcast_states(db, viewer_id=viewer_id, podcast_ids=[podcast_id]).get(podcast_id)
+    if state is None:
+        return []
+    actions: list[ResourceActionOut] = []
+    if state.subscribed:
+        actions += [_simple("PodcastSettings"), _simple("RefreshPodcast")]
+    if state.backfill_failed:
+        actions.append(_simple("RetryPodcastBackfill"))
+    actions.append(PodcastSubscriptionAction(blocked=None, subscribed=state.subscribed))
+    actions.append(_simple("LibraryPlacement"))
+    return actions
+
+
+def _highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> list[ResourceActionOut]:
+    facts = highlights.highlight_action_facts(
+        db, viewer_id=viewer_id, highlight_ids=[highlight_id]
+    ).get(highlight_id)
+    if facts is None:
+        return []
+    owner = _owner(facts.is_owner)
+    actions: list[ResourceActionOut] = [
+        _simple("EditHighlight", owner),
+        HighlightNoteAction(blocked=None, note_block_id=facts.note_block_id),
+    ]
+    if facts.learn_applicable:
+        actions.append(_simple("LearnHighlight"))
+    if facts.edit_bounds_applicable:
+        actions.append(_simple("EditHighlightBounds", owner))
+    actions.append(_simple("DeleteHighlight", owner))
+    return actions
+
+
+def _message(db: Session, viewer_id: UUID, message_id: UUID) -> list[ResourceActionOut]:
+    facts = conversations.message_action_facts(
+        db, viewer_id=viewer_id, message_ids=[message_id]
+    ).get(message_id)
+    if facts is None:
+        return []
+    applicable: list[tuple[bool, SimpleActionKind]] = [
+        (facts.fork_applicable, "ForkMessage"),
+        (facts.walk_sources_applicable, "WalkMessageSources"),
+        (facts.rerun_applicable, "RerunMessage"),
+        (facts.regenerate_applicable, "RegenerateMessage"),
+        (True, "DeleteMessage"),
+    ]
+    return [_simple(kind) for applies, kind in applicable if applies]
+
+
+def _simple(kind: SimpleActionKind, blocked: BlockReason | None = None) -> SimpleAction:
+    return SimpleAction(kind=kind, blocked=blocked)
+
+
+def _owner(allowed: bool) -> BlockReason | None:
+    return None if allowed else "PermissionDenied"

@@ -22,7 +22,7 @@ import json
 from array import array
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from sqlalchemy import Row, text
@@ -44,7 +44,7 @@ from nexus.schemas.import_history import (
 from nexus.schemas.imports import RepairSearchOffer
 from nexus.schemas.media import SearchRepairAdmission
 from nexus.services import media_intelligence_lifecycle
-from nexus.services.capabilities import SearchRecoveryAnswer, ViewerRecovery
+from nexus.services.capabilities import SearchRecoveryAnswer
 from nexus.services.content_chunking import (
     Chunk,
     EnvelopeExceeded,
@@ -72,6 +72,10 @@ from nexus.services.web_article_structure import (
     add_heading_anchors,
     build_web_article_index_blocks,
 )
+
+if TYPE_CHECKING:
+    # a type only: ingest imports this module, so the actor's home cannot be imported here.
+    from nexus.services.media_source_ingest import ViewerRecovery
 
 JOB_KIND = "media_content_reindex_job"
 ReindexReason = Literal[

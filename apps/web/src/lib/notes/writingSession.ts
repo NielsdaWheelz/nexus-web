@@ -3,7 +3,6 @@
 import { apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { createRandomId } from "@/lib/createRandomId";
-import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 import type { NoteBodyEdit, NoteBodyEditorDocument, NoteBodySelection } from "@/components/notes/NoteBodyEditor";
 import { expectRecord, expectInteger, expectString } from "@/lib/validation";
 import { noteBodyHasContent } from "@/lib/notes/prosemirror/bodyContent";
@@ -84,8 +83,6 @@ type BodyRuntime = {
   revision: number;
   adapter: BodyAdapter | null;
   onError?: (error: unknown) => void;
-  onMutationStarted?: () => MountedEditorMutationLease | null;
-  lease: MountedEditorMutationLease | null;
   entry: BodyEntry | null;
   snapshot: WritingSnapshot;
   histories: Map<string, { undo: HistoryItem[]; redo: HistoryItem[]; group: number }>;
@@ -237,7 +234,7 @@ export class WritingSession {
     if (notify) this.publish();
   }
 
-  openBody(input: { noteRef: string; ownerKey: string; initial: { body: NoteBodyValue; version: number | null }; adapter: BodyAdapter | null; awaitExternalCreation?: boolean; onError?: (error: unknown) => void; onMutationStarted?: () => MountedEditorMutationLease | null }): void {
+  openBody(input: { noteRef: string; ownerKey: string; initial: { body: NoteBodyValue; version: number | null }; adapter: BodyAdapter | null; awaitExternalCreation?: boolean; onError?: (error: unknown) => void }): void {
     const existing = this.bodies.get(input.noteRef);
     if (existing) {
       if (!existing.adapter && input.adapter) existing.adapter = input.adapter;
@@ -249,7 +246,6 @@ export class WritingSession {
         }
       }
       if (input.onError) existing.onError = input.onError;
-      if (input.onMutationStarted) existing.onMutationStarted = input.onMutationStarted;
       if (input.awaitExternalCreation && !existing.adapter && existing.version === null) existing.awaitExternalCreation = true;
       if (!existing.entry && existing.version === null && existing.awaitExternalCreation && !sameBody(existing.body, input.initial.body)) {
         existing.body = input.initial.body; existing.initialBody = input.initial.body; existing.revision += 1;
@@ -267,7 +263,7 @@ export class WritingSession {
     }
     const body: BodyRuntime = {
       ownerKey: input.ownerKey, ownerKeys: new Set([input.ownerKey]), body: input.initial.body, initialBody: input.initial.body, version: input.initial.version,
-      revision: 0, adapter: input.adapter, onError: input.onError, onMutationStarted: input.onMutationStarted, lease: null, entry: null,
+      revision: 0, adapter: input.adapter, onError: input.onError, entry: null,
       snapshot: { document: { body: input.initial.body, revision: 0 }, status: "clean", localRetained: true, hasRecoveredDraft: false, conflict: null },
       histories: new Map(), observers: new Map(), submittedObservers: null, submittedAdapterObserver: null, idleTimer: null, maxTimer: null, ready: false, remote: null, awaitExternalCreation: input.awaitExternalCreation ?? false,
     };
@@ -629,7 +625,6 @@ export class WritingSession {
       }
       this.active = entry.noteRef;
       runtime.ready = false;
-      runtime.lease ??= runtime.onMutationStarted?.() ?? null;
       this.snapshot(runtime, runtime.snapshot.localRetained ? "saving" : "storage_failed", runtime.snapshot.localRetained);
       const submitted = entry.submitted;
       let createdVersions: Schema<"NoteBodyVersionsOut"> | undefined;
@@ -658,8 +653,6 @@ export class WritingSession {
           const localRetained = retained || runtime.snapshot.localRetained;
           this.snapshot(runtime, localRetained ? "dirty" : "storage_failed", localRetained);
         }
-        const lease = runtime.lease; runtime.lease = null;
-        try { await lease?.committed(); } catch (error) { runtime.onError?.(error); }
         const observers = new Set(runtime.submittedObservers?.values() ?? []);
         for (const observer of runtime.observers.values()) observers.add(observer);
         if (runtime.submittedAdapterObserver) observers.add(runtime.submittedAdapterObserver);
@@ -727,9 +720,6 @@ export class WritingSession {
     if (kind === "network") this.blocked = entry.noteRef;
     const retained = this.retain();
     this.snapshot(runtime, retained ? kind === "network" ? "network_failed" : kind === "conflict" ? "conflict" : "server_failed" : "storage_failed", retained);
-    // A paused request retains its exact bytes, not the mounted action slot.
-    // Retry reacquires a current owner's lease before replaying those bytes.
-    runtime.lease?.failed(); runtime.lease = null;
     runtime.onError?.(error);
     if (kind === "conflict") void this.refreshConflict(entry.noteRef).catch((refreshError: unknown) => runtime.onError?.(refreshError));
   }

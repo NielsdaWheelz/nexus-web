@@ -146,8 +146,8 @@ a pane's resource is its route's own locator (`resource_ref` or
 runtime's `resourceRef` is that ref (null for authors and routes naming no
 resource). nothing resolves locators for open panes: the author body takes its
 contributor ref from the author it loaded, and a pane for deleted media shows the
-body's own not-found. `resourceLocators.ts` remains the one-locator transport
-for editors that resolve a typed link.
+body's own not-found. editors that open a typed link resolve it with
+`resolveResourceItem` (`lib/resources/items.ts`, `GET /resource-items/{ref}`).
 
 ## Pane Canvas
 
@@ -273,14 +273,16 @@ A resource pane publishes only its canonical `actionSubject`
 `menuActions` through `ContextualActionMenu`; the unchanged canonical resource
 descriptors are one ordered contiguous suffix
 ([resource-action owner](resource-actions.md)). Membership, current verb,
-order, and danger-last come from the server action snapshot and direct menu projection,
+order, and danger-last come from the server's verbs, read when the menu opens,
 so the pane menu includes `Open`. Pane bodies never build resource action
-arrays.
+arrays. The mobile bar renders the active pane's menu outside that pane, so the
+pane publishes `onDefect` with its chrome: a defect while loading still breaks
+only that pane.
 
-Deletion updates panes and reconciles action snapshots after the command
-succeeds. Mounted owners still reconcile when their local projection fails.
-A failed or lost response reports the command error and leaves the view for
-refresh; the browser neither retries the delete nor reads a commit witness.
+A delete settles panes after the command succeeds: the active pane on the
+deleted ref adopts its collection and other panes on it close. A failed or lost
+response reports the command error and leaves the view for refresh; the browser
+neither retries the delete nor reads a commit witness.
 
 Desktop and mobile primary headers keep stable Back and Forward positions,
 expose exactly one **More** trigger when contextual commands exist, and render
@@ -489,11 +491,16 @@ that date, a `/pages/{id}` target one naming that page. Today, quick note and
 add to Today therefore reuse an open daily pane under either href.
 
 Accepted activation may carry one pane-entry delivery addressed to the chosen
-pane and the exact visit the target lands on; the page body reads it through
-`usePaneEntryDelivery` and acknowledges it by activation id. A newer entry
-supersedes (cancels) the pane's previous delivery, a View cancels it, a rejected
-activation cancels itself, and a commit that changes the pane's visit cancels
-it; `MobileQuickNoteHandoff` watches `cancelledPaneEntryActivationIds`.
+pane and the exact visit the target lands on (`WorkspacePaneEntry`: the quick
+note's text, or a resource menu's edit: page title, note body, highlight colour,
+note, bounds or delete, message fork, walk, rerun, regenerate or delete). The
+pane body reads it through `usePaneEntryDelivery` and acts only once ready: it
+claims first and acts only when `claim` returned true (the one call that
+removed it); ready but unable to serve it (the subject is gone), it claims and
+says so in a hud; it owns every outcome. A newer entry supersedes (cancels) the
+pane's previous delivery, a View cancels it, a rejected activation cancels
+itself, and a commit that changes the pane's visit cancels it; nothing expires
+otherwise. `MobileQuickNoteHandoff` watches `cancelledPaneEntryActivationIds`.
 
 Learn is one of the named Adopt workflows. It preserves the source reader and
 opens `/artifacts/artifact:<id>` as a standalone resource pane after its durable

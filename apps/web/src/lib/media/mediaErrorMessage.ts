@@ -5,7 +5,7 @@
  * capabilities, source URL and retrieval status to what the screen shows.
  */
 
-import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
+import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { assertNever } from "@/lib/assertNever";
 import {
   FAILURE_COPY,
@@ -91,9 +91,9 @@ function sourceAction(
  * catalog owns rather than repeating its wording here.
  */
 const REPAIR_SOURCE_LABEL =
-  RESOURCE_ACTION_CATALOG["ResourceOperation.Media.RepairSource"].label;
+  ACTION_CATALOG.RepairSource.label;
 const REPAIR_SEARCH_LABEL =
-  RESOURCE_ACTION_CATALOG["ResourceOperation.Media.RepairSearch"].label;
+  ACTION_CATALOG.RepairSearch.label;
 
 function sourceErrorMessage(
   input: Extract<MediaErrorInput, { kind: "Source" }>,

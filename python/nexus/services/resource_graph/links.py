@@ -32,7 +32,7 @@ from nexus.services.resource_graph.connections import connection_for_edge
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible, resolve_refs
 from nexus.services.resource_items import versions
-from nexus.services.resource_items.capabilities import resource_link_mode
+from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
     lookup_replay,
@@ -186,11 +186,11 @@ def materialize_link_endpoint(
     anchor minted or reused for a passage candidate. Only flushes."""
     if endpoint.kind == "resource":
         ref = require_ref(endpoint.ref)
-        if resource_link_mode(ref) != "direct":
+        if capability(ref.scheme).link_mode != "direct":
             raise ApiError(ApiErrorCode.E_LINK_CAPABILITY, "Resource cannot be linked")
         return ref
     candidate = require_ref(endpoint.candidate_ref)
-    if resource_link_mode(candidate) != "materialize_passage":
+    if capability(candidate.scheme).link_mode != "materialize_passage":
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource is not a passage candidate")
     found = candidate_owner_and_quote(db, ref=candidate)
     if found is None:

@@ -6,15 +6,13 @@
 // media is observed: by an open view, or by the tab that admitted the run.
 
 import { useCallback, useSyncExternalStore } from "react";
+import type { FeedbackContextValue } from "@/components/feedback/Feedback";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import {
-  createMutationIntent,
-  type MutationIntent,
-} from "@/lib/actions/mutationIntent";
 import { publishImportsInvalidation } from "@/lib/imports/api";
 import { openStream } from "@/lib/api/stream";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 
 export type MetadataEnrichmentView = Schema<"MetadataEnrichmentView">;
 export type MetadataOperation = Schema<"MetadataOperationOut">;
@@ -25,7 +23,7 @@ const SETTLED = new Set<MetadataOperation["status"]>([
   "failed",
 ]);
 
-export async function submitMetadataEnrichment(
+async function submitMetadataEnrichment(
   mediaId: string,
   request: Schema<"MetadataEnrichmentRequest">,
 ): Promise<Schema<"MetadataEnrichmentAccepted">> {
@@ -54,6 +52,74 @@ export async function submitMetadataEnrichment(
   return response.data;
 }
 
+// A request whose outcome is unknown keeps its client id, keyed by what the viewer
+// saw, so "confirm request" replays it exactly; a settling answer forgets it. An
+// access reply (401/403/404) precedes the server's replay lookup, so it settles
+// nothing.
+const unconfirmed = new Map<string, string>();
+
+/**
+ * Admit metadata research for a media whose latest job the viewer saw as
+ * `expectedJobId`. A refusal throws; acceptance and an unknown outcome are huds.
+ */
+export async function requestMetadataResearch(
+  mediaId: string,
+  expectedJobId: string | null,
+  hud: { feedback: FeedbackContextValue; showMetadata: () => void },
+): Promise<void> {
+  const key = `${mediaId}|${expectedJobId}`;
+  const clientMutationId = unconfirmed.get(key) ?? crypto.randomUUID();
+  const hudKey = `metadata-request:${mediaId}`;
+  const metadata = { label: "metadata…", onClick: hud.showMetadata };
+  try {
+    await submitMetadataEnrichment(mediaId, {
+      client_mutation_id: clientMutationId,
+      expected_job_id: expectedJobId,
+    });
+  } catch (error) {
+    if (isApiError(error) && error.status >= 400 && error.status < 500) {
+      if (![401, 403, 404].includes(error.status)) {
+        unconfirmed.delete(key);
+        hud.feedback.resolve(hudKey);
+      }
+      throw error;
+    }
+    unconfirmed.set(key, clientMutationId);
+    const confirm = () =>
+      void requestMetadataResearch(mediaId, expectedJobId, hud).catch(
+        (refused: unknown) => {
+          if (handleUnauthenticatedApiError(refused)) return;
+          hud.feedback.publish({
+            kind: "Hud",
+            content: {
+              tone: "Danger",
+              title: "could not confirm metadata request",
+              message: isApiError(refused) ? refused.message : undefined,
+            },
+          });
+        },
+      );
+    hud.feedback.publish({
+      kind: "Hud",
+      key: hudKey,
+      content: {
+        tone: "Danger",
+        title: "metadata request unconfirmed",
+        message: "confirm this request to safely check whether it was queued",
+      },
+      actions: [{ label: "confirm request", onClick: confirm }, metadata],
+    });
+    return;
+  }
+  unconfirmed.delete(key);
+  hud.feedback.publish({
+    kind: "Hud",
+    key: hudKey,
+    content: { tone: "Neutral", title: "metadata request confirmed" },
+    actions: [metadata],
+  });
+}
+
 interface Observation {
   readonly view: MetadataEnrichmentView | null;
   readonly disconnected: boolean;
@@ -65,7 +131,6 @@ interface Entry {
 }
 const EMPTY: Observation = { view: null, disconnected: false };
 const entries = new Map<string, Entry>();
-const operationListeners = new Set<(mediaId: string) => void>();
 // Jobs this tab admitted: a first frame showing one already completed is a
 // change this tab made, not its baseline.
 const admitted = new Set<string>();
@@ -100,9 +165,7 @@ function connect(mediaId: string, entry: Entry): void {
     onEvent: (view) => {
       const previous = entry.snapshot.view;
       const previousStamp =
-        previous?.last_enriched_at != null
-          ? previous.last_enriched_at
-          : null;
+        previous?.last_enriched_at != null ? previous.last_enriched_at : null;
       const stamp = view.last_enriched_at;
       const operation = view.operation;
       // The first frame is this tab's baseline, unless it shows a run this tab
@@ -115,7 +178,6 @@ function connect(mediaId: string, entry: Entry): void {
           admitted.has(operation.job_id)
         );
       publish(entry, { view, disconnected: false });
-      for (const listener of operationListeners) listener(mediaId);
       if (baseline || stamp === null || stamp === previousStamp) return;
       // An older job can publish while a newer job is latest. Without its field
       // list, reconcile summaries conservatively through their existing owners.
@@ -177,50 +239,23 @@ export function useMediaMetadataOperations(
   return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY);
 }
 
-export function subscribeMetadataOperationChanges(
-  listener: (mediaId: string) => void,
-): () => void {
-  operationListeners.add(listener);
-  return () => {
-    operationListeners.delete(listener);
-  };
-}
-
-const reviewIntents = new Map<string, MutationIntent>();
-
-/** One exact result; an uncertain response keeps the same mutation identity. */
+/**
+ * Acknowledge one exact no-findings job for this viewer. The server answers a
+ * repeat with the review already recorded, so a retry needs no frozen id.
+ */
 export async function submitMetadataResultReview(
   mediaId: string,
   jobId: string,
 ): Promise<void> {
-  const key = `${mediaId}:${jobId}`;
-  let intent = reviewIntents.get(key);
-  if (intent === undefined) {
-    intent = createMutationIntent();
-    reviewIntents.set(key, intent);
-  }
-  try {
-    await apiFetch<
-      ApiJson<"/media/{media_id}/metadata-enrichment/{job_id}/review", "post">
-    >(
-      `/api/media/${encodeURIComponent(mediaId)}/metadata-enrichment/${encodeURIComponent(jobId)}/review`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          client_mutation_id: intent.clientMutationId(jobId),
-        }),
-      },
-    );
-    intent.discard();
-    reviewIntents.delete(key);
-    publishImportsInvalidation();
-    reconnectMetadataOperations(mediaId);
-    for (const listener of operationListeners) listener(mediaId);
-  } catch (error) {
-    if (isApiError(error) && error.status >= 400 && error.status < 500) {
-      intent.discard();
-      reviewIntents.delete(key);
-    }
-    throw error;
-  }
+  await apiFetch<
+    ApiJson<"/media/{media_id}/metadata-enrichment/{job_id}/review", "post">
+  >(
+    `/api/media/${encodeURIComponent(mediaId)}/metadata-enrichment/${encodeURIComponent(jobId)}/review`,
+    {
+      method: "POST",
+      body: JSON.stringify({ client_mutation_id: crypto.randomUUID() }),
+    },
+  );
+  publishImportsInvalidation();
+  reconnectMetadataOperations(mediaId);
 }

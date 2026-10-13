@@ -195,10 +195,11 @@ not restore feed bibliography. promotion during a turn may invalidate its frozen
 input and require a deliberate rerun. chapters/transcript source mechanics retain
 their existing owners.
 
-detail/action snapshots batch the same projection. detail and each stream
-snapshot use repeatable read. existing `media_events` notifications announce
-semantic job changes and committed reviews; heartbeats do not. client admission
-and review receipts also invalidate imports so an idle workspace wakes. the successful timestamp independently
+media detail and the resource actions read share the same projection. detail
+and each stream snapshot use repeatable read. existing `media_events`
+notifications announce semantic job changes and committed reviews; heartbeats do
+not. client admission and review receipts also invalidate imports so an idle
+workspace wakes. the successful timestamp independently
 invalidates facts when an older job publishes behind a newer latest job.
 
 one shared browser observer serves visible details and the `metadata…` overlay

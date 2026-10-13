@@ -18,7 +18,6 @@ import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import MobileSheet from "@/components/ui/MobileSheet";
-import type { ResourceActionMutationBoundary } from "@/lib/actions/resourceActionMutation";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { useThrowLater } from "@/lib/api/serverState";
 import { useResource } from "@/lib/api/useResource";
@@ -33,7 +32,6 @@ import {
 import { contributorNameKey } from "@/lib/contributors/credits";
 import { createRandomId } from "@/lib/createRandomId";
 import { useMediaBibliographyInvalidation } from "@/lib/media/MediaSummaryProvider";
-import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { DismissDecision, ReturnFocusTarget } from "@/lib/ui/overlay";
 import AuthorSearchField from "./AuthorSearchField";
@@ -100,13 +98,10 @@ const ERRORS: Readonly<Record<string, readonly [string, string?]>> = {
 
 export default function MediaAuthorsEditor({
   mediaId,
-  mutation,
   returnFocusTo,
   onClose,
 }: {
   readonly mediaId: string;
-  /** The canonical action boundary, begun immediately before each PUT. */
-  readonly mutation: ResourceActionMutationBoundary;
   readonly returnFocusTo: ReturnFocusTarget;
   readonly onClose: () => void;
 }) {
@@ -143,7 +138,6 @@ export default function MediaAuthorsEditor({
       mediaId={mediaId}
       loaded={loaded}
       manual={source.data.manual}
-      mutation={mutation}
       returnFocusTo={returnFocusTo}
       onClose={onClose}
     />
@@ -154,19 +148,16 @@ function Editor({
   mediaId,
   loaded,
   manual,
-  mutation,
   returnFocusTo,
   onClose,
 }: {
   readonly mediaId: string;
   readonly loaded: readonly Bound[];
   readonly manual: boolean;
-  readonly mutation: ResourceActionMutationBoundary;
   readonly returnFocusTo: ReturnFocusTarget;
   readonly onClose: () => void;
 }) {
   const isMobile = useIsMobileViewport();
-  const feedback = useFeedback();
   const invalidateBibliography = useMediaBibliographyInvalidation();
   const throwLater = useThrowLater();
   const [rows, setRows] = useState<readonly Row[]>(() => loaded.map(bound));
@@ -262,8 +253,6 @@ function Editor({
 
   async function submit(body: Draft) {
     if (saving) return;
-    const lease = mutation.begin();
-    if (lease === null) return;
     const payload = JSON.stringify(body);
     if (mutationId.current?.payload !== payload) {
       mutationId.current = { payload, id: createRandomId("media-authors") };
@@ -276,7 +265,6 @@ function Editor({
         client_mutation_id: mutationId.current.id,
       });
     } catch (error) {
-      lease.abort();
       setSaving(false);
       if (handleUnauthenticatedApiError(error)) return;
       const copy =
@@ -296,27 +284,8 @@ function Editor({
       });
       return;
     }
-    // Saved. Refreshing other views is best effort and never re-sends the PUT.
+    // Saved: other views refresh from the bibliography change.
     invalidateBibliography(mediaId);
-    try {
-      await lease.reconcile({
-        kind: "Subjects",
-        refs: [assumeCanonicalResourceRef(`media:${mediaId}`)],
-      });
-      await lease.commit();
-    } catch (error) {
-      if (!isApiError(error) || isSameSystemApiDefect(error))
-        return throwLater({ error });
-      feedback.publish({
-        kind: "Hud",
-        content: {
-          tone: "Neutral",
-          title: "Authors saved",
-          message: "Some views will update when they next refresh.",
-          requestId: error.requestId,
-        },
-      });
-    }
     onClose();
   }
 
