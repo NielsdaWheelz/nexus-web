@@ -14,9 +14,20 @@ the failure; this does not qualify sustained reader use.
 private evidence: release `provider-smoke/results/partial-browser-failure-receipt.json`
 and `nexus-release-repair-plan-20261013/postgres-oom-history.json`
 (sha256 `393a66b16a856e58d52b9422f79630fd74d6220644b10c5953e365bb4a2a89a0`).
-runtime repairs and further smoke calls are held while the exact request path
-is profiled on a restored production copy. preserve publication semantics and
+runtime repairs and broad browser journeys are held while the exact request
+path is profiled on a restored production copy. short, serial provider checks
+run separately under host observation. preserve publication semantics and
 measure the complete host budget; an isolated api cap increase is not proof.
+
+the first private source-overlay runner mounted patched files under
+`/app/python/nexus`, but the image imports `/app/nexus`. all of its apparent
+patched successes and failures are therefore unpatched observations. retain
+those receipts with that correction; neither qualifies the patch. the corrected
+runner must record imported module paths and source hashes inside the serving
+process before workload acceptance. the six-cycle oom receipt
+`3d5ab557d87acd7f24fafb55ec9d9c8115e25a48700ef019e357f09e318bb554`
+belongs to the released source. exact published-image qualification remains
+required after the preparatory source-overlay run.
 
 the proposed repair removes a duplicate initial reader request, resolves graph
 ownership only for actual edges, and shares a bounded, disk-backed image
