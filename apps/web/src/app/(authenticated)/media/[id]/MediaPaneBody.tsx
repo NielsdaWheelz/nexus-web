@@ -149,10 +149,12 @@ function MediaPane({ id }: { readonly id: string }) {
   useEffect(() => {
     if (!stamp || !media || media.metadata_enriched_at === stamp) return;
     void apiFetch<ApiJson<"/media/{media_id}", "get">>(`/api/media/${id}`).then((response) => {
-      setMedia(mediaDetailFromResponse(response, id));
-      if (!transcript) reader.reload();
+      const detail = mediaDetailFromResponse(response, id);
+      setMedia(detail);
+      // The readiness transition owns the first load; metadata refreshes an existing publication.
+      if (readable && detail.capabilities.can_read && !transcript) reader.reload();
     });
-  }, [id, media, reader, stamp, transcript]);
+  }, [id, media, readable, reader, stamp, transcript]);
 
   // ---- annotations ----
   const [store] = useState(() => createAnnotationStore(id));
