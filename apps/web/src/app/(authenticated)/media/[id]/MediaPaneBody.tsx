@@ -156,12 +156,18 @@ function MediaPane({ id }: { readonly id: string }) {
 
   // ---- annotations ----
   const [store] = useState(() => createAnnotationStore(id));
-  useEffect(() => subscribeLinkMutations(store.refresh), [store]);
-  const annotations = useSyncExternalStore(store.subscribe, store.getState, store.getState);
+  const subscribeAnnotations = useCallback(
+    (listener: () => void) => readable ? store.subscribe(listener) : () => {},
+    [readable, store],
+  );
+  useEffect(() => {
+    if (readable) return subscribeLinkMutations(store.refresh);
+  }, [readable, store]);
+  const annotations = useSyncExternalStore(subscribeAnnotations, store.getState, store.getState);
   useEffect(() => {
     // The map belongs to another publication: read it again for this one.
-    if (doc && annotations.decorations.identity && annotations.decorations.identity !== doc.identity) store.refresh();
-  }, [annotations.decorations.identity, doc, store]);
+    if (readable && doc && annotations.decorations.identity && annotations.decorations.identity !== doc.identity) store.refresh();
+  }, [annotations.decorations.identity, doc, readable, store]);
   const [openKey, setOpenKey] = useState<{ id: string } | null>(apparatusKey ? { id: apparatusKey } : null);
   const openEvidence = useCallback(
     (item: string | null) => {

@@ -29,6 +29,14 @@ private graph receipts: `2026-10-13/release/runtime-query-audit/` in the campaig
 artifacts, manifest sha256
 `e10a7a8eef235a5de38809339428cf67edef14d1f4977874b7f7a71ca150074d`.
 
+remaining source allocations to measure if capacity is still insufficient:
+`reader_document.py:187` retains original html rows while building rewritten
+reader units; `reader_apparatus.py:710` loads every fragment body and caches
+canonical structures for copied-source link resolution. the incident book has
+no apparatus, so the latter path did not cause this crash. assess a large book
+with source notes during reader acceptance before attributing a second defect
+or expanding the repair.
+
 the d23063e4 pillow-book plus shadow/claw reproduction remained usable, with
 no oom/restart during that interval. a later00:05:58 verification-overlap oom
 reopened oi-116. pr #271 removes probe overhead; its final7965 paired-reader
