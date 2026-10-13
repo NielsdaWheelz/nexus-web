@@ -1,12 +1,17 @@
 """Cloudflare R2 storage client (S3-compatible API)."""
 
+import atexit
+import io
 import time
-from collections.abc import Iterator
+from collections.abc import Generator
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
+from threading import Lock
 from typing import BinaryIO
 
-import boto3
+from boto3.session import Session
 from botocore.client import BaseClient, Config
 from botocore.exceptions import BotoCoreError, ClientError
 
@@ -14,6 +19,7 @@ from nexus.config import get_settings
 
 _PUT_OBJECT_ATTEMPTS = 3
 _READ_CHUNK_BYTES = 8 * 1024 * 1024
+_client_lock = Lock()
 
 
 @dataclass(frozen=True)
@@ -67,7 +73,7 @@ class StorageClient:
         s3_client: BaseClient | None = None,
     ):
         self._bucket = bucket
-        self._client = s3_client or boto3.client(
+        self._client = s3_client or Session().client(
             "s3",
             endpoint_url=endpoint_url.rstrip("/"),
             aws_access_key_id=access_key_id,
@@ -82,6 +88,9 @@ class StorageClient:
                 read_timeout=get_settings().r2_read_timeout_seconds,
             ),
         )
+
+    def close(self) -> None:
+        self._client.close()
 
     def sign_upload(
         self, path: str, *, content_type: str, size_bytes: int, expires_in: int = 300
@@ -127,10 +136,12 @@ class StorageClient:
             size_bytes=int(response.get("ContentLength") or 0),
         )
 
-    def stream_object(self, path: str) -> Iterator[bytes]:
+    def stream_object(self, path: str) -> Generator[bytes, None, None]:
         return self._stream(path, remaining=None)
 
-    def stream_object_range(self, path: str, *, start: int, end_inclusive: int) -> Iterator[bytes]:
+    def stream_object_range(
+        self, path: str, *, start: int, end_inclusive: int
+    ) -> Generator[bytes, None, None]:
         if start < 0 or end_inclusive < start:
             raise ValueError("invalid inclusive object range")
         return self._stream(
@@ -139,7 +150,7 @@ class StorageClient:
 
     def _stream(
         self, path: str, *, remaining: int | None, range_header: str | None = None
-    ) -> Iterator[bytes]:
+    ) -> Generator[bytes, None, None]:
         what = "object" if range_header is None else "object range"
         params = {"Bucket": self._bucket, "Key": path}
         if range_header is not None:
@@ -264,19 +275,38 @@ class StorageClient:
 
 def read_object_checked(storage: StorageClient, storage_path: str, *, expected_size: int) -> bytes:
     """Stream an object fully, verifying its byte size before returning."""
-    chunks: list[bytes] = []
+    with io.BytesIO() as output:
+        write_object_checked(storage, storage_path, output=output, expected_size=expected_size)
+        return output.getvalue()
+
+
+def write_object_checked(
+    storage: StorageClient, storage_path: str, *, output: BinaryIO, expected_size: int
+) -> None:
+    """Copy one object into caller-owned storage; success proves its exact byte size."""
     total = 0
-    for chunk in storage.stream_object(storage_path):
-        total += len(chunk)
-        if total > expected_size:
-            raise StorageError("Stored object is larger than persisted metadata")
-        chunks.append(chunk)
+    with closing(storage.stream_object(storage_path)) as chunks:
+        for chunk in chunks:
+            total += len(chunk)
+            if total > expected_size:
+                raise StorageError("Stored object is larger than persisted metadata")
+            output.write(chunk)
     if total != expected_size:
         raise StorageError("Stored object integrity mismatch")
-    return b"".join(chunks)
 
 
 def get_storage_client() -> StorageClient:
+    """One process-owned S3 client, shared across threads and closed at process exit.
+
+    Boto clients support concurrent requests; session/client construction does not.
+    Serialize cold creation too: lru_cache alone can run its factory concurrently.
+    """
+    with _client_lock:
+        return _configured_storage_client()
+
+
+@lru_cache(maxsize=1)
+def _configured_storage_client() -> StorageClient:
     settings = get_settings()
     resolved: dict[str, str] = {}
     missing: list[str] = []
@@ -293,10 +323,12 @@ def get_storage_client() -> StorageClient:
     if missing:
         raise StorageError(f"Missing R2 storage settings: {', '.join(missing)}")
 
-    return StorageClient(
+    client = StorageClient(
         endpoint_url=resolved["R2_S3_API_ORIGIN"],
         access_key_id=resolved["R2_ACCESS_KEY_ID"],
         secret_access_key=resolved["R2_SECRET_ACCESS_KEY"],
         bucket=resolved["R2_BUCKET"],
         region=settings.r2_region or "auto",
     )
+    atexit.register(client.close)
+    return client

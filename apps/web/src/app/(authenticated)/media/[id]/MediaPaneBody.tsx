@@ -124,13 +124,8 @@ function MediaPane({ id }: { readonly id: string }) {
       }),
       [chrome, entry, id],
     ),
+    readable,
   );
-  const readableRef = useRef(readable);
-  useEffect(() => {
-    // A publication that became readable (processing, a transcript) is read now.
-    if (readable && !readableRef.current) reader.reload();
-    readableRef.current = readable;
-  }, [readable, reader]);
   const doc = useReaderState(reader, (s) => (s.document.status === "ready" ? s.document.doc : null));
   // A lectern progress reset: this reader's unsaved progress settles first, then
   // the reset cursor installs.
@@ -153,20 +148,31 @@ function MediaPane({ id }: { readonly id: string }) {
   const stamp = metadata.view?.last_enriched_at.kind === "Present" ? metadata.view.last_enriched_at.value : null;
   useEffect(() => {
     if (!stamp || !media || media.metadata_enriched_at === stamp) return;
+    let active = true;
     void apiFetch<ApiJson<"/media/{media_id}", "get">>(`/api/media/${id}`).then((response) => {
-      setMedia(mediaDetailFromResponse(response, id));
-      if (!transcript) reader.reload();
+      if (!active) return;
+      const detail = mediaDetailFromResponse(response, id);
+      setMedia(detail);
+      // The readiness transition owns the first load; metadata refreshes an existing publication.
+      if (readable && detail.capabilities.can_read && !transcript) reader.reload();
     });
-  }, [id, media, reader, stamp, transcript]);
+    return () => { active = false; };
+  }, [id, media, readable, reader, stamp, transcript]);
 
   // ---- annotations ----
   const [store] = useState(() => createAnnotationStore(id));
-  useEffect(() => subscribeLinkMutations(store.refresh), [store]);
-  const annotations = useSyncExternalStore(store.subscribe, store.getState, store.getState);
+  const subscribeAnnotations = useCallback(
+    (listener: () => void) => readable ? store.subscribe(listener) : () => {},
+    [readable, store],
+  );
+  useEffect(() => {
+    if (readable) return subscribeLinkMutations(store.refresh);
+  }, [readable, store]);
+  const annotations = useSyncExternalStore(subscribeAnnotations, store.getState, store.getState);
   useEffect(() => {
     // The map belongs to another publication: read it again for this one.
-    if (doc && annotations.decorations.identity && annotations.decorations.identity !== doc.identity) store.refresh();
-  }, [annotations.decorations.identity, doc, store]);
+    if (readable && doc && annotations.decorations.identity && annotations.decorations.identity !== doc.identity) store.refresh();
+  }, [annotations.decorations.identity, doc, readable, store]);
   const [openKey, setOpenKey] = useState<{ id: string } | null>(apparatusKey ? { id: apparatusKey } : null);
   const openEvidence = useCallback(
     (item: string | null) => {

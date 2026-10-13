@@ -7,13 +7,16 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, cast
+from typing import Literal, cast
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import UUID as SqlUUID
+from sqlalchemy import String, and_, or_, select, text
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
-from nexus.db.models import NoteBlock, ResourceEdge
+from nexus.auth.permissions import highlight_visibility_filter
+from nexus.db.models import Highlight, NoteBlock, PassageAnchor, ResourceEdge
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_graph import (
     CitationSnapshot,
@@ -30,6 +33,7 @@ from nexus.schemas.resource_graph import (
     UnlinkMutation,
 )
 from nexus.services.resource_graph.edges import Pair, link_note_blocks_for_pairs, link_pair
+from nexus.services.resource_graph.owners import owner_rows_sql
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
 from nexus.services.resource_graph.resolve import resolve_refs
 from nexus.services.resource_items.capabilities import expand_owned_child_refs
@@ -43,26 +47,87 @@ def query_connections(
     """One page, newest first; the cursor is ``"<created_at iso>|<edge id>"``. Unknown
     or invisible refs simply match nothing."""
     refs = {ref.uri: ref for ref in map(require_ref, query.refs)}
+    owner_ids: dict[str, list[UUID]] = {}
     if query.rollup == "owner":
         for ref in list(refs.values()):
+            if ref.scheme in ("media", "note_block"):
+                owner_ids.setdefault(ref.scheme, []).append(ref.id)
+                continue
+            # Page graph closure and an artifact's current revision have their
+            # own expansion semantics; neither is an endpoint-to-work mapping.
             for child in expand_owned_child_refs(db, viewer_id=viewer_id, ref=ref):
                 refs.setdefault(child.uri, child)
     ids_by_scheme: dict[str, list[UUID]] = {}
     for ref in refs.values():
         ids_by_scheme.setdefault(ref.scheme, []).append(ref.id)
 
-    def at(scheme: Any, id_: Any) -> Any:  # per scheme, so an owner rollup stays indexed
-        return or_(*(and_(scheme == s, id_.in_(ids)) for s, ids in ids_by_scheme.items()))
+    def at(side: Literal["source", "target"]) -> ColumnElement[bool]:
+        scheme = getattr(ResourceEdge, f"{side}_scheme")
+        id_ = getattr(ResourceEdge, f"{side}_id")
+        exact = or_(*(and_(scheme == s, id_.in_(ids)) for s, ids in ids_by_scheme.items()))
+        if not owner_ids:
+            return exact
+        # Resolve only graph endpoints, never enumerate an owner's entire
+        # content index into Python objects and repeated SQL bind lists.
+        owner = (
+            text(
+                owner_rows_sql(
+                    f"SELECT resource_edges.{side}_scheme AS scheme, resource_edges.{side}_id AS id"
+                )
+            )
+            .columns(scheme=String, id=SqlUUID, owner_scheme=String, owner_id=SqlUUID)
+            .subquery(f"{side}_owner")
+        )
+        owned = []
+        if media_ids := owner_ids.get("media"):
+            owned.append(and_(owner.c.owner_scheme == "media", owner.c.owner_id.in_(media_ids)))
+        if note_ids := owner_ids.get("note_block"):
+            owned.append(
+                and_(
+                    owner.c.owner_scheme == "note_block",
+                    owner.c.owner_id.in_(note_ids),
+                    scheme.in_(("evidence_span", "content_chunk")),
+                )
+            )
+        visible_highlight = (
+            select(Highlight.id)
+            .where(
+                Highlight.id == id_,
+                highlight_visibility_filter(viewer_id, Highlight.anchor_media_id),
+            )
+            .correlate(ResourceEdge)
+            .exists()
+        )
+        owned_passage = (
+            select(PassageAnchor.id)
+            .where(PassageAnchor.id == id_, PassageAnchor.user_id == viewer_id)
+            .correlate(ResourceEdge)
+            .exists()
+        )
+        return or_(
+            exact,
+            select(1)
+            .select_from(owner)
+            .where(
+                or_(*owned),
+                or_(scheme != "highlight", visible_highlight),
+                or_(scheme != "passage_anchor", owned_passage),
+            )
+            .correlate(ResourceEdge)
+            .exists(),
+        )
 
-    at_source = at(ResourceEdge.source_scheme, ResourceEdge.source_id)
-    at_target = at(ResourceEdge.target_scheme, ResourceEdge.target_id)
+    at_source = at("source")
+    at_target = at("target")
     link = ResourceEdge.origin == "user"
     incident = {
         "both": or_(at_source, at_target),
         "incoming": or_(at_target, and_(link, at_source)),
         "outgoing": or_(at_source, and_(link, at_target)),
     }[query.direction]
-    stmt = select(ResourceEdge).where(ResourceEdge.user_id == viewer_id, incident)
+    stmt = select(ResourceEdge, at_source, at_target).where(
+        ResourceEdge.user_id == viewer_id, incident
+    )
     filters = query.filters
     if filters.origins is not None:
         stmt = stmt.where(ResourceEdge.origin.in_(filters.origins))
@@ -86,14 +151,19 @@ def query_connections(
                 and_(ResourceEdge.created_at == created_at, ResourceEdge.id < edge_id),
             )
         )
-    rows = db.scalars(
+    rows = db.execute(
         stmt.order_by(ResourceEdge.created_at.desc(), ResourceEdge.id.desc()).limit(query.limit + 1)
     ).all()
-    page = rows[: query.limit]
+    page = [row[0] for row in rows[: query.limit]]
     next_cursor = None
     if len(rows) > query.limit:
         next_cursor = f"{page[-1].created_at.isoformat()}|{page[-1].id}"
-    matched = {(ref.scheme, ref.id) for ref in refs.values()}
+    matched: set[Pair] = set()
+    for edge, source_matches, target_matches in rows[: query.limit]:
+        if source_matches:
+            matched.add(cast(Pair, (edge.source_scheme, edge.source_id)))
+        if target_matches:
+            matched.add(cast(Pair, (edge.target_scheme, edge.target_id)))
     return ConnectionPageOut(
         items=_hydrate(db, viewer_id, page, matched, query.direction), next_cursor=next_cursor
     )
