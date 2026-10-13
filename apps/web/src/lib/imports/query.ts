@@ -11,12 +11,12 @@ import type {
   ImportStage,
   ImportSummary,
   ImportsView,
-  SafeFailureCode,
+  ImportFailureCode,
 } from "@/lib/imports/api";
 import {
-  FAILURE_COPY,
+  importFailureCopy,
   KIND_LABEL,
-  SAFE_FAILURE_CODES,
+  IMPORT_FAILURE_CODES,
   STAGE_COPY,
   STATE_KIND_LABEL,
   dateChipLabel,
@@ -32,7 +32,7 @@ export interface ImportsUrlState {
   readonly q?: string;
   readonly media_kind?: MediaKind;
   readonly stage?: ImportStage;
-  readonly failure_code?: SafeFailureCode;
+  readonly failure_code?: ImportFailureCode;
   readonly state?: ImportState["kind"];
   readonly had_failures?: boolean;
   readonly from?: string;
@@ -99,7 +99,7 @@ export function decodeImportsUrl(params: URLSearchParams): ImportsUrlState {
     q: params.get("q")?.trim() || undefined,
     media_kind: oneOf(params.get("media_kind"), MEDIA_KINDS),
     stage: oneOf(params.get("stage"), IMPORT_STAGES),
-    failure_code: oneOf(params.get("failure_code"), SAFE_FAILURE_CODES),
+    failure_code: oneOf(params.get("failure_code"), IMPORT_FAILURE_CODES),
     state: oneOf(params.get("state"), STATE_KINDS),
     had_failures: flag === "true" ? true : flag === "false" ? false : undefined,
     from: day("from"),
@@ -210,7 +210,10 @@ export function appliedFilters(
   if (state.stage !== undefined)
     chip("stage", `Stage: ${stageLabel(state.stage)}`);
   if (state.failure_code !== undefined && view !== "InProgress") {
-    chip("failure_code", `Reason: ${FAILURE_COPY[state.failure_code].reason}`);
+    chip(
+      "failure_code",
+      `Reason: ${importFailureCopy(state.failure_code).reason}`,
+    );
   }
   if (view !== "History") return chips;
   if (state.state !== undefined) {
@@ -219,7 +222,7 @@ export function appliedFilters(
   if (state.had_failures !== undefined) {
     chip(
       "had_failures",
-      state.had_failures ? "Had failures" : "No recorded failures",
+      state.had_failures ? "Recorded failures" : "No recorded failures",
     );
   }
   const bounds = dateBounds(state);

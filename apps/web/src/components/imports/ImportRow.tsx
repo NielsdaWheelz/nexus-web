@@ -2,6 +2,7 @@
 
 import { useMemo, useRef } from "react";
 import { useFeedback } from "@/components/feedback/Feedback";
+import MetadataResearchActions from "@/components/media/MetadataResearchActions";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import Button from "@/components/ui/Button";
 import Pill from "@/components/ui/Pill";
@@ -9,13 +10,19 @@ import ResourceRow from "@/components/ui/ResourceRow";
 import { RESOURCE_ACTION_BLOCKED_REASON_COPY } from "@/lib/actions/resourceActionMenu";
 import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
 import { useThrowLater } from "@/lib/api/serverState";
-import type { ImportItem, RecoveryOffer } from "@/lib/imports/api";
+import {
+  publishImportsInvalidation,
+  type ImportItem,
+  type RecoveryOffer,
+} from "@/lib/imports/api";
 import {
   KIND_LABEL,
   RECOVERY_PENDING_LABEL,
   RETRY_UPLOAD_LABEL,
   ageLine,
+  concurrentWorkLine,
   matchLine,
+  momentText,
   originalFileFeedback,
   reasonLine,
   stateBadge,
@@ -52,9 +59,8 @@ const UPLOAD_KIND: Readonly<Record<MediaKind, UploadFileKind | null>> = {
 };
 
 /**
- * The one control a media offer authorizes. The resource-action runtime owns
- * the identity it commands and its busy state, so a stale command conflicts
- * on the server instead of acting on work this reader never saw.
+ * The row and action snapshot refresh independently. Only invoke a descriptor
+ * whose exact owner identity is the one this import displays.
  */
 function MediaRecovery({
   subject,
@@ -67,6 +73,44 @@ function MediaRecovery({
   const action = model.descriptors.find(
     (candidate) => candidate.id === MEDIA_ACTION[offer.kind],
   );
+  const capability = model.capabilities.find((candidate) =>
+    offer.kind === "RepairSearch"
+      ? candidate.kind === "SearchRecovery"
+      : candidate.kind === "SourceRecovery",
+  );
+  const current =
+    capability?.kind === "SourceRecovery" ||
+    capability?.kind === "SearchRecovery"
+      ? capability.offer
+      : undefined;
+  const matches =
+    offer.kind === "RetrySource"
+      ? current?.kind === "RetrySource" &&
+        current.input === offer.input &&
+        current.expectedAttemptId === offer.expected_attempt_id
+      : offer.kind === "RepairSource"
+        ? current?.kind === "RepairSource" &&
+          current.input === offer.input &&
+          current.expectedAttemptId === offer.expected_attempt_id &&
+          current.expectedJobId === offer.expected_job_id
+        : current?.kind === "RepairSearch" &&
+          current.input === offer.input &&
+          current.expectedRevision === offer.expected_revision &&
+          current.expectedJobId === offer.expected_job_id;
+  if (model.status === "Ready" && !matches) {
+    return (
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => {
+          publishImportsInvalidation();
+          model.refresh();
+        }}
+      >
+        refresh status
+      </Button>
+    );
+  }
   if (action === undefined || action.kind !== "command") return null;
   const busy =
     action.disabled === true &&
@@ -94,10 +138,25 @@ function MediaActions({
     () => ({ ref: assumeCanonicalResourceRef(mediaRef) }),
     [mediaRef],
   );
-  const offer = item.capabilities.recovery;
+  const key =
+    item.state.kind !== "Complete" && item.state.stage === "Index"
+      ? "search"
+      : "source";
+  const obligation = item.obligations[key];
+  const offer =
+    obligation.kind === "Present" ? obligation.value.recovery : null;
+  const metadata = item.obligations.metadata;
+  const metadataPrimary =
+    item.state.kind !== "Complete" && item.state.stage === "Metadata";
   return (
     <>
-      {offer.kind === "Present" && offer.value.kind !== "RetryUpload" ? (
+      {metadataPrimary && metadata.kind === "Present" ? (
+        <MetadataResearchActions
+          mediaId={mediaRef.slice("media:".length)}
+          view={metadata.value}
+          primaryOnly
+        />
+      ) : offer?.kind === "Present" && offer.value.kind !== "RetryUpload" ? (
         <MediaRecovery subject={subject} offer={offer.value} />
       ) : null}
       <ResourceActionMenu
@@ -119,9 +178,10 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
   const fail = useThrowLater();
   const inputRef = useRef<HTMLInputElement>(null);
   const handle = item.ref.slice("upload:".length);
-  const recovery = item.capabilities.recovery;
+  const source = item.obligations.source;
+  const recovery = source.kind === "Present" ? source.value.recovery : null;
   const offer =
-    recovery.kind === "Present" && recovery.value.kind === "RetryUpload"
+    recovery?.kind === "Present" && recovery.value.kind === "RetryUpload"
       ? recovery.value
       : null;
   const retrying = pending.has(pendingKey({ kind: "RetryUpload", handle }));
@@ -215,6 +275,33 @@ export function ImportActions({ item }: { readonly item: ImportItem }) {
   );
 }
 
+/** Each inspector section invokes only its owner's offered recovery. */
+export function ImportObligationActions({
+  item,
+  obligation,
+}: {
+  readonly item: ImportItem;
+  readonly obligation: "source" | "search";
+}) {
+  const mediaRef = item.media_ref;
+  const subject = useMemo(
+    () =>
+      mediaRef.kind === "Present"
+        ? { ref: assumeCanonicalResourceRef(mediaRef.value) }
+        : null,
+    [mediaRef],
+  );
+  if (subject === null)
+    return obligation === "source" ? <UploadActions item={item} /> : null;
+  const slot = item.obligations[obligation];
+  if (slot.kind === "Absent" || slot.value.recovery.kind === "Absent")
+    return null;
+  const offer = slot.value.recovery.value;
+  return offer.kind === "RetryUpload" ? null : (
+    <MediaRecovery subject={subject} offer={offer} />
+  );
+}
+
 /**
  * One import: what it is, what it is doing or waiting for, why, and the
  * command that recovers it when the server offers one. Selecting it opens the
@@ -233,10 +320,12 @@ export default function ImportRow({
   const now = new Date();
   const badge = stateBadge(item);
   const reason = reasonLine(item);
+  const concurrent = concurrentWorkLine(item);
   const age = ageLine(item, display, now);
   return (
     <ResourceRow
       as="li"
+      wrapped
       selected={selected}
       rootProps={{
         "aria-label": item.title,
@@ -266,9 +355,14 @@ export default function ImportRow({
           <Pill tone={badge.tone} size="sm">
             {badge.label}
           </Pill>
-          <span className={styles.rowStatusLine}>{statusLine(item)}</span>
+          <span className={styles.rowStatusLine}>
+            {statusLine(item, (at) => momentText(at, display))}
+          </span>
           {reason === null ? null : (
             <span className={styles.rowReason}>{reason}</span>
+          )}
+          {concurrent === null ? null : (
+            <span className={styles.rowStatusLine}>{concurrent}</span>
           )}
           <time className={styles.rowAge} dateTime={age.dateTime}>
             {age.text}

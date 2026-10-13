@@ -1786,6 +1786,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/media/{media_id}/metadata-enrichment/{job_id}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Review Media Metadata Result */
+        post: operations["review_media_metadata_result_media__media_id__metadata_enrichment__job_id__review_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/media/{media_id}/player": {
         parameters: {
             query?: never;
@@ -3404,8 +3421,6 @@ export interface components {
             can_open: boolean;
             /** Can Remove */
             can_remove: boolean;
-            recovery: components["schemas"]["Presence_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer__RepairSearchOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
-            unavailable_reason: components["schemas"]["Presence_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___"];
         };
         /** CapabilitiesOut */
         CapabilitiesOut: {
@@ -4681,6 +4696,10 @@ export interface components {
         Data_MetadataEnrichmentAccepted_: {
             data: components["schemas"]["MetadataEnrichmentAccepted"];
         };
+        /** Data[MetadataResultReviewed] */
+        Data_MetadataResultReviewed_: {
+            data: components["schemas"]["MetadataResultReviewed"];
+        };
         /** Data[NexusHistoryOut] */
         Data_NexusHistoryOut_: {
             data: components["schemas"]["NexusHistoryOut"];
@@ -5774,23 +5793,20 @@ export interface components {
         };
         /**
          * HistoryEntry
-         * @description One recorded event as every reader sees it.
+         * @description One recorded event or retained metadata operation as a viewer sees it.
          */
         HistoryEntry: {
             /** Facts */
-            facts: components["schemas"]["UploadAccepted"] | components["schemas"]["UploadExecutionStarted"] | components["schemas"]["UploadFailed"] | components["schemas"]["UploadRecoveryAccepted"] | components["schemas"]["UploadPublished"] | components["schemas"]["UploadHistoryBaseline"] | components["schemas"]["SourceAccepted"] | components["schemas"]["SourceExecutionStarted"] | components["schemas"]["SourceStageChanged"] | components["schemas"]["SourceRetryScheduled"] | components["schemas"]["SourceFailed"] | components["schemas"]["SourceRecoveryAccepted"] | components["schemas"]["SourceSucceeded"] | components["schemas"]["SourceSuperseded"] | components["schemas"]["SourceHistoryBaseline"] | components["schemas"]["IndexAccepted"] | components["schemas"]["IndexExecutionStarted"] | components["schemas"]["IndexRetryScheduled"] | components["schemas"]["IndexFailed"] | components["schemas"]["IndexRecoveryAccepted"] | components["schemas"]["IndexSucceeded"] | components["schemas"]["IndexSuperseded"];
-            failure_code: components["schemas"]["Presence_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_GONE____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____"];
-            /**
-             * Id
-             * Format: uuid
-             */
+            facts: components["schemas"]["UploadAccepted"] | components["schemas"]["UploadExecutionStarted"] | components["schemas"]["UploadFailed"] | components["schemas"]["UploadRecoveryAccepted"] | components["schemas"]["UploadPublished"] | components["schemas"]["UploadHistoryBaseline"] | components["schemas"]["SourceAccepted"] | components["schemas"]["SourceExecutionStarted"] | components["schemas"]["SourceStageChanged"] | components["schemas"]["SourceRetryScheduled"] | components["schemas"]["SourceFailed"] | components["schemas"]["SourceRecoveryAccepted"] | components["schemas"]["SourceSucceeded"] | components["schemas"]["SourceSuperseded"] | components["schemas"]["SourceHistoryBaseline"] | components["schemas"]["IndexAccepted"] | components["schemas"]["IndexExecutionStarted"] | components["schemas"]["IndexRetryScheduled"] | components["schemas"]["IndexFailed"] | components["schemas"]["IndexRecoveryAccepted"] | components["schemas"]["IndexSucceeded"] | components["schemas"]["IndexSuperseded"] | components["schemas"]["MetadataOperationFacts"];
+            failure_code: components["schemas"]["Presence_ImportFailureCode_"];
+            /** Id */
             id: string;
             /**
              * Occurred At
              * Format: date-time
              */
             occurred_at: string;
-            stage: components["schemas"]["Presence_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___"];
+            stage: components["schemas"]["Presence_Union_Literal__Upload____Validate____Extract____Finalize____SourceProcessing____Literal__Index____Metadata____"];
         };
         /** HistoryPage */
         HistoryPage: {
@@ -5806,6 +5822,7 @@ export interface components {
             readiness: components["schemas"]["ImportReadiness"];
             source_issues: components["schemas"]["Presence_ImportSourceIssues_"];
         };
+        ImportFailureCode: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_FORBIDDEN" | "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_UPLOAD_TRANSPORT_FAILED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | components["schemas"]["MetadataFailureCode"];
         /** ImportItem */
         ImportItem: {
             /**
@@ -5817,6 +5834,7 @@ export interface components {
             matched_event: components["schemas"]["Presence_HistoryEntry_"];
             media_kind: components["schemas"]["MediaKind"];
             media_ref: components["schemas"]["Presence_Annotated_str__AfterValidator__"];
+            obligations: components["schemas"]["ImportObligations"];
             /** Ref */
             ref: string;
             /** Source Issue Count */
@@ -5831,6 +5849,12 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** ImportObligations */
+        ImportObligations: {
+            metadata: components["schemas"]["Presence_MetadataEnrichmentView_"];
+            search: components["schemas"]["Presence_SearchImportObligation_"];
+            source: components["schemas"]["Presence_SourceImportObligation_"];
         };
         /** ImportPage */
         ImportPage: {
@@ -5867,11 +5891,8 @@ export interface components {
         ImportStageGroup: {
             /** Count */
             count: number;
-            /**
-             * Stage
-             * @enum {string}
-             */
-            stage: "Upload" | "Validate" | "Extract" | "Finalize" | "Index" | "SourceProcessing";
+            /** Stage */
+            stage: ("Upload" | "Validate" | "Extract" | "Finalize" | "SourceProcessing") | ("Index" | "Metadata");
         };
         /** ImportStateActive */
         ImportStateActive: {
@@ -5882,11 +5903,8 @@ export interface components {
             kind: "Active";
             next_retry_at: components["schemas"]["Presence_datetime_"];
             progress: components["schemas"]["Presence_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
-            /**
-             * Stage
-             * @enum {string}
-             */
-            stage: "Upload" | "Validate" | "Extract" | "Finalize" | "Index" | "SourceProcessing";
+            /** Stage */
+            stage: ("Upload" | "Validate" | "Extract" | "Finalize" | "SourceProcessing") | ("Index" | "Metadata");
             /**
              * Status
              * @enum {string}
@@ -5904,17 +5922,14 @@ export interface components {
         };
         /** ImportStateNeedsAttention */
         ImportStateNeedsAttention: {
-            failure_code: components["schemas"]["Presence_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_GONE____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____"];
+            failure_code: components["schemas"]["Presence_ImportFailureCode_"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "NeedsAttention";
-            /**
-             * Stage
-             * @enum {string}
-             */
-            stage: "Upload" | "Validate" | "Extract" | "Finalize" | "Index" | "SourceProcessing";
+            /** Stage */
+            stage: ("Upload" | "Validate" | "Extract" | "Finalize" | "SourceProcessing") | ("Index" | "Metadata");
         };
         /** ImportSummary */
         ImportSummary: {
@@ -5927,6 +5942,8 @@ export interface components {
              * Format: date-time
              */
             observed_at: string;
+            /** Unfinished Work Count */
+            unfinished_work_count: number;
         };
         /** InFlightSourceBaselineOutcome */
         InFlightSourceBaselineOutcome: {
@@ -7333,6 +7350,9 @@ export interface components {
             last_enriched_at: components["schemas"]["Presence_AwareDatetime_"];
             operation: components["schemas"]["Presence_MetadataOperationOut_"];
             retry: components["schemas"]["MetadataRetry"];
+            /** Unfinished Count */
+            unfinished_count: number;
+            unfinished_operation: components["schemas"]["Presence_MetadataUnfinishedOperation_"];
         };
         /** MetadataFailedOperation */
         MetadataFailedOperation: {
@@ -7383,6 +7403,7 @@ export interface components {
              * Format: uuid
              */
             job_id: string;
+            reviewed_at: components["schemas"]["Presence_AwareDatetime_"];
             selection: components["schemas"]["Presence_MetadataSelection_"];
             started_at: components["schemas"]["Presence_AwareDatetime_"];
             /**
@@ -7390,6 +7411,18 @@ export interface components {
              * @enum {string}
              */
             status: "no_findings";
+        };
+        /**
+         * MetadataOperationFacts
+         * @description A retained operation projected into history; never a persisted event.
+         */
+        MetadataOperationFacts: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "MetadataOperation";
+            operation: components["schemas"]["MetadataOperationOut"];
         };
         MetadataOperationOut: components["schemas"]["MetadataQueuedOperation"] | components["schemas"]["MetadataRunningOperation"] | components["schemas"]["MetadataRecoveringOperation"] | components["schemas"]["MetadataWaitingOperation"] | components["schemas"]["MetadataCompletedOperation"] | components["schemas"]["MetadataNoFindingsOperation"] | components["schemas"]["MetadataFailedOperation"];
         /** MetadataQueuedOperation */
@@ -7433,6 +7466,24 @@ export interface components {
              * @enum {string}
              */
             status: "recovering";
+        };
+        /** MetadataResultReviewRequest */
+        MetadataResultReviewRequest: {
+            /** Client Mutation Id */
+            client_mutation_id: string;
+        };
+        /** MetadataResultReviewed */
+        MetadataResultReviewed: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * Reviewed At
+             * Format: date-time
+             */
+            reviewed_at: string;
         };
         MetadataRetry: components["schemas"]["MetadataRetryAllowed"] | components["schemas"]["MetadataRetryBlocked"];
         /** MetadataRetryAllowed */
@@ -7487,6 +7538,7 @@ export interface components {
             /** Reasoning */
             reasoning: string;
         };
+        MetadataUnfinishedOperation: components["schemas"]["MetadataQueuedOperation"] | components["schemas"]["MetadataRunningOperation"] | components["schemas"]["MetadataRecoveringOperation"] | components["schemas"]["MetadataWaitingOperation"];
         /** MetadataWaitingOperation */
         MetadataWaitingOperation: {
             /**
@@ -8851,7 +8903,7 @@ export interface components {
         };
         Presence_ActivitySessionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ActivitySessionOut_"];
         Presence_Annotated_Union_NotePassageTarget__FragmentPassageTarget__TimePassageTarget__PdfPassageTarget___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_Union_NotePassageTarget__FragmentPassageTarget__TimePassageTarget__PdfPassageTarget___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
-        Presence_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer__RepairSearchOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer__RepairSearchOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+        Presence_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
         Presence_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
         Presence_Annotated_Union_UploadTransportNetworkFailure__UploadTransportTimeoutFailure__UploadTransportHttpRejectedFailure__UploadTransportAbortedFailure___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_Union_UploadTransportNetworkFailure__UploadTransportTimeoutFailure__UploadTransportHttpRejectedFailure__UploadTransportAbortedFailure___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
         Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__0__0_____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__0__0_____"];
@@ -8881,36 +8933,43 @@ export interface components {
         Presence_DossierRevisionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_DossierRevisionOut_"];
         Presence_DurableExecutionPhase_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_DurableExecutionPhase_"];
         Presence_HistoryEntry_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_HistoryEntry_"];
+        Presence_ImportFailureCode_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ImportFailureCode_"];
         Presence_ImportSourceIssues_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ImportSourceIssues_"];
         Presence_LecternItemOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_LecternItemOut_"];
         Presence_LibraryEntryPlacementOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_LibraryEntryPlacementOut_"];
         Presence_LibraryEntryPodcastSubscriptionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_LibraryEntryPodcastSubscriptionOut_"];
         Presence_ListeningPositionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ListeningPositionOut_"];
+        Presence_Literal__NotOwner___: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__NotOwner___"];
         Presence_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___"];
         "Presence_Literal__Off____Natural___-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_Literal__Off____Natural___-Input"];
         "Presence_Literal__Off____Natural___-Output": components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__Off____Natural___-Output"];
         Presence_Literal__Publisher____Imported____Generated___: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__Publisher____Imported____Generated___"];
         Presence_Literal__Queue____Capacity____RetryBackoff___: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__Queue____Capacity____RetryBackoff___"];
-        Presence_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___"];
         Presence_MediaAbstractOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MediaAbstractOut_"];
         Presence_MediaDurationOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MediaDurationOut_"];
         Presence_MediaProgressState_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MediaProgressState_"];
         Presence_MediaSummaryOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MediaSummaryOut_"];
+        Presence_MetadataEnrichmentView_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MetadataEnrichmentView_"];
         Presence_MetadataOperationOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MetadataOperationOut_"];
         Presence_MetadataSelection_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MetadataSelection_"];
+        Presence_MetadataUnfinishedOperation_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MetadataUnfinishedOperation_"];
         Presence_PlayerDescriptor_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_PlayerDescriptor_"];
         Presence_PodcastReplacementConfirmation_: components["schemas"]["Absent-Input"] | components["schemas"]["Present_PodcastReplacementConfirmation_"];
         Presence_PublicHighlightOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_PublicHighlightOut_"];
         Presence_ReaderSelectionInput_: components["schemas"]["Absent-Input"] | components["schemas"]["Present_ReaderSelectionInput_"];
         Presence_ReaderSelectionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ReaderSelectionOut_"];
         Presence_ReadingTimeEstimateOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ReadingTimeEstimateOut_"];
+        Presence_RepairSearchOffer_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_RepairSearchOffer_"];
         Presence_ResourceActivationOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ResourceActivationOut_"];
+        Presence_SearchImportObligation_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_SearchImportObligation_"];
         Presence_ShareMembersOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ShareMembersOut_"];
         Presence_SourceFailureProgress_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_SourceFailureProgress_"];
+        Presence_SourceImportObligation_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_SourceImportObligation_"];
         "Presence_UUID_-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_UUID_-Input"];
         "Presence_UUID_-Output": components["schemas"]["Absent-Output"] | components["schemas"]["Present_UUID_-Output"];
         Presence_UndoRestoreIn_: components["schemas"]["Absent-Input"] | components["schemas"]["Present_UndoRestoreIn_"];
         Presence_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_GONE____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_GONE____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____"];
+        Presence_Union_Literal__Upload____Validate____Extract____Finalize____SourceProcessing____Literal__Index____Metadata____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Union_Literal__Upload____Validate____Extract____Finalize____SourceProcessing____Literal__Index____Metadata____"];
         Presence_datetime_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_datetime_"];
         Presence_int_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_int_"];
         "Presence_str_-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_str_-Input"];
@@ -8934,15 +8993,15 @@ export interface components {
             /** Value */
             value: components["schemas"]["NotePassageTarget"] | components["schemas"]["FragmentPassageTarget"] | components["schemas"]["TimePassageTarget"] | components["schemas"]["PdfPassageTarget"];
         };
-        /** Present[Annotated[Union[RetryUploadOffer, RetrySourceOffer, RepairSourceOffer, RepairSearchOffer], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
-        Present_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer__RepairSearchOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
+        /** Present[Annotated[Union[RetryUploadOffer, RetrySourceOffer, RepairSourceOffer], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
+        Present_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "Present";
             /** Value */
-            value: components["schemas"]["RetryUploadOffer"] | components["schemas"]["RetrySourceOffer"] | components["schemas"]["RepairSourceOffer"] | components["schemas"]["RepairSearchOffer"];
+            value: components["schemas"]["RetryUploadOffer"] | components["schemas"]["RetrySourceOffer"] | components["schemas"]["RepairSourceOffer"];
         };
         /** Present[Annotated[Union[SourceStageProgress, SourceCountedProgress], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         Present_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
@@ -9228,6 +9287,15 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["HistoryEntry"];
         };
+        /** Present[ImportFailureCode] */
+        Present_ImportFailureCode_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["ImportFailureCode"];
+        };
         /** Present[ImportSourceIssues] */
         Present_ImportSourceIssues_: {
             /**
@@ -9272,6 +9340,19 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["ListeningPositionOut"];
+        };
+        /** Present[Literal['NotOwner']] */
+        Present_Literal__NotOwner___: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /**
+             * Value
+             * @constant
+             */
+            value: "NotOwner";
         };
         /** Present[Literal['NotOwner', 'SameSourceTerminal', 'SourceNotReacquirable', 'UploadRejected']] */
         Present_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___: {
@@ -9338,19 +9419,6 @@ export interface components {
              */
             value: "Queue" | "Capacity" | "RetryBackoff";
         };
-        /** Present[Literal['Upload', 'Validate', 'Extract', 'Finalize', 'Index', 'SourceProcessing']] */
-        Present_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Present";
-            /**
-             * Value
-             * @enum {string}
-             */
-            value: "Upload" | "Validate" | "Extract" | "Finalize" | "Index" | "SourceProcessing";
-        };
         /** Present[MediaAbstractOut] */
         Present_MediaAbstractOut_: {
             /**
@@ -9387,6 +9455,15 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["MediaSummaryOut"];
         };
+        /** Present[MetadataEnrichmentView] */
+        Present_MetadataEnrichmentView_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["MetadataEnrichmentView"];
+        };
         /** Present[MetadataOperationOut] */
         Present_MetadataOperationOut_: {
             /**
@@ -9404,6 +9481,15 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["MetadataSelection"];
+        };
+        /** Present[MetadataUnfinishedOperation] */
+        Present_MetadataUnfinishedOperation_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["MetadataUnfinishedOperation"];
         };
         /** Present[PlayerDescriptor] */
         Present_PlayerDescriptor_: {
@@ -9459,6 +9545,15 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["ReadingTimeEstimateOut"];
         };
+        /** Present[RepairSearchOffer] */
+        Present_RepairSearchOffer_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["RepairSearchOffer"];
+        };
         /** Present[ResourceActivationOut] */
         Present_ResourceActivationOut_: {
             /**
@@ -9467,6 +9562,15 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["ResourceActivationOut"];
+        };
+        /** Present[SearchImportObligation] */
+        Present_SearchImportObligation_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["SearchImportObligation"];
         };
         /** Present[ShareMembersOut] */
         Present_ShareMembersOut_: {
@@ -9485,6 +9589,15 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["SourceFailureProgress"];
+        };
+        /** Present[SourceImportObligation] */
+        Present_SourceImportObligation_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["SourceImportObligation"];
         };
         /** Present[UUID] */
         "Present_UUID_-Input": {
@@ -9530,6 +9643,16 @@ export interface components {
             kind: "Present";
             /** Value */
             value: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_FORBIDDEN" | "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_UPLOAD_TRANSPORT_FAILED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE");
+        };
+        /** Present[Union[Literal['Upload', 'Validate', 'Extract', 'Finalize', 'SourceProcessing'], Literal['Index', 'Metadata']]] */
+        Present_Union_Literal__Upload____Validate____Extract____Finalize____SourceProcessing____Literal__Index____Metadata____: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: ("Upload" | "Validate" | "Extract" | "Finalize" | "SourceProcessing") | ("Index" | "Metadata");
         };
         /** Present[datetime] */
         Present_datetime_: {
@@ -10613,22 +10736,6 @@ export interface components {
             /** Subject */
             subject: string;
         };
-        /**
-         * RecoveryResourceActionCapabilityOut
-         * @description The one recovery a media menu may plan, carrying the identity the viewer
-         *     inspected so a stale offer conflicts instead of acting on newer work.
-         */
-        RecoveryResourceActionCapabilityOut: {
-            /** Availability */
-            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Recovery";
-            /** Offer */
-            offer: components["schemas"]["RetrySourceOfferOut"] | components["schemas"]["RepairSourceOfferOut"] | components["schemas"]["RepairSearchOfferOut"];
-        };
         /** RejectedChatAdmission */
         RejectedChatAdmission: {
             /**
@@ -10712,8 +10819,9 @@ export interface components {
              */
             input: "PublishedContent";
             /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
+             * Kind
+             * @default RepairSearch
+             * @constant
              */
             kind: "RepairSearch";
         };
@@ -10733,8 +10841,9 @@ export interface components {
              */
             input: "PublishedContent";
             /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
+             * Kind
+             * @default RepairSearch
+             * @constant
              */
             kind: "RepairSearch";
         };
@@ -10857,7 +10966,7 @@ export interface components {
         ResourceActionSnapshotOut: {
             activation: components["schemas"]["ResourceActivationOut"];
             /** Capabilities */
-            capabilities: (components["schemas"]["SimpleResourceActionCapabilityOut"] | components["schemas"]["RetryMetadataResourceActionCapabilityOut"] | components["schemas"]["RecoveryResourceActionCapabilityOut"] | components["schemas"]["DownloadResourceActionCapabilityOut"] | components["schemas"]["OpenSourceResourceActionCapabilityOut"] | components["schemas"]["PlaybackResourceActionCapabilityOut"] | components["schemas"]["ConsumptionResourceActionCapabilityOut"] | components["schemas"]["EpisodeConsumptionResourceActionCapabilityOut"] | components["schemas"]["PodcastSubscriptionResourceActionCapabilityOut"] | components["schemas"]["TranscriptResourceActionCapabilityOut"] | components["schemas"]["LecternMembershipResourceActionCapabilityOut"] | components["schemas"]["HighlightNoteResourceActionCapabilityOut"])[];
+            capabilities: (components["schemas"]["SimpleResourceActionCapabilityOut"] | components["schemas"]["RetryMetadataResourceActionCapabilityOut"] | components["schemas"]["ReviewMetadataResultResourceActionCapabilityOut"] | components["schemas"]["SourceRecoveryResourceActionCapabilityOut"] | components["schemas"]["SearchRecoveryResourceActionCapabilityOut"] | components["schemas"]["DownloadResourceActionCapabilityOut"] | components["schemas"]["OpenSourceResourceActionCapabilityOut"] | components["schemas"]["PlaybackResourceActionCapabilityOut"] | components["schemas"]["ConsumptionResourceActionCapabilityOut"] | components["schemas"]["EpisodeConsumptionResourceActionCapabilityOut"] | components["schemas"]["PodcastSubscriptionResourceActionCapabilityOut"] | components["schemas"]["TranscriptResourceActionCapabilityOut"] | components["schemas"]["LecternMembershipResourceActionCapabilityOut"] | components["schemas"]["HighlightNoteResourceActionCapabilityOut"])[];
             /** Missing */
             missing: boolean;
             /** Ref */
@@ -11371,6 +11480,21 @@ export interface components {
              */
             type: "reverse_edit";
         };
+        /** ReviewMetadataResultResourceActionCapabilityOut */
+        ReviewMetadataResultResourceActionCapabilityOut: {
+            /** Availability */
+            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
+            /**
+             * Jobid
+             * Format: uuid
+             */
+            jobId: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReviewMetadataResult";
+        };
         /** RunSelectionOut */
         RunSelectionOut: {
             display_at_dispatch: components["schemas"]["SelectionPresentation"];
@@ -11390,6 +11514,50 @@ export interface components {
              */
             kind: "SavedInNexus";
         };
+        /** SearchImportObligation */
+        SearchImportObligation: {
+            recovery: components["schemas"]["Presence_RepairSearchOffer_"];
+            /** State */
+            state: components["schemas"]["SearchImportStateActive"] | components["schemas"]["SearchImportStateNeedsAttention"] | components["schemas"]["ImportStateComplete"];
+            unavailable_reason: components["schemas"]["Presence_Literal__NotOwner___"];
+        };
+        /** SearchImportStateActive */
+        SearchImportStateActive: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Active";
+            next_retry_at: components["schemas"]["Presence_datetime_"];
+            progress: components["schemas"]["Presence_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+            /**
+             * Stage
+             * @default Index
+             * @constant
+             */
+            stage: "Index";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "Queued" | "Processing";
+            waiting_reason: components["schemas"]["Presence_Literal__Queue____Capacity____RetryBackoff___"];
+        };
+        /** SearchImportStateNeedsAttention */
+        SearchImportStateNeedsAttention: {
+            failure_code: components["schemas"]["Presence_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_GONE____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "NeedsAttention";
+            /**
+             * Stage
+             * @default Index
+             * @constant
+             */
+            stage: "Index";
+        };
         /** SearchPageInfo */
         SearchPageInfo: {
             /**
@@ -11399,6 +11567,20 @@ export interface components {
             has_more: boolean;
             /** Next Cursor */
             next_cursor: string | null;
+        };
+        /**
+         * SearchRecoveryResourceActionCapabilityOut
+         * @description Recover the exact search obligation independently of source work.
+         */
+        SearchRecoveryResourceActionCapabilityOut: {
+            /** Availability */
+            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SearchRecovery";
+            offer: components["schemas"]["RepairSearchOfferOut"];
         };
         /** SearchRepairAdmission */
         SearchRepairAdmission: {
@@ -12270,6 +12452,48 @@ export interface components {
              */
             source_attempt_id: string;
         };
+        /** SourceImportObligation */
+        SourceImportObligation: {
+            recovery: components["schemas"]["Presence_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+            /** State */
+            state: components["schemas"]["SourceImportStateActive"] | components["schemas"]["SourceImportStateNeedsAttention"] | components["schemas"]["ImportStateComplete"];
+            unavailable_reason: components["schemas"]["Presence_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___"];
+        };
+        /** SourceImportStateActive */
+        SourceImportStateActive: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Active";
+            next_retry_at: components["schemas"]["Presence_datetime_"];
+            progress: components["schemas"]["Presence_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "Upload" | "Validate" | "Extract" | "Finalize" | "SourceProcessing";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "Queued" | "Processing";
+            waiting_reason: components["schemas"]["Presence_Literal__Queue____Capacity____RetryBackoff___"];
+        };
+        /** SourceImportStateNeedsAttention */
+        SourceImportStateNeedsAttention: {
+            failure_code: components["schemas"]["Presence_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_GONE____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "NeedsAttention";
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "Upload" | "Validate" | "Extract" | "Finalize" | "SourceProcessing";
+        };
         /** SourceRecoveryAccepted */
         SourceRecoveryAccepted: {
             /**
@@ -12284,6 +12508,21 @@ export interface components {
              * Format: uuid
              */
             source_attempt_id: string;
+        };
+        /**
+         * SourceRecoveryResourceActionCapabilityOut
+         * @description Recover the exact source obligation the viewer inspected.
+         */
+        SourceRecoveryResourceActionCapabilityOut: {
+            /** Availability */
+            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SourceRecovery";
+            /** Offer */
+            offer: components["schemas"]["RetrySourceOfferOut"] | components["schemas"]["RepairSourceOfferOut"];
         };
         /** SourceRepairAdmission */
         SourceRepairAdmission: {
@@ -15212,8 +15451,8 @@ export interface operations {
                 view: "NeedsAttention" | "InProgress" | "History";
                 q?: string | null;
                 media_kind?: components["schemas"]["MediaKind"] | null;
-                stage?: ("Upload" | "Validate" | "Extract" | "Finalize" | "Index" | "SourceProcessing") | null;
-                failure_code?: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_FORBIDDEN" | "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_UPLOAD_TRANSPORT_FAILED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | null;
+                stage?: ("Upload" | "Validate" | "Extract" | "Finalize" | "SourceProcessing") | ("Index" | "Metadata") | null;
+                failure_code?: components["schemas"]["ImportFailureCode"] | null;
                 state?: ("Active" | "NeedsAttention" | "Complete") | null;
                 had_failures?: boolean | null;
                 from?: string | null;
@@ -17178,6 +17417,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_MetadataEnrichmentAccepted_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    review_media_metadata_result_media__media_id__metadata_enrichment__job_id__review_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetadataResultReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_MetadataResultReviewed_"];
                 };
             };
             /** @description Validation Error */

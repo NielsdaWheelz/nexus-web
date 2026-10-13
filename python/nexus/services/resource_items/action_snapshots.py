@@ -30,7 +30,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from nexus.schemas.consumption import PlayerDescriptor
-from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
+from nexus.schemas.imports import RetrySourceOffer
 from nexus.schemas.metadata_enrichment import MetadataRetryAllowed
 from nexus.schemas.presence import Present
 from nexus.schemas.resource_action_snapshots import (
@@ -44,7 +44,6 @@ from nexus.schemas.resource_action_snapshots import (
     OpenSourceResourceActionCapabilityOut,
     PlaybackResourceActionCapabilityOut,
     PodcastSubscriptionResourceActionCapabilityOut,
-    RecoveryResourceActionCapabilityOut,
     RepairSearchOfferOut,
     RepairSourceOfferOut,
     ResourceActionCapabilityOut,
@@ -52,11 +51,14 @@ from nexus.schemas.resource_action_snapshots import (
     ResourceActionSnapshotResolveResponse,
     RetryMetadataResourceActionCapabilityOut,
     RetrySourceOfferOut,
+    ReviewMetadataResultResourceActionCapabilityOut,
+    SearchRecoveryResourceActionCapabilityOut,
     ServerActionAvailabilityAvailableOut,
     ServerActionAvailabilityBlockedOut,
     ServerActionAvailabilityOut,
     SimpleResourceActionCapabilityKind,
     SimpleResourceActionCapabilityOut,
+    SourceRecoveryResourceActionCapabilityOut,
     TranscriptResourceActionCapabilityOut,
 )
 from nexus.schemas.resource_items import ResourceActivationOut
@@ -66,7 +68,6 @@ from nexus.services.consumption import lectern, projection
 from nexus.services.dossier import engine as dossier_engine
 from nexus.services.media import (
     CollectionMedia,
-    MediaRecoveryOffer,
     list_collection_media_for_viewer_by_ids,
 )
 from nexus.services.podcasts.subscriptions_query import podcast_states
@@ -407,36 +408,6 @@ def _authorized(allowed: bool) -> ServerActionAvailabilityOut:
     return _available() if allowed else _blocked("PermissionDenied")
 
 
-def _recovery(media: CollectionMedia) -> RecoveryResourceActionCapabilityOut | None:
-    """The viewer's own offer is actionable; the offer a creator would be given
-    stays discoverable but permission-blocked, like every other authorized
-    capability."""
-    if isinstance(media.recovery, Present):
-        return RecoveryResourceActionCapabilityOut(
-            availability=_available(), offer=_recovery_offer_out(media.recovery.value)
-        )
-    if isinstance(media.applicable_recovery, Present):
-        return RecoveryResourceActionCapabilityOut(
-            availability=_blocked("PermissionDenied"),
-            offer=_recovery_offer_out(media.applicable_recovery.value),
-        )
-    return None
-
-
-def _recovery_offer_out(
-    offer: MediaRecoveryOffer,
-) -> RetrySourceOfferOut | RepairSourceOfferOut | RepairSearchOfferOut:
-    match offer:
-        case RetrySourceOffer():
-            return RetrySourceOfferOut.model_validate(offer.model_dump())
-        case RepairSourceOffer():
-            return RepairSourceOfferOut.model_validate(offer.model_dump())
-        case RepairSearchOffer():
-            return RepairSearchOfferOut.model_validate(offer.model_dump())
-        case _ as unreachable:
-            assert_never(unreachable)
-
-
 def _simple(
     kind: SimpleResourceActionCapabilityKind,
     availability: ServerActionAvailabilityOut | None = None,
@@ -544,9 +515,35 @@ def _extend_media(
     if media.has_original_file:
         capabilities.append(_simple("DownloadOriginal"))
     ops = media.capabilities
-    recovery = _recovery(media)
-    if recovery is not None:
-        capabilities.append(recovery)
+    source = (
+        media.source_recovery
+        if isinstance(media.source_recovery, Present)
+        else media.applicable_source_recovery
+    )
+    if isinstance(source, Present):
+        offer = source.value
+        capabilities.append(
+            SourceRecoveryResourceActionCapabilityOut(
+                availability=_authorized(isinstance(media.source_recovery, Present)),
+                offer=(
+                    RetrySourceOfferOut.model_validate(offer.model_dump())
+                    if isinstance(offer, RetrySourceOffer)
+                    else RepairSourceOfferOut.model_validate(offer.model_dump())
+                ),
+            )
+        )
+    search = (
+        media.search_recovery
+        if isinstance(media.search_recovery, Present)
+        else media.applicable_search_recovery
+    )
+    if isinstance(search, Present):
+        capabilities.append(
+            SearchRecoveryResourceActionCapabilityOut(
+                availability=_authorized(isinstance(media.search_recovery, Present)),
+                offer=RepairSearchOfferOut.model_validate(search.value.model_dump()),
+            )
+        )
     if ops.refresh_source_applicable:
         capabilities.append(_simple("RefreshSource", _authorized(ops.can_refresh_source)))
     if ops.retry_metadata_applicable:
@@ -568,6 +565,12 @@ def _extend_media(
         )
         capabilities.append(
             RetryMetadataResourceActionCapabilityOut(availability=availability, retry=retry)
+        )
+    if isinstance(media.reviewable_metadata_job_id, Present):
+        capabilities.append(
+            ReviewMetadataResultResourceActionCapabilityOut(
+                availability=_available(), job_id=media.reviewable_metadata_job_id.value
+            )
         )
     if ops.edit_authors_applicable:
         capabilities.append(_simple("EditAuthors", _authorized(ops.can_edit_authors)))

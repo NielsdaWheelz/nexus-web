@@ -11,10 +11,10 @@ import Toggle from "@/components/ui/Toggle";
 import CollectionFilterEditor from "@/components/workspace/CollectionFilterEditor";
 import type { ImportsView } from "@/lib/imports/api";
 import {
-  FAILURE_COPY,
+  importFailureCopy,
   KIND_LABEL,
   ORDER_LABEL,
-  SAFE_FAILURE_CODES,
+  IMPORT_FAILURE_CODES,
   STATE_KIND_LABEL,
   dateFilterLabel,
   stageLabel,
@@ -55,8 +55,8 @@ const REASON: Choice = {
   name: "failure_code",
   label: "Reason",
   any: "Any reason",
-  options: SAFE_FAILURE_CODES.map(
-    (code) => [code, FAILURE_COPY[code].reason] as const,
+  options: IMPORT_FAILURE_CODES.map(
+    (code) => [code, importFailureCopy(code).reason] as const,
   ).sort(([, left], [, right]) => left.localeCompare(right)),
 };
 const STATE: Choice = {
@@ -225,7 +225,7 @@ export default function ImportsToolbar({
               <>
                 <Toggle
                   size="sm"
-                  label="Had failures"
+                  label="Recorded failures"
                   checked={state.had_failures === true}
                   onCheckedChange={(next) =>
                     set("had_failures", next ? "true" : "")

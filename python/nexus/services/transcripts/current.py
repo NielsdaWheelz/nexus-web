@@ -25,7 +25,11 @@ from nexus.services.content_indexing import (
 from nexus.services.media_processing_state import mark_ready_for_reading_by_id
 from nexus.services.transcript_segments import TranscriptSegmentInput, insert_transcript_fragments
 from nexus.services.transcripts.request_reason import TranscriptRequestReason
-from nexus.services.transcripts.state import TranscriptOrigin, set_media_transcript_state
+from nexus.services.transcripts.state import (
+    TranscriptOrigin,
+    advance_transcript_content_revision,
+    set_media_transcript_state,
+)
 
 
 def write_current_transcript(
@@ -111,3 +115,4 @@ def publish_source_transcript(
         transcript_origin=transcript_origin,
         now=now,
     )
+    advance_transcript_content_revision(db, media_id=media_id)

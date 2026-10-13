@@ -89,7 +89,7 @@ from nexus.services.media_processing_state import (
     mark_stage_warning,
     require_media_failure_stage,
 )
-from nexus.services.metadata_dispatch import try_enqueue_metadata_enrichment
+from nexus.services.metadata_dispatch import enqueue_metadata_enrichment
 from nexus.services.remote_file import remote_file_kind_from_url
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
@@ -1973,7 +1973,11 @@ def _run_fenced_attempt(
     request_id: str | None,
     fence: SourcePublicationFence,
 ) -> dict[str, object]:
-    from nexus.services.media_source_adapters import run_source_adapter
+    from nexus.services.media_source_adapters import (
+        finalize_prepared_file_source,
+        publish_prepared_file_source,
+        run_source_adapter,
+    )
 
     def mark_running(db: Session, attempt: MediaSourceAttempt) -> None:
         attempt.status = RUNNING
@@ -2010,13 +2014,82 @@ def _run_fenced_attempt(
         snapshot_db.close()
 
     try:
-        outcome = run_source_adapter(
+        acquired = run_source_adapter(
             session_factory=session_factory,
             media_id=media_id,
             attempt=attempt,
             actor_user_id=actor_user_id,
             request_id=request_id,
             fence=fence,
+        )
+        if isinstance(acquired, SourceRunOutcome):
+            outcome = acquired
+            terminal_media_id = (
+                outcome.superseded_by_media_id.value
+                if isinstance(outcome.superseded_by_media_id, Present)
+                else media_id
+            )
+            # Keep the queue payload and attempt anchored to the accepted media.
+            # Every winner effect commits with admission of the loser's teardown.
+            base_media_ids = {
+                media_id,
+                terminal_media_id,
+                *outcome.additional_reindex_media_ids,
+                *(observed for observed, _obs, _src in outcome.observations),
+            }
+
+            def publish_terminal(db: Session, locked: MediaSourceAttempt) -> None:
+                if terminal_media_id != media_id:
+                    _supersede_source_media(
+                        db,
+                        attempt=locked,
+                        loser_media_id=media_id,
+                        winner_media_id=terminal_media_id,
+                    )
+                _apply_observations(db, terminal_media_id, outcome)
+                _publish_terminal_attempt(
+                    db,
+                    attempt=locked,
+                    terminal_media_id=terminal_media_id,
+                    outcome=outcome,
+                    execution_id=fence.execution_id,
+                    request_id=request_id,
+                )
+
+            run_source_publication_phase(
+                session_factory=session_factory,
+                label="publish_source_attempt_terminal",
+                fence=fence,
+                media_ids=tuple(sorted(base_media_ids)),
+                mutate=publish_terminal,
+                discover=_document_embed_owners(base_media_ids),
+            )
+            return source_outcome_to_job_result(outcome)
+
+        def publish_file(
+            db: Session, locked: MediaSourceAttempt
+        ) -> tuple[SourceRunOutcome, list[str]]:
+            outcome, cleanup_paths = publish_prepared_file_source(
+                db, media_id=media_id, prepared=acquired
+            )
+            _apply_observations(db, media_id, outcome)
+            _publish_terminal_attempt(
+                db,
+                attempt=locked,
+                terminal_media_id=media_id,
+                outcome=outcome,
+                execution_id=fence.execution_id,
+                request_id=request_id,
+            )
+            return outcome, cleanup_paths
+
+        outcome, cleanup_paths = run_source_publication_phase(
+            session_factory=session_factory,
+            label="publish_file_source_attempt_terminal",
+            fence=fence,
+            media_ids=(media_id,),
+            mutate=publish_file,
+            discover=_document_embed_owners({media_id}),
         )
     except SourcePublicationSuperseded:
         raise
@@ -2027,73 +2100,14 @@ def _run_fenced_attempt(
             session_factory, media_id=media_id, attempt_id=attempt_id, exc=exc, fence=fence
         )
 
-    terminal_media_id = media_id
-    if (
-        isinstance(outcome.superseded_by_media_id, Present)
-        and outcome.superseded_by_media_id.value != media_id
-    ):
-        winner_media_id = outcome.superseded_by_media_id.value
-        run_source_publication_phase(
-            session_factory=session_factory,
-            label="publish_source_media_supersession",
-            fence=fence,
-            media_ids=(media_id, winner_media_id),
-            mutate=lambda db, locked: _supersede_source_media(
-                db, attempt=locked, loser_media_id=media_id, winner_media_id=winner_media_id
-            ),
-        )
-        terminal_media_id = winner_media_id
-
-    # The attempt and the queue payload stay anchored to the originally accepted
-    # media: the queue claim's identity is (media_id, attempt_id).
-    base_media_ids = {
-        media_id,
-        terminal_media_id,
-        *outcome.additional_reindex_media_ids,
-        *(observed for observed, _obs, _src in outcome.observations),
-    }
-    discover = _document_embed_owners(base_media_ids)
-
-    if outcome.observations:
-        run_source_publication_phase(
-            session_factory=session_factory,
-            label="apply_contributor_observations",
-            fence=fence,
-            media_ids=tuple(sorted(base_media_ids)),
-            mutate=lambda db, _attempt: _apply_observations(db, terminal_media_id, outcome),
-            discover=discover,
-        )
-    run_source_publication_phase(
-        session_factory=session_factory,
-        label="publish_source_attempt_terminal",
-        fence=fence,
-        media_ids=tuple(sorted(base_media_ids)),
-        mutate=lambda db, locked: _publish_terminal_attempt(
-            db,
-            attempt=locked,
-            terminal_media_id=terminal_media_id,
-            outcome=outcome,
-            execution_id=fence.execution_id,
-        ),
-        discover=discover,
+    # A terminal source replay does not repeat storage finalization. Independent
+    # reservation cleanup retains every object now referenced by the publication.
+    finalize_prepared_file_source(
+        session_factory,
+        media_id=media_id,
+        prepared=acquired,
+        cleanup_paths=cleanup_paths,
     )
-    if (
-        attempt.created_by_user_id is not None
-        and isinstance(outcome.metadata_enrichment, Present)
-        and outcome.metadata_enrichment.value
-    ):
-        post_success_db = session_factory()
-        try:
-            metadata_job = try_enqueue_metadata_enrichment(
-                post_success_db,
-                media_id=terminal_media_id,
-                requester_user_id=attempt.created_by_user_id,
-                request_id=request_id,
-            )
-            if isinstance(metadata_job, Present):
-                post_success_db.commit()
-        finally:
-            post_success_db.close()
     return source_outcome_to_job_result(outcome)
 
 
@@ -2138,6 +2152,7 @@ def _publish_terminal_attempt(
     terminal_media_id: UUID,
     outcome: SourceRunOutcome,
     execution_id: UUID,
+    request_id: str | None,
 ) -> None:
     """Settle the attempt against the terminal media's own published outcome."""
     media = db.get(Media, terminal_media_id)
@@ -2197,6 +2212,17 @@ def _publish_terminal_attempt(
                 request_media_content_reindex(
                     db, media_id=reindex_media_id, reason="source_success"
                 )
+        if (
+            attempt.created_by_user_id is not None
+            and isinstance(outcome.metadata_enrichment, Present)
+            and outcome.metadata_enrichment.value
+        ):
+            enqueue_metadata_enrichment(
+                db,
+                media_id=terminal_media_id,
+                requester_user_id=attempt.created_by_user_id,
+                request_id=request_id,
+            )
     attempt.finished_at = func.now()
     attempt.updated_at = func.now()
     for synced_media_id in (terminal_media_id, *outcome.additional_reindex_media_ids):

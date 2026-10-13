@@ -8,7 +8,6 @@ again. Publication takes the media lock before its exact queue claim.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
@@ -17,13 +16,14 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session, defer
 
 from nexus.auth.permissions import can_read_media
-from nexus.db.models import ContentIndexState, Media, PodcastEpisode
+from nexus.db.models import Media
 from nexus.db.retries import retry_serializable
-from nexus.db.session import get_session_factory
+from nexus.db.session import get_repeatable_read_db, get_session_factory
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobResult,
     TerminalJobFailure,
+    finish_job,
     lock_running_job_claim,
 )
 from nexus.logging import get_logger
@@ -56,17 +56,14 @@ from nexus.services.generation.runtime import Runtime, run_generation_job
 from nexus.services.media_processing_state import is_metadata_enrichment_eligible
 from nexus.services.metadata_enrichment import (
     MetadataInputTooLarge,
+    MetadataResearchInput,
     admitted_contributor_handles,
-    build_enrichment_user_content,
-    get_content_sample,
+    build_metadata_research_input,
     merge_enrichment,
     metadata_enrichment_agent_definition,
     validate_structured_enrichment,
 )
-from nexus.services.reader_publication import (
-    lock_publication_generation,
-    read_publication_generation,
-)
+from nexus.services.reader_publication import lock_publication_generation
 
 logger = get_logger(__name__)
 
@@ -110,18 +107,23 @@ def enrich_metadata(
     logger.info("enrich_metadata_started", media_id=media_id, request_id=request_id)
 
     async def work(db: Session, runtime: Runtime) -> _JobResult:
+        get_repeatable_read_db(db)
         media = db.get(Media, media_uuid, options=(defer(Media.plain_text),))
         if media is None or not can_read_media(db, requester_user_id, media_uuid):
-            return _queue_only_failure("access_revoked")
+            db.rollback()
+            return _queue_only_failure(context, "access_revoked")
         if not is_metadata_enrichment_eligible(
             kind=media.kind, processing_status=media.processing_status
         ):
-            return _queue_only_failure("no_longer_eligible")
+            db.rollback()
+            return _queue_only_failure(context, "no_longer_eligible")
         try:
-            intent = _intent(_user_content(db, media, requester_user_id=requester_user_id))
+            research = build_metadata_research_input(db, media)
         except MetadataInputTooLarge:
-            return _queue_only_failure("input_too_large")
-        db.commit()
+            db.rollback()
+            return _queue_only_failure(context, "input_too_large")
+        db.rollback()
+        intent = _intent(research.user_content)
         handles = admitted_contributor_handles(intent.input)
         terminal = await generate(
             runtime,
@@ -131,19 +133,31 @@ def enrich_metadata(
             decode=lambda out: validate_structured_enrichment(out, admitted_handles=handles),
             tools=Tools("MetadataResearch", frozenset({f"media:{media_uuid}"})),
         )
-        return retry_serializable(
-            db,
-            "metadata_enrichment.publish",
-            lambda: _publish(db, context, media_uuid, requester_user_id, intent, terminal),
-        )
+        with runtime.session_factory() as publication_db:
+            return retry_serializable(
+                publication_db,
+                "metadata_enrichment.publish",
+                lambda: _publish(
+                    publication_db, context, media_uuid, requester_user_id, research, terminal
+                ),
+            )
 
     return run_generation_job("metadata_generation", context, work)
 
 
-def _queue_only_failure(code: MetadataFailureCode) -> _JobResult:
+def _queue_only_failure(context: JobExecutionContext, code: MetadataFailureCode) -> _JobResult:
     with get_session_factory()() as db:
-        completed_at = db.scalar(text("SELECT clock_timestamp()"))
-    return _settlement(MetadataFailedOutcome(completed_at=completed_at, reason=code))
+
+        def settle() -> _JobResult:
+            completed_at = db.scalar(text("SELECT clock_timestamp()"))
+            result = _settlement(MetadataFailedOutcome(completed_at=completed_at, reason=code))
+            if finish_job(db, context=context, result=result) is None:
+                db.rollback()
+                return {"status": "skipped", "reason": "claim_lost_before_publication"}
+            db.commit()
+            return result
+
+        return retry_serializable(db, "metadata_enrichment.reject", settle)
 
 
 def _intent(user_content: str) -> GenerationIntent:
@@ -159,41 +173,6 @@ def _intent(user_content: str) -> GenerationIntent:
                 "strict": True,
             }
         ),
-    )
-
-
-def _user_content(db: Session, media: Media, *, requester_user_id: UUID) -> str:
-    """Bind the local reads to the same source generation as the sample."""
-    index = db.execute(
-        select(ContentIndexState.revision, ContentIndexState.status, ContentIndexState.updated_at)
-        .where(ContentIndexState.owner_kind == "media", ContentIndexState.owner_id == media.id)
-        .with_for_update()
-    ).one_or_none()
-    rss_metadata_fingerprint = (
-        db.execute(
-            select(PodcastEpisode.rss_metadata_fingerprint).where(
-                PodcastEpisode.media_id == media.id
-            )
-        )
-        .one()
-        .rss_metadata_fingerprint
-        if media.kind == "podcast_episode"
-        else None
-    )
-    admission_facts = json.dumps(
-        {
-            "requester_user_id": str(requester_user_id),
-            "reader_generation": read_publication_generation(db, media_id=media.id),
-            "index_revision": index.revision if index is not None else None,
-            "index_status": index.status if index is not None else None,
-            "index_updated_at": index.updated_at.isoformat() if index is not None else None,
-            "rss_metadata_fingerprint": rss_metadata_fingerprint,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return build_enrichment_user_content(
-        db, media, get_content_sample(db, media), admission_facts=admission_facts
     )
 
 
@@ -220,7 +199,7 @@ def _publish(
     context: JobExecutionContext,
     media_id: UUID,
     requester_user_id: UUID,
-    intent: GenerationIntent,
+    research: MetadataResearchInput,
     terminal: Terminal[AcceptedMetadataEnrichment],
 ) -> _JobResult:
     """The claim-fenced publication transaction; the queue stores its settlement."""
@@ -233,8 +212,14 @@ def _publish(
         return {"status": "skipped", "reason": "claim_lost_before_publication"}
 
     def finish(outcome: MetadataOutcome) -> _JobResult:
+        result = _settlement(outcome)
+        if finish_job(db, context=context, result=result) is None:
+            db.rollback()
+            # justify-defect: the exact running claim is locked until this
+            # transaction commits; publication cannot lose it halfway through.
+            raise AssertionError("locked metadata claim disappeared during publication")
         db.commit()
-        return _settlement(outcome)
+        return result
 
     def failed(code: MetadataFailureCode) -> _JobResult:
         completed_at = db.scalar(text("SELECT clock_timestamp()"))
@@ -252,11 +237,11 @@ def _publish(
         return failed("cancelled")
     lock_publication_generation(db, media_id=media_id)
     try:
-        current = _intent(_user_content(db, media, requester_user_id=requester_user_id))
+        current = build_metadata_research_input(db, media)
     except MetadataInputTooLarge:
         # The admitted input fit; enlarged current facts invalidate that input.
         return failed("stale_input")
-    if current != intent:
+    if current.fingerprint != research.fingerprint:
         return failed("stale_input")
     enrichment = terminal.value
     if not enrichment.has_findings:

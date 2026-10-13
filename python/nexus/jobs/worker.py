@@ -7,7 +7,6 @@ import time
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
 
 import psycopg
 from sqlalchemy import text
@@ -92,7 +91,6 @@ class JobWorker:
         """Dead-letter one expired job whose budget is spent, else claim and run one."""
         with self.session_factory() as db:
             if expired := queue.dead_letter_expired_job(db, kinds=self.kinds):
-                self._hooks(db, expired, expired.execution_id)
                 db.commit()
                 logger.warning(
                     "worker_job_dead_lettered", job_id=str(expired.id), kind=expired.kind
@@ -101,8 +99,6 @@ class JobWorker:
             claim = queue.claim_next_job(
                 db, worker_id=self.worker_id, kinds=self.kinds, heavy_kinds=self.heavy_kinds
             )
-            if claim and claim.displaced_execution_id:
-                self._hooks(db, claim.job, claim.displaced_execution_id)
             db.commit()
         if claim is None:
             return False
@@ -141,11 +137,17 @@ class JobWorker:
             try:
                 with self.session_factory() as db, db.begin():
                     renewed = queue.renew_running_job_claim(db, context=context, heavy=heavy)
+                    stored = None if renewed else queue.get_job(db, context.job_id)
             except SQLAlchemyError:
                 logger.exception("worker_heartbeat_failed", job_id=str(context.job_id))
                 continue
-            if not renewed:  # the executor kills the child; the new owner settles the job
-                logger.warning("worker_claim_lost", job_id=str(context.job_id))
+            if not renewed:
+                if not (
+                    stored is not None
+                    and stored.execution_id == context.execution_id
+                    and stored.status in {"succeeded", "dead"}
+                ):
+                    logger.warning("worker_claim_lost", job_id=str(context.job_id))
                 lost.set()
                 return
             self._publish_health()
@@ -158,9 +160,16 @@ class JobWorker:
         outcome: Outcome,
     ) -> None:
         """Commit how one attempt ended, and its hooks, in one transaction."""
-        if isinstance(outcome, Lost):
-            return
         with self.session_factory() as db:
+            stored = queue.get_job(db, context.job_id)
+            if (
+                stored is not None
+                and stored.execution_id == context.execution_id
+                and stored.status in {"succeeded", "dead"}
+            ):
+                return
+            if isinstance(outcome, Lost):
+                return
             if (
                 isinstance(outcome, Failed)
                 and d.on_failure
@@ -175,15 +184,8 @@ class JobWorker:
                     row = queue.reschedule_running_job(db, context=context, at=None)
                 case queue.RescheduleRequested(at=at, payload=payload):
                     row = queue.reschedule_running_job(db, context=context, at=at, payload=payload)
-                case queue.TerminalJobFailure(result_payload=result, error_code=code):
-                    row = queue.fail_job(
-                        db,
-                        context=context,
-                        error_code=code,
-                        message=outcome.error_message,
-                        result=result,
-                        dead=True,
-                    )
+                case queue.TerminalJobFailure():
+                    row = queue.finish_job(db, context=context, result=outcome)
                 case Failed(code=code, message=message, dimension=dimension):
                     resource = {"kind": "ResourceFailure", "dimension": dimension}
                     row = queue.fail_job(
@@ -195,12 +197,10 @@ class JobWorker:
                         dead=dimension is not None,
                     )
                 case _:
-                    row = queue.complete_job(db, context=context, result=outcome)
+                    row = queue.finish_job(db, context=context, result=outcome)
             if row is None:
                 logger.warning("worker_settle_lost", job_id=str(job.id), kind=job.kind)
                 return
-            if row.status != "succeeded":
-                self._hooks(db, row, context.execution_id)
             db.commit()
         logger.info(
             "worker_job_settled",
@@ -209,15 +209,6 @@ class JobWorker:
             status=row.status,
             error_code=row.error_code,
         )
-
-    def _hooks(self, db: Session, job: queue.JobRow, execution_id: UUID | None) -> None:
-        """The kind's owner reacts inside the transition's transaction."""
-        assert execution_id is not None  # every claimed row carries one
-        d = self.definitions[job.kind]
-        if job.status == "dead" and d.on_dead:
-            resolve(d.on_dead)(db, job)
-        if d.on_history:
-            resolve(d.on_history)(db, job, execution_id)
 
     def _wait_for_work(self) -> None:
         """Sleep until a notification for this lane, its next due row, or a heartbeat."""

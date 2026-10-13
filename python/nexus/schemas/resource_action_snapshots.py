@@ -133,6 +133,14 @@ class RetryMetadataResourceActionCapabilityOut(BaseModel):
     model_config = _OUT_CONFIG
 
 
+class ReviewMetadataResultResourceActionCapabilityOut(BaseModel):
+    kind: Literal["ReviewMetadataResult"] = "ReviewMetadataResult"
+    availability: ServerActionAvailabilityOut
+    job_id: UUID
+
+    model_config = _OUT_CONFIG
+
+
 class RetrySourceOfferOut(RetrySourceOffer):
     model_config = _OUT_CONFIG
 
@@ -145,20 +153,29 @@ class RepairSearchOfferOut(RepairSearchOffer):
     model_config = _OUT_CONFIG
 
 
-MediaRecoveryOfferOut = Annotated[
-    RetrySourceOfferOut | RepairSourceOfferOut | RepairSearchOfferOut,
+SourceRecoveryOfferOut = Annotated[
+    RetrySourceOfferOut | RepairSourceOfferOut,
     Field(discriminator="kind"),
 ]
 """The Imports owner's media offers, camelCased like every other snapshot field."""
 
 
-class RecoveryResourceActionCapabilityOut(BaseModel):
-    """The one recovery a media menu may plan, carrying the identity the viewer
-    inspected so a stale offer conflicts instead of acting on newer work."""
+class SourceRecoveryResourceActionCapabilityOut(BaseModel):
+    """Recover the exact source obligation the viewer inspected."""
 
-    kind: Literal["Recovery"] = "Recovery"
+    kind: Literal["SourceRecovery"] = "SourceRecovery"
     availability: ServerActionAvailabilityOut
-    offer: MediaRecoveryOfferOut
+    offer: SourceRecoveryOfferOut
+
+    model_config = _OUT_CONFIG
+
+
+class SearchRecoveryResourceActionCapabilityOut(BaseModel):
+    """Recover the exact search obligation independently of source work."""
+
+    kind: Literal["SearchRecovery"] = "SearchRecovery"
+    availability: ServerActionAvailabilityOut
+    offer: RepairSearchOfferOut
 
     model_config = _OUT_CONFIG
 
@@ -278,7 +295,9 @@ type HighlightNoteResourceActionCapabilityOut = Annotated[
 ResourceActionCapabilityOut = Annotated[
     SimpleResourceActionCapabilityOut
     | RetryMetadataResourceActionCapabilityOut
-    | RecoveryResourceActionCapabilityOut
+    | ReviewMetadataResultResourceActionCapabilityOut
+    | SourceRecoveryResourceActionCapabilityOut
+    | SearchRecoveryResourceActionCapabilityOut
     | DownloadResourceActionCapabilityOut
     | OpenSourceResourceActionCapabilityOut
     | PlaybackResourceActionCapabilityOut

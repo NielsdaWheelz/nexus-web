@@ -3,7 +3,6 @@
 from uuid import UUID
 
 from sqlalchemy import select, text
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, defer
 
 from nexus.auth.permissions import can_read_media
@@ -11,21 +10,18 @@ from nexus.db.models import Media
 from nexus.db.retries import retry_read_committed
 from nexus.errors import ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
 from nexus.jobs.queue import JobRow, enqueue_job, jobs_for_payload
-from nexus.logging import get_logger
 from nexus.schemas.metadata_enrichment import (
     MetadataEnrichmentAccepted,
     MetadataEnrichmentRequest,
     MetadataRetryAllowed,
 )
-from nexus.schemas.presence import Presence, absent, presence_from_nullable, present
+from nexus.schemas.presence import presence_from_nullable
 from nexus.services.metadata_operations import metadata_retry
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
     lookup_replay,
     record_replay,
 )
-
-logger = get_logger(__name__)
 
 
 def enqueue_metadata_enrichment(
@@ -53,22 +49,6 @@ def enqueue_metadata_enrichment(
         "request_id": request_id,
     }
     return enqueue_job(db, kind="enrich_metadata", payload=payload, created_at=created_at)
-
-
-def try_enqueue_metadata_enrichment(
-    db: Session, *, media_id: UUID | str, requester_user_id: UUID, request_id: str | None
-) -> Presence[JobRow]:
-    """Best-effort automatic enqueue never undoes an already-readable capture."""
-    try:
-        return present(
-            enqueue_metadata_enrichment(
-                db, media_id=media_id, requester_user_id=requester_user_id, request_id=request_id
-            )
-        )
-    except SQLAlchemyError as exc:
-        db.rollback()
-        logger.warning("metadata_enrichment_enqueue_failed", media_id=str(media_id), error=str(exc))
-        return absent()
 
 
 def admit_metadata_enrichment(

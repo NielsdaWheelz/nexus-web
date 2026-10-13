@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlparse
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
@@ -374,6 +374,14 @@ class Settings(BaseSettings):
         "env_file_encoding": "utf-8",
         "extra": "ignore",
     }
+
+    @field_validator("openai_api_key", "brave_search_api_key")
+    @classmethod
+    def normalize_tool_credentials(cls, value: str | None) -> str | None:
+        """Blank credentials are unavailable, including explicit compose values."""
+        if value is None:
+            return None
+        return value.strip() or None
 
     @model_validator(mode="after")
     def validate_required_settings(self) -> "Settings":

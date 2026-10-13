@@ -607,6 +607,7 @@ class SearchRecoveryFacts:
     revision: int
     dead_job_id: UUID | None  # the current revision's job, when it is dead
     is_creator: bool
+    ready_for_reading: bool
 
 
 def search_recovery(facts: SearchRecoveryFacts) -> SearchRecoveryAnswer:
@@ -614,7 +615,7 @@ def search_recovery(facts: SearchRecoveryFacts) -> SearchRecoveryAnswer:
 
     ``repair_dead_media_reindex`` admits exactly this, answering 403 and 409 instead.
     """
-    if facts.dead_job_id is None:
+    if facts.dead_job_id is None or not facts.ready_for_reading:
         return None
     if not facts.is_creator:
         return "NotOwner"
@@ -660,6 +661,15 @@ def repair_dead_media_reindex(
             db.rollback()
             return SearchRepairAdmission.model_validate(replayed)
         state = _lock(db, media_id)
+        if (
+            db.scalar(
+                text("SELECT processing_status::text FROM media WHERE id = :id"), {"id": media_id}
+            )
+            != "ready_for_reading"
+        ):
+            raise ConflictError(
+                ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Media is not ready for search indexing."
+            )
         if state is None:
             raise ConflictError(
                 ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Media has no search index to repair."

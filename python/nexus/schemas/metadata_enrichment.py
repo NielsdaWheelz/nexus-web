@@ -229,6 +229,15 @@ class MetadataEnrichmentAccepted(_MetadataModel):
     job_id: UUID
 
 
+class MetadataResultReviewRequest(_MetadataModel):
+    client_mutation_id: ClientMutationUuidText
+
+
+class MetadataResultReviewed(_MetadataModel):
+    job_id: UUID
+    reviewed_at: AwareDatetime
+
+
 class MetadataRetryAllowed(_MetadataModel):
     status: Literal["allowed"] = "allowed"
     expected_job_id: Presence[UUID]
@@ -284,6 +293,7 @@ class MetadataCompletedOperation(_MetadataOperationBase):
 class MetadataNoFindingsOperation(_MetadataOperationBase):
     status: Literal["no_findings"] = "no_findings"
     completed_at: AwareDatetime
+    reviewed_at: Presence[AwareDatetime]
 
 
 class MetadataFailedOperation(_MetadataOperationBase):
@@ -304,7 +314,18 @@ type MetadataOperationOut = Annotated[
 ]
 
 
+type MetadataUnfinishedOperation = Annotated[
+    MetadataQueuedOperation
+    | MetadataRunningOperation
+    | MetadataRecoveringOperation
+    | MetadataWaitingOperation,
+    Field(discriminator="status"),
+]
+
+
 class MetadataEnrichmentView(_MetadataModel):
     operation: Presence[MetadataOperationOut]
+    unfinished_count: Annotated[int, Field(ge=0)]
+    unfinished_operation: Presence[MetadataUnfinishedOperation]
     retry: MetadataRetry
     last_enriched_at: Presence[AwareDatetime]

@@ -279,10 +279,6 @@ class CompactMediaTarget:
     href: str
 
 
-type MediaRecoveryOffer = RetrySourceOffer | RepairSourceOffer | RepairSearchOffer
-"""The offers a media subject can carry; upload recovery belongs to sessions."""
-
-
 @dataclass(frozen=True, slots=True)
 class CollectionMediaCapabilities:
     can_quote: bool
@@ -314,9 +310,12 @@ class CollectionMedia:
     has_original_file: bool
     capabilities: CollectionMediaCapabilities
     metadata_retry: MetadataRetry
-    recovery: Presence[MediaRecoveryOffer]
+    reviewable_metadata_job_id: Presence[UUID]
+    source_recovery: Presence[RetrySourceOffer | RepairSourceOffer]
+    search_recovery: Presence[RepairSearchOffer]
     """The offer the viewer's own authority yields."""
-    applicable_recovery: Presence[MediaRecoveryOffer]
+    applicable_source_recovery: Presence[RetrySourceOffer | RepairSourceOffer]
+    applicable_search_recovery: Presence[RepairSearchOffer]
     """The offer a creator or admin would be given: discoverable, permission-blocked."""
     created_at: datetime
 
@@ -403,20 +402,11 @@ def _row_recovery(
                     else UUID(str(row["dead_reindex_job_id"]))
                 ),
                 is_creator=is_creator,
+                ready_for_reading=_status_to_str(row["persisted_processing_status"])
+                == "ready_for_reading",
             )
         )
     return source, search
-
-
-def _recovery_offer(
-    source: SourceRecoveryAnswer, search: SearchRecoveryAnswer
-) -> Presence[MediaRecoveryOffer]:
-    """The one offer a media subject carries: source recovery first, then search."""
-    if isinstance(source, RetrySourceOffer | RepairSourceOffer):
-        return present(source)
-    if isinstance(search, RepairSearchOffer):
-        return present(search)
-    return absent()
 
 
 def _listening_state(row: RowMapping) -> ListeningStateOut | None:
@@ -539,6 +529,16 @@ def list_collection_media_for_viewer_by_ids(
             if kind_value == MediaKind.podcast_episode.value
             else ""
         )
+        operation = metadata_views[media_id].operation
+        reviewable_job = (
+            present(operation.value.job_id)
+            if isinstance(operation, Present)
+            and operation.value.status == "no_findings"
+            and operation.value.reviewed_at.kind == "Absent"
+            else absent()
+        )
+        source, search = answers[0]
+        applicable_source, applicable_search = answers[1]
         collection.append(
             CollectionMedia(
                 id=media_id,
@@ -581,8 +581,21 @@ def list_collection_media_for_viewer_by_ids(
                     edit_authors_applicable=applicable_caps.can_edit_authors,
                 ),
                 metadata_retry=metadata_views[media_id].retry,
-                recovery=_recovery_offer(*answers[0]),
-                applicable_recovery=_recovery_offer(*answers[1]),
+                reviewable_metadata_job_id=reviewable_job,
+                source_recovery=presence_from_nullable(
+                    source if isinstance(source, RetrySourceOffer | RepairSourceOffer) else None
+                ),
+                search_recovery=presence_from_nullable(
+                    search if isinstance(search, RepairSearchOffer) else None
+                ),
+                applicable_source_recovery=presence_from_nullable(
+                    applicable_source
+                    if isinstance(applicable_source, RetrySourceOffer | RepairSourceOffer)
+                    else None
+                ),
+                applicable_search_recovery=presence_from_nullable(
+                    applicable_search if isinstance(applicable_search, RepairSearchOffer) else None
+                ),
                 created_at=cast(datetime, row["created_at"]),
             )
         )

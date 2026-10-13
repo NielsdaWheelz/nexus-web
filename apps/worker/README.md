@@ -50,10 +50,25 @@ BuildKit secret; an unset path or missing file fails the build. it never enters
 image layers, build arguments or runtime configuration. the optional interactive
 `NEXUS_MEMORY_CLIENT_CONFIG_FILE` is a separate runtime declaration.
 
+metadata research additionally needs `OPENAI_API_KEY` for document embeddings,
+`BRAVE_SEARCH_API_KEY` for public search and the local native host. compose passes
+only those declared worker settings; neither key enters the native host. blank
+keys count as unavailable. without them, unrelated jobs continue and metadata
+research fails visibly before model submission.
+
+the optional `codex` profile supplies the pinned host and its allowlisted egress
+proxy. ordinary worker startup does not depend on its account directory or health.
+follow [local enrollment](../../docs/runbooks/codex-personal-agent-host.md#local-enrollment)
+to prepare the directory, enroll, start the host and await its health before
+starting research workers. api and web stay host-native for importing, admission
+and metadata reads; this setup does not qualify local chat/model-catalog parity.
+
 Each container's healthcheck runs `python -S -m apps.worker.health --lane <lane>`,
 which fails unless the lane's live process published a database-backed cycle in
 the last 20 seconds. A worker publishes nothing until the database is at its
 image's revision, which it proves once, at start.
+worker heartbeat health, native catalog health and a successful four-tool research
+operation are separate evidence; a healthy queue worker does not prove research.
 
 ## Environment
 

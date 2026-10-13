@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.errors import integrity_constraint_name
 from nexus.db.session import get_session_factory
-from nexus.jobs.registry import registry
+from nexus.jobs.registry import registry, resolve
 
 LEASE_SECONDS = 30
 
@@ -192,8 +192,6 @@ def enqueue_unique_job(
 class Claim:
     job: JobRow
     context: JobExecutionContext
-    # The execution this claim reclaimed from an expired lease, if any.
-    displaced_execution_id: UUID | None
 
 
 def claim_next_job(
@@ -244,7 +242,9 @@ def claim_next_job(
         )
     assert job.execution_id is not None
     context = JobExecutionContext(job.id, job.execution_id, job.attempts)
-    return Claim(job, context, candidate[0].execution_id if reclaimed else None)
+    if reclaimed:
+        _react(db, job, candidate[0].execution_id)
+    return Claim(job, context)
 
 
 def seconds_until_due(
@@ -296,9 +296,22 @@ def renew_running_job_claim(db: Session, *, context: JobExecutionContext, heavy:
     return True
 
 
-def complete_job(
-    db: Session, *, context: JobExecutionContext, result: Mapping[str, Any] | None
+def finish_job(
+    db: Session,
+    *,
+    context: JobExecutionContext,
+    result: Mapping[str, Any] | TerminalJobFailure | None,
 ) -> JobRow | None:
+    """Finish the exact execution with its reactions; the caller owns the commit."""
+    if isinstance(result, TerminalJobFailure):
+        return fail_job(
+            db,
+            context=context,
+            error_code=result.error_code,
+            message=result.error_message,
+            result=result.result_payload,
+            dead=True,
+        )
     return _settle(
         db,
         context,
@@ -316,7 +329,7 @@ def reschedule_running_job(
     payload: Mapping[str, Any] | None = None,
 ) -> JobRow | None:
     """Back to pending at ``at`` (None: now), refunding the attempt."""
-    return _settle(
+    row = _settle(
         db,
         context,
         f"""status = 'pending', {_RELEASED}, attempts = attempts - 1,
@@ -325,6 +338,9 @@ def reschedule_running_job(
         at=at,
         payload=_json(payload),
     )
+    if row is not None:
+        _react(db, row, context.execution_id)
+    return row
 
 
 def fail_job(
@@ -358,6 +374,8 @@ def fail_job(
     )
     if not dead:
         _notify(db, owned.kind)
+    if failed is not None:
+        _react(db, failed, context.execution_id)
     return failed
 
 
@@ -380,6 +398,7 @@ def dead_letter_expired_job(db: Session, *, kinds: Sequence[str]) -> JobRow | No
     if not expired:
         return None
     _release_heavy(db, [expired[0].id])
+    _react(db, expired[0], expired[0].execution_id)
     return expired[0]
 
 
@@ -617,6 +636,16 @@ def _release_heavy(db: Session, job_ids: list[UUID]) -> None:
         ),
         {"job_ids": job_ids},
     )
+
+
+def _react(db: Session, job: JobRow, execution_id: UUID | None) -> None:
+    """Run the owner's reactions at the transition, including displaced attempts."""
+    assert execution_id is not None
+    definition = registry()[job.kind]
+    if job.status == "dead" and definition.on_dead:
+        resolve(definition.on_dead)(db, job)
+    if definition.on_history:
+        resolve(definition.on_history)(db, job, execution_id)
 
 
 def _notify(db: Session, kind: str) -> None:

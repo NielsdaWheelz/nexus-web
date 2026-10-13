@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
@@ -13,7 +14,7 @@ from nexus.db.models import Media, MediaFile, MediaKind, MediaSourceAttempt
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.extension_capture import decode_article_packet
-from nexus.schemas.presence import nullable_from_presence, present
+from nexus.schemas.presence import Presence, Present, absent, nullable_from_presence, present
 from nexus.services import media_source_types as source_types
 from nexus.services.epub_ingest import EpubExtractionPlan
 from nexus.services.epub_lifecycle import prepare_epub_source, publish_epub_source
@@ -23,7 +24,7 @@ from nexus.services.pdf_ingest import PdfExtractionPlan
 from nexus.services.pdf_lifecycle import prepare_pdf_source, publish_pdf_source
 from nexus.services.podcasts.transcription import run_podcast_transcription_now
 from nexus.services.reader_publication import ReaderPublicationSourceFile
-from nexus.services.remote_file import fetch_remote_file
+from nexus.services.remote_file import RemoteFile, fetch_remote_file
 from nexus.services.source_outcome import SourceRunOutcome, source_contributor_observations
 from nexus.services.source_publication import (
     SourcePublicationFence,
@@ -58,6 +59,14 @@ _DOCUMENT = frozenset({MediaKind.pdf.value, MediaKind.epub.value})
 type ExtractionPlan = PdfExtractionPlan | EpubExtractionPlan
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedFileSource:
+    """Detached acquisition; the source coordinator owns its atomic publication."""
+
+    plan: ExtractionPlan
+    remote_file: Presence[RemoteFile]
+
+
 def run_source_adapter(
     *,
     session_factory: sessionmaker[Session],
@@ -66,7 +75,7 @@ def run_source_adapter(
     actor_user_id: UUID,
     request_id: str | None,
     fence: SourcePublicationFence,
-) -> SourceRunOutcome:
+) -> SourceRunOutcome | PreparedFileSource:
     """Acquire one detached attempt, preserving its source-specific refusal order."""
     source_type = attempt.source_type
     if source_type == source_types.GENERIC_WEB_URL:
@@ -266,7 +275,7 @@ def _run_remote_file(
     media_id: UUID,
     attempt: MediaSourceAttempt,
     fence: SourcePublicationFence,
-) -> SourceRunOutcome:
+) -> PreparedFileSource:
     requested_url = attempt.requested_url
     if not requested_url:
         raise ApiError(ApiErrorCode.E_INTERNAL, "Missing remote file URL.")
@@ -287,7 +296,7 @@ def _run_remote_file(
         storage=storage_client,
         max_bytes=settings.max_pdf_bytes if kind == "pdf" else settings.max_epub_bytes,
     )
-    prepared = _prepare_file_source(
+    plan = _prepare_file_source(
         session_factory,
         media_id,
         kind,
@@ -297,40 +306,12 @@ def _run_remote_file(
         source_sha256=fetched.sha256_hex,
     )
 
-    def publish(db: Session, _locked: MediaSourceAttempt) -> tuple[SourceRunOutcome, list[str]]:
-        media = db.get(Media, media_id)
-        if media is None:
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        media.canonical_source_url = normalize_url_for_display(fetched.final_url)
-        media.updated_at = func.now()
-        return _publish_file_source(
-            db,
-            media_id=media_id,
-            prepared=prepared,
-            source_file=ReaderPublicationSourceFile(
-                storage_path=storage_path,
-                content_type=fetched.content_type,
-                size_bytes=fetched.size_bytes,
-                source_sha256=fetched.sha256_hex,
-            ),
-        )
-
-    outcome, cleanup_paths = run_source_publication_phase(
-        session_factory=session_factory,
-        label="publish_remote_file_reference",
-        fence=fence,
-        media_ids=(media_id,),
-        mutate=publish,
-    )
-    _finalize(session_factory, media_id, storage_path, storage_client)
-    _finalize_file_source(session_factory, media_id=media_id, prepared=prepared)
-    delete_document_storage_objects(cleanup_paths, storage_client)
-    return outcome
+    return PreparedFileSource(plan=plan, remote_file=present(fetched))
 
 
 def _run_existing_file(
     session_factory: sessionmaker[Session], media_id: UUID, fence: SourcePublicationFence
-) -> SourceRunOutcome:
+) -> PreparedFileSource:
     def begin(db: Session, _attempt: MediaSourceAttempt) -> tuple[str, str, int, str]:
         media = db.get(Media, media_id)
         if media is None:
@@ -359,7 +340,7 @@ def _run_existing_file(
         media_ids=(media_id,),
         mutate=begin,
     )
-    prepared = _prepare_file_source(
+    plan = _prepare_file_source(
         session_factory,
         media_id,
         kind,
@@ -368,16 +349,7 @@ def _run_existing_file(
         source_size_bytes=source_size_bytes,
         source_sha256=source_sha256,
     )
-    outcome, cleanup_paths = run_source_publication_phase(
-        session_factory=session_factory,
-        label=f"publish_{kind}_source_artifacts",
-        fence=fence,
-        media_ids=(media_id,),
-        mutate=lambda db, _attempt: _publish_file_source(db, media_id=media_id, prepared=prepared),
-    )
-    _finalize_file_source(session_factory, media_id=media_id, prepared=prepared)
-    delete_document_storage_objects(cleanup_paths, get_storage_client())
-    return outcome
+    return PreparedFileSource(plan=plan, remote_file=absent())
 
 
 def _prepare_file_source(
@@ -423,26 +395,49 @@ def _prepare_file_source(
     return prepared
 
 
-def _publish_file_source(
+def publish_prepared_file_source(
     db: Session,
     *,
     media_id: UUID,
-    prepared: ExtractionPlan,
-    source_file: ReaderPublicationSourceFile | None = None,
+    prepared: PreparedFileSource,
 ) -> tuple[SourceRunOutcome, list[str]]:
-    if isinstance(prepared, PdfExtractionPlan):
-        return publish_pdf_source(db, media_id=media_id, plan=prepared, source_file=source_file)
-    return publish_epub_source(db, media_id=media_id, plan=prepared, source_file=source_file)
+    """Publish files in the source coordinator's fenced terminal transaction."""
+    source_file = None
+    if isinstance(prepared.remote_file, Present):
+        fetched = prepared.remote_file.value
+        media = db.get(Media, media_id)
+        if media is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        media.canonical_source_url = normalize_url_for_display(fetched.final_url)
+        media.updated_at = func.now()
+        source_file = ReaderPublicationSourceFile(
+            storage_path=prepared.plan.storage_path,
+            content_type=fetched.content_type,
+            size_bytes=fetched.size_bytes,
+            source_sha256=fetched.sha256_hex,
+        )
+    if isinstance(prepared.plan, PdfExtractionPlan):
+        return publish_pdf_source(
+            db, media_id=media_id, plan=prepared.plan, source_file=source_file
+        )
+    return publish_epub_source(db, media_id=media_id, plan=prepared.plan, source_file=source_file)
 
 
-def _finalize_file_source(
-    session_factory: sessionmaker[Session], *, media_id: UUID, prepared: ExtractionPlan
+def finalize_prepared_file_source(
+    session_factory: sessionmaker[Session],
+    *,
+    media_id: UUID,
+    prepared: PreparedFileSource,
+    cleanup_paths: list[str],
 ) -> None:
-    if not isinstance(prepared, EpubExtractionPlan):
-        return
+    """Finalize referenced reservations and delete superseded objects after commit."""
     storage_client = get_storage_client()
-    for asset_storage_path in prepared.asset_storage_paths.values():
-        _finalize(session_factory, media_id, asset_storage_path, storage_client)
+    if isinstance(prepared.remote_file, Present):
+        _finalize(session_factory, media_id, prepared.plan.storage_path, storage_client)
+    if isinstance(prepared.plan, EpubExtractionPlan):
+        for asset_storage_path in prepared.plan.asset_storage_paths.values():
+            _finalize(session_factory, media_id, asset_storage_path, storage_client)
+    delete_document_storage_objects(cleanup_paths, storage_client)
 
 
 def _finalize(

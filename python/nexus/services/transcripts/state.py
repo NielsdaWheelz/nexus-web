@@ -12,6 +12,30 @@ from sqlalchemy.orm import Session
 TranscriptOrigin = Literal["Publisher", "Imported", "Generated"]
 
 
+def read_transcript_content_revision(db: Session, *, media_id: UUID) -> int:
+    """An absent lifecycle row shares the opaque pre-revision baseline of zero."""
+    revision = db.scalar(
+        text("SELECT content_revision FROM media_transcript_states WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    return 0 if revision is None else int(revision)
+
+
+def advance_transcript_content_revision(db: Session, *, media_id: UUID) -> None:
+    """Advance once with a current-transcript replacement, after its state upsert."""
+    revision = db.scalar(
+        text("""
+            UPDATE media_transcript_states SET content_revision = content_revision + 1
+            WHERE media_id = :media_id RETURNING content_revision
+        """),
+        {"media_id": media_id},
+    )
+    if revision is None:
+        # justify-defect: transcript publication must establish its state before
+        # advancing the content identity in the same transaction.
+        raise AssertionError("transcript publication has no lifecycle row")
+
+
 def set_media_transcript_state(
     db: Session,
     *,

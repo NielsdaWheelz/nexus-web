@@ -20,7 +20,7 @@ The queue is a ledger of attempts; every rule below follows from three facts.
 1. **An attempt is its `execution_id`.** A claim mints it; only a reclaim
    replaces it. Every write on behalf of an attempt locks the row and requires
    `id = ? AND status = 'running' AND execution_id = ?` (`queue._OWNED`, the one
-   fence text): `complete_job`, `fail_job`, `reschedule_running_job`,
+   fence text): `finish_job`, `fail_job`, `reschedule_running_job`,
    `update_running_job_payload` update through it, and an owner's effect
    transaction calls `lock_running_job_claim(db, context=...)` (returns the row, or
    `None` once the job was reclaimed). A late but unreclaimed attempt still writes;
@@ -34,7 +34,7 @@ The queue is a ledger of attempts; every rule below follows from three facts.
    retry delay, the prune its retention, each lane its kinds.
 3. **Hooks run where transitions commit.** A dead-letter or history reaction
    commits in the transition's transaction and never commits itself, so the
-   worker process runs it. On the background lane that process is the lean
+   queue transition invokes it. On the background lane that process is the lean
    supervisor sharing the 448 MiB cgroup with its child: a background kind's hook
    lives in an import-light module, and the worker refuses to start if the
    supervisor imported `boto3`, `httpx` or `lxml`.
@@ -58,6 +58,14 @@ its expected failures as `ApiError`s: indexing raises
 `E_EMBEDDING_PROVIDER_UNAVAILABLE` for an embedding provider that stayed
 unavailable through its retries (`content_chunking.plan_chunks`), so the attempt
 retries as a provider failure, not a defect.
+
+`finish_job(db, context=..., result=...)` commits nothing. an owner whose
+published facts require a terminal outcome calls it inside its publication
+transaction: facts, outcome, released capacity and reactions become visible
+together. mappings/none succeed; `TerminalJobFailure` makes the job dead. retry,
+reschedule, reclaim and expiry reactions run at their queue transitions. payload
+updates run no reaction. successful completion has no history reaction. the
+worker retains failure normalization but owns no transition callbacks.
 
 Hooks (by path in the registry):
 
@@ -92,7 +100,10 @@ health. An expired lease lets any worker of the lane reclaim the row (spending a
 attempt, stamping `E_WORKER_INTERRUPTED`) or, with the budget spent,
 dead-letter it. A killed worker's job is therefore picked up about 30 s after its
 last renewal; an idle worker's wait wakes at that instant. A heartbeat that finds
-its claim gone sets `lost`: the child is killed and nothing settles.
+its claim no longer running stops renewal and sets `lost`, stopping the bounded
+child. settlement first accepts a terminal row with the exact execution id, even
+when the executor reports `Lost`; it never repeats reactions. a terminal row from
+that execution also suppresses the reclaimed-claim warning.
 
 Heavy kinds hold the one row `background_job_capacity_leases('Heavy')` (its
 `job_id` and expiry) while running, so at most one Heavy attempt runs cluster-wide.

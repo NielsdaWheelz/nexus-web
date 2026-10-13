@@ -17,16 +17,22 @@ export type ImportStage = Schema<"ImportStageGroup">["stage"];
 export type ImportDetail = ApiJson<"/imports/{ref}", "get">["data"];
 export type HistoryPage = ApiJson<"/imports/{ref}/history", "get">["data"];
 export type HistoryEntry = Schema<"HistoryEntry">;
-export type SafeFailureCode = Extract<
+export type ImportFailureCode = Extract<
   Schema<"ImportStateNeedsAttention">["failure_code"],
   { kind: "Present" }
 >["value"];
+export type SafeFailureCode = Exclude<
+  ImportFailureCode,
+  Schema<"MetadataFailureCode">
+>;
+export type SourceImportObligation = Schema<"SourceImportObligation">;
+export type SearchImportObligation = Schema<"SearchImportObligation">;
 export type RecoveryOffer = Extract<
-  ImportItem["capabilities"]["recovery"],
+  SourceImportObligation["recovery"] | SearchImportObligation["recovery"],
   { kind: "Present" }
 >["value"];
 export type RecoveryRestriction = Extract<
-  ImportItem["capabilities"]["unavailable_reason"],
+  SourceImportObligation["unavailable_reason"],
   { kind: "Present" }
 >["value"];
 export type ImportsView = "NeedsAttention" | "InProgress" | "History";
@@ -47,9 +53,8 @@ export type UploadSessionOutcome =
       readonly code: UploadVerificationCode;
     }
   | {
-      readonly kind:
-        /** Imports owns an unresolved obligation for this session. */
-        | "NeedsAttention"
+      readonly kind: /** Imports owns an unresolved obligation for this session. */
+      | "NeedsAttention"
         /** No staged bytes for this generation; send the same file again. */
         | "BytesMissing"
         /** This attempt no longer owns the session; Imports is authoritative. */

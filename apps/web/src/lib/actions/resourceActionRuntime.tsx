@@ -117,6 +117,10 @@ const EMPTY_BUSY_KEYS: ReadonlySet<string> = new Set();
 
 export interface ResourceActionMenuModel {
   readonly status: "Loading" | "Ready" | "Error";
+  /** The exact owner facts used by these descriptors, for inspected inline actions. */
+  readonly capabilities: ResourceActionSnapshot["capabilities"];
+  /** An existing request is being confirmed; its frozen identity owns replay. */
+  readonly metadataRequestPending: boolean;
   readonly descriptors: readonly ActionDescriptor[];
   readonly triggerDisabled: boolean;
   readonly triggerDisabledReason?: string;
@@ -499,8 +503,9 @@ export function useOptionalResourceActionMenuModel(
     if (!target) return null;
     if (!runtime || !environment || !cache)
       throw new Error("ResourceActionRuntimeProvider is missing");
+    const metadataRequestPending = environment.pendingMetadataRequests.has(target.ref);
     if (!entry || entry.status === "Loading")
-      return { status: "Loading", descriptors: [], triggerDisabled: true,
+      return { status: "Loading", capabilities: [], metadataRequestPending, descriptors: [], triggerDisabled: true,
         triggerDisabledReason: "Actions are still loading.", refresh };
     const snapshot =
       entry.status === "Error" ? entry.lastGoodSnapshot : entry.snapshot;
@@ -519,7 +524,7 @@ export function useOptionalResourceActionMenuModel(
       },
     };
     if (!snapshot)
-      return { status: "Error", descriptors: [retry], triggerDisabled: false, refresh };
+      return { status: "Error", capabilities: [], metadataRequestPending, descriptors: [retry], triggerDisabled: false, refresh };
     const busyIds = new Set<ResourceActionId>();
     for (const key of busyKeys) {
       const prefix = `${target.ref}|`;
@@ -541,6 +546,8 @@ export function useOptionalResourceActionMenuModel(
     if (entry.status === "Error")
       return {
         status: "Error",
+        capabilities: snapshot.capabilities,
+        metadataRequestPending,
         descriptors: [
           ...descriptors,
           { ...retry, separatorBefore: descriptors.length > 0 || undefined },
@@ -550,6 +557,8 @@ export function useOptionalResourceActionMenuModel(
       };
     return {
       status: "Ready",
+      capabilities: snapshot.capabilities,
+      metadataRequestPending,
       descriptors,
       triggerDisabled: descriptors.length === 0,
       refresh,

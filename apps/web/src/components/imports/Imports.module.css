@@ -204,6 +204,18 @@
   color: var(--ink-faint);
 }
 
+.diagnostics dd {
+  min-width: 0;
+}
+
+.inspector code {
+  overflow-wrap: anywhere;
+}
+
+.attemptEvents .diagnostics {
+  flex-basis: 100%;
+}
+
 /* Touch gives every command a full 44 px target, both axes, while desktop stays
    compact. A switch and a labelled select paint their target on the label; the
    inspector is published outside this subtree, so it sizes its own actions. */
