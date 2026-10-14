@@ -5,8 +5,6 @@ import { ChevronLeft, ChevronRight, CircleUser, Plus, Search } from "lucide-reac
 import Link from "next/link";
 import AsterismMark from "@/components/AsterismMark";
 import ImportsBadge from "@/components/imports/ImportsBadge";
-import { DEFAULT_KEYBINDINGS } from "@/lib/keybindings";
-import { useKeybinding, useKeybindingLabel } from "@/lib/keybindingsProvider";
 import { requestNexusOpen } from "@/lib/nexus/events";
 import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
 import {
@@ -15,6 +13,7 @@ import {
 } from "@/lib/panes/targetLinkActivation";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { NAV_COLLAPSED_COOKIE } from "@/lib/renderEnvironment/types";
+import { formatShortcut, shortcutAriaKeys, SHORTCUTS } from "@/lib/shortcuts";
 import { cx } from "@/lib/ui/cx";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
@@ -53,8 +52,9 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
   const [tip, setTip] = useState<{ label: string; top: number } | null>(null);
   const [indicator, setIndicator] = useState<{ top: number; height: number } | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
-  const combo = useKeybinding("Nexus.Open") ?? DEFAULT_KEYBINDINGS["Nexus.Open"];
-  const hint = useKeybindingLabel("Nexus.Open") ?? combo;
+  const { platform } = useRenderEnvironment();
+  const shortcut = SHORTCUTS["Nexus.Open"];
+  const hint = formatShortcut(shortcut, platform);
   const activeHref = state.panes.find((pane) => pane.id === state.activePrimaryPaneId)
     ?.currentVisit.href;
   const section = activeHref ? sectionDestinationIdForHref(activeHref) : null;
@@ -136,7 +136,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         type="button"
         className={styles.command}
         aria-haspopup="dialog"
-        aria-keyshortcuts={combo}
+        aria-keyshortcuts={shortcutAriaKeys(shortcut, platform)}
         aria-label="Search or ask anything"
         onClick={() => requestNexusOpen({ kind: "Root" })}
       >

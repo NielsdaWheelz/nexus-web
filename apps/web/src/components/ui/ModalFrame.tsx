@@ -12,6 +12,7 @@ import {
 
 export interface ModalProps {
   readonly open: boolean;
+  readonly scope?: string;
   /** Runs only after a dismissal is accepted. */
   readonly onDismiss: () => void;
   /** Asked by Escape, Back, the scrim and the frame's own close controls. */
@@ -50,7 +51,6 @@ export default function ModalFrame({
   children,
 }: ModalProps & {
   readonly label: string;
-  readonly scope?: string;
   readonly id?: string;
   /** After the first open, keep the content mounted (hidden) while closed. */
   readonly keepMounted?: boolean;

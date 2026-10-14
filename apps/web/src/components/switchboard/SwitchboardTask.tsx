@@ -185,6 +185,7 @@ export default function SwitchboardTask({
   return (
     <MobileFullScreenTask
       active={active}
+      scope="Nexus"
       onDismiss={controller.dismissAccepted}
       onDismissRequest={controller.guardClose}
       ariaLabel={controller.addDefect ? "Add needs attention" : controller.dialogLabel}

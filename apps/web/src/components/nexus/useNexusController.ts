@@ -8,16 +8,11 @@ import type { MobileQuickNoteHandoffHandle } from "@/components/switchboard/Mobi
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { apiTransportFeedback, isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { matchesKeyEvent } from "@/lib/keybindings";
-import { useKeybindings, useKeybindingsController } from "@/lib/keybindingsProvider";
 import { createLibrary } from "@/lib/libraries/client";
-import { DESTINATIONS } from "@/lib/navigation/destinations";
 import { useNexusOpenRequests } from "@/lib/nexus/events";
 import {
-  PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
   type MaterializedOpenDailyPageTarget,
   type NexusAction,
-  type NexusCommandId,
   type NexusDispatchOutcome,
   type NexusOpenIntent,
   type NexusPage,
@@ -36,7 +31,9 @@ import { DailyDraftStorageError, readDailyDraft, subscribeDailyDraft } from "@/l
 import { resolveDailyLocalDate, useOpenDailyPage } from "@/lib/notes/openDailyPage";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { playingEpisode, usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
-import { useViewportState } from "@/lib/renderEnvironment/provider";
+import { useRenderEnvironment, useViewportState } from "@/lib/renderEnvironment/provider";
+import { formatShortcut, matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
+import { hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import { dailyDraftAcceptsText } from "@/lib/resourceSurface/dailySurfacePersistence";
 import type { DismissDecision } from "@/lib/ui/overlay";
 import { resolveWorkspacePaneLabel, useWorkspaceStore } from "@/lib/workspace/store";
@@ -79,8 +76,7 @@ export type NexusController = ReturnType<typeof useNexusController>;
 export function useNexusController() {
   const { accountId, calendarTimeZone } = useAuthenticatedAccount();
   const viewport = useViewportState();
-  const keybindings = useKeybindings();
-  const { labelFor } = useKeybindingsController();
+  const { platform } = useRenderEnvironment();
   const player = usePlayerSession();
   const playerCommands = usePlayerCommands();
   const openDailyPage = useOpenDailyPage();
@@ -116,19 +112,9 @@ export function useNexusController() {
       })),
     [runtimeLabelByPaneId, state],
   );
-  const hints = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.keys(NEXUS_COMMANDS).flatMap((id) => {
-          const label = labelFor(id);
-          return label ? [[id, label]] : [];
-        }),
-      ) as Partial<Record<NexusCommandId, string>>,
-    [labelFor],
-  );
   const candidates = useMemo(
-    () => candidateRows({ query: parsed, panes, frecency: find.frecency, hints, openables: find.openables, search: find.search }),
-    [find.frecency, find.openables, find.search, hints, panes, parsed],
+    () => candidateRows({ query: parsed, panes, frecency: find.frecency, openables: find.openables, search: find.search }),
+    [find.frecency, find.openables, find.search, panes, parsed],
   );
   useLayoutEffect(() => setList((previous) => mergeResults(previous, listIdentity, candidates)), [candidates, listIdentity]);
 
@@ -164,7 +150,6 @@ export function useNexusController() {
     playback: playback && playbackRow(playback.title, playback.subtitle.kind === "Present" ? playback.subtitle.value : undefined),
     recent: find.recent,
     frecency: find.frecency,
-    hints,
     todayAppend,
   });
   const rows = groups.flatMap((group) => group.rows);
@@ -399,30 +384,13 @@ export function useNexusController() {
 
   const keydown = useRef<(event: KeyboardEvent) => void>(() => undefined);
   keydown.current = (event) => {
-    if (event.defaultPrevented) return;
-    const openCombo = keybindings["Nexus.Open"];
-    if (openCombo && matchesKeyEvent(openCombo, event)) {
-      event.preventDefault();
-      const activeRow = rows.find((row) => row.key === activeKey);
-      if (!open) requestExit({ kind: "Replace", intent: { kind: "Root" } });
-      else if (page.kind === "Root" && activeRow?.menu) openMenu(activeRow.key);
-      return;
-    }
-    for (const [id, combo] of Object.entries(keybindings)) {
-      if (id === "Nexus.Open" || !matchesKeyEvent(combo, event)) continue;
-      const place = DESTINATIONS.find((destination) => destination.id === id);
-      const target: NexusTarget | null = Object.hasOwn(NEXUS_COMMANDS, id)
-        ? NEXUS_COMMANDS[id as NexusCommandId].target("")
-        : id === "today"
-          ? { kind: "OpenDailyPage", date: { kind: "Today" }, entry: { kind: "View" } }
-          : place
-            ? { kind: "InternalHref", href: place.href, labelHint: place.label }
-            : null;
-      if (!target) continue;
-      event.preventDefault();
-      requestExit({ kind: "Navigate", target, activation: PROGRAMMATIC_NEXUS_TARGET_ACTIVATION, completion: "Destination" });
-      return;
-    }
+    if (!matchesShortcut(SHORTCUTS["Nexus.Open"], event, platform)) return;
+    if (hasActiveInteractionOwner() && !isTopmostInteractionOwner("Nexus")) return;
+    event.preventDefault();
+    if (event.repeat) return;
+    const activeRow = rows.find((row) => row.key === activeKey);
+    if (!open) requestExit({ kind: "Replace", intent: { kind: "Root" } });
+    else if (page.kind === "Root" && activeRow?.menu) openMenu(activeRow.key);
   };
   useEffect(() => {
     const listener = (event: KeyboardEvent) => keydown.current(event);
@@ -452,7 +420,7 @@ export function useNexusController() {
     announcement,
     dialogLabel: page.kind === "Add" ? "Add content" : "Nexus",
     focusKey: page.kind === "Add" ? addSession.state.sessionId : page.kind,
-    openShortcut: labelFor("Nexus.Open") ?? "",
+    openShortcut: formatShortcut(SHORTCUTS["Nexus.Open"], platform),
     handoff,
     addSession,
     addDefect: addDefect?.sessionId === addSession.state.sessionId,

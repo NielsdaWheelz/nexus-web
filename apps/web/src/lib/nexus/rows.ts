@@ -51,7 +51,6 @@ const UNRANKED = { tier: "CurrentContext", score: 0, frecency: 0 } as const;
 const MOBILE_PLACES: readonly DestinationId[] = ["lectern", "libraries", "browse", "podcasts", "chats", "notes"];
 const BROWSE_LABELS: Record<BrowseKind, string> = { WebArticle: "articles", Podcast: "podcasts", Video: "videos", Epub: "books" };
 
-type Hints = Readonly<Partial<Record<NexusCommandId, string>>>;
 type Frecency = Readonly<Record<string, number>>;
 
 /** The ranked result rows of one query identity and the row the keyboard acts on. */
@@ -138,7 +137,7 @@ function placeRow(place: Destination, tier: NexusRankTier, frecency: Frecency): 
   };
 }
 
-function commandRow(id: NexusCommandId, tier: NexusRankTier, argument: string, hints: Hints): NexusRow {
+function commandRow(id: NexusCommandId, tier: NexusRankTier, argument: string): NexusRow {
   const command = NEXUS_COMMANDS[id];
   return {
     key: `QuickAction:${id}`,
@@ -146,7 +145,6 @@ function commandRow(id: NexusCommandId, tier: NexusRankTier, argument: string, h
     icon: command.icon,
     type: "Command",
     detail: argument || `${command.category} · ${command.alias.trimEnd()}`,
-    shortcut: hints[id],
     action: { kind: "Available", target: command.target(argument) },
     rank: { tier, score: 0, frecency: 0 },
   };
@@ -181,7 +179,7 @@ function appendToToday(text: string, todayAppend: TodayAppend): NexusAction {
     : todayAppend;
 }
 
-function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Frecency, hints: Hints): NexusRow[] {
+function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Frecency): NexusRow[] {
   const { intent, text } = query;
   const explicit: NexusRow[] = [];
   if (intent.kind === "ImportUrl") {
@@ -195,7 +193,7 @@ function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Fre
       rank: { tier: "Exact", score: 1, frecency: 0 },
     });
   } else if (intent.kind === "Command") {
-    explicit.push(commandRow(intent.id, "ExplicitIntent", intent.argument, hints));
+    explicit.push(commandRow(intent.id, "ExplicitIntent", intent.argument));
   } else if (intent.kind === "Ask") {
     explicit.push(askRow("Intent:Ask", intent.argument, "Explicit intent", "ExplicitIntent"));
   } else if (intent.kind === "ChooseBrowse") {
@@ -233,7 +231,7 @@ function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Fre
       ? []
       : (Object.keys(NEXUS_COMMANDS) as NexusCommandId[]).flatMap((id) => {
           const tier = textTier(text, NEXUS_COMMANDS[id].label, { aliases: NEXUS_COMMANDS[id].keywords });
-          return tier ? [commandRow(id, tier, "", hints)] : [];
+          return tier ? [commandRow(id, tier, "")] : [];
         });
   return [...explicit, ...tabs, ...places, ...commands];
 }
@@ -314,7 +312,6 @@ export function candidateRows(input: {
   readonly query: NexusQuery;
   readonly panes: readonly NexusPane[];
   readonly frecency: Frecency;
-  readonly hints: Hints;
   readonly openables: readonly ResourceItem[];
   readonly search: readonly SearchResultRowViewModel[];
 }): NexusRow[] {
@@ -322,7 +319,7 @@ export function candidateRows(input: {
   if (!query.text) return [];
   const unique = new Map<string, NexusRow>();
   for (const row of [
-    ...localRows(query, panes, frecency, input.hints),
+    ...localRows(query, panes, frecency),
     ...openableRows(query.text, input.openables, panes, frecency),
     ...searchRows(query.text, input.search, panes, frecency),
   ]) {
@@ -427,10 +424,9 @@ export function nexusGroups(input: {
   readonly playback: NexusRow | null;
   readonly recent: readonly NexusRecent[];
   readonly frecency: Frecency;
-  readonly hints: Hints;
   readonly todayAppend: TodayAppend;
 }): NexusGroup[] {
-  const { desktop, query, panes, frecency, hints } = input;
+  const { desktop, query, panes, frecency } = input;
   const group = (id: NexusGroup["id"], label: string, rows: readonly NexusRow[]): NexusGroup[] =>
     rows.length === 0 ? [] : [{ id, label, rows }];
   if (query.text) {
@@ -473,7 +469,7 @@ export function nexusGroups(input: {
       },
     ];
   });
-  const command = (id: NexusCommandId) => plain(commandRow(id, "CurrentContext", "", hints));
+  const command = (id: NexusCommandId) => plain(commandRow(id, "CurrentContext", ""));
   const quick = [
     command("Nexus.Quick.Note"),
     plain(placeRow(getDestination("today"), "CurrentContext", frecency)),

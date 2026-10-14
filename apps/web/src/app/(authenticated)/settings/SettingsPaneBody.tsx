@@ -26,6 +26,11 @@ const SETTINGS_ITEMS: {
     description: "Theme, font, line height, column width, focus mode.",
   },
   {
+    href: "/settings/keybindings",
+    title: "Keyboard Shortcuts",
+    description: "The shortcuts for Nexus, pane search, and switching panes.",
+  },
+  {
     href: "/settings/identities",
     title: "Linked Identities",
     description: "Connect or remove Google and GitHub sign-in methods.",

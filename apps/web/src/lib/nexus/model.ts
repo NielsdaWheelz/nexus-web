@@ -87,7 +87,6 @@ export interface NexusRow {
   readonly detail?: string;
   readonly state?: "Current" | "Open" | "Minimized";
   readonly snippet?: readonly EmphasisSegment[];
-  readonly shortcut?: string;
   readonly parent?: { readonly key: string; readonly label: string };
   readonly action: NexusAction;
   readonly menu?:
