@@ -5,7 +5,7 @@
 The player owns three independent concepts and three synchronizations between
 them.
 
-- **Lectern** — the viewer's ordered list of intentions: place, remove, order.
+- **Lectern** — the viewer's ordered list of intentions: ensure, place, remove, order.
 - **Consumption state** — where the viewer stands with a media: an explicit
   override (`finished` / `unread`), else positive podcast listening position
   means in progress, else reader engagement, else
@@ -53,7 +53,9 @@ downloads are adjacent, not player state ([offline](offline.md)).
 - `lectern.py` — sole DML owner of `consumption_queue_items`. Positions are
   dense over visible and hidden rows (a row is hidden while its media is not
   visible to the viewer or is being torn down; hidden rows keep their slots).
-  `place` puts a block at the visible boundary or after a visible anchor;
+  `ensure_missing_in_txn` appends absent media at the absolute tail and preserves
+  existing identity, added time and position. `place` intentionally moves a block
+  to the first visible boundary or after a visible anchor;
   `set_order` takes the exact visible permutation; `remove_media` returns the
   visible index the row had (where the successor search starts); `restore`
   puts back a removed row with its id and `added_at` (undo only).
@@ -83,7 +85,7 @@ downloads are adjacent, not player state ([offline](offline.md)).
 
 ```http
 GET  /lectern                       -> LecternSnapshot
-POST /lectern/commands              PlaceItems | RemoveItem | SetOrder
+POST /lectern/commands              EnsureItem | PlaceItems | RemoveItem | SetOrder
 POST /consumption/commands          EnsureMediaFinished | Done | SetUnread | ResetProgress
                                     | UndoFinish | SettleNaturalEnd
 GET  /media/{id}/player             -> PlayerDescriptor (404 when not playable)
@@ -96,6 +98,12 @@ GET  /lectern/suggestions, /lectern/quick-reads   (suggestions)
 `api/routes/lectern.py` owns the Lectern reads and the two command ports;
 `api/routes/playback.py` owns the player read, the listening write, the preview
 hand-off and activity capture (registered before the `media` router).
+
+`EnsureItem {mediaId, clientMutationId}` acknowledges with `Ensured`; replay
+returns that receipt with a fresh snapshot and never reapplies a removed item.
+admission runs only after replay lookup. `LecternSnapshot.atCapacity` counts all
+canonical rows, including hidden members; its `items` remain visibility-filtered.
+snapshot absence therefore does not establish non-membership.
 
 A listening write answers 200 with the accepted
 `{positionMs, resetEpoch, consumptionOverrideRevision}` tuple. An accepted
@@ -127,12 +135,21 @@ changes state only; the row stays where it is.
 - `lib/lectern/contract.ts` — branded ids and the wire projected once into
   domain values. `LecternProvider.tsx` — the snapshot resource and every
   Lectern/consumption command on one promise chain (installs never
-  interleave), refetch-then-rethrow on failure, the `progressState` event after
+  interleave). ensure retains its exact command until receipt, bounds each send
+  and body read at 30 seconds, and owns dismissible recovery above pane lifetime.
+  the shared api client classifies failed body acquisition as transport regardless
+  of status; completed malformed responses remain defects. ordinary command
+  failures refetch then rethrow. the `progressState` event after
   ResetProgress, and paired progress-fence hooks that drain/gate then reconcile
   mounted owners around unread, reset and undo. `useCompletionUndo.ts`
   — the ten-second "Marked as finished" HUD. `view.ts` — the url-only sort.
 - `app/(authenticated)/lectern/LecternPaneBody.tsx` — **On the lectern** (play
   rows, sort, filter, drag reorder in Custom view), Quick reads, At hand.
+- `components/collections/LecternAddControl.tsx` — shared quick-read/transcript
+  add, frozen-request check and fresh membership status. receipt invalidates
+  action facts through `ensureAcknowledged`; only a fresh action snapshot supplies
+  presence/absence. unrelated edits remain available after uncertainty. dismissal
+  hides recovery without discarding identity; account teardown/reload ends it.
 - `lib/player/playerRuntime.tsx` — `GlobalPlayerProvider`: engine choice, the
   state/timeline context split, device history (previous restarts after 3 s,
   else pops back; next pops forward, else the next Lectern audio row), the fresh

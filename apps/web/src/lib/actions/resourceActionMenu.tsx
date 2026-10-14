@@ -34,7 +34,6 @@ import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import {
   assumeMediaId,
   assumeLecternItemId,
-  LECTERN_MAX_ITEMS,
 } from "@/lib/lectern/contract";
 import type { LecternCapability } from "@/lib/lectern/LecternProvider";
 import type { CompletionUndoInput } from "@/lib/lectern/useCompletionUndo";
@@ -180,7 +179,7 @@ function lecternReady(
     title = "Another Lectern change is still finishing";
   else if (
     capacityMatters &&
-    ports.lectern.resource.data.items.length >= LECTERN_MAX_ITEMS
+    ports.lectern.resource.data.atCapacity
   )
     title = "Lectern is full";
   if (!title) return true;
@@ -638,6 +637,20 @@ export function resourceActionDescriptors({
         );
       case "LecternMembership": {
         const included = capability.state === "Present";
+        const mediaId = assumeMediaId(id());
+        const request = environment.ensureRequests.get(mediaId);
+        // This checks a frozen operation; current admission and stale inverse
+        // membership facts cannot authorize or block its replay.
+        if (!included && request) {
+          return {
+            kind: "command",
+            id: "RelationshipAction.LecternMembership",
+            label: request.kind === "Sending" ? "adding…" : "check add",
+            icon: createElement(RESOURCE_ACTION_CATALOG["RelationshipAction.LecternMembership"].icon, { size: 16, "aria-hidden": true }),
+            disabled: request.kind !== "Unconfirmed",
+            onSelect: () => { if (request.kind === "Unconfirmed") request.check(); },
+          };
+        }
         return make(
           capability,
           "RelationshipAction.LecternMembership",
@@ -648,17 +661,14 @@ export function resourceActionDescriptors({
                 assumeLecternItemId(capability.lecternItemId),
               );
             else
-              await ports.lectern.placeItems({
-                mediaIds: [assumeMediaId(id())],
-                placement: { kind: "Last" },
-              });
+              await ports.lectern.ensureItem({ mediaId, title: capability.title });
           },
           {
             ...RESOURCE_ACTION_CATALOG["RelationshipAction.LecternMembership"]
               .states[capability.state],
             checked: included,
             blocked: lecternBlocked(!included),
-            reconcile: subjectScope,
+            reconcile: included ? subjectScope : noneScope,
           },
         );
       }

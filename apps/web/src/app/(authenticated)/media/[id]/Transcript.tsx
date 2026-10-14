@@ -9,6 +9,7 @@ import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feed
 import HtmlRenderer from "@/components/HtmlRenderer";
 import YouTubeEmbedFrame, { isAllowedYoutubeEmbedUrl } from "@/components/media/YouTubeEmbedFrame";
 import Button from "@/components/ui/Button";
+import LecternAddControl from "@/components/collections/LecternAddControl";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -25,6 +26,8 @@ import {
   usePlayerTimeline,
 } from "@/lib/player/playerRuntime";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import styles from "./media.module.css";
 
 function requestFailure(error: unknown): FeedbackContent {
@@ -163,6 +166,8 @@ export function TranscriptChrome({
   const { state } = usePlayerSession();
   const { positionMs } = usePlayerTimeline();
   const { placeItems, resource } = useLectern();
+  const paneId = usePaneRuntime()?.paneId;
+  const playRef = useRef<HTMLButtonElement | null>(null);
   const [notes] = useState(() => showNotes(media));
   const [videoFailed, setVideoFailed] = useState(false);
   const frame = useRef<HTMLIFrameElement>(null);
@@ -220,7 +225,7 @@ export function TranscriptChrome({
       ) : descriptor ? (
         <div className={styles.playback}>
           <p>Playback continues in the global player.</p>
-          <Button variant="secondary" size="sm" disabled={!ready} onClick={() => playAudio(descriptor)}>
+          <Button ref={playRef} variant="secondary" size="sm" disabled={!ready} onClick={() => playAudio(descriptor)}>
             Play
           </Button>
           <Button
@@ -236,9 +241,12 @@ export function TranscriptChrome({
           >
             Play next
           </Button>
-          <Button variant="secondary" size="sm" disabled={!ready} onClick={() => void placeItems({ mediaIds: [parseMediaId(media.id)], placement: { kind: "Last" } })}>
-            Add to Lectern
-          </Button>
+          <LecternAddControl mediaId={parseMediaId(media.id)} title={media.title}
+            returnFocus={() => playRef.current?.isConnected && !playRef.current.disabled && !playRef.current.closest("[inert]")
+              ? playRef.current : findPaneLandmarkFocusTarget(paneId)} />
+          {ready && resource.data.atCapacity ? <FeedbackNotice
+            content={{ tone: "Neutral", title: "lectern is full", message: "remove an item to add another." }}
+            announcement="None" /> : null}
         </div>
       ) : null}
       {(media.kind === "video" || !descriptor) && (source?.source_url || media.canonical_source_url) ? (

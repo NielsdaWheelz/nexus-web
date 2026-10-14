@@ -145,11 +145,11 @@ export const RESOURCE_ACTION_CATALOG = {
     group: "Organize",
   },
   "RelationshipAction.LecternMembership": {
-    label: "Add to Lectern",
+    label: "add to lectern",
     icon: ListPlus,
     group: "Organize",
     states: {
-      Absent: { label: "Add to Lectern", icon: ListPlus },
+      Absent: { label: "add to lectern", icon: ListPlus },
       Present: { label: "Remove from Lectern", icon: ListMinus },
     },
   },

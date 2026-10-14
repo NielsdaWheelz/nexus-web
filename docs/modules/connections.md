@@ -123,6 +123,13 @@ and threshold before limiting rows. this cutover changes no ranking policy.
 
 `GET /lectern/suggestions` and `GET /libraries/{id}/suggestions` return
 `SuggestionsOut`; `GET /lectern/quick-reads` returns `QuickReadsOut`.
-add calls the existing destination owner, retains visible survivors and appends
-at most one replacement. collection rows show factual item metadata; explanations
+add calls the existing destination owner. lectern uses ensure-membership; only
+acknowledgement plus current visible membership returns `Accepted` and runs the
+existing local removal/refill path. `Retained` leaves rows to ordinary query facts.
+quick reads retain queued documents and expose add/check/on-lectern through the
+shared control; opening never enqueues. inactive query keys are null; activation
+refreshes while retaining rows and truthful failure feedback. suggestions' existing
+[focus](../tickets/suggestion-add-can-reclaim-moved-focus.md) and
+[refill](../tickets/suggestion-add-refetch-replaces-stable-survivors.md) defects
+remain tracked. collection rows show factual item metadata; explanations
 of relationships remain in the opened resource's connections.

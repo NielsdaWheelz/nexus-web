@@ -58,13 +58,14 @@ export interface LecternItem {
 }
 export interface LecternSnapshot {
   items: LecternItem[];
+  atCapacity: boolean;
 }
 export type Placement =
   | { kind: "First" }
-  | { kind: "After"; itemId: LecternItemId }
-  | { kind: "Last" };
+  | { kind: "After"; itemId: LecternItemId };
 export interface LecternResult {
   outcome:
+    | { kind: "Ensured" }
     | { kind: "Placed"; itemIds: LecternItemId[] }
     | { kind: "Removed"; itemId: LecternItemId }
     | { kind: "Ordered" };
@@ -93,8 +94,6 @@ export interface UndoRestore {
   addedAt: string;
   after: Presence<LecternItemId>;
 }
-
-export const LECTERN_MAX_ITEMS = 2000;
 
 export function playerDescriptorFromWire(
   descriptor: Schema<"PlayerDescriptor">,
@@ -128,7 +127,7 @@ export function lecternItemFromWire(
 export function lecternSnapshotFromWire(
   snapshot: Schema<"LecternSnapshot">,
 ): LecternSnapshot {
-  return { items: snapshot.items.map(lecternItemFromWire) };
+  return { items: snapshot.items.map(lecternItemFromWire), atCapacity: snapshot.atCapacity };
 }
 
 export function consumptionResultFromWire(

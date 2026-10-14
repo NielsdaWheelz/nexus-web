@@ -35,7 +35,6 @@ import {
 import { createResourceActionMutationBoundary } from "@/lib/actions/resourceActionMutation";
 import { settleDeletedResourcePanes } from "@/lib/actions/resourceDeletionLifecycle";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
-import { LECTERN_MAX_ITEMS } from "@/lib/lectern/contract";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import {
   useCompletionUndo,
@@ -116,7 +115,7 @@ const EnvironmentContext = createContext<ResourceActionEnvironment | null>(
 const EMPTY_BUSY_KEYS: ReadonlySet<string> = new Set();
 
 export interface ResourceActionMenuModel {
-  readonly status: "Loading" | "Ready" | "Error";
+  readonly status: "Loading" | "Refreshing" | "Ready" | "Error";
   /** The exact owner facts used by these descriptors, for inspected inline actions. */
   readonly capabilities: ResourceActionSnapshot["capabilities"];
   /** An existing request is being confirmed; its frozen identity owns replay. */
@@ -171,6 +170,7 @@ export function ResourceActionRuntimeProvider({
     openSubscribe,
   } = useResourceOverlaysController();
   const lectern = useLectern();
+  const { onCanonicalInstall } = lectern;
   const playerCommands = usePlayerCommands();
   const playerSession = usePlayerSession();
   const feedback = useFeedback();
@@ -248,6 +248,9 @@ export function ResourceActionRuntimeProvider({
     [cache],
   );
   const offerCompletionUndo = useCompletionUndo(reconcileMedia);
+  useEffect(() => onCanonicalInstall((event) => {
+    if (event.kind === "ensureAcknowledged") reconcileMedia(event.mediaId);
+  }), [onCanonicalInstall, reconcileMedia]);
   // Lectern membership is part of every media's actions: reconcile the media whose rows came or went.
   const lecternMembers = useRef<Set<string> | null>(null);
   useEffect(() => {
@@ -363,7 +366,9 @@ export function ResourceActionRuntimeProvider({
                   ? { ...CONFLICT_NOTICE, requestId: error.requestId }
                   : {
                       tone: "Danger",
-                      title: `Could not ${command.label.replace(/…$/, "")}`,
+                      title: command.id === "RelationshipAction.LecternMembership" && command.label === "add to lectern"
+                        ? "couldn’t add to lectern"
+                        : `Could not ${command.label.replace(/…$/, "")}`,
                       message: error.message,
                       requestId: error.requestId,
                     },
@@ -421,18 +426,19 @@ export function ResourceActionRuntimeProvider({
         lectern.resource.status === "ready"
           ? {
               kind: "Ready",
-              atCapacity:
-                lectern.resource.data.items.length >= LECTERN_MAX_ITEMS,
+              atCapacity: lectern.resource.data.atCapacity,
               mutation: lectern.busy ? "Busy" : "Idle",
             }
           : { kind: lectern.resource.status === "error" ? "Error" : "Loading" },
       playbackByRef,
       pendingMetadataRequests,
+      ensureRequests: lectern.ensureRequests,
     }),
     [
       connectivity,
       lectern.busy,
       lectern.resource,
+      lectern.ensureRequests,
       offlineSnapshot,
       offlineByRef,
       playbackByRef,
@@ -556,7 +562,7 @@ export function useOptionalResourceActionMenuModel(
         refresh,
       };
     return {
-      status: "Ready",
+      status: entry.status === "Reconciling" ? "Refreshing" : "Ready",
       capabilities: snapshot.capabilities,
       metadataRequestPending,
       descriptors,

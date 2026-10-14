@@ -902,6 +902,7 @@ function LibraryPane({ id }: { readonly id: string }) {
                   library: { id: currentLibrary.id, name: currentLibrary.name },
                 },
               });
+              return "Accepted";
             }}
           />
         ) : null}

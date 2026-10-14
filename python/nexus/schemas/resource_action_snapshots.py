@@ -253,6 +253,7 @@ class LecternMembershipAbsentOut(BaseModel):
     kind: Literal["LecternMembership"] = "LecternMembership"
     availability: ServerActionAvailabilityOut
     state: Literal["Absent"] = "Absent"
+    title: str
 
     model_config = _OUT_CONFIG
 

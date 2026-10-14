@@ -5,8 +5,8 @@
  *
  * One promise chain serializes commands and refetches, so installs never interleave: a GET
  * queued before a command cannot overwrite that command's answer. Each call mints its own
- * `clientMutationId` (natural-end settles bring theirs, so retries replay). A failed command
- * refetches the truth and rethrows; the caller owns its error.
+ * `clientMutationId` (natural-end settles bring theirs). Ensure retains its exact command
+ * until acknowledgement and bounds each attempt; other failed commands refetch and rethrow.
  */
 
 import {
@@ -23,13 +23,23 @@ import {
   apiFetch,
   decodeApiPayload,
   isApiError,
+  isSameSystemApiDefect,
   ApiError,
 } from "@/lib/api/client";
+import { useFeedback } from "@/components/feedback/Feedback";
+import { createRandomId } from "@/lib/createRandomId";
+import { assertNever } from "@/lib/assertNever";
 import type { Presence } from "@/lib/api/presence";
 import type { AsyncResource } from "@/lib/api/useResource";
-import type { ApiJson } from "@/lib/api/wire";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { publishChange, useChangeStamp } from "@/lib/api/changes";
+import {
+  findPaneChromeFocusTarget,
+  findPaneCollectionRowFocusTarget,
+  findPaneLandmarkFocusTarget,
+} from "@/lib/workspace/paneDom";
+import { useWorkspaceStore } from "@/lib/workspace/store";
 import {
   consumptionResultFromWire,
   lecternSnapshotFromWire,
@@ -49,14 +59,30 @@ import {
 const REVALIDATE_MIN_INTERVAL_MS = 60_000;
 
 type CanonicalInstallEvent =
+  | { kind: "ensureAcknowledged"; mediaId: MediaId }
   | { kind: "progressState"; state: MediaProgressState }
   | { kind: "snapshot"; snapshot: LecternSnapshot; unreadMediaIds: readonly MediaId[] };
-type ProgressListener = (event: CanonicalInstallEvent) => void | Promise<void>;
+type CanonicalInstallListener = (event: CanonicalInstallEvent) => void | Promise<void>;
+
+export type EnsureRequest =
+  | { kind: "Sending" | "Checking" }
+  | { kind: "Unconfirmed"; check(): void };
+type EnsureOutcome = "Acknowledged" | "Unconfirmed";
+interface PendingEnsure {
+  readonly mediaId: MediaId;
+  readonly title: string;
+  readonly command: Schema<"EnsureItemCommand">;
+  readonly check: () => void;
+  state: EnsureRequest;
+  attempt: Promise<EnsureOutcome> | null;
+}
 
 export interface LecternCapability {
   readonly resource: AsyncResource<LecternSnapshot>;
   /** A command is in flight. */
   readonly busy: boolean;
+  readonly ensureRequests: ReadonlyMap<MediaId, EnsureRequest>;
+  ensureItem(input: { mediaId: MediaId; title: string }): Promise<EnsureOutcome>;
   placeItems(input: {
     mediaIds: MediaId[];
     placement: Placement;
@@ -80,7 +106,7 @@ export interface LecternCapability {
   /** Refetch now, after any queued work. */
   revalidate(): void;
   getCanonicalSnapshot(): LecternSnapshot | undefined;
-  onCanonicalInstall(listener: ProgressListener): () => void;
+  onCanonicalInstall(listener: CanonicalInstallListener): () => void;
   registerProgressFence(hook: {
     prepare(mediaIds: readonly MediaId[]): Promise<void>;
     reconcile(mediaIds: readonly MediaId[]): Promise<void>;
@@ -100,31 +126,39 @@ async function getLectern(cache?: RequestCache): Promise<LecternSnapshot> {
   );
 }
 
-async function postLectern(body: object): Promise<LecternResult> {
+async function postLectern(
+  body: Schema<"EnsureItemCommand"> | Schema<"PlaceItemsCommand"> |
+    Schema<"RemoveItemCommand"> | Schema<"SetOrderCommand">,
+  signal?: AbortSignal,
+): Promise<LecternResult> {
   const response = await apiFetch<ApiJson<"/lectern/commands", "post">>(
     "/api/lectern/commands",
     {
       method: "POST",
-      body: JSON.stringify({ clientMutationId: crypto.randomUUID(), ...body }),
+      body: JSON.stringify(body),
+      signal,
     },
   );
   return decodeApiPayload(
     response,
-    ({ data }): LecternResult => ({
-      outcome:
-        data.outcome.kind === "Placed"
-          ? {
-              kind: "Placed",
-              itemIds: data.outcome.itemIds.map(parseLecternItemId),
-            }
-          : data.outcome.kind === "Removed"
-            ? {
-                kind: "Removed",
-                itemId: parseLecternItemId(data.outcome.itemId),
-              }
-            : { kind: "Ordered" },
-      lectern: lecternSnapshotFromWire(data.lectern),
-    }),
+    ({ data }): LecternResult => {
+      let outcome: LecternResult["outcome"];
+      switch (data.outcome.kind) {
+        case "Ensured":
+        case "Ordered":
+          outcome = data.outcome;
+          break;
+        case "Placed":
+          outcome = { kind: "Placed", itemIds: data.outcome.itemIds.map(parseLecternItemId) };
+          break;
+        case "Removed":
+          outcome = { kind: "Removed", itemId: parseLecternItemId(data.outcome.itemId) };
+          break;
+        default:
+          return assertNever(data.outcome, "Unsupported Lectern outcome");
+      }
+      return { outcome, lectern: lecternSnapshotFromWire(data.lectern) };
+    },
     "POST /api/lectern/commands",
   );
 }
@@ -134,7 +168,7 @@ async function postConsumption(body: object): Promise<ConsumptionResult> {
     "/api/consumption/commands",
     {
       method: "POST",
-      body: JSON.stringify({ clientMutationId: crypto.randomUUID(), ...body }),
+      body: JSON.stringify({ clientMutationId: createRandomId(), ...body }),
     },
   );
   return decodeApiPayload(
@@ -149,10 +183,18 @@ export function LecternProvider({ children }: { children: ReactNode }) {
     status: "loading",
   });
   const [inFlight, setInFlight] = useState(0);
+  const [ensureRequests, setEnsureRequests] = useState<ReadonlyMap<MediaId, EnsureRequest>>(new Map());
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const pendingEnsures = useRef(new Map<MediaId, PendingEnsure>());
+  const active = useRef(true);
+  const feedback = useFeedback();
+  const workspace = useWorkspaceStore();
+  const workspaceRef = useRef(workspace);
+  workspaceRef.current = workspace;
   const chain = useRef<Promise<unknown>>(Promise.resolve());
   const snapshot = useRef<LecternSnapshot | undefined>(undefined);
   const installedAt = useRef(0);
-  const listeners = useRef(new Set<ProgressListener>());
+  const listeners = useRef(new Set<CanonicalInstallListener>());
   const fenceHooks = useRef(new Set<Parameters<LecternCapability["registerProgressFence"]>[0]>());
 
   const install = useCallback((next: LecternSnapshot) => {
@@ -166,6 +208,141 @@ export function LecternProvider({ children }: { children: ReactNode }) {
     chain.current = result.catch(() => undefined);
     return result;
   }, []);
+
+  const publishEnsureRequests = useCallback(() => {
+    setEnsureRequests(new Map([...pendingEnsures.current].map(([id, pending]) => [id, pending.state])));
+  }, []);
+
+  const showEnsureRecovery = useCallback((pending: PendingEnsure, checking: boolean) => {
+    feedback.publish({
+      kind: "Persistent",
+      key: `lectern-add:${pending.command.clientMutationId}`,
+      announcement: "Polite",
+      content: checking
+        ? { tone: "Neutral", title: "checking the add…", message: pending.title }
+        : { tone: "Warning", title: `couldn’t confirm adding ${pending.title}`,
+          message: "it may already be on lectern." },
+      actions: [{ label: "check add", onClick: pending.check, busy: checking }],
+      returnFocus: () => {
+        if (!active.current) return null;
+        const paneId = workspaceRef.current.state.activePrimaryPaneId;
+        const item = snapshot.current?.items.find((item) => item.mediaSummary.mediaId === pending.mediaId);
+        return findPaneCollectionRowFocusTarget(paneId, `media:${pending.mediaId}`) ??
+          (item ? findPaneCollectionRowFocusTarget(paneId, item.itemId) : null) ??
+          findPaneChromeFocusTarget(paneId) ?? findPaneLandmarkFocusTarget(paneId);
+      },
+    });
+  }, [feedback]);
+
+  const attemptEnsure = useCallback((pending: PendingEnsure): Promise<EnsureOutcome> => {
+    if (!active.current || pendingEnsures.current.get(pending.mediaId) !== pending)
+      return Promise.resolve("Unconfirmed");
+    if (pending.attempt !== null) return pending.attempt;
+    const checking = pending.state.kind === "Unconfirmed";
+    pending.state = { kind: checking ? "Checking" : "Sending" };
+    publishEnsureRequests();
+    if (checking) showEnsureRecovery(pending, true);
+    setInFlight((count) => count + 1);
+    pending.attempt = serial<EnsureOutcome>(async () => {
+      if (!active.current || pendingEnsures.current.get(pending.mediaId) !== pending)
+        return "Unconfirmed";
+      const signal = AbortSignal.timeout(30_000);
+      let result: LecternResult;
+      try {
+        result = await postLectern(pending.command, signal);
+        if (result.outcome.kind !== "Ensured")
+          // justify-defect: this fixed command can only be acknowledged by an Ensured receipt.
+          throw new ApiError(200, "E_INVALID_RESPONSE", "EnsureItem returned an unexpected outcome");
+      } catch (error) {
+        if (!active.current || pendingEnsures.current.get(pending.mediaId) !== pending)
+          return "Unconfirmed";
+        pending.state = { kind: "Unconfirmed", check: pending.check };
+        const refusal = isApiError(error) && (
+          error.code === "E_NOT_FOUND" || error.code === "E_MEDIA_DELETING" || error.code === "E_LIMIT"
+        );
+        if (refusal && !checking) {
+          pendingEnsures.current.delete(pending.mediaId);
+          publishEnsureRequests();
+          throw error;
+        }
+        publishEnsureRequests();
+        if (isSameSystemApiDefect(error)) throw error;
+        if (refusal || signal.aborted ||
+          (isApiError(error) && (error.code === "E_NETWORK" || error.code === "E_UPSTREAM" ||
+            error.code === "E_UPSTREAM_TIMEOUT"))) {
+          showEnsureRecovery(pending, false);
+          return "Unconfirmed";
+        }
+        if (handleUnauthenticatedApiError(error) || !isApiError(error))
+          throw error;
+        // justify-defect: this fixed command has no other modeled refusal; invalid shape or replay identity is a bug.
+        throw new Error("Unexpected EnsureItem refusal", { cause: error });
+      }
+      if (!active.current || pendingEnsures.current.get(pending.mediaId) !== pending)
+        return "Unconfirmed";
+      // Retire the receipt before local work: observer failure cannot replay this acknowledged intent.
+      pendingEnsures.current.delete(pending.mediaId);
+      const reportDefect = (error: unknown) => {
+        if (active.current) setDefect((current) => current ?? { error });
+      };
+      const afterReceipt = (work: () => void | Promise<void>) => {
+        try {
+          void Promise.resolve(work()).catch(reportDefect);
+        } catch (error) {
+          reportDefect(error);
+        }
+      };
+      afterReceipt(() => install(result.lectern));
+      const event: CanonicalInstallEvent = { kind: "ensureAcknowledged", mediaId: pending.mediaId };
+      for (const listener of listeners.current) afterReceipt(() => listener(event));
+      afterReceipt(() => publishChange("Consumption"));
+      afterReceipt(publishEnsureRequests);
+      afterReceipt(() => feedback.resolve(`lectern-add:${pending.command.clientMutationId}`));
+      afterReceipt(() => feedback.publish({
+        kind: "Hud",
+        content: { tone: "Success", title: "add confirmed.", message: pending.title },
+      }));
+      return "Acknowledged";
+    }).finally(() => {
+      pending.attempt = null;
+      if (active.current) setInFlight((count) => count - 1);
+    });
+    return pending.attempt;
+  }, [feedback, install, publishEnsureRequests, serial, showEnsureRecovery]);
+
+  const ensureItem = useCallback(({ mediaId, title }: { mediaId: MediaId; title: string }) => {
+    if (!active.current) return Promise.resolve<EnsureOutcome>("Unconfirmed");
+    let pending = pendingEnsures.current.get(mediaId);
+    if (!pending) {
+      const command: Schema<"EnsureItemCommand"> = {
+        kind: "EnsureItem", mediaId,
+        clientMutationId: createRandomId(),
+      };
+      const created: PendingEnsure = {
+        mediaId, title, command, state: { kind: "Sending" }, attempt: null,
+        check: () => {
+          if (!active.current || pendingEnsures.current.get(mediaId) !== created) return;
+          void attemptEnsure(created).catch((error) => {
+            if (!active.current || handleUnauthenticatedApiError(error)) return;
+            setDefect({ error });
+          });
+        },
+      };
+      pending = created;
+      pendingEnsures.current.set(mediaId, pending);
+    }
+    return attemptEnsure(pending);
+  }, [attemptEnsure]);
+
+  useEffect(() => {
+    active.current = true;
+    const pending = pendingEnsures.current;
+    return () => {
+      active.current = false;
+      for (const request of pending.values()) feedback.resolve(`lectern-add:${request.command.clientMutationId}`);
+      pending.clear();
+    };
+  }, [feedback]);
 
   const refetch = useCallback(
     (cache?: RequestCache) =>
@@ -279,10 +456,12 @@ export function LecternProvider({ children }: { children: ReactNode }) {
     () => ({
       resource,
       busy: inFlight > 0,
+      ensureRequests,
+      ensureItem,
       placeItems: ({ mediaIds, placement }) =>
-        run(() => postLectern({ kind: "PlaceItems", mediaIds, placement })),
+        run(() => postLectern({ kind: "PlaceItems", mediaIds, placement, clientMutationId: createRandomId() })),
       removeItem: (itemId) =>
-        run(() => postLectern({ kind: "RemoveItem", itemId })),
+        run(() => postLectern({ kind: "RemoveItem", itemId, clientMutationId: createRandomId() })),
       setOrder: (itemIds) => {
         const current = snapshot.current;
         if (current !== undefined) {
@@ -290,9 +469,9 @@ export function LecternProvider({ children }: { children: ReactNode }) {
             current.items.map((item) => [item.itemId, item]),
           );
           const items = itemIds.flatMap((itemId) => byId.get(itemId) ?? []);
-          setResource({ status: "ready", data: { items } });
+          setResource({ status: "ready", data: { ...current, items } });
         }
-        return run(() => postLectern({ kind: "SetOrder", itemIds }));
+        return run(() => postLectern({ kind: "SetOrder", itemIds, clientMutationId: createRandomId() }));
       },
       ensureMediaFinished: (mediaId) =>
         consumption({ kind: "EnsureMediaFinished", mediaId }),
@@ -313,9 +492,10 @@ export function LecternProvider({ children }: { children: ReactNode }) {
         return () => fenceHooks.current.delete(hook);
       },
     }),
-    [consumption, inFlight, refetch, resource, run],
+    [consumption, ensureItem, ensureRequests, inFlight, refetch, resource, run],
   );
 
+  if (defect) throw defect.error;
   return (
     <LecternContext.Provider value={value}>{children}</LecternContext.Provider>
   );

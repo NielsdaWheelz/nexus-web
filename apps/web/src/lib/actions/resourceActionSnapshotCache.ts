@@ -139,14 +139,17 @@ export function createResourceActionSnapshotCache(deps: {
 
   async function resolveRefs(
     refs: readonly CanonicalResourceRef[],
+    reservedGenerations?: ReadonlyMap<CanonicalResourceRef, number>,
   ): Promise<void> {
     const requests: ResolveRequest[] = [];
     for (const ref of refs) {
       const entry = entries.get(ref);
       if (!entry || entry.retainCount === 0) continue;
+      const reserved = reservedGenerations?.get(ref);
+      if (reserved !== undefined && entry.generation !== reserved) continue;
       const previous = lastGoodSnapshot(entry.state);
       const previousState = entry.state;
-      entry.generation += 1;
+      if (reserved === undefined) entry.generation += 1;
       entry.inFlightCount += 1;
       // A failed post-mutation read means `previous` may contain the stale
       // inverse verb. Keep the public entry in Error for every retrying reader;
@@ -255,6 +258,20 @@ export function createResourceActionSnapshotCache(deps: {
     });
     if (uniqueRefs.length === 0) return Promise.resolve();
 
+    // Invalidate now, even when an older reconciliation still owns the read
+    // slot. Its response cannot restore pre-receipt facts in that interval.
+    const generations = new Map<CanonicalResourceRef, number>();
+    for (const ref of uniqueRefs) {
+      const entry = entries.get(ref)!;
+      entry.generation += 1;
+      generations.set(ref, entry.generation);
+      entry.state = entry.state.status === "Error"
+        ? { ...entry.state, retrying: true }
+        : resolvingState(lastGoodSnapshot(entry.state));
+      pendingFirstResolve.delete(ref);
+    }
+    notify();
+
     const preceding = [
       ...new Set(
         uniqueRefs.flatMap((ref) => {
@@ -265,10 +282,10 @@ export function createResourceActionSnapshotCache(deps: {
     ];
     const operation =
       preceding.length === 0
-        ? resolveRefs(uniqueRefs)
+        ? resolveRefs(uniqueRefs, generations)
         : Promise.all(
             preceding.map((tail) => tail.catch(() => undefined)),
-          ).then(() => resolveRefs(uniqueRefs));
+          ).then(() => resolveRefs(uniqueRefs, generations));
 
     // Install the shared tail synchronously. A second reconciliation started
     // in this same turn therefore waits instead of racing the first request.
