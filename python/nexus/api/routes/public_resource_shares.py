@@ -6,6 +6,7 @@ headers on every response under this prefix, errors included.
 """
 
 from collections.abc import Generator
+from threading import Lock
 from typing import Annotated
 
 from anyio import CancelScope, to_thread
@@ -34,10 +35,25 @@ class _PdfResponse(StreamingResponse):
         headers: dict[str, str],
         status_code: int = 200,
     ) -> None:
-        super().__init__(
-            content, status_code=status_code, media_type="application/pdf", headers=headers
-        )
         self._content = content
+        self._iterator_lock = Lock()
+        super().__init__(
+            self._iterate(), status_code=status_code, media_type="application/pdf", headers=headers
+        )
+
+    def _iterate(self) -> Generator[bytes, None, None]:
+        while True:
+            with self._iterator_lock:
+                try:
+                    chunk = next(self._content)
+                except StopIteration:
+                    return
+            yield chunk
+
+    def _close(self) -> None:
+        # Direct task cancellation can leave next() running in its worker.
+        with self._iterator_lock:
+            self._content.close()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         try:
@@ -45,7 +61,7 @@ class _PdfResponse(StreamingResponse):
         finally:
             # Starlette does not close the original sync iterator on disconnect.
             with CancelScope(shield=True):
-                await to_thread.run_sync(self._content.close)
+                await to_thread.run_sync(self._close)
 
 
 @router.get("")
