@@ -23,6 +23,14 @@ its wire types are generated from FastAPI's OpenAPI schema, so tsc catches drift
   [../rules/json-values.md](../rules/json-values.md) and
   [../rules/frontend.md](../rules/frontend.md) (owner decision 2026-10-13). a
   request PATCH that tells an omitted key from `null` reads `model_fields_set`.
+- a `strict=True` model with a uuid, datetime, date, decimal, enum or tuple
+  field reads JSON only in JSON mode (`model_validate_json`,
+  `validate_json(json.dumps(value))`): there strict takes those as JSON
+  strings and arrays, while python-mode strict refuses them in a decoded
+  dict. FastAPI is the one exception: it validates a decoded request body in
+  python mode, so a strict request model marks each such field
+  `Field(strict=False)` (for a uuid this accepts exactly what JSON-mode
+  strict accepts) and has no tuple field.
 - always-serialized fields of an Out model must be required in its output
   schema. `json_schema_serialization_defaults_required=True` on that selected
   output model keeps useful nullable/factory constructor defaults while making

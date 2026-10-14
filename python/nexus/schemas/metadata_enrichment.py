@@ -257,7 +257,8 @@ type MetadataOutcome = Annotated[
 
 class MetadataEnrichmentRequest(_MetadataModel):
     client_mutation_id: ClientMutationUuidText
-    expected_job_id: UUID | None
+    # FastAPI validates the decoded body in python mode, where strict refuses uuid text.
+    expected_job_id: UUID | None = Field(strict=False)
 
 
 class MetadataEnrichmentAccepted(_MetadataModel):
