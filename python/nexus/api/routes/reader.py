@@ -6,9 +6,10 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
+from anyio import CancelScope, to_thread
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse
-from starlette.background import BackgroundTask
+from starlette.types import Receive, Scope, Send
 
 from nexus.api.deps import get_stream_viewer
 from nexus.auth.middleware import Viewer, get_viewer
@@ -34,6 +35,15 @@ from nexus.services.consumption import service as consumption_service
 from nexus.services.resource_graph import reader_targets
 
 router = APIRouter(tags=["media"])
+
+
+class _ReadingCopyResponse(FileResponse):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            with CancelScope(shield=True):
+                await to_thread.run_sync(os.unlink, self.path)
 
 
 @router.get("/media/{media_id}/reader")
@@ -130,9 +140,8 @@ def get_reading_copy(
     except BaseException:
         os.unlink(name)
         raise
-    return FileResponse(
+    return _ReadingCopyResponse(
         name,
         media_type="application/zip",
         headers={"Cache-Control": "private, no-store", "Nexus-Reader-Generation": str(generation)},
-        background=BackgroundTask(os.unlink, name),
     )
