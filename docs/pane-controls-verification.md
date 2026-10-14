@@ -9,7 +9,8 @@ status: complete; youtube success explicitly waived by owner, remaining manual l
 baseline: `16763c3cd4a7cb0b54520e99ec388fb82d573b9d`, served from the
 detached task baseline worktree. implementation:
 `/Users/nnandal/Documents/code/nexus-web-pane-controls-20261013`.
-final web-source sha256:
+qualified pre-integration snapshot: `d17affbd43b900cb1332bfb0125f10baba025651`.
+its web-source sha256:
 `9c469b23fe6563bc1e80f6b09658af408a8e9734f86295846555867d47ecd2ea`.
 digest input: union of baseline `git ls-tree -r --name-only` and current
 `git ls-files --cached --others --exclude-standard` paths under `apps/web/src`,
@@ -108,8 +109,17 @@ projection was preserved as evidence rather than manually repaired.
 `git diff --check` passed. temporary browser drivers, dependencies, private raw receipts,
 configuration, fixtures and the detached baseline worktree were removed.
 task containers/networks/socket volume, database, bucket and disposable auth
-user were removed. the original enrolled account remains only in its protected
-`nexus-pane-controls-20261013-codex-account` volume, with no running host and no
-credential copy/archive. no automated suite or production test seam remains.
+user were removed. the original enrolled account volume was subsequently removed
+under the owner's “clean everything up” instruction, without copying or archiving
+credentials. no automated suite or production test seam remains.
 the task android package and owned port forwards were removed; rotation/home
 restored. unrelated apps/services are outside cleanup ownership.
+
+## merge integration
+
+the cutover was rebased onto `443eda51e75ee3f23af4ed7d7f7d00345da76716` before
+the pr. the sole textual conflict was the issue register; both sets of entries
+were preserved. all 80 changed/deleted cutover source paths retain identical
+bytes/deletion state to the qualified snapshot. `./scripts/test` and diff checks
+passed after integration. live journeys were not replayed; independent review
+checked the newer add/import and transport changes against the shared contracts.
