@@ -1,6 +1,7 @@
 "use client";
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import type { MouseEventHandler } from "react";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import type { PaneCompanionAction } from "@/lib/panes/paneChrome";
 import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
@@ -34,6 +35,7 @@ export default function SurfaceHeader({
   menuActions = [],
   actionSubject,
   navigation,
+  onMouseDown,
 }: {
   header: PaneHeaderModel;
   identityId: string;
@@ -42,12 +44,13 @@ export default function SurfaceHeader({
   menuActions?: readonly ActionDescriptor[];
   actionSubject?: ResourceActionSubject;
   navigation: SurfaceHeaderNavigation;
+  onMouseDown: MouseEventHandler<HTMLElement>;
 }) {
   const actions = [...paneActions, ...menuActions];
   const companionState =
     companion && projectActionControlState(companion.label, companion.state);
   return (
-    <header className={styles.header}>
+    <header className={styles.header} onMouseDown={onMouseDown}>
       <div className={styles.navigation}>
         <button
           type="button"

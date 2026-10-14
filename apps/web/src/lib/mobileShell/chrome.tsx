@@ -1,6 +1,6 @@
 "use client";
 
-// Mobile chrome: the top bar, the active pane's contextual row and the Nexus
+// Mobile chrome: the top bar, the active pane's controls and the Nexus
 // control retreat while the reader reads forward and return on intent. This
 // module alone writes their motion: `--mobile-chrome-collapse` (p), `inert`
 // (p > 0) and `data-mobile-chrome-phase` on every registered surface, in the
@@ -278,7 +278,7 @@ export function useMobileChromeSurface(ref: RefObject<HTMLElement | null>, enabl
 /** Keeps the chrome shown while `active`. */
 export function useMobileChromeHold(active: boolean): void {
   const chrome = useController();
-  useEffect(() => (active ? chrome.hold() : undefined), [chrome, active]);
+  useLayoutEffect(() => (active ? chrome.hold() : undefined), [chrome, active]);
 }
 
 /** Publishes the mounted active pane's chrome for the top bar while non-null. */

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useId, useEffect, useMemo, useRef, useState } from "react";
 import { requestNexusOpen } from "@/lib/nexus/events";
 import { isInvalidViewError } from "@/lib/api/client";
 import { libraryEntriesResource } from "@/lib/api/resource";
@@ -18,9 +18,9 @@ import { presentMedia } from "@/lib/collections/presenters/media";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import { addLibraryPlacement } from "@/lib/libraries/libraryPlacement";
 import Button from "@/components/ui/Button";
-import AppliedFilters, { type AppliedFilterChip } from "@/components/ui/AppliedFilters";
-import SelectField from "@/components/ui/SelectField";
-import Toggle from "@/components/ui/Toggle";
+import type { AppliedFilterChip } from "@/components/ui/AppliedFilters";
+import RadioGroup from "@/components/ui/RadioGroup";
+import ChoiceField from "@/components/ui/ChoiceField";
 import PaneSurface from "@/components/ui/PaneSurface";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
@@ -31,9 +31,9 @@ import SuggestionsSection from "@/components/collections/SuggestionsSection";
 import type { CollectionRowView } from "@/lib/collections/types";
 import LibraryMembersSurface from "@/components/libraries/LibraryMembersSurface";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
-import CollectionFilterEditor from "@/components/workspace/CollectionFilterEditor";
-import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
+import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
+import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
+import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import {
@@ -213,8 +213,6 @@ function LibraryPane({ id }: { readonly id: string }) {
   // UX/endpoint support, independent of canEditEntries (which stays true for
   // Default's "Add content" capability).
   const canReorder = canEditEntries && !isDefaultLibrary;
-  const filtersTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const hideFinishedInputId = `library-hide-finished-${id}`;
   useSetPaneLabel(knownLibrary ? libraryPresentation(knownLibrary).name : loading ? null : "Library");
   const handleReorderEntries = (nextEntries: readonly LibraryEntry[]) => {
     setError(null);
@@ -279,68 +277,6 @@ function LibraryPane({ id }: { readonly id: string }) {
     () => projectionOptionsFor(isDefaultLibrary),
     [isDefaultLibrary],
   );
-  const domainFilterControls = useMemo(
-    () =>
-      invalidView || view === null ? undefined : (
-        <>
-          <SelectField
-            layout="Stacked"
-            label="Type"
-            value={entryTypeOptionOf(view)}
-            onChange={(event) => {
-              setView(
-                withEntryTypeOption(
-                  view,
-                  event.target.value as LibraryEntryTypeOptionId,
-                ),
-              );
-            }}
-          >
-            {LIBRARY_ENTRY_TYPE_OPTION_IDS.map((optionId) => (
-              <option key={optionId} value={optionId}>
-                {entryTypeOptionLabel(optionId)}
-              </option>
-            ))}
-          </SelectField>
-          <SelectField
-            layout="Stacked"
-            label="View"
-            value={projectionOptionOf(view)}
-            onChange={(event) => {
-              setView(
-                withProjectionOption(
-                  view,
-                  event.target.value as ProjectionOptionId,
-                ),
-              );
-            }}
-          >
-            {projectionOptions.map((optionId) => (
-              <option key={optionId} value={optionId}>
-                {projectionOptionLabel(optionId)}
-              </option>
-            ))}
-          </SelectField>
-          {projectionSupportsCompletion(view) ? (
-            <Toggle
-              id={hideFinishedInputId}
-              checked={completionOf(view) === "unfinished"}
-              onCheckedChange={(checked) => {
-                setView(withCompletion(view, checked ? "unfinished" : "all"));
-              }}
-              label="Hide finished"
-            />
-          ) : null}
-        </>
-      ),
-    [
-      hideFinishedInputId,
-      invalidView,
-      projectionOptions,
-      setView,
-      view,
-    ],
-  );
   const getFilterStatus = useCallback(
     (query: string) =>
       listRowStatus(
@@ -362,7 +298,8 @@ function LibraryPane({ id }: { readonly id: string }) {
     sourceKey: `Library.Entries:${id}`,
     getRowStatus: getFilterStatus,
   });
-  const { inputRef, focusInput } = usePaneCollectionInput();
+  const { inputRef, focusInput } = usePaneQueryInput();
+  const queryStatusId = useId();
   const resetView = useCallback(() => {
     clearQuery();
     setView(CANONICAL_LIBRARY_VIEW);
@@ -386,89 +323,61 @@ function LibraryPane({ id }: { readonly id: string }) {
       ? []
       : [{ id: "completion", label: "Hide finished" }]),
   ], [view]);
-  const collection = useMemo(
-    () =>
-      invalidView || view === null
-        ? undefined
-        : {
-          label: "Filter library entries",
-          content: (
-            <PaneCollectionBar
-              inputRef={inputRef}
-              inputLabel="Filter library entries"
-              placeholder="Filter entries"
-              query={filterQuery}
-              onQueryChange={onQueryChange}
-              onClearQuery={clearQuery}
-              rowStatus={rowStatus}
-              filters={
-                <>
-                  <SelectField
-                    layout="Inline"
-                    label="Sort entries"
-                    size="sm"
-                    value={orderToPresetId(view.order)}
-                    onChange={(event) =>
-                      setView({
-                        order: presetIdToOrder(event.target.value as LibraryOrderPresetId),
-                        projection: view.projection,
-                        entryType: view.entryType,
-                      })
-                    }
-                  >
-                    {orderPresetIds.map((presetId) => (
-                      <option key={presetId} value={presetId}>
-                        {presetLabel(presetId, isDefaultLibrary)}
-                      </option>
-                    ))}
-                  </SelectField>
-                  <CollectionFilterEditor
-                    activeCount={appliedFilters.length}
-                    triggerRef={filtersTriggerRef}
-                    onClearFilters={clearDomainFilters}
-                    onResetView={!isInitialLibraryView(view) || filterQuery.trim() ? resetView : undefined}
-                  >
-                    {domainFilterControls}
-                  </CollectionFilterEditor>
-                </>
-              }
-              appliedFilters={
-                <AppliedFilters
-                  chips={appliedFilters}
-                  returnFocusTo={filtersTriggerRef}
-                  onRemove={(chipId) => {
-                    if (chipId === "type") {
-                      setView(withEntryTypeOption(view, "all-types"));
-                    } else if (chipId === "projection") {
-                      setView(withProjectionOption(view, "all-items"));
-                    } else if (chipId === "completion") {
-                      setView(withCompletion(view, "all"));
-                    }
-                  }}
-                />
-              }
-            />
-          ),
-          focusInput,
-        },
-    [
-      appliedFilters,
-      clearDomainFilters,
-      resetView,
-      clearQuery,
-      domainFilterControls,
-      filterQuery,
-      focusInput,
-      inputRef,
-      invalidView,
-      onQueryChange,
-      isDefaultLibrary,
-      orderPresetIds,
-      rowStatus,
-      setView,
-      view,
-    ],
-  );
+  const queryControls = invalidView || view === null ? undefined : {
+    kind: "Controls" as const,
+    label: "Filter library entries",
+    focusInput,
+    content: <PaneQueryToolbar
+      inputRef={inputRef}
+      input={{ label: "Filter library entries", placeholder: "Filter entries", value: filterQuery, appliedValue: filterQuery, onChange: onQueryChange, onClear: clearQuery }}
+      options={{
+        label: "Filters",
+        activeCount: appliedFilters.length,
+        onClear: clearDomainFilters,
+        content: <>
+          <RadioGroup
+            label="Type"
+            value={entryTypeOptionOf(view)}
+            choices={LIBRARY_ENTRY_TYPE_OPTION_IDS.map((value) => ({ value, label: entryTypeOptionLabel(value) }))}
+            onChange={(value) => setView(withEntryTypeOption(view,
+              // justify-type-assertion: the group offers exactly these ids.
+              value as LibraryEntryTypeOptionId,
+            ))}
+          />
+          <RadioGroup
+            label="View"
+            value={projectionOptionOf(view)}
+            choices={projectionOptions.map((value) => ({ value, label: projectionOptionLabel(value) }))}
+            onChange={(value) => setView(withProjectionOption(view,
+              // justify-type-assertion: the group offers exactly these ids.
+              value as ProjectionOptionId,
+            ))}
+          />
+          {projectionSupportsCompletion(view) ? <ChoiceField
+            label="Hide finished"
+            checked={completionOf(view) === "unfinished"}
+            onChange={(checked) => setView(withCompletion(view, checked ? "unfinished" : "all"))}
+          /> : null}
+        </>,
+      }}
+      sort={{
+        label: "Sort",
+        value: orderToPresetId(view.order),
+        choices: orderPresetIds.map((value) => ({ value, label: presetLabel(value, isDefaultLibrary) })),
+        onChange: (value) => setView({ ...view, order: presetIdToOrder(
+          // justify-type-assertion: the select offers exactly these ids.
+          value as LibraryOrderPresetId,
+        ) }),
+      }}
+      chips={{ items: appliedFilters, onRemove: (chipId) => {
+        if (chipId === "type") setView(withEntryTypeOption(view, "all-types"));
+        else if (chipId === "projection") setView(withProjectionOption(view, "all-items"));
+        else if (chipId === "completion") setView(withCompletion(view, "all"));
+      } }}
+      status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={rowStatus} query={filterQuery} /> }}
+      onReset={!isInitialLibraryView(view) || filterQuery ? resetView : undefined}
+    />,
+  };
   const filteredEntries = useMemo(
     () =>
       visibleEntries.filter((entry) =>
@@ -568,7 +477,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     [id, refreshLibrary],
   );
   usePaneChrome({
-    collection,
+    query: queryControls,
     refresh:
       currentLibrary && requestedViewKey && viewIsCommitted
         ? {
@@ -628,7 +537,7 @@ function LibraryPane({ id }: { readonly id: string }) {
         }`}</span>
       {firstPageError === null ? null : (
         <Button variant="ghost" size="sm" onClick={() => {
-          filtersTriggerRef.current?.focus({ preventScroll: true });
+          inputRef.current?.focus({ preventScroll: true });
           owner.retry();
         }}>Retry</Button>
       )}
@@ -669,11 +578,10 @@ function LibraryPane({ id }: { readonly id: string }) {
   const visibleEntryRows = filteredEntries.map(entryRowView);
 
   const entriesAccessibleName = libraryPresentation(knownLibrary).name;
-  // Both recoveries request AllItems(All) preserving order and focus View; the
-  // completion-only "Show finished" recovery focuses the Hide-finished checkbox.
+  // Recoveries preserve order and return focus to the permanent query input.
   const recoverToAllItems = () => {
     if (committedView === null) return;
-    filtersTriggerRef.current?.focus({ preventScroll: true });
+    inputRef.current?.focus({ preventScroll: true });
     setView({
       order: committedView.order,
       projection: { kind: "AllItems", completion: "all" },
@@ -682,7 +590,7 @@ function LibraryPane({ id }: { readonly id: string }) {
   };
   const recoverShowFinished = () => {
     if (committedView === null) return;
-    filtersTriggerRef.current?.focus({ preventScroll: true });
+    inputRef.current?.focus({ preventScroll: true });
     setView(withCompletion(committedView, "all"));
   };
   // Closed-union empty-state precedence (never inferred from counts).
@@ -703,7 +611,7 @@ function LibraryPane({ id }: { readonly id: string }) {
           announcement="Polite"
           actions={[{
             label: "Clear filters", onClick: () => {
-              filtersTriggerRef.current?.focus({ preventScroll: true });
+              inputRef.current?.focus({ preventScroll: true });
               clearDomainFilters();
             }
           }]}
@@ -735,7 +643,7 @@ function LibraryPane({ id }: { readonly id: string }) {
           announcement="Polite"
           actions={[{
             label: "Clear filters", onClick: () => {
-              filtersTriggerRef.current?.focus({ preventScroll: true });
+              inputRef.current?.focus({ preventScroll: true });
               clearDomainFilters();
             }
           }]}

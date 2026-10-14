@@ -66,18 +66,19 @@ Mobile pane shells do not mount desktop resize handles, fixed primary chrome, or
 desktop-attached secondary columns. Secondary content is presented by the
 workspace mobile secondary sheet.
 
-pane-local search is visit-local chrome, not pane history or workspace state.
-only the active capable `PaneShell` consumes Cmd/Ctrl+F; inactive panes retain
-their mounted query/result state, while source replacement retires it.
-unsupported panes leave native browser find untouched. collection panes publish
-one compact row in the body scrollport: their input and order stay visible;
-applicable facets open a labelled editor, while applied chips and an honest
-result status sit at the list boundary. reset appears only for changed state.
-`Pane.Search` reveals, focuses and selects the active pane input; collection
-menus have no duplicate search command.
-page and note editors retain transient `FilterRows` over their direct ordered
-items. document panes, including individual conversations, retain transient `Find`
-(the pane's `useFind` controller) with transient Inspector results.
+pane-local controls are source-local chrome. identity, reader navigation and
+queries compose independently above the content scrollport. supported desktop
+fields remain visible; mobile find discloses alongside navigation and clears on
+close. only the active capable pane consumes cmd/ctrl+f; overlays win and native
+find remains available for unsupported/resolving panes. source replacement
+retires query lifetime; active-pane resizing preserves it. inactive panes
+unmounted on mobile retain their existing reset behavior.
+
+collections and page/note rows publish the shared query toolbar with inline
+native filter choices. find publishers supply `useFind` controllers and
+transient companion results. domains own urls, query timing, results and clear/
+reset semantics. see [workspace controls](workspace.md) for the capability,
+geometry and keyboard contract.
 
 Every domain view is pane-URL state. Most are decoded by one strict, total
 owner codec: an unknown, duplicate, partial, or redundantly-default owned key is

@@ -17,27 +17,6 @@
   font-size: var(--text-xs);
 }
 
-.search {
-  display: flex;
-  min-width: 0;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.search input {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
 .sortLabel,
 .resultStatus {
   font-size: var(--text-sm);
@@ -61,7 +40,7 @@
   color: var(--ink-muted);
 }
 
-/* No shared date control exists; this is the raw input with a visible label. */
+/* Domain labels describe the interval; Input owns field appearance. */
 .dateField {
   display: inline-flex;
   align-items: center;
@@ -71,15 +50,6 @@
   color: var(--ink-muted);
 }
 
-.dateField input {
-  min-height: var(--size-xl);
-  padding: 0 var(--space-2);
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--ink);
-  font-size: var(--text-sm);
-}
 
 .list {
   display: flex;

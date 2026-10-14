@@ -15,7 +15,6 @@ import {
   type ReactNode,
 } from "react";
 import type { FindController } from "@/lib/find/useFind";
-import type { PaneFilterRowsStatus } from "@/lib/panes/paneFilterRows";
 import type { PaneHeaderPublication } from "@/lib/panes/paneHeaderModel";
 import type {
   WorkspaceSecondaryGroupId,
@@ -33,24 +32,15 @@ export function truncatePaneSearchQuery(query: string): string {
   return Array.from(query).slice(0, 256).join("");
 }
 
-export interface PaneFilterRowsSearch {
-  readonly kind: "FilterRows";
-  readonly query: string;
-  readonly inputLabel: string;
-  readonly placeholder: string;
-  readonly onQueryChange: (query: string) => void;
-  readonly onDismiss: () => void;
-  readonly rowStatus: PaneFilterRowsStatus;
-}
-
-/**
- * `Resolving` names the control a loading pane will offer, so More keeps its
- * shape; publish it only where the loaded answer is certain to be a search.
- */
-export type PaneSearch =
-  | { readonly kind: "Resolving"; readonly control: "Find" | "Filter" }
-  | { readonly kind: "Find"; readonly find: FindController }
-  | PaneFilterRowsSearch;
+/** A shared query toolbar, or Find with its existing Companion integration. */
+export type PaneQuery =
+  | {
+      readonly kind: "Controls";
+      readonly label: string;
+      readonly content: ReactNode;
+      readonly focusInput: () => boolean;
+    }
+  | { readonly kind: "Find"; readonly find: FindController | null };
 
 export type PaneRefreshProgress =
   | { readonly kind: "Indeterminate" }
@@ -88,35 +78,15 @@ export type PaneCompanionAction = Extract<
   readonly icon: ReactElement;
 };
 
-interface PaneChromeCommon {
+export interface PaneChrome {
   readonly header?: PaneHeaderPublication;
+  readonly navigation?: { readonly label: string; readonly content: ReactNode };
+  readonly query?: PaneQuery;
   /** The pane's resource; its canonical actions end the More menu. */
   readonly actionSubject?: ResourceActionSubject;
   readonly menuActions?: readonly ActionDescriptor[];
   readonly refresh?: PaneRefresh;
 }
-
-/** A collection row excludes the search row and the instrument. */
-export type PaneChrome = PaneChromeCommon &
-  (
-    | {
-        readonly collection: {
-          readonly label: string;
-          readonly content: ReactNode;
-          readonly focusInput: () => boolean;
-        };
-        readonly search?: never;
-        readonly instrument?: never;
-      }
-    | {
-        readonly collection?: never;
-        readonly search?: PaneSearch;
-        readonly instrument?: {
-          readonly label: string;
-          readonly content: ReactNode;
-        };
-      }
-  );
 
 /**
  * The pane's Companion tabs in order, all of one group. The default shows
@@ -200,7 +170,7 @@ function usePublish<K extends "chrome" | "companion" | "layout">(
   }, [store, key, value]);
 }
 
-/** A body's header, search or collection, instrument, menu and refresh. */
+/** A body's identity, independent navigation and query controls, menu and refresh. */
 export function usePaneChrome(chrome: PaneChrome | null): void {
   usePublish("chrome", chrome);
 }

@@ -164,10 +164,9 @@ export function createTextGeometry(
   function aim(
     to: ReaderTarget | Placement,
   ): { top: number; want: number } | null {
-    const view = scrollport.getBoundingClientRect();
-    if ("topPx" in to) {
+    if ("offsetPx" in to) {
       const rect = to.point.kind === "text" ? rectAt(to.point) : null;
-      return rect && { top: rect.top, want: view.top + to.topPx };
+      return rect && { top: rect.top, want: readingLine() + to.offsetPx };
     }
     if (to.kind === "anchor") {
       const element = anchor(to.unit, to.id);
@@ -228,13 +227,13 @@ export function createTextGeometry(
         },
         placement: {
           point,
-          topPx: (rect ? rect.top : line) - view.top,
+          offsetPx: (rect ? rect.top : line) - line,
           zoom: null,
         },
       };
     },
     scrollTo(to) {
-      if (!("topPx" in to) && to.kind === "edge") {
+      if (!("offsetPx" in to) && to.kind === "edge") {
         scrollport.scrollTop =
           to.edge === "start" ? 0 : scrollport.scrollHeight;
         return true;
@@ -246,7 +245,7 @@ export function createTextGeometry(
     },
     arrived(to) {
       const max = scrollport.scrollHeight - scrollport.clientHeight;
-      if (!("topPx" in to) && to.kind === "edge") {
+      if (!("offsetPx" in to) && to.kind === "edge") {
         return to.edge === "start"
           ? scrollport.scrollTop <= 0
           : scrollport.scrollTop >= max - 1;

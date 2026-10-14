@@ -92,8 +92,11 @@ it takes neither pointer nor keyboard input and records no reading progress.
 no module styles another module's internal dom. a caller adjusts a primitive
 only through its props, its `className` (a field primitive's rules weigh one
 class, so the caller's class meets them at equal weight) or a context token the
-primitive declares. a collection bar's compact select is `SelectField`'s
-`Inline` layout, not the toolbar reaching into it.
+primitive declares. pane query/navigation controls share declared density
+tokens owned by `PaneShell`'s control row; `SelectField`'s `Inline` layout owns its label and native select.
+`PaneQueryToolbar` owns wrapping and one bounded refinement region; shell
+measurement publishes its maximum height. essential controls never depend on
+horizontal scrolling. see [workspace controls](workspace.md).
 
 ## the lint
 

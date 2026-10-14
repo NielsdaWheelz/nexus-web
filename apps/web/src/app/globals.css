@@ -95,7 +95,6 @@
   --navbar-width: 240px;
   --navbar-collapsed-width: 48px;
   --pane-chrome-header-height: max(60px, 3.75rem);
-  --pane-chrome-instrument-height: max(40px, 2.5rem);
   --tabsbar-height: 40px;
   /* lib/mobileShell/viewport.tsx overwrites the mobile three at runtime. */
   --viewport-safe-top: env(safe-area-inset-top);

@@ -1,10 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import {
-  truncatePaneSearchQuery,
-  type PaneFilterRowsSearch,
-} from "@/lib/panes/paneChrome";
+import { truncatePaneSearchQuery } from "@/lib/panes/paneChrome";
 
 export interface PaneFilterRowsUnit {
   readonly singular: string;
@@ -46,7 +43,7 @@ export function paneFilterRowsStatusMessage(
   const shown = `${status.visibleCount}${query.trim() ? " matching" : ""} ${unit}`;
   switch (status.kind) {
     case "Partial":
-      return `${shown} among ${status.loadedCount} loaded; loading remaining ${status.unit.plural}.`;
+      return `${shown} among ${status.loadedCount} loaded; this is not the full collection.`;
     case "Complete":
       return `${shown} of ${status.totalCount} total.`;
     case "Retained":
@@ -68,8 +65,8 @@ export function paneCollectionRowsStatusMessage(
   switch (status.kind) {
     case "Partial":
       return query.trim()
-        ? `${status.visibleCount} matches in ${status.loadedCount} loaded; loading more`
-        : `${status.visibleCount} ${unit} in ${status.loadedCount} loaded; loading more`;
+        ? `${status.visibleCount} matches in ${status.loadedCount} loaded`
+        : `${status.visibleCount} ${unit} in ${status.loadedCount} loaded`;
     case "Complete":
       return status.visibleCount === status.totalCount
         ? `${status.visibleCount}${query.trim() ? " matching" : ""} ${unit}`
@@ -95,7 +92,6 @@ export function matchesPaneFilterQuery(
     )
   );
 }
-
 /** Visit-local filter text; a new source starts empty. */
 export function usePaneFilterRows(input: {
   readonly sourceKey: string;
@@ -118,28 +114,4 @@ export function usePaneFilterRows(input: {
     () => ({ query, onQueryChange, clearQuery, rowStatus }),
     [query, onQueryChange, clearQuery, rowStatus],
   );
-}
-
-/** The filter row a body publishes as its pane search (Find has its own). */
-export function usePaneTransientFilterRows(input: {
-  readonly sourceKey: string;
-  readonly inputLabel: string;
-  readonly placeholder: string;
-  readonly getRowStatus: (query: string) => PaneFilterRowsStatus;
-}): { readonly query: string; readonly search: PaneFilterRowsSearch } {
-  const { inputLabel, placeholder } = input;
-  const rows = usePaneFilterRows(input);
-  const search = useMemo<PaneFilterRowsSearch>(
-    () => ({
-      kind: "FilterRows",
-      query: rows.query,
-      inputLabel,
-      placeholder,
-      onQueryChange: rows.onQueryChange,
-      onDismiss: rows.clearQuery,
-      rowStatus: rows.rowStatus,
-    }),
-    [rows, inputLabel, placeholder],
-  );
-  return { query: rows.query, search };
 }

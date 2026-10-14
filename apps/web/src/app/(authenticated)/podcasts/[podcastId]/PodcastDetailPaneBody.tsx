@@ -5,22 +5,23 @@
 // episodes). While the subscription is live and the pane active, its
 // lifecycle stream refetches the head on every change.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useId, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import AcquisitionControl from "@/components/browse/AcquisitionControl";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import PodcastOverview from "@/components/podcasts/PodcastOverview";
-import PodcastViewBar, {
-  podcastViewHref,
-} from "@/components/podcasts/PodcastViewBar";
+import { podcastViewHref } from "@/lib/podcasts/view";
+import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
+import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
+import RadioGroup from "@/components/ui/RadioGroup";
 import Button from "@/components/ui/Button";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import PaneSection from "@/components/ui/PaneSection";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
+import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { presenceValueOr } from "@/lib/api/presence";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { listLibraryPlacements } from "@/lib/libraries/libraryPlacement";
@@ -283,39 +284,32 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
       ),
     [params, podcastId, router],
   );
-  const { inputRef, focusInput } = usePaneCollectionInput();
-  const collection = useMemo(
-    () => ({
-      label: "Filter podcast episodes",
-      content: (
-        <PodcastViewBar
-          inputRef={inputRef}
-          inputLabel="Filter podcast episodes"
-          placeholder="Filter episodes"
-          filterRows={filterRows}
-          sort={{
-            param: "sort",
-            label: "Sort episodes",
-            value: sort,
-            defaultValue: "newest",
-            options: SORTS,
-          }}
-          filters={[
-            {
-              param: "state",
-              label: "Playback",
-              value: state,
-              defaultValue: "all",
-              options: STATES,
-            },
-          ]}
-          onChange={replaceView}
-        />
-      ),
-      focusInput,
-    }),
-    [filterRows, focusInput, inputRef, replaceView, sort, state],
-  );
+  const { inputRef, focusInput } = usePaneQueryInput();
+  const queryStatusId = useId();
+  const playbackChoices = STATES.some((choice) => choice.value === state) ? STATES : [...STATES, { value: state, label: state }];
+  const sortChoices = SORTS.some((choice) => choice.value === sort) ? SORTS : [...SORTS, { value: sort, label: sort }];
+  const chips = state === "all" ? [] : [{ id: "state", label: `Playback: ${playbackChoices.find((choice) => choice.value === state)?.label}` }];
+  const queryControls = {
+    kind: "Controls" as const,
+    label: "Filter podcast episodes",
+    focusInput,
+    content: <PaneQueryToolbar
+      inputRef={inputRef}
+      input={{ label: "Filter podcast episodes", placeholder: "Filter episodes", value: filterRows.query, appliedValue: filterRows.query, onChange: filterRows.onQueryChange, onClear: filterRows.clearQuery }}
+      options={{
+        label: "Filters", activeCount: chips.length,
+        onClear: () => replaceView({ state: null }),
+        content: <RadioGroup label="Playback" value={state} choices={playbackChoices} onChange={(value) => replaceView({ state: value === "all" ? null : value })} />,
+      }}
+      sort={{ label: "Sort", value: sort, choices: sortChoices, onChange: (value) => replaceView({ sort: value === "newest" ? null : value }) }}
+      chips={{ items: chips, onRemove: () => replaceView({ state: null }) }}
+      status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} /> }}
+      onReset={sort !== "newest" || state !== "all" || filterRows.query ? () => {
+        filterRows.clearQuery();
+        replaceView({ sort: null, state: null });
+      } : undefined}
+    />,
+  };
   const execute = useMemo(
     () => podcastRefresh({ kind: "Podcast", podcastId }),
     [podcastId],
@@ -354,7 +348,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
           ? { kind: "Pending" }
           : { kind: "None" },
     },
-    collection,
+    query: queryControls,
   });
   const podcast = ready?.data.detail.podcast;
   useSetPaneLabel(

@@ -52,6 +52,12 @@ export interface PaneScopedRouter {
 
 /** What a body knows that its href alone does not say, and what it may do. */
 export type PaneRuntimeContextValue = PaneRuntimeFacts & PaneRuntimeCommands;
+
+/** Query and hash refinements belong to the same source within a visit. */
+export function paneSourceKey(runtime: PaneRuntimeContextValue): string {
+  return `${runtime.visitId}:${runtime.routeId}:${runtime.pathname}`;
+}
+
 interface PaneRuntimeFacts {
   paneId: string;
   visitId: string;

@@ -21,6 +21,7 @@ import { resolveDomTextRanges } from "@/lib/canonicalText/domTextRanges";
  * find keeps the way back.
  */
 export function useConversationFindSource(input: {
+  readonly ownerKey: string;
   readonly conversationId: string | null;
   readonly activeLeafMessageId: string | null;
   readonly messages: readonly Message[];
@@ -32,13 +33,14 @@ export function useConversationFindSource(input: {
   );
   const key =
     conversationId &&
-    JSON.stringify([conversationId, input.activeLeafMessageId, terminal]);
+    JSON.stringify([input.ownerKey, conversationId, input.activeLeafMessageId, terminal]);
   return useMemo(() => {
     if (!key) return null;
     let origin: ChatReadingPosition | null = null;
     return {
       key,
       label: "Find in conversation",
+      narrowLabel: null,
       prepare: () => null,
       search(options) {
         const blocks = Array.from(
@@ -75,10 +77,14 @@ export function useConversationFindSource(input: {
           },
         );
       },
-      async reveal(ranges) {
+      async reveal(ranges, signal) {
+        if (signal.aborted) return { kind: "Cancelled" };
+        const surface = scroll.current;
+        if (!surface || !ranges[0])
+          return { kind: "Failed", message: "This match is no longer shown. Retry the search." };
         origin ??= scroll.current?.captureReadingPosition() ?? null;
-        if (ranges[0]) scroll.current?.revealRange(ranges[0]);
-        return null;
+        surface.revealRange(ranges[0]);
+        return { kind: "Shown" };
       },
       paint: highlightPainter((ranges) => ranges),
       returnToOrigin() {

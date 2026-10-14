@@ -1,5 +1,5 @@
 /* The media pane around the reader: its states and banners, the pane-bar
- * instrument, the rail slot, the selection dock and quick note, evidence,
+ * navigation, the rail slot, the selection dock and quick note, evidence,
  * the transcript chrome and embed cards. */
 
 .layout {
@@ -37,20 +37,6 @@
   margin: var(--space-2) auto;
   padding: 0 var(--space-4);
   font-size: var(--text-sm);
-}
-
-.instrumentStatus {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-  white-space: nowrap;
-}
-
-.sectionSelect {
-  flex: 1 1 0;
-  min-width: 0;
 }
 
 .menuStatus {

@@ -95,12 +95,15 @@ export type ReaderTarget =
       readonly quads: readonly PdfQuad[];
     }
   | { readonly kind: "pdfDest"; readonly dest: string | readonly unknown[] }
+  /** A transient match in the current PDF query; never a saved locator. */
+  | { readonly kind: "pdfMatch"; readonly page: number; readonly index: number }
   | { readonly kind: "edge"; readonly edge: "start" | "end" };
-/** Where the eye is: a point and its pixel offset below the scrollport top. */
+/** Where the eye is: a point and its pixel offset from the visible reading line.
+ * offsetPx is positive below the line and negative above it; never persisted. */
 export interface Placement {
   readonly identity: string;
   readonly point: ReaderPoint;
-  readonly topPx: number;
+  readonly offsetPx: number;
   readonly zoom: number | null;
 }
 export interface Viewport {

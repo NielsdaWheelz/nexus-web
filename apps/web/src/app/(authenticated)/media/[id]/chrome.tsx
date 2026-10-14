@@ -1,19 +1,14 @@
 "use client";
 
-// The media pane's chrome around the reader: the header, the pane-bar
-// instrument (sections, or pdf pages and zoom), find, the inspector (Contents,
-// Evidence, the dossier), the view menu, the document map rail, the pane width
+// The media pane's chrome around the reader: the header, document navigation,
+// find, the inspector (Contents, Evidence, the dossier), the view menu, the document map rail, the pane width
 // a pdf asks for, and the reader's keys (g chords, focus mode).
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
-import { Activity, ChevronLeft, ChevronRight } from "lucide-react";
-import ActionMenu from "@/components/ui/ActionMenu";
-import Button from "@/components/ui/Button";
-import PaneToolbar from "@/components/ui/PaneToolbar";
-import Select from "@/components/ui/Select";
+import { Activity } from "lucide-react";
 import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/credits";
+import ReaderNavigation from "@/lib/documentReader/chrome/ReaderNavigation";
 import { MapRail, type RailMarker } from "@/lib/documentReader/chrome/MapRail";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
-import { PDF_ZOOM } from "@/lib/documentReader/model";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import type { FindController } from "@/lib/find/useFind";
 import type { MediaDetail } from "@/lib/media/mediaDetail";
@@ -34,105 +29,6 @@ import styles from "./media.module.css";
 
 const FOCUS_CYCLE = { off: "distraction_free", distraction_free: "paragraph", paragraph: "sentence", sentence: "off" } as const;
 
-/** Previous/next and the picker over the publisher's sections; `i / n` at the reading point. */
-function SectionInstrument({ reader }: { readonly reader: Reader }) {
-  const ready = useReaderState(reader, (s) => (s.document.status === "ready" && s.document.doc.kind === "text" ? s.document : null));
-  const current = useReaderState(reader, (s) =>
-    s.document.status === "ready" && s.viewport ? (s.document.structure.sectionAt(s.viewport.primary)?.id ?? null) : null,
-  );
-  const sections = useMemo(
-    () =>
-      ready?.doc.kind === "text"
-        ? [...ready.doc.sections].sort(
-            (a, b) =>
-              ready.structure.fraction({ kind: "text", ...a.at }) - ready.structure.fraction({ kind: "text", ...b.at }),
-          )
-        : [],
-    [ready],
-  );
-  const index = sections.findIndex((section) => section.id === current);
-  const go = (to: number) => {
-    const section = sections[to];
-    if (section) void reader.inspect({ kind: "point", point: { kind: "text", ...section.at } });
-  };
-  return (
-    <PaneToolbar
-      variant="Instrument"
-      controls={
-        <>
-          <Button variant="ghost" size="sm" iconOnly aria-label="Previous section" disabled={index <= 0} onClick={() => go(index - 1)}>
-            <ChevronLeft size={16} aria-hidden="true" />
-          </Button>
-          {index >= 0 ? (
-            <span className={styles.instrumentStatus} aria-label={`Section ${index + 1} of ${sections.length}`}>
-              {index + 1} / {sections.length}
-            </span>
-          ) : null}
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            aria-label="Next section"
-            disabled={index >= sections.length - 1}
-            onClick={() => go(index + 1)}
-          >
-            <ChevronRight size={16} aria-hidden="true" />
-          </Button>
-          <Select
-            size="sm"
-            className={styles.sectionSelect}
-            aria-label="Select section"
-            value={current ?? ""}
-            title={sections[index]?.label}
-            onChange={(event) => go(sections.findIndex((section) => section.id === event.target.value))}
-          >
-            <option value="" disabled>
-              between sections
-            </option>
-            {sections.map((section) => (
-              <option key={section.id} value={section.id}>
-                {section.label}
-              </option>
-            ))}
-          </Select>
-        </>
-      }
-    />
-  );
-}
-
-/** Pages are reader jumps (a held spot); zoom steps by a quarter within the ui range. */
-function PdfInstrument({ reader }: { readonly reader: Reader }) {
-  const pdf = useReaderState(reader, (s) => s.pdf);
-  if (!pdf) return null;
-  const page = (to: number) => void reader.inspect({ kind: "point", point: { kind: "pdf", page: to, y: 0 } });
-  return (
-    <PaneToolbar
-      variant="Instrument"
-      controls={
-        <>
-          <Button variant="ghost" size="sm" iconOnly aria-label="Previous page" disabled={pdf.page <= 1} onClick={() => page(pdf.page - 1)}>
-            <ChevronLeft size={16} aria-hidden="true" />
-          </Button>
-          <span className={styles.instrumentStatus} aria-label={`Page ${pdf.page} of ${pdf.pages}`}>
-            {pdf.page} / {pdf.pages}
-          </span>
-          <Button variant="ghost" size="sm" iconOnly aria-label="Next page" disabled={pdf.page >= pdf.pages} onClick={() => page(pdf.page + 1)}>
-            <ChevronRight size={16} aria-hidden="true" />
-          </Button>
-          <ActionMenu
-            label="More actions"
-            options={[
-              { kind: "command", id: "zoom-out", label: "Zoom out", disabled: pdf.scale <= PDF_ZOOM.min, onSelect: () => reader.setZoom(pdf.scale - PDF_ZOOM.step) },
-              { kind: "command", id: "zoom-in", label: "Zoom in", disabled: pdf.scale >= PDF_ZOOM.max, onSelect: () => reader.setZoom(pdf.scale + PDF_ZOOM.step) },
-            ]}
-          />
-        </>
-      }
-    />
-  );
-}
-
 export function useReaderChrome(input: {
   readonly media: MediaDetail | null;
   readonly failed: boolean;
@@ -152,6 +48,7 @@ export function useReaderChrome(input: {
   const runtime = requirePaneRuntime(usePaneRuntime(), "useReaderChrome");
   const { activateTarget, requestSecondarySurface, toggleSecondaryPane, paneId } = runtime;
   const { profile, setTheme, setFocusMode } = useReaderContext();
+  const documentFailed = useReaderState(reader, (s) => s.document.status === "failed");
   const kind = useReaderState(reader, (s) => (s.document.status === "ready" ? s.document.doc.kind : null));
   const sectioned = useReaderState(reader, (s) => s.document.status === "ready" && s.document.doc.kind === "text" && s.document.doc.sections.length > 0);
   const widthPx = useReaderState(reader, (s) => s.pdf?.widthPx ?? null);
@@ -163,14 +60,14 @@ export function useReaderChrome(input: {
     handle: id,
     bodies: { contents: input.contents, linkedItems: input.evidence },
   });
-  const instrument = useMemo(
+  const navigation = useMemo(
     () =>
       !readable
         ? undefined
         : kind === "pdf"
-          ? { label: "PDF controls", content: <PdfInstrument reader={reader} /> }
+          ? { label: "PDF controls", content: <ReaderNavigation reader={reader} /> }
           : kind === "text" && sectioned
-            ? { label: "section navigation", content: <SectionInstrument reader={reader} /> }
+            ? { label: "section navigation", content: <ReaderNavigation reader={reader} /> }
             : undefined,
     [kind, readable, reader, sectioned],
   );
@@ -229,16 +126,16 @@ export function useReaderChrome(input: {
           : input.failed
             ? { kind: "Resource" as const, resource: { status: "Failed" as const } }
             : undefined,
-        ...(instrument ? { instrument } : {}),
-        search: find
+        navigation,
+        query: find
           ? { kind: "Find" as const, find }
-          : media === null || (readable && media.kind !== "podcast_episode" && media.kind !== "video")
-            ? { kind: "Resolving" as const, control: "Find" as const }
+          : !input.failed && !documentFailed && (media === null || readable)
+            ? { kind: "Find" as const, find: null }
             : undefined,
         actionSubject: { ref: canonicalResourceRef({ scheme: "media", id }) },
         menuActions,
       }),
-      [authors, find, id, input.failed, instrument, media, menuActions, readable],
+      [authors, documentFailed, find, id, input.failed, navigation, media, menuActions, readable],
     ),
   );
   // a pdf's own width is the pane's minimum; the map rail sits beside the body.

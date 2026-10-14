@@ -10,7 +10,7 @@ import Pill from "@/components/ui/Pill";
 import ResourceList from "@/components/ui/ResourceList";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
+import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { usePagePrefix } from "@/lib/api/pagePrefix";
 import {
   fetchImportPage,
@@ -114,7 +114,7 @@ export default function ImportsList({
       ?.focus();
   }, [selected]);
 
-  const { inputRef, focusInput } = usePaneCollectionInput();
+  const { inputRef, focusInput } = usePaneQueryInput();
   const chips = useMemo(
     () => appliedFilters(view, state, display.displayLocale),
     [display.displayLocale, state, view],
@@ -173,7 +173,7 @@ export default function ImportsList({
   usePaneChrome(
     useMemo(
       () => ({
-        collection: { label: "Filter imports", content: toolbar, focusInput },
+        query: { kind: "Controls", label: "Search imports", content: toolbar, focusInput },
       }),
       [focusInput, toolbar],
     ),

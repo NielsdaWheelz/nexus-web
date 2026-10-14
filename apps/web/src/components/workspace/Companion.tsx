@@ -227,7 +227,11 @@ export function companionExpanded(
   secondary: WorkspaceSecondaryPane | null,
 ): boolean {
   return (
-    !(results !== null && chrome?.search?.kind === "Find") &&
+    !(
+      results !== null &&
+      chrome?.query?.kind === "Find" &&
+      chrome.query.find !== null
+    ) &&
     companion !== null &&
     secondary?.groupId === companion.groupId &&
     secondary.visibility === "visible"
