@@ -345,6 +345,7 @@ function Destinations({
           event reaches this document. */}
       <LibraryDestinationTrigger
         label="Libraries"
+        accessibleLabel="Libraries"
         emptyLabel="No additional libraries"
         selected={selected}
         expanded={open}

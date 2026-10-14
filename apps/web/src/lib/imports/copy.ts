@@ -1208,13 +1208,15 @@ export const UNCONFIRMED: FeedbackContent = {
     "Nexus could not confirm whether this was saved. Check status to find out.",
 };
 
-const notAdded = (message: string): AcceptanceFailure => ({
+const notAdded = (
+  message: string,
+): Extract<AcceptanceFailure, { kind: "Rejected" }> => ({
   kind: "Rejected",
   feedback: { tone: "Danger", title: "Couldn’t save", message },
 });
 
 /** Add's answer to each upload-session outcome of one frozen intent. */
-const ADD_OUTCOME: Readonly<Record<PlainOutcome, AcceptanceFailure>> = {
+const ADD_OUTCOME = {
   NeedsAttention: {
     kind: "Rejected",
     feedback: {
@@ -1252,7 +1254,7 @@ const ADD_OUTCOME: Readonly<Record<PlainOutcome, AcceptanceFailure>> = {
   ),
   IntentChanged: notAdded("This import changed. Start a new import."),
   FileMismatch: notAdded(FILE_DOES_NOT_MATCH),
-};
+} satisfies Readonly<Record<PlainOutcome, AcceptanceFailure>>;
 
 /**
  * Why an Add acceptance did not land: refused, unknown (replay the frozen
@@ -1286,6 +1288,10 @@ export function acceptanceFailure(error: unknown): AcceptanceFailure {
       reason: "StatusUnknown",
       feedback: { ...UNCONFIRMED, requestId },
     };
+  }
+  if (code === "E_LIBRARY_FORBIDDEN") {
+    const failure = ADD_OUTCOME.LibraryForbidden;
+    return { ...failure, feedback: { ...failure.feedback, requestId } };
   }
   return {
     kind: "Rejected",

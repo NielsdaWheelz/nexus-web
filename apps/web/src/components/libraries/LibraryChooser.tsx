@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Check, Loader2, Lock, Plus } from "lucide-react";
 import {
   FeedbackNotice,
@@ -39,7 +39,7 @@ export interface LibraryChooserProps {
 
   onToggle: (id: string) => void;
 
-  /** A mutation (create) or placement command/reconcile is in flight: disable every toggle. */
+  /** A mutation or placement reconciliation is in flight: freeze search and activation. */
   busy: boolean;
   /** A read (search / Load More / reconcile GET) is in flight: mark the listbox busy without disabling toggles. */
   loading: boolean;
@@ -83,6 +83,7 @@ export default function LibraryChooser({
   const otherHeaderId = `${baseId}-other-header`;
   const optionDomId = (rowId: string) => `${baseId}-option-${rowId}`;
   const composingRef = useRef(false);
+  const listRef = useRef<HTMLDivElement>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
 
   const hasCreate = create !== null;
@@ -116,6 +117,19 @@ export default function LibraryChooser({
     activeId !== null && actionables.some((a) => a.optionId === activeId)
       ? activeId
       : undefined;
+
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list || activeDescendant === undefined) return;
+    const option = document.getElementById(activeDescendant);
+    if (!option || !list.contains(option)) return;
+    const top = list.getBoundingClientRect().top + list.clientTop;
+    const bottom = top + list.clientHeight;
+    const optionRect = option.getBoundingClientRect();
+    // Only the chooser scrolls; scrollIntoView would also move its parent task.
+    if (optionRect.top < top) list.scrollTop += optionRect.top - top;
+    else if (optionRect.bottom > bottom) list.scrollTop += optionRect.bottom - bottom;
+  }, [activeDescendant, actionables]);
 
   function activate(optionId: string) {
     const target = actionables.find((a) => a.optionId === optionId);
@@ -266,6 +280,7 @@ export default function LibraryChooser({
           aria-describedby={statusId}
           aria-autocomplete="list"
           value={query}
+          readOnly={busy}
           placeholder={searchPlaceholder}
           autoCapitalize="off"
           autoCorrect="off"
@@ -292,13 +307,14 @@ export default function LibraryChooser({
           content={error.content}
           announcement="Assertive"
           actions={
-            error.onRetry === null
+            error.onRetry === null || busy
               ? undefined
               : [{ label: "Retry", onClick: error.onRetry }]
           }
         />
       ) : null}
       <div
+        ref={listRef}
         id={listboxId}
         role="listbox"
         aria-label={listLabel}

@@ -339,34 +339,40 @@ def _similar(
     targets: str,
     params: dict[str, object],
 ) -> list[dict[str, object]]:
-    """Calibrated nearest media neighbours of each media anchor, best first.
+    """Calibrated nearest media neighbours of the media anchors, best first.
 
-    The anchor's first chunk vector stands for its work; the ANN limit applies
-    per family so one family cannot crowd out the other."""
+    Each anchor's first chunk vector stands for its work. Rank all anchors in
+    one scan, with the exact chunk limit applied separately per anchor/family.
+    """
+    media_anchors = [
+        {"id": str(anchor.id), "rank": rank}
+        for rank, anchor in enumerate(anchors)
+        if anchor.scheme == "media"
+    ]
+    if not media_anchors:
+        return []
     provider, model, dimensions = _EMBEDDING
-    rows: list[tuple[float, int, UUID]] = []
-    for rank, anchor in enumerate(anchors):
-        if anchor.scheme != "media":
-            continue
-        neighbours = _media_neighbor_rows_sql(f"""
-            SELECT target_id AS media_id, family AS candidate_partition
-            FROM ({targets}) t
-            WHERE target_scheme = 'media' AND family IN ('GraphThread', 'Rediscovery')
-        """)
-        for peer_id, distance in db.execute(
-            text(f"SELECT peer_media_id, distance FROM ({neighbours}) n WHERE distance <= :max"),
+    neighbours = _media_neighbor_rows_sql(f"""
+        SELECT target_id AS media_id, family AS candidate_partition
+        FROM ({targets}) t
+        WHERE target_scheme = 'media' AND family IN ('GraphThread', 'Rediscovery')
+    """)
+    rows = [
+        (distance, rank, peer_id)
+        for rank, peer_id, distance in db.execute(
+            text(f"SELECT anchor_rank, peer_media_id, distance FROM ({neighbours}) n"),
             {
                 "viewer_id": viewer_id,
-                "anchor_media_id": anchor.id,
+                "media_anchors": json.dumps(media_anchors),
                 "embedding_provider": provider,
                 "embedding_model": model,
                 "embedding_dimensions": dimensions,
                 "candidate_limit": 400,
-                "max": 1 - _MIN_SIMILARITY,
+                "max_distance": 1 - _MIN_SIMILARITY,
                 **params,
             },
-        ):
-            rows.append((distance, rank, peer_id))
+        )
+    ]
     rows.sort()
     return [
         {"id": str(peer_id), "rank": rank, "ordinal": ordinal}
@@ -375,21 +381,19 @@ def _similar(
 
 
 def _media_neighbor_rows_sql(eligible_media_relation: str) -> str:
-    """Same-active-tuple media neighbors per bounded candidate partition.
+    """Exact neighbours per anchor and eligible candidate partition.
 
-    ``eligible_media_relation`` must be a checked-in composable relation with a
-    ``media_id`` and non-null ``candidate_partition`` column; it is never request
-    text. The returned SQL binds ``:anchor_media_id``, the caller's calibrated
-    ``:embedding_provider``, ``:embedding_model`` and ``:embedding_dimensions``
-    (an anchor under another active identity has no neighbours), and
-    ``:candidate_limit``, plus any binds owned by the supplied relation. It returns
-    ``peer_media_id``, minimum cosine ``distance``, ``embedding_provider``,
-    ``embedding_model``, ``embedding_dimensions``, and ``candidate_partition``.
+    The checked-in relation supplies ``media_id`` and ``candidate_partition``.
+    ``:media_anchors`` supplies the bounded ``id``/``rank`` records; the other
+    binds are the calibrated embedding identity, chunk limit and max distance.
+    Each anchor's first active chunk is chosen by ``(chunk_idx, id)``. Peers
+    must have that same active embedding identity and pass target eligibility
+    before ranking. The result retains the anchor rank, partition, peer id and
+    minimum cosine distance.
 
-    Eligibility is joined before the ANN candidate limit. The anchor vector is
-    the first active media chunk by ``(chunk_idx, id)`` and peer embeddings must
-    match that exact active provider/model/dimensions tuple. Limiting is applied
-    independently to every caller-owned partition.
+    Filter distance before ranking: larger distances cannot displace an admitted
+    chunk or change its peer's minimum. Sharing one embedding scan across the
+    anchors avoids rereading the entire eligible corpus for each of five vectors.
     """
     return f"""
         WITH eligible_media AS (
@@ -400,95 +404,59 @@ def _media_neighbor_rows_sql(eligible_media_relation: str) -> str:
             FROM eligible_media
             WHERE candidate_partition IS NOT NULL
         ),
-        candidate_partitions AS (
-            SELECT DISTINCT candidate_partition
-            FROM eligible_media_partitions
+        anchors AS (
+            SELECT * FROM jsonb_to_recordset(CAST(:media_anchors AS jsonb))
+                AS a(id uuid, rank integer)
         ),
-        anchor_state AS (
-            SELECT
-                cis.active_embedding_provider AS embedding_provider,
-                cis.active_embedding_model AS embedding_model
-            FROM content_index_states cis
-            WHERE cis.owner_kind = 'media'
-              AND cis.owner_id = :anchor_media_id
-              AND cis.status = 'ready'
-              AND cis.active_embedding_provider = :embedding_provider
-              AND cis.active_embedding_model = :embedding_model
+        anchor_vectors AS (
+            SELECT a.id AS anchor_media_id, a.rank AS anchor_rank, av.vector
+            FROM anchors a
+            CROSS JOIN LATERAL (
+                SELECT ce.embedding_vector AS vector
+                FROM content_chunks cc
+                JOIN content_embeddings ce ON ce.chunk_id = cc.id
+                JOIN content_index_states cis
+                  ON cis.owner_kind = 'media' AND cis.owner_id = a.id
+                 AND cis.status = 'ready'
+                 AND cis.active_embedding_provider = :embedding_provider
+                 AND cis.active_embedding_model = :embedding_model
+                WHERE cc.owner_kind = 'media' AND cc.owner_id = a.id
+                  AND ce.embedding_provider = :embedding_provider
+                  AND ce.embedding_model = :embedding_model
+                  AND ce.embedding_dimensions = :embedding_dimensions
+                  AND ce.embedding_vector IS NOT NULL
+                ORDER BY cc.chunk_idx, cc.id
+                LIMIT 1
+            ) av
         ),
-        anchor_vector AS (
-            SELECT
-                ce.embedding_vector AS vector,
-                ce.embedding_provider,
-                ce.embedding_model,
-                ce.embedding_dimensions
-            FROM content_chunks cc
-            JOIN content_embeddings ce ON ce.chunk_id = cc.id
-            JOIN anchor_state ast
-              ON ast.embedding_provider = ce.embedding_provider
-             AND ast.embedding_model = ce.embedding_model
-            WHERE cc.owner_kind = 'media'
-              AND cc.owner_id = :anchor_media_id
+        ranked_chunks AS (
+            SELECT av.anchor_rank, eligible.candidate_partition, cc.owner_id AS peer_media_id,
+                   ce.embedding_vector <=> av.vector AS distance,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY av.anchor_rank, eligible.candidate_partition
+                       ORDER BY ce.embedding_vector <=> av.vector, cc.owner_id, cc.id
+                   ) AS candidate_rank
+            FROM content_embeddings ce
+            JOIN content_chunks cc ON cc.id = ce.chunk_id
+            JOIN eligible_media_partitions eligible ON eligible.media_id = cc.owner_id
+            JOIN content_index_states peer_state
+              ON peer_state.owner_kind = 'media' AND peer_state.owner_id = cc.owner_id
+             AND peer_state.status = 'ready'
+             AND peer_state.active_embedding_provider = :embedding_provider
+             AND peer_state.active_embedding_model = :embedding_model
+            CROSS JOIN anchor_vectors av
+            WHERE cc.owner_kind = 'media' AND cc.owner_id <> av.anchor_media_id
+              AND ce.embedding_provider = :embedding_provider
+              AND ce.embedding_model = :embedding_model
               AND ce.embedding_dimensions = :embedding_dimensions
               AND ce.embedding_vector IS NOT NULL
-            ORDER BY cc.chunk_idx ASC, cc.id ASC
-            LIMIT 1
-        ),
-        nearest_chunks AS (
-            SELECT
-                nearest.peer_media_id,
-                nearest.distance,
-                nearest.embedding_provider,
-                nearest.embedding_model,
-                nearest.embedding_dimensions,
-                partitions.candidate_partition
-            FROM anchor_vector av
-            CROSS JOIN candidate_partitions partitions
-            CROSS JOIN LATERAL (
-                SELECT
-                    cc.owner_id AS peer_media_id,
-                    (ce.embedding_vector <=> av.vector) AS distance,
-                    ce.embedding_provider,
-                    ce.embedding_model,
-                    ce.embedding_dimensions
-                FROM content_embeddings ce
-                JOIN content_chunks cc ON cc.id = ce.chunk_id
-                JOIN eligible_media_partitions eligible
-                  ON eligible.media_id = cc.owner_id
-                 AND eligible.candidate_partition = partitions.candidate_partition
-                JOIN content_index_states peer_state
-                  ON peer_state.owner_kind = 'media'
-                 AND peer_state.owner_id = cc.owner_id
-                 AND peer_state.status = 'ready'
-                 AND peer_state.active_embedding_provider = av.embedding_provider
-                 AND peer_state.active_embedding_model = av.embedding_model
-                WHERE cc.owner_kind = 'media'
-                  AND cc.owner_id <> :anchor_media_id
-                  AND ce.embedding_provider = av.embedding_provider
-                  AND ce.embedding_model = av.embedding_model
-                  AND ce.embedding_dimensions = av.embedding_dimensions
-                  AND ce.embedding_vector IS NOT NULL
-                ORDER BY
-                    ce.embedding_vector <=> av.vector ASC,
-                    cc.owner_id ASC,
-                    cc.id ASC
-                LIMIT :candidate_limit
-            ) nearest
+              AND ce.embedding_vector <=> av.vector <= :max_distance
         )
-        SELECT
-            peer_media_id,
-            MIN(distance) AS distance,
-            embedding_provider,
-            embedding_model,
-            embedding_dimensions,
-            candidate_partition
-        FROM nearest_chunks
-        GROUP BY
-            peer_media_id,
-            embedding_provider,
-            embedding_model,
-            embedding_dimensions,
-            candidate_partition
-        ORDER BY candidate_partition ASC, distance ASC, peer_media_id ASC
+        SELECT anchor_rank, candidate_partition, peer_media_id, MIN(distance) AS distance
+        FROM ranked_chunks
+        WHERE candidate_rank <= :candidate_limit
+        GROUP BY anchor_rank, candidate_partition, peer_media_id
+        ORDER BY anchor_rank, candidate_partition, distance, peer_media_id
     """
 
 

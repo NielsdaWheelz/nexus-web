@@ -37,6 +37,7 @@ export default function LibraryPlacementOverlay({
   return (
     <LibraryChooserSurface
       active={session !== null}
+      presentation="Responsive"
       onClose={onClose}
       anchor={session ? session.options.anchor : () => null}
       returnFocusFallback={fallback?.kind === "Present" ? fallback.value : undefined}

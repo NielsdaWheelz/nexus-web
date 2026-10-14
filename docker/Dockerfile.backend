@@ -101,7 +101,8 @@ RUN chmod -R u=rwX,go=rX /app/apps/api
 USER nexus:nexus
 
 EXPOSE 8000
-CMD ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Cancel persistent streams before the production container's 30s stop grace.
+CMD ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "20"]
 
 
 FROM backend-runtime AS worker-runtime

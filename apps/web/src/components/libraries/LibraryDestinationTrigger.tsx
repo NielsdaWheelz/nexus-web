@@ -1,18 +1,20 @@
 "use client";
 
-import { forwardRef } from "react";
+import { forwardRef, type MouseEventHandler } from "react";
 import { ChevronDown } from "lucide-react";
 import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
 import styles from "./LibraryDestinationTrigger.module.css";
 
 export interface LibraryDestinationTriggerProps {
   label: string;
+  /** Source-specific prefix; selected names are appended in full. */
+  accessibleLabel: string;
   /** Caller-owned collapsed empty summary. Required; there is no shared default. */
   emptyLabel: string;
   selected: readonly LibraryDestinationSelection[];
   expanded: boolean;
   disabled: boolean;
-  onToggle: () => void;
+  onToggle: MouseEventHandler<HTMLButtonElement>;
   /** What the trigger opens: a chooser dialog surface, or an inline region by id. */
   discloses: { kind: "dialog" } | { kind: "region"; id: string };
 }
@@ -26,7 +28,7 @@ const LibraryDestinationTrigger = forwardRef<
   HTMLButtonElement,
   LibraryDestinationTriggerProps
 >(function LibraryDestinationTrigger(
-  { label, emptyLabel, selected, expanded, disabled, onToggle, discloses },
+  { label, accessibleLabel, emptyLabel, selected, expanded, disabled, onToggle, discloses },
   ref,
 ) {
   const names = selected
@@ -47,7 +49,7 @@ const LibraryDestinationTrigger = forwardRef<
       aria-expanded={expanded}
       aria-haspopup={discloses.kind === "dialog" ? "dialog" : undefined}
       aria-controls={discloses.kind === "region" ? discloses.id : undefined}
-      aria-label={`${label}: ${names.length === 0 ? emptyLabel : names.join(", ")}`}
+      aria-label={`${accessibleLabel}: ${names.length === 0 ? emptyLabel : names.join(", ")}`}
       disabled={disabled}
       onClick={onToggle}
     >

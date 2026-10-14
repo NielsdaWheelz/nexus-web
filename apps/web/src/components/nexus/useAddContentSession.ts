@@ -4,8 +4,8 @@
  * The Add session (docs/modules/add-content.md): stage links and files, send
  * them two at a time, reconcile unknown outcomes and file accepted items into
  * libraries, all browser-local. What was sent is frozen: an unknown outcome
- * keeps its intent for exact replay, and restaging mints a fresh key. At most
- * one mutation runs; stop and reset fence every older completion, and a
+ * keeps its intent for exact replay; a new attempt gets a key at submission.
+ * At most one mutation runs; stop and reset fence every older completion, and a
  * placement read writes only while it still owns that media's placement.
  */
 
@@ -20,7 +20,6 @@ import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
-import { extractUrls } from "@/lib/extractUrls";
 import {
   UNCONFIRMED,
   acceptanceFailure,
@@ -28,8 +27,6 @@ import {
 } from "@/lib/imports/copy";
 import {
   addMediaFromUrl,
-  getFileUploadError,
-  getFileUploadKind,
   uploadIngestFile,
   type AcceptedIngest,
   type UploadFileKind,
@@ -48,8 +45,15 @@ import {
 } from "@/lib/libraries/libraryPlacement";
 import { libraryRequestErrorMessage } from "@/lib/libraries/libraryRequestErrorMessage";
 import type { AddSeed } from "@/lib/nexus/model";
+import {
+  findAmbiguousUrlSplit,
+  parseAddUrlList,
+  validateDraftSource,
+  type AddSource,
+  type DraftSource,
+} from "./addInput";
 
-const MAX_ITEMS = 20;
+export const MAX_ADD_ITEMS = 20;
 const EMPTY_SEED: AddSeed = { kind: "Content", initialDestinations: [] };
 const STOPPED: FeedbackContent = {
   tone: "Warning",
@@ -57,14 +61,11 @@ const STOPPED: FeedbackContent = {
   message: "Server changes that already committed may remain.",
 };
 
-type AddSource =
-  | { kind: "Url"; url: string }
-  | { kind: "File"; file: File; fileKind: UploadFileKind };
 type FileSummary = {
   kind: "File";
   name: string;
   sizeBytes: number;
-  fileKind: UploadFileKind | "Unsupported";
+  fileKind: UploadFileKind;
 };
 type AcceptanceIntent = Readonly<{
   source: AddSource;
@@ -79,13 +80,14 @@ type UrlIntent = AcceptanceIntent & {
 };
 
 export type AddItem =
+  | { readonly kind: "Insertion"; readonly id: string }
   | {
-      kind: "Invalid";
-      id: string;
-      source: FileSummary;
-      feedback: FeedbackContent;
+      readonly kind: "Draft";
+      readonly id: string;
+      readonly source: DraftSource;
+      readonly destinations: readonly LibraryDestinationSelection[];
+      readonly showFeedback: boolean;
     }
-  | { kind: "Draft"; id: string; intent: AcceptanceIntent }
   | { kind: "Queued"; id: string; intent: AcceptanceIntent }
   | { kind: "Submitting"; id: string; intent: FileIntent; phase: UploadPhase }
   | {
@@ -156,30 +158,53 @@ type Mutation =
 
 export type AddSessionState = Readonly<{
   sessionId: string;
-  urlInput: { text: string; feedback?: FeedbackContent };
   intakeFeedback?: FeedbackContent;
   items: readonly AddItem[];
-  defaultDestinations: readonly LibraryDestinationSelection[];
+  newItemDestinations: readonly LibraryDestinationSelection[];
   placementByMediaId: ReadonlyMap<string, PlacementState>;
   mutation: Mutation;
 }>;
 
+export type AddLeaveReason = "Stop" | "Unconfirmed" | "Discard" | null;
+
+export type UrlPasteResult =
+  | { kind: "Native" }
+  | { kind: "Applied"; focusItemId: string | null }
+  | { kind: "Rejected" };
+
 export interface AddContentSessionController {
   readonly state: AddSessionState;
-  readonly dirty: boolean;
+  readonly leaveReason: AddLeaveReason;
   start(seed: AddSeed): string;
-  setUrlText(text: string): void;
-  reviewUrls(): boolean;
-  stageFiles(files: readonly File[]): boolean;
+  setItemUrl(input: {
+    itemId: string;
+    text: string;
+    origin: "Typing" | "Paste";
+  }): void;
+  revealItemFeedback(input: { itemId: string }): void;
+  pasteUrls(input: {
+    itemId: string;
+    text: string;
+    selectionStart: number | null;
+    selectionEnd: number | null;
+  }): UrlPasteResult;
+  splitItemUrl(input: {
+    itemId: string;
+  }): Exclude<UrlPasteResult, { kind: "Native" }>;
+  stageFiles(input: { files: readonly File[] }): boolean;
   removeItem(itemId: string): void;
   restageItem(itemId: string): void;
-  setDefaultDestinations(
-    destinations: readonly LibraryDestinationSelection[],
-  ): void;
-  setItemDestinations(
-    itemId: string,
-    destinations: readonly LibraryDestinationSelection[],
-  ): void;
+  setNewItemDestinations(input: {
+    destinations: readonly LibraryDestinationSelection[];
+  }): void;
+  setItemDestinations(input: {
+    itemId: string;
+    destinations: readonly LibraryDestinationSelection[];
+  }): void;
+  setDraftLibrary(input: {
+    destination: LibraryDestinationSelection;
+    included: boolean;
+  }): void;
   submit(): Promise<void>;
   reconcileAcceptance(itemId: string): Promise<void>;
   refreshPlacements(mediaIds: readonly string[]): Promise<void>;
@@ -198,13 +223,62 @@ export interface AddContentSessionController {
 }
 
 function initialState(seed: AddSeed): AddSessionState {
+  const { cells } = parseAddUrlList(seed.initialUrlDraft ?? "");
+  if (cells.length > MAX_ADD_ITEMS) {
+    // justify-defect: Add seeds are owned inputs; callers must respect capacity.
+    throw new Error(
+      `An Add seed cannot contain more than ${MAX_ADD_ITEMS} items.`,
+    );
+  }
   return {
     sessionId: createRandomId("add-session"),
-    urlInput: { text: seed.initialUrlDraft ?? "" },
-    items: [],
-    defaultDestinations: [...seed.initialDestinations],
+    items: [
+      ...cells.map(
+        (text): AddItem => ({
+          kind: "Draft",
+          id: createRandomId("add-item"),
+          source: { kind: "Url", text },
+          destinations: [...seed.initialDestinations],
+          showFeedback: true,
+        }),
+      ),
+      { kind: "Insertion", id: createRandomId("add-item") },
+    ],
+    newItemDestinations: [...seed.initialDestinations],
     placementByMediaId: new Map(),
     mutation: { kind: "Idle" },
+  };
+}
+
+export function isPopulatedAddItem(row: AddItem): boolean {
+  switch (row.kind) {
+    case "Insertion":
+      return false;
+    case "Draft":
+      return row.source.kind === "File" || row.source.text.trim() !== "";
+    case "Queued":
+    case "Submitting":
+    case "Rejected":
+    case "AcceptanceUnresolved":
+    case "Accepted":
+      return true;
+  }
+}
+
+function draftFromIntent(row: {
+  id: string;
+  intent: AcceptanceIntent;
+}): Extract<AddItem, { kind: "Draft" }> {
+  const { source, destinations } = row.intent;
+  return {
+    kind: "Draft",
+    id: row.id,
+    source:
+      source.kind === "Url"
+        ? { kind: "Url", text: source.url }
+        : { kind: "File", file: source.file },
+    destinations: [...destinations],
+    showFeedback: true,
   };
 }
 
@@ -297,10 +371,10 @@ export function useAddContentSession(): AddContentSessionController {
   }, [state.mutation.kind]);
 
   function start(seed: AddSeed) {
+    const next = initialState(seed);
     abort.current.abort();
     abort.current = new AbortController();
     createIds.current.clear();
-    const next = initialState(seed);
     update(() => next);
     return next.sessionId;
   }
@@ -316,7 +390,7 @@ export function useAddContentSession(): AddContentSessionController {
       ...snapshot,
       mutation: { kind: "Idle" },
       items: snapshot.items.map((row): AddItem => {
-        if (row.kind === "Queued") return { ...row, kind: "Draft" };
+        if (row.kind === "Queued") return draftFromIntent(row);
         if (row.kind !== "Submitting") return row;
         return row.intent.source.kind === "File"
           ? {
@@ -357,100 +431,231 @@ export function useAddContentSession(): AddContentSessionController {
       ),
     }));
   }
-  function setUrlText(text: string) {
-    if (current.current.mutation.kind === "Idle") {
-      update((snapshot) => ({ ...snapshot, urlInput: { text } }));
+  function intakeAllowed() {
+    if (current.current.mutation.kind === "Idle") return true;
+    update((snapshot) => ({
+      ...snapshot,
+      intakeFeedback: {
+        tone: "Warning",
+        title:
+          "Wait for this operation to finish, or stop it before adding items.",
+      },
+    }));
+    return false;
+  }
+  function hasCapacity({
+    count,
+    replaced = 0,
+  }: {
+    count: number;
+    replaced?: number;
+  }) {
+    const places =
+      MAX_ADD_ITEMS -
+      current.current.items.filter(isPopulatedAddItem).length +
+      replaced;
+    if (count <= places) return true;
+    update((snapshot) => ({
+      ...snapshot,
+      intakeFeedback: {
+        tone: "Danger",
+        title: `Add up to ${MAX_ADD_ITEMS} items at a time.`,
+        message: `${places} ${places === 1 ? "place" : "places"} left. ${
+          count === 1 ? "This item wasn’t" : `These ${count} items weren’t`
+        } added.`,
+      },
+    }));
+    return false;
+  }
+  function setItemUrl({
+    itemId,
+    text,
+    origin,
+  }: {
+    itemId: string;
+    text: string;
+    origin: "Typing" | "Paste";
+  }) {
+    const snapshot = current.current;
+    if (snapshot.mutation.kind !== "Idle") return;
+    const row = snapshot.items.find((next) => next.id === itemId);
+    if (
+      row?.kind !== "Insertion" &&
+      !(row?.kind === "Draft" && row.source.kind === "Url")
+    ) {
+      return;
+    }
+    if (row.kind === "Insertion" && text === "") return;
+    if (
+      !hasCapacity({
+        count: text.trim() === "" ? 0 : 1,
+        replaced: isPopulatedAddItem(row) ? 1 : 0,
+      })
+    ) {
+      return;
+    }
+    const next: AddItem = {
+      kind: "Draft",
+      id: row.id,
+      source: { kind: "Url", text },
+      destinations:
+        row.kind === "Draft"
+          ? row.destinations
+          : [...snapshot.newItemDestinations],
+      showFeedback:
+        origin === "Paste" || (row.kind === "Draft" && row.showFeedback),
+    };
+    update((state) => ({
+      ...state,
+      intakeFeedback: undefined,
+      items:
+        row.kind === "Insertion"
+          ? [
+              ...state.items.slice(0, -1),
+              next,
+              { kind: "Insertion", id: createRandomId("add-item") },
+            ]
+          : state.items.map((entry) => (entry.id === row.id ? next : entry)),
+    }));
+  }
+  function revealItemFeedback({ itemId }: { itemId: string }) {
+    if (current.current.mutation.kind !== "Idle") return;
+    const row = current.current.items.find((next) => next.id === itemId);
+    if (row?.kind === "Draft" && !row.showFeedback) {
+      item({ ...row, showFeedback: true });
     }
   }
-  function stage(items: readonly AddItem[], source: "Url" | "File") {
-    if (current.current.items.length + items.length > MAX_ITEMS) {
-      const feedback: FeedbackContent = {
-        tone: "Danger",
-        title: "Add up to 20 items at a time.",
-      };
-      update((next) =>
-        source === "Url"
-          ? { ...next, urlInput: { ...next.urlInput, feedback } }
-          : { ...next, intakeFeedback: feedback },
-      );
-      return false;
+  function replaceUrlCells({
+    row,
+    cells,
+  }: {
+    row: Extract<AddItem, { kind: "Insertion" | "Draft" }>;
+    cells: readonly string[];
+  }): Exclude<UrlPasteResult, { kind: "Native" }> {
+    if (cells.length === 0) return { kind: "Applied", focusItemId: null };
+    if (
+      !hasCapacity({
+        count: cells.length,
+        replaced: isPopulatedAddItem(row) ? 1 : 0,
+      })
+    ) {
+      return { kind: "Rejected" };
     }
-    update((next) => ({
-      ...next,
-      urlInput: source === "Url" ? { text: "" } : next.urlInput,
+    const destinations =
+      row.kind === "Draft"
+        ? row.destinations
+        : current.current.newItemDestinations;
+    const inserted = cells.map(
+      (text, index): Extract<AddItem, { kind: "Draft" }> => ({
+        kind: "Draft",
+        id: index === 0 ? row.id : createRandomId("add-item"),
+        source: { kind: "Url", text },
+        destinations: [...destinations],
+        showFeedback: true,
+      }),
+    );
+    update((snapshot) => ({
+      ...snapshot,
       intakeFeedback: undefined,
-      items: [...next.items, ...items],
+      items: [
+        ...snapshot.items.flatMap<AddItem>((entry) =>
+          entry.id === row.id ? inserted : [entry],
+        ),
+        ...(row.kind === "Insertion"
+          ? [{ kind: "Insertion" as const, id: createRandomId("add-item") }]
+          : []),
+      ],
+    }));
+    return { kind: "Applied", focusItemId: inserted[inserted.length - 1].id };
+  }
+  function pasteUrls({
+    itemId,
+    text,
+    selectionStart,
+    selectionEnd,
+  }: {
+    itemId: string;
+    text: string;
+    selectionStart: number | null;
+    selectionEnd: number | null;
+  }): UrlPasteResult {
+    if (!intakeAllowed()) return { kind: "Rejected" };
+    const row = current.current.items.find((next) => next.id === itemId);
+    if (
+      row?.kind !== "Insertion" &&
+      !(row?.kind === "Draft" && row.source.kind === "Url")
+    ) {
+      return { kind: "Rejected" };
+    }
+    const parsed = parseAddUrlList(text);
+    if (!parsed.hasDelimiters) return { kind: "Native" };
+    if (parsed.cells.length === 0) return { kind: "Applied", focusItemId: null };
+    if (
+      row.kind === "Draft" &&
+      row.source.kind === "Url" &&
+      row.source.text.trim() !== "" &&
+      !(selectionStart === 0 && selectionEnd === row.source.text.length)
+    ) {
+      update((snapshot) => ({
+        ...snapshot,
+        intakeFeedback: {
+          tone: "Warning",
+          title: "Select the whole link to paste a list.",
+        },
+      }));
+      return { kind: "Rejected" };
+    }
+    return replaceUrlCells({ row, cells: parsed.cells });
+  }
+  function splitItemUrl({
+    itemId,
+  }: {
+    itemId: string;
+  }): Exclude<UrlPasteResult, { kind: "Native" }> {
+    if (!intakeAllowed()) return { kind: "Rejected" };
+    const row = current.current.items.find((next) => next.id === itemId);
+    if (row?.kind !== "Draft" || row.source.kind !== "Url") {
+      return { kind: "Rejected" };
+    }
+    const cells = findAmbiguousUrlSplit(row.source.text);
+    if (cells === null) return { kind: "Rejected" };
+    return replaceUrlCells({ row, cells });
+  }
+  function stageFiles({ files }: { files: readonly File[] }) {
+    if (files.length === 0) return false;
+    if (!intakeAllowed() || !hasCapacity({ count: files.length })) return false;
+    update((snapshot) => ({
+      ...snapshot,
+      intakeFeedback: undefined,
+      items: [
+        ...snapshot.items.slice(0, -1),
+        ...files.map(
+          (file): AddItem => ({
+            kind: "Draft",
+            id: createRandomId("add-item"),
+            source: { kind: "File", file },
+            destinations: [...snapshot.newItemDestinations],
+            showFeedback: true,
+          }),
+        ),
+        ...snapshot.items.slice(-1),
+      ],
     }));
     return true;
   }
-  function reviewUrls() {
-    const snapshot = current.current;
-    if (snapshot.mutation.kind !== "Idle") return false;
-    const urls = extractUrls(snapshot.urlInput.text);
-    if (urls.length === 0) {
-      const feedback: FeedbackContent = {
-        tone: "Danger",
-        title: "Paste one or more http:// or https:// URLs.",
-      };
-      update((next) => ({ ...next, urlInput: { ...next.urlInput, feedback } }));
-      return false;
-    }
-    return stage(
-      urls.map((url) => ({
-        kind: "Draft",
-        id: createRandomId("add-item"),
-        intent: {
-          source: { kind: "Url", url },
-          destinations: [...snapshot.defaultDestinations],
-          idempotencyKey: createRandomId("media-url"),
-        },
-      })),
-      "Url",
-    );
-  }
-  function stageFiles(files: readonly File[]) {
-    const snapshot = current.current;
-    if (snapshot.mutation.kind !== "Idle" || files.length === 0) return false;
-    return stage(
-      files.map((file): AddItem => {
-        const fileKind = getFileUploadKind(file);
-        const error = getFileUploadError(file);
-        if (error !== null || fileKind === null) {
-          return {
-            kind: "Invalid",
-            id: createRandomId("add-item"),
-            source: {
-              kind: "File",
-              name: file.name,
-              sizeBytes: file.size,
-              fileKind: fileKind ?? "Unsupported",
-            },
-            feedback: {
-              tone: "Danger",
-              title: error ?? "Only PDF and EPUB files are supported.",
-            },
-          };
-        }
-        return {
-          kind: "Draft",
-          id: createRandomId("add-item"),
-          intent: {
-            source: { kind: "File", file, fileKind },
-            destinations: [...snapshot.defaultDestinations],
-            idempotencyKey: createRandomId("media-upload"),
-          },
-        };
-      }),
-      "File",
-    );
-  }
   function removeItem(itemId: string) {
     if (current.current.mutation.kind !== "Idle") return;
+    if (
+      current.current.items.find((row) => row.id === itemId)?.kind === "Insertion"
+    ) {
+      return;
+    }
     update((snapshot) => {
       const items = snapshot.items.filter((row) => row.id !== itemId);
       const retained = acceptedMediaIds({ ...snapshot, items });
       return {
         ...snapshot,
+        intakeFeedback: undefined,
         items,
         placementByMediaId: new Map(
           [...snapshot.placementByMediaId].filter(([mediaId]) =>
@@ -465,47 +670,70 @@ export function useAddContentSession(): AddContentSessionController {
     const row = current.current.items.find((next) => next.id === itemId);
     if (row?.kind !== "Rejected" && row?.kind !== "AcceptanceUnresolved")
       return;
-    const idempotencyKey = createRandomId("media-restage");
-    item({
-      kind: "Draft",
-      id: row.id,
-      intent: { ...row.intent, idempotencyKey },
-    });
+    const draft = draftFromIntent(row);
+    update((snapshot) => ({
+      ...snapshot,
+      intakeFeedback: undefined,
+      items: snapshot.items.map((next) => (next.id === row.id ? draft : next)),
+    }));
   }
-  function setDefaultDestinations(
-    destinations: readonly LibraryDestinationSelection[],
-  ) {
+  function setNewItemDestinations({
+    destinations,
+  }: {
+    destinations: readonly LibraryDestinationSelection[];
+  }) {
     if (current.current.mutation.kind !== "Idle") return;
     update((snapshot) => ({
       ...snapshot,
-      defaultDestinations: [...destinations],
-      items: snapshot.items.map((row) =>
-        row.kind === "Draft"
-          ? {
-              ...row,
-              intent: { ...row.intent, destinations: [...destinations] },
-            }
-          : row,
-      ),
+      newItemDestinations: [...destinations],
     }));
   }
-  function setItemDestinations(
-    itemId: string,
-    destinations: readonly LibraryDestinationSelection[],
-  ) {
+  function setItemDestinations({
+    itemId,
+    destinations,
+  }: {
+    itemId: string;
+    destinations: readonly LibraryDestinationSelection[];
+  }) {
     if (current.current.mutation.kind !== "Idle") return;
     const row = current.current.items.find((next) => next.id === itemId);
     if (row?.kind === "Draft") {
       item({
         ...row,
-        intent: { ...row.intent, destinations: [...destinations] },
+        destinations: [...destinations],
       });
     }
+  }
+  function setDraftLibrary({
+    destination,
+    included,
+  }: {
+    destination: LibraryDestinationSelection;
+    included: boolean;
+  }) {
+    if (current.current.mutation.kind !== "Idle") return;
+    const change = (destinations: readonly LibraryDestinationSelection[]) => {
+      if (!included) {
+        return destinations.filter((next) => next.id !== destination.id);
+      }
+      return destinations.some((next) => next.id === destination.id)
+        ? destinations
+        : [...destinations, destination];
+    };
+    update((snapshot) => ({
+      ...snapshot,
+      newItemDestinations: change(snapshot.newItemDestinations),
+      items: snapshot.items.map((row) =>
+        row.kind === "Draft" && isPopulatedAddItem(row)
+          ? { ...row, destinations: change(row.destinations) }
+          : row,
+      ),
+    }));
   }
 
   /** Sends one frozen intent; an unknown outcome keeps it for exact replay. */
   async function accept(
-    row: Extract<AddItem, { kind: "Draft" | "AcceptanceUnresolved" }>,
+    row: Extract<AddItem, { kind: "Queued" | "AcceptanceUnresolved" }>,
     signal: AbortSignal,
   ) {
     if (!active(signal)) return;
@@ -589,25 +817,38 @@ export function useAddContentSession(): AddContentSessionController {
     }
   }
   async function submit() {
-    if (current.current.mutation.kind !== "Idle") return;
-    const rows = current.current.items.filter(
-      (row): row is Extract<AddItem, { kind: "Draft" }> => row.kind === "Draft",
-    );
-    if (rows.length === 0) return;
-    const ids = new Set(rows.map((row) => row.id));
+    const snapshot = current.current;
+    if (snapshot.mutation.kind !== "Idle") return;
+    const rows: Extract<AddItem, { kind: "Queued" }>[] = [];
+    const items = snapshot.items.map((row): AddItem => {
+      if (row.kind !== "Draft") return row;
+      const validation = validateDraftSource(row.source);
+      if (validation.kind !== "Ready") return { ...row, showFeedback: true };
+      const queued: Extract<AddItem, { kind: "Queued" }> = {
+        kind: "Queued",
+        id: row.id,
+        intent: {
+          source: validation.source,
+          destinations: [...row.destinations],
+          idempotencyKey: createRandomId("media-add"),
+        },
+      };
+      rows.push(queued);
+      return queued;
+    });
     const signal = abort.current.signal;
     update((next) => ({
       ...next,
-      mutation: {
-        kind: "Running",
-        operation: { kind: "Submit", itemIds: [...ids] },
-      },
-      items: next.items.map((row) =>
-        row.kind === "Draft" && ids.has(row.id)
-          ? { ...row, kind: "Queued" }
-          : row,
-      ),
+      mutation:
+        rows.length === 0
+          ? { kind: "Idle" }
+          : {
+              kind: "Running",
+              operation: { kind: "Submit", itemIds: rows.map((row) => row.id) },
+            },
+      items,
     }));
+    if (rows.length === 0) return;
     await batch(rows, signal, (row) => accept(row, signal));
   }
   async function reconcileAcceptance(itemId: string) {
@@ -928,19 +1169,43 @@ export function useAddContentSession(): AddContentSessionController {
     });
   }
 
+  let leaveReason: AddLeaveReason = null;
+  if (state.mutation.kind === "Running") {
+    leaveReason = "Stop";
+  } else if (
+    state.items.some((row) => row.kind === "AcceptanceUnresolved") ||
+    [...state.placementByMediaId.values()].some(
+      (placement) =>
+        placement.kind === "Uncertain" ||
+        ((placement.kind === "Loading" || placement.kind === "Queued") &&
+          placement.previous?.kind === "Uncertain"),
+    )
+  ) {
+    leaveReason = "Unconfirmed";
+  } else if (
+    state.items.some(
+      (row) =>
+        row.kind === "Rejected" ||
+        (row.kind === "Draft" && isPopulatedAddItem(row)),
+    )
+  ) {
+    leaveReason = "Discard";
+  }
+
   return {
     state,
-    dirty:
-      state.urlInput.text.trim() !== "" ||
-      state.items.some((row) => row.kind !== "Accepted"),
+    leaveReason,
     start,
-    setUrlText,
-    reviewUrls,
+    setItemUrl,
+    revealItemFeedback,
+    pasteUrls,
+    splitItemUrl,
     stageFiles,
     removeItem,
     restageItem,
-    setDefaultDestinations,
+    setNewItemDestinations,
     setItemDestinations,
+    setDraftLibrary,
     submit,
     reconcileAcceptance,
     refreshPlacements,

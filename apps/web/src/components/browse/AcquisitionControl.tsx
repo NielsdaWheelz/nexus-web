@@ -347,12 +347,12 @@ export default function AcquisitionControl({
       </div>
       <LibraryDestinationPicker
         open={pickerOpen}
+        presentation="Responsive"
         onClose={() => setPickerOpen(false)}
         anchor={() => chevronRef.current}
         title="Also add to"
         selectedGroupLabel="Selected"
-        selected={selected}
-        onChange={setSelected}
+        selection={{ kind: "Item", selected, onChange: setSelected }}
         interaction={
           creating
             ? { kind: "Creating" }

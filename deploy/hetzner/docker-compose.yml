@@ -83,6 +83,8 @@ services:
   api:
     image: ${API_IMAGE:?set an immutable candidate digest}
     restart: unless-stopped
+    # Uvicorn cancels remaining requests after 20s, leaving time for cleanup.
+    stop_grace_period: 30s
     mem_reservation: 192m
     mem_limit: 320m
     memswap_limit: 320m

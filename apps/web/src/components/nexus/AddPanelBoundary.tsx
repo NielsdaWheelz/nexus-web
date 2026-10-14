@@ -21,8 +21,7 @@ interface AddPanelBoundaryProps {
 }
 
 /**
- * A contract defect inside Add reads "Add needs attention" without losing the
- * session: Continue Add, or stop the active work and review its status.
+ * A rendering defect leaves the session available for review and guarded exit.
  */
 export default class AddPanelBoundary extends Component<
   AddPanelBoundaryProps,
@@ -74,12 +73,12 @@ export default class AddPanelBoundary extends Component<
         aria-labelledby="add-defect-title"
       >
         <h2 id="add-defect-title" data-add-heading="true" tabIndex={-1}>
-          Add needs attention
+          add needs attention
         </h2>
         <p>
           {running
-            ? "Nexus preserved the accepted source identity. Stop the active work to review its status."
-            : "Nexus preserved your Add work after an internal contract error."}
+            ? "your items are still in this add session. stop the active work to review its status."
+            : "your add session is still available. try returning to review it."}
         </p>
         <div className={styles.addDefectActions}>
           <Button
@@ -88,7 +87,7 @@ export default class AddPanelBoundary extends Component<
             size="sm"
             onClick={this.recover}
           >
-            {running ? "Stop and review status" : "Continue Add"}
+            {running ? "stop and review status" : "continue add"}
           </Button>
         </div>
         <AddDismissalDialog
