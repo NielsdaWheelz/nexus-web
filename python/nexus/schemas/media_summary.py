@@ -1,17 +1,26 @@
-"""One strict stored-media identity and duration wire."""
+"""One strict stored-media identity, read state and duration wire."""
 
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.db.models import MediaKind
-from nexus.schemas.consumption_state import ConsumptionOut
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.publication_dates import PublicationDate
 from nexus.schemas.reading_time import ReadingTimeEstimateOut
 
 MediaProcessingStatus = Literal["pending", "extracting", "ready_for_reading", "failed", "suspended"]
+ConsumptionState = Literal["Unread", "InProgress", "Finished"]
+
+
+class ConsumptionOut(BaseModel):
+    """The viewer's read state of the media: the override, else progress, else engagement."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    state: ConsumptionState
+    progress: Annotated[float, Field(ge=0, le=1)] | None
 
 
 class MediaDurationOut(BaseModel):

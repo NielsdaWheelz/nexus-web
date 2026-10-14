@@ -41,10 +41,11 @@ menu appears on every row, header, dock and pane chrome that shows a resource.
   a title blocked on missing x source context reads the media's verbs while blocked and offers
   its first available source remedy (refresh, retry or repair). an import's open reads the
   item's current activation when pressed (`resolveResourceItem`).
-- lectern add is `ensureItem` with the resource's `label` as its title; while that frozen
-  command is unacknowledged the verb reads "adding…" or "check add" and checks it instead of
-  sending another. the quick-read and transcript add controls read the media's verbs on mount
-  and whenever its lectern membership changes; only that read says "on lectern".
+- lectern add is the Lectern's ensure (`useLecternAdds().add`, a null placement) with the
+  resource's `label` as its title; while that add is unanswered the verb reads "adding…" or
+  "check add" and checks it instead of sending another. the quick-read and transcript add
+  controls read the media's verbs on mount and whenever its lectern membership changes; only
+  that read says "on lectern".
 - source refresh and metadata research keep an unconfirmed request's client id, keyed by the
   expectation the viewer saw, so the hud's "confirm request" replays it; an access reply
   (401/403/404) settles nothing.

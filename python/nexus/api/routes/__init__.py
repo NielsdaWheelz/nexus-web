@@ -8,6 +8,7 @@ from nexus.api.routes.auth_handoff_codes import router as auth_handoff_codes_rou
 from nexus.api.routes.browse import router as browse_router
 from nexus.api.routes.chat import router as chat_router
 from nexus.api.routes.connection_discovery import router as connection_discovery_router
+from nexus.api.routes.consumption import router as consumption_router
 from nexus.api.routes.consumption_activity import router as consumption_activity_router
 from nexus.api.routes.contributors import router as contributors_router
 from nexus.api.routes.dossiers import router as dossiers_router
@@ -16,7 +17,6 @@ from nexus.api.routes.extension_captures import router as extension_captures_rou
 from nexus.api.routes.extension_sessions import router as extension_sessions_router
 from nexus.api.routes.highlights import router as highlights_router
 from nexus.api.routes.imports import router as imports_router
-from nexus.api.routes.lectern import router as lectern_router
 from nexus.api.routes.libraries import router as libraries_router
 from nexus.api.routes.library_members import router as library_members_router
 from nexus.api.routes.llm import router as llm_router
@@ -55,13 +55,14 @@ def create_api_router() -> APIRouter:
     api_router.include_router(libraries_router)
     api_router.include_router(dossiers_router)
     # Media family. Every router owning a static `/media/<literal>` path
-    # (media_assets, media_ingest, playback, podcast_transcripts) must be
+    # (media_assets, media_ingest, playback, consumption, podcast_transcripts) must be
     # registered before the `media` router that owns `/media/{media_id}` —
     # Starlette matches in registration order, so a misorder would parse e.g.
     # "image" as a UUID and 422. Tags are self-declared on each router.
     api_router.include_router(media_assets_router)
     api_router.include_router(media_ingest_router)
     api_router.include_router(playback_router)
+    api_router.include_router(consumption_router)
     api_router.include_router(podcast_transcripts_router)
     api_router.include_router(imports_router)
     api_router.include_router(public_resource_shares_router)
@@ -82,9 +83,6 @@ def create_api_router() -> APIRouter:
     api_router.include_router(search_router)
     api_router.include_router(users_router)
     api_router.include_router(atlas_router)
-    # Lectern command ports (GET /lectern, POST /lectern/commands,
-    # POST /consumption/commands); the player's media paths are on playback_router above.
-    api_router.include_router(lectern_router)
     api_router.include_router(consumption_activity_router)
     api_router.include_router(podcasts_router)
     api_router.include_router(email_ingest_router)

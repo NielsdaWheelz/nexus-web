@@ -182,7 +182,7 @@ def _auto_queue(db: Session, subscription_id: UUID, sub: Any, watermark: datetim
         {"podcast_id": sub.podcast_id, "watermark": watermark, "cutoff": sub.sync_started_at},
     ).all()
     try:
-        lectern.ensure_missing_in_txn(db, viewer_id=sub.user_id, media_ids=list(media_ids))
+        lectern.append_missing_in_txn(db, viewer_id=sub.user_id, media_ids=list(media_ids))
     except ApiError as exc:  # raised before it writes anything
         if exc.code is not ApiErrorCode.E_LIMIT:
             raise

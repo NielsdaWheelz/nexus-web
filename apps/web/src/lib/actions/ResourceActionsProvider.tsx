@@ -18,14 +18,12 @@ import type { ActionCommand } from "@/lib/actions/project";
 import { ResourceOverlays } from "@/lib/actions/ResourceOverlays";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { useFinish } from "@/lib/consumption/state";
 import {
+  lecternFull,
   useLectern,
-  type LecternCapability,
-} from "@/lib/lectern/LecternProvider";
-import {
-  useCompletionUndo,
-  type CompletionUndoInput,
-} from "@/lib/lectern/useCompletionUndo";
+  useLecternAdds,
+} from "@/lib/lectern/lectern";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import {
   offlineAvailable,
@@ -66,7 +64,12 @@ export interface ActionContext {
   readonly offline:
     | { readonly kind: "Unavailable" | "Loading" }
     | { readonly kind: "Ready"; readonly items: readonly OfflineItem[] };
-  readonly lectern: LecternCapability;
+  /** The Lectern's capacity (the server's count), whether its read failed, and its
+   * unanswered adds. */
+  readonly lectern: {
+    readonly atCapacity: boolean;
+    readonly failed: boolean;
+  } & ReturnType<typeof useLecternAdds>;
   readonly player: {
     readonly state: ReturnType<typeof usePlayerSession>["state"];
     readonly commands: ReturnType<typeof usePlayerCommands>;
@@ -79,7 +82,8 @@ export interface ActionContext {
   readonly openLibraryPlacement: ReturnType<
     typeof useLibraryPlacementController
   >["openLibraryPlacement"];
-  readonly offerCompletionUndo: (input: CompletionUndoInput) => void;
+  /** Finish with "Marked as finished" and its Undo. */
+  readonly finish: ReturnType<typeof useFinish>;
   readonly overlays: { readonly open: (overlay: Overlay) => void };
 }
 
@@ -152,7 +156,14 @@ export default function ResourceActionsProvider({
 }) {
   const workspace = useLatestWorkspace();
   const feedback = useFeedback();
-  const lectern = useLectern();
+  const read = useLectern();
+  const atCapacity = lecternFull(read);
+  const failed = read.status === "failed";
+  const { adds, add } = useLecternAdds();
+  const lectern = useMemo(
+    () => ({ atCapacity, failed, adds, add }),
+    [atCapacity, failed, adds, add],
+  );
   const playerSession = usePlayerSession();
   const playerCommands = usePlayerCommands();
   const offlineSnapshot = useOfflineSnapshot();
@@ -160,7 +171,7 @@ export default function ResourceActionsProvider({
   const linkComposer = useLinkComposer();
   const { openShare } = useShareController();
   const { openLibraryPlacement } = useLibraryPlacementController();
-  const offerCompletionUndo = useCompletionUndo();
+  const finish = useFinish();
   const [busy] = useState(createBusyKeys);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [overlay, setOverlay] = useState<
@@ -201,7 +212,7 @@ export default function ResourceActionsProvider({
       linkComposer,
       openShare,
       openLibraryPlacement,
-      offerCompletionUndo,
+      finish,
       overlays: { open },
     }),
     [
@@ -215,7 +226,7 @@ export default function ResourceActionsProvider({
       linkComposer,
       openShare,
       openLibraryPlacement,
-      offerCompletionUndo,
+      finish,
       open,
     ],
   );

@@ -10,7 +10,7 @@ import { useCallback, useId, useMemo, useState } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
-import SuggestionsSection from "@/components/collections/SuggestionsSection";
+import SuggestionsSection, { suggestionTargetId } from "@/components/collections/SuggestionsSection";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import LibraryMembers, { useLibraryMembers } from "@/components/libraries/LibraryMembers";
@@ -72,7 +72,6 @@ import {
 } from "@/lib/panes/paneRuntime";
 import { podcastRefresh } from "@/lib/podcasts/paneState";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
-import { suggestionTargetId } from "@/lib/suggestions";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import {
   definePaneVisitDataKey,
@@ -489,9 +488,8 @@ function LibraryPane({ id }: { readonly id: string }) {
       />
       {list.complete ? (
         <SuggestionsSection
-          returnScope="Library.Suggestions"
-          destination={{ kind: "Library", id, name }}
-          paneId={runtime?.paneId ?? `library-${id}`}
+          kind="Library"
+          library={{ id, name }}
           isActive={active}
           accept={async (target) => {
             await addPlacement({ kind: target.kind, id: suggestionTargetId(target) }, id);

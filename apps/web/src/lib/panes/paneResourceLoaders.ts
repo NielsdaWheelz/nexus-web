@@ -20,7 +20,6 @@ const firstPage = (path: `/${string}`) => data(`${path}?limit=100`);
 export const paneSeeds: Partial<
   Record<PaneRouteId, (params: Record<string, string>) => Seeds>
 > = {
-  lectern: () => ({ "/lectern/suggestions": data("/lectern/suggestions") }),
   libraries: () => ({ "/libraries?": firstPage("/libraries") }),
   library: ({ id }) => {
     const path = `/libraries/${encodeURIComponent(id)}` as const;

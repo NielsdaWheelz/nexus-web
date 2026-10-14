@@ -13,14 +13,12 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import TranscriptState
-from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas import podcast as wire
 from nexus.schemas.collection_page import CollectionPage
 from nexus.services import media as media_service
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
-from nexus.services.consumption import projection
-from nexus.services.consumption import service as consumption
+from nexus.services.consumption import projection, state, viewer_txn
 
 EpisodeSort = Literal["newest", "oldest", "duration_asc", "duration_desc"]
 _TRANSCRIBABLE = (
@@ -71,14 +69,19 @@ def selection_fingerprint(media_ids: list[UUID]) -> str:
 
 
 def mark_played(
-    db: Session, viewer_id: UUID, podcast_id: UUID, state: str
+    viewer_id: UUID, podcast_id: UUID, selection: str
 ) -> wire.PodcastEpisodeMarkPlayedOut:
-    with transaction(db):
-        media_ids = selection_ids(db, viewer_id, podcast_id, state)
-        changed = consumption.set_podcast_episode_states_in_txn(
+    """Finish every episode of the selection under the viewer lock (I10)."""
+
+    def run(db: Session) -> wire.PodcastEpisodeMarkPlayedOut:
+        media_ids = selection_ids(db, viewer_id, podcast_id, selection)
+        changed = state.set_episode_states_in_txn(
             db, viewer_id=viewer_id, media_ids=media_ids, state="Finished"
         )
+        db.commit()
         return wire.PodcastEpisodeMarkPlayedOut(matched_count=len(media_ids), changed_count=changed)
+
+    return viewer_txn("mark_played", viewer_id, run)
 
 
 def _plan(sort: EpisodeSort) -> list[SortKey]:

@@ -12,7 +12,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from math import ceil
-from typing import cast
 from uuid import UUID
 
 from sqlalchemy import text
@@ -20,20 +19,12 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.schemas import consumption as wire
-from nexus.schemas.consumption_state import ConsumptionStateValue
-from nexus.schemas.media import MediaReadState
-from nexus.schemas.media_summary import MediaDurationOut, MediaSummaryOut
+from nexus.schemas.media_summary import ConsumptionState, MediaDurationOut
 from nexus.schemas.reading_time import ReadingTimeEstimateOut
-from nexus.services.consumption import lectern, listening, reader_cursor
+from nexus.services.consumption import reader_cursor
 from nexus.services.playback_source import derive_playback_source
 
 FINISHED_PROGRESSION = 0.95
-READABLE_KINDS = frozenset({"web_article", "epub", "pdf"})
-_TO_READ_STATE: dict[str, MediaReadState] = {
-    "Unread": "unread",
-    "InProgress": "in_progress",
-    "Finished": "finished",
-}
 
 
 def _duration_sql(listening_alias: str, episode_alias: str) -> str:
@@ -117,8 +108,8 @@ def engagement_fact_rows_sql(*, media_ids_param: str | None = None) -> str:
             END AS progress_fraction,
             CASE
                 WHEN m.kind = 'podcast_episode'
-                    THEN co.media_id IS NOT NULL OR COALESCE(pls.position_ms, 0) > 0
-                ELSE co.media_id IS NOT NULL OR res.media_id IS NOT NULL
+                    THEN co.status IS NOT NULL OR COALESCE(pls.position_ms, 0) > 0
+                ELSE co.status IS NOT NULL OR res.media_id IS NOT NULL
             END AS progress_resettable,
             CASE
                 WHEN m.kind = 'podcast_episode' THEN pls.last_engaged_at
@@ -164,45 +155,27 @@ def episode_state_joins_sql(
     """
 
 
-def lectern_membership_rows_sql() -> str:
-    """Complete Lectern membership, hidden rows included. Binds ``:viewer_id``."""
-    return "SELECT q.media_id FROM consumption_queue_items q WHERE q.user_id = :viewer_id"
-
-
-def _read_states(
-    db: Session, viewer_id: UUID, media_ids: list[UUID]
-) -> dict[UUID, tuple[ConsumptionStateValue, float | None, bool]]:
-    """``(state, progress, resettable)`` for media with any consumption row."""
-    rows = db.execute(
-        text(engagement_fact_rows_sql(media_ids_param="media_ids")),
-        {"viewer_id": viewer_id, "media_ids": media_ids},
-    )
-    return {
-        row.media_id: (
-            cast(ConsumptionStateValue, row.read_state),
-            row.progress_fraction,
-            row.progress_resettable,
-        )
-        for row in rows
-    }
-
-
-@dataclass(frozen=True)
-class MediaReadStateOut:
-    state: MediaReadState
-    progress_fraction: float | None
-    progress_resettable: bool
+@dataclass(frozen=True, slots=True)
+class ReadState:
+    state: ConsumptionState
+    progress: float | None
+    resettable: bool
 
 
 def media_read_states(
     db: Session, *, viewer_id: UUID, media_ids: list[UUID]
-) -> dict[UUID, MediaReadStateOut]:
-    """Read state for every requested media; media with no rows are unread."""
-    states = _read_states(db, viewer_id, media_ids)
+) -> dict[UUID, ReadState]:
+    """Read state for every requested media; media with no rows are Unread."""
+    rows = db.execute(
+        text(engagement_fact_rows_sql(media_ids_param="media_ids")),
+        {"viewer_id": viewer_id, "media_ids": media_ids},
+    )
+    found = {
+        row.media_id: ReadState(row.read_state, row.progress_fraction, row.progress_resettable)
+        for row in rows
+    }
     return {
-        media_id: MediaReadStateOut(_TO_READ_STATE[state], progress, resettable)
-        for media_id in media_ids
-        for state, progress, resettable in [states.get(media_id, ("Unread", None, False))]
+        media_id: found.get(media_id, ReadState("Unread", None, False)) for media_id in media_ids
     }
 
 
@@ -282,39 +255,6 @@ def player_descriptors(
     return descriptors
 
 
-def lectern_snapshot(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    rows: list[lectern.Row],
-    summaries: dict[UUID, MediaSummaryOut],
-) -> wire.LecternSnapshot:
-    """Visible rows with summaries/descriptors, and capacity over complete membership."""
-    visible = [row for row in rows if row.visible]
-    descriptors = player_descriptors(
-        db,
-        viewer_id=viewer_id,
-        media_ids=[row.media_id for row in visible if row.kind == "podcast_episode"],
-    )
-    return wire.LecternSnapshot(
-        items=[
-            wire.LecternItemOut(
-                item_id=row.item_id,
-                media_summary=summaries[row.media_id],
-                href=f"/media/{row.media_id}",
-                added_at=row.added_at,
-                activation=wire.FooterAudioActivation(descriptor=descriptors[row.media_id])
-                if row.media_id in descriptors
-                else wire.ReadableActivation()
-                if row.kind in READABLE_KINDS
-                else wire.OpenPaneActivation(),
-            )
-            for row in visible
-        ],
-        at_capacity=len(rows) >= lectern.LECTERN_MAX_ITEMS,
-    )
-
-
 def listening_duration(
     *, position_ms: int, listening_duration_ms: int | None, feed_duration_seconds: int | None
 ) -> MediaDurationOut | None:
@@ -337,38 +277,28 @@ def listening_duration(
     )
 
 
-def override_revision(db: Session, *, viewer_id: UUID, media_id: UUID) -> int | None:
-    """The explicit override's revision: the natural-end fence."""
-    return db.scalar(
-        text("""
-            SELECT revision FROM consumption_overrides
-            WHERE user_id = :viewer_id AND media_id = :media_id
-        """),
-        {"viewer_id": viewer_id, "media_id": media_id},
-    )
-
-
 def media_kind(db: Session, media_id: UUID) -> str | None:
     return db.scalar(text("SELECT kind FROM media WHERE id = :id"), {"id": media_id})
 
 
-def listening_recency(
+def engagement_recency(
     db: Session, *, viewer_id: UUID, media_ids: list[UUID]
 ) -> dict[UUID, datetime]:
-    return listening.recency(db, viewer_id=viewer_id, media_ids=media_ids)
-
-
-def reader_engagement_recency(
-    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
-) -> dict[UUID, datetime]:
+    """When the viewer last read or listened; state-only changes do not count."""
     rows = db.execute(
         text("""
-            SELECT media_id, last_engaged_at FROM reader_engagement_states
-            WHERE user_id = :viewer_id AND media_id = ANY(:media_ids)
+            SELECT media_id, max(last_engaged_at) AS at FROM (
+                SELECT media_id, last_engaged_at FROM reader_engagement_states
+                WHERE user_id = :viewer_id AND media_id = ANY(:media_ids)
+                UNION ALL
+                SELECT media_id, last_engaged_at FROM podcast_listening_states
+                WHERE user_id = :viewer_id AND media_id = ANY(:media_ids)
+                  AND last_engaged_at IS NOT NULL
+            ) engaged GROUP BY media_id
         """),
         {"viewer_id": viewer_id, "media_ids": media_ids},
     )
-    return {row.media_id: row.last_engaged_at for row in rows}
+    return {row.media_id: row.at for row in rows}
 
 
 @dataclass(frozen=True, slots=True)

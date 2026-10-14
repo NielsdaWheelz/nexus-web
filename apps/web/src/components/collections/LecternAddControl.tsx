@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import Button from "@/components/ui/Button";
 import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
-import type { MediaId } from "@/lib/lectern/contract";
-import { useLectern } from "@/lib/lectern/LecternProvider";
+import { lecternItems, useLectern, useLecternAdds } from "@/lib/lectern/lectern";
 import styles from "./LecternAddControl.module.css";
 
 /**
@@ -15,16 +14,15 @@ import styles from "./LecternAddControl.module.css";
 export default function LecternAddControl({
   mediaId, title, returnFocus,
 }: {
-  mediaId: MediaId;
+  mediaId: string;
   title: string;
   returnFocus: () => HTMLElement | null;
 }) {
   const { options, onOpenChange } = useResourceActionMenu(`media:${mediaId}`);
-  const { resource, ensureRequests } = useLectern();
-  const request = ensureRequests.get(mediaId);
-  const member =
-    resource.status === "ready" &&
-    resource.data.items.some((item) => item.mediaSummary.media_id === mediaId);
+  const request = useLecternAdds().adds.get(mediaId);
+  const member = lecternItems(useLectern()).some(
+    (item) => item.media_summary.media_id === mediaId,
+  );
   useEffect(() => {
     onOpenChange(true);
     return () => onOpenChange(false);

@@ -2,16 +2,14 @@
 
 from typing import Annotated, Literal
 
-from pydantic import ConfigDict, Field
+from pydantic import Field
 
 from nexus.schemas.consumption import Closed
 from nexus.schemas.media_summary import MediaSummaryOut
 
 
 class MediaSuggestionTargetOut(Closed):
-    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
-
-    kind: Literal["Media"] = "Media"
+    kind: Literal["Media"]
     ref: str
     media_summary: MediaSummaryOut
     image_url: str | None
@@ -19,9 +17,7 @@ class MediaSuggestionTargetOut(Closed):
 
 
 class PodcastSuggestionTargetOut(Closed):
-    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
-
-    kind: Literal["Podcast"] = "Podcast"
+    kind: Literal["Podcast"]
     ref: str
     title: str
     subtitle: str | None

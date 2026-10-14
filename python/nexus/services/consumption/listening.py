@@ -9,11 +9,12 @@ inside the caller's viewer-locked transaction.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+from nexus.schemas.consumption import ListeningIn
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,31 +32,24 @@ def _listening(row) -> Listening:
     return Listening(row.position_ms, row.duration_ms, row.playback_speed, row.reset_epoch)
 
 
-def load_many(db: Session, *, viewer_id: UUID, media_ids: list[UUID]) -> dict[UUID, Listening]:
-    rows = db.execute(
+def load(db: Session, *, viewer_id: UUID, media_id: UUID) -> Listening | None:
+    row = db.execute(
         text(f"""
-            SELECT media_id, {_COLUMNS} FROM podcast_listening_states
-            WHERE user_id = :viewer_id AND media_id = ANY(:media_ids)
+            SELECT {_COLUMNS} FROM podcast_listening_states
+            WHERE user_id = :viewer_id AND media_id = :media_id
         """),
-        {"viewer_id": viewer_id, "media_ids": media_ids},
-    )
-    return {row.media_id: _listening(row) for row in rows}
+        {"viewer_id": viewer_id, "media_id": media_id},
+    ).one_or_none()
+    return None if row is None else _listening(row)
 
 
-def write(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    media_id: UUID,
-    position_ms: int,
-    duration_ms: int | None,
-    episode_rate: float | None,
-    expected_reset_epoch: int,
-) -> Listening | None:
-    """Store one sample taken under ``expected_reset_epoch``; None when the epoch is stale.
-    An absent duration or rate keeps the stored one."""
-    params = {"viewer_id": viewer_id, "media_id": media_id, "position_ms": position_ms}
-    params |= {"duration_ms": duration_ms, "rate": episode_rate, "epoch": expected_reset_epoch}
+def write(db: Session, *, viewer_id: UUID, media_id: UUID, sample: ListeningIn) -> Listening | None:
+    """Store one sample taken under its epoch; None when the epoch is stale. An absent duration
+    or rate keeps the stored one."""
+    expected_reset_epoch = sample.expected_reset_epoch
+    params = {"viewer_id": viewer_id, "media_id": media_id, "position_ms": sample.position_ms}
+    params |= {"duration_ms": sample.duration_ms, "rate": sample.episode_playback_rate}
+    params |= {"epoch": expected_reset_epoch}
     row = db.execute(
         text(f"""
             UPDATE podcast_listening_states
@@ -64,7 +58,6 @@ def write(
                     THEN LEAST(:position_ms, COALESCE(:duration_ms, duration_ms))
                     ELSE :position_ms END,
                 playback_speed = COALESCE(:rate, playback_speed),
-                updated_at = now(),
                 last_engaged_at = now()
             WHERE user_id = :viewer_id AND media_id = :media_id AND reset_epoch = :epoch
             RETURNING {_COLUMNS}
@@ -117,7 +110,7 @@ def fence(db: Session, *, viewer_id: UUID, media_id: UUID) -> None:
             INSERT INTO podcast_listening_states (user_id, media_id, reset_epoch)
             VALUES (:viewer_id, :media_id, 1)
             ON CONFLICT (user_id, media_id) DO UPDATE
-            SET reset_epoch = podcast_listening_states.reset_epoch + 1, updated_at = now()
+            SET reset_epoch = podcast_listening_states.reset_epoch + 1
         """),
         {"viewer_id": viewer_id, "media_id": media_id},
     )
@@ -133,31 +126,9 @@ def reset(db: Session, *, viewer_id: UUID, media_id: UUID) -> Listening:
                 ON CONFLICT (user_id, media_id) DO UPDATE
                 SET position_ms = 0,
                     reset_epoch = podcast_listening_states.reset_epoch + 1,
-                    updated_at = now(),
                     last_engaged_at = NULL
                 RETURNING {_COLUMNS}
             """),
             {"viewer_id": viewer_id, "media_id": media_id},
         ).one()
-    )
-
-
-def recency(db: Session, *, viewer_id: UUID, media_ids: list[UUID]) -> dict[UUID, datetime]:
-    """When the viewer last listened; state-only changes do not count."""
-    rows = db.execute(
-        text("""
-            SELECT media_id, last_engaged_at FROM podcast_listening_states
-            WHERE user_id = :viewer_id AND media_id = ANY(:media_ids)
-              AND last_engaged_at IS NOT NULL
-        """),
-        {"viewer_id": viewer_id, "media_ids": media_ids},
-    )
-    return {row.media_id: row.last_engaged_at for row in rows}
-
-
-def delete_all_users_in_txn(db: Session, *, media_id: UUID) -> None:
-    """Media teardown: every viewer's row for the media."""
-    db.execute(
-        text("DELETE FROM podcast_listening_states WHERE media_id = :media_id"),
-        {"media_id": media_id},
     )

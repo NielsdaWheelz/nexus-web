@@ -163,15 +163,6 @@ export function createNativeEngine(
         // justify-ignore-error: the service's retry snapshot or onResponding(false) owns the outage; saving stays fenced until authority returns.
       }
     },
-    async adopt(mediaId, position) {
-      if (key() !== mediaId) return;
-      try {
-        await call("adopt", { key: mediaId, position });
-      } catch (error) {
-        if (!(error instanceof Error) || error.message !== "NotResponding") throw error;
-        // justify-ignore-error: reset already committed; onResponding(false) owns the missing native acknowledgement.
-      }
-    },
     dismiss: () => call("dismiss", {}, LOAD_TIMEOUT_MS).catch(() => undefined),
     close() {
       port.onmessage = null;

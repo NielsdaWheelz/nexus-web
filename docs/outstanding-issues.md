@@ -45,7 +45,6 @@ area · opened YYYY-MM-DD by <who> · P2
 
 - [open] shared collections / accessibility · 2026-10-14 live qualification · enlarged text clips reading facts at narrow widths: [ticket](tickets/collection-metadata-clips-with-enlarged-text.md).
 
-- [open] suggestions / interaction · 2026-10-14 source review · mutation-triggered refetch can replace retained survivors after refill: [ticket](tickets/suggestion-add-refetch-replaces-stable-survivors.md).
 - [open] suggestions / focus · 2026-10-14 source review · async add completion can reclaim focus the user moved: [ticket](tickets/suggestion-add-can-reclaim-moved-focus.md).
 - [open] release / provider credentials · 2026-10-14 release · local and production openai/brave exposure confirmed; owner explicitly deferred rotation: [ticket](tickets/metadata-qualification-provider-key-output.md).
 - [open] storage / cleanup · 2026-10-13 specification review · p2 · superseded-object deletion logs failures without durable retry: [ticket](tickets/superseded-storage-deletion-is-best-effort.md).
@@ -332,7 +331,6 @@ unexpected timeouts. See
 - [open] resource graph / reauthoring · 2026-10-10 graph reauthor · p3 · 3,997 formatted lines against the 3,900 cap: [ticket](tickets/resource-graph-reauthor-over-line-budget.md).
 - [open] schema / production migration · 2026-09-28 pr #413 · restored production loss inventory recorded; owner acceptance and final drained backup/restore remain: [ticket](tickets/schema-0251-production-loss-preflight.md).
 - [open] release / billing · 2026-09-28 cleanup pr-03 · record the billing counts before the 0252 release; cancel stripe, delete its webhook and drop the billing env keys after it: [ticket](tickets/billing-0252-release-steps.md).
-- [deferred] consumption / schema · 2026-09-28 consumption-stats reauthoring · four consumption state timestamps are written by nothing and read by nothing; drop them one release later: [ticket](tickets/drop-write-only-consumption-timestamps.md).
 
 - [open] inbound share / account policy candidate · 2026-10-02 producer review · valid dependency failures reach the defect owner; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/share-account-transient-failures-escape-inline-feedback.md).
 - [open] nexus / command policy candidate · 2026-10-02 producer review · valid auth-dependency503 reaches all three writes; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/nexus-auth-dependency-failure-escapes-retry-feedback.md).
