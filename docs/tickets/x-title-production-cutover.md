@@ -1,11 +1,19 @@
 # x title production cutover
 
-status: pending release
+status: in progress; source/content qualification blockers
 origin: 2026-10-14 x title implementation
 area: release / existing x sources
 
-the implementation and isolated `0277→0278` qualification do not migrate or refresh
-production. `deploy/hetzner/deploy.sh:53–63` requires a clean checkout at exact
+release `134f4f4c3` migrated production to `0278`, with verified r2 backup and
+aligned api/worker/web. the first census settled 54 targets and nine child titles,
+with two saved-position refusals. accounting is complete; content qualification
+is not. full-archive search omitted its historical lower bound and truncated 28
+thread captures. five english inputs received spanish/french titles, and one
+received the literal title `null`. forward correction and ordinary reacquisition
+are required before handoff. the owner approved preserving the inline-quote
+position conflict as an explicit exception; keep its old copy and coordinate.
+
+the original release prerequisite remains: `deploy/hetzner/deploy.sh:53–63` requires a clean checkout at exact
 `origin/main`; the release controller owns stopped writers and a verified backup.
 the feature branch is not that release candidate.
 

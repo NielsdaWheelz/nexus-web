@@ -56,13 +56,33 @@ the reader fixes do not claim those broader contracts.
 legitimate missing media-expansion behavior is an [unverified provider question](tickets/x-media-expansion-absence-unqualified.md),
 not an observed capture defect; strict incomplete-response failure remains visible.
 
-production migration and the production refresh census have not run. the owner approved completing the aligned release here. it still requires a
-clean merged main candidate and verified backup; see
-[the release item](tickets/x-title-production-cutover.md). no production data was
-changed during isolated qualification.
+production release `134f4f4c3` aligned api/worker/web and upgraded `0277→0278`.
+the controller retained a verified 1,270,557,222-byte r2 backup, sha256
+`263bb620f1c3d205b46db5ba31e6ce20e18b24efda0ac605adf83a4f14fddf2a`.
+verification read back the remote archive and traversed it with `pg_restore`;
+it did not execute a database restore. 208 historical metadata jobs validated
+after migration, including 72 raw sql-null dead results. no pre-migration
+byte-for-byte hash baseline was obtained.
+
+the first frozen census settled 54 targets: 52 refreshed, two saved-position
+refusals, nine additional child titles; zero unfinished/unaccounted obligations.
+this established accounting, not acceptance. production content review found an
+implicit 30-day archive range, five mistranslated titles and one literal `null`
+title. corrective publication/reacquisition remains required before handoff.
+one position becomes exactly mappable after historical acquisition; the other
+crosses an inline-quotation/embed boundary and is the owner's explicit
+[preserved-copy exception](tickets/x-inline-quote-refresh-loses-saved-position.md).
+
+the narrow archive correction passed two provider-boundary red/green checks and
+detached real acquisition of the recoverable saved position. nine real-db language
+input checks and nine ordinary native naming calls qualified the title correction:
+seven faithful titles, one preserved invalid-output rejection, then one actual
+json-null completion after explicit json instructions. no tools; 220 output tokens.
+these local checks do not certify the currently published production captures.
+see [the release item](tickets/x-title-production-cutover.md).
 
 sanitized receipts are retained outside the repository at
-`/private/tmp/nexus-x-titles-proof-20261014/`. 87 sanitized receipt/review/screenshot files are retained. temporary tests, proof
+`/private/tmp/nexus-x-titles-proof-20261014/`. sanitized receipt/review/screenshot files are retained. temporary tests, proof
 credentials, isolated containers, volumes and setup were deleted after final green;
 shared account state and standard development dependencies were preserved. no
 runtime test seam or harness remains. `./scripts/test` passed after deletion and

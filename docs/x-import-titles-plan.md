@@ -1,6 +1,6 @@
 # x import titles
 
-status: implemented and qualified in the isolated branch; production cutover pending. owner decisions: 2026-10-14.
+status: implemented; production migration complete, corrective source/title qualification in progress. owner decisions: 2026-10-14.
 
 publish an excerpt immediately, then a contextual title through existing metadata
 jobs. retain attributed evidence; keep reading independent of naming and refresh.
@@ -11,6 +11,9 @@ jobs. retain attributed evidence; keep reading independent of naming and refresh
 - the owner approved excerpts as an intentional unnamed state, source-language
   titles, refresh of existing x imports preserving unavailable copies, and exact
   saved-position preservation during replacement.
+- the owner approved retaining one unchanged saved copy whose inline quotation
+  became a separate embedded document; record its exact refresh conflict instead
+  of resetting it or extending the cursor contract across documents.
 - hard cutover: one new source representation and one x naming path. no legacy
   fragment-to-prompt adapter, model substitution, compatibility decoder or dual writer.
 - no chat naming, generated descriptions, manual title editor, vision/ocr, recursive
@@ -68,6 +71,8 @@ defines these observations. transport/auth/rate-limit failures retain existing
 source failure semantics; failed requests never become evidence of absence.
 
 retain existing per-request timeouts, job wall limit and post cap (default 1,000).
+author-thread archive searches explicitly start at `2006-03-21T00:00:00Z` on
+every page; omitting the range silently searches only the last 30 days.
 record `post_limit` for unread provider continuation or actual selected-chain omission;
 do not silently truncate retained post text. naming's byte budget is independent.
 
@@ -168,12 +173,18 @@ retain the bounded grapheme prefix of the body instead.
 
 generated output is exactly `{title: string | null}`. trim surrounding whitespace,
 then require a nonblank, single-line string of at most 120 code points; reject invalid
-shape or length. prompt for plain text without markdown wrapping; render escaped
+shape, length or a standalone literal string `null` (case-insensitive). prompt for
+an actual json object, with `{"title": null}` as the abstention example.
+prompt for plain text without markdown wrapping; render escaped
 text. hashtags and comparison operators remain legitimate. 5–12 words is a drafting
 target where linguistically meaningful, never a validator. preserve the primary
 author's language, names, negation, uncertainty, quantities and stance. name their
 contribution; quoted claims are context, not their endorsement. source text is
 untrusted evidence, never instructions. no promotional copy or repeated byline.
+use a single usable captured primary-post language hint in the instructions;
+ignore unknown/mixed markers and conflicting hints. primary prose overrides a
+wrong hint. without a hint, infer its language from that prose. quote, reply,
+author-name and linked-page language never chooses the title language.
 
 `null` is a successful decision to use the snapshot's excerpt/source label. it
 does not create no-findings, review or attention. on an explicit rerun it restores

@@ -32,6 +32,23 @@ post. the second refused source is media
 reports 54 accounted targets, two failures and nine settled child titles;
 accounting completion does not establish source completeness.
 
+source correction qualified locally: every archive-search page now includes
+`start_time=2006-03-21T00:00:00Z`, the provider's exact accepted floor confirmed
+by its 400 validation response (`archive-range-provider-boundary.json`). two
+temporary boundary checks failed before the change and pass after it: a reply
+permalink retains preceding posts across pages, and the existing post/page
+budget still stops with `post_limit`. at `22:58:00Z`, detached corrected
+acquisition restored the three known `114a` posts; its saved fragment and
+64-character window each match exactly once at the same terminal offset 134.
+receipt: `archive-range-114a-green.private.json` in the private evidence directory.
+production deployment and ordinary recovery remain outstanding.
+
+the second `8e08` refusal has a separate proven cause: unchanged inline quote
+content was replaced by an embed caption. see
+[the quotation-position ticket](x-inline-quote-refresh-loses-saved-position.md).
+missing-root ancestor selection is also a separate existing limitation, recorded
+in [its ticket](x-thread-missing-root-drops-available-ancestors.md).
+
 prerequisite: confirm the missing replies through an explicitly bounded
 full-history search; do not presume that missing search results prove deleted
 posts. fix the provider query's time range at acquisition, preserving the
