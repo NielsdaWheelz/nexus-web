@@ -259,8 +259,22 @@ async def run_tool(
     async with open_async_session(run.sessions) as database:
         call = Call(run, uuid4(), tool_id, database, run.plan.tools.grant(binding.spec.id))
         position = await database.run_sync(lambda _: _start(call, arguments))
-        result = await _dispatch(call, binding, arguments)
-        model_text = await database.run_sync(lambda _: _complete(call, position, result))
+        try:
+            result = await _dispatch(call, binding, arguments)
+            model_text = await database.run_sync(lambda _: _complete(call, position, result))
+        except BaseException as error:
+            await database.rollback()
+            await database.execute(
+                text(
+                    "UPDATE tool_calls SET status = :status WHERE id = :id AND status = 'running'"
+                ),
+                {
+                    "id": call.id,
+                    "status": "cancelled" if isinstance(error, asyncio.CancelledError) else "error",
+                },
+            )
+            await database.commit()
+            raise
     return ToolOutput(call.id, result, model_text)
 
 
@@ -354,10 +368,10 @@ def _complete(call: Call, position: int, result: ToolResult) -> str:
         raise AssertionError(f"{call.tool_id} result exceeds its declared output limit")
     # the run before the row, as every chat writer locks them.
     chat_run = events.lock_run(db, call.run.chat_run_id) if call.run.chat_run_id else None
-    db.execute(
+    completed = db.execute(
         text(
             "UPDATE tool_calls SET result = :result, created_refs = :refs, status = :status"
-            " WHERE id = :id"
+            " WHERE id = :id AND status = 'running' RETURNING id"
         ).bindparams(bindparam("result", type_=JSONB), bindparam("refs", type_=JSONB)),
         {
             "id": call.id,
@@ -365,7 +379,9 @@ def _complete(call: Call, position: int, result: ToolResult) -> str:
             "refs": call.created_refs,
             "status": "complete" if result["type"] == "Success" else "error",
         },
-    )
+    ).scalar_one_or_none()
+    if completed is None:
+        raise ToolRefused("tool call is already settled")
     model_text = encoded.decode()
     if chat_run is not None:
         model_text = _project(call, chat_run, position, result) or model_text

@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from nexus.db.models import LLMCall
 from nexus.jobs.queue import JobRow
 from nexus.services.generation.contract import (
+    Cancelled,
     Failed,
     GenerationSpec,
     JsonValue,
@@ -70,7 +71,7 @@ def close_generation(
         document["failure_code"] = terminal.code
         if terminal.detail:
             document["detail"] = terminal.detail
-    db.execute(
+    closed = db.scalars(
         update(LLMCall)
         .where(LLMCall.id == terminal.generation_id, LLMCall.outcome.is_(None))
         .values(
@@ -80,13 +81,15 @@ def close_generation(
             usage=None if terminal.usage is None else terminal.usage.model_dump(mode="json"),
             completed_at=func.now(),
         )
-    )
+        .returning(LLMCall.id)
+    ).all()
+    _settle_running_tools(db, closed, cancelled=isinstance(terminal, Cancelled))
 
 
 def interrupt_job_generations(db: Session, *, job_id: UUID, detail: str) -> None:
     """Close every open row of one job: the attempt that opened it is gone."""
 
-    db.execute(
+    closed = db.scalars(
         text("""
             UPDATE llm_calls SET outcome = 'Failed', failure_code = 'interrupted',
                 completed_at = now(),
@@ -94,8 +97,25 @@ def interrupt_job_generations(db: Session, *, job_id: UUID, detail: str) -> None
                     'detail', CAST(:detail AS text),
                     'route', generation_spec #>> '{selection,route}', 'evidence', '{}'::jsonb)
             WHERE job_id = :job_id AND outcome IS NULL
+            RETURNING id
         """),
         {"job_id": job_id, "detail": detail},
+    ).all()
+    _settle_running_tools(db, closed, cancelled=False)
+
+
+def _settle_running_tools(
+    db: Session, generation_ids: Collection[UUID], *, cancelled: bool
+) -> None:
+    """Closed generation rows are locked first; settle only unfinished receipts."""
+    if not generation_ids:
+        return
+    db.execute(
+        text(
+            "UPDATE tool_calls SET status = :status"
+            " WHERE generation_id = ANY(:ids) AND status = 'running'"
+        ),
+        {"ids": list(generation_ids), "status": "cancelled" if cancelled else "error"},
     )
 
 

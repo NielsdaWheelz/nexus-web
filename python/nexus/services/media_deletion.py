@@ -457,6 +457,7 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     _delete_by_media_id(
         db,
         media_id,
+        "x_source_snapshots",
         "media_source_attempts",
         "media_file",
         "fragments",

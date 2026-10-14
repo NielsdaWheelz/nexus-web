@@ -1,9 +1,9 @@
 "use client";
 
 // The metadata overlay ("metadata…"): publication facts with linked,
-// role-grouped credits, the live metadata-research status, source, reading or
-// listening, activity and availability. It rereads the media whenever a new
-// successful enrichment stamp arrives; a failed reread keeps the old values.
+// role-grouped credits, live operation status, source, reading or listening,
+// activity and availability. A successful enrichment or newly admitted title
+// job rereads the media; a failed reread keeps the old values.
 
 import type { ReactNode } from "react";
 import { formatCollectionPublicationDate } from "@/components/collections/collectionRowFormatting";
@@ -26,10 +26,13 @@ import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
 import {
   METADATA_FAILURE_COPY,
   METADATA_FIELD_LABELS,
-  METADATA_RETRY_BLOCKED_COPY,
   METADATA_REVIEW_HELP,
+  X_TITLE_CONTEXT_HELP,
   earlierMetadataRuns,
+  metadataOperationName,
   metadataOperationSummary,
+  metadataRetryBlockedCopy,
+  xSourceCoverage,
 } from "@/lib/media/mediaMetadataCopy";
 import {
   reconnectMetadataOperations,
@@ -131,7 +134,8 @@ function MediaInfo({
   const earlierRuns = earlierMetadataRuns(metadata);
   const originalUnresolved =
     operation?.status === "no_findings" ||
-    outcome?.unresolved_fields.includes("original_published_date");
+    (outcome?.purpose === "bibliography" &&
+      outcome.unresolved_fields.includes("original_published_date"));
   const completedAt =
     operation?.status === "completed"
       ? operation.outcome.completed_at
@@ -182,13 +186,13 @@ function MediaInfo({
         fact("language", media.language),
         fact("description", media.description),
       ])}
-      {group("metadata research", [
+      {group(metadataOperationName(operation?.purpose ?? metadata.retry.purpose), [
         fact(
           "status",
           <span aria-live="polite" aria-atomic="true">
             {operation
               ? metadataOperationSummary(operation)
-              : "no recorded metadata research"}
+              : `no recorded ${metadataOperationName(metadata.retry.purpose)}`}
           </span>,
         ),
         fact(
@@ -201,7 +205,7 @@ function MediaInfo({
         ),
         fact(
           "not established by this run",
-          outcome && outcome.unresolved_fields.length > 0
+          outcome?.purpose === "bibliography" && outcome.unresolved_fields.length > 0
             ? outcome.unresolved_fields
                 .map((field) => METADATA_FIELD_LABELS[field])
                 .join(", ")
@@ -209,7 +213,9 @@ function MediaInfo({
         ),
         fact(
           "authors",
-          outcome?.retained_manual_authors ? "kept manually set authors" : null,
+          outcome?.purpose === "bibliography" && outcome.retained_manual_authors
+            ? "kept manually set authors"
+            : null,
         ),
         fact(
           "explanation",
@@ -218,10 +224,14 @@ function MediaInfo({
             : null,
         ),
         fact(
-          "research availability",
+          `${metadataOperationName(metadata.retry.purpose)} availability`,
           metadata.retry.status === "blocked"
-            ? METADATA_RETRY_BLOCKED_COPY[metadata.retry.reason]
+            ? metadataRetryBlockedCopy(metadata.retry)
             : "available",
+        ),
+        fact(
+          "title evidence",
+          metadata.retry.purpose === "title" ? X_TITLE_CONTEXT_HELP : null,
         ),
         fact(
           "review",
@@ -310,6 +320,18 @@ function MediaInfo({
         fact(
           "provider id",
           media.provider_id.kind === "Present" ? media.provider_id.value : null,
+        ),
+        fact(
+          "captured context",
+          media.x_source_context.kind === "Present"
+            ? xSourceCoverage(media.x_source_context.value)
+            : null,
+        ),
+        fact(
+          "captured",
+          media.x_source_context.kind === "Present"
+            ? instant(media.x_source_context.value.published_at)
+            : null,
         ),
         fact(
           "source url",
@@ -414,9 +436,15 @@ export default function MediaInfoOverlay({
   const isMobile = useIsMobileViewport();
   const observation = useMediaMetadataOperations(open ? mediaId : null);
   const stamp = observation.view?.last_enriched_at;
+  const operation = observation.view?.operation;
+  const titleJob =
+    operation?.kind === "Present" && operation.value.purpose === "title"
+      ? operation.value.job_id
+      : "";
   const media = useServerValue({
     key: open ? mediaId : null,
-    stale: stamp?.kind === "Present" ? stamp.value : "",
+    // New source publication admits a title job before naming can succeed or fail.
+    stale: `${stamp?.kind === "Present" ? stamp.value : ""}:${titleJob}`,
     visit: VISIT,
     load: async (signal) =>
       mediaDetailFromResponse(

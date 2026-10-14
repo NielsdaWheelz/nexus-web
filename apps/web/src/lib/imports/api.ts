@@ -145,7 +145,7 @@ export function fetchImportHistory(
 /** Admit one media recovery; the admission changes what Imports owes. */
 async function admit<T>(
   mediaId: string,
-  verb: "retry" | "repair",
+  verb: "retry" | "repair" | "refresh",
   body: object,
 ): Promise<T> {
   const response = await apiFetch<{ data: T }>(
@@ -197,9 +197,9 @@ export function repairSearchImport(input: {
 }
 
 /** Re-fetch a media's source; the refreshed facts arrive through Imports. */
-export async function refreshMediaSource(mediaId: string): Promise<void> {
-  await apiFetch<unknown>(`/api/media/${encodeURIComponent(mediaId)}/refresh`, {
-    method: "POST",
-  });
-  publishImportsInvalidation();
+export function refreshMediaSource(
+  mediaId: string,
+  request: Schema<"RefreshSourceRequest">,
+): Promise<Schema<"SourceRefreshAdmission">> {
+  return admit(mediaId, "refresh", request);
 }

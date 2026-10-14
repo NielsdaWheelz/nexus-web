@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 type BackgroundOperation = Literal[
     "metadata_enrichment",
+    "media_title",
     "media_summary",
     "connection_discovery",
     "oracle",

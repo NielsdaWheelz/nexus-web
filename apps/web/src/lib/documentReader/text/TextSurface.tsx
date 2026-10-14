@@ -55,6 +55,7 @@ export default function TextSurface({
   readonly view: DocumentReaderViewProps;
   readonly scrollIndicator: RefObject<HTMLDivElement | null>;
 }) {
+  const { identity, format, units, sections, length } = doc;
   const scrollport = useRef<HTMLDivElement>(null);
   const lead = useRef<HTMLDivElement>(null);
   const column = useRef<HTMLDivElement>(null);
@@ -93,19 +94,21 @@ export default function TextSurface({
 
   useLayoutEffect(() => {
     const port = scrollport.current!;
-    const text = createTextGeometry(port, column.current!, doc);
-    const paint = createPainter(port, text, doc.identity);
+    const text = createTextGeometry(port, column.current!, { units, length });
+    const paint = createPainter(port, text, identity);
     geometry.current = text;
     painter.current = paint;
     paint.paint(viewRef.current.decorations);
     const handle: SurfaceHandle = {
-      find: createTextFind(doc, structure, text, paint, runtime),
+      find: createTextFind(
+        { identity, format, sections, units, length }, structure, text, paint, runtime,
+      ),
       capture() {
         const capture = text.capture();
-        return capture && { ...capture.placement, identity: doc.identity };
+        return capture && { ...capture.placement, identity };
       },
       async position(to, signal): Promise<NavOutcome> {
-        if ("identity" in to && to.identity !== doc.identity) {
+        if ("identity" in to && to.identity !== identity) {
           return { kind: "Unavailable", reason: "SourceChanged" };
         }
         const before = port.scrollTop;
@@ -145,7 +148,7 @@ export default function TextSurface({
       geometry.current = null;
       painter.current = null;
     };
-  }, [doc, measure, runtime, structure]);
+  }, [identity, format, sections, units, length, measure, runtime, structure]);
 
   useEffect(() => painter.current?.paint(decorations), [decorations]);
   useEffect(measure, [measure, profile.focus_mode]);
@@ -171,7 +174,7 @@ export default function TextSurface({
       observer.disconnect();
       controller.abort();
     };
-  }, [doc, runtime]);
+  }, [identity, units, runtime]);
 
   // A live selection suspends focus dimming; the capture reaches the host settled.
   useEffect(() => {
@@ -223,7 +226,7 @@ export default function TextSurface({
       for (const [, slot] of slots) slot.remove();
       setEmbeds([]);
     };
-  }, [doc, embedded]);
+  }, [identity, units, embedded]);
 
   function click(event: MouseEvent<HTMLDivElement>) {
     const target = event.target as Element;
@@ -291,7 +294,7 @@ export default function TextSurface({
         onClick={click}
         onMouseMove={view.onMarks && !isMobile ? hover : undefined}
       >
-        {doc.units.map((unit) => (
+        {units.map((unit) => (
           <section
             key={unit.id}
             data-reader-unit={unit.id}

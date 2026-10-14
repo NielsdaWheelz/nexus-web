@@ -29,3 +29,11 @@ owner restores the intended brave service through its dashboard. acceptance:
 one ordinary real search succeeds with production inputs, then the deferred
 web-research journeys are qualified. do not change providers or paywall paths
 to conceal the outage.
+
+2026-10-14 x title qualification independently confirmed the same http 402 with
+both configured keys; the owner explicitly waived successful live bibliography
+qualification in this task. isolated job `4b4c9379-9cf6-4ed2-8291-3068486f7946`
+has terminal error tool receipts and unchanged saved facts. actual local document
+and resource reads passed; controlled bibliography/no-findings/review composition
+passed. no successful four-tool research claim is made. see
+[the scoped qualification](../x-import-titles-verification.md).

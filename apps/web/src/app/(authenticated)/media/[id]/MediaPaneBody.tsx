@@ -144,11 +144,21 @@ function MediaPane({ id }: { readonly id: string }) {
     };
   }, [id, lectern, reader]);
 
-  // Bibliography enrichment: re-read the record (and a document's publication).
+  // A title job is admitted with source publication, before naming may fail.
+  // Manual title admission costs the same small reread; it does not reload progress.
   const metadata = useMediaMetadataOperations(paneVisible && media ? id : null);
   const stamp = metadata.view?.last_enriched_at.kind === "Present" ? metadata.view.last_enriched_at.value : null;
+  const operation = metadata.view?.operation;
+  const titleJob = operation?.kind === "Present" && operation.value.purpose === "title"
+    ? operation.value.job_id : null;
   useEffect(() => {
-    if (!stamp || !media || media.metadata_enriched_at === stamp) return;
+    if (!media) return;
+    const recorded = media.metadata_enrichment.operation;
+    const recordedTitleJob = recorded.kind === "Present" && recorded.value.purpose === "title"
+      ? recorded.value.job_id : null;
+    const titleAdmitted = titleJob !== null && titleJob !== recordedTitleJob;
+    const metadataPublished = stamp !== null && media.metadata_enriched_at !== stamp;
+    if (!titleAdmitted && !metadataPublished) return;
     let active = true;
     void apiFetch<ApiJson<"/media/{media_id}", "get">>(`/api/media/${id}`).then((response) => {
       if (!active) return;
@@ -158,7 +168,7 @@ function MediaPane({ id }: { readonly id: string }) {
       if (readable && detail.capabilities.can_read && !transcript) reader.reload();
     });
     return () => { active = false; };
-  }, [id, media, readable, reader, stamp, transcript]);
+  }, [id, media, readable, reader, stamp, titleJob, transcript]);
 
   // ---- annotations ----
   const [store] = useState(() => createAnnotationStore(id));

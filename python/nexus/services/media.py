@@ -56,6 +56,7 @@ from nexus.services.document_embeds import (
 )
 from nexus.services.media_source_ingest import (
     SourceRecoveryFacts,
+    source_attempt_refreshable,
     source_recovery,
     source_repairable_sql,
 )
@@ -65,6 +66,7 @@ from nexus.services.playback_source import derive_playback_source
 from nexus.services.reading_time import load_reading_time_estimates
 from nexus.services.resource_grants import media_grant_path_exists_sql
 from nexus.services.source_publication import load_source_progress
+from nexus.services.x_source import retained_x_publication_sql, x_source_contexts
 from nexus.text import escape_like
 
 _LIST_LIMIT_MAX = 200
@@ -100,21 +102,22 @@ _DEAD_REINDEX_JOB_ID_SQL = """(
     ORDER BY dead_job.id
     LIMIT 1
 )"""
-_SOURCE_ATTEMPT_TYPES_SQL = """
-    'generic_web_url',
-    'x_author_thread',
-    'x_post',
-    'youtube_video',
-    'remote_pdf_url',
-    'remote_epub_url',
-    'uploaded_pdf_file',
-    'uploaded_epub_file',
-    'browser_article_capture',
-    'browser_pdf_capture',
-    'browser_epub_capture',
-    'podcast_episode_transcript',
-    'video_transcript'
-"""
+_SOURCE_ATTEMPT_TYPES = (
+    "generic_web_url",
+    "x_author_thread",
+    "x_post",
+    "youtube_video",
+    "remote_pdf_url",
+    "remote_epub_url",
+    "uploaded_pdf_file",
+    "uploaded_epub_file",
+    "browser_article_capture",
+    "browser_pdf_capture",
+    "browser_epub_capture",
+    "podcast_episode_transcript",
+    "video_transcript",
+)
+_SOURCE_ATTEMPT_TYPES_SQL = ", ".join(f"'{source_type}'" for source_type in _SOURCE_ATTEMPT_TYPES)
 _SOURCE_ATTEMPT_FILE_TYPES_SQL = """
     'uploaded_pdf_file',
     'uploaded_epub_file',
@@ -161,9 +164,9 @@ _SELECT_EXPRESSIONS: dict[str, str] = {
     "canonical_url": "m.canonical_url",
     "external_playback_url": "m.external_playback_url",
     "persisted_processing_status": "m.processing_status",
-    # A repairable latest source attempt displays as suspended whatever the row says.
+    # A stopped refresh leaves a retained X publication readable.
     "processing_status": (
-        f"CASE WHEN {source_repairable_sql('m')} THEN 'suspended'"
+        f"CASE WHEN {source_repairable_sql('m')} AND NOT {retained_x_publication_sql('m')} THEN 'suspended'"
         " ELSE m.processing_status::text END"
     ),
     "latest_source_attempt": _LATEST_SOURCE_ATTEMPT_SQL,
@@ -310,6 +313,8 @@ class CollectionMedia:
     has_original_file: bool
     capabilities: CollectionMediaCapabilities
     metadata_retry: MetadataRetry
+    refresh_source_attempt_id: Presence[UUID]
+    refresh_source_authorized: bool
     reviewable_metadata_job_id: Presence[UUID]
     source_recovery: Presence[RetrySourceOffer | RepairSourceOffer]
     search_recovery: Presence[RepairSearchOffer]
@@ -369,6 +374,19 @@ def hydrate_compact_media_targets(
             href=cast(str, activations[ResourceRef(scheme="media", id=media_id).uri].href),
         )
     return hydrated
+
+
+def _source_refresh_available(row: RowMapping) -> bool:
+    latest = row["latest_source_attempt"]
+    return (
+        bool(row["source_refresh_available"])
+        and latest is not None
+        and source_attempt_refreshable(
+            source_type=str(latest["source_type"]),
+            status=str(latest["status"]),
+            error_code=latest["error_code"],
+        )
+    )
 
 
 def _row_recovery(
@@ -447,8 +465,8 @@ def list_collection_media_for_viewer_by_ids(
     """The exact media facts finite collection rows consume, in input order.
 
     Deliberately narrower than ``MediaOut``: no descriptions, chapters, embeds or
-    retrieval metadata. Each row also carries the *applicable* capability — what a
-    creator would be offered — so a blocked action stays discoverable.
+    retrieval metadata. Structural applicability is distinct from authority and
+    current availability, so a blocked action stays discoverable.
     """
     ordered_media_ids = _dedupe_uuid_order(media_ids)
     if not ordered_media_ids:
@@ -508,7 +526,7 @@ def list_collection_media_for_viewer_by_ids(
                 transcript_coverage=transcript_coverage,
                 can_delete=bool(row["can_delete"]),
                 is_creator=actor,
-                source_refresh_available=bool(row["source_refresh_available"]),
+                source_refresh_available=_source_refresh_available(row),
                 source_recovery=source,
                 search_recovery=search,
                 metadata_retry=metadata_views[media_id].retry,
@@ -573,7 +591,12 @@ def list_collection_media_for_viewer_by_ids(
                     can_retry_metadata=viewer_caps.can_retry_metadata,
                     can_edit_authors=viewer_caps.can_edit_authors,
                     can_delete=viewer_caps.can_delete,
-                    refresh_source_applicable=applicable_caps.can_refresh_source,
+                    # Keep exact-request confirmation reachable during an unfinished
+                    # refresh. Only current availability admits a fresh request.
+                    refresh_source_applicable=(
+                        row["latest_source_attempt"] is not None
+                        and row["latest_source_attempt"]["source_type"] in _SOURCE_ATTEMPT_TYPES
+                    ),
                     # Research eligibility may change while an admitted request
                     # still needs receipt confirmation. The retry answer owns
                     # eligibility; every supported media retains its capability.
@@ -581,6 +604,10 @@ def list_collection_media_for_viewer_by_ids(
                     edit_authors_applicable=applicable_caps.can_edit_authors,
                 ),
                 metadata_retry=metadata_views[media_id].retry,
+                refresh_source_authorized=is_creator,
+                refresh_source_attempt_id=present(UUID(str(row["latest_source_attempt"]["id"])))
+                if viewer_caps.can_refresh_source
+                else absent(),
                 reviewable_metadata_job_id=reviewable_job,
                 source_recovery=presence_from_nullable(
                     source if isinstance(source, RetrySourceOffer | RepairSourceOffer) else None
@@ -643,6 +670,7 @@ def _metadata_views(
             load_only(
                 Media.id,
                 Media.kind,
+                Media.provider,
                 Media.processing_status,
                 Media.created_by_user_id,
                 Media.metadata_enriched_at,
@@ -676,6 +704,7 @@ def _hydrate_media_out(
     chapters_by_media = _load_chapters(db, media_ids)
     embed_summaries = document_embed_summaries_for_media(db, media_ids)
     progress_by_media = load_source_progress(db, tuple(media_ids))
+    x_context_by_media = x_source_contexts(db, media_ids=media_ids)
     read_states = projection.media_read_states(db, viewer_id=viewer_id, media_ids=media_ids)
     reading_times = load_reading_time_estimates(
         db,
@@ -726,6 +755,9 @@ def _hydrate_media_out(
                     "MediaProcessingStatus", _status_to_str(row["processing_status"])
                 ),
                 source_progress=_source_progress(progress_by_media.get(media_id)),
+                x_source_context=present(x_context_by_media[media_id])
+                if media_id in x_context_by_media
+                else absent(),
                 transcript_state=(
                     None
                     if row["transcript_state"] is None
@@ -762,7 +794,7 @@ def _hydrate_media_out(
                     retrieval_status=retrieval_status,
                     can_delete=bool(row["can_delete"]),
                     is_creator=bool(row["is_creator"]),
-                    source_refresh_available=bool(row["source_refresh_available"]),
+                    source_refresh_available=_source_refresh_available(row),
                     source_recovery=source_answer,
                     search_recovery=search_answer,
                     metadata_retry=metadata_views[media_id].retry,

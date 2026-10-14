@@ -32,6 +32,7 @@ import {
 import type { AcceptedIngest } from "@/lib/imports/ingest";
 import {
   METADATA_FAILURE_COPY,
+  metadataOperationName,
   metadataOperationSummary,
 } from "@/lib/media/mediaMetadataCopy";
 import type { MediaKind } from "@/lib/media/kind";
@@ -222,6 +223,12 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: "Try another copy of this source with readable content.",
     recovery: "OpenOriginal",
   },
+  E_SOURCE_POSITION_UNMAPPABLE: {
+    reason: "a saved reading spot has no clear match",
+    title: "refresh not applied: a saved reading spot has no clear match. saved copy kept.",
+    explanation: "open the saved copy and deliberately save another reading spot before retrying, or retry after the source changes. retrying alone may reach the same conflict.",
+    recovery: "SameSource",
+  },
   E_SOURCE_TOO_LARGE: {
     reason: "Source too large",
     title: "This document is too large to import.",
@@ -340,7 +347,7 @@ export const IMPORT_FAILURE_CODES: readonly ImportFailureCode[] = [
 export function importFailureCopy(code: ImportFailureCode): FailureCopy {
   if (isSafeFailureCode(code)) return FAILURE_COPY[code];
   const reason = METADATA_FAILURE_COPY[code];
-  return { reason, title: "metadata research failed.", explanation: reason };
+  return { reason, title: "metadata operation failed.", explanation: reason };
 }
 
 /**
@@ -431,6 +438,12 @@ export function statusLine(
   formatTime?: (value: string) => string,
 ): string {
   const state = item.state;
+  const source = item.obligations.source;
+  if (state.kind === "NeedsAttention" && source.kind === "Present" &&
+    source.value.state.kind === "NeedsAttention" && state.stage === source.value.state.stage) {
+    const retained = sourceFailureLine(item);
+    if (retained !== null) return retained;
+  }
   if (state.kind !== "Complete" && state.stage === "Metadata") {
     const metadata = item.obligations.metadata;
     if (metadata.kind === "Present") {
@@ -451,6 +464,20 @@ export function statusLine(
     return `${pluralize(item.source_issue_count, "source issue")} recorded`;
   }
   return obligationStatusLine(state, isUploadObligation(item));
+}
+
+/** A failed refresh is separate from the readable publication it retained. */
+export function sourceFailureLine(item: ImportItem): string | null {
+  const source = item.obligations.source;
+  if (!item.capabilities.can_open || source.kind === "Absent" ||
+    source.value.state.kind !== "NeedsAttention") return null;
+  const failure = source.value.state.failure_code;
+  if (failure.kind === "Present" && failure.value === "E_SOURCE_POSITION_UNMAPPABLE")
+    return FAILURE_COPY.E_SOURCE_POSITION_UNMAPPABLE.title;
+  const metadata = item.obligations.metadata;
+  return metadata.kind === "Present" && metadata.value.retry.purpose === "title"
+    ? "couldn't refresh from x · saved copy kept"
+    : "couldn't refresh source · saved copy kept";
 }
 
 /** A source/search slot can be read without inventing a whole import row. */
@@ -520,8 +547,7 @@ export function stateBadge(item: ImportItem): {
 }
 
 /**
- * What this import means for the reader now. Search indexing is the one stage
- * whose failure leaves a usable document, and only when it is readable.
+ * What this import means for the reader now, using its authoritative readiness.
  */
 export function consequenceLine(
   item: ImportItem,
@@ -547,6 +573,8 @@ export function consequenceLine(
     state.failure_code.kind === "Present"
   ) {
     const copy = importFailureCopy(state.failure_code.value);
+    const retained = sourceFailureLine(item);
+    if (retained !== null) return `${retained} ${copy.explanation}`;
     return `${copy.title} ${copy.explanation}`;
   }
   if (state.kind !== "Complete") return statusLine(item);
@@ -593,6 +621,11 @@ export function recoveryLine(
   obligation: SourceImportObligation | SearchImportObligation,
 ): string | null {
   const { recovery, unavailable_reason: restriction } = obligation;
+  if (recovery.kind === "Present" && obligation.state.kind === "NeedsAttention" &&
+    obligation.state.failure_code.kind === "Present" &&
+    obligation.state.failure_code.value === "E_SOURCE_POSITION_UNMAPPABLE") {
+    return FAILURE_COPY.E_SOURCE_POSITION_UNMAPPABLE.explanation;
+  }
   if (recovery.kind === "Present") return offerLine(recovery.value);
   if (restriction.kind === "Present")
     return RESTRICTION_LINE[restriction.value];
@@ -620,7 +653,8 @@ export function concurrentWorkLine(item: ImportItem): string | null {
   }
   if (item.obligations.metadata.kind === "Present") {
     const metadata = item.obligations.metadata.value;
-    if (metadata.unfinished_count > 0) active.push("metadata research");
+    if (metadata.unfinished_operation.kind === "Present")
+      active.push(metadataOperationName(metadata.unfinished_operation.value.purpose));
     const latest = metadata.operation;
     if (
       item.state.stage !== "Metadata" &&
@@ -629,7 +663,7 @@ export function concurrentWorkLine(item: ImportItem): string | null {
         (latest.value.status === "no_findings" &&
           latest.value.reviewed_at.kind === "Absent"))
     )
-      attention.push("metadata research");
+      attention.push(metadataOperationName(latest.value.purpose));
   }
   const parts = [];
   if (attention.length)
@@ -991,7 +1025,7 @@ export function emptyCopy(
     case "InProgress":
       return {
         title: "No imports are in progress",
-        body: "Uploads, source processing, search indexing, and metadata research appear here.",
+        body: "Uploads, source processing, search indexing, and metadata operations appear here.",
       };
     case "History":
       return {

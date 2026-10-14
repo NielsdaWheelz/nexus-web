@@ -41,7 +41,7 @@ from nexus.services.web_article import (
     publish_article,
     publish_fetched_article,
 )
-from nexus.services.x_ingest import materialize_x_author_thread_media, materialize_x_post_media
+from nexus.services.x_ingest import PreparedXSource, prepare_x_source
 from nexus.services.youtube import run_youtube_video_ingest
 from nexus.services.youtube_identity import classify_youtube_provider_video_id, classify_youtube_url
 from nexus.storage.client import StorageClient, StorageError, get_storage_client
@@ -75,7 +75,7 @@ def run_source_adapter(
     actor_user_id: UUID,
     request_id: str | None,
     fence: SourcePublicationFence,
-) -> SourceRunOutcome | PreparedFileSource:
+) -> SourceRunOutcome | PreparedFileSource | PreparedXSource:
     """Acquire one detached attempt, preserving its source-specific refusal order."""
     source_type = attempt.source_type
     if source_type == source_types.GENERIC_WEB_URL:
@@ -102,34 +102,13 @@ def run_source_adapter(
         return run_youtube_video_ingest(
             session_factory, media_id, identity=identity, publication_fence=fence
         )
-    if source_type == source_types.X_AUTHOR_THREAD:
+    if source_type in {source_types.X_AUTHOR_THREAD, source_types.X_POST}:
         _begin_source_extraction(
-            session_factory,
-            media_id,
-            fence,
-            expected_kinds=_WEB_ARTICLE,
-            label="x_thread_extraction",
+            session_factory, media_id, fence, expected_kinds=_WEB_ARTICLE, label="x_extraction"
         )
-        return materialize_x_author_thread_media(
-            session_factory,
-            viewer_id=actor_user_id,
-            media_id=media_id,
+        return prepare_x_source(
             post_id=_x_post_target(attempt),
-            source_attempt_id=attempt.id,
-            request_id=request_id,
-            publication_fence=fence,
-        )
-    if source_type == source_types.X_POST:
-        _begin_source_extraction(
-            session_factory, media_id, fence, expected_kinds=_WEB_ARTICLE, label="x_post_extraction"
-        )
-        return materialize_x_post_media(
-            session_factory,
-            viewer_id=actor_user_id,
-            media_id=media_id,
-            post_id=_x_post_target(attempt),
-            request_id=request_id,
-            publication_fence=fence,
+            author_thread=source_type == source_types.X_AUTHOR_THREAD,
         )
     if source_type in source_types.REMOTE_FILE_SOURCE_TYPES:
         return _run_remote_file(session_factory, media_id, attempt, fence)

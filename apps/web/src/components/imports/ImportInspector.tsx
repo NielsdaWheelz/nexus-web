@@ -1,15 +1,17 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import MetadataResearchActions, {
   MetadataReviewButton,
 } from "@/components/media/MetadataResearchActions";
+import Button from "@/components/ui/Button";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import PaneSection from "@/components/ui/PaneSection";
 import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { ApiError } from "@/lib/api/client";
+import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
 import { usePagePrefix } from "@/lib/api/pagePrefix";
@@ -34,6 +36,7 @@ import {
   importFailureCopy,
   recoveryLine,
   stageLabel,
+  sourceFailureLine,
   stateBadge,
 } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
@@ -41,17 +44,40 @@ import {
   earlierMetadataRuns,
   METADATA_FAILURE_COPY,
   METADATA_FIELD_LABELS,
-  METADATA_RETRY_BLOCKED_COPY,
   METADATA_REVIEW_HELP,
+  metadataOperationName,
   metadataOperationSummary,
+  metadataRetryBlockedCopy,
 } from "@/lib/media/mediaMetadataCopy";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { ImportObligationActions } from "./ImportRow";
 import styles from "./Imports.module.css";
 
 /** The server no longer has this import, or never had one by that ref. */
 const gone = (error: ApiError | null) =>
   error?.code === "E_IMPORT_NOT_FOUND" || error?.code === "E_INVALID_REQUEST";
+
+function OpenSavedCopy({ mediaId }: { readonly mediaId: string }) {
+  const subject = useMemo(
+    () => ({ ref: canonicalResourceRef({ scheme: "media", id: mediaId }) }),
+    [mediaId],
+  );
+  const model = useResourceActionMenuModel(subject);
+  const open = model.descriptors.find(
+    (action) => action.id === "ResourceAction.Open",
+  );
+  return open?.kind === "command" ? (
+    <Button
+      variant="secondary"
+      size="sm"
+      disabled={open.disabled}
+      onClick={() => open.onSelect({ triggerEl: null })}
+    >
+      open saved copy
+    </Button>
+  ) : null;
+}
 
 /**
  * The inspected import in the order a reader needs it: what it means for them,
@@ -144,25 +170,31 @@ export default function ImportInspector({
         if (slot.kind === "Absent") return null;
         const recovery = recoveryLine(slot.value);
         const state = slot.value.state;
+        const retained = key === "source" ? sourceFailureLine(item) : null;
         return (
           <PaneSection key={key} title={key === "source" ? "Source" : "Search"}>
-            <p>{obligationStatusLine(state)}</p>
+            <p>{retained ?? obligationStatusLine(state)}</p>
             {state.kind === "NeedsAttention" &&
             state.failure_code.kind === "Present" ? (
               <p>{importFailureCopy(state.failure_code.value).reason}</p>
             ) : null}
             {recovery === null ? null : <p>{recovery}</p>}
             <div className={styles.inspectorActions}>
+              {retained !== null && mediaId !== null ? (
+                <OpenSavedCopy mediaId={mediaId} />
+              ) : null}
               <ImportObligationActions item={item} obligation={key} />
             </div>
           </PaneSection>
         );
       })}
       {metadata === null || mediaId === null ? null : (
-        <PaneSection title="Metadata">
+        <PaneSection
+          title={metadataOperationName(operation?.purpose ?? metadata.retry.purpose)}
+        >
           <p>
             {operation === null
-              ? "no recorded metadata research"
+              ? `no recorded ${metadataOperationName(metadata.retry.purpose)}`
               : metadataOperationSummary(operation, (at) =>
                   momentText(at, display),
                 )}
@@ -175,6 +207,7 @@ export default function ImportInspector({
             <p>{METADATA_REVIEW_HELP}</p>
           ) : null}
           {operation?.status === "completed" &&
+          operation.outcome.purpose === "bibliography" &&
           operation.outcome.unresolved_fields.length > 0 ? (
             <p>
               not established by this run:{" "}
@@ -201,14 +234,14 @@ export default function ImportInspector({
             </p>
           ) : null}
           {metadata.retry.status === "blocked" ? (
-            <p>{METADATA_RETRY_BLOCKED_COPY[metadata.retry.reason]}</p>
+            <p>{metadataRetryBlockedCopy(metadata.retry)}</p>
           ) : null}
           <div className={styles.inspectorActions}>
             <MetadataResearchActions mediaId={mediaId} view={metadata} />
           </div>
           {operation === null ? null : (
             <details className={styles.diagnostics}>
-              <summary>Research details</summary>
+              <summary>operation details</summary>
               <dl>
                 {field("Job", <code>{operation.job_id}</code>)}
                 {operation.generation_id.kind === "Present"
@@ -285,7 +318,10 @@ function attempts(entries: readonly HistoryEntry[]) {
     const facts = entry.facts;
     const [id, label] =
       facts.kind === "MetadataOperation"
-        ? [`Metadata:${facts.operation.job_id}`, "Metadata research"]
+        ? [
+            `Metadata:${facts.operation.job_id}`,
+            metadataOperationName(facts.operation.purpose),
+          ]
         : "generation" in facts
           ? [`Upload:${facts.generation}`, `Upload attempt ${facts.generation}`]
           : "source_attempt_id" in facts
@@ -376,7 +412,7 @@ function Attempts({
                 </time>
                 {entry.facts.kind === "MetadataOperation" ? (
                   <details className={styles.diagnostics}>
-                    <summary>Research details</summary>
+                    <summary>operation details</summary>
                     <dl>
                       <div>
                         <dt>Job</dt>

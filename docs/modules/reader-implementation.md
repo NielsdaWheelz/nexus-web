@@ -12,7 +12,9 @@ the reader is three facts and one policy.
 - **publication** (`ReaderDocument`): an immutable ordered list of text units
   (web fragments, epub spine documents, transcript segments) or one pdf, under one
   `identity` (`g<generation>`; transcripts: a digest of the ordered segment ids).
-  read once from one snapshot, never mixed with another read.
+  read once from one snapshot, never mixed with another read. identity versions
+  content/targets; the title is mutable metadata. a same-identity reload updates
+  the current title without replacing units, learned structure or surface nodes.
 - **placement**: where the eye is, `{identity, point, offsetPx, zoom}`. measured,
   never stored. `offsetPx` is relative to the visible reading line: positive
   below, negative above. capture, reflow and return use it; chrome insets can
@@ -97,6 +99,13 @@ listed in Evidence as unavailable (`Stale`), never painted.
   save keeps its revision but counts as resumed activity; stale equal saves
   conflict without effects. Percentage follows current position. Completion at
   known progress ≥95% remains finished until unread/reset; history is separate.
+- native x replacement locks publication and all saved cursors before deleting
+  fragments. `reader_cursor.py` prepares exact whole-text or literal ±64-codepoint
+  matches, requires one match, applies new ids/offsets/revisions and recomputes
+  progression without recording activity/completion. ambiguity or absence rejects
+  the whole replacement. web saves lock publication even without a supplied
+  generation and check revision before admitting old targets. non-x replacement
+  remains [separate work](../tickets/web-publication-invalidates-saved-reader-cursors.md).
 - the locator wire is unchanged (android stores locators opaquely). the web writes
   `target` and `locations.text_offset`/`total_progression` exactly and `null` for
   `progression`, `position` and the quote triple. pdf writes `page`,

@@ -9,15 +9,32 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import httpx
-from pydantic import BaseModel, BeforeValidator, ConfigDict, ValidationError, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    ValidationError,
+    model_validator,
+)
 
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
+from nexus.schemas.presence import absent, present
+from nexus.schemas.x_source import (
+    XSourceAttachment,
+    XSourceAuthor,
+    XSourcePost,
+    XSourceReference,
+    XSourceSnapshot,
+    XSourceUrl,
+)
 from nexus.services.net.http_retry import get_json_with_retry
+from nexus.services.x_identity import x_author_thread_provider_id, x_post_provider_id
 
 logger = get_logger(__name__)
 
@@ -54,7 +71,7 @@ class _Model(BaseModel):
 
 
 class XReference(_Model):
-    type: str
+    type: Literal["quoted", "replied_to", "retweeted"]
     id: str
 
 
@@ -63,6 +80,7 @@ class XUrlEntity(_Model):
     expanded_url: Text = None
     display_url: Text = None
     title: Text = None
+    media_key: Text = None
 
 
 class XMedia(_Model):
@@ -85,7 +103,8 @@ class XPost(_Model):
     id: str
     author_id: str
     text: str = ""
-    created_at: Text = None
+    created_at: AwareDatetime | None = None
+    lang: Text = None
     conversation_id: Text = None
     referenced_tweets: tuple[XReference, ...] = ()
     media_keys: tuple[str, ...] = ()
@@ -98,7 +117,8 @@ class XPost(_Model):
             return value
         raw_note = value.get("note_tweet")
         note = raw_note if isinstance(raw_note, dict) else {}
-        note_text = str(note.get("text") or "").strip()
+        raw_text = note.get("text")
+        note_text = raw_text if isinstance(raw_text, str) and raw_text.strip() else None
         entities = note.get("entities") if note_text else value.get("entities")
         attachments = value.get("attachments")
         keys = attachments.get("media_keys") if isinstance(attachments, dict) else []
@@ -114,26 +134,11 @@ class XPost(_Model):
             ],
         }
 
-    @property
-    def quoted_post_ids(self) -> tuple[str, ...]:
-        return tuple(ref.id for ref in self.referenced_tweets if ref.type == "quoted")
 
-
-@dataclass(frozen=True)
-class XThread:
-    author: XUser
-    conversation_id: str
-    posts: tuple[XPost, ...]  # the author's reply chain, in time order, holding the root
-    quotes: Mapping[str, XPost | None]  # None: X answered that the quoted post is unavailable
-    users: Mapping[str, XUser]
-    media: Mapping[str, XMedia]
-
-
-@dataclass(frozen=True)
-class XSinglePost:
-    post: XPost
-    users: Mapping[str, XUser]
-    media: Mapping[str, XMedia]
+@dataclass(frozen=True, slots=True)
+class AcquiredXSource:
+    provider_id: str
+    snapshot: XSourceSnapshot
 
 
 @dataclass
@@ -141,50 +146,151 @@ class _Seen:
     posts: dict[str, XPost]
     users: dict[str, XUser]
     media: dict[str, XMedia]
+    unavailable: set[str]
 
 
-def fetch_author_thread(post_id: str) -> XThread:
-    """Look the post up, page the author's conversation, and resolve its quotes."""
+def fetch_author_thread(post_id: str) -> AcquiredXSource:
+    """Capture the author's chain and one hop of each retained post's references."""
     max_posts = int(get_settings().x_api_author_thread_max_posts)
-    seen = _Seen({}, {}, {})
+    seen = _Seen({}, {}, {}, set())
     root = _lookup(post_id, seen)
     author = seen.users[root.author_id]
     conversation_id = root.conversation_id or root.id
     candidates = {root.id}
     params = {**_FIELDS, "query": f"conversation_id:{conversation_id} from:{author.username}"}
+    continuation = True
     while len(candidates) < max_posts:
         params["max_results"] = str(max(10, min(100, max_posts - len(candidates))))
         page = _get("/tweets/search/all", params, "search_author_thread")
         candidates.update(post.id for post in _absorb(page, seen))
         meta = page.get("meta")
         next_token = meta.get("next_token") if isinstance(meta, dict) else None
+        continuation = bool(next_token)
         if not next_token:
             break
         params["next_token"] = next_token
-    posts = _thread_posts(seen.posts, root=root, candidates=candidates, max_posts=max_posts)
-    quote_ids = sorted({quote_id for post in posts for quote_id in post.quoted_post_ids})
-    missing = [quote_id for quote_id in quote_ids if quote_id not in seen.posts]
-    unavailable: set[str] = set()
+    posts, omitted = _thread_posts(
+        seen.posts, root=root, candidates=candidates, max_posts=max_posts
+    )
+    return AcquiredXSource(
+        provider_id=x_author_thread_provider_id(author.id, conversation_id),
+        snapshot=_snapshot(
+            seen,
+            posts=posts,
+            requested_post_id=post_id,
+            source_kind="author_thread",
+            enumeration="post_limit" if continuation or omitted else "exhausted",
+        ),
+    )
+
+
+def fetch_single_post(post_id: str) -> AcquiredXSource:
+    seen = _Seen({}, {}, {}, set())
+    root = _lookup(post_id, seen)
+    return AcquiredXSource(
+        provider_id=x_post_provider_id(post_id),
+        snapshot=_snapshot(
+            seen,
+            posts=[root],
+            requested_post_id=post_id,
+            source_kind="post",
+            enumeration="exhausted",
+        ),
+    )
+
+
+def _snapshot(
+    seen: _Seen,
+    *,
+    posts: list[XPost],
+    requested_post_id: str,
+    source_kind: Literal["author_thread", "post"],
+    enumeration: Literal["exhausted", "post_limit"],
+) -> XSourceSnapshot:
+    direct_ids = {reference.id for post in posts for reference in post.referenced_tweets}
+    missing = sorted(
+        identity
+        for identity in direct_ids
+        if identity not in seen.unavailable
+        and (identity not in seen.posts or not _has_expansions(seen, seen.posts[identity]))
+    )
     for start in range(0, len(missing), 100):
-        params = {**_FIELDS, "ids": ",".join(missing[start : start + 100])}
-        payload = _get("/tweets", params, "lookup_quotes")
+        payload = _get(
+            "/tweets", {**_FIELDS, "ids": ",".join(missing[start : start + 100])}, "lookup_context"
+        )
         _absorb(payload, seen)
-        unavailable |= _unavailable_ids(payload)
-    quotes: dict[str, XPost | None] = {}
-    for quote_id in quote_ids:
-        quoted = seen.posts.get(quote_id)
-        if (quoted is None and quote_id not in unavailable) or (
-            quoted is not None and quoted.author_id not in seen.users
-        ):
-            raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "lookup_quotes")
-        quotes[quote_id] = quoted
-    return XThread(author, conversation_id, tuple(posts), quotes, seen.users, seen.media)
+    ids = {post.id for post in posts} | {
+        identity for identity in direct_ids if identity in seen.posts
+    }
+    for identity in ids | direct_ids:
+        post = seen.posts.get(identity)
+        if post is None:
+            if identity in seen.unavailable:
+                continue
+            raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "lookup_context")
+        if not _has_expansions(seen, post):
+            raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "lookup_context")
+    normalized = {}
+    for identity in ids:
+        post = seen.posts[identity]
+        author = seen.users[post.author_id]
+        normalized[identity] = XSourcePost(
+            id=post.id,
+            author=XSourceAuthor(id=author.id, name=author.name, username=author.username),
+            text=post.text,
+            created_at=absent() if post.created_at is None else present(post.created_at),
+            language=absent() if post.lang is None else present(post.lang),
+            urls=tuple(
+                XSourceUrl(
+                    url=url.url,
+                    expanded_url=absent()
+                    if url.expanded_url is None
+                    else present(url.expanded_url),
+                    display_url=absent() if url.display_url is None else present(url.display_url),
+                    title=absent() if url.title is None else present(url.title),
+                    attachment_media_key=absent()
+                    if url.media_key is None
+                    else present(url.media_key),
+                )
+                for url in post.urls
+            ),
+            attachments=tuple(
+                XSourceAttachment(
+                    media_key=item.media_key,
+                    type=item.type,
+                    url=absent() if item.url is None else present(item.url),
+                    preview_image_url=absent()
+                    if item.preview_image_url is None
+                    else present(item.preview_image_url),
+                    alt_text=absent() if item.alt_text is None else present(item.alt_text),
+                )
+                for key in post.media_keys
+                for item in (seen.media[key],)
+            ),
+            references=tuple(
+                XSourceReference(
+                    kind=reference.type,
+                    post_id=reference.id,
+                    availability="available"
+                    if reference.id in ids
+                    else "unavailable"
+                    if reference.id in seen.unavailable
+                    else "not_captured",
+                )
+                for reference in post.referenced_tweets
+            ),
+        )
+    return XSourceSnapshot(
+        source_kind=source_kind,
+        requested_post_id=requested_post_id,
+        primary_post_ids=tuple(post.id for post in posts),
+        posts=normalized,
+        enumeration=enumeration,
+    )
 
 
-def fetch_single_post(post_id: str) -> XSinglePost:
-    """Look one public post up by id."""
-    seen = _Seen({}, {}, {})
-    return XSinglePost(_lookup(post_id, seen), seen.users, seen.media)
+def _has_expansions(seen: _Seen, post: XPost) -> bool:
+    return post.author_id in seen.users and all(key in seen.media for key in post.media_keys)
 
 
 def _handle(value: str | None) -> str | None:
@@ -252,6 +358,7 @@ def _error(code: ApiErrorCode, operation: str, *, status: int | None = None) -> 
 
 def _absorb(payload: Mapping[str, Any], seen: _Seen) -> list[XPost]:
     """Record every post, user and media item of one payload; return its primary posts."""
+    seen.unavailable |= _unavailable_ids(payload)
     raw_includes = payload.get("includes")
     includes = raw_includes if isinstance(raw_includes, dict) else {}
     for post in _decode(XPost, includes.get("tweets")):  # an expansion never replaces a primary
@@ -260,9 +367,7 @@ def _absorb(payload: Mapping[str, Any], seen: _Seen) -> list[XPost]:
     seen.posts.update((post.id, post) for post in data)
     for user in _decode(XUser, includes.get("users")):
         if handle := _handle(user.username):
-            seen.users[user.id] = user.model_copy(
-                update={"name": user.name or handle, "username": handle}
-            )
+            seen.users[user.id] = user.model_copy(update={"username": handle})
     for item in _decode(XMedia, includes.get("media")):
         seen.media[item.media_key] = item
     return data
@@ -292,7 +397,7 @@ def _unavailable_ids(payload: Mapping[str, Any]) -> set[str]:
 
 def _thread_posts(
     posts: Mapping[str, XPost], *, root: XPost, candidates: set[str], max_posts: int
-) -> list[XPost]:
+) -> tuple[list[XPost], bool]:
     """The author's own reply chain in the conversation, in time order, always with the root."""
     conversation_id = root.conversation_id or root.id
     own = {
@@ -313,14 +418,18 @@ def _thread_posts(
                 included.add(post_id)
                 grew = True
     thread = sorted((own[post_id] for post_id in included), key=_time_order)
-    if len(thread) > max_posts:
+    omitted = len(thread) > max_posts
+    if omitted:
         others = [post for post in thread if post.id != root.id][: max_posts - 1]
         thread = sorted([root, *others], key=_time_order)
-    return thread
+    return thread, omitted
 
 
 def _time_order(post: XPost) -> tuple[str, int]:
-    return (post.created_at or "", int(post.id) if post.id.isdecimal() else 0)
+    return (
+        post.created_at.isoformat() if post.created_at is not None else "",
+        int(post.id) if post.id.isdecimal() else 0,
+    )
 
 
 def _items(value: Any) -> list[Any]:

@@ -53,7 +53,8 @@ Code: `python/nexus/services/tools/` (`contract`, `run`, `reads`, `writes`,
   `ToolUnavailable` (provider route; on codex see ticket
   `codex-unpublished-tool-call-ends-the-answer`).
 - I4 lock order: generation -> chat run -> job claim -> `tool_calls` row; chat's
-  finalize takes run -> rows.
+  finalize takes run -> rows. generation closure locks its generation rows before
+  settling their unfinished tool rows in the same transaction.
 - I5 `created_refs` list exactly the targets the call inserted; nothing that
   existed before.
 - I6 live Nexus writes per generation <= 8.
@@ -66,10 +67,14 @@ Code: `python/nexus/services/tools/` (`contract`, `run`, `reads`, `writes`,
   output carries the call's numbered `tool_citation` sections.
 - I10 memory tools run only for the config's owner, in a live chat; a save submits
   `submission_id` = call id, `native_conversation_id` = the chat.
-- I11 terminal states: `complete` (Success), `error` (Failure, or settled by chat
-  finalize), `cancelled` (settled by a stopped chat). A call whose generation ended
-  without completing it stays `running`; in a chat, finalize settles it. Nothing
-  treats `running` as finished.
+- I11 terminal states: `complete` (Success), `error` (Failure, an escaping handler
+  exception, or chat finalize), `cancelled` (a cancelled callback or stopped chat).
+  An escaping exception rolls back local effects, settles its still-running row
+  without inventing a result, then propagates unchanged. generation closure and
+  dead-attempt recovery settle any remaining running rows in their transaction;
+  cancellation uses `cancelled`, other interrupted calls use `error`. completed
+  receipts and their results remain unchanged. late callbacks cannot overwrite
+  settlement. Nothing treats `running` as finished.
 
 ## One call
 
@@ -83,8 +88,8 @@ canonical call, the transport's refusal (`InvalidJson` -> `InvalidInput`,
    chat's `tool_call_start`/`tool_call_done` frames, commit.
 2. `_dispatch`: input envelope bytes, availability, strict validation, then the
    handler under the tool's deadline. Declared and boundary failures are results;
-   anything else is a defect and propagates. A stop cancels the codex callback
-   here; the row stays `running` until finalize (I11).
+   anything else propagates after settling the receipt (I11). A stop cancels the
+   codex callback here and marks its unfinished receipt `cancelled`.
 3. `_complete` (one transaction): a Failure rolls back locally staged effects; lock the
    chat run; complete the row; in a chat, web snapshots for `web.search`, the call's
    retrievals, the `tool_result` frame and the numbered output; commit.

@@ -8,6 +8,8 @@ an import has independent `source`, `search`, and `metadata` presence slots. sou
 
 needs attention takes precedence: an applicable source/search failure, latest metadata failure, or latest unreviewed no-findings result. otherwise applicable source/search activity or any unfinished metadata job makes the row active. otherwise it is complete. attention and progress counts are exclusive row counts. history includes all current states. a newer metadata result supersedes older attention; older unfinished jobs still block research and keep observation alive.
 
+metadata jobs retain their admitted `purpose`: native x uses `title`; other media uses `bibliography`. history never infers purpose from the current provider. a completed title may use its source label; this is successful abstention, without no-findings or review. naming failure leaves readable source intact. [media metadata](media-metadata.md) owns the generation and outcome contracts.
+
 population includes existing upload/source imports and visible media with retained metadata jobs, including rss episodes without source attempts. published uploads retain the upload-first identity. metadata-only rows take their acceptance time from the earliest retained metadata job. no missing historical job is inferred or backfilled.
 
 classify before filtering. attention considers only attention obligations; progress only active obligations. stage and failure code must match the same obligation. primary matching work is ordered by stage rank, failure/acceptance time, then obligation key. each row appears once; source, search, and metadata remain separately inspectable and actionable. source/search recovery uses separate resource capabilities and existing exact attempt/job/revision commands.
@@ -52,6 +54,79 @@ the owner of import, upload, and acquisition copy. `FAILURE_COPY` remains exhaus
 ## acquisition (`lib/imports/ingest.ts`)
 
 `addMediaFromUrl`, `uploadIngestFile`, `retryUploadSession`, `removeUploadSession` and `captureSourceUrl`; see [add content](add-content.md) for the upload-session protocol. each endpoint's declared codes map to one `UploadSessionOutcome`; the outcomes that change what Imports owes invalidate it.
+
+## native x sources
+
+`services/x_client.py` acquires the requested post or same-author thread plus one
+hop of direct quotes, reply parents and repost targets. `schemas/x_source.py` owns
+normalized evidence; `services/x_source.py` owns its current persisted snapshot,
+coverage and excerpt. retain full authored wording, url observations, supplied image
+descriptions and attributed context. nested references never trigger another fetch.
+`post_limit` means enumeration stopped at the configured bound; `exhausted` means
+enumeration ended, not that every historical post remains available.
+
+`services/x_ingest.py` prepares source and reader content before publication. the
+source coordinator's exact claim and ordered media locks fence one transaction that
+installs reader content, snapshot and excerpt, settles the attempt, and admits indexing
+and naming. a newly completed quoted child receives its own snapshot and naming job.
+a child with a reader publication retains its independent source, including an ongoing
+refresh. identity reuse transfers access and supersedes onto the existing holder;
+it installs no new evidence or naming obligation.
+
+reader content and naming consume the same evidence. quotes retain their existing
+embeds; external reply/repost context follows the primary content, and references to
+other primary posts do not repeat them. the reader retains attachment links to
+preserve source wording and saved positions. standalone posts keep their generic
+quote footer when enhanced with embeds; threads keep their attributed footer.
+the immediate title is the first
+nonempty authored opening, shortened at a unicode word boundary within 120 code
+points without splitting a grapheme. when that would retain only an opening mention
+or hashtag, keep the grapheme prefix. quote/attachment tokens are removed from title
+evidence; meaningful links remain. textless evidence uses
+`x post by @handle` or `x thread by @handle`. generated titles belong to the existing
+metadata job, independently of source readiness.
+
+## source refresh
+
+`POST /media/{id}/refresh` requires `client_mutation_id` and `expected_attempt_id`;
+its 202 response contains `SourceRefreshAdmission` with media, attempt and job ids.
+`services/media_source_ingest.py` shares replay/storage/admission mechanics with
+source retry while keeping their policies distinct. authorization, the exact latest
+attempt and source policy precede mutation. receipt, new attempt and job commit
+together. identical replay returns that receipt after completion; a changed request
+or fresh stale expectation conflicts. browser retries retain the original intent.
+
+native x retains its readable publication while refresh is queued, running, failed
+or stopped. first imports keep ordinary failure behavior. authorized refresh first
+initializes any ready legacy copy's missing reader publication through its existing
+owner; it never reconstructs normalized evidence from rendered fragments. a failed
+refresh remains visible on its source attempt and supports ordinary retry or exact
+dead-job repair while the saved copy remains readable.
+
+replacement composes the [reader's position owner](reader-implementation.md): every
+saved position must map exactly into the replacement before fragments are deleted.
+`E_SOURCE_POSITION_UNMAPPABLE` rolls back source, snapshot and naming admission and
+keeps the saved copy. retry alone may repeat the refusal; deliberate repositioning
+or a changed source can resolve it. title-only changes preserve content identity.
+
+## x source cutover
+
+`python -m nexus.ops.refresh_x_sources plan --manifest <path>` freezes existing
+native-x media, creators, expected attempts and mutation ids before admission and
+previews refusals. run after the release backup, writer stop and migration preflight.
+`apply` uses ordinary refresh admission; rerun it to recover lost responses and
+observe source/title settlement. it neither runs workers nor bypasses exact-job repair.
+
+receipts survive replacement of current snapshots. retained jobs after the database's
+frozen timestamp account for each target's first title obligation and inline children,
+including children completed before their own planned refresh. a frozen child may be
+counted as refreshed only when its current successful publication records this
+manifest's exact admitted parent attempt; retain the real child attempt and job
+receipts without inventing an admission or changing the frozen request. ordinary
+refresh clones do not inherit inline publication provenance. new children add naming
+obligations, never refresh targets. `release_accounted` requires zero unfinished and
+unaccounted work; recorded unavailable copies, source refusals and title failures remain
+explicit exceptions requiring follow-up. retain the manifest with release evidence.
 
 ## vocabulary history
 

@@ -12,10 +12,16 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.responses import Data, ok, success_response
+from nexus.responses import Data, ok
 from nexus.schemas.contributors import MediaAuthorsOut, MediaAuthorsPutRequest
 from nexus.schemas.library import LibraryPlacementOptionOut
-from nexus.schemas.media import MediaDeleteResult, MediaLibrariesRequest, MediaOut
+from nexus.schemas.media import (
+    MediaDeleteResult,
+    MediaLibrariesRequest,
+    MediaOut,
+    RefreshSourceRequest,
+    SourceRefreshAdmission,
+)
 from nexus.schemas.media_summary import (
     MediaSummaryResolutionOut,
     ResolvedMediaSummariesOut,
@@ -188,12 +194,15 @@ def remove_media_library(
 
 @router.post("/media/{media_id}/refresh", status_code=202)
 def refresh_media_source(
-    media_id: UUID, viewer: ViewerDep, db: DbSession, request: Request
-) -> dict:
-    result = media_source_ingest.refresh_source_for_viewer(
-        db=db,
-        viewer_id=viewer.user_id,
-        media_id=media_id,
-        request_id=getattr(request.state, "request_id", None),
+    media_id: UUID, body: RefreshSourceRequest, viewer: ViewerDep, db: DbSession, request: Request
+) -> Data[SourceRefreshAdmission]:
+    return Data(
+        data=media_source_ingest.refresh_source_for_viewer(
+            db=db,
+            viewer_id=viewer.user_id,
+            media_id=media_id,
+            request_id=getattr(request.state, "request_id", None),
+            client_mutation_id=body.client_mutation_id,
+            expected_attempt_id=body.expected_attempt_id,
+        )
     )
-    return success_response(result)

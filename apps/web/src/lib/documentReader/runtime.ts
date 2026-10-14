@@ -228,14 +228,26 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     const previous = ready()?.doc ?? null;
     if (!previous) set({ document: { status: "loading" } });
     try {
-      const [doc, view, fresh] = await Promise.all([
+      const [doc, initialView, fresh] = await Promise.all([
         options.source.load(controller.signal),
-        sync?.start(controller.signal) ?? null,
+        previous ? null : sync?.start(controller.signal) ?? null,
         freshUsed ? null : options.entry.fresh,
       ]);
       if (controller.signal.aborted) return;
       freshUsed = true;
-      if (previous?.identity === doc.identity) return;
+      const current = ready();
+      if (current?.doc.identity === doc.identity) {
+        // A source identity fixes body/targets, while its metadata label may change.
+        // Keep measured coordinates, navigation and unsaved progress intact.
+        if (current.doc.title !== doc.title) {
+          set({ document: { ...current, doc: { ...current.doc, title: doc.title } } });
+        }
+        return;
+      }
+      const view = previous
+        ? await sync?.start(controller.signal) ?? null
+        : initialView;
+      if (controller.signal.aborted) return;
       if (previous) navigator.invalidateOrigin(doc.identity);
       restore = { fresh: fresh ?? null, saved: view && savedLocator(view) };
       set({

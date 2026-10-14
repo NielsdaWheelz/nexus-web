@@ -1,7 +1,8 @@
 # media metadata
 
-`services/metadata_enrichment.py` owns bibliographic meaning, bounded input and
-strict generated-output acceptance. `tasks/enrich_metadata.py` composes it with
+`services/metadata_enrichment.py` owns bibliography; `services/x_titles.py` owns
+grounded x titles. each owns bounded input and strict generated-output acceptance.
+`tasks/enrich_metadata.py` composes them with
 the contributor owner and generation service. `services/metadata_operations.py`
 projects existing jobs setwise for detail, streams, imports and history; it stores
 no shadow activity state. `services/metadata_reviews.py` owns personal review of
@@ -71,10 +72,10 @@ real isolated live receipt; controlled responses qualify domain behavior only.
 
 ## operation and publication
 
-one `enrich_metadata` job is one operation: every attempt builds its input,
-generates once and publishes. the decode (`validate_structured_enrichment`)
-accepts the output or fails the generation `invalid_output`; the queue stores the
-settled outcome as the job's result.
+one `enrich_metadata` job freezes `purpose=bibliography|title`; title jobs also freeze
+the published x source's successful `source_attempt_id`. every attempt builds its
+input, generates once and publishes. the purpose-specific decoder accepts output
+or fails `invalid_output`; the queue stores the settled outcome as its result.
 
 publication starts from a fresh session, locks media before the exact job claim,
 and rechecks authorization, eligibility and the frozen source/bibliographic
@@ -97,6 +98,37 @@ terminal `model_unavailable`. a worker that dies mid-research reruns the whole o
 from scratch on the job's retry. metadata failures never
 write source-processing error fields. successful and dead metadata jobs are
 retained indefinitely so pruning cannot revive an older failure as latest.
+
+## x titles
+
+native x web articles use `media_title`: the same generation owner, `gpt-6-luna`,
+`low`, strict `{title:string|null}`, no tools, 120 seconds and 256 kib utf-8 input.
+`services/x_source.py` owns the current normalized snapshot and immediate source
+label. the title input retains complete captured primary/direct context, attribution,
+supplied alt text and coverage; it excludes image urls and generated child labels.
+oversized complete input fails before dispatch; there is no prefix summary or model
+substitution. [imports](imports.md) owns acquisition and source replacement.
+
+preserve the primary author's language, stance, negation, uncertainty and quantities.
+quoted claims are context, never assumed endorsement. absent context and undescribed
+images do not supply a subject. source instructions are untrusted evidence. accepted
+generated labels are trimmed, nonblank, one line and at most 120 unicode code points.
+null successfully restores the source excerpt/author label; it creates no attention
+or review obligation. generated/source-label completions write only title and the
+successful stamp. explicit rerun may restore an excerpt over an earlier model title.
+
+missing snapshots block manual admission with `source_context_missing` and ordinary
+source refresh. actual source publication admits one title job even with older jobs
+unfinished; manual admission retains its active-work barrier. evidence version is the
+snapshot's attempt, not a pending refresh attempt. replaced evidence rejects before
+generation; publication rechecks source, current title, access and exact queue claim.
+both generated and source-label output use these fences. title changes preserve
+reader content generation, saved positions and selection.
+
+every operation/retry dto carries purpose, including pre-dispatch and historical
+entries. title completion has `changed_fields=[]|[title]` and
+`disposition=generated|source_label`; bibliography retains its fields/no-findings
+review. history reports that run's disposition, never current-title provenance.
 
 ## api and observation
 
@@ -174,17 +206,19 @@ frame in a tab is its baseline, never a change, unless it shows a run that tab
 admitted already completed (it settled before the stream opened); unchanged
 success refreshes activity only. row menus use their inspected action expectation.
 
-each successful stamp checks the text reader's authoritative navigation version;
-the same version needs no content reread. a different version verifies current
-navigation/content/navigation and exact byte/anchor equality through the reader
-owner before advancing attestation while keeping mounted coordinates. a missed
-title change back to the original spelling is still detected. changed content
-uses the existing composed reload; pdf metadata does not reopen its viewer.
-this costs one small navigation read per successful text-reader enrichment.
+each successful stamp rereads media and reloads the reader through its source port.
+title-job admission also rereads: source publication and its new naming obligation
+commit together, so mounted content updates even if generation later fails. a
+same-content-identity response replaces only the current ready document's title;
+units, structure, viewport, surface dom, selection and exploration origin remain.
+changed content uses the ordinary reload, then reads its remapped cursor. the first
+open keeps parallel source/cursor reads; a metadata-only pdf reload keeps learned
+page count and viewer state. each title admission costs one detail read, including
+manual admission. there is no additional subscription or poller.
 
 the metadata overlay remains available for readable, pending and failed media.
 it reads the media through the shared server-state hook (`useServerValue`, keyed
-by media id, refetched on each new enrichment stamp), so reopening it shows the
+by media id, refetched on each new enrichment stamp or latest title-job id), so reopening it shows the
 last values at once while it rereads. it separates reading status from research,
 preserves existing facts during reread, and shows safe outcomes/model activity
 without prompts or tracebacks.
@@ -203,6 +237,16 @@ it reconstructs no identifier or url and adds no reads. an absent provider says
 canonical urls distinct from the source url share one descriptive label.
 
 ## hard cutover and source repair
+
+`0278` adds current x snapshots and tags every settled old metadata payload/typed
+outcome `purpose=bibliography`, including old x research. raw dead-job result bytes,
+ids, reviews, replay receipts and generation evidence remain. unfinished metadata,
+open media-enrichment generations and active x source work refuse migration.
+malformed typed outcomes and untyped succeeded jobs refuse it too. deploy api,
+worker and web together through the existing release controller/verified backup.
+no runtime legacy decoder remains. `nexus.ops.refresh_x_sources` freezes existing
+x targets and records ordinary replayable refresh/title receipts; unavailable
+saved copies stay readable. see [the implementation plan](../x-import-titles-plan.md).
 
 `0256` requires stopped writers and the verified release backup. unresolved
 metadata jobs or generations block migration. settled legacy metadata jobs are

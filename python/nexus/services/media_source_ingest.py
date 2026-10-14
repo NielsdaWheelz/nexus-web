@@ -63,6 +63,7 @@ from nexus.schemas.imports import RepairSourceOffer, RetrySourceOffer, SourceRec
 from nexus.schemas.media import (
     FromUrlResponse,
     MediaSourceAttemptStatus,
+    SourceRefreshAdmission,
     SourceRepairAdmission,
     SourceRetryAdmission,
 )
@@ -90,6 +91,7 @@ from nexus.services.media_processing_state import (
     require_media_failure_stage,
 )
 from nexus.services.metadata_dispatch import enqueue_metadata_enrichment
+from nexus.services.reader_publication import ensure_reader_publication
 from nexus.services.remote_file import remote_file_kind_from_url
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
@@ -143,7 +145,7 @@ _TERMINAL_SOURCE_FAILURE_CODES = frozenset(
     E_INVALID_CONTENT_TYPE E_FILE_TOO_LARGE
     E_CAPTURE_TOO_LARGE E_ARCHIVE_UNSAFE E_INVALID_REQUEST E_PDF_PASSWORD_REQUIRED
     E_TRANSCRIPT_UNAVAILABLE E_X_POST_UNAVAILABLE E_X_PROVIDER_CREDITS_DEPLETED
-    E_X_PROVIDER_AUTH_REJECTED E_REPAIR_NOT_ALLOWED""".split()
+    E_X_PROVIDER_AUTH_REJECTED E_REPAIR_NOT_ALLOWED E_SOURCE_POSITION_UNMAPPABLE""".split()
 )
 _RESTRICTION_MESSAGES: dict[SourceRecoveryRestriction, str] = {
     "NotOwner": "Only the creator can retry source content.",
@@ -216,7 +218,11 @@ def source_recovery(facts: SourceRecoveryFacts) -> SourceRecoveryAnswer:
             expected_job_id=facts.job_id,
             input=_recovery_input(facts.source_type),
         )
-    if facts.attempt_status != FAILED or facts.processing_status != "failed":
+    retained_x = (
+        facts.source_type in {source_types.X_AUTHOR_THREAD, source_types.X_POST}
+        and facts.processing_status == "ready_for_reading"
+    )
+    if facts.attempt_status != FAILED or not (facts.processing_status == "failed" or retained_x):
         return None
     if not facts.is_creator:
         return "NotOwner"
@@ -608,6 +614,8 @@ def _clone_attempt(
     intent_key: str,
 ) -> MediaSourceAttempt:
     """A fresh accepted attempt carrying the previous one's source identity only."""
+    source_payload = dict(previous.source_payload or {})
+    source_payload.pop("parent_source_attempt_id", None)
     attempt = create_attempt(
         db,
         media=media,
@@ -618,7 +626,7 @@ def _clone_attempt(
         canonical_source_url=previous.canonical_source_url,
         provider=previous.provider,
         provider_target_ref=previous.provider_target_ref,
-        source_payload=dict(previous.source_payload or {}),
+        source_payload=source_payload,
         idempotency_key=None,
         status=ACCEPTED,
     )
@@ -1015,6 +1023,7 @@ def complete_x_post_snapshot_attempt(
     *,
     media: Media,
     source_attempt_id: UUID,
+    parent_source_attempt_id: UUID,
     viewer_id: UUID,
     post_id: str,
     canonical_url: str,
@@ -1023,10 +1032,8 @@ def complete_x_post_snapshot_attempt(
     attempt = db.get(MediaSourceAttempt, source_attempt_id)
     if attempt is None or attempt.media_id != media.id:
         raise ApiError(ApiErrorCode.E_INTERNAL, "Accepted X-post attempt identity changed.")
-    if attempt.status == SUCCEEDED:
-        return attempt
     now = datetime.now(UTC)
-    if attempt.status == FAILED:
+    if attempt.status in {FAILED, SUCCEEDED}:
         attempt = create_attempt(
             db,
             media=media,
@@ -1037,12 +1044,19 @@ def complete_x_post_snapshot_attempt(
             canonical_source_url=canonical_url,
             provider="x",
             provider_target_ref=post_id,
-            source_payload={"post_id": post_id},
+            source_payload={
+                "post_id": post_id,
+                "parent_source_attempt_id": str(parent_source_attempt_id),
+            },
             idempotency_key=None,
             status=SUCCEEDED,
         )
     else:
         _release_in_flight_x_post_job(db, attempt)
+        attempt.source_payload = {
+            **dict(attempt.source_payload or {}),
+            "parent_source_attempt_id": str(parent_source_attempt_id),
+        }
         attempt.status = SUCCEEDED
         attempt.error_code = None
         attempt.error_message = None
@@ -1243,14 +1257,73 @@ def retry_source_for_viewer(
     expected_attempt_id: UUID,
     request_id: str | None,
 ) -> SourceRetryAdmission:
-    """Admit one new source attempt for a terminally failed source.
+    return _admit_source_repeat(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        client_mutation_id=client_mutation_id,
+        expected_attempt_id=expected_attempt_id,
+        request_id=request_id,
+        action="retry",
+        admission_type=SourceRetryAdmission,
+    )
 
-    Replay is checked before storage. A read-committed pre-check then heads the
-    stored source with no transaction open, and serializable admission re-checks the attempt
-    and the owner policy before cloning the attempt and enqueueing its one job in
-    the same commit that records the replay receipt.
-    """
-    scope = f"media_source_retry:{media_id}"
+
+def _require_source_retry(db: Session, media: Media, attempt: MediaSourceAttempt) -> None:
+    offer = source_recovery(
+        _recovery_facts(db, media=media, attempt=attempt, is_creator=True, is_operator=False)
+    )
+    match offer:
+        case RetrySourceOffer():
+            return
+        case RepairSourceOffer():
+            raise ConflictError(
+                ApiErrorCode.E_RETRY_NOT_ALLOWED,
+                "Processing stopped before this import finished. Imports offers Retry "
+                "stopped processing, which runs the stopped attempt again without creating a new one.",
+            )
+        case "NotOwner" | "SameSourceTerminal" | "SourceNotReacquirable":
+            raise ConflictError(ApiErrorCode.E_RETRY_NOT_ALLOWED, _RESTRICTION_MESSAGES[offer])
+        case None:
+            raise ConflictError(
+                ApiErrorCode.E_RETRY_NOT_ALLOWED, "Latest source attempt is not retryable."
+            )
+
+
+def _require_source_refresh(media: Media, attempt: MediaSourceAttempt) -> None:
+    if media.processing_status not in {ProcessingStatus.ready_for_reading, ProcessingStatus.failed}:
+        raise ConflictError(
+            ApiErrorCode.E_MEDIA_NOT_READY,
+            "Media source refresh is not available in the current processing state.",
+        )
+    if attempt.status in IN_FLIGHT_STATUSES:
+        raise ConflictError(
+            ApiErrorCode.E_RETRY_INVALID_STATE, "Source ingest is already queued or running."
+        )
+    _raise_if_not_reacquirable(media, attempt)
+
+
+def source_attempt_refreshable(*, source_type: str, status: str, error_code: str | None) -> bool:
+    """The source-policy half of the refresh capability; actor/readability stay with media."""
+    return (
+        status in {SUCCEEDED, FAILED}
+        and _reacquisition_restriction(source_type=source_type, error_code=error_code) is None
+    )
+
+
+def _admit_source_repeat[T: SourceRetryAdmission | SourceRefreshAdmission](
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    client_mutation_id: str,
+    expected_attempt_id: UUID,
+    request_id: str | None,
+    action: Literal["retry", "refresh"],
+    admission_type: type[T],
+) -> T:
+    """Shared replay/storage/commit mechanics; retry and refresh keep their own policies."""
+    scope = f"media_source_{action}:{media_id}"
     request_bytes = canonical_json_bytes({"expected_attempt_id": str(expected_attempt_id)})
     _load_owned_media(db, viewer_id, media_id, lock=False)
     replay = lookup_replay(
@@ -1262,13 +1335,13 @@ def retry_source_for_viewer(
     )
     if replay is not None:
         db.rollback()
-        return SourceRetryAdmission.model_validate(replay)
+        return admission_type.model_validate(replay)
     inspected = _latest_attempt(db, media_id)
     if inspected is not None and inspected.id == expected_attempt_id:
         _verify_source_storage(db, media_id=media_id, attempt_id=inspected.id)
     db.rollback()
 
-    def admit() -> SourceRetryAdmission:
+    def admit() -> T:
         replay = lookup_replay(
             db,
             viewer_id=viewer_id,
@@ -1278,13 +1351,13 @@ def retry_source_for_viewer(
         )
         if replay is not None:
             db.rollback()
-            return SourceRetryAdmission.model_validate(replay)
+            return admission_type.model_validate(replay)
         media = _load_owned_media(db, viewer_id, media_id, lock=True)
         attempt = _lock_latest_attempt(db, media.id)
         if attempt is None:
             raise ConflictError(
                 ApiErrorCode.E_RETRY_NOT_ALLOWED,
-                "Source retry is not available for media without a source attempt.",
+                "Source action is not available for media without a source attempt.",
             )
         if attempt.id != expected_attempt_id:
             raise ConflictError(
@@ -1292,60 +1365,48 @@ def retry_source_for_viewer(
                 "The inspected source attempt is no longer current.",
                 details={"current": {"attempt_id": str(attempt.id)}},
             )
-        offer = source_recovery(
-            _recovery_facts(db, media=media, attempt=attempt, is_creator=True, is_operator=False)
-        )
-        match offer:
-            case RetrySourceOffer():
-                pass
-            case RepairSourceOffer():
-                raise ConflictError(
-                    ApiErrorCode.E_RETRY_NOT_ALLOWED,
-                    "Processing stopped before this import finished. Imports offers Retry "
-                    "stopped processing, which runs the stopped attempt again without "
-                    "creating a new one.",
-                )
-            case "NotOwner" | "SameSourceTerminal" | "SourceNotReacquirable":
-                raise ConflictError(ApiErrorCode.E_RETRY_NOT_ALLOWED, _RESTRICTION_MESSAGES[offer])
-            case None:
-                raise ConflictError(
-                    ApiErrorCode.E_RETRY_NOT_ALLOWED, "Latest source attempt is not retryable."
-                )
+        if action == "retry":
+            _require_source_retry(db, media, attempt)
+        else:
+            _require_source_refresh(media, attempt)
         if media.kind == MediaKind.epub.value:
             _require_unpublished_document(db, media.id, require_no_file=False)
-        retry_attempt = _clone_attempt(
+        if (
+            action == "refresh"
+            and media.kind == MediaKind.web_article.value
+            and media.provider == "x"
+        ):
+            ensure_reader_publication(db, media_id=media.id)
+        repeated = _clone_attempt(
             db,
             media=media,
             viewer_id=viewer_id,
             previous=attempt,
             intent_key=_action_intent_key(
-                "retry", media_id=media.id, previous_attempt_id=attempt.id
+                action, media_id=media.id, previous_attempt_id=attempt.id
             ),
         )
-        _reset_requeued_transcript_job(db, media, retry_attempt)
+        _reset_requeued_transcript_job(db, media, repeated)
         mark_extracting(db, media)
         job_id = enqueue_accepted_source_attempt_in_transaction(
             db,
             media_id=media.id,
-            attempt_id=retry_attempt.id,
+            attempt_id=repeated.id,
             actor_user_id=viewer_id,
             request_id=request_id,
         )
-        _record_event(
-            db,
-            media_id=media.id,
-            attempt=attempt,
-            facts=SourceRecoveryAccepted(
-                source_attempt_id=attempt.id,
-                recovery=RetrySourceRecovery(new_source_attempt_id=retry_attempt.id),
-            ),
-            failure_code=absent(),
-        )
-        admission = SourceRetryAdmission(
-            media_id=media.id,
-            source_attempt_id=retry_attempt.id,
-            job_id=job_id,
-        )
+        if action == "retry":
+            _record_event(
+                db,
+                media_id=media.id,
+                attempt=attempt,
+                facts=SourceRecoveryAccepted(
+                    source_attempt_id=attempt.id,
+                    recovery=RetrySourceRecovery(new_source_attempt_id=repeated.id),
+                ),
+                failure_code=absent(),
+            )
+        admission = admission_type(media_id=media.id, source_attempt_id=repeated.id, job_id=job_id)
         record_replay(
             db,
             viewer_id=viewer_id,
@@ -1357,7 +1418,7 @@ def retry_source_for_viewer(
         db.commit()
         return admission
 
-    return admit_serializable(db, "retry_source_for_viewer", admit)
+    return admit_serializable(db, f"{action}_source_for_viewer", admit)
 
 
 def reprocess_retained_epub(
@@ -1707,80 +1768,25 @@ def repair_dead_source_execution(
 
 
 def refresh_source_for_viewer(
-    *, db: Session, viewer_id: UUID, media_id: UUID, request_id: str | None
-) -> dict[str, object]:
-    """Clone and requeue the latest attempt of a settled, re-acquirable source."""
-    _load_owned_media(db, viewer_id, media_id, lock=False)
-    inspected = _latest_attempt(db, media_id)
-    if inspected is not None:
-        _verify_source_storage(db, media_id=media_id, attempt_id=inspected.id)
-    db.rollback()
-
-    def admit() -> UUID:
-        media = _load_owned_media(db, viewer_id, media_id, lock=True)
-        if media.processing_status not in {
-            ProcessingStatus.ready_for_reading,
-            ProcessingStatus.failed,
-        }:
-            raise ConflictError(
-                ApiErrorCode.E_MEDIA_NOT_READY,
-                "Media source refresh is not available in the current processing state.",
-            )
-        attempt = _lock_latest_attempt(db, media.id)
-        if attempt is None:
-            raise ConflictError(
-                ApiErrorCode.E_RETRY_NOT_ALLOWED,
-                "Source refresh is not available for media without a source attempt.",
-            )
-        if inspected is None or attempt.id != inspected.id:
-            raise ConflictError(
-                ApiErrorCode.E_RESOURCE_CONFLICT, "Source attempt changed during verification."
-            )
-        if attempt.status in IN_FLIGHT_STATUSES:
-            raise ConflictError(
-                ApiErrorCode.E_RETRY_INVALID_STATE, "Source ingest is already queued or running."
-            )
-        _raise_if_not_reacquirable(media, attempt)
-        if media.kind == MediaKind.epub.value:
-            _require_unpublished_document(db, media.id, require_no_file=False)
-        refresh_attempt = _clone_attempt(
-            db,
-            media=media,
-            viewer_id=viewer_id,
-            previous=attempt,
-            intent_key=_action_intent_key(
-                "refresh", media_id=media.id, previous_attempt_id=attempt.id
-            ),
-        )
-        _reset_requeued_transcript_job(db, media, refresh_attempt)
-        mark_extracting(db, media)
-        enqueue_accepted_source_attempt_in_transaction(
-            db,
-            media_id=media.id,
-            attempt_id=refresh_attempt.id,
-            actor_user_id=viewer_id,
-            request_id=request_id,
-        )
-        db.commit()
-        return refresh_attempt.id
-
-    refresh_attempt_id = admit_serializable(db, "refresh_source_for_viewer", admit)
-    from nexus.services.media import get_media_for_viewer
-
-    reloaded = db.get(Media, media_id)
-    attempt_now = db.get(MediaSourceAttempt, refresh_attempt_id)
-    if reloaded is None or attempt_now is None:
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Source refresh disappeared after admission.")
-    return {
-        "media_id": str(reloaded.id),
-        "source_attempt_id": str(attempt_now.id),
-        "source_type": attempt_now.source_type,
-        "source_attempt_status": attempt_now.status,
-        "idempotency_outcome": "refreshed",
-        "processing_status": reloaded.processing_status.value,
-        "ingest_enqueued": True,
-        "capabilities": get_media_for_viewer(db, viewer_id, media_id).capabilities.model_dump(),
-    }
+    *,
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    request_id: str | None,
+    client_mutation_id: str,
+    expected_attempt_id: UUID,
+) -> SourceRefreshAdmission:
+    """Admit one replayable refresh of an exact settled source attempt."""
+    return _admit_source_repeat(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        client_mutation_id=client_mutation_id,
+        expected_attempt_id=expected_attempt_id,
+        request_id=request_id,
+        action="refresh",
+        admission_type=SourceRefreshAdmission,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1893,9 +1899,9 @@ def _system_repair_result(
 
 
 def _raise_if_not_reacquirable(media: Media, attempt: MediaSourceAttempt) -> None:
-    """Refuse on ``media.last_error_code`` — the exact column the offer read."""
+    """The attempted source owns reacquisition restrictions, even while its saved copy is ready."""
     restriction = _reacquisition_restriction(
-        source_type=attempt.source_type, error_code=media.last_error_code
+        source_type=attempt.source_type, error_code=attempt.error_code
     )
     if restriction is not None:
         raise ConflictError(ApiErrorCode.E_RETRY_NOT_ALLOWED, _RESTRICTION_MESSAGES[restriction])
@@ -2063,6 +2069,58 @@ def _run_fenced_attempt(
                 media_ids=tuple(sorted(base_media_ids)),
                 mutate=publish_terminal,
                 discover=_document_embed_owners(base_media_ids),
+            )
+            return source_outcome_to_job_result(outcome)
+
+        from nexus.services.x_ingest import (
+            PreparedXSource,
+            publish_prepared_x_source,
+            x_publication_media_ids,
+        )
+
+        if isinstance(acquired, PreparedXSource):
+
+            def publish_x(db: Session, locked: MediaSourceAttempt) -> SourceRunOutcome:
+                outcome = publish_prepared_x_source(
+                    db,
+                    media_id=media_id,
+                    source_attempt_id=locked.id,
+                    viewer_id=actor_user_id,
+                    request_id=request_id,
+                    prepared=acquired,
+                )
+                terminal_media_id = (
+                    outcome.superseded_by_media_id.value
+                    if isinstance(outcome.superseded_by_media_id, Present)
+                    else media_id
+                )
+                if terminal_media_id != media_id:
+                    _supersede_source_media(
+                        db,
+                        attempt=locked,
+                        loser_media_id=media_id,
+                        winner_media_id=terminal_media_id,
+                    )
+                _apply_observations(db, terminal_media_id, outcome)
+                _publish_terminal_attempt(
+                    db,
+                    attempt=locked,
+                    terminal_media_id=terminal_media_id,
+                    outcome=outcome,
+                    execution_id=fence.execution_id,
+                    request_id=request_id,
+                )
+                return outcome
+
+            outcome = run_source_publication_phase(
+                session_factory=session_factory,
+                label="publish_x_source_attempt_terminal",
+                fence=fence,
+                media_ids=(media_id,),
+                mutate=publish_x,
+                discover=lambda db: x_publication_media_ids(
+                    db, media_id=media_id, prepared=acquired
+                ),
             )
             return source_outcome_to_job_result(outcome)
 
