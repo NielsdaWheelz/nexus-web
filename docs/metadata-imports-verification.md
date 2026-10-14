@@ -122,6 +122,17 @@ extension. existing [custom-highlight minifier warnings](tickets/offline-css-min
 recurred; pyright's version notice was informational. no application change
 followed qualification or this final gate.
 
+## pr integration
+
+integrated main `15fa01866dcfaa11051a2d3e996b9ab5fdfa7a8a` in
+`b39c01754`. independent consumer review found the add editor's acceptance
+contracts intact: shared copy preserves library-refusal handling, the size label
+uses `MiB`, and metadata obligations/recovery/wire contracts remain unchanged.
+the only conflict was the issue register; both sets of open entries were retained.
+`./scripts/test` passed again on this combined head. live qualification remains
+the earlier application-commit evidence above; those deleted cases were not
+recreated for these independent upstream changes.
+
 ## selected durable receipt identities
 
 | observation | identity |
