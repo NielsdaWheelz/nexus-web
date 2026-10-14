@@ -51,7 +51,7 @@ const TOLERANCE_PX = 2;
 export function createTextGeometry(
   scrollport: HTMLElement,
   column: HTMLElement,
-  doc: TextDocument,
+  doc: Pick<TextDocument, "units" | "length">,
 ): TextGeometry {
   const units = new Map(doc.units.map((unit) => [unit.id, unit]));
   const cache = new Map<string, Entry | null>();

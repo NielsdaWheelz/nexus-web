@@ -11,17 +11,20 @@ from nexus.db.retries import retry_read_committed
 from nexus.errors import ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
 from nexus.jobs.queue import JobRow, enqueue_job, jobs_for_payload
 from nexus.schemas.metadata_enrichment import (
+    BibliographyMetadataJobPayload,
     MetadataEnrichmentAccepted,
     MetadataEnrichmentRequest,
     MetadataRetryAllowed,
+    TitleMetadataJobPayload,
 )
 from nexus.schemas.presence import presence_from_nullable
-from nexus.services.metadata_operations import metadata_retry
+from nexus.services.metadata_operations import metadata_purpose, metadata_retry
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
     lookup_replay,
     record_replay,
 )
+from nexus.services.x_source import x_source_attempt_ids
 
 
 def enqueue_metadata_enrichment(
@@ -33,9 +36,34 @@ def enqueue_metadata_enrichment(
 ) -> JobRow:
     """Enqueue in the caller's transaction, serialized by the media parent."""
     media_uuid = UUID(str(media_id))
-    exists = db.scalar(select(Media.id).where(Media.id == media_uuid).with_for_update())
-    if exists is None:
+    media = db.scalar(
+        select(Media)
+        .options(defer(Media.plain_text))
+        .where(Media.id == media_uuid)
+        .with_for_update()
+    )
+    if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "media not found")
+    if metadata_purpose(media) == "title":
+        source_attempt_id = x_source_attempt_ids(db, media_ids=[media_uuid]).get(media_uuid)
+        if source_attempt_id is None:
+            raise ConflictError(
+                ApiErrorCode.E_RETRY_NOT_ALLOWED, "refresh source to generate a title"
+            )
+        payload = TitleMetadataJobPayload(
+            purpose="title",
+            media_id=media_uuid,
+            requester_user_id=requester_user_id,
+            request_id=request_id,
+            source_attempt_id=source_attempt_id,
+        )
+    else:
+        payload = BibliographyMetadataJobPayload(
+            purpose="bibliography",
+            media_id=media_uuid,
+            requester_user_id=requester_user_id,
+            request_id=request_id,
+        )
     created_at = db.scalar(
         text("""
         SELECT greatest(clock_timestamp(), max(created_at) + interval '1 microsecond')
@@ -43,12 +71,9 @@ def enqueue_metadata_enrichment(
     """),
         {"media_id": str(media_uuid)},
     )
-    payload = {
-        "media_id": str(media_uuid),
-        "requester_user_id": str(requester_user_id),
-        "request_id": request_id,
-    }
-    return enqueue_job(db, kind="enrich_metadata", payload=payload, created_at=created_at)
+    return enqueue_job(
+        db, kind="enrich_metadata", payload=payload.model_dump(mode="json"), created_at=created_at
+    )
 
 
 def admit_metadata_enrichment(
@@ -114,12 +139,13 @@ def admit_metadata_enrichment(
             raise ConflictError(
                 ApiErrorCode.E_RESOURCE_CONFLICT, "metadata activity changed; refresh and try again"
             )
-        retry = metadata_retry(media=media, viewer_id=viewer_id, jobs=jobs)
+        retry = metadata_retry(db, media=media, viewer_id=viewer_id, jobs=jobs)
         if not isinstance(retry, MetadataRetryAllowed):
             messages = {
                 "not_creator": "only the creator can research metadata",
                 "not_eligible": "metadata research is unavailable for this media state",
                 "active": "metadata research is already in progress",
+                "source_context_missing": "refresh source to generate a title",
             }
             raise ConflictError(ApiErrorCode.E_RETRY_NOT_ALLOWED, messages[retry.reason])
         job = enqueue_metadata_enrichment(

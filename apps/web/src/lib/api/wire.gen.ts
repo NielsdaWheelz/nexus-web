@@ -4848,6 +4848,10 @@ export interface components {
         Data_ResourceTitleMutationOut_: {
             data: components["schemas"]["ResourceTitleMutationOut"];
         };
+        /** Data[SourceRefreshAdmission] */
+        Data_SourceRefreshAdmission_: {
+            data: components["schemas"]["SourceRefreshAdmission"];
+        };
         /** Data[SourceRetryAdmission] */
         Data_SourceRetryAdmission_: {
             data: components["schemas"]["SourceRetryAdmission"];
@@ -5570,7 +5574,7 @@ export interface components {
         /** FailedSourceBaselineOutcome */
         FailedSourceBaselineOutcome: {
             /** Failure Code */
-            failure_code: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_FORBIDDEN" | "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_UPLOAD_TRANSPORT_FAILED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE");
+            failure_code: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_FORBIDDEN" | "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_UPLOAD_TRANSPORT_FAILED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE");
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -5848,7 +5852,7 @@ export interface components {
             readiness: components["schemas"]["ImportReadiness"];
             source_issues: components["schemas"]["Presence_ImportSourceIssues_"];
         };
-        ImportFailureCode: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_FORBIDDEN" | "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_UPLOAD_TRANSPORT_FAILED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | components["schemas"]["MetadataFailureCode"];
+        ImportFailureCode: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_FORBIDDEN" | "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_UPLOAD_TRANSPORT_FAILED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | components["schemas"]["MetadataFailureCode"];
         /** ImportItem */
         ImportItem: {
             /**
@@ -7136,6 +7140,7 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            x_source_context: components["schemas"]["Presence_XSourceContext_"];
         };
         /**
          * MediaProcessingSnapshotOut
@@ -7306,6 +7311,31 @@ export interface components {
              */
             updated_at: string;
         };
+        /** MetadataBibliographyCompletedOutcome */
+        MetadataBibliographyCompletedOutcome: {
+            /** Changed Fields */
+            changed_fields: components["schemas"]["MetadataField"][];
+            /**
+             * Completed At
+             * Format: date-time
+             */
+            completed_at: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            purpose: "bibliography";
+            /** Retained Manual Authors */
+            retained_manual_authors: boolean;
+            /**
+             * Status
+             * @default completed
+             * @constant
+             */
+            status: "completed";
+            /** Unresolved Fields */
+            unresolved_fields: components["schemas"]["MetadataField"][];
+        };
         /** MetadataCompletedOperation */
         MetadataCompletedOperation: {
             /**
@@ -7320,6 +7350,7 @@ export interface components {
              */
             job_id: string;
             outcome: components["schemas"]["MetadataCompletedOutcome"];
+            purpose: components["schemas"]["MetadataPurpose"];
             selection: components["schemas"]["Presence_MetadataSelection_"];
             started_at: components["schemas"]["Presence_AwareDatetime_"];
             /**
@@ -7328,26 +7359,7 @@ export interface components {
              */
             status: "completed";
         };
-        /** MetadataCompletedOutcome */
-        MetadataCompletedOutcome: {
-            /** Changed Fields */
-            changed_fields: components["schemas"]["MetadataField"][];
-            /**
-             * Completed At
-             * Format: date-time
-             */
-            completed_at: string;
-            /** Retained Manual Authors */
-            retained_manual_authors: boolean;
-            /**
-             * Status
-             * @default completed
-             * @constant
-             */
-            status: "completed";
-            /** Unresolved Fields */
-            unresolved_fields: components["schemas"]["MetadataField"][];
-        };
+        MetadataCompletedOutcome: components["schemas"]["MetadataBibliographyCompletedOutcome"] | components["schemas"]["MetadataTitleCompletedOutcome"];
         /** MetadataEnrichmentAccepted */
         MetadataEnrichmentAccepted: {
             /**
@@ -7395,6 +7407,7 @@ export interface components {
              * Format: uuid
              */
             job_id: string;
+            purpose: components["schemas"]["MetadataPurpose"];
             selection: components["schemas"]["Presence_MetadataSelection_"];
             started_at: components["schemas"]["Presence_AwareDatetime_"];
             /**
@@ -7404,7 +7417,7 @@ export interface components {
             status: "failed";
         };
         /** @enum {string} */
-        MetadataFailureCode: "model_unavailable" | "authentication_failed" | "quota_unavailable" | "research_timeout" | "invalid_output" | "input_too_large" | "output_limit" | "stale_input" | "no_longer_eligible" | "access_revoked" | "cancelled" | "policy_violation" | "worker_interrupted" | "execution_failed";
+        MetadataFailureCode: "model_unavailable" | "authentication_failed" | "quota_unavailable" | "research_timeout" | "invalid_output" | "input_too_large" | "output_limit" | "stale_input" | "source_context_missing" | "no_longer_eligible" | "access_revoked" | "cancelled" | "policy_violation" | "worker_interrupted" | "execution_failed";
         /** @enum {string} */
         MetadataField: "title" | "contributors" | "original_published_date" | "edition_published_date" | "edition_isbn" | "publisher" | "language" | "description";
         /** MetadataNoFindingsOperation */
@@ -7425,6 +7438,11 @@ export interface components {
              * Format: uuid
              */
             job_id: string;
+            /**
+             * Purpose
+             * @constant
+             */
+            purpose: "bibliography";
             reviewed_at: components["schemas"]["Presence_AwareDatetime_"];
             selection: components["schemas"]["Presence_MetadataSelection_"];
             started_at: components["schemas"]["Presence_AwareDatetime_"];
@@ -7447,6 +7465,8 @@ export interface components {
             operation: components["schemas"]["MetadataOperationOut"];
         };
         MetadataOperationOut: components["schemas"]["MetadataQueuedOperation"] | components["schemas"]["MetadataRunningOperation"] | components["schemas"]["MetadataRecoveringOperation"] | components["schemas"]["MetadataWaitingOperation"] | components["schemas"]["MetadataCompletedOperation"] | components["schemas"]["MetadataNoFindingsOperation"] | components["schemas"]["MetadataFailedOperation"];
+        /** @enum {string} */
+        MetadataPurpose: "bibliography" | "title";
         /** MetadataQueuedOperation */
         MetadataQueuedOperation: {
             /**
@@ -7460,6 +7480,7 @@ export interface components {
              * Format: uuid
              */
             job_id: string;
+            purpose: components["schemas"]["MetadataPurpose"];
             selection: components["schemas"]["Presence_MetadataSelection_"];
             started_at: components["schemas"]["Presence_AwareDatetime_"];
             /**
@@ -7481,6 +7502,7 @@ export interface components {
              * Format: uuid
              */
             job_id: string;
+            purpose: components["schemas"]["MetadataPurpose"];
             selection: components["schemas"]["Presence_MetadataSelection_"];
             started_at: components["schemas"]["Presence_AwareDatetime_"];
             /**
@@ -7511,6 +7533,7 @@ export interface components {
         /** MetadataRetryAllowed */
         MetadataRetryAllowed: {
             expected_job_id: components["schemas"]["Presence_UUID_-Output"];
+            purpose: components["schemas"]["MetadataPurpose"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -7519,11 +7542,12 @@ export interface components {
         };
         /** MetadataRetryBlocked */
         MetadataRetryBlocked: {
+            purpose: components["schemas"]["MetadataPurpose"];
             /**
              * Reason
              * @enum {string}
              */
-            reason: "not_creator" | "not_eligible" | "active";
+            reason: "not_creator" | "not_eligible" | "active" | "source_context_missing";
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -7543,6 +7567,7 @@ export interface components {
              * Format: uuid
              */
             job_id: string;
+            purpose: components["schemas"]["MetadataPurpose"];
             selection: components["schemas"]["Presence_MetadataSelection_"];
             started_at: components["schemas"]["Presence_AwareDatetime_"];
             /**
@@ -7560,6 +7585,32 @@ export interface components {
             /** Reasoning */
             reasoning: string;
         };
+        /** MetadataTitleCompletedOutcome */
+        MetadataTitleCompletedOutcome: {
+            /** Changed Fields */
+            changed_fields: "title"[];
+            /**
+             * Completed At
+             * Format: date-time
+             */
+            completed_at: string;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "generated" | "source_label";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            purpose: "title";
+            /**
+             * Status
+             * @default completed
+             * @constant
+             */
+            status: "completed";
+        };
         MetadataUnfinishedOperation: components["schemas"]["MetadataQueuedOperation"] | components["schemas"]["MetadataRunningOperation"] | components["schemas"]["MetadataRecoveringOperation"] | components["schemas"]["MetadataWaitingOperation"];
         /** MetadataWaitingOperation */
         MetadataWaitingOperation: {
@@ -7574,6 +7625,7 @@ export interface components {
              * Format: uuid
              */
             job_id: string;
+            purpose: components["schemas"]["MetadataPurpose"];
             /**
              * Reason
              * @constant
@@ -8990,8 +9042,9 @@ export interface components {
         "Presence_UUID_-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_UUID_-Input"];
         "Presence_UUID_-Output": components["schemas"]["Absent-Output"] | components["schemas"]["Present_UUID_-Output"];
         Presence_UndoRestoreIn_: components["schemas"]["Absent-Input"] | components["schemas"]["Present_UndoRestoreIn_"];
-        Presence_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_GONE____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_GONE____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____"];
+        Presence_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_GONE____E_SOURCE_NOT_READABLE____E_SOURCE_POSITION_UNMAPPABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_GONE____E_SOURCE_NOT_READABLE____E_SOURCE_POSITION_UNMAPPABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____"];
         Presence_Union_Literal__Upload____Validate____Extract____Finalize____SourceProcessing____Literal__Index____Metadata____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Union_Literal__Upload____Validate____Extract____Finalize____SourceProcessing____Literal__Index____Metadata____"];
+        Presence_XSourceContext_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_XSourceContext_"];
         Presence_datetime_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_datetime_"];
         Presence_int_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_int_"];
         "Presence_str_-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_str_-Input"];
@@ -9656,15 +9709,15 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["UndoRestoreIn"];
         };
-        /** Present[Union[Literal['E_SOURCE_INTEGRITY', 'E_INVALID_FILE_TYPE', 'E_FILE_TOO_LARGE', 'E_CAPTURE_TOO_LARGE'], Literal['E_ARCHIVE_UNSAFE', 'E_CAPTURE_TOO_LARGE', 'E_FORBIDDEN', 'E_IDEMPOTENCY_KEY_REPLAY_MISMATCH', 'E_INGEST_FAILED', 'E_INGEST_TIMEOUT', 'E_INTERNAL', 'E_INVALID_CONTENT_TYPE', 'E_INVALID_KIND', 'E_INVALID_REQUEST', 'E_MEDIA_NOT_FOUND', 'E_MEDIA_NOT_READY', 'E_OWNER_REQUIRED', 'E_PDF_PASSWORD_REQUIRED', 'E_PDF_TEXT_UNAVAILABLE', 'E_PODCAST_PROVIDER_UNAVAILABLE', 'E_REPAIR_NOT_ALLOWED', 'E_RESOURCE_CONFLICT', 'E_RESOURCE_LIMIT', 'E_RETRY_INVALID_STATE', 'E_RETRY_NOT_ALLOWED', 'E_SANITIZATION_FAILED', 'E_SELECTION_CHANGED', 'E_SIGN_UPLOAD_FAILED', 'E_SOURCE_ACCESS_DENIED', 'E_SOURCE_FETCH_FAILED', 'E_SOURCE_GONE', 'E_SOURCE_NOT_READABLE', 'E_SOURCE_TOO_LARGE', 'E_SSRF_BLOCKED', 'E_STORAGE_ERROR', 'E_STORAGE_MISSING', 'E_TRANSCRIPTION_FAILED', 'E_TRANSCRIPTION_TIMEOUT', 'E_TRANSCRIPT_UNAVAILABLE', 'E_UPLOAD_CAPABILITY_EXPIRED', 'E_UPLOAD_TRANSPORT_FAILED', 'E_WORKER_HANDLER_FAILED', 'E_WORKER_INTERRUPTED', 'E_X_POST_UNAVAILABLE', 'E_X_PROVIDER_AUTH_REJECTED', 'E_X_PROVIDER_CREDITS_DEPLETED', 'E_X_PROVIDER_RATE_LIMITED', 'E_X_PROVIDER_TIMEOUT', 'E_X_PROVIDER_UNAVAILABLE']]] */
-        Present_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_GONE____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____: {
+        /** Present[Union[Literal['E_SOURCE_INTEGRITY', 'E_INVALID_FILE_TYPE', 'E_FILE_TOO_LARGE', 'E_CAPTURE_TOO_LARGE'], Literal['E_ARCHIVE_UNSAFE', 'E_CAPTURE_TOO_LARGE', 'E_FORBIDDEN', 'E_IDEMPOTENCY_KEY_REPLAY_MISMATCH', 'E_INGEST_FAILED', 'E_INGEST_TIMEOUT', 'E_INTERNAL', 'E_INVALID_CONTENT_TYPE', 'E_INVALID_KIND', 'E_INVALID_REQUEST', 'E_MEDIA_NOT_FOUND', 'E_MEDIA_NOT_READY', 'E_OWNER_REQUIRED', 'E_PDF_PASSWORD_REQUIRED', 'E_PDF_TEXT_UNAVAILABLE', 'E_PODCAST_PROVIDER_UNAVAILABLE', 'E_REPAIR_NOT_ALLOWED', 'E_RESOURCE_CONFLICT', 'E_RESOURCE_LIMIT', 'E_RETRY_INVALID_STATE', 'E_RETRY_NOT_ALLOWED', 'E_SANITIZATION_FAILED', 'E_SELECTION_CHANGED', 'E_SIGN_UPLOAD_FAILED', 'E_SOURCE_ACCESS_DENIED', 'E_SOURCE_FETCH_FAILED', 'E_SOURCE_GONE', 'E_SOURCE_NOT_READABLE', 'E_SOURCE_POSITION_UNMAPPABLE', 'E_SOURCE_TOO_LARGE', 'E_SSRF_BLOCKED', 'E_STORAGE_ERROR', 'E_STORAGE_MISSING', 'E_TRANSCRIPTION_FAILED', 'E_TRANSCRIPTION_TIMEOUT', 'E_TRANSCRIPT_UNAVAILABLE', 'E_UPLOAD_CAPABILITY_EXPIRED', 'E_UPLOAD_TRANSPORT_FAILED', 'E_WORKER_HANDLER_FAILED', 'E_WORKER_INTERRUPTED', 'E_X_POST_UNAVAILABLE', 'E_X_PROVIDER_AUTH_REJECTED', 'E_X_PROVIDER_CREDITS_DEPLETED', 'E_X_PROVIDER_RATE_LIMITED', 'E_X_PROVIDER_TIMEOUT', 'E_X_PROVIDER_UNAVAILABLE']]] */
+        Present_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_GONE____E_SOURCE_NOT_READABLE____E_SOURCE_POSITION_UNMAPPABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "Present";
             /** Value */
-            value: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_FORBIDDEN" | "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_UPLOAD_TRANSPORT_FAILED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE");
+            value: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_FORBIDDEN" | "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_UPLOAD_TRANSPORT_FAILED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE");
         };
         /** Present[Union[Literal['Upload', 'Validate', 'Extract', 'Finalize', 'SourceProcessing'], Literal['Index', 'Metadata']]] */
         Present_Union_Literal__Upload____Validate____Extract____Finalize____SourceProcessing____Literal__Index____Metadata____: {
@@ -9675,6 +9728,15 @@ export interface components {
             kind: "Present";
             /** Value */
             value: ("Upload" | "Validate" | "Extract" | "Finalize" | "SourceProcessing") | ("Index" | "Metadata");
+        };
+        /** Present[XSourceContext] */
+        Present_XSourceContext_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["XSourceContext"];
         };
         /** Present[datetime] */
         Present_datetime_: {
@@ -10758,6 +10820,27 @@ export interface components {
             /** Subject */
             subject: string;
         };
+        /** RefreshSourceRequest */
+        RefreshSourceRequest: {
+            /** Client Mutation Id */
+            client_mutation_id: string;
+            /**
+             * Expected Attempt Id
+             * Format: uuid
+             */
+            expected_attempt_id: string;
+        };
+        /** RefreshSourceResourceActionCapabilityOut */
+        RefreshSourceResourceActionCapabilityOut: {
+            /** Availability */
+            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
+            expectedAttemptId: components["schemas"]["Presence_UUID_-Output"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "RefreshSource";
+        };
         /** RejectedChatAdmission */
         RejectedChatAdmission: {
             /**
@@ -10988,7 +11071,7 @@ export interface components {
         ResourceActionSnapshotOut: {
             activation: components["schemas"]["ResourceActivationOut"];
             /** Capabilities */
-            capabilities: (components["schemas"]["SimpleResourceActionCapabilityOut"] | components["schemas"]["RetryMetadataResourceActionCapabilityOut"] | components["schemas"]["ReviewMetadataResultResourceActionCapabilityOut"] | components["schemas"]["SourceRecoveryResourceActionCapabilityOut"] | components["schemas"]["SearchRecoveryResourceActionCapabilityOut"] | components["schemas"]["DownloadResourceActionCapabilityOut"] | components["schemas"]["OpenSourceResourceActionCapabilityOut"] | components["schemas"]["PlaybackResourceActionCapabilityOut"] | components["schemas"]["ConsumptionResourceActionCapabilityOut"] | components["schemas"]["EpisodeConsumptionResourceActionCapabilityOut"] | components["schemas"]["PodcastSubscriptionResourceActionCapabilityOut"] | components["schemas"]["TranscriptResourceActionCapabilityOut"] | components["schemas"]["LecternMembershipResourceActionCapabilityOut"] | components["schemas"]["HighlightNoteResourceActionCapabilityOut"])[];
+            capabilities: (components["schemas"]["SimpleResourceActionCapabilityOut"] | components["schemas"]["RefreshSourceResourceActionCapabilityOut"] | components["schemas"]["RetryMetadataResourceActionCapabilityOut"] | components["schemas"]["ReviewMetadataResultResourceActionCapabilityOut"] | components["schemas"]["SourceRecoveryResourceActionCapabilityOut"] | components["schemas"]["SearchRecoveryResourceActionCapabilityOut"] | components["schemas"]["DownloadResourceActionCapabilityOut"] | components["schemas"]["OpenSourceResourceActionCapabilityOut"] | components["schemas"]["PlaybackResourceActionCapabilityOut"] | components["schemas"]["ConsumptionResourceActionCapabilityOut"] | components["schemas"]["EpisodeConsumptionResourceActionCapabilityOut"] | components["schemas"]["PodcastSubscriptionResourceActionCapabilityOut"] | components["schemas"]["TranscriptResourceActionCapabilityOut"] | components["schemas"]["LecternMembershipResourceActionCapabilityOut"] | components["schemas"]["HighlightNoteResourceActionCapabilityOut"])[];
             /** Missing */
             missing: boolean;
             /** Ref */
@@ -11567,7 +11650,7 @@ export interface components {
         };
         /** SearchImportStateNeedsAttention */
         SearchImportStateNeedsAttention: {
-            failure_code: components["schemas"]["Presence_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_GONE____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____"];
+            failure_code: components["schemas"]["Presence_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_GONE____E_SOURCE_NOT_READABLE____E_SOURCE_POSITION_UNMAPPABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -12365,7 +12448,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "LinkResource" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RefreshSource" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RerunMessage" | "ResetProgress" | "RetryPodcastBackfill" | "Share" | "WalkMessageSources";
+            kind: "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "LinkResource" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RerunMessage" | "ResetProgress" | "RetryPodcastBackfill" | "Share" | "WalkMessageSources";
         };
         /** SourceAccepted */
         SourceAccepted: {
@@ -12504,7 +12587,7 @@ export interface components {
         };
         /** SourceImportStateNeedsAttention */
         SourceImportStateNeedsAttention: {
-            failure_code: components["schemas"]["Presence_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_GONE____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____"];
+            failure_code: components["schemas"]["Presence_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_GONE____E_SOURCE_NOT_READABLE____E_SOURCE_POSITION_UNMAPPABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -12545,6 +12628,30 @@ export interface components {
             kind: "SourceRecovery";
             /** Offer */
             offer: components["schemas"]["RetrySourceOfferOut"] | components["schemas"]["RepairSourceOfferOut"];
+        };
+        /** SourceRefreshAdmission */
+        SourceRefreshAdmission: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * Kind
+             * @default SourceRefresh
+             * @constant
+             */
+            kind: "SourceRefresh";
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
         };
         /** SourceRepairAdmission */
         SourceRepairAdmission: {
@@ -13887,6 +13994,28 @@ export interface components {
             activePrimaryPaneId: string;
             /** Panes */
             panes: components["schemas"]["WorkspacePane-Output"][];
+        };
+        /** XSourceContext */
+        XSourceContext: {
+            /**
+             * Enumeration
+             * @enum {string}
+             */
+            enumeration: "exhausted" | "post_limit";
+            /**
+             * Published At
+             * Format: date-time
+             */
+            published_at: string;
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
+            /** Unavailable Context Count */
+            unavailable_context_count: number;
+            /** Uncaptured Context Count */
+            uncaptured_context_count: number;
         };
     };
     responses: never;
@@ -17691,7 +17820,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RefreshSourceRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             202: {
@@ -17699,9 +17832,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_SourceRefreshAdmission_"];
                 };
             };
             /** @description Validation Error */

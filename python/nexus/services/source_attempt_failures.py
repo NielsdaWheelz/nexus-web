@@ -20,13 +20,18 @@ from nexus.schemas.import_history import (
 from nexus.schemas.presence import Presence, present
 from nexus.services import media_source_types as source_types
 from nexus.services.import_history import append_processing_event
-from nexus.services.media_processing_state import MediaFailureStage, mark_media_failed_by_id
+from nexus.services.media_processing_state import (
+    MediaFailureStage,
+    mark_media_failed_by_id,
+    mark_ready_for_reading_by_id,
+)
 from nexus.services.podcasts.transcription_failure import (
     PodcastTranscriptionFailure,
     publish_podcast_transcription_failure,
 )
 from nexus.services.source_history import source_failure_progress, source_history_stage
 from nexus.services.transcripts.state import set_media_transcript_state
+from nexus.services.x_source import has_retained_x_publication
 
 # Keyed by a resource failure's dimension (``background_jobs.result``).
 _RESOURCE_LIMIT_MESSAGES: dict[ResourceFailureDimension, str] = {
@@ -60,9 +65,8 @@ def source_attempt_failure_stage(source_type: str) -> MediaFailureStage:
 def publish_source_attempt_failure(db: Session, failure: SourceAttemptFailure) -> None:
     """Settle one attempt and publish all of its terminal domain projections.
 
-    The media row and the attempt are locked first: the attempt's ``error_code``
-    and the media's ``last_error_code`` are written in this one transaction and
-    must never disagree.
+    Lock the media and attempt first. A retained X publication stays ready;
+    its failed refresh is represented by this attempt, not by the saved copy.
     """
     db.execute(
         text("SELECT id FROM media WHERE id = :media_id FOR NO KEY UPDATE"),
@@ -130,6 +134,13 @@ def publish_source_attempt_failure(db: Session, failure: SourceAttemptFailure) -
                 now=failure.now,
             ),
         )
+        return
+
+    if source_type in {
+        source_types.X_AUTHOR_THREAD,
+        source_types.X_POST,
+    } and has_retained_x_publication(db, media_id=failure.media_id):
+        mark_ready_for_reading_by_id(db, media_id=failure.media_id, now=failure.now)
         return
 
     mark_media_failed_by_id(

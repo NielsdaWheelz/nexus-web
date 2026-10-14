@@ -108,12 +108,25 @@ export default function MetadataResearchActions({
       ? currentRetry.expected_job_id
       : undefined;
   const matches =
+    currentRetry?.purpose === view.retry.purpose &&
     expected !== undefined &&
     offered !== undefined &&
     expected.kind === offered.kind &&
     (expected.kind === "Absent" ||
       (offered.kind === "Present" && expected.value === offered.value));
   const operation = view.operation;
+  const sourceRemedy =
+    view.retry.status === "blocked" &&
+    view.retry.reason === "source_context_missing"
+      ? model.descriptors.find(
+          (action) =>
+            action.kind === "command" &&
+            !action.disabled &&
+            (action.id === "ResourceOperation.Media.RefreshSource" ||
+              action.id === "ResourceOperation.Media.RetryProcessing" ||
+              action.id === "ResourceOperation.Media.RepairSource"),
+        )
+      : undefined;
   const reviewable =
     operation.kind === "Present" &&
     operation.value.status === "no_findings" &&
@@ -127,6 +140,7 @@ export default function MetadataResearchActions({
         />
       ) : null}
       {(!primaryOnly || !reviewable) &&
+      !model.metadataRequestPending &&
       view.retry.status === "allowed" &&
       model.status === "Ready" &&
       !matches ? (
@@ -142,7 +156,7 @@ export default function MetadataResearchActions({
           refresh status
         </Button>
       ) : (!primaryOnly || !reviewable) &&
-        view.retry.status === "allowed" &&
+        (view.retry.status === "allowed" || model.metadataRequestPending) &&
         retry?.kind === "command" ? (
         <Button
           variant="secondary"
@@ -152,7 +166,16 @@ export default function MetadataResearchActions({
         >
           {model.metadataRequestPending
             ? retry.label
-            : metadataResearchLabel(operation)}
+            : metadataResearchLabel(operation, view.retry.purpose)}
+        </Button>
+      ) : null}
+      {(!primaryOnly || !reviewable) && sourceRemedy?.kind === "command" ? (
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => sourceRemedy.onSelect({ triggerEl: null })}
+        >
+          {sourceRemedy.label}
         </Button>
       ) : null}
     </>

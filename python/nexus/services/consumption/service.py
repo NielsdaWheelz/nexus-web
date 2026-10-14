@@ -116,8 +116,13 @@ def put_reader_cursor_in_txn(
 ) -> ReaderCursorSnapshot:
     lock_viewer(db, viewer_id)
     kind = _reader_kind(db, viewer_id, media_id)
+    generation = (
+        lock_publication_generation(db, media_id=media_id)
+        if kind == "web_article" or write.expected_reader_generation is not None
+        else None
+    )
     if write.expected_reader_generation is not None and (
-        lock_publication_generation(db, media_id=media_id) != write.expected_reader_generation
+        generation != write.expected_reader_generation
     ):
         raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
     snapshot = reader_cursor.put_in_txn(

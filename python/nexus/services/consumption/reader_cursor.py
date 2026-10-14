@@ -8,6 +8,8 @@ inside the caller's transaction.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from uuid import UUID
 
 from pydantic import TypeAdapter, ValidationError
@@ -22,7 +24,10 @@ from nexus.schemas.reader import (
     ReaderCursorEmpty,
     ReaderCursorPositioned,
     ReaderCursorSnapshot,
+    ReaderFragmentTarget,
+    ReaderQuoteContext,
     ReaderResumeState,
+    ReaderTextLocations,
     WebReaderResumeState,
 )
 from nexus.services.canonicalize import canonicalize_structure
@@ -36,6 +41,130 @@ _LOCATOR_KIND = {
     "podcast_episode": "transcript",
 }
 _RESUME_STATE = TypeAdapter(ReaderResumeState)
+
+
+@dataclass(frozen=True, slots=True)
+class _CursorRemap:
+    user_id: UUID
+    before: WebReaderResumeState
+    fragment_index: int
+    offset: int
+    total_progression: float
+
+
+@dataclass(frozen=True, slots=True)
+class CursorRemapPlan:
+    """Exact locations prepared under the publication and cursor row locks."""
+
+    media_id: UUID
+    moves: tuple[_CursorRemap, ...]
+
+
+def prepare_source_replacement(
+    db: Session, *, media_id: UUID, replacement_texts: Sequence[str]
+) -> CursorRemapPlan:
+    """Lock every saved cursor and map it before the caller replaces its fragments.
+
+    The caller holds the publication lock. Web saves take it before reading a
+    cursor, so even a first save cannot enter between this plan and publication.
+    """
+    rows = db.execute(
+        text(
+            "SELECT user_id, locator FROM reader_media_state WHERE media_id = :media_id"
+            " ORDER BY user_id FOR UPDATE"
+        ),
+        {"media_id": media_id},
+    ).all()
+    fragments = {
+        str(row.id): row.canonical_text
+        for row in db.execute(
+            text("SELECT id, canonical_text FROM fragments WHERE media_id = :media_id"),
+            {"media_id": media_id},
+        )
+    }
+    starts: list[int] = []
+    total = 0
+    for content in replacement_texts:
+        starts.append(total)
+        total += len(content)
+    moves: list[_CursorRemap] = []
+    for row in rows:
+        if row.locator is None:
+            continue
+        try:
+            before = _RESUME_STATE.validate_python(row.locator)
+        except ValidationError:
+            raise _unmappable() from None
+        if not isinstance(before, WebReaderResumeState):
+            raise _unmappable()
+        original = fragments.get(before.target.fragment_id)
+        offset = before.locations.text_offset
+        if original is None or offset is None or not 0 <= offset <= len(original):
+            raise _unmappable()
+        match = _unique_source_match(original, replacement_texts)
+        relative = offset
+        if match is None:
+            start = max(0, offset - 64)
+            window = original[start : offset + 64]
+            match = _unique_source_match(window, replacement_texts)
+            relative = offset - start
+        if match is None:
+            raise _unmappable()
+        index, start = match
+        mapped_offset = start + relative
+        moves.append(
+            _CursorRemap(
+                row.user_id,
+                before,
+                index,
+                mapped_offset,
+                (starts[index] + mapped_offset) / total,
+            )
+        )
+    return CursorRemapPlan(media_id, tuple(moves))
+
+
+def apply_source_replacement(
+    db: Session, *, plan: CursorRemapPlan, replacement_fragment_ids: Sequence[UUID]
+) -> None:
+    """Install prepared locations in the same transaction, without reading activity."""
+    for move in plan.moves:
+        locator = WebReaderResumeState(
+            kind="web",
+            target=ReaderFragmentTarget(
+                fragment_id=str(replacement_fragment_ids[move.fragment_index])
+            ),
+            locations=ReaderTextLocations(
+                text_offset=move.offset,
+                progression=None,
+                total_progression=move.total_progression,
+                position=None,
+            ),
+            text=ReaderQuoteContext(quote=None, quote_prefix=None, quote_suffix=None),
+        )
+        if locator != move.before:
+            _write(db, move.user_id, plan.media_id, locator.model_dump(mode="json"))
+
+
+def _unique_source_match(needle: str, texts: Sequence[str]) -> tuple[int, int] | None:
+    if not needle:
+        return None
+    found: tuple[int, int] | None = None
+    for index, content in enumerate(texts):
+        offset = content.find(needle)
+        if offset < 0:
+            continue
+        if found is not None or content.find(needle, offset + 1) >= 0:
+            raise _unmappable()
+        found = (index, offset)
+    return found
+
+
+def _unmappable() -> ConflictError:
+    return ConflictError(
+        ApiErrorCode.E_SOURCE_POSITION_UNMAPPABLE,
+        "A saved reading spot has no clear match in the replacement source.",
+    )
 
 
 def current_position_rows_sql() -> str:
@@ -87,10 +216,6 @@ def put_in_txn(
 ) -> ReaderCursorPositioned:
     """Validate the base revision before accepting even an identical locator."""
     _check_kind(media_kind, write.locator)
-    if isinstance(write.locator, EpubReaderResumeState):
-        _admit_epub(db, media_id, write.locator)
-    elif isinstance(write.locator, WebReaderResumeState):
-        _admit_web(db, media_id, write.locator)
     current = load_snapshot(db, viewer_id=viewer_id, media_id=media_id, media_kind=media_kind)
     if write.base_revision != current.revision:
         raise ConflictError(
@@ -98,6 +223,10 @@ def put_in_txn(
             "Reader cursor was updated elsewhere",
             details={"current": current.model_dump(mode="json")},
         )
+    if isinstance(write.locator, EpubReaderResumeState):
+        _admit_epub(db, media_id, write.locator)
+    elif isinstance(write.locator, WebReaderResumeState):
+        _admit_web(db, media_id, write.locator)
     if isinstance(current, ReaderCursorPositioned) and current.locator == write.locator:
         return current
     revision = _write(db, viewer_id, media_id, write.locator.model_dump(mode="json"))

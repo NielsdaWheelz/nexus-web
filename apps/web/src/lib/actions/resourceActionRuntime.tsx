@@ -42,6 +42,7 @@ import {
 } from "@/lib/lectern/useCompletionUndo";
 import { offlineAvailable, useOfflineSnapshot } from "@/lib/offline/bridge";
 import { CONFLICT_NOTICE } from "@/lib/imports/copy";
+import { refreshMediaSource } from "@/lib/imports/api";
 import { useShareController } from "@/lib/sharing/controller";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import { useWorkspaceStore } from "@/lib/workspace/store";
@@ -101,6 +102,11 @@ function createBusyStore() {
   };
 }
 
+function accessReplyCannotSettleIntent(status: number): boolean {
+  // These access checks precede replay lookup, including hidden not-found replies.
+  return status === 401 || status === 403 || status === 404;
+}
+
 interface ResourceActionRuntime {
   readonly cache: ResourceActionSnapshotCache;
   readonly busy: ReturnType<typeof createBusyStore>;
@@ -156,6 +162,12 @@ export function ResourceActionRuntimeProvider({
     submitting: boolean;
   }>());
   const [pendingMetadataRequests, setPendingMetadataRequests] = useState<ReadonlySet<CanonicalResourceRef>>(new Set());
+  const [sourceRefreshIntents] = useState(() => new Map<string, {
+    readonly intent: MutationIntent;
+    readonly expectedAttemptId: string;
+    submitting: boolean;
+  }>());
+  const [pendingSourceRefreshRequests, setPendingSourceRefreshRequests] = useState<ReadonlySet<CanonicalResourceRef>>(new Set());
   const workspace = useWorkspaceStore();
   const workspaceRef = useRef(workspace);
   workspaceRef.current = workspace;
@@ -206,15 +218,17 @@ export function ResourceActionRuntimeProvider({
       feedback.publish({
         kind: "Hud",
         key: `metadata-request:${mediaId}`,
-        content: { tone: "Neutral", title: "metadata research request confirmed" },
+        content: { tone: "Neutral", title: "metadata request confirmed" },
         actions: [{ label: "metadata…", onClick: showMetadata }],
       });
     } catch (error) {
       if (isApiError(error) && error.status >= 400 && error.status < 500) {
-        pending.intent.discard();
-        metadataIntents.delete(mediaId);
-        feedback.resolve(`metadata-request:${mediaId}`);
-        setPendingMetadataRequests(new Set([...metadataIntents.keys()].map((id) => canonicalResourceRef({ scheme: "media", id }))));
+        if (!accessReplyCannotSettleIntent(error.status)) {
+          pending.intent.discard();
+          metadataIntents.delete(mediaId);
+          feedback.resolve(`metadata-request:${mediaId}`);
+          setPendingMetadataRequests(new Set([...metadataIntents.keys()].map((id) => canonicalResourceRef({ scheme: "media", id }))));
+        }
         throw error;
       }
       // No receipt was received. New snapshots must not rotate this frozen body.
@@ -226,7 +240,7 @@ export function ResourceActionRuntimeProvider({
           { label: "confirm request", onClick: () => { void submit(mediaId, null, detail).catch((error) => {
             if (handleUnauthenticatedApiError(error)) return;
             if (isApiError(error) && !isSameSystemApiDefect(error)) {
-              feedback.publish({ kind: "Hud", content: { tone: "Danger", title: "metadata request was not accepted", message: error.message } });
+              feedback.publish({ kind: "Hud", content: { tone: "Danger", title: "could not confirm metadata request", message: error.message } });
               void cache.reconcile({ kind: "Subjects", refs: [canonicalResourceRef({ scheme: "media", id: mediaId })] }).catch((error) => setDefect({ error }));
             } else setDefect({ error });
           }); } },
@@ -237,6 +251,74 @@ export function ResourceActionRuntimeProvider({
       pending.submitting = false;
     }
   }, [metadataIntents, feedback, openMediaMetadata, cache]);
+  const submitSourceRefresh = useCallback(async function submit(
+    mediaId: string,
+    expectedAttemptId: string | null,
+    detail: ActionSelectDetail,
+  ): Promise<void> {
+    let pending = sourceRefreshIntents.get(mediaId);
+    if (!pending) {
+      if (expectedAttemptId === null) {
+        // justify-defect: fresh refresh needs the exact offered source attempt.
+        throw new TypeError("Source refresh lost its inspected expectation");
+      }
+      pending = { intent: createMutationIntent(), expectedAttemptId, submitting: false };
+      sourceRefreshIntents.set(mediaId, pending);
+      setPendingSourceRefreshRequests(new Set([...sourceRefreshIntents.keys()].map((id) => canonicalResourceRef({ scheme: "media", id }))));
+    }
+    if (pending.submitting) return;
+    pending.submitting = true;
+    const ref = canonicalResourceRef({ scheme: "media", id: mediaId });
+    const paneId = detail.triggerEl?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId
+      ?? workspaceRef.current.state.activePrimaryPaneId;
+    const showMetadata = () => openMediaMetadata(mediaId, detail.triggerEl, () =>
+      document.querySelector<HTMLElement>(`[data-pane-chrome-for="${paneId}"]`));
+    try {
+      await refreshMediaSource(mediaId, {
+        client_mutation_id: pending.intent.clientMutationId(pending.expectedAttemptId),
+        expected_attempt_id: pending.expectedAttemptId,
+      });
+      pending.intent.discard();
+      sourceRefreshIntents.delete(mediaId);
+      setPendingSourceRefreshRequests(new Set([...sourceRefreshIntents.keys()].map((id) => canonicalResourceRef({ scheme: "media", id }))));
+      feedback.publish({
+        kind: "Hud",
+        key: `source-refresh:${mediaId}`,
+        content: { tone: "Neutral", title: "source refresh request confirmed" },
+        actions: [{ label: "metadata…", onClick: showMetadata }],
+      });
+    } catch (error) {
+      if (isApiError(error) && error.status >= 400 && error.status < 500) {
+        if (!accessReplyCannotSettleIntent(error.status)) {
+          pending.intent.discard();
+          sourceRefreshIntents.delete(mediaId);
+          feedback.resolve(`source-refresh:${mediaId}`);
+          setPendingSourceRefreshRequests(new Set([...sourceRefreshIntents.keys()].map((id) => canonicalResourceRef({ scheme: "media", id }))));
+        }
+        throw error;
+      }
+      // A later snapshot cannot change the bytes of this unconfirmed request.
+      feedback.publish({
+        kind: "Hud",
+        key: `source-refresh:${mediaId}`,
+        content: { tone: "Danger", title: "source refresh unconfirmed", message: "confirm this request to safely check whether it was accepted" },
+        actions: [
+          { label: "confirm request", onClick: () => { void submit(mediaId, null, detail).then(() =>
+            cache.reconcile({ kind: "Subjects", refs: [ref] }),
+          ).catch((error) => {
+            if (handleUnauthenticatedApiError(error)) return;
+            if (isApiError(error) && !isSameSystemApiDefect(error)) {
+              feedback.publish({ kind: "Hud", content: { tone: "Danger", title: "could not confirm source refresh", message: error.message } });
+              void cache.reconcile({ kind: "Subjects", refs: [ref] }).catch((error) => setDefect({ error }));
+            } else setDefect({ error });
+          }); } },
+          { label: "metadata…", onClick: showMetadata },
+        ],
+      });
+    } finally {
+      pending.submitting = false;
+    }
+  }, [sourceRefreshIntents, feedback, openMediaMetadata, cache]);
   useEffect(() => subscribeMetadataOperationChanges((mediaId) => {
     void cache.reconcile({ kind: "Subjects", refs: [canonicalResourceRef({ scheme: "media", id: mediaId })] }).catch((error) => setDefect({ error }));
   }), [cache]);
@@ -302,6 +384,7 @@ export function ResourceActionRuntimeProvider({
   );
   const ports: ResourceActionPorts = {
     submitMetadata,
+    submitSourceRefresh,
     workspace,
     activePaneId: workspace.state.activePrimaryPaneId,
     openShare,
@@ -352,7 +435,8 @@ export function ResourceActionRuntimeProvider({
         } catch (error) {
           if (handleUnauthenticatedApiError(error)) return;
           if (isApiError(error) && !isSameSystemApiDefect(error)) {
-            if (command.id === "ResourceOperation.Media.RetryMetadata") {
+            if (command.id === "ResourceOperation.Media.RetryMetadata" ||
+                command.id === "ResourceOperation.Media.RefreshSource") {
               void cache.reconcile(command.reconcile).catch((error) => setDefect({ error }));
             }
             const importRecovery =
@@ -433,6 +517,7 @@ export function ResourceActionRuntimeProvider({
       playbackByRef,
       pendingMetadataRequests,
       ensureRequests: lectern.ensureRequests,
+      pendingSourceRefreshRequests,
     }),
     [
       connectivity,
@@ -443,6 +528,7 @@ export function ResourceActionRuntimeProvider({
       offlineByRef,
       playbackByRef,
       pendingMetadataRequests,
+      pendingSourceRefreshRequests,
     ],
   );
   if (defect) throw defect.error;

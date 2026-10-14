@@ -12,6 +12,7 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import FailureStage, Media, MediaKind, ProcessingStatus
+from nexus.services.x_source import has_retained_x_publication
 
 type MediaFailureStage = Literal["upload", "extract", "transcribe", "embed", "other"]
 
@@ -74,6 +75,10 @@ def _clear_failure(media: Media) -> None:
 
 def mark_extracting(db: Session, media: Media) -> None:
     """Move queued or starting source work to extracting, failure cleared."""
+    if media.provider == "x" and has_retained_x_publication(db, media_id=media.id):
+        if media.processing_status != ProcessingStatus.ready_for_reading:
+            mark_ready_for_reading(db, media)
+        return
     media.processing_status = ProcessingStatus.extracting
     media.processing_started_at = func.now()
     _clear_failure(media)

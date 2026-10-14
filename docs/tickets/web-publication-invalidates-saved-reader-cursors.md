@@ -39,3 +39,14 @@ published fragment and canonical-text hash were unchanged. the prepared narrow
 operator reset was never executed. this resolves the current migration input,
 while the publication defect remains open. the fresh db0215 archive captured at
 13:32:06–13:33:28 utc includes the deliberate user recovery.
+
+## x refresh prerequisite
+
+2026-10-14: the owner approved exact-position preservation for the refresh-all
+cutover in [x import titles](../x-import-titles-plan.md). current
+`python/nexus/services/web_article.py:267–290` still deletes fragment identities;
+`services/consumption/service.py:114–142` performs reader-save activity effects.
+the plan adds cursor-owner remapping inside x publication, rejects unmappable
+replacements while keeping the saved copy, and fences concurrent saves without
+creating reading activity. implementation and verification remain outstanding;
+non-x replacement remains covered by this ticket.

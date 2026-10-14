@@ -187,12 +187,6 @@ The safe-code catalog carries a PDF text warning as if it were a failure; the
 browser copy is corrected, but warnings still share the failure vocabulary. See
 [docs/tickets/import-history-pdf-text-warning-is-not-a-failure.md](tickets/import-history-pdf-text-warning-is-not-a-failure.md).
 
-### [OPEN] OI-023 — X-post quote completion defects when its ingest job is not running
-backend · opened 2026-09-08 by Claude (imports cutover, Track B) · P2
-A pre-existing defect surfaced while fixing the completion's lock cycle: quote
-completion raises when its ingest job is not running. See
-[docs/tickets/x-quote-completion-defects-when-its-ingest-job-is-not-running.md](tickets/x-quote-completion-defects-when-its-ingest-job-is-not-running.md).
-
 ### [OPEN] OI-030 — the source-refusal sentence duplicates browser copy
 backend · opened 2026-09-09 by Claude (imports cutover, Track C2) · P3
 The repairable-state refusal in `media_source_ingest.py` now repeats, word for
@@ -412,7 +406,6 @@ unexpected timeouts. See
 - [open] web / mobile viewport verification · 2026-10-10 app navigation reauthor · the nav harness has no playable episode, so the mini-player half of bottom clearance (M10) is unrun: [ticket](tickets/mobile-player-clearance-has-no-browser-proof.md).
 - [open] web / workspace · 2026-10-10 nav harness X1 · the stats pane re-activates itself after its in-place address rewrite, so a quick fork lands behind it: [ticket](tickets/stats-pane-reactivates-after-address-rewrite.md).
 - [open] add content / libraries · 2026-10-10 imports reauthor · Add keeps its own multi-target placement machine beside the shared placement overlay; unify in the libraries rewrite: [ticket](tickets/add-placement-duplicates-library-placement-overlay.md).
-- [open] api / typed wire · 2026-10-10 imports reauthor · `POST /media/{id}/refresh` returns an untyped body: [ticket](tickets/media-refresh-route-has-no-model.md).
 - [open] imports / inspector · 2026-10-10 imports reauthor · a failed "Load earlier events" read shows no notice and no retry: [ticket](tickets/import-history-load-more-failure-is-silent.md).
 - [open] imports / verification · 2026-10-10 imports reauthor · the imports harness does not drive browse preview Add or note-body attachments: [ticket](tickets/imports-harness-lacks-browse-and-note-attachment-journeys.md).
 - [open] resource actions / web · 2026-10-10 workspace host reauthor · a resource's More menu opens with every canonical action blocked ("Actions are refreshing.") for one snapshot round trip: [ticket](tickets/resource-menu-opens-with-actions-blocked.md).
@@ -450,3 +443,9 @@ unexpected timeouts. See
 - [open] web / chat, keyboard · 2026-10-14 shortcut-removal review · an active docent walk can steal modified keys such as command/control+p: [ticket](tickets/docent-shortcuts-steal-modified-keys.md).
 - [open] web / player, overlays · 2026-10-14 shortcut-removal review · player shortcuts remain active on a focused library chooser sheet: [ticket](tickets/player-shortcuts-ignore-overlays.md).
 - [open] web / keyboard verification · 2026-10-14 shortcut removal · fixed shortcuts passed static checks; authenticated browser journeys remain unverified: [ticket](tickets/fixed-shortcuts-browser-verification.md).
+- [open] release / x titles · 2026-10-14 implementation · production migration and frozen refresh census remain with the aligned release: [ticket](tickets/x-title-production-cutover.md).
+- [open] browser / replay · 2026-10-14 review · unresolved intents survive mounted runtime only, not navigation/login: [ticket](tickets/admission-intents-do-not-survive-navigation.md).
+- [open] reader / embeds · 2026-10-14 review · mounted parent cards do not refresh another media's changed label: [ticket](tickets/reader-embed-target-metadata-stays-stale.md).
+- [open] generation / queue locks · 2026-10-14 recovery review · tool generation→job order opposes dead-letter job→generation: [ticket](tickets/generation-dead-letter-inverts-tool-lock-order.md).
+- [unverified] x / provider contract · 2026-10-14 review · legitimate omission of requested media expansion objects is not established: [ticket](tickets/x-media-expansion-absence-unqualified.md).
+

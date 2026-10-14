@@ -46,12 +46,14 @@ import { deleteMemberLibrary } from "@/lib/libraries/client";
 import type { useWorkspaceStore } from "@/lib/workspace/store";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import {
-  refreshMediaSource,
   repairSearchImport,
   repairSourceImport,
   retrySourceImport,
 } from "@/lib/imports/api";
-import { METADATA_RETRY_BLOCKED_COPY } from "@/lib/media/mediaMetadataCopy";
+import {
+  metadataResearchLabel,
+  metadataRetryBlockedCopy,
+} from "@/lib/media/mediaMetadataCopy";
 import { submitMetadataResultReview } from "@/lib/media/mediaMetadataOperations";
 import { deleteMedia } from "@/lib/media/mediaLibraries";
 import { deleteConversation } from "@/lib/chat/conversationIndex";
@@ -87,6 +89,11 @@ export interface ResourceActionPorts {
   readonly submitMetadata: (
     mediaId: string,
     expectedJobId: Schema<"MetadataRetryAllowed">["expected_job_id"] | null,
+    detail: ActionSelectDetail,
+  ) => Promise<void>;
+  readonly submitSourceRefresh: (
+    mediaId: string,
+    expectedAttemptId: string | null,
     detail: ActionSelectDetail,
   ) => Promise<void>;
   readonly workspace: ReturnType<typeof useWorkspaceStore>;
@@ -786,15 +793,30 @@ export function resourceActionDescriptors({
             return assertNever(offer, "media recovery offer");
         }
       }
-      case "RefreshSource":
+      case "RefreshSource": {
+        const canConfirm = environment.pendingSourceRefreshRequests.has(ref) &&
+          !(capability.availability.kind === "Blocked" &&
+            capability.availability.reason === "PermissionDenied");
         return make(
-          capability,
+          canConfirm ? { ...capability, availability: { kind: "Available" } } : capability,
           "ResourceOperation.Media.RefreshSource",
-          async () => {
-            await refreshMediaSource(id());
+          async (ports, detail) => {
+            await ports.submitSourceRefresh(id(),
+              capability.expectedAttemptId.kind === "Present"
+                ? capability.expectedAttemptId.value : null,
+              detail);
           },
-          { reconcile: subjectScope },
+          {
+            label: canConfirm ? "confirm refresh request" : undefined,
+            disabledReason: !canConfirm && capability.availability.kind === "Blocked" &&
+              capability.availability.reason !== "PermissionDenied"
+              ? "source refresh is unavailable in the current state"
+              : undefined,
+            blocked: environment.connectivity === "Offline" ? "RequiresOnline" : undefined,
+            reconcile: subjectScope,
+          },
         );
+      }
       case "RetryMetadata": {
         const confirming = environment.pendingMetadataRequests.has(ref);
         const canConfirm = confirming && (capability.retry.status !== "blocked"
@@ -807,9 +829,11 @@ export function resourceActionDescriptors({
               ? capability.retry.expected_job_id : null, detail);
           },
           {
-            label: canConfirm ? "confirm metadata request" : undefined,
+            label: canConfirm ? "confirm metadata request" : metadataResearchLabel(
+              { kind: "Absent" }, capability.retry.purpose,
+            ),
             disabledReason: !canConfirm && capability.retry.status === "blocked"
-              ? METADATA_RETRY_BLOCKED_COPY[capability.retry.reason] : undefined,
+              ? metadataRetryBlockedCopy(capability.retry) : undefined,
             blocked: environment.connectivity === "Offline" ? "RequiresOnline" : undefined,
             reconcile: subjectScope,
           },

@@ -1,110 +1,283 @@
-"""X author threads and single posts, published as web-article media.
-
-A thread is one fragment per post. Each resolved quote becomes its own x-post media,
-published from the same snapshot (no second provider call) and linked as a
-materialized embed. Re-adding supersedes onto the media holding the provider identity.
-"""
+"""Detached X acquisition and atomic source/reader publication."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import select, text
+from sqlalchemy.orm import Session
 
 from nexus.db.models import Media
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.schemas.presence import absent, present
+from nexus.schemas.presence import present
+from nexus.schemas.x_source import XSourceAuthor, XSourceSnapshot
 from nexus.services import contributor_taxonomy as taxonomy
 from nexus.services import document_embeds as embeds
 from nexus.services import library_entries
 from nexus.services import x_rendering as render
+from nexus.services.consumption.reader_cursor import (
+    apply_source_replacement,
+    prepare_source_replacement,
+)
 from nexus.services.media_processing_state import mark_ready_for_reading
 from nexus.services.media_source_ingest import (
     accept_embedded_source,
     complete_x_post_snapshot_attempt,
     lock_identity,
 )
-from nexus.services.reader_publication import ReplaceSourceIssues, replace_reader_publication
-from nexus.services.source_outcome import (
-    SourceContributorObservation,
-    SourceRunOutcome,
-    source_contributor_observations,
+from nexus.services.metadata_dispatch import enqueue_metadata_enrichment
+from nexus.services.reader_publication import (
+    ReplaceSourceIssues,
+    read_publication_generation,
+    replace_reader_publication,
 )
-from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
+from nexus.services.source_outcome import SourceRunOutcome, source_contributor_observations
 from nexus.services.web_article import prepare_article, replace_article_fragments
 from nexus.services.web_article_structure import WebArticlePreparedFragment
-from nexus.services.x_client import XMedia, XPost, XUser, fetch_author_thread, fetch_single_post
-from nexus.services.x_identity import (
-    canonical_x_post_url,
-    x_author_thread_provider_id,
-    x_post_provider_id,
+from nexus.services.x_client import AcquiredXSource, fetch_author_thread, fetch_single_post
+from nexus.services.x_identity import canonical_x_post_url, x_post_provider_id
+from nexus.services.x_source import (
+    authored_text,
+    publish_x_source,
+    quoted_post_snapshot,
+    source_label,
 )
 
 
 @dataclass(frozen=True, slots=True)
-class _Post:
-    """One post, rendered and prepared outside any transaction."""
-
-    post: XPost
-    author: XUser | None
-    title: str
-    description: str
-    html: str
-    prepared: WebArticlePreparedFragment
+class PreparedXDocument:
+    snapshot: XSourceSnapshot
+    provider_id: str
+    fragments: tuple[tuple[render.RenderedPost, WebArticlePreparedFragment], ...]
 
 
 @dataclass(frozen=True, slots=True)
-class _Published:
-    holder_id: UUID | None  # the media that already held the identity, when superseding
-    status: str
-    quote_media_ids: dict[str, UUID]
-    reindex_media_ids: list[UUID]
+class PreparedXSource:
+    document: PreparedXDocument
+    quotes: Mapping[str, PreparedXDocument]
 
 
-def materialize_x_author_thread_media(
-    session_factory: sessionmaker[Session],
-    *,
-    viewer_id: UUID,
-    media_id: UUID,
-    post_id: str,
-    source_attempt_id: UUID,
-    request_id: str | None,
-    publication_fence: SourcePublicationFence,
-) -> SourceRunOutcome:
-    """Publish the author's thread and its quotes, or supersede onto the thread's media."""
-    thread = fetch_author_thread(post_id)
-    provider_id = x_author_thread_provider_id(thread.author.id, thread.conversation_id)
-    posts = [
-        (
-            item,
-            prepare_article(
-                item.html,
-                base_url=canonical_x_post_url(item.post.id),
-                document_url=canonical_x_post_url(item.post.id),
-                extract_embeds=bool(item.quotes),
-                fragment_idx=index,
-            ),
-        )
-        for index, item in enumerate(render.render_thread(thread))
-    ]
-    quotes = {
-        quote_id: _render_post(quoted, thread.users, thread.media)
-        for quote_id, quoted in thread.quotes.items()
-        if quoted is not None
+def prepare_x_source(*, post_id: str, author_thread: bool) -> PreparedXSource:
+    acquired = fetch_author_thread(post_id) if author_thread else fetch_single_post(post_id)
+    snapshot = acquired.snapshot
+    quote_ids = {
+        reference.post_id
+        for primary in snapshot.primary_post_ids
+        for reference in snapshot.posts[primary].references
+        if reference.kind == "quoted" and reference.availability == "available"
     }
+    return PreparedXSource(
+        document=_prepare_document(acquired, embed_quotes=True),
+        quotes={
+            post_id: _prepare_document(
+                AcquiredXSource(
+                    provider_id=x_post_provider_id(post_id),
+                    snapshot=quoted_post_snapshot(snapshot, post_id),
+                ),
+                embed_quotes=False,
+            )
+            for post_id in sorted(quote_ids)
+        },
+    )
 
-    def project(db: Session, media: Media, quote_media_ids: Mapping[str, UUID]) -> None:
-        media.title = render.thread_title(thread)[:255]
-        media.description = render.thread_description(thread)
-        media.canonical_url = None
-        media.canonical_source_url = canonical_x_post_url(thread.posts[0].id)
-        media.provider, media.provider_id, media.publisher = "x", provider_id, "X"
-        fragment_ids = replace_article_fragments(
-            db, media_id=media.id, fragments=[(prepared, item.html) for item, prepared in posts]
+
+def _prepare_document(acquired: AcquiredXSource, *, embed_quotes: bool) -> PreparedXDocument:
+    return PreparedXDocument(
+        snapshot=acquired.snapshot,
+        provider_id=acquired.provider_id,
+        fragments=tuple(
+            (
+                item,
+                prepare_article(
+                    item.html,
+                    base_url=canonical_x_post_url(item.post.id),
+                    document_url=canonical_x_post_url(item.post.id),
+                    extract_embeds=bool(item.quotes),
+                    fragment_idx=index,
+                ),
+            )
+            for index, item in enumerate(
+                render.render_source(acquired.snapshot, embed_quotes=embed_quotes)
+            )
+        ),
+    )
+
+
+def x_publication_media_ids(
+    db: Session, *, media_id: UUID, prepared: PreparedXSource
+) -> list[UUID]:
+    """Discover all existing identities and embed owners before source locks are taken."""
+    identities = [
+        prepared.document.provider_id,
+        *(quote.provider_id for quote in prepared.quotes.values()),
+    ]
+    ids = set(
+        db.scalars(select(Media.id).where(Media.provider == "x", Media.provider_id.in_(identities)))
+    )
+    ids.add(media_id)
+    # Identity reuse also transfers access to the existing holder's embedded targets.
+    for identity in tuple(ids):
+        ids.update(embeds.resolved_document_embed_target_media_ids(db, media_id=identity))
+    ids.update(
+        db.scalars(
+            text("SELECT DISTINCT media_id FROM document_embeds WHERE target_media_id = ANY(:ids)"),
+            {"ids": sorted(ids)},
         )
+    )
+    return sorted(ids)
+
+
+def publish_prepared_x_source(
+    db: Session,
+    *,
+    media_id: UUID,
+    source_attempt_id: UUID,
+    viewer_id: UUID,
+    request_id: str | None,
+    prepared: PreparedXSource,
+) -> SourceRunOutcome:
+    """Flush-only; the coordinator fences and commits reader, attempt and jobs together."""
+    document = prepared.document
+    for identity in sorted(
+        {document.provider_id, *(quote.provider_id for quote in prepared.quotes.values())}
+    ):
+        lock_identity(db, identity)
+    library_ids = library_entries.admin_non_default_library_ids_for_media(
+        db, viewer_id=viewer_id, media_id=media_id
+    )
+    holder = db.scalar(
+        select(Media).where(
+            Media.provider == "x", Media.provider_id == document.provider_id, Media.id != media_id
+        )
+    )
+    if holder is not None:
+        for target_id in (
+            holder.id,
+            *embeds.resolved_document_embed_target_media_ids(db, media_id=holder.id),
+        ):
+            library_entries.assign_libraries_for_media_in_current_transaction(
+                db, viewer_id, target_id, library_ids
+            )
+        embeds.reconcile_document_embed_edges_for_viewer(
+            db, viewer_id=viewer_id, media_id=holder.id
+        )
+        return SourceRunOutcome(
+            diagnostics={
+                "processing_status": holder.processing_status.value,
+                "ingest_enqueued": False,
+                "idempotency_outcome": "reused",
+            },
+            superseded_by_media_id=present(holder.id),
+            metadata_enrichment=present(False),
+        )
+    quote_media_ids: dict[str, UUID] = {}
+    completed_quotes: list[UUID] = []
+    observations = source_contributor_observations(
+        media_id=media_id,
+        observation=_author(document.snapshot.posts[document.snapshot.requested_post_id].author),
+        source="x_api_author_thread"
+        if document.snapshot.source_kind == "author_thread"
+        else "x_api_post",
+    )
+    for quote_id, quote in prepared.quotes.items():
+        accepted = accept_embedded_source(
+            db=db,
+            viewer_id=viewer_id,
+            url=canonical_x_post_url(quote_id),
+            parent_media_id=media_id,
+            document_embed_key=f"x-quote-post:{quote_id}",
+            library_ids=library_ids,
+        )
+        quote_media_ids[quote_id] = accepted.media_id
+        # A parent capture never replaces a child's independent published source/refresh.
+        if read_publication_generation(db, media_id=accepted.media_id) is not None:
+            continue
+        child = db.get(Media, accepted.media_id)
+        assert child is not None
+        attempt = complete_x_post_snapshot_attempt(
+            db,
+            media=child,
+            source_attempt_id=accepted.source_attempt_id,
+            parent_source_attempt_id=source_attempt_id,
+            viewer_id=viewer_id,
+            post_id=quote_id,
+            canonical_url=canonical_x_post_url(quote_id),
+        )
+        _publish_document(
+            db,
+            media_id=child.id,
+            source_attempt_id=attempt.id,
+            viewer_id=viewer_id,
+            document=quote,
+            quote_media_ids={},
+        )
+        enqueue_metadata_enrichment(
+            db,
+            media_id=child.id,
+            requester_user_id=child.created_by_user_id or viewer_id,
+            request_id=request_id,
+        )
+        completed_quotes.append(child.id)
+        observations += source_contributor_observations(
+            media_id=child.id,
+            observation=_author(quote.snapshot.posts[quote_id].author),
+            source="x_api_quoted_post",
+        )
+    _publish_document(
+        db,
+        media_id=media_id,
+        source_attempt_id=source_attempt_id,
+        viewer_id=viewer_id,
+        document=document,
+        quote_media_ids=quote_media_ids,
+    )
+    return SourceRunOutcome(
+        diagnostics={
+            "processing_status": "ready_for_reading",
+            "ingest_enqueued": False,
+            "idempotency_outcome": "refreshed",
+        },
+        observations=observations,
+        additional_reindex_media_ids=tuple(completed_quotes),
+        metadata_enrichment=present(True),
+    )
+
+
+def _publish_document(
+    db: Session,
+    *,
+    media_id: UUID,
+    source_attempt_id: UUID,
+    viewer_id: UUID,
+    document: PreparedXDocument,
+    quote_media_ids: Mapping[str, UUID],
+) -> None:
+    def project(media: Media) -> None:
+        snapshot = document.snapshot
+        plan = prepare_source_replacement(
+            db,
+            media_id=media.id,
+            replacement_texts=[prepared.canonical_text for _, prepared in document.fragments],
+        )
+        media.title = source_label(snapshot)
+        media.description = "\n\n".join(
+            authored_text(snapshot.posts[post_id]) for post_id in snapshot.primary_post_ids
+        )[:2000]
+        media.canonical_url = (
+            canonical_x_post_url(snapshot.requested_post_id)
+            if snapshot.source_kind == "post"
+            else None
+        )
+        media.canonical_source_url = canonical_x_post_url(snapshot.primary_post_ids[0])
+        media.provider, media.provider_id, media.publisher = "x", document.provider_id, "X"
+        fragment_ids = replace_article_fragments(
+            db,
+            media_id=media.id,
+            fragments=[(prepared, item.html) for item, prepared in document.fragments],
+        )
+        apply_source_replacement(db, plan=plan, replacement_fragment_ids=fragment_ids)
         embeds.replace_document_embed_artifact(
             db,
             owner_user_id=media.created_by_user_id or viewer_id,
@@ -112,7 +285,9 @@ def materialize_x_author_thread_media(
             source_attempt_id=source_attempt_id,
             occurrences=[
                 occurrence
-                for fragment_id, (item, prepared) in zip(fragment_ids, posts, strict=True)
+                for fragment_id, (item, prepared) in zip(
+                    fragment_ids, document.fragments, strict=True
+                )
                 for occurrence in _quote_occurrences(
                     fragment_id, prepared.canonical_text, item.quotes, quote_media_ids
                 )
@@ -120,181 +295,12 @@ def materialize_x_author_thread_media(
             extraction_failed=False,
             locked_existing_target_media_ids=frozenset(),
         )
-
-    published = _publish(
-        session_factory,
-        viewer_id=viewer_id,
-        media_id=media_id,
-        fence=publication_fence,
-        label="publish_x_thread_artifacts",
-        provider_id=provider_id,
-        quotes=quotes,
-        project=project,
-    )
-    observations = source_contributor_observations(
-        media_id=published.holder_id or media_id,
-        observation=_author(thread.author),
-        source="x_api_author_thread",
-    )
-    for quote_id, quote_media_id in published.quote_media_ids.items():
-        if (author := quotes[quote_id].author) is not None:
-            observations += source_contributor_observations(
-                media_id=quote_media_id, observation=_author(author), source="x_api_quoted_post"
-            )
-    return _outcome(published, observations)
-
-
-def materialize_x_post_media(
-    session_factory: sessionmaker[Session],
-    *,
-    viewer_id: UUID,
-    media_id: UUID,
-    post_id: str,
-    request_id: str | None,
-    publication_fence: SourcePublicationFence,
-) -> SourceRunOutcome:
-    """Publish one post, or supersede onto the media that already holds it."""
-    snapshot = fetch_single_post(post_id)
-    post = _render_post(snapshot.post, snapshot.users, snapshot.media)
-    published = _publish(
-        session_factory,
-        viewer_id=viewer_id,
-        media_id=media_id,
-        fence=publication_fence,
-        label="publish_x_post_artifacts",
-        provider_id=x_post_provider_id(post.post.id),
-        quotes={},
-        project=lambda db, media, _quotes: _project_post(db, media, viewer_id, post),
-    )
-    observations = (
-        source_contributor_observations(
-            media_id=media_id, observation=_author(post.author), source="x_api_post"
+        publish_x_source(
+            db, media_id=media.id, source_attempt_id=source_attempt_id, snapshot=snapshot
         )
-        if published.holder_id is None and post.author is not None
-        else ()
-    )
-    return _outcome(published, observations)
+        mark_ready_for_reading(db, media)
 
-
-def _publish(
-    session_factory: sessionmaker[Session],
-    *,
-    viewer_id: UUID,
-    media_id: UUID,
-    fence: SourcePublicationFence,
-    label: str,
-    provider_id: str,
-    quotes: Mapping[str, _Post],
-    project: Callable[[Session, Media, Mapping[str, UUID]], object],
-) -> _Published:
-    """One fenced phase: lock the identities, then supersede onto a holder or publish.
-
-    A holder of ``provider_id`` and its embedded targets gain the viewer's libraries.
-    Otherwise each quote is accepted as a child and published from the snapshot unless
-    it already is, and ``project`` installs this media's own reader projection.
-    """
-    found: dict[str, UUID] = {}
-
-    def discover(db: Session) -> list[UUID]:
-        found.clear()
-        for key, identity in [("", provider_id), *((q, x_post_provider_id(q)) for q in quotes)]:
-            query = select(Media.id).where(Media.provider == "x", Media.provider_id == identity)
-            if key == "":
-                query = query.where(Media.id != media_id)
-            if (holder := db.scalar(query.order_by(Media.id).limit(1))) is not None:
-                found[key] = holder
-        return list(found.values())
-
-    def mutate(db: Session, _attempt: object) -> _Published:
-        for identity in sorted({provider_id, *map(x_post_provider_id, quotes)}):
-            lock_identity(db, identity)
-        library_ids = library_entries.admin_non_default_library_ids_for_media(
-            db, viewer_id=viewer_id, media_id=media_id
-        )
-        if (holder_id := found.get("")) is not None:
-            targets = embeds.resolved_document_embed_target_media_ids(db, media_id=holder_id)
-            for target_id in (holder_id, *targets):
-                library_entries.assign_libraries_for_media_in_current_transaction(
-                    db, viewer_id, target_id, library_ids
-                )
-            embeds.reconcile_document_embed_edges_for_viewer(
-                db, viewer_id=viewer_id, media_id=holder_id
-            )
-            holder = db.get(Media, holder_id)
-            if holder is None:
-                raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-            return _Published(holder_id, holder.processing_status.value, {}, list(targets))
-        quote_media_ids: dict[str, UUID] = {}
-        for quote_id, quote in quotes.items():
-            accepted = accept_embedded_source(
-                db=db,
-                viewer_id=viewer_id,
-                url=canonical_x_post_url(quote_id),
-                parent_media_id=media_id,
-                document_embed_key=f"x-quote-post:{quote_id}",
-                library_ids=library_ids,
-            )
-            quote_media_ids[quote_id] = accepted.media_id
-            if (accepted.processing_status, accepted.source_attempt_status) == (
-                "ready_for_reading",
-                "succeeded",
-            ):
-                continue
-            quote_media = _replace(
-                db,
-                accepted.media_id,
-                lambda media, quote=quote: _project_post(db, media, viewer_id, quote),
-            )
-            mark_ready_for_reading(db, quote_media)
-            complete_x_post_snapshot_attempt(
-                db,
-                media=quote_media,
-                source_attempt_id=accepted.source_attempt_id,
-                viewer_id=viewer_id,
-                post_id=quote_id,
-                canonical_url=canonical_x_post_url(quote_id),
-            )
-        _replace(db, media_id, lambda media: project(db, media, quote_media_ids))
-        return _Published(
-            None, "ready_for_reading", quote_media_ids, sorted(set(quote_media_ids.values()))
-        )
-
-    return run_source_publication_phase(
-        session_factory=session_factory,
-        label=label,
-        fence=fence,
-        media_ids=(media_id,),
-        mutate=mutate,
-        discover=discover,
-    )
-
-
-def _render_post(post: XPost, users: Mapping[str, XUser], media: Mapping[str, XMedia]) -> _Post:
-    html = render.render_post(post, users, media)
-    url = canonical_x_post_url(post.id)
-    return _Post(
-        post=post,
-        author=users.get(post.author_id),
-        title=render.post_title(post, users)[:255],
-        description=render.post_description(post),
-        html=html,
-        prepared=prepare_article(html, base_url=url, document_url=url, extract_embeds=False),
-    )
-
-
-def _project_post(db: Session, media: Media, viewer_id: UUID, post: _Post) -> Media:
-    owner = media.created_by_user_id or viewer_id
-    embeds.delete_document_embed_artifacts(db, owner_user_id=owner, media_id=media.id)
-    media.title, media.description = post.title, post.description
-    media.canonical_url = media.canonical_source_url = canonical_x_post_url(post.post.id)
-    media.provider, media.provider_id = "x", x_post_provider_id(post.post.id)
-    media.publisher = "X"
-    replace_article_fragments(db, media_id=media.id, fragments=[(post.prepared, post.html)])
-    return media
-
-
-def _replace[T](db: Session, media_id: UUID, project: Callable[[Media], T]) -> T:
-    return replace_reader_publication(
+    replace_reader_publication(
         db,
         media_id=media_id,
         expected_kind="web_article",
@@ -309,7 +315,6 @@ def _quote_occurrences(
     quotes: tuple[render.RenderedQuote, ...],
     quote_media_ids: Mapping[str, UUID],
 ) -> list[embeds.DocumentEmbedArtifactOccurrence]:
-    """Each quote's placeholder, found in order in the fragment's canonical text."""
     occurrences: list[embeds.DocumentEmbedArtifactOccurrence] = []
     end = 0
     for quote in quotes:
@@ -347,28 +352,15 @@ def _quote_occurrences(
     return occurrences
 
 
-def _author(user: XUser) -> taxonomy.ContributorObservationBatch:
-    """The snapshot display name keyed on the numeric ``x_user`` id, never the handle."""
-    claim = (taxonomy.RawIdentityClaim("x_user", user.id),)
+def _author(user: XSourceAuthor) -> taxonomy.ContributorObservationBatch:
     batch, _truncated = taxonomy.build_observation(
-        {"author": [taxonomy.RawCreditEntry(credited_name=user.name, identity_claims=claim)]}
+        {
+            "author": [
+                taxonomy.RawCreditEntry(
+                    credited_name=user.name,
+                    identity_claims=(taxonomy.RawIdentityClaim("x_user", user.id),),
+                )
+            ]
+        }
     )
     return batch
-
-
-def _outcome(
-    published: _Published, observations: tuple[SourceContributorObservation, ...]
-) -> SourceRunOutcome:
-    return SourceRunOutcome(
-        diagnostics={
-            "processing_status": published.status,
-            "ingest_enqueued": False,
-            "idempotency_outcome": "refreshed" if published.holder_id is None else "reused",
-        },
-        observations=observations,
-        superseded_by_media_id=absent()
-        if published.holder_id is None
-        else present(published.holder_id),
-        additional_reindex_media_ids=tuple(published.reindex_media_ids),
-        metadata_enrichment=present(True),
-    )

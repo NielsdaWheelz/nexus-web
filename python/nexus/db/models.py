@@ -764,6 +764,24 @@ class MediaSourceAttempt(Base):
     media: Mapped["Media"] = relationship("Media")
 
 
+class XSourceSnapshot(Base):
+    """Current normalized evidence published by one successful native x attempt."""
+
+    __tablename__ = "x_source_snapshots"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=False, unique=True
+    )
+    source_attempt_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media_source_attempts.id"), nullable=False
+    )
+    published_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
+    )
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+
+
 class MediaTeardownIntent(Base):
     """Durable claim that a media row is being torn down (lectern-player-lifecycle
     hard cutover §3.1).

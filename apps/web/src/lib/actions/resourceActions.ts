@@ -257,7 +257,7 @@ export const RESOURCE_ACTION_CATALOG = {
     group: "Manage",
   },
   "ResourceOperation.Media.RefreshSource": {
-    label: "Refresh source",
+    label: "refresh source",
     icon: RefreshCw,
     group: "Manage",
   },

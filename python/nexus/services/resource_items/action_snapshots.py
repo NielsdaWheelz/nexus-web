@@ -44,6 +44,7 @@ from nexus.schemas.resource_action_snapshots import (
     OpenSourceResourceActionCapabilityOut,
     PlaybackResourceActionCapabilityOut,
     PodcastSubscriptionResourceActionCapabilityOut,
+    RefreshSourceResourceActionCapabilityOut,
     RepairSearchOfferOut,
     RepairSourceOfferOut,
     ResourceActionCapabilityOut,
@@ -545,7 +546,18 @@ def _extend_media(
             )
         )
     if ops.refresh_source_applicable:
-        capabilities.append(_simple("RefreshSource", _authorized(ops.can_refresh_source)))
+        capabilities.append(
+            RefreshSourceResourceActionCapabilityOut(
+                availability=(
+                    _blocked("PermissionDenied")
+                    if not media.refresh_source_authorized
+                    else _available()
+                    if ops.can_refresh_source
+                    else _blocked("TemporarilyUnavailable")
+                ),
+                expected_attempt_id=media.refresh_source_attempt_id,
+            )
+        )
     if ops.retry_metadata_applicable:
         retry = media.metadata_retry
         availability = (
@@ -558,7 +570,7 @@ def _extend_media(
                         "not_creator": "PermissionDenied",
                         "not_eligible": "TemporarilyUnavailable",
                         "active": "Processing",
-                        "uncertain": "Locked",
+                        "source_context_missing": "TemporarilyUnavailable",
                     }[retry.reason],
                 )
             )

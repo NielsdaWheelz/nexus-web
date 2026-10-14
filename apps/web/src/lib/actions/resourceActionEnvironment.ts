@@ -34,6 +34,7 @@ export type ResourceActionOfflineState =
  */
 export interface ResourceActionEnvironment {
   readonly pendingMetadataRequests: ReadonlySet<CanonicalResourceRef>;
+  readonly pendingSourceRefreshRequests: ReadonlySet<CanonicalResourceRef>;
   readonly connectivity: "Online" | "Offline";
   readonly offline: ResourceActionOfflineState;
   readonly lectern: ResourceActionLecternState;

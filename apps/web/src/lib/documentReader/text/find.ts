@@ -16,7 +16,7 @@ import type { TextGeometry } from "./geometry";
 import type { Painter } from "./paint";
 
 export function createTextFind(
-  doc: TextDocument,
+  doc: Pick<TextDocument, "identity" | "format" | "sections" | "units" | "length">,
   structure: Structure,
   geometry: TextGeometry,
   painter: Painter,

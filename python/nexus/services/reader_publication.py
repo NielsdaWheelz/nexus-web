@@ -1,11 +1,11 @@
-"""Reader-visible document publication and generation fencing."""
+"""Reader content publication and generation fencing; titles are mutable metadata."""
 
 from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -245,7 +245,7 @@ def replace_reader_publication[T](
 
 
 def replace_reader_document_title(db: Session, *, media: Media, title: str) -> bool:
-    """Publish a new title, bumping the generation; ``False`` if there is no publication."""
+    """Update the label without changing content identity; false without a publication."""
     kind = str(media.kind)
     if kind not in _ELIGIBLE_KINDS:
         return False
@@ -254,19 +254,10 @@ def replace_reader_document_title(db: Session, *, media: Media, title: str) -> b
     )
     if locked_id is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if read_publication_generation(db, media_id=locked_id) is None:
+    if lock_publication_generation(db, media_id=locked_id) is None:
         return False
-
-    def replace_projection(published: Media) -> None:
-        published.title = title
-
-    replace_reader_publication(
-        db,
-        media_id=locked_id,
-        expected_kind=cast(ReaderDocumentKind, kind),
-        replace_projection=replace_projection,
-        issues=PreserveSourceIssues(),
-    )
+    media.title = title
+    db.flush()
     return True
 
 

@@ -219,6 +219,14 @@ class SourceCountedProgress(_Strict):
 SourceProgress = Annotated[SourceStageProgress | SourceCountedProgress, Field(discriminator="kind")]
 
 
+class XSourceContext(_Strict):
+    source_attempt_id: UUID
+    published_at: datetime
+    enumeration: Literal["exhausted", "post_limit"]
+    unavailable_context_count: int = Field(ge=0)
+    uncaptured_context_count: int = Field(ge=0)
+
+
 class MediaOut(BaseModel):
     """The media detail wire: snake_case throughout except ``playerDescriptor``.
 
@@ -263,6 +271,7 @@ class MediaOut(BaseModel):
     description_text: str | None
     metadata_enriched_at: datetime | None
     metadata_enrichment: MetadataEnrichmentView
+    x_source_context: Presence[XSourceContext]
     read_state: MediaReadState | None
     progress_fraction: float | None = Field(ge=0.0, le=1.0)
     progress_resettable: bool
@@ -459,6 +468,18 @@ class SearchRepairRequest(_Strict):
 MediaRepairRequest = Annotated[
     SourceRepairRequest | SearchRepairRequest, Field(discriminator="kind")
 ]
+
+
+class RefreshSourceRequest(_Strict):
+    client_mutation_id: ClientMutationUuidText
+    expected_attempt_id: UUID
+
+
+class SourceRefreshAdmission(_Strict):
+    kind: Literal["SourceRefresh"] = "SourceRefresh"
+    media_id: UUID
+    source_attempt_id: UUID
+    job_id: UUID
 
 
 class SourceRetryAdmission(_Strict):

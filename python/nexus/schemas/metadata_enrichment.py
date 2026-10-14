@@ -43,6 +43,7 @@ type MetadataField = Literal[
     "description",
 ]
 METADATA_FIELDS: tuple[MetadataField, ...] = get_args(MetadataField.__value__)
+type MetadataPurpose = Literal["bibliography", "title"]
 
 type MetadataFailureCode = Literal[
     "model_unavailable",
@@ -53,6 +54,7 @@ type MetadataFailureCode = Literal[
     "input_too_large",
     "output_limit",
     "stale_input",
+    "source_context_missing",
     "no_longer_eligible",
     "access_revoked",
     "cancelled",
@@ -88,6 +90,26 @@ _Language = Annotated[str, StringConstraints(min_length=2, max_length=2, pattern
 
 class _MetadataModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+
+class _MetadataJobPayload(_MetadataModel):
+    media_id: UUID
+    requester_user_id: UUID
+    request_id: str | None
+
+
+class BibliographyMetadataJobPayload(_MetadataJobPayload):
+    purpose: Literal["bibliography"]
+
+
+class TitleMetadataJobPayload(_MetadataJobPayload):
+    purpose: Literal["title"]
+    source_attempt_id: UUID
+
+
+type MetadataJobPayload = Annotated[
+    BibliographyMetadataJobPayload | TitleMetadataJobPayload, Field(discriminator="purpose")
+]
 
 
 class MetadataContributorCreditOutput(_MetadataModel):
@@ -194,21 +216,38 @@ class AcceptedMetadataEnrichment(_MetadataModel):
         )
 
 
-class MetadataCompletedOutcome(_MetadataModel):
+class MetadataBibliographyCompletedOutcome(_MetadataModel):
     status: Literal["completed"] = "completed"
+    purpose: Literal["bibliography"]
     completed_at: AwareDatetime
     changed_fields: list[MetadataField]
     unresolved_fields: list[MetadataField]
     retained_manual_authors: bool
 
 
+class MetadataTitleCompletedOutcome(_MetadataModel):
+    status: Literal["completed"] = "completed"
+    purpose: Literal["title"]
+    completed_at: AwareDatetime
+    changed_fields: Annotated[list[Literal["title"]], Field(max_length=1)]
+    disposition: Literal["generated", "source_label"]
+
+
+type MetadataCompletedOutcome = Annotated[
+    MetadataBibliographyCompletedOutcome | MetadataTitleCompletedOutcome,
+    Field(discriminator="purpose"),
+]
+
+
 class MetadataNoFindingsOutcome(_MetadataModel):
     status: Literal["no_findings"] = "no_findings"
+    purpose: Literal["bibliography"]
     completed_at: AwareDatetime
 
 
 class MetadataFailedOutcome(_MetadataModel):
     status: Literal["failed"] = "failed"
+    purpose: MetadataPurpose
     completed_at: AwareDatetime
     reason: MetadataFailureCode
 
@@ -240,12 +279,14 @@ class MetadataResultReviewed(_MetadataModel):
 
 class MetadataRetryAllowed(_MetadataModel):
     status: Literal["allowed"] = "allowed"
+    purpose: MetadataPurpose
     expected_job_id: Presence[UUID]
 
 
 class MetadataRetryBlocked(_MetadataModel):
     status: Literal["blocked"] = "blocked"
-    reason: Literal["not_creator", "not_eligible", "active"]
+    purpose: MetadataPurpose
+    reason: Literal["not_creator", "not_eligible", "active", "source_context_missing"]
 
 
 type MetadataRetry = Annotated[
@@ -269,35 +310,42 @@ class _MetadataOperationBase(_MetadataModel):
 
 class MetadataQueuedOperation(_MetadataOperationBase):
     status: Literal["queued"] = "queued"
+    purpose: MetadataPurpose
 
 
 class MetadataRunningOperation(_MetadataOperationBase):
     status: Literal["running"] = "running"
+    purpose: MetadataPurpose
 
 
 class MetadataRecoveringOperation(_MetadataOperationBase):
     status: Literal["recovering"] = "recovering"
+    purpose: MetadataPurpose
 
 
 class MetadataWaitingOperation(_MetadataOperationBase):
     status: Literal["waiting"] = "waiting"
+    purpose: MetadataPurpose
     reason: Literal["retry"]
     until: Presence[AwareDatetime]
 
 
 class MetadataCompletedOperation(_MetadataOperationBase):
     status: Literal["completed"] = "completed"
+    purpose: MetadataPurpose
     outcome: MetadataCompletedOutcome
 
 
 class MetadataNoFindingsOperation(_MetadataOperationBase):
     status: Literal["no_findings"] = "no_findings"
+    purpose: Literal["bibliography"]
     completed_at: AwareDatetime
     reviewed_at: Presence[AwareDatetime]
 
 
 class MetadataFailedOperation(_MetadataOperationBase):
     status: Literal["failed"] = "failed"
+    purpose: MetadataPurpose
     completed_at: AwareDatetime
     code: MetadataFailureCode
 

@@ -22,9 +22,11 @@ from nexus.schemas.metadata_enrichment import (
     MetadataEnrichmentView,
     MetadataFailedOperation,
     MetadataFailureCode,
+    MetadataJobPayload,
     MetadataNoFindingsOperation,
     MetadataOperationOut,
     MetadataOutcome,
+    MetadataPurpose,
     MetadataQueuedOperation,
     MetadataRecoveringOperation,
     MetadataRetry,
@@ -38,8 +40,10 @@ from nexus.schemas.metadata_enrichment import (
 from nexus.schemas.presence import Presence, Present, absent, presence_from_nullable, present
 from nexus.services.generation.ledger import latest_job_generations
 from nexus.services.media_processing_state import is_metadata_enrichment_eligible
+from nexus.services.x_source import x_source_attempt_ids
 
 _OUTCOME = TypeAdapter(MetadataOutcome)
+_JOB_PAYLOAD = TypeAdapter(MetadataJobPayload)
 _FAILURE_CODE = TypeAdapter(MetadataFailureCode)
 _FAILURE_CODES: dict[str, MetadataFailureCode] = {
     **{f"E_METADATA_{code.upper()}": code for code in get_args(MetadataFailureCode.__value__)},
@@ -106,7 +110,13 @@ def metadata_operations_sql() -> str:
     """
 
 
-def metadata_retry(*, media: Media, viewer_id: UUID, jobs: Sequence[JobRow]) -> MetadataRetry:
+def metadata_purpose(media: Media) -> MetadataPurpose:
+    return "title" if media.provider == "x" and media.kind == "web_article" else "bibliography"
+
+
+def metadata_retry(
+    db: Session, *, media: Media, viewer_id: UUID, jobs: Sequence[JobRow]
+) -> MetadataRetry:
     """Admission and snapshots share the creator, eligibility and active-work barrier."""
     latest = max(jobs, key=lambda job: (job.created_at, job.id), default=None)
     return _retry(
@@ -114,21 +124,32 @@ def metadata_retry(*, media: Media, viewer_id: UUID, jobs: Sequence[JobRow]) -> 
         viewer_id=viewer_id,
         unfinished_count=sum(job.status in {"pending", "running", "failed"} for job in jobs),
         latest_job_id=present(latest.id) if latest else absent(),
+        has_source_context=media.id in x_source_attempt_ids(db, media_ids=[media.id])
+        if metadata_purpose(media) == "title"
+        else False,
     )
 
 
 def _retry(
-    *, media: Media, viewer_id: UUID, unfinished_count: int, latest_job_id: Presence[UUID]
+    *,
+    media: Media,
+    viewer_id: UUID,
+    unfinished_count: int,
+    latest_job_id: Presence[UUID],
+    has_source_context: bool,
 ) -> MetadataRetry:
+    purpose = metadata_purpose(media)
     if media.created_by_user_id != viewer_id:
-        return MetadataRetryBlocked(reason="not_creator")
+        return MetadataRetryBlocked(purpose=purpose, reason="not_creator")
     if not is_metadata_enrichment_eligible(
         kind=media.kind, processing_status=media.processing_status
     ):
-        return MetadataRetryBlocked(reason="not_eligible")
+        return MetadataRetryBlocked(purpose=purpose, reason="not_eligible")
     if unfinished_count:
-        return MetadataRetryBlocked(reason="active")
-    return MetadataRetryAllowed(expected_job_id=latest_job_id)
+        return MetadataRetryBlocked(purpose=purpose, reason="active")
+    if purpose == "title" and not has_source_context:
+        return MetadataRetryBlocked(purpose=purpose, reason="source_context_missing")
+    return MetadataRetryAllowed(purpose=purpose, expected_job_id=latest_job_id)
 
 
 def metadata_enrichment_views(
@@ -141,6 +162,9 @@ def metadata_enrichment_views(
     """
     if not media:
         return {}
+    source_attempts = x_source_attempt_ids(
+        db, media_ids=[item.id for item in media if metadata_purpose(item) == "title"]
+    )
     rows = (
         db.execute(
             text(f"""
@@ -203,6 +227,7 @@ def metadata_enrichment_views(
                 viewer_id=viewer_id,
                 unfinished_count=unfinished_count,
                 latest_job_id=latest_job_id,
+                has_source_context=item.id in source_attempts,
             ),
             last_enriched_at=presence_from_nullable(item.metadata_enriched_at),
         )
@@ -247,6 +272,7 @@ def _decode_operations(db: Session, rows: Sequence[RowMapping]) -> dict[UUID, Me
 
 
 def _operation(row: RowMapping, call: LLMCall | None) -> MetadataOperationOut:
+    payload = _JOB_PAYLOAD.validate_json(json.dumps(row["payload"]))
     selection: Presence[MetadataSelection] = absent()
     if call is not None:
         selected = call.generation_spec["selection"]
@@ -262,10 +288,14 @@ def _operation(row: RowMapping, call: LLMCall | None) -> MetadataOperationOut:
         "started_at": presence_from_nullable(row["started_at"]),
         "generation_id": presence_from_nullable(call.id if call else None),
         "selection": selection,
+        "purpose": payload.purpose,
     }
     # Validate the immutable durable outcome as well as projecting its state.
     if row["status"] in {"succeeded", "dead"} and row["result"] and "completed_at" in row["result"]:
         outcome = _OUTCOME.validate_json(json.dumps(row["result"]))
+        # justify-defect: a retained outcome belongs to its job's frozen purpose.
+        if outcome.purpose != payload.purpose:
+            raise AssertionError("metadata outcome purpose differs from its job")
         match outcome.status:
             case "completed":
                 return MetadataCompletedOperation(**common, outcome=outcome)
