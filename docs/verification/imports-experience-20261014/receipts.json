@@ -1,0 +1,2719 @@
+{
+  "at": "2026-10-14",
+  "source": {
+    "baseline_commit": "6b9909ed74c55f1c6febff0f02415b5121a92094",
+    "candidate_application_bytes_sha256": "09a9aed6977d12afca330b8e70577a2eeffa0d32ec9d32d4f3d5d837f13864ec",
+    "digest_encoding": "sort emitted nonempty paths by UTF-8 bytes; skip non-files; SHA-256 of path + NUL + actual file bytes + NUL for each path",
+    "candidate_dirty_during_live_proof": true,
+    "source_worktree": "/Users/nnandal/Documents/code/nexus-web-imports-experience-20261014",
+    "web_origin": "http://localhost:3198",
+    "api_origin": "http://127.0.0.1:8198",
+    "worker_image": "nexus-imports-experience-worker:baseline",
+    "worker_source_mount": "/Users/nnandal/Documents/code/nexus-web-imports-experience-20261014",
+    "runtime_identity": {
+      "expected_database_revision": "0277",
+      "source_sha": "6b9909ed74c55f1c6febff0f02415b5121a92094"
+    },
+    "web_served_git_sha": "6b9909ed74c55f1c6febff0f02415b5121a92094",
+    "mode": "next dev, real api/auth/storage/database and normal locked linux worker; no deployment claim",
+    "path_selector": [
+      "apps",
+      "python",
+      "node",
+      "scripts",
+      "docker",
+      "bun.lock",
+      "package.json"
+    ],
+    "path_manifest": [
+      "apps/android/app/build.gradle.kts",
+      "apps/android/app/src/main/AndroidManifest.xml",
+      "apps/android/app/src/main/java/app/nexus/android/AuthReturnTarget.kt",
+      "apps/android/app/src/main/java/app/nexus/android/GoogleSignInController.kt",
+      "apps/android/app/src/main/java/app/nexus/android/MainActivity.kt",
+      "apps/android/app/src/main/java/app/nexus/android/NexusOriginClient.kt",
+      "apps/android/app/src/main/java/app/nexus/android/NexusWebView.kt",
+      "apps/android/app/src/main/java/app/nexus/android/ShareActivity.kt",
+      "apps/android/app/src/main/java/app/nexus/android/offline/OfflineBridge.kt",
+      "apps/android/app/src/main/java/app/nexus/android/offline/OfflineJobService.kt",
+      "apps/android/app/src/main/java/app/nexus/android/offline/OfflineStore.kt",
+      "apps/android/app/src/main/java/app/nexus/android/offline/PositionSync.kt",
+      "apps/android/app/src/main/java/app/nexus/android/offline/ShelfRouter.kt",
+      "apps/android/app/src/main/java/app/nexus/android/offline/Transfers.kt",
+      "apps/android/app/src/main/java/app/nexus/android/playback/ActivityOutbox.kt",
+      "apps/android/app/src/main/java/app/nexus/android/playback/ListeningRecorder.kt",
+      "apps/android/app/src/main/java/app/nexus/android/playback/NexusPlaybackService.kt",
+      "apps/android/app/src/main/java/app/nexus/android/playback/PlayerBridge.kt",
+      "apps/android/app/src/main/java/app/nexus/android/webkit/OwnedOriginWebMessage.kt",
+      "apps/android/app/src/main/res/drawable/ic_launcher_foreground.xml",
+      "apps/android/app/src/main/res/drawable/ic_launcher_monochrome.xml",
+      "apps/android/app/src/main/res/drawable/ic_stat_nexus.xml",
+      "apps/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml",
+      "apps/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml",
+      "apps/android/app/src/main/res/values/ic_launcher_colors.xml",
+      "apps/android/app/src/main/res/values/ids.xml",
+      "apps/android/app/src/main/res/values/strings.xml",
+      "apps/android/app/src/main/res/values/themes.xml",
+      "apps/android/app/src/main/res/xml/data_extraction_rules.xml",
+      "apps/android/build.gradle.kts",
+      "apps/android/gradle.properties",
+      "apps/android/gradle/gradle-daemon-jvm.properties",
+      "apps/android/gradle/wrapper/gradle-wrapper.jar",
+      "apps/android/gradle/wrapper/gradle-wrapper.properties",
+      "apps/android/gradlew",
+      "apps/android/gradlew.bat",
+      "apps/android/ic_launcher-playstore.png",
+      "apps/android/settings.gradle.kts",
+      "apps/api/main.py",
+      "apps/codex_agent/__init__.py",
+      "apps/codex_agent/enroll.py",
+      "apps/codex_agent/health.py",
+      "apps/codex_agent/main.py",
+      "apps/extension/icons/128.png",
+      "apps/extension/icons/16.png",
+      "apps/extension/icons/32.png",
+      "apps/extension/icons/48.png",
+      "apps/extension/manifest.json",
+      "apps/web/.gitignore",
+      "apps/web/README.md",
+      "apps/web/bun.lock",
+      "apps/web/eslint.config.mjs",
+      "apps/web/next.config.ts",
+      "apps/web/package.json",
+      "apps/web/patches/minimatch@3.1.5.patch",
+      "apps/web/public/.well-known/assetlinks.json",
+      "apps/web/public/brand/asterism-ondark.svg",
+      "apps/web/public/brand/asterism-onlight.svg",
+      "apps/web/public/brand/asterism.svg",
+      "apps/web/public/oracle-plates/don-quixote-in-his-library.jpg",
+      "apps/web/public/oracle-plates/inferno-canto-i-in-a-gloomy-wood.jpg",
+      "apps/web/public/oracle-plates/inferno-canto-iii-charon-crossing-the-river-styx.jpg",
+      "apps/web/public/oracle-plates/inferno-canto-iii-the-inscription-over-the-gate-of-hell.jpg",
+      "apps/web/public/oracle-plates/inferno-canto-v-minos.jpg",
+      "apps/web/public/oracle-plates/inferno-canto-vii-plutus.jpg",
+      "apps/web/public/oracle-plates/inferno-canto-xvii-geryon.jpg",
+      "apps/web/public/oracle-plates/inferno-canto-xxii-the-demons.jpg",
+      "apps/web/public/oracle-plates/inferno-canto-xxxiv-lucifer-king-of-hell.jpg",
+      "apps/web/public/oracle-plates/isle-of-the-dead.jpg",
+      "apps/web/public/oracle-plates/nebuchadnezzar.jpg",
+      "apps/web/public/oracle-plates/paolo-and-francesca-da-rimini.jpg",
+      "apps/web/public/oracle-plates/paradise-lost-satan-in-council.jpg",
+      "apps/web/public/oracle-plates/paradise-lost-satan-surveys-the-garden.jpg",
+      "apps/web/public/oracle-plates/paradise-lost-the-fall-of-the-rebel-angels.jpg",
+      "apps/web/public/oracle-plates/satan-going-forth-from-the-presence-of-the-lord-illustrations-of-the-book-of-job.jpg",
+      "apps/web/public/oracle-plates/saturn-devouring-his-son.jpg",
+      "apps/web/public/oracle-plates/the-abbey-in-the-oakwood.jpg",
+      "apps/web/public/oracle-plates/the-ancient-of-days.jpg",
+      "apps/web/public/oracle-plates/the-cyclops.jpg",
+      "apps/web/public/oracle-plates/the-eye-like-a-strange-balloon-mounts-toward-infinity-a-edgar-poe.jpg",
+      "apps/web/public/oracle-plates/the-garden-of-earthly-delights-garden-panel-detail.jpg",
+      "apps/web/public/oracle-plates/the-garden-of-earthly-delights-hell-panel-detail.jpg",
+      "apps/web/public/oracle-plates/the-great-red-dragon-and-the-woman-clothed-with-the-sun.jpg",
+      "apps/web/public/oracle-plates/the-lady-of-shalott.jpg",
+      "apps/web/public/oracle-plates/the-lovers-whirlwind-illustration-to-dante-s-inferno.jpg",
+      "apps/web/public/oracle-plates/the-nightmare.jpg",
+      "apps/web/public/oracle-plates/the-raven-once-upon-a-midnight-dreary.jpg",
+      "apps/web/public/oracle-plates/the-sea-of-ice-the-wreck-of-hope.jpg",
+      "apps/web/public/oracle-plates/the-sick-rose-songs-of-experience.jpg",
+      "apps/web/public/oracle-plates/the-sleep-of-reason-produces-monsters-los-caprichos-no-43.jpg",
+      "apps/web/public/oracle-plates/the-smiling-spider.jpg",
+      "apps/web/public/oracle-plates/the-tyger-songs-of-experience-plate-42.jpg",
+      "apps/web/public/oracle-plates/the-witches-sabbath.jpg",
+      "apps/web/public/oracle-plates/there-was-perhaps-a-first-vision-attempted-in-the-flower-les-origines.jpg",
+      "apps/web/public/oracle-plates/wanderer-above-the-sea-of-fog.jpg",
+      "apps/web/scripts/build-extension.mjs",
+      "apps/web/scripts/check-css-tokens.mjs",
+      "apps/web/scripts/copy-pdfjs.mjs",
+      "apps/web/scripts/gen-wire.mjs",
+      "apps/web/src/.gitkeep",
+      "apps/web/src/app/(authenticated)/AuthenticatedShell.tsx",
+      "apps/web/src/app/(authenticated)/AuthenticatedWorkspaceErrorBoundary.tsx",
+      "apps/web/src/app/(authenticated)/[[...path]]/page.tsx",
+      "apps/web/src/app/(authenticated)/artifacts/[artifactRef]/ArtifactPaneBody.module.css",
+      "apps/web/src/app/(authenticated)/artifacts/[artifactRef]/ArtifactPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/atlas/GrandAtlasPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/atlas/atlas.module.css",
+      "apps/web/src/app/(authenticated)/atlas/sky.ts",
+      "apps/web/src/app/(authenticated)/authors/[handle]/AuthorPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/authors/[handle]/page.module.css",
+      "apps/web/src/app/(authenticated)/browse/BrowsePaneBody.tsx",
+      "apps/web/src/app/(authenticated)/browse/browse.module.css",
+      "apps/web/src/app/(authenticated)/browse/preview/BrowsePreviewPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/conversations/ConversationsPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/imports/ImportsPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/layout.module.css",
+      "apps/web/src/app/(authenticated)/layout.tsx",
+      "apps/web/src/app/(authenticated)/lectern/LecternPaneBody.module.css",
+      "apps/web/src/app/(authenticated)/lectern/LecternPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/libraries/LibrariesPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/libraries/[id]/LibraryPaneBody.module.css",
+      "apps/web/src/app/(authenticated)/libraries/[id]/LibraryPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/libraries/page.module.css",
+      "apps/web/src/app/(authenticated)/media/[id]/Embeds.tsx",
+      "apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/media/[id]/SelectionDock.tsx",
+      "apps/web/src/app/(authenticated)/media/[id]/Transcript.tsx",
+      "apps/web/src/app/(authenticated)/media/[id]/activity.ts",
+      "apps/web/src/app/(authenticated)/media/[id]/annotations.ts",
+      "apps/web/src/app/(authenticated)/media/[id]/chrome.tsx",
+      "apps/web/src/app/(authenticated)/media/[id]/evidence/EvidencePane.tsx",
+      "apps/web/src/app/(authenticated)/media/[id]/evidence/EvidenceRow.tsx",
+      "apps/web/src/app/(authenticated)/media/[id]/hostedReader.ts",
+      "apps/web/src/app/(authenticated)/media/[id]/media.module.css",
+      "apps/web/src/app/(authenticated)/media/[id]/useAnnotationVerbs.ts",
+      "apps/web/src/app/(authenticated)/notes/NotesPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/notes/[blockId]/NotePaneBody.tsx",
+      "apps/web/src/app/(authenticated)/notes/notes.module.css",
+      "apps/web/src/app/(authenticated)/oracle/OracleLandingPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/oracle/[readingId]/OracleReadingPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/oracle/oracle.module.css",
+      "apps/web/src/app/(authenticated)/oracle/ornaments.tsx",
+      "apps/web/src/app/(authenticated)/pages/[pageId]/PagePaneBody.tsx",
+      "apps/web/src/app/(authenticated)/podcasts/PodcastsPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/podcasts/[podcastId]/PodcastEpisodeList.tsx",
+      "apps/web/src/app/(authenticated)/podcasts/[podcastId]/page.module.css",
+      "apps/web/src/app/(authenticated)/search/SearchPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/search/page.module.css",
+      "apps/web/src/app/(authenticated)/settings/SettingsPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/settings/account/AssistantWrites.tsx",
+      "apps/web/src/app/(authenticated)/settings/account/SettingsAccountPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/settings/account/actions.ts",
+      "apps/web/src/app/(authenticated)/settings/account/page.module.css",
+      "apps/web/src/app/(authenticated)/settings/appearance/SettingsAppearancePaneBody.tsx",
+      "apps/web/src/app/(authenticated)/settings/appearance/page.module.css",
+      "apps/web/src/app/(authenticated)/settings/identities/SettingsIdentitiesPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/settings/identities/actions.ts",
+      "apps/web/src/app/(authenticated)/settings/identities/page.module.css",
+      "apps/web/src/app/(authenticated)/settings/keybindings/KeybindingsPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/settings/reader/SettingsReaderPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/settings/reader/page.module.css",
+      "apps/web/src/app/(authenticated)/stats/StatsPaneBody.module.css",
+      "apps/web/src/app/(authenticated)/stats/StatsPaneBody.tsx",
+      "apps/web/src/app/(authenticated)/stats/statsPeriod.ts",
+      "apps/web/src/app/account/password/PasswordUpdateForm.tsx",
+      "apps/web/src/app/account/password/page.tsx",
+      "apps/web/src/app/android/page.module.css",
+      "apps/web/src/app/android/page.tsx",
+      "apps/web/src/app/api/[...path]/route.ts",
+      "apps/web/src/app/api/consumption/activity/route.ts",
+      "apps/web/src/app/api/consumption/sessions/route.ts",
+      "apps/web/src/app/api/consumption/stats/route.ts",
+      "apps/web/src/app/api/extension/captures/[handle]/confirm/route.ts",
+      "apps/web/src/app/api/extension/captures/[handle]/retry/route.ts",
+      "apps/web/src/app/api/extension/captures/[handle]/route.ts",
+      "apps/web/src/app/api/extension/captures/[handle]/transport-failure/route.ts",
+      "apps/web/src/app/api/extension/captures/route.ts",
+      "apps/web/src/app/api/extension/library-destinations/route.ts",
+      "apps/web/src/app/api/extension/session/route.ts",
+      "apps/web/src/app/api/me/workspace-session/route.ts",
+      "apps/web/src/app/api/media/[id]/assets/[...assetKey]/route.ts",
+      "apps/web/src/app/api/media/from-url/route.ts",
+      "apps/web/src/app/api/public/resource-share/[[...path]]/route.ts",
+      "apps/web/src/app/api/stream-token/route.ts",
+      "apps/web/src/app/api/telemetry/client-defects/route.ts",
+      "apps/web/src/app/apple-icon.tsx",
+      "apps/web/src/app/auth/callback/route.ts",
+      "apps/web/src/app/auth/confirm/[purpose]/route.ts",
+      "apps/web/src/app/auth/handoff/route.ts",
+      "apps/web/src/app/auth/invite/page.tsx",
+      "apps/web/src/app/auth/native/google/route.ts",
+      "apps/web/src/app/auth/oauth/route.ts",
+      "apps/web/src/app/auth/password/recovery/route.ts",
+      "apps/web/src/app/auth/password/sign-in/route.ts",
+      "apps/web/src/app/auth/password/update/route.ts",
+      "apps/web/src/app/auth/recovery/page.tsx",
+      "apps/web/src/app/auth/session/recover/SessionRecovery.tsx",
+      "apps/web/src/app/auth/session/recover/page.tsx",
+      "apps/web/src/app/auth/session/resolve/route.ts",
+      "apps/web/src/app/auth/signout/route.ts",
+      "apps/web/src/app/brand.css",
+      "apps/web/src/app/extension/connect/start/route.ts",
+      "apps/web/src/app/fonts/README.md",
+      "apps/web/src/app/fonts/cormorant-italic-latin.woff2",
+      "apps/web/src/app/fonts/cormorant-normal-latin.woff2",
+      "apps/web/src/app/fonts/eb-garamond-italic-latin.woff2",
+      "apps/web/src/app/fonts/eb-garamond-normal-latin.woff2",
+      "apps/web/src/app/fonts/im-fell-english-italic-latin.woff2",
+      "apps/web/src/app/fonts/im-fell-english-normal-latin.woff2",
+      "apps/web/src/app/fonts/inter-latin.woff2",
+      "apps/web/src/app/fonts/jetbrains-mono-latin.woff2",
+      "apps/web/src/app/fonts/licenses/Cormorant-OFL.txt",
+      "apps/web/src/app/fonts/licenses/EB-Garamond-OFL.txt",
+      "apps/web/src/app/fonts/licenses/IM-Fell-English-OFL.txt",
+      "apps/web/src/app/fonts/licenses/Inter-OFL.txt",
+      "apps/web/src/app/fonts/licenses/JetBrains-Mono-OFL.txt",
+      "apps/web/src/app/fonts/licenses/Unifraktur-Maguntia-OFL.txt",
+      "apps/web/src/app/fonts/unifraktur-maguntia-latin.woff2",
+      "apps/web/src/app/forgot-password/ForgotPasswordForm.tsx",
+      "apps/web/src/app/forgot-password/page.tsx",
+      "apps/web/src/app/globals.css",
+      "apps/web/src/app/icon.svg",
+      "apps/web/src/app/layout.tsx",
+      "apps/web/src/app/legal.module.css",
+      "apps/web/src/app/login/LoginPageClient.tsx",
+      "apps/web/src/app/login/page.tsx",
+      "apps/web/src/app/manifest.ts",
+      "apps/web/src/app/opengraph-image.tsx",
+      "apps/web/src/app/packagedFonts.css",
+      "apps/web/src/app/privacy/page.tsx",
+      "apps/web/src/app/robots.ts",
+      "apps/web/src/app/s/PublicShareReader.tsx",
+      "apps/web/src/app/s/page.tsx",
+      "apps/web/src/app/s/publicShare.module.css",
+      "apps/web/src/app/s/publicSource.ts",
+      "apps/web/src/app/share/ShareCapture.tsx",
+      "apps/web/src/app/share/page.tsx",
+      "apps/web/src/app/share/share.module.css",
+      "apps/web/src/app/terms/page.tsx",
+      "apps/web/src/app/version/route.ts",
+      "apps/web/src/components/AsterismMark.tsx",
+      "apps/web/src/components/EntryCanvas.module.css",
+      "apps/web/src/components/EntryCanvas.tsx",
+      "apps/web/src/components/HtmlRenderer.module.css",
+      "apps/web/src/components/HtmlRenderer.tsx",
+      "apps/web/src/components/LecternNextPrompt.module.css",
+      "apps/web/src/components/LecternNextPrompt.tsx",
+      "apps/web/src/components/LibrarySettingsDialog.module.css",
+      "apps/web/src/components/LibrarySettingsDialog.tsx",
+      "apps/web/src/components/appnav/AccountMenu.tsx",
+      "apps/web/src/components/appnav/AppNav.module.css",
+      "apps/web/src/components/appnav/AppNav.tsx",
+      "apps/web/src/components/appnav/MobilePaneBar.tsx",
+      "apps/web/src/components/appnav/navModel.ts",
+      "apps/web/src/components/auth/AuthForms.module.css",
+      "apps/web/src/components/auth/AuthSurface.module.css",
+      "apps/web/src/components/auth/AuthSurface.tsx",
+      "apps/web/src/components/auth/EmailActionLanding.tsx",
+      "apps/web/src/components/browse/AcquisitionControl.module.css",
+      "apps/web/src/components/browse/AcquisitionControl.tsx",
+      "apps/web/src/components/chat/AssistantMessage.tsx",
+      "apps/web/src/components/chat/AssistantTrust.tsx",
+      "apps/web/src/components/chat/ChatComposer.module.css",
+      "apps/web/src/components/chat/ChatComposer.tsx",
+      "apps/web/src/components/chat/ChatPanels.module.css",
+      "apps/web/src/components/chat/ChatSurface.module.css",
+      "apps/web/src/components/chat/ChatSurface.tsx",
+      "apps/web/src/components/chat/Conversation.tsx",
+      "apps/web/src/components/chat/ConversationDestinationOverlay.tsx",
+      "apps/web/src/components/chat/Docent.tsx",
+      "apps/web/src/components/chat/Forks.tsx",
+      "apps/web/src/components/chat/GenerationPicker.tsx",
+      "apps/web/src/components/chat/HighlightSnippet.module.css",
+      "apps/web/src/components/chat/HighlightSnippet.tsx",
+      "apps/web/src/components/chat/QuotedPassageCard.tsx",
+      "apps/web/src/components/chat/conversationFind.ts",
+      "apps/web/src/components/chat/conversationStore.ts",
+      "apps/web/src/components/chat/useChatScroll.ts",
+      "apps/web/src/components/collections/CollectionExhaustionNotice.module.css",
+      "apps/web/src/components/collections/CollectionExhaustionNotice.tsx",
+      "apps/web/src/components/collections/CollectionRow.module.css",
+      "apps/web/src/components/collections/CollectionRow.tsx",
+      "apps/web/src/components/collections/CollectionView.tsx",
+      "apps/web/src/components/collections/MediaSummaryNotice.tsx",
+      "apps/web/src/components/collections/QuickReadsSection.tsx",
+      "apps/web/src/components/collections/SuggestionsSection.module.css",
+      "apps/web/src/components/collections/SuggestionsSection.tsx",
+      "apps/web/src/components/collections/collectionRowFormatting.ts",
+      "apps/web/src/components/connections/ConnectionCreation.tsx",
+      "apps/web/src/components/connections/ConnectionsSurface.module.css",
+      "apps/web/src/components/connections/ConnectionsSurface.tsx",
+      "apps/web/src/components/contributors/AuthorSearchField.tsx",
+      "apps/web/src/components/contributors/ContributorCredits.module.css",
+      "apps/web/src/components/contributors/ContributorCredits.tsx",
+      "apps/web/src/components/contributors/ContributorFilter.module.css",
+      "apps/web/src/components/contributors/ContributorFilter.tsx",
+      "apps/web/src/components/contributors/MediaAuthorsEditor.module.css",
+      "apps/web/src/components/contributors/MediaAuthorsEditor.tsx",
+      "apps/web/src/components/dossier/DossierDocument.tsx",
+      "apps/web/src/components/dossier/DossierSurface.module.css",
+      "apps/web/src/components/dossier/DossierSurface.tsx",
+      "apps/web/src/components/dossier/dossierCopy.ts",
+      "apps/web/src/components/dossier/dossierSheet.ts",
+      "apps/web/src/components/feedback/Feedback.module.css",
+      "apps/web/src/components/feedback/Feedback.tsx",
+      "apps/web/src/components/find/Find.module.css",
+      "apps/web/src/components/find/FindBar.tsx",
+      "apps/web/src/components/imports/ImportActions.tsx",
+      "apps/web/src/components/imports/ImportInspector.tsx",
+      "apps/web/src/components/imports/ImportRow.tsx",
+      "apps/web/src/components/imports/Imports.module.css",
+      "apps/web/src/components/imports/ImportsBadge.tsx",
+      "apps/web/src/components/imports/ImportsList.tsx",
+      "apps/web/src/components/imports/ImportsToolbar.tsx",
+      "apps/web/src/components/libraries/LibraryChooser.module.css",
+      "apps/web/src/components/libraries/LibraryChooser.tsx",
+      "apps/web/src/components/libraries/LibraryChooserSurface.module.css",
+      "apps/web/src/components/libraries/LibraryChooserSurface.tsx",
+      "apps/web/src/components/libraries/LibraryDestinationField.module.css",
+      "apps/web/src/components/libraries/LibraryDestinationField.tsx",
+      "apps/web/src/components/libraries/LibraryDestinationPicker.module.css",
+      "apps/web/src/components/libraries/LibraryDestinationPicker.tsx",
+      "apps/web/src/components/libraries/LibraryDestinationTrigger.module.css",
+      "apps/web/src/components/libraries/LibraryDestinationTrigger.tsx",
+      "apps/web/src/components/libraries/LibraryEntryEditor.tsx",
+      "apps/web/src/components/libraries/LibraryMembersSurface.module.css",
+      "apps/web/src/components/libraries/LibraryMembersSurface.tsx",
+      "apps/web/src/components/libraries/LibraryPlacementOverlay.tsx",
+      "apps/web/src/components/libraries/useLibraryDestinationSearch.ts",
+      "apps/web/src/components/media/MediaInfoOverlay.module.css",
+      "apps/web/src/components/media/MediaInfoOverlay.tsx",
+      "apps/web/src/components/media/MetadataResearchActions.tsx",
+      "apps/web/src/components/media/YouTubeEmbedFrame.tsx",
+      "apps/web/src/components/nexus/AddPanel.module.css",
+      "apps/web/src/components/nexus/AddPanel.tsx",
+      "apps/web/src/components/nexus/AddPanelBoundary.tsx",
+      "apps/web/src/components/nexus/Nexus.module.css",
+      "apps/web/src/components/nexus/Nexus.tsx",
+      "apps/web/src/components/nexus/NexusPages.tsx",
+      "apps/web/src/components/nexus/NexusRow.tsx",
+      "apps/web/src/components/nexus/addInput.ts",
+      "apps/web/src/components/nexus/desktop/DesktopNexus.tsx",
+      "apps/web/src/components/nexus/useAddContentSession.ts",
+      "apps/web/src/components/nexus/useNexusController.ts",
+      "apps/web/src/components/notes/HighlightNoteEditor.module.css",
+      "apps/web/src/components/notes/HighlightNoteEditor.tsx",
+      "apps/web/src/components/notes/NoteBodyEditor.module.css",
+      "apps/web/src/components/notes/NoteBodyEditor.tsx",
+      "apps/web/src/components/notes/NoteDraftRecovery.module.css",
+      "apps/web/src/components/notes/NoteDraftRecovery.tsx",
+      "apps/web/src/components/player/GlobalPlayerSurfaces.tsx",
+      "apps/web/src/components/player/Player.module.css",
+      "apps/web/src/components/player/PlayerPlaybackControls.tsx",
+      "apps/web/src/components/podcasts/PodcastOverview.module.css",
+      "apps/web/src/components/podcasts/PodcastOverview.tsx",
+      "apps/web/src/components/podcasts/PodcastSubscriptionSettingsOverlay.module.css",
+      "apps/web/src/components/podcasts/PodcastSubscriptionSettingsOverlay.tsx",
+      "apps/web/src/components/resource-inspector/inspectorSurfaces.ts",
+      "apps/web/src/components/resource-surface/ResourceSurfaceBodyEditor.module.css",
+      "apps/web/src/components/resource-surface/ResourceSurfaceBodyEditor.tsx",
+      "apps/web/src/components/resource-surface/ResourceSurfaceEditor.module.css",
+      "apps/web/src/components/resource-surface/ResourceSurfaceEditor.tsx",
+      "apps/web/src/components/resource-surface/resourceSurfaceFilterFields.ts",
+      "apps/web/src/components/resource-surface/useResourceSurfaceFilterRows.tsx",
+      "apps/web/src/components/resources/ContextEdgeMenu.tsx",
+      "apps/web/src/components/resources/ContextualActionMenu.tsx",
+      "apps/web/src/components/resources/LinkTargetDialog.module.css",
+      "apps/web/src/components/resources/LinkTargetDialog.tsx",
+      "apps/web/src/components/resources/ResourceActionMenu.tsx",
+      "apps/web/src/components/sharing/ShareOverlay.module.css",
+      "apps/web/src/components/sharing/ShareOverlay.tsx",
+      "apps/web/src/components/sortable/SortableList.module.css",
+      "apps/web/src/components/sortable/SortableList.tsx",
+      "apps/web/src/components/switchboard/CreateLibraryPanel.tsx",
+      "apps/web/src/components/switchboard/MobileQuickNoteHandoff.tsx",
+      "apps/web/src/components/switchboard/NexusButton.tsx",
+      "apps/web/src/components/switchboard/SwitchboardTask.tsx",
+      "apps/web/src/components/theme/SolarEffects.tsx",
+      "apps/web/src/components/ui/ActionMenu.module.css",
+      "apps/web/src/components/ui/ActionMenu.tsx",
+      "apps/web/src/components/ui/AppliedFilters.module.css",
+      "apps/web/src/components/ui/AppliedFilters.tsx",
+      "apps/web/src/components/ui/Button.module.css",
+      "apps/web/src/components/ui/Button.tsx",
+      "apps/web/src/components/ui/Chip.module.css",
+      "apps/web/src/components/ui/Chip.tsx",
+      "apps/web/src/components/ui/ChoiceField.module.css",
+      "apps/web/src/components/ui/ChoiceField.tsx",
+      "apps/web/src/components/ui/Dialog.module.css",
+      "apps/web/src/components/ui/Dialog.tsx",
+      "apps/web/src/components/ui/EmphasisSegments.tsx",
+      "apps/web/src/components/ui/Field.module.css",
+      "apps/web/src/components/ui/FloatingActionSurface.module.css",
+      "apps/web/src/components/ui/FloatingActionSurface.tsx",
+      "apps/web/src/components/ui/HoverPreview.module.css",
+      "apps/web/src/components/ui/HoverPreview.tsx",
+      "apps/web/src/components/ui/Input.tsx",
+      "apps/web/src/components/ui/LoadMoreFooter.module.css",
+      "apps/web/src/components/ui/LoadMoreFooter.tsx",
+      "apps/web/src/components/ui/MachineText.module.css",
+      "apps/web/src/components/ui/MachineText.tsx",
+      "apps/web/src/components/ui/MarkdownMessage.module.css",
+      "apps/web/src/components/ui/MarkdownMessage.tsx",
+      "apps/web/src/components/ui/MediaImage.tsx",
+      "apps/web/src/components/ui/MobileFullScreenTask.module.css",
+      "apps/web/src/components/ui/MobileFullScreenTask.tsx",
+      "apps/web/src/components/ui/MobileSheet.module.css",
+      "apps/web/src/components/ui/MobileSheet.tsx",
+      "apps/web/src/components/ui/ModalFrame.tsx",
+      "apps/web/src/components/ui/PaneHeaderIdentity.module.css",
+      "apps/web/src/components/ui/PaneHeaderIdentity.tsx",
+      "apps/web/src/components/ui/PaneSection.module.css",
+      "apps/web/src/components/ui/PaneSection.tsx",
+      "apps/web/src/components/ui/PaneSurface.module.css",
+      "apps/web/src/components/ui/PaneSurface.tsx",
+      "apps/web/src/components/ui/Pill.module.css",
+      "apps/web/src/components/ui/Pill.tsx",
+      "apps/web/src/components/ui/RadioGroup.tsx",
+      "apps/web/src/components/ui/ReaderCitation.module.css",
+      "apps/web/src/components/ui/ReaderCitation.tsx",
+      "apps/web/src/components/ui/ResourceList.module.css",
+      "apps/web/src/components/ui/ResourceList.tsx",
+      "apps/web/src/components/ui/ResourceRow.module.css",
+      "apps/web/src/components/ui/ResourceRow.tsx",
+      "apps/web/src/components/ui/Select.tsx",
+      "apps/web/src/components/ui/SelectField.tsx",
+      "apps/web/src/components/ui/SurfaceHeader.module.css",
+      "apps/web/src/components/ui/SurfaceHeader.tsx",
+      "apps/web/src/components/ui/Tabs.module.css",
+      "apps/web/src/components/ui/Tabs.tsx",
+      "apps/web/src/components/ui/Textarea.tsx",
+      "apps/web/src/components/ui/Toggle.module.css",
+      "apps/web/src/components/ui/Toggle.tsx",
+      "apps/web/src/components/ui/hljs-theme.css",
+      "apps/web/src/components/users/PeopleSearchCombobox.module.css",
+      "apps/web/src/components/users/PeopleSearchCombobox.tsx",
+      "apps/web/src/components/workspace/Companion.module.css",
+      "apps/web/src/components/workspace/Companion.tsx",
+      "apps/web/src/components/workspace/PaneFilterRowsStatus.tsx",
+      "apps/web/src/components/workspace/PaneLoadingState.module.css",
+      "apps/web/src/components/workspace/PaneLoadingState.tsx",
+      "apps/web/src/components/workspace/PaneQueryToolbar.module.css",
+      "apps/web/src/components/workspace/PaneQueryToolbar.tsx",
+      "apps/web/src/components/workspace/PaneRouteBoundary.tsx",
+      "apps/web/src/components/workspace/PaneRouteErrorBoundary.tsx",
+      "apps/web/src/components/workspace/PaneShell.module.css",
+      "apps/web/src/components/workspace/PaneShell.tsx",
+      "apps/web/src/components/workspace/ResizeHandle.module.css",
+      "apps/web/src/components/workspace/ResizeHandle.tsx",
+      "apps/web/src/components/workspace/WorkspaceHost.module.css",
+      "apps/web/src/components/workspace/WorkspaceHost.tsx",
+      "apps/web/src/components/workspace/WorkspacePaneStrip.module.css",
+      "apps/web/src/components/workspace/WorkspacePaneStrip.tsx",
+      "apps/web/src/components/workspace/usePaneCanvas.ts",
+      "apps/web/src/components/workspace/usePaneQueryInput.ts",
+      "apps/web/src/components/workspace/usePaneRefresh.tsx",
+      "apps/web/src/css.d.ts",
+      "apps/web/src/extension/articleExtraction.d.ts",
+      "apps/web/src/extension/background.ts",
+      "apps/web/src/extension/captureClient.ts",
+      "apps/web/src/extension/captureContract.ts",
+      "apps/web/src/extension/captureStore.ts",
+      "apps/web/src/extension/content.ts",
+      "apps/web/src/extension/popup.html",
+      "apps/web/src/extension/popup.module.css",
+      "apps/web/src/extension/popup.tsx",
+      "apps/web/src/extension/tsconfig.json",
+      "apps/web/src/extension/uploadSessionContract.ts",
+      "apps/web/src/lib/account/authenticatedAccount.tsx",
+      "apps/web/src/lib/account/contract.ts",
+      "apps/web/src/lib/actions/mountedActionHandoff.ts",
+      "apps/web/src/lib/actions/mutationIntent.ts",
+      "apps/web/src/lib/actions/resourceActionEnvironment.ts",
+      "apps/web/src/lib/actions/resourceActionMenu.tsx",
+      "apps/web/src/lib/actions/resourceActionMutation.ts",
+      "apps/web/src/lib/actions/resourceActionRuntime.tsx",
+      "apps/web/src/lib/actions/resourceActionSnapshot.ts",
+      "apps/web/src/lib/actions/resourceActionSnapshotCache.ts",
+      "apps/web/src/lib/actions/resourceActions.ts",
+      "apps/web/src/lib/actions/resourceDeletionLifecycle.ts",
+      "apps/web/src/lib/androidReleaseLinks.ts",
+      "apps/web/src/lib/androidShell.ts",
+      "apps/web/src/lib/api/changes.ts",
+      "apps/web/src/lib/api/client.ts",
+      "apps/web/src/lib/api/generationRunStream.ts",
+      "apps/web/src/lib/api/pagePrefix.ts",
+      "apps/web/src/lib/api/presence.ts",
+      "apps/web/src/lib/api/privateNoStoreResponse.server.ts",
+      "apps/web/src/lib/api/proxy.ts",
+      "apps/web/src/lib/api/resource.ts",
+      "apps/web/src/lib/api/resourceCache.tsx",
+      "apps/web/src/lib/api/resourceTransport.client.ts",
+      "apps/web/src/lib/api/resourceTransport.server.ts",
+      "apps/web/src/lib/api/resourceTransport.ts",
+      "apps/web/src/lib/api/retryPolicy.ts",
+      "apps/web/src/lib/api/server.ts",
+      "apps/web/src/lib/api/serverState.ts",
+      "apps/web/src/lib/api/sse-client.ts",
+      "apps/web/src/lib/api/sse-stream.ts",
+      "apps/web/src/lib/api/streamToken.ts",
+      "apps/web/src/lib/api/useCursorPagination.ts",
+      "apps/web/src/lib/api/useDebouncedFetch.ts",
+      "apps/web/src/lib/api/usePaneUrlState.ts",
+      "apps/web/src/lib/api/useResource.ts",
+      "apps/web/src/lib/api/useServerList.ts",
+      "apps/web/src/lib/api/wire.gen.ts",
+      "apps/web/src/lib/api/wire.ts",
+      "apps/web/src/lib/assertNever.ts",
+      "apps/web/src/lib/assistantWrites.ts",
+      "apps/web/src/lib/async/runBoundedTasks.ts",
+      "apps/web/src/lib/auth/UnauthenticatedApiBoundary.tsx",
+      "apps/web/src/lib/auth/deviceCookie.ts",
+      "apps/web/src/lib/auth/form.ts",
+      "apps/web/src/lib/auth/internal.ts",
+      "apps/web/src/lib/auth/session.ts",
+      "apps/web/src/lib/auth/urls.ts",
+      "apps/web/src/lib/auth/useAuthForm.ts",
+      "apps/web/src/lib/brand.ts",
+      "apps/web/src/lib/browse/api.ts",
+      "apps/web/src/lib/browse/query.ts",
+      "apps/web/src/lib/build-mode.ts",
+      "apps/web/src/lib/canonicalText/codepoints.ts",
+      "apps/web/src/lib/canonicalText/domTextCursor.ts",
+      "apps/web/src/lib/canonicalText/domTextRanges.ts",
+      "apps/web/src/lib/chat/conversationIndex.ts",
+      "apps/web/src/lib/chat/drafts.ts",
+      "apps/web/src/lib/chat/messageActionIntent.ts",
+      "apps/web/src/lib/chat/readerIntent.ts",
+      "apps/web/src/lib/chat/runTail.ts",
+      "apps/web/src/lib/chat/selection.ts",
+      "apps/web/src/lib/chat/toolContractProjection.ts",
+      "apps/web/src/lib/chat/tree.ts",
+      "apps/web/src/lib/chat/wire.ts",
+      "apps/web/src/lib/clamp.ts",
+      "apps/web/src/lib/collapseWhitespace.ts",
+      "apps/web/src/lib/collections/presenters/browse.ts",
+      "apps/web/src/lib/collections/presenters/conversation.ts",
+      "apps/web/src/lib/collections/presenters/lectern.ts",
+      "apps/web/src/lib/collections/presenters/library.ts",
+      "apps/web/src/lib/collections/presenters/media.ts",
+      "apps/web/src/lib/collections/presenters/note.ts",
+      "apps/web/src/lib/collections/presenters/podcast.ts",
+      "apps/web/src/lib/collections/presenters/search.ts",
+      "apps/web/src/lib/collections/presenters/settings.ts",
+      "apps/web/src/lib/collections/types.ts",
+      "apps/web/src/lib/collections/updatedTitleIndexView.ts",
+      "apps/web/src/lib/connectionDiscovery.ts",
+      "apps/web/src/lib/consumption/ActivityCaptureLifecycle.tsx",
+      "apps/web/src/lib/consumption/activityContract.ts",
+      "apps/web/src/lib/consumption/activityFacts.ts",
+      "apps/web/src/lib/consumption/activityRecorder.ts",
+      "apps/web/src/lib/consumption/activityUploader.ts",
+      "apps/web/src/lib/consumption/canonicalWordPosition.ts",
+      "apps/web/src/lib/consumption/historyBff.server.ts",
+      "apps/web/src/lib/contributors/api.ts",
+      "apps/web/src/lib/contributors/credits.ts",
+      "apps/web/src/lib/createRandomId.ts",
+      "apps/web/src/lib/dates/publicationDate.ts",
+      "apps/web/src/lib/display/format.ts",
+      "apps/web/src/lib/documentReader/DocumentReader.tsx",
+      "apps/web/src/lib/documentReader/chrome/Contents.tsx",
+      "apps/web/src/lib/documentReader/chrome/MapRail.tsx",
+      "apps/web/src/lib/documentReader/chrome/ReaderNavigation.module.css",
+      "apps/web/src/lib/documentReader/chrome/ReaderNavigation.tsx",
+      "apps/web/src/lib/documentReader/chrome/chrome.module.css",
+      "apps/web/src/lib/documentReader/documentReader.module.css",
+      "apps/web/src/lib/documentReader/model.ts",
+      "apps/web/src/lib/documentReader/navigator.ts",
+      "apps/web/src/lib/documentReader/pdf/PdfSurface.tsx",
+      "apps/web/src/lib/documentReader/pdf/find.ts",
+      "apps/web/src/lib/documentReader/pdf/geometry.ts",
+      "apps/web/src/lib/documentReader/pdf/pdfjs.ts",
+      "apps/web/src/lib/documentReader/ports.ts",
+      "apps/web/src/lib/documentReader/progress.ts",
+      "apps/web/src/lib/documentReader/runtime.ts",
+      "apps/web/src/lib/documentReader/scrollport.ts",
+      "apps/web/src/lib/documentReader/text/TextSurface.tsx",
+      "apps/web/src/lib/documentReader/text/find.ts",
+      "apps/web/src/lib/documentReader/text/geometry.ts",
+      "apps/web/src/lib/documentReader/text/paint.ts",
+      "apps/web/src/lib/dossiers/dossierApi.ts",
+      "apps/web/src/lib/dossiers/useDossier.ts",
+      "apps/web/src/lib/dossiers/useResourceInspector.ts",
+      "apps/web/src/lib/env.ts",
+      "apps/web/src/lib/errors.ts",
+      "apps/web/src/lib/extractUrls.ts",
+      "apps/web/src/lib/find/find.ts",
+      "apps/web/src/lib/find/useFind.ts",
+      "apps/web/src/lib/formatClock.ts",
+      "apps/web/src/lib/highlights/actionIntent.ts",
+      "apps/web/src/lib/imports/ImportsProvider.tsx",
+      "apps/web/src/lib/imports/api.ts",
+      "apps/web/src/lib/imports/copy.ts",
+      "apps/web/src/lib/imports/ingest.ts",
+      "apps/web/src/lib/imports/query.ts",
+      "apps/web/src/lib/keybindings.ts",
+      "apps/web/src/lib/keybindingsProvider.tsx",
+      "apps/web/src/lib/lectern/LecternProvider.tsx",
+      "apps/web/src/lib/lectern/contract.ts",
+      "apps/web/src/lib/lectern/useCompletionUndo.ts",
+      "apps/web/src/lib/lectern/view.ts",
+      "apps/web/src/lib/libraries/client.ts",
+      "apps/web/src/lib/libraries/contract.ts",
+      "apps/web/src/lib/libraries/destinationContract.ts",
+      "apps/web/src/lib/libraries/entryListItem.ts",
+      "apps/web/src/lib/libraries/governance.ts",
+      "apps/web/src/lib/libraries/governanceState.ts",
+      "apps/web/src/lib/libraries/libraryIndexView.ts",
+      "apps/web/src/lib/libraries/libraryPlacement.ts",
+      "apps/web/src/lib/libraries/libraryRequestErrorMessage.ts",
+      "apps/web/src/lib/libraries/libraryView.ts",
+      "apps/web/src/lib/libraries/placementController.tsx",
+      "apps/web/src/lib/libraries/presentation.ts",
+      "apps/web/src/lib/libraries/useLibraryEntries.ts",
+      "apps/web/src/lib/libraries/useLibraryMembers.ts",
+      "apps/web/src/lib/localDate.ts",
+      "apps/web/src/lib/media/MediaSummaryProvider.tsx",
+      "apps/web/src/lib/media/imageProxy.ts",
+      "apps/web/src/lib/media/kind.ts",
+      "apps/web/src/lib/media/mediaDetail.ts",
+      "apps/web/src/lib/media/mediaErrorMessage.ts",
+      "apps/web/src/lib/media/mediaLibraries.ts",
+      "apps/web/src/lib/media/mediaListFilter.ts",
+      "apps/web/src/lib/media/mediaMetadataCopy.ts",
+      "apps/web/src/lib/media/mediaMetadataOperations.ts",
+      "apps/web/src/lib/media/mediaSummary.ts",
+      "apps/web/src/lib/media/sourceProgress.ts",
+      "apps/web/src/lib/media/transcriptView.ts",
+      "apps/web/src/lib/media/useMediaProcessingStatus.ts",
+      "apps/web/src/lib/mobileShell/chrome.tsx",
+      "apps/web/src/lib/mobileShell/chromeMotion.ts",
+      "apps/web/src/lib/mobileShell/viewport.tsx",
+      "apps/web/src/lib/navigation/destinations.ts",
+      "apps/web/src/lib/nexus/events.ts",
+      "apps/web/src/lib/nexus/model.ts",
+      "apps/web/src/lib/nexus/query.ts",
+      "apps/web/src/lib/nexus/rows.ts",
+      "apps/web/src/lib/nexus/useNexusFind.ts",
+      "apps/web/src/lib/notes/actionIntents.ts",
+      "apps/web/src/lib/notes/api.ts",
+      "apps/web/src/lib/notes/dailyDraftStore.ts",
+      "apps/web/src/lib/notes/openDailyPage.ts",
+      "apps/web/src/lib/notes/pageContract.ts",
+      "apps/web/src/lib/notes/pendingNoteFocus.ts",
+      "apps/web/src/lib/notes/prosemirror/bodyContent.ts",
+      "apps/web/src/lib/notes/prosemirror/commands.ts",
+      "apps/web/src/lib/notes/prosemirror/noteBodyProjection.ts",
+      "apps/web/src/lib/notes/prosemirror/notePulse.ts",
+      "apps/web/src/lib/notes/prosemirror/schema.ts",
+      "apps/web/src/lib/notes/useNoteEditorSession.ts",
+      "apps/web/src/lib/notes/writingSession.ts",
+      "apps/web/src/lib/offline/bridge.ts",
+      "apps/web/src/lib/oracle/oracle.ts",
+      "apps/web/src/lib/panes/paneChrome.tsx",
+      "apps/web/src/lib/panes/paneFilterRows.ts",
+      "apps/web/src/lib/panes/paneHeaderModel.ts",
+      "apps/web/src/lib/panes/paneRenderRegistry.tsx",
+      "apps/web/src/lib/panes/paneResourceLoaders.ts",
+      "apps/web/src/lib/panes/paneRouteKeyedRecords.ts",
+      "apps/web/src/lib/panes/paneRouteModel.ts",
+      "apps/web/src/lib/panes/paneRuntime.tsx",
+      "apps/web/src/lib/panes/paneSecondaryModel.ts",
+      "apps/web/src/lib/panes/targetLinkActivation.ts",
+      "apps/web/src/lib/player/browserEngine.ts",
+      "apps/web/src/lib/player/nativeEngine.ts",
+      "apps/web/src/lib/player/playbackRate.ts",
+      "apps/web/src/lib/player/playerRuntime.tsx",
+      "apps/web/src/lib/podcasts/api.ts",
+      "apps/web/src/lib/podcasts/paneState.ts",
+      "apps/web/src/lib/podcasts/view.ts",
+      "apps/web/src/lib/preferredScrollBehavior.ts",
+      "apps/web/src/lib/productIdentity.ts",
+      "apps/web/src/lib/reader/ReaderContext.tsx",
+      "apps/web/src/lib/reader/passageResolution.ts",
+      "apps/web/src/lib/reader/pendingNoteActivation.ts",
+      "apps/web/src/lib/reader/pulseEvent.ts",
+      "apps/web/src/lib/renderEnvironment/connectivity.tsx",
+      "apps/web/src/lib/renderEnvironment/provider.tsx",
+      "apps/web/src/lib/renderEnvironment/server.ts",
+      "apps/web/src/lib/renderEnvironment/types.ts",
+      "apps/web/src/lib/resourceGraph/citations.ts",
+      "apps/web/src/lib/resourceGraph/links.ts",
+      "apps/web/src/lib/resourceGraph/resourceRef.ts",
+      "apps/web/src/lib/resourceGraph/useLinkComposer.ts",
+      "apps/web/src/lib/resourceSurface/api.ts",
+      "apps/web/src/lib/resourceSurface/dailySurfacePersistence.ts",
+      "apps/web/src/lib/resourceSurface/draftStore.ts",
+      "apps/web/src/lib/resourceSurface/model.ts",
+      "apps/web/src/lib/resourceSurface/outline.ts",
+      "apps/web/src/lib/resourceSurface/useResourceSurfaceSession.ts",
+      "apps/web/src/lib/resources/activation.ts",
+      "apps/web/src/lib/resources/openableResources.ts",
+      "apps/web/src/lib/resources/resourceActionExecution.ts",
+      "apps/web/src/lib/resources/resourceActionTarget.ts",
+      "apps/web/src/lib/resources/resourceCapabilities.ts",
+      "apps/web/src/lib/resources/resourceItems.ts",
+      "apps/web/src/lib/resources/resourceLocators.ts",
+      "apps/web/src/lib/resources/resourceOverlaysController.tsx",
+      "apps/web/src/lib/routes/defaults.ts",
+      "apps/web/src/lib/search/kinds.ts",
+      "apps/web/src/lib/search/parseSearchInput.ts",
+      "apps/web/src/lib/search/query.ts",
+      "apps/web/src/lib/search/searchApi.ts",
+      "apps/web/src/lib/search/searchParams.ts",
+      "apps/web/src/lib/search/searchTypeIcon.ts",
+      "apps/web/src/lib/search/searchViewModel.ts",
+      "apps/web/src/lib/search/types.ts",
+      "apps/web/src/lib/security/csp.ts",
+      "apps/web/src/lib/security/headers.ts",
+      "apps/web/src/lib/security/origin.ts",
+      "apps/web/src/lib/security/youtube.ts",
+      "apps/web/src/lib/sharing/controller.tsx",
+      "apps/web/src/lib/sharing/openOptions.ts",
+      "apps/web/src/lib/sharing/targets.ts",
+      "apps/web/src/lib/sharing/types.ts",
+      "apps/web/src/lib/sharing/wireValidation.ts",
+      "apps/web/src/lib/suggestions.ts",
+      "apps/web/src/lib/supabase/auth.ts",
+      "apps/web/src/lib/supabase/cookie.ts",
+      "apps/web/src/lib/telemetry/clientDefects.ts",
+      "apps/web/src/lib/text/formatByteCount.ts",
+      "apps/web/src/lib/text/pluralize.ts",
+      "apps/web/src/lib/theme/cookie.ts",
+      "apps/web/src/lib/theme/elvishInscriptions.ts",
+      "apps/web/src/lib/theme/room.ts",
+      "apps/web/src/lib/theme/setAppearanceAction.ts",
+      "apps/web/src/lib/time/browserTimeZone.ts",
+      "apps/web/src/lib/toRoman.ts",
+      "apps/web/src/lib/ui/actionDescriptor.ts",
+      "apps/web/src/lib/ui/copyText.ts",
+      "apps/web/src/lib/ui/cx.ts",
+      "apps/web/src/lib/ui/emphasis.ts",
+      "apps/web/src/lib/ui/eventTarget.ts",
+      "apps/web/src/lib/ui/overlay.ts",
+      "apps/web/src/lib/ui/rovingIndex.ts",
+      "apps/web/src/lib/ui/useAnchoredPosition.ts",
+      "apps/web/src/lib/ui/useHydrationPreservedInput.ts",
+      "apps/web/src/lib/ui/useIsMobileViewport.ts",
+      "apps/web/src/lib/ui/useKeyboardInset.ts",
+      "apps/web/src/lib/ui/viewTransitions.ts",
+      "apps/web/src/lib/useIntervalPoll.ts",
+      "apps/web/src/lib/useStringIdSet.ts",
+      "apps/web/src/lib/users/search.ts",
+      "apps/web/src/lib/validation.ts",
+      "apps/web/src/lib/windowEventChannel.ts",
+      "apps/web/src/lib/workspace/adjacentPaneKeybindings.ts",
+      "apps/web/src/lib/workspace/bootstrap.server.ts",
+      "apps/web/src/lib/workspace/model.ts",
+      "apps/web/src/lib/workspace/paneDom.ts",
+      "apps/web/src/lib/workspace/paneReturnMemento.tsx",
+      "apps/web/src/lib/workspace/paneSizing.ts",
+      "apps/web/src/lib/workspace/store.tsx",
+      "apps/web/src/lib/workspace/targetActivation.ts",
+      "apps/web/src/lib/workspace/useWorkspaceSession.ts",
+      "apps/web/src/lib/workspace/workspaceHref.ts",
+      "apps/web/src/middleware.ts",
+      "apps/web/src/shelf/Shelf.tsx",
+      "apps/web/src/shelf/ShelfReader.tsx",
+      "apps/web/src/shelf/index.html",
+      "apps/web/src/shelf/main.tsx",
+      "apps/web/src/shelf/shelf.module.css",
+      "apps/web/tsconfig.json",
+      "apps/web/vite.extension.config.ts",
+      "apps/web/vite.shelf.config.ts",
+      "apps/worker/README.md",
+      "apps/worker/health.py",
+      "apps/worker/main.py",
+      "docker/Dockerfile.backend",
+      "docker/codex-requirements.toml",
+      "docker/docker-compose.worker.yml",
+      "docker/docker-compose.yml",
+      "node/ingest/article_extraction.mjs",
+      "node/ingest/bun.lock",
+      "node/ingest/ingest.mjs",
+      "node/ingest/package.json",
+      "python/.python-version",
+      "python/README.md",
+      "python/nexus/__init__.py",
+      "python/nexus/api/__init__.py",
+      "python/nexus/api/deps.py",
+      "python/nexus/api/routes/__init__.py",
+      "python/nexus/api/routes/_sse.py",
+      "python/nexus/api/routes/assistant_writes.py",
+      "python/nexus/api/routes/atlas.py",
+      "python/nexus/api/routes/auth_handoff_codes.py",
+      "python/nexus/api/routes/browse.py",
+      "python/nexus/api/routes/chat.py",
+      "python/nexus/api/routes/connection_discovery.py",
+      "python/nexus/api/routes/consumption_activity.py",
+      "python/nexus/api/routes/contributors.py",
+      "python/nexus/api/routes/dossiers.py",
+      "python/nexus/api/routes/email_ingest.py",
+      "python/nexus/api/routes/extension_captures.py",
+      "python/nexus/api/routes/extension_sessions.py",
+      "python/nexus/api/routes/highlights.py",
+      "python/nexus/api/routes/imports.py",
+      "python/nexus/api/routes/lectern.py",
+      "python/nexus/api/routes/libraries.py",
+      "python/nexus/api/routes/llm.py",
+      "python/nexus/api/routes/me.py",
+      "python/nexus/api/routes/media.py",
+      "python/nexus/api/routes/media_assets.py",
+      "python/nexus/api/routes/media_ingest.py",
+      "python/nexus/api/routes/notes.py",
+      "python/nexus/api/routes/operational.py",
+      "python/nexus/api/routes/oracle.py",
+      "python/nexus/api/routes/passage_anchors.py",
+      "python/nexus/api/routes/playback.py",
+      "python/nexus/api/routes/podcast_transcripts.py",
+      "python/nexus/api/routes/podcasts.py",
+      "python/nexus/api/routes/public_resource_shares.py",
+      "python/nexus/api/routes/reader.py",
+      "python/nexus/api/routes/resource_graph.py",
+      "python/nexus/api/routes/resource_items.py",
+      "python/nexus/api/routes/resource_shares.py",
+      "python/nexus/api/routes/search.py",
+      "python/nexus/api/routes/stream.py",
+      "python/nexus/api/routes/stream_tokens.py",
+      "python/nexus/api/routes/telemetry.py",
+      "python/nexus/api/routes/users.py",
+      "python/nexus/app.py",
+      "python/nexus/auth/__init__.py",
+      "python/nexus/auth/bearer.py",
+      "python/nexus/auth/extension.py",
+      "python/nexus/auth/middleware.py",
+      "python/nexus/auth/permissions.py",
+      "python/nexus/auth/verifier.py",
+      "python/nexus/cli.py",
+      "python/nexus/coerce.py",
+      "python/nexus/config.py",
+      "python/nexus/db/__init__.py",
+      "python/nexus/db/async_session.py",
+      "python/nexus/db/engine.py",
+      "python/nexus/db/errors.py",
+      "python/nexus/db/generation_effect_receipts_migration.py",
+      "python/nexus/db/listen.py",
+      "python/nexus/db/models.py",
+      "python/nexus/db/retries.py",
+      "python/nexus/db/session.py",
+      "python/nexus/errors.py",
+      "python/nexus/ids.py",
+      "python/nexus/jobs/__init__.py",
+      "python/nexus/jobs/dead_letters.py",
+      "python/nexus/jobs/process_executor.py",
+      "python/nexus/jobs/queue.py",
+      "python/nexus/jobs/registry.py",
+      "python/nexus/jobs/worker.py",
+      "python/nexus/logging.py",
+      "python/nexus/middleware/__init__.py",
+      "python/nexus/middleware/request_id.py",
+      "python/nexus/middleware/stream_cors.py",
+      "python/nexus/model_cutover_archive.py",
+      "python/nexus/model_cutover_preflight.py",
+      "python/nexus/ops/__init__.py",
+      "python/nexus/ops/model_cutover.py",
+      "python/nexus/ops/processing_recovery.py",
+      "python/nexus/ops/reader_navigation_repair.py",
+      "python/nexus/ops/reader_publication_preflight.py",
+      "python/nexus/public_resource_security.py",
+      "python/nexus/release_artifact.py",
+      "python/nexus/release_backup.py",
+      "python/nexus/responses.py",
+      "python/nexus/runtime_health.py",
+      "python/nexus/schemas/__init__.py",
+      "python/nexus/schemas/assistant_writes.py",
+      "python/nexus/schemas/atlas.py",
+      "python/nexus/schemas/browse.py",
+      "python/nexus/schemas/citation.py",
+      "python/nexus/schemas/client_mutation.py",
+      "python/nexus/schemas/collection_page.py",
+      "python/nexus/schemas/connection_discovery.py",
+      "python/nexus/schemas/consumption.py",
+      "python/nexus/schemas/consumption_activity.py",
+      "python/nexus/schemas/consumption_state.py",
+      "python/nexus/schemas/contributor_credit.py",
+      "python/nexus/schemas/contributors.py",
+      "python/nexus/schemas/conversation.py",
+      "python/nexus/schemas/dossier.py",
+      "python/nexus/schemas/extension_capture.py",
+      "python/nexus/schemas/highlights.py",
+      "python/nexus/schemas/import_history.py",
+      "python/nexus/schemas/import_refs.py",
+      "python/nexus/schemas/imports.py",
+      "python/nexus/schemas/isbn.py",
+      "python/nexus/schemas/library.py",
+      "python/nexus/schemas/llm.py",
+      "python/nexus/schemas/media.py",
+      "python/nexus/schemas/media_summary.py",
+      "python/nexus/schemas/metadata_enrichment.py",
+      "python/nexus/schemas/nexus_history.py",
+      "python/nexus/schemas/notes.py",
+      "python/nexus/schemas/oracle.py",
+      "python/nexus/schemas/passage_anchors.py",
+      "python/nexus/schemas/podcast.py",
+      "python/nexus/schemas/presence.py",
+      "python/nexus/schemas/public_resource_sharing.py",
+      "python/nexus/schemas/publication_dates.py",
+      "python/nexus/schemas/reader.py",
+      "python/nexus/schemas/reader_apparatus.py",
+      "python/nexus/schemas/reader_document.py",
+      "python/nexus/schemas/reader_document_map.py",
+      "python/nexus/schemas/reading_time.py",
+      "python/nexus/schemas/resource_action_snapshots.py",
+      "python/nexus/schemas/resource_graph.py",
+      "python/nexus/schemas/resource_items.py",
+      "python/nexus/schemas/resource_search.py",
+      "python/nexus/schemas/resource_sharing.py",
+      "python/nexus/schemas/retrieval.py",
+      "python/nexus/schemas/search.py",
+      "python/nexus/schemas/search_types.py",
+      "python/nexus/schemas/source_issues.py",
+      "python/nexus/schemas/suggestions.py",
+      "python/nexus/schemas/telemetry.py",
+      "python/nexus/schemas/upload_failures.py",
+      "python/nexus/schemas/user.py",
+      "python/nexus/schemas/workspace_session.py",
+      "python/nexus/services/__init__.py",
+      "python/nexus/services/atlas.py",
+      "python/nexus/services/auth_handoff_codes.py",
+      "python/nexus/services/bootstrap.py",
+      "python/nexus/services/browse/__init__.py",
+      "python/nexus/services/browse/brave.py",
+      "python/nexus/services/browse/gutenberg.py",
+      "python/nexus/services/browse/podcast_index.py",
+      "python/nexus/services/browse/service.py",
+      "python/nexus/services/browse/targets.py",
+      "python/nexus/services/browse/youtube.py",
+      "python/nexus/services/browser_capture_conversion.py",
+      "python/nexus/services/canonicalize.py",
+      "python/nexus/services/capabilities.py",
+      "python/nexus/services/chat/__init__.py",
+      "python/nexus/services/chat/admit.py",
+      "python/nexus/services/chat/citations.py",
+      "python/nexus/services/chat/context.py",
+      "python/nexus/services/chat/conversations.py",
+      "python/nexus/services/chat/events.py",
+      "python/nexus/services/chat/quotes.py",
+      "python/nexus/services/chat/reads.py",
+      "python/nexus/services/chat/retrievals.py",
+      "python/nexus/services/chat/worker.py",
+      "python/nexus/services/collection_keyset.py",
+      "python/nexus/services/connection_discovery.py",
+      "python/nexus/services/consumption/__init__.py",
+      "python/nexus/services/consumption/activity.py",
+      "python/nexus/services/consumption/exclusions.py",
+      "python/nexus/services/consumption/handles.py",
+      "python/nexus/services/consumption/lectern.py",
+      "python/nexus/services/consumption/listening.py",
+      "python/nexus/services/consumption/projection.py",
+      "python/nexus/services/consumption/reader_cursor.py",
+      "python/nexus/services/consumption/service.py",
+      "python/nexus/services/consumption/stats.py",
+      "python/nexus/services/content_chunking.py",
+      "python/nexus/services/content_indexing.py",
+      "python/nexus/services/contributor_credits.py",
+      "python/nexus/services/contributor_taxonomy.py",
+      "python/nexus/services/contributor_writes.py",
+      "python/nexus/services/contributors.py",
+      "python/nexus/services/document_embed_extraction.py",
+      "python/nexus/services/document_embeds.py",
+      "python/nexus/services/dossier/__init__.py",
+      "python/nexus/services/dossier/document.py",
+      "python/nexus/services/dossier/engine.py",
+      "python/nexus/services/dossier/inputs.py",
+      "python/nexus/services/dossier/research.py",
+      "python/nexus/services/dossier/run.py",
+      "python/nexus/services/dossier/subjects.py",
+      "python/nexus/services/dossier/synthesis.py",
+      "python/nexus/services/email_ingest_service.py",
+      "python/nexus/services/embeddings.py",
+      "python/nexus/services/epub_assets.py",
+      "python/nexus/services/epub_contributor_repair.py",
+      "python/nexus/services/epub_ingest.py",
+      "python/nexus/services/epub_lifecycle.py",
+      "python/nexus/services/epub_read.py",
+      "python/nexus/services/epub_sanitize.py",
+      "python/nexus/services/epub_structure.py",
+      "python/nexus/services/extension_sessions.py",
+      "python/nexus/services/file_ingest_validation.py",
+      "python/nexus/services/fragment_blocks.py",
+      "python/nexus/services/generation/__init__.py",
+      "python/nexus/services/generation/catalog.py",
+      "python/nexus/services/generation/codex.py",
+      "python/nexus/services/generation/contract.py",
+      "python/nexus/services/generation/ledger.py",
+      "python/nexus/services/generation/policy.py",
+      "python/nexus/services/generation/provider.py",
+      "python/nexus/services/generation/run.py",
+      "python/nexus/services/generation/runtime.py",
+      "python/nexus/services/generation/synthesis.py",
+      "python/nexus/services/gutenberg.py",
+      "python/nexus/services/highlights.py",
+      "python/nexus/services/html_apparatus.py",
+      "python/nexus/services/html_tree.py",
+      "python/nexus/services/image_placeholder.py",
+      "python/nexus/services/image_validation.py",
+      "python/nexus/services/import_history.py",
+      "python/nexus/services/imports.py",
+      "python/nexus/services/library_entries.py",
+      "python/nexus/services/library_entry_listing.py",
+      "python/nexus/services/library_governance.py",
+      "python/nexus/services/library_sharing.py",
+      "python/nexus/services/locator_resolver.py",
+      "python/nexus/services/media.py",
+      "python/nexus/services/media_deletion.py",
+      "python/nexus/services/media_document_metrics.py",
+      "python/nexus/services/media_file_access.py",
+      "python/nexus/services/media_intelligence.py",
+      "python/nexus/services/media_intelligence_lifecycle.py",
+      "python/nexus/services/media_processing_state.py",
+      "python/nexus/services/media_read_map.py",
+      "python/nexus/services/media_source_adapters.py",
+      "python/nexus/services/media_source_ingest.py",
+      "python/nexus/services/media_source_types.py",
+      "python/nexus/services/media_upload_sessions.py",
+      "python/nexus/services/metadata_dispatch.py",
+      "python/nexus/services/metadata_enrichment.py",
+      "python/nexus/services/metadata_operations.py",
+      "python/nexus/services/metadata_reviews.py",
+      "python/nexus/services/net/__init__.py",
+      "python/nexus/services/net/http_retry.py",
+      "python/nexus/services/net/safe_fetch.py",
+      "python/nexus/services/nexus_history.py",
+      "python/nexus/services/note_bodies.py",
+      "python/nexus/services/note_indexing.py",
+      "python/nexus/services/notes.py",
+      "python/nexus/services/oracle/__init__.py",
+      "python/nexus/services/oracle/corpus.json",
+      "python/nexus/services/oracle/corpus.py",
+      "python/nexus/services/oracle/readings.py",
+      "python/nexus/services/oracle/synthesis.py",
+      "python/nexus/services/parser_temp.py",
+      "python/nexus/services/passage_anchors.py",
+      "python/nexus/services/pdf_highlight_geometry.py",
+      "python/nexus/services/pdf_highlights.py",
+      "python/nexus/services/pdf_ingest.py",
+      "python/nexus/services/pdf_lifecycle.py",
+      "python/nexus/services/pdf_readiness.py",
+      "python/nexus/services/playback_source.py",
+      "python/nexus/services/podcasts/__init__.py",
+      "python/nexus/services/podcasts/backfill.py",
+      "python/nexus/services/podcasts/deepgram_adapter.py",
+      "python/nexus/services/podcasts/episode_acquisition.py",
+      "python/nexus/services/podcasts/episodes.py",
+      "python/nexus/services/podcasts/feed.py",
+      "python/nexus/services/podcasts/ingest.py",
+      "python/nexus/services/podcasts/provider.py",
+      "python/nexus/services/podcasts/shows.py",
+      "python/nexus/services/podcasts/subscriptions.py",
+      "python/nexus/services/podcasts/subscriptions_query.py",
+      "python/nexus/services/podcasts/sync.py",
+      "python/nexus/services/podcasts/transcription.py",
+      "python/nexus/services/podcasts/transcription_failure.py",
+      "python/nexus/services/public_html.py",
+      "python/nexus/services/public_resource_sharing.py",
+      "python/nexus/services/public_source_urls.py",
+      "python/nexus/services/reader_apparatus.py",
+      "python/nexus/services/reader_connections.py",
+      "python/nexus/services/reader_document.py",
+      "python/nexus/services/reader_document_map.py",
+      "python/nexus/services/reader_evidence.py",
+      "python/nexus/services/reader_evidence_markers.py",
+      "python/nexus/services/reader_locations.py",
+      "python/nexus/services/reader_navigation.py",
+      "python/nexus/services/reader_navigation_repair.py",
+      "python/nexus/services/reader_profile.py",
+      "python/nexus/services/reader_publication.py",
+      "python/nexus/services/reader_structure.py",
+      "python/nexus/services/reading_copy.py",
+      "python/nexus/services/reading_time.py",
+      "python/nexus/services/remote_file.py",
+      "python/nexus/services/resource_grants.py",
+      "python/nexus/services/resource_graph/__init__.py",
+      "python/nexus/services/resource_graph/adjacency.py",
+      "python/nexus/services/resource_graph/citations.py",
+      "python/nexus/services/resource_graph/cleanup.py",
+      "python/nexus/services/resource_graph/connections.py",
+      "python/nexus/services/resource_graph/context.py",
+      "python/nexus/services/resource_graph/edges.py",
+      "python/nexus/services/resource_graph/highlight_notes.py",
+      "python/nexus/services/resource_graph/links.py",
+      "python/nexus/services/resource_graph/owners.py",
+      "python/nexus/services/resource_graph/reader_targets.py",
+      "python/nexus/services/resource_graph/refs.py",
+      "python/nexus/services/resource_graph/resolve.py",
+      "python/nexus/services/resource_items/__init__.py",
+      "python/nexus/services/resource_items/action_snapshots.py",
+      "python/nexus/services/resource_items/capabilities.py",
+      "python/nexus/services/resource_items/locators.py",
+      "python/nexus/services/resource_items/mutations.py",
+      "python/nexus/services/resource_items/routing.py",
+      "python/nexus/services/resource_items/surfaces.py",
+      "python/nexus/services/resource_items/versions.py",
+      "python/nexus/services/resource_mutation_replay.py",
+      "python/nexus/services/resource_sharing.py",
+      "python/nexus/services/rss_transcript_fetch.py",
+      "python/nexus/services/sanitize_html.py",
+      "python/nexus/services/sealed_handles.py",
+      "python/nexus/services/search/__init__.py",
+      "python/nexus/services/search/pickers.py",
+      "python/nexus/services/search/project.py",
+      "python/nexus/services/search/query.py",
+      "python/nexus/services/search/scope.py",
+      "python/nexus/services/search/semantic.py",
+      "python/nexus/services/search/service.py",
+      "python/nexus/services/search/sources.py",
+      "python/nexus/services/seq.py",
+      "python/nexus/services/source_attempt_artifacts.py",
+      "python/nexus/services/source_attempt_failures.py",
+      "python/nexus/services/source_history.py",
+      "python/nexus/services/source_outcome.py",
+      "python/nexus/services/source_publication.py",
+      "python/nexus/services/stream_tokens.py",
+      "python/nexus/services/suggestions.py",
+      "python/nexus/services/text_quote.py",
+      "python/nexus/services/tools/__init__.py",
+      "python/nexus/services/tools/assistant_writes.py",
+      "python/nexus/services/tools/contract.py",
+      "python/nexus/services/tools/memory.py",
+      "python/nexus/services/tools/reads.py",
+      "python/nexus/services/tools/run.py",
+      "python/nexus/services/tools/writes.py",
+      "python/nexus/services/transcript_segments.py",
+      "python/nexus/services/transcripts/__init__.py",
+      "python/nexus/services/transcripts/current.py",
+      "python/nexus/services/transcripts/request_reason.py",
+      "python/nexus/services/transcripts/state.py",
+      "python/nexus/services/url_normalize.py",
+      "python/nexus/services/users.py",
+      "python/nexus/services/web_article.py",
+      "python/nexus/services/web_article_structure.py",
+      "python/nexus/services/workspace_sessions.py",
+      "python/nexus/services/x_client.py",
+      "python/nexus/services/x_identity.py",
+      "python/nexus/services/x_ingest.py",
+      "python/nexus/services/x_rendering.py",
+      "python/nexus/services/youtube.py",
+      "python/nexus/services/youtube_identity.py",
+      "python/nexus/storage/__init__.py",
+      "python/nexus/storage/client.py",
+      "python/nexus/storage/paths.py",
+      "python/nexus/stream_paths.py",
+      "python/nexus/tasks/__init__.py",
+      "python/nexus/tasks/enrich_metadata.py",
+      "python/nexus/tasks/media_teardown.py",
+      "python/nexus/tasks/media_unit_build.py",
+      "python/nexus/tasks/reconcile_stale_ingest_media.py",
+      "python/nexus/tasks/storage_object_cleanup.py",
+      "python/nexus/tasks/storage_orphan_sweep.py",
+      "python/nexus/text.py",
+      "python/nexus/web_paths.py",
+      "python/nexus/wire_schema.py",
+      "python/pyproject.toml",
+      "python/scripts/backfill_note_content_index.py",
+      "python/scripts/generate_resource_capabilities.py",
+      "python/scripts/generate_tool_contract_projection.py",
+      "python/scripts/repair_epub_contributors.py",
+      "python/uv.lock",
+      "scripts/build-icons.mjs",
+      "scripts/github-known-hosts",
+      "scripts/test",
+      "scripts/with-memory-git"
+    ],
+    "digest_command": [
+      "git",
+      "ls-files",
+      "-z",
+      "--cached",
+      "--others",
+      "--exclude-standard",
+      "--",
+      "apps",
+      "python",
+      "node",
+      "scripts",
+      "docker",
+      "bun.lock",
+      "package.json"
+    ],
+    "worker_image_id": "sha256:dd167c745e0a622f59677cdd1e5645c75c7dc28d1d99e02b63cd94cb600a7297",
+    "pre_focus_application_bytes_sha256": "cf3ad29b060b1c316d758d533b32c373c619f0cd14e0e8c00970d28524034b4a",
+    "qualification_cuts": {
+      "broad_live_100_grouped_assertions": "cf3ad29b060b1c316d758d533b32c373c619f0cd14e0e8c00970d28524034b4a",
+      "ownership_live_4_before_independent_busy_presentation_change": "7edc6d7c300a64ab63d4eb319e238774467983a38bd280bad563cdf299d7150c",
+      "source_refusal_live_2_and_final_static": "09a9aed6977d12afca330b8e70577a2eeffa0d32ec9d32d4f3d5d837f13864ec"
+    }
+  },
+  "fixtures": {
+    "waiting": {
+      "ref": "upload:nup1.AaE8CwlpdTKShGlzb1qklA.XeHP9vc1Wyy9vmbSxEl3EA",
+      "title": "contract-waiting-green-1792008718620.pdf",
+      "rawFilename": "contract-waiting-green-1792008718620.pdf",
+      "generation": 1
+    },
+    "retry": {
+      "ref": "upload:nup1.AaE8CwmaeWSRqtMizZaQCw.8Sk9gC1-xpAJmk0yyguFjg",
+      "title": "contract-original-green-1792008718620.epub",
+      "rawFilename": "  contract-original-green-1792008718620.epub  ",
+      "generation": 1
+    },
+    "epub": {
+      "ref": "upload:nup1.AaE8CwqadZa6kQBF3taMCQ.0dBBWc1bZHSVJ1memkLvmA",
+      "title": "distinct human title",
+      "mediaId": "01a13c0b-0a9b-7096-a6f2-92fab9e3a637",
+      "rawFilename": "  contract-book-green-1792008718620.epub  ",
+      "generation": 2
+    },
+    "rejectedCapture": {
+      "ref": "upload:nup1.AaE8C34rcs6fbyQcAKO89w.xwCi1QxT-q22XoG7dNchJg",
+      "title": "contract-rejected-green-1792008718620.pdf",
+      "generation": 1
+    },
+    "url": {
+      "ref": "media:6a7537cb-295c-4ceb-9ff6-41dd7f8e006e",
+      "title": "example.com",
+      "mediaId": "6a7537cb-295c-4ceb-9ff6-41dd7f8e006e"
+    },
+    "captures": [
+      {
+        "ref": "upload:nup1.AaE8C32NdlS7DARje-7Q8g.HreBrFwvwUCZmZ1gR-GsdA",
+        "title": "contract-capture-green-1792008718620.pdf",
+        "mediaId": "01a13bed-81aa-7be2-a2ac-efd071e94c2f"
+      },
+      {
+        "ref": "upload:nup1.AaE8C33EcMCS005LpLCHug.ZYJt8FNMVBzyumgDYc5yNg",
+        "title": "contract-capture-green-1792008718620.pdf",
+        "mediaId": "01a13bed-81aa-7be2-a2ac-efd071e94c2f"
+      }
+    ],
+    "history": {
+      "ref": "upload:nup1.AaE77xDGdnOsD4u9IHC-eA.5KPOe1dktRwxyfNZhqSDGQ",
+      "title": "ui-history-probe.pdf",
+      "generation": 26,
+      "rawFilename": "ui-history-probe.pdf"
+    },
+    "pagination": [
+      {
+        "ref": "upload:nup1.AaE77wbacEqoKP-Iso28Hw.QLOS_68iVteHy5WZiZTO-g",
+        "title": "ui-page-01.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-01.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wcwcP6-yAGBVF1znA.Ldfr_tZR4PwxkgMHd-87YA",
+        "title": "ui-page-02.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-02.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wdtd96sZE9p12FyCg.Pz4zoKNmUKSnAL0dyajGpQ",
+        "title": "ui-page-03.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-03.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77weadkyJaavpXorJsQ.msG5aNtFAA3wyb3KrxhANA",
+        "title": "ui-page-04.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-04.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wfld7C3HOjpSQUqrA.DE4y890r_ALRyzw8qAR3Lw",
+        "title": "ui-page-05.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-05.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77whAeN-eiMyojTb_0w.S5bAQIyMSbgOvoBFc25smA",
+        "title": "ui-page-06.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-06.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77whpeb64_0KSaV8Dlg.J2M4MdYng3t_24hbArtJqQ",
+        "title": "ui-page-07.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-07.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wiSfVKCbcfUzzy3iA.82YDRVAmtPJ29EURcMIeQg",
+        "title": "ui-page-08.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-08.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wi3fNujukBddnbTHw.nfXQeMW1o436YbJRKCDRqQ",
+        "title": "ui-page-09.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-09.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wjbcOi_GdgGyAU43A.YbWpUCgIZvNzY1IVZo7aZA",
+        "title": "ui-page-10.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-10.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wkIdV6jnxeaIwO4Rg.lLTx-5GMna9TaUp-nlKPFQ",
+        "title": "ui-page-11.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-11.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wk0dyaXnca0sBAwgw.09MLU2-MqwpDpR58mTs4tQ",
+        "title": "ui-page-12.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-12.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wlpcLWepxU1uEiF6g.EMRVra2bW54tdbMVR4vXTQ",
+        "title": "ui-page-13.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-13.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wmmej-mUfIIGHybYg.p6jvvG6KH628mroH0G7xqw",
+        "title": "ui-page-14.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-14.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wnbfCyXyLHKBs48Ng.BikbBTPaoHVmwJZSOfLkDg",
+        "title": "ui-page-15.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-15.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77woHdTGUUD3lRccaBA.8JotMX0iBaMG-ppuVRSH4w",
+        "title": "ui-page-16.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-16.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wo1f5mZouaHhNkn1A.YusK1SDgQqgnALqzfD68LQ",
+        "title": "ui-page-17.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-17.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wpcdYa5wrwFzALB9Q.opkYN6LTPFvoV6BXzVpq9w",
+        "title": "ui-page-18.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-18.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wqCdnmcQHvTuGfUqA.-pnZFqs4c7UPHmpAuV0FYQ",
+        "title": "ui-page-19.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-19.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wqrdwe6G3kZf6O2OA.5ezTbRSKzqjDTzTcA11Bbg",
+        "title": "ui-page-20.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-20.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wrScqS3gx7xnl8d9Q.XvW6eKz17LNvr02Tt1XIUA",
+        "title": "ui-page-21.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-21.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wr1eDq5tFOtrRf0RQ.Vfby6cya3gnXurl-8Z-0HQ",
+        "title": "ui-page-22.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-22.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wsccSW_2F8mthAmOg.eQtAx5kLl8ggW7T1cyO7jw",
+        "title": "ui-page-23.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-23.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wtDcIq-utA8GmEdnA.Le6AZWAbpcOFIbPfLBsx4g",
+        "title": "ui-page-24.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-24.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wtxdmqvgpo4tGK4PQ.fbXioQl-0O2VmAFb6RYsJw",
+        "title": "ui-page-25.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-25.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wuveUazUws0boRF-Q.2YtxeKXpMd7h0e2M1sEtRg",
+        "title": "ui-page-26.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-26.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wvve4OzDzef-5SjfQ.LPm-8g8A1LNMTt54lrH-hQ",
+        "title": "ui-page-27.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-27.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wwfe4aRmbIDVFrEXA.ttMc4dOatIMDEG20t4fjoQ",
+        "title": "ui-page-28.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-28.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wxLfsu4n07HxMoj8g.iRWK8htxaWNx3dwGwjJD5w",
+        "title": "ui-page-29.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-29.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77wy7cwCi14vezj4Ywg.UgIhOMHpvilm-l7kDCskRw",
+        "title": "ui-page-30.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-30.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77w0OdMGLtp0avphuSA.9xywoPLv-rusiMjclZFHiQ",
+        "title": "ui-page-31.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-31.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77w1ZfDm8DCReMbGSDA.YuK7CcwJNpf989lay-WOzQ",
+        "title": "ui-page-32.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-32.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77w2SfKOUcmttAucBGw.c4nzjy7uv3nNX-t8_ZOmEw",
+        "title": "ui-page-33.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-33.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77w2_fS-_IbxkwE03WQ.Giby4-nLkaAj-ydyrLohSg",
+        "title": "ui-page-34.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-34.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77w3ud8O2aKEXdnWfLg.nMaFk8ohF1u-3eUSIaV27w",
+        "title": "ui-page-35.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-35.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77w4edsqQSKQQXOd0NQ.m_Q5I6JsiniYOvHZcnaWNg",
+        "title": "ui-page-36.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-36.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77w5KdkSrWX7rWPsgXA.MM-jrvofvvFidP-Bsz_-UA",
+        "title": "ui-page-37.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-37.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77w50cEaVRwPF9LqjZA.iwa_-ck1JS943VZ3TYV7AQ",
+        "title": "ui-page-38.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-38.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77w6heFS0oMR5MCdTwQ.U9QitMnvNkQKGduH01Lq3g",
+        "title": "ui-page-39.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-39.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77w7Kdn-AncK0TkZYLg.kJbSizmHka8PIJTyFmGHAw",
+        "title": "ui-page-40.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-40.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77w74fHeYekcuMtB2_A.GcDX1QS0IrJB755eCowlrw",
+        "title": "ui-page-41.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-41.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77w8jfveA8bwTAnaSYw.xU-i8dzPPgIsNxJwdIVGkA",
+        "title": "ui-page-42.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-42.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77w9IdCafNdf1bYN_GA.mu-ZYF3oVafLVYjMVWfp3A",
+        "title": "ui-page-43.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-43.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77w9qd8e3cTokpC3XdA.Gioxm_JQ2nT4BncATzvLug",
+        "title": "ui-page-44.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-44.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77w-QebuPfYzi1RhOLQ.J1GjzB5rnizoydvscMR-kA",
+        "title": "ui-page-45.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-45.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77w-1eZiSHM8Ly3oGjQ.1uIFwxbXLs5domBIFbw1eQ",
+        "title": "ui-page-46.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-46.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77w_ZdGGpcaKOe2fkmA.KSBnnRk-eMi9WvjIieCIig",
+        "title": "ui-page-47.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-47.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77w_8cHKphZMEWWq57w.hKSupg8qSZbvoORqaYjFng",
+        "title": "ui-page-48.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-48.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77xAgf_mcsrahr2QHgg.PNEBE5xtL-ZnMi9YQqFu8Q",
+        "title": "ui-page-49.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-49.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77xBIeBG_C9OPTRmgOQ.xIK8xJdz8SS9dW2WzZMD1w",
+        "title": "ui-page-50.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-50.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE77xCFdlSeFtdZhCBdjg.WWauOvPtcmP97Pt70u55Ag",
+        "title": "ui-page-51.pdf",
+        "generation": 1,
+        "rawFilename": "ui-page-51.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE8CRPzdrG8EhePkdH44g.4wN2FnZivgCldDZtzGa-Xw",
+        "title": "ui-gone-1792008590318.pdf",
+        "generation": 1,
+        "rawFilename": "ui-gone-1792008590318.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE8C9y8evSkPTiOs149_Q.SJkSMzIHJBeAjUy-L2XE9w",
+        "title": "ui-gone-1792008772790.pdf",
+        "generation": 1,
+        "rawFilename": "ui-gone-1792008772790.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE8DVB5cb22z9WswZkLgQ.CRFAmjnKHXbpPaXXVuXWQQ",
+        "title": "ui-gone-1792008867955.pdf",
+        "generation": 1,
+        "rawFilename": "ui-gone-1792008867955.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE8DZq4e5CfxJy88swIqw.CdRbAsWiWbiw-m21mvhN-w",
+        "title": "ui-gone-1792008886963.pdf",
+        "generation": 1,
+        "rawFilename": "ui-gone-1792008886963.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE8JfaaeZ2rSXkRZlA79Q.qaKYdIVSZFEsUcsFUwomQw",
+        "title": "ui-gone-1792010483349.pdf",
+        "generation": 1,
+        "rawFilename": "ui-gone-1792010483349.pdf"
+      },
+      {
+        "ref": "upload:nup1.AaE8KAKmdvySdCMvCkGszQ.IO_a294kNBCk8AB-6yVtyw",
+        "title": "ui-gone-1792010617504.pdf",
+        "generation": 1,
+        "rawFilename": "ui-gone-1792010617504.pdf"
+      }
+    ]
+  },
+  "receipts": {
+    "contracts-red.json": {
+      "name": "contracts",
+      "phase": "red",
+      "at": "2026-10-14T19:39:43.640Z",
+      "results": [
+        {
+          "name": "fixture: admit a real upload without sending bytes",
+          "status": "pass"
+        },
+        {
+          "name": "i4: unobserved upload progress is awaiting confirmation",
+          "status": "fail",
+          "detail": "Expected values to be strictly deep-equal:"
+        },
+        {
+          "name": "wire: item owns readiness and filename; removed fields are absent",
+          "status": "fail",
+          "detail": "Expected values to be strictly deep-equal:"
+        },
+        {
+          "name": "wire: flat result contract has no stage groups",
+          "status": "fail",
+          "detail": "Expected values to be strictly equal:"
+        },
+        {
+          "name": "i6: upload acceptance receipt names its exact import",
+          "status": "fail",
+          "detail": "Expected values to be strictly equal:"
+        },
+        {
+          "name": "fixture: interrupt a real upload for recoverable attention",
+          "status": "pass"
+        },
+        {
+          "name": "preservation: transport failure takes precedence over waiting",
+          "status": "pass"
+        },
+        {
+          "name": "preservation: wrong filename, type and size refuse before signed upload",
+          "status": "pass"
+        },
+        {
+          "name": "fixture: normalized original-file retry publishes real epub",
+          "status": "pass"
+        },
+        {
+          "name": "i5: published import exposes current title and immutable filename",
+          "status": "fail",
+          "detail": "Expected values to be strictly equal:"
+        },
+        {
+          "name": "i5: title and original filename both find the exact published import",
+          "status": "fail",
+          "detail": "expected exact import when querying distinct human title"
+        },
+        {
+          "name": "i6: publication and create replay retain the upload import ref",
+          "status": "fail",
+          "detail": "Expected values to be strictly equal:"
+        },
+        {
+          "name": "fixture: distinct real captures reuse the same published media",
+          "status": "pass"
+        },
+        {
+          "name": "preservation: duplicate captured bytes share media and retain separate sessions",
+          "status": "pass"
+        },
+        {
+          "name": "i6: each capture receipt and status keep its exact import identity",
+          "status": "fail",
+          "detail": "Expected values to be strictly equal:"
+        },
+        {
+          "name": "fixture: rejected bytes produce real terminal capture attention",
+          "status": "pass"
+        },
+        {
+          "name": "i6: NeedsAttention receipt preserves exact upload identity",
+          "status": "fail",
+          "detail": "Expected values to be strictly equal:"
+        },
+        {
+          "name": "fixture: public URL admission returns its real media identity",
+          "status": "pass"
+        },
+        {
+          "name": "i6: URL receipt names its admitted media",
+          "status": "fail",
+          "detail": "Expected values to be strictly equal:"
+        }
+      ]
+    },
+    "handoff-red.json": {
+      "name": "handoff",
+      "phase": "red",
+      "at": "2026-10-14T19:40:24.673Z",
+      "results": [
+        {
+          "name": "i6 known-ref lost confirmation preserves view and check",
+          "status": "fail",
+          "detail": "Expected values to be strictly equal:"
+        },
+        {
+          "name": "preservation: confirmation close-guard cancel keeps drafts and frozen destinations",
+          "status": "pass"
+        },
+        {
+          "name": "i6 known-ref view-guard cancel preserves unresolved state",
+          "status": "blocked",
+          "detail": "blocked by missing view-import action"
+        },
+        {
+          "name": "preservation: confirmation check replays frozen source, destinations and key",
+          "status": "pass"
+        },
+        {
+          "name": "i6 confirmation accepted replay uses neutral saved receipt",
+          "status": "fail",
+          "detail": "Expected values to be strictly equal:"
+        },
+        {
+          "name": "i6 confirmation settled receipt guarded handoff opens exact import",
+          "status": "blocked",
+          "detail": "blocked by missing view-import action"
+        },
+        {
+          "name": "i6 known-ref transport failure has a direct view-import action",
+          "status": "fail",
+          "detail": "Expected values to be strictly equal:"
+        },
+        {
+          "name": "i6 known-ref failure guarded handoff opens exact unpublished import",
+          "status": "blocked",
+          "detail": "blocked by missing view-import action"
+        },
+        {
+          "name": "i6 lost create keeps check and exposes no guessed import",
+          "status": "pass"
+        },
+        {
+          "name": "preservation: create close-guard cancel keeps drafts and frozen destinations",
+          "status": "pass"
+        },
+        {
+          "name": "preservation: create check replays frozen source, destinations and key",
+          "status": "pass"
+        },
+        {
+          "name": "i6 create accepted replay uses neutral saved receipt",
+          "status": "pass"
+        },
+        {
+          "name": "i6 create settled receipt guarded handoff opens exact import",
+          "status": "blocked",
+          "detail": "blocked by missing view-import action"
+        }
+      ]
+    },
+    "ui-chromium-red.json": {
+      "name": "ui-chromium",
+      "phase": "red",
+      "at": "2026-10-14T20:00:14.241Z",
+      "results": [
+        {
+          "name": "red i1: overview omits duplicate standfirst, sort prose and healthy timestamp",
+          "status": "fail",
+          "detail": "fixed sort prose still occupies the query header"
+        },
+        {
+          "name": "red i7: paginated attention is flat and has no empty stage sections",
+          "status": "fail",
+          "detail": "server-wide stage headings still wrap a partial page"
+        },
+        {
+          "name": "preservation i7: explicit continuation keeps unique import refs",
+          "status": "pass"
+        },
+        {
+          "name": "red i3: usable row exposes open without the overflow menu",
+          "status": "fail",
+          "detail": "usable content has no direct open control"
+        },
+        {
+          "name": "preservation i8: first selection opens the selected import",
+          "status": "pass"
+        },
+        {
+          "name": "red i8: keyboard close returns to the selected row trigger",
+          "status": "fail",
+          "detail": "inspector close did not restore its row trigger"
+        },
+        {
+          "name": "preservation i8: selecting the same row reopens dismissed details",
+          "status": "pass"
+        },
+        {
+          "name": "red i10: dismissed details stay dismissed after reload",
+          "status": "fail",
+          "detail": "selected URL reopened a dismissed inspector"
+        },
+        {
+          "name": "red i11: unmatched history begins collapsed behind a disclosure",
+          "status": "fail",
+          "detail": "history is an always-expanded attempt card"
+        },
+        {
+          "name": "red i9: failed detail refresh retains facts with a stale notice and retry",
+          "status": "fail",
+          "detail": "detail refresh failed silently"
+        },
+        {
+          "name": "red i11: failed history continuation retains events and offers retry",
+          "status": "fail",
+          "detail": "history continuation failed without retry"
+        },
+        {
+          "name": "preservation i11: historical failure remains distinguishable from current usability",
+          "status": "pass"
+        },
+        {
+          "name": "red i11: collapsing the same historical match survives refresh",
+          "status": "fail",
+          "detail": "matched history has no disclosure"
+        },
+        {
+          "name": "red i1/i2: first mobile import appears in the upper half of the viewport",
+          "status": "fail",
+          "detail": "first row begins at 503.578125px of an 844px viewport"
+        },
+        {
+          "name": "red i8: recovery preserves focus on a remaining row or query after its control disappears",
+          "status": "fail",
+          "detail": "focus was lost to BODY"
+        }
+      ]
+    },
+    "contracts-green.json": {
+      "name": "contracts",
+      "phase": "green",
+      "at": "2026-10-14T20:12:28.654Z",
+      "results": [
+        {
+          "name": "fixture: admit a real upload without sending bytes",
+          "status": "pass"
+        },
+        {
+          "name": "i4: unobserved upload progress is awaiting confirmation",
+          "status": "pass"
+        },
+        {
+          "name": "wire: item owns readiness and filename; removed fields are absent",
+          "status": "pass"
+        },
+        {
+          "name": "wire: flat result contract has no stage groups",
+          "status": "pass"
+        },
+        {
+          "name": "i6: upload acceptance receipt names its exact import",
+          "status": "pass"
+        },
+        {
+          "name": "fixture: interrupt a real upload for recoverable attention",
+          "status": "pass"
+        },
+        {
+          "name": "preservation: transport failure takes precedence over waiting",
+          "status": "pass"
+        },
+        {
+          "name": "preservation: wrong filename, type and size refuse before signed upload",
+          "status": "pass"
+        },
+        {
+          "name": "fixture: normalized original-file retry publishes real epub",
+          "status": "pass"
+        },
+        {
+          "name": "i5: published import exposes current title and immutable filename",
+          "status": "pass"
+        },
+        {
+          "name": "i5: title and original filename both find the exact published import",
+          "status": "pass"
+        },
+        {
+          "name": "i6: publication and create replay retain the upload import ref",
+          "status": "pass"
+        },
+        {
+          "name": "fixture: distinct real captures reuse the same published media",
+          "status": "pass"
+        },
+        {
+          "name": "preservation: duplicate captured bytes share media and retain separate sessions",
+          "status": "pass"
+        },
+        {
+          "name": "i6: each capture receipt and status keep its exact import identity",
+          "status": "pass"
+        },
+        {
+          "name": "fixture: rejected bytes produce real terminal capture attention",
+          "status": "pass"
+        },
+        {
+          "name": "i6: NeedsAttention receipt preserves exact upload identity",
+          "status": "pass"
+        },
+        {
+          "name": "fixture: public URL admission returns its real media identity",
+          "status": "pass"
+        },
+        {
+          "name": "i6: URL receipt names its admitted media",
+          "status": "pass"
+        }
+      ]
+    },
+    "handoff-green.json": {
+      "name": "handoff",
+      "phase": "green",
+      "at": "2026-10-14T20:10:43.438Z",
+      "results": [
+        {
+          "name": "i6 known-ref lost confirmation preserves view and check",
+          "status": "pass"
+        },
+        {
+          "name": "preservation: confirmation close-guard cancel keeps drafts and frozen destinations",
+          "status": "pass"
+        },
+        {
+          "name": "i6 known-ref view-guard cancel preserves unresolved state",
+          "status": "pass"
+        },
+        {
+          "name": "preservation: confirmation check replays frozen source, destinations and key",
+          "status": "pass"
+        },
+        {
+          "name": "i6 confirmation accepted replay uses neutral saved receipt",
+          "status": "pass"
+        },
+        {
+          "name": "i6 confirmation settled receipt guarded handoff opens exact import",
+          "status": "pass"
+        },
+        {
+          "name": "i6 known-ref transport failure has a direct view-import action",
+          "status": "pass"
+        },
+        {
+          "name": "i6 known-ref failure guarded handoff opens exact unpublished import",
+          "status": "pass"
+        },
+        {
+          "name": "i6 lost create keeps check and exposes no guessed import",
+          "status": "pass"
+        },
+        {
+          "name": "preservation: create close-guard cancel keeps drafts and frozen destinations",
+          "status": "pass"
+        },
+        {
+          "name": "preservation: create check replays frozen source, destinations and key",
+          "status": "pass"
+        },
+        {
+          "name": "i6 create accepted replay uses neutral saved receipt",
+          "status": "pass"
+        },
+        {
+          "name": "i6 create settled receipt guarded handoff opens exact import",
+          "status": "pass"
+        }
+      ]
+    },
+    "ui-chromium-green.json": {
+      "name": "ui-chromium",
+      "phase": "green",
+      "at": "2026-10-14T20:43:40.079Z",
+      "results": [
+        {
+          "name": "red i1: overview omits duplicate standfirst, sort prose and healthy timestamp",
+          "status": "pass"
+        },
+        {
+          "name": "red i7: paginated attention is flat and has no empty stage sections",
+          "status": "pass"
+        },
+        {
+          "name": "preservation i7: explicit continuation keeps unique import refs",
+          "status": "pass"
+        },
+        {
+          "name": "red i3: usable row exposes open without the overflow menu",
+          "status": "pass"
+        },
+        {
+          "name": "i3: open creates beside imports and then reuses the reader",
+          "status": "pass"
+        },
+        {
+          "name": "preservation i8: first selection opens the selected import",
+          "status": "pass"
+        },
+        {
+          "name": "red i8: keyboard close returns to the selected row trigger",
+          "status": "pass"
+        },
+        {
+          "name": "preservation i8: selecting the same row reopens dismissed details",
+          "status": "pass"
+        },
+        {
+          "name": "red i10: dismissed details stay dismissed after reload",
+          "status": "pass"
+        },
+        {
+          "name": "red i11: unmatched history begins collapsed behind a disclosure",
+          "status": "pass"
+        },
+        {
+          "name": "red i9: failed detail refresh retains facts with a stale notice and retry",
+          "status": "pass"
+        },
+        {
+          "name": "red i11: failed history continuation retains events and offers retry",
+          "status": "pass"
+        },
+        {
+          "name": "preservation i11: historical failure remains distinguishable from current usability",
+          "status": "pass"
+        },
+        {
+          "name": "red i11: collapsing the same historical match survives refresh",
+          "status": "pass"
+        },
+        {
+          "name": "i11: changed query drops old matched evidence before its read completes",
+          "status": "pass"
+        },
+        {
+          "name": "red i1/i2: first mobile import appears in the upper half of the viewport",
+          "status": "pass"
+        },
+        {
+          "name": "i9/i8: removed selected import becomes gone and close uses shell focus return",
+          "status": "pass"
+        },
+        {
+          "name": "red i8: recovery preserves focus on a remaining row or query after its control disappears",
+          "status": "pass"
+        }
+      ]
+    },
+    "navigation-chromium-green.json": {
+      "name": "navigation-chromium",
+      "phase": "green",
+      "at": "2026-10-14T20:12:55.975Z",
+      "results": [
+        {
+          "name": "i1: two pane drafts and applied queries remain independent",
+          "status": "pass"
+        },
+        {
+          "name": "i1: type, stage, reason and state filters use the real query contract",
+          "status": "pass"
+        },
+        {
+          "name": "i1: history failure filter preserves true, false and unset",
+          "status": "pass"
+        },
+        {
+          "name": "i1: history date bounds are UTC half-open event filters",
+          "status": "pass"
+        },
+        {
+          "name": "i1: clear filters keeps search; reset clears draft and restores this view only",
+          "status": "pass"
+        },
+        {
+          "name": "i3: desktop open creates adjacent then adopts the same reader",
+          "status": "pass"
+        },
+        {
+          "name": "i3: desktop pane cap refuses open without replacement or eviction",
+          "status": "pass"
+        },
+        {
+          "name": "i3: mobile touch/coarse follow and pane back preserve imports navigation",
+          "status": "pass"
+        }
+      ]
+    },
+    "history-focus-green.json": {
+      "name": "history-focus",
+      "phase": "green",
+      "at": "2026-10-14T20:15:31.931Z",
+      "results": [
+        {
+          "name": "i9/i11 failed history refresh retains events, explains staleness and retries",
+          "status": "pass"
+        },
+        {
+          "name": "i11 delayed ref and query changes never display another import’s matched evidence",
+          "status": "pass"
+        },
+        {
+          "name": "i8 an inspector whose opener disappeared returns focus to its shell",
+          "status": "pass"
+        },
+        {
+          "name": "i8 recovery leaves another input and its unsubmitted draft focused",
+          "status": "pass"
+        },
+        {
+          "name": "i8 recovery leaves another active pane and its focus target unchanged",
+          "status": "pass"
+        }
+      ]
+    },
+    "remaining-acceptance-green.json": {
+      "name": "remaining-acceptance",
+      "phase": "green",
+      "at": "2026-10-14T20:32:14.328Z",
+      "results": [
+        {
+          "name": "i5 browser retry accepts the original whitespace filename through real storage and confirmation",
+          "status": "pass"
+        },
+        {
+          "name": "i8 removed retry control returns focus to the same row title retained in history",
+          "status": "pass"
+        },
+        {
+          "name": "i8 final matching attention row disappears and focus returns to its query input",
+          "status": "pass"
+        },
+        {
+          "name": "i10 dismissed companion survives desktop-mobile-desktop and fresh-page workspace restoration",
+          "status": "pass"
+        }
+      ]
+    },
+    "ui-focus-refusal-green.json": {
+      "name": "ui-focus-refusal",
+      "phase": "green",
+      "at": "2026-10-14T20:24:50.394Z",
+      "results": [
+        {
+          "name": "real server filename refusal restores the surviving retry control without a storage PUT",
+          "status": "pass"
+        }
+      ]
+    },
+    "ui-browser-firefox-green.json": {
+      "name": "ui-browser-firefox",
+      "phase": "green",
+      "at": "2026-10-14T20:15:49.382Z",
+      "results": [
+        {
+          "name": "first keyboard selection opens exact selected import",
+          "status": "pass"
+        },
+        {
+          "name": "native history disclosure is keyboard operable and retains explicit collapse",
+          "status": "pass"
+        },
+        {
+          "name": "keyboard close returns to selected title",
+          "status": "pass"
+        },
+        {
+          "name": "same selected title reopens details",
+          "status": "pass"
+        },
+        {
+          "name": "narrow geometry preserves the query and puts first row in upper half",
+          "status": "pass"
+        }
+      ]
+    },
+    "ui-browser-webkit-green.json": {
+      "name": "ui-browser-webkit",
+      "phase": "green",
+      "at": "2026-10-14T20:16:11.568Z",
+      "results": [
+        {
+          "name": "first keyboard selection opens exact selected import",
+          "status": "pass"
+        },
+        {
+          "name": "native history disclosure is keyboard operable and retains explicit collapse",
+          "status": "pass"
+        },
+        {
+          "name": "keyboard close returns to selected title",
+          "status": "pass"
+        },
+        {
+          "name": "same selected title reopens details",
+          "status": "pass"
+        },
+        {
+          "name": "narrow geometry preserves the query and puts first row in upper half",
+          "status": "pass"
+        }
+      ]
+    },
+    "ui-browser-chromium-coarse-green.json": {
+      "name": "ui-browser-chromium-coarse",
+      "phase": "green",
+      "at": "2026-10-14T20:16:41.893Z",
+      "results": [
+        {
+          "name": "first keyboard selection opens exact selected import",
+          "status": "pass"
+        },
+        {
+          "name": "native history disclosure is keyboard operable and retains explicit collapse",
+          "status": "pass"
+        },
+        {
+          "name": "keyboard close returns to selected title",
+          "status": "pass"
+        },
+        {
+          "name": "same selected title reopens details",
+          "status": "pass"
+        },
+        {
+          "name": "narrow geometry preserves the query and puts first row in upper half",
+          "status": "pass"
+        },
+        {
+          "name": "actual coarse pointer controls have at least 44px target height",
+          "status": "pass"
+        }
+      ]
+    },
+    "ui-browser-webkit-coarse-green.json": {
+      "name": "ui-browser-webkit-coarse",
+      "phase": "green",
+      "at": "2026-10-14T20:17:05.222Z",
+      "results": [
+        {
+          "name": "first keyboard selection opens exact selected import",
+          "status": "pass"
+        },
+        {
+          "name": "native history disclosure is keyboard operable and retains explicit collapse",
+          "status": "pass"
+        },
+        {
+          "name": "keyboard close returns to selected title",
+          "status": "pass"
+        },
+        {
+          "name": "same selected title reopens details",
+          "status": "pass"
+        },
+        {
+          "name": "narrow geometry preserves the query and puts first row in upper half",
+          "status": "pass"
+        },
+        {
+          "name": "actual coarse pointer controls have at least 44px target height",
+          "status": "pass"
+        }
+      ]
+    },
+    "ui-physical-android-green.json": {
+      "name": "ui-physical-android",
+      "phase": "green",
+      "at": "2026-10-14T20:24:29.853Z",
+      "results": [
+        {
+          "name": "physical Android reports coarse pointer and readable attention rows",
+          "status": "pass"
+        },
+        {
+          "name": "physical touch selection opens exact import in the mobile sheet",
+          "status": "pass"
+        },
+        {
+          "name": "physical history disclosure and sheet dismissal work",
+          "status": "pass"
+        },
+        {
+          "name": "physical open follows in place and pane Go back preserves imports",
+          "status": "pass"
+        }
+      ]
+    },
+    "ui-visual-green.json": {
+      "name": "ui-visual",
+      "phase": "green",
+      "at": "2026-10-14T20:22:55.348Z",
+      "results": [
+        {
+          "name": "native pane resize reaches320px with no local horizontal overflow",
+          "status": "pass"
+        },
+        {
+          "name": "actual200percent browser zoom retains readable query,row,actions without page overflow",
+          "status": "pass"
+        }
+      ]
+    },
+    "extension-green.json": {
+      "at": "2026-10-14T20:46:04.002Z",
+      "browser": "firefox158.0",
+      "installed_xpi_sha256": "3b14b660578219abe4158846af51fd4b25a6b8f6f875a07384c0355972b9b416",
+      "fixtures": {
+        "recovered": {
+          "ref": "upload:nup1.AaE8IRxFceOmlDIfF9AGyw.PJkCcBhrosTR0t6ZlH6v8g",
+          "media_ref": "media:01a13c21-1c46-7a14-94cd-aa6a0c88ceb4",
+          "filename": "fresh-b.pdf"
+        }
+      },
+      "results": [
+        {
+          "name": "installed rebuilt artifact and native ordinary sign-in",
+          "status": "pass"
+        },
+        {
+          "name": "fresh create, signed transfer, confirmation, saved native popup",
+          "status": "pass"
+        },
+        {
+          "name": "real network PUT failure reports transport failure and attention",
+          "status": "pass"
+        },
+        {
+          "name": "native retry decodes NeedsAttention and republishes exact session",
+          "status": "pass"
+        }
+      ],
+      "limits": [
+        "first-run permission doorhanger not qualified; host access granted through normal addon settings",
+        "storage PUT is inferred from normal compiled flow and successful verification; api trace does not record storage HTTP"
+      ]
+    },
+    "extension-build.json": {
+      "browser": "firefox158.0",
+      "addon_id": "capture@nexus.local",
+      "xpi_sha256": "3b14b660578219abe4158846af51fd4b25a6b8f6f875a07384c0355972b9b416",
+      "background_sha256": "f343bcaf389a2aa8f5e4a674516d49f326659922ffcfabf9a0816fc772c57d68",
+      "nexus_origin_pinned": true,
+      "storage_origin_pinned": true,
+      "source": "real task HTTP fixture, imports-proof.example.com:29200 resolved only in isolated browser to loopback",
+      "permission_setup": "ordinary Firefox addon permissions UI; native identity flow and ordinary password UI; first-run doorhanger not claimed"
+    },
+    "extension-requests.json": [
+      {
+        "timestamp": "2026-10-14T20:35:03.793216Z",
+        "method": "POST",
+        "path": "/extension/captures",
+        "status_code": 200
+      },
+      {
+        "timestamp": "2026-10-14T20:35:03.977598Z",
+        "method": "POST",
+        "path": "/extension/captures/nup1.AaE8ICvMdASezIFGKoLuYw.tz4LyYSkIU3BP76bK03xDg/confirm",
+        "status_code": 200
+      },
+      {
+        "timestamp": "2026-10-14T20:36:05.335057Z",
+        "method": "POST",
+        "path": "/extension/captures",
+        "status_code": 200
+      },
+      {
+        "timestamp": "2026-10-14T20:36:07.942826Z",
+        "method": "POST",
+        "path": "/extension/captures/nup1.AaE8IRxFceOmlDIfF9AGyw.PJkCcBhrosTR0t6ZlH6v8g/transport-failure",
+        "status_code": 204
+      },
+      {
+        "timestamp": "2026-10-14T20:36:53.118212Z",
+        "method": "GET",
+        "path": "/extension/captures/nup1.AaE8IRxFceOmlDIfF9AGyw.PJkCcBhrosTR0t6ZlH6v8g",
+        "status_code": 200
+      },
+      {
+        "timestamp": "2026-10-14T20:36:54.169574Z",
+        "method": "POST",
+        "path": "/extension/captures/nup1.AaE8IRxFceOmlDIfF9AGyw.PJkCcBhrosTR0t6ZlH6v8g/retry",
+        "status_code": 200
+      },
+      {
+        "timestamp": "2026-10-14T20:36:54.620896Z",
+        "method": "POST",
+        "path": "/extension/captures/nup1.AaE8IRxFceOmlDIfF9AGyw.PJkCcBhrosTR0t6ZlH6v8g/confirm",
+        "status_code": 200
+      }
+    ],
+    "extension-attention-before-retry.json": {
+      "at": "2026-10-14T20:36:51.489Z",
+      "status": "pass",
+      "ref": "upload:nup1.AaE8IRxFceOmlDIfF9AGyw.PJkCcBhrosTR0t6ZlH6v8g",
+      "state": {
+        "kind": "NeedsAttention",
+        "stage": "Upload",
+        "failure_code": {
+          "kind": "Present",
+          "value": "E_UPLOAD_TRANSPORT_FAILED"
+        }
+      },
+      "readiness": {
+        "can_read": false,
+        "can_search": false,
+        "can_play": false
+      }
+    },
+    "extension-fresh-published.json": {
+      "at": "2026-10-14T20:35:35.362Z",
+      "status": "pass",
+      "text": "PDF\nfresh-a.pdf\nimports-proof.example.com\n[task account]\nLibraries\nNo additional libraries\n\nMembers of selected libraries can read this item.\n\nSaved.\nOpen in Nexus\nDisconnect"
+    },
+    "extension-attention-recovered.json": {
+      "at": "2026-10-14T20:38:11.596Z",
+      "status": "pass",
+      "text": "PDF\nfresh-b.pdf\nimports-proof.example.com\n[task account]\nLibraries\nNo additional libraries\n\nMembers of selected libraries can read this item.\n\nSaved.\nOpen in Nexus\nDisconnect"
+    },
+    "extension-disconnect.json": {
+      "at": "2026-10-14T20:47:08.523Z",
+      "status": "pass",
+      "message": "ordinary native disconnect confirmed; profile will be deleted"
+    },
+    "physical-android-cleanup.json": {
+      "at": "2026-10-14T20:25:58.135Z",
+      "closedRemainingTaskTabs": 0,
+      "clearedOrigin": "http://localhost:3198",
+      "clearedStorage": "local_storage,indexeddb,cache_storage,service_workers",
+      "clearedCookie": "sb-127-auth-token",
+      "otherTabsTouched": false,
+      "packagesChanged": false,
+      "defaultBrowserChanged": false,
+      "removedForward": "tcp:29398",
+      "removedReverse": "tcp:3198",
+      "remainingForwards": [],
+      "remainingReverses": []
+    },
+    "ui-physical-android-browser-back-failure.json": {
+      "name": "ui-physical-android",
+      "phase": "green",
+      "at": "2026-10-14T20:24:11.956Z",
+      "results": [
+        {
+          "name": "physical Android reports coarse pointer and readable attention rows",
+          "status": "pass"
+        },
+        {
+          "name": "physical touch selection opens exact import in the mobile sheet",
+          "status": "pass"
+        },
+        {
+          "name": "physical history disclosure and sheet dismissal work",
+          "status": "pass"
+        },
+        {
+          "name": "physical open follows in place and browser back preserves imports",
+          "status": "fail",
+          "detail": "locator.waitFor: Timeout 20000ms exceeded."
+        }
+      ]
+    }
+  },
+  "static_content": {
+    "scope": "static canonical copy examples; no live outcomes claimed; live metadata no-findings remains waived/unverified",
+    "examples": {
+      "unreadable_source_failure": {
+        "consequence": "extraction failed",
+        "reason": null,
+        "concurrent": null,
+        "recovery": "Starts a new attempt from the stored file. Extraction and search indexing run again."
+      },
+      "readable_while_indexing": {
+        "consequence": "ready to read · indexing for search",
+        "reason": null,
+        "concurrent": null
+      },
+      "playable_without_readable_transcript": {
+        "consequence": "ready to play · no transcript available",
+        "reason": null,
+        "concurrent": null
+      },
+      "metadata_attention_with_source_activity": {
+        "consequence": "metadata research failed",
+        "reason": null,
+        "concurrent": "also in progress: source processing"
+      },
+      "unreviewed_no_findings": {
+        "consequence": "ready to read · no metadata found",
+        "reason": null,
+        "concurrent": null,
+        "action": "mark reviewed",
+        "actionSource": "MetadataResearchActions passes the displayed operation.job_id to MetadataReviewButton"
+      },
+      "automatic_retry_deadline": {
+        "consequence": "waiting to retry · oct 14, 2026, 10:30 am",
+        "reason": null,
+        "concurrent": null
+      },
+      "complete_without_read_or_play": {
+        "consequence": "saved",
+        "reason": null,
+        "concurrent": null
+      },
+      "partial_history": "Detailed execution history was recorded from Oct 1, 2026.",
+      "stale_detail": {
+        "source": "ImportInspector.tsx ready data with detail.error",
+        "title": "Couldn’t refresh this import",
+        "message": "Showing the last update",
+        "action": "Retry"
+      },
+      "known_ref_upload_failure": {
+        "feedback": {
+          "kind": "Rejected",
+          "feedback": {
+            "tone": "Warning",
+            "title": "Upload needs attention",
+            "message": "view this import for the available recovery, or edit this item to start a new import."
+          }
+        },
+        "actions": [
+          "view import",
+          "edit item"
+        ],
+        "source": "AddPanel renders view import whenever importRef is known"
+      },
+      "unknown_acceptance": {
+        "feedback": {
+          "tone": "Warning",
+          "title": "Couldn’t confirm",
+          "message": "Nexus could not confirm whether this was saved. Check status to find out."
+        },
+        "action": "check status"
+      },
+      "accepted_receipt": "saved",
+      "successful_item_matching_earlier_failure": {
+        "consequence": "ready to read",
+        "reason": null,
+        "concurrent": null,
+        "history": "Matched: upload failed · Oct 14"
+      }
+    }
+  },
+  "setup_limits": [
+    "initial candidate worker missed lane env; corrected and full contracts rerun19/19",
+    "one UI retry setup used PDF bytes later changed for extension uniqueness; restored and full UI rerun18/18",
+    "exploratory extension localhost URL refused normally; dedup and invalid-structure publication explorations excluded from fresh-transfer claim"
+  ],
+  "cleanup": {
+    "status": "complete",
+    "manifest": "cleanup-manifest.json",
+    "processes": [
+      {
+        "group": 43877,
+        "status": "terminated task group"
+      },
+      {
+        "group": 43890,
+        "status": "terminated task group"
+      },
+      {
+        "group": 3925,
+        "status": "terminated task group"
+      },
+      {
+        "group": 65286,
+        "status": "terminated task group"
+      },
+      {
+        "group": 90276,
+        "status": "terminated task group"
+      },
+      {
+        "group": 42514,
+        "status": "terminated task group"
+      }
+    ],
+    "task_containers_volumes_networks_absent": true,
+    "task_ports_closed": [
+      8198,
+      3198,
+      29110,
+      29111,
+      29121,
+      29122,
+      29124,
+      29200,
+      29398
+    ],
+    "task_baseline_worktree_removed": true,
+    "harness_root_removed": true,
+    "shared_worker_image_retained": true,
+    "device_cleanup": "task origin/tab/forward/reverse cleanup confirmed by retained physical receipt"
+  },
+  "post_cleanup_static_gate": {
+    "status": "pass",
+    "command": "./scripts/test",
+    "exit_code": 0,
+    "log": "static-check.txt",
+    "log_sha256": "5d0ae940253a5978c9a6350526d76c3322d1fd87d8dcd49ec7a4ac16d82c7e49",
+    "canonical_migration_head": "0277",
+    "after_late_cleanup_and_local_locked_dependency_repair": true,
+    "application_digest_unchanged": true
+  },
+  "capture_limits": {
+    "geometry_device_and_zoom": "captured before final copy-only removal of generic failure paraphrases",
+    "attention_details": "captured after final content pass",
+    "source_digest": "broad live proof precedes the final three-file focus change; late six-case proof and final static gate qualify the final digest; pictures retain their original capture timing"
+  },
+  "late_focus_qualification": {
+    "status": "pass",
+    "files": [
+      "focus-ownership-red.json",
+      "focus-ownership-green.json",
+      "source-refusal-red.json",
+      "source-refusal-green.json"
+    ],
+    "ownership_red": {
+      "fail": 2,
+      "preservation_pass": 2
+    },
+    "source_refusal_red": {
+      "fail": 1,
+      "preservation_pass": 1
+    },
+    "green": {
+      "ownership_cases": 4,
+      "source_refusal_cases": 2,
+      "busy_reactivation": "exactly one browser request per case"
+    },
+    "method": "ordinary password sign-in and public fixture admission; initial storage PUT genuinely aborted before transport report; successful retry/confirm and actual stale-attempt 409 held/released unchanged; no domain body or auth fabrication",
+    "native_focus": "actual query focus()/blur() and exact original element disconnection/visible list commit; no app state injection",
+    "runtime": {
+      "web_origin": "http://localhost:3198",
+      "api_origin": "http://127.0.0.1:8198",
+      "runtime_identity": {
+        "expected_database_revision": "0277",
+        "source_sha": "6b9909ed74c55f1c6febff0f02415b5121a92094"
+      },
+      "worker_image_id": "sha256:dd167c745e0a622f59677cdd1e5645c75c7dc28d1d99e02b63cd94cb600a7297",
+      "worker_cwd": "/work/source",
+      "worker_verified_import_path": "/work/source/python/nexus/services/media_upload_sessions.py"
+    },
+    "scope": "chromium native disabled-to-body falsifier; prior broad browser/device qualification retained, no new cross-browser claim; real source endpoint refusal, shared search presentation and existing revision/job fence source review only",
+    "setup_blockers_excluded": [
+      "email provider disabled in disposable auth config",
+      "hand-formatted runtime identity rejected as noncanonical",
+      "MinIO bucket CORS unsupported; task-scoped service CORS used",
+      "stretched row time hit target and unavailable outside-pane space",
+      "source offer briefly exposed before source queue execution settled"
+    ],
+    "fixtures": "all retained focus/source fixture receipts record successful public cleanup; final summary200 and unfinished_work_count0",
+    "cleanup": {
+      "status": "complete",
+      "manifest": "cleanup-manifest.json#additional_focus_qualification",
+      "resource_checks": {
+        "process_groups_absent": true,
+        "containers_volumes_networks_absent": true,
+        "ports_closed": true,
+        "harness_credentials_dependencies_fixtures_removed": true,
+        "shared_image_retained": true
+      }
+    },
+    "cut_precision": "ownership4 ran after the ImportsList fix but before independent source/search busy presentation; its final ImportsList and native upload path stayed unchanged. source2 exercised final ImportActions/ButtonCSS; per-file hashes retained. ownership-cut digest reconstructed with exact pre-busy bytes whose hashes match the receipt"
+  },
+  "pre_focus_post_cleanup_static_gate": {
+    "status": "pass",
+    "command": "./scripts/test",
+    "exit_code": 0,
+    "log": "static-check-pre-focus.txt",
+    "log_sha256": "2d11823024748332dfd3ebdfac4c4724ba4624ce95ac4bf6366071f0f76dd0d5",
+    "canonical_migration_head": "0277"
+  },
+  "prerequisite_final_status": {
+    "pr": 578,
+    "state": "MERGED",
+    "head": "5460cc041dcebbd0d741e623ad81aaeea643bd3c",
+    "merge_commit": "fa62a6901fca9ae7cdf4551e0dbb805a87ebb97e",
+    "merged_at": "2026-10-14T21:56:10Z",
+    "web_source_equal_to_qualified_baseline": true,
+    "imports_branch_not_merged_or_deployed": true
+  },
+  "ordinary_dependency_repair": {
+    "cause": "independent pane-controls integration cleanup removed its worktree, leaving three proven dangling task-owned symlinks",
+    "action": "unlink only broken task links and install ordinary dependencies locally from unchanged locks",
+    "commands": [
+      "uv sync --locked --offline --extra dev --extra codex-agent (python)",
+      "bun install --frozen-lockfile (apps/web)",
+      "bun install --frozen-lockfile (node/ingest)"
+    ],
+    "source_digest_unchanged": true,
+    "dependency_paths": [
+      "python/.venv",
+      "apps/web/node_modules",
+      "node/ingest/node_modules"
+    ],
+    "test_dependencies_retained": false,
+    "final_static_gate_repeated": true
+  }
+}

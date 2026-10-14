@@ -7,13 +7,13 @@ from fastapi import APIRouter, Depends, Query
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import RepeatableReadDbSession
 from nexus.responses import Data
+from nexus.schemas.import_refs import parse_import_ref
 from nexus.schemas.imports import (
     HistoryPage,
     ImportDetail,
     ImportListQuery,
     ImportPage,
     ImportSummary,
-    parse_import_ref,
 )
 from nexus.services.imports import (
     read_import_detail,

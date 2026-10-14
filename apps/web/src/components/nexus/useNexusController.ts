@@ -173,7 +173,7 @@ export function useNexusController() {
     }
     const result = workspace.activateWorkspaceTarget({
       originPaneId: state.activePrimaryPaneId,
-      target: { href: target.href, labelHint: target.labelHint },
+      target: { href: target.href, labelHint: target.labelHint, secondaryActivation: target.secondaryActivation },
       disposition: activation.disposition,
     });
     return result.kind === "Rejected" ? { kind: "Rejected", target } : { kind: "Accepted" };

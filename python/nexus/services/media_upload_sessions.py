@@ -57,6 +57,7 @@ from nexus.schemas.import_history import (
     UploadPublished,
     UploadRecoveryAccepted,
 )
+from nexus.schemas.import_refs import UploadImportRef, format_import_ref
 from nexus.schemas.media import (
     CapabilityExpired,
     CreateUploadSessionRequest,
@@ -361,8 +362,10 @@ def read_upload_session(
         if session.verification_error_code is not None:
             return _verification_failed(session)
         if session.transport_failed_at is not None:
+            handle = seal_upload_session(session.id)
             return NeedsAttention(
-                session_handle=seal_upload_session(session.id),
+                import_ref=format_import_ref(UploadImportRef(session_handle=handle)),
+                session_handle=handle,
                 failure=_transport_failure(session),
                 capabilities=UploadSessionCapabilities(can_retry_upload=True, can_remove=True),
             )
@@ -721,8 +724,10 @@ def confirm_upload_session(
         media_id=str(published_media_id),
         source_attempt_id=str(published_attempt_id),
     )
+    handle = seal_upload_session(session_id)
     return Published(
-        session_handle=seal_upload_session(session_id),
+        import_ref=format_import_ref(UploadImportRef(session_handle=handle)),
+        session_handle=handle,
         media_id=published_media_id,
         source_attempt_id=published_attempt_id,
         idempotency_outcome="Created",
@@ -1016,8 +1021,10 @@ def delete_published_media_support_in_current_transaction(db: Session, *, media_
 def _verification_failed(session: MediaUploadSession) -> NeedsAttention:
     if session.verification_failed_at is None or session.verification_error_code is None:
         raise ApiError(ApiErrorCode.E_INTERNAL, "Terminal verification has no recorded failure.")
+    handle = seal_upload_session(session.id)
     return NeedsAttention(
-        session_handle=seal_upload_session(session.id),
+        import_ref=format_import_ref(UploadImportRef(session_handle=handle)),
+        session_handle=handle,
         failure=VerificationFailed(
             code=cast(UploadVerificationFailureCode, session.verification_error_code),
             failed_at=session.verification_failed_at,
@@ -1027,8 +1034,10 @@ def _verification_failed(session: MediaUploadSession) -> NeedsAttention:
 
 
 def _capability_expired(session_id: UUID, expired_at: datetime) -> NeedsAttention:
+    handle = seal_upload_session(session_id)
     return NeedsAttention(
-        session_handle=seal_upload_session(session_id),
+        import_ref=format_import_ref(UploadImportRef(session_handle=handle)),
+        session_handle=handle,
         failure=CapabilityExpired(expired_at=expired_at),
         capabilities=UploadSessionCapabilities(can_retry_upload=True, can_remove=True),
     )
@@ -1052,8 +1061,10 @@ def _transport_failure(session: MediaUploadSession) -> TransportFailed:
 def _published(session: MediaUploadSession, outcome: Literal["Created", "Reused"]) -> Published:
     if session.published_media_id is None or session.published_source_attempt_id is None:
         raise ApiError(ApiErrorCode.E_INTERNAL, "Published upload has no publication identity.")
+    handle = seal_upload_session(session.id)
     return Published(
-        session_handle=seal_upload_session(session.id),
+        import_ref=format_import_ref(UploadImportRef(session_handle=handle)),
+        session_handle=handle,
         media_id=session.published_media_id,
         source_attempt_id=session.published_source_attempt_id,
         idempotency_outcome=outcome,
@@ -1076,8 +1087,10 @@ def _sign(
         )
     except StorageError as exc:
         raise ApiError(ApiErrorCode.E_SIGN_UPLOAD_FAILED, "Failed to initialize upload.") from exc
+    handle = seal_upload_session(capability.session_id)
     return UploadRequired(
-        session_handle=seal_upload_session(capability.session_id),
+        import_ref=format_import_ref(UploadImportRef(session_handle=handle)),
+        session_handle=handle,
         generation=capability.generation,
         upload_url=signed.upload_url,
         required_headers=UploadRequiredHeaders.model_validate(

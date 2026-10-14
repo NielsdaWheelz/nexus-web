@@ -1,0 +1,75 @@
+{
+  "phase": "green",
+  "run": "green-1792014455680",
+  "method": "real browser and public API; real response bodies released unchanged",
+  "fixtures": [
+    {
+      "ref": "upload:nup1.AaE8YpZJc2yvF80WJz1QAA.99RqCHQRfHN7UA9xZsJGYQ",
+      "handle": "nup1.AaE8YpZJc2yvF80WJz1QAA.99RqCHQRfHN7UA9xZsJGYQ",
+      "generation": 1,
+      "filename": "focus-green-1792014455680-between-commits.pdf",
+      "cleanup": {
+        "operation": "delete media",
+        "result": "Deleting"
+      },
+      "mediaRef": "media:01a13c62-964a-7321-8b6d-9b6ea2809404"
+    },
+    {
+      "ref": "upload:nup1.AaE8YqeYc9u7pNxqyyN0-Q.Xgrp78vX3zKuCTNxaGEX0Q",
+      "handle": "nup1.AaE8YqeYc9u7pNxqyyN0-Q.Xgrp78vX3zKuCTNxaGEX0Q",
+      "generation": 1,
+      "filename": "focus-green-1792014455680-after-settlement.pdf",
+      "cleanup": {
+        "operation": "delete media",
+        "result": "Deleting"
+      },
+      "mediaRef": "media:01a13c62-a799-7884-9cc2-8526f2617852"
+    },
+    {
+      "ref": "upload:nup1.AaE8YrlreXmpFf41w7HL-g.dH6L3iNKJK3an5EuoajfhA",
+      "handle": "nup1.AaE8YrlreXmpFf41w7HL-g.dH6L3iNKJK3an5EuoajfhA",
+      "generation": 1,
+      "filename": "focus-green-1792014455680-refusal.pdf",
+      "cleanup": {
+        "operation": "delete upload",
+        "status": 204
+      }
+    },
+    {
+      "ref": "upload:nup1.AaE8YsNscyO0yCGoPK0XVw.F4X-rYDhNMCTFhGtJ8hQpQ",
+      "handle": "nup1.AaE8YsNscyO0yCGoPK0XVw.F4X-rYDhNMCTFhGtJ8hQpQ",
+      "generation": 1,
+      "filename": "focus-green-1792014455680-surviving-title.pdf",
+      "cleanup": {
+        "operation": "delete media",
+        "result": "Deleting"
+      },
+      "mediaRef": "media:01a13c62-c36d-7c95-b7fb-0eadbe8ef737"
+    }
+  ],
+  "results": [
+    {
+      "name": "deliberate query then BODY before response settlement retires disabled retry ownership",
+      "status": "pass"
+    },
+    {
+      "name": "query focus through settlement retires ownership before a later BODY query commit",
+      "status": "pass"
+    },
+    {
+      "name": "unmoved native-disabled retry restores its connected trigger after real filename refusal",
+      "status": "pass"
+    },
+    {
+      "name": "unmoved native-disabled successful retry returns focus to its surviving history title",
+      "status": "pass"
+    }
+  ],
+  "source_after_run": {
+    "apps/web/src/components/imports/ImportsList.tsx": "d951317f77af678a860430c4121e950430c49c838d53495254a3bf88baa72db7",
+    "apps/web/src/components/imports/ImportActions.tsx": "451471bfefe1e1768f4a1b965aae86640c9ff2f9f988aab62b9b16caacf95de6",
+    "apps/web/src/components/ui/Button.module.css": "b2c30a60e0503c5512414c2105c82d93fb9199af6a2ecb4901b021b43670aaf9",
+    "driver_sha256": "5e681c4fb1cee79bdf3c014013a0d0b82576109247ab25030f24e8b65ea43952"
+  },
+  "scope": "chromium native focus events; two negative ownership excursions and native upload refusal/removal preservation; no broader browser or source/media action claim"
+}

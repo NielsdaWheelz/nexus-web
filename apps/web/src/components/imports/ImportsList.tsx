@@ -1,14 +1,17 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+} from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
-import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
-import Pill from "@/components/ui/Pill";
 import ResourceList from "@/components/ui/ResourceList";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { usePagePrefix } from "@/lib/api/pagePrefix";
@@ -20,12 +23,9 @@ import {
 import {
   STALE_NOTICE,
   VIEW_LABEL,
-  briefSegments,
   countText,
   emptyCopy,
   loadFailure,
-  stageLabel,
-  summaryLine,
 } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import {
@@ -33,12 +33,12 @@ import {
   apiQuery,
   appliedFilters,
   isDefaultView,
-  oneOf,
   selectView,
   withoutFilters,
   type ImportsUrlState,
 } from "@/lib/imports/query";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import ImportRow from "./ImportRow";
 import ImportsToolbar from "./ImportsToolbar";
@@ -46,12 +46,14 @@ import styles from "./Imports.module.css";
 
 const ABSENT = { kind: "Absent" } as const;
 
-/**
- * One Imports view: its rows, counts, notices and tabs. The list is the first
- * `pages` pages of the view's query; every observation rereads that prefix, so
- * a refresh keeps the pages the reader loaded, Load more is one page longer,
- * and a new query starts again at one page. A failed read keeps the rows.
- */
+/** Historical evidence belongs to one selection under one applied query. */
+export interface MatchedImportEvidence {
+  readonly importRef: string | null;
+  readonly apiQuery: string;
+  readonly event: ImportItem["matched_event"];
+}
+
+/** A flat server-ordered prefix; refreshing retains the pages already requested. */
 export default function ImportsList({
   view,
   state,
@@ -65,12 +67,13 @@ export default function ImportsList({
   readonly state: ImportsUrlState;
   readonly setState: (next: ImportsUrlState) => void;
   readonly today: () => string;
-  readonly onMatched: (matched: ImportItem["matched_event"]) => void;
-  readonly onSelect: (ref: string | null) => void;
+  readonly onMatched: (matched: MatchedImportEvidence) => void;
+  readonly onSelect: (ref: string, triggerElement: HTMLButtonElement) => void;
   readonly onSettled: (settled: boolean) => void;
 }) {
   const { summary, observation, refresh } = useImports();
   const display = useRenderEnvironment();
+  const active = usePaneIsActive();
   const query = apiQuery(view, state);
   const {
     prefix: rows,
@@ -89,39 +92,95 @@ export default function ImportsList({
     (summary.status === "ready" && summary.error !== null);
   const stale =
     (error !== null && !short) || (summaryFailed && counts !== null);
-
   const settled = rows.status !== "loading";
   useEffect(() => onSettled(settled), [onSettled, settled]);
 
-  // Why the selected import matched is a fact of the listed row; a query that
-  // no longer lists it reports none.
   const selected = state.selected ?? null;
   const matched =
     items.find((item) => item.ref === selected)?.matched_event ?? ABSENT;
-  useEffect(() => onMatched(matched), [matched, onMatched]);
-
-  // Dismissing the inspector returns focus to the row it was opened from.
-  const listRef = useRef<HTMLDivElement>(null);
-  const lastSelected = useRef(selected);
-  useEffect(() => {
-    const previous = lastSelected.current;
-    lastSelected.current = selected;
-    if (previous === null || selected !== null) return;
-    listRef.current
-      ?.querySelector<HTMLElement>(
-        `[data-import-ref="${CSS.escape(previous)}"] [data-row-focusable]`,
-      )
-      ?.focus();
-  }, [selected]);
+  useEffect(
+    () => onMatched({ importRef: selected, apiQuery: query, event: matched }),
+    [matched, onMatched, query, selected],
+  );
 
   const { inputRef, focusInput } = usePaneQueryInput();
+  const listRef = useRef<HTMLDivElement>(null);
+  const ownedFocus = useRef<{
+    target: HTMLElement;
+    importRef: string;
+    followingRefs: string[];
+  } | null>(null);
+  // Retire on a real focus move, even if it returns to body before a render.
+  useLayoutEffect(() => {
+    const retire = (event: FocusEvent) => {
+      const focus = ownedFocus.current;
+      if (
+        focus !== null &&
+        event.target !== focus.target &&
+        event.target !== document.body
+      )
+        ownedFocus.current = null;
+    };
+    document.addEventListener("focusin", retire, true);
+    return () => document.removeEventListener("focusin", retire, true);
+  }, []);
+  // Repair an owned control lost to removal or native disabled-button blur.
+  // A canonical command or another pane may already have placed focus.
+  useLayoutEffect(() => {
+    const focus = ownedFocus.current;
+    const root = listRef.current;
+    if (focus === null || root === null) return;
+    const focused = document.activeElement;
+    if (
+      !active ||
+      root.closest("[inert]") ||
+      (focused !== document.body && focused !== focus.target)
+    ) {
+      ownedFocus.current = null;
+      return;
+    }
+    const remaining = [
+      ...root.querySelectorAll<HTMLElement>("[data-import-ref]"),
+    ];
+    if (focus.target.isConnected) {
+      const at = remaining.findIndex(
+        (row) => row.dataset.importRef === focus.importRef,
+      );
+      focus.followingRefs = remaining
+        .slice(at + 1)
+        .flatMap((row) => row.dataset.importRef ?? []);
+      if (
+        focused === document.body &&
+        !focus.target.matches(":disabled")
+      )
+        focus.target.focus({ preventScroll: true });
+      return;
+    }
+    ownedFocus.current = null;
+    const same = remaining.find(
+      (row) => row.dataset.importRef === focus.importRef,
+    );
+    const following = focus.followingRefs
+      .map((ref) => remaining.find((row) => row.dataset.importRef === ref))
+      .find((row) => row !== undefined);
+    const target =
+      same?.querySelector<HTMLElement>(
+        "[data-row-focusable]:not([disabled])",
+      ) ??
+      following?.querySelector<HTMLElement>(
+        "[data-row-focusable]:not([disabled])",
+      ) ??
+      inputRef.current;
+    target?.focus({ preventScroll: true });
+  });
+
   const chips = useMemo(
     () => appliedFilters(view, state, display.displayLocale),
     [display.displayLocale, state, view],
   );
   const matchedCount = data?.pages[0].matched_count ?? 0;
   const loaded = items.length;
-  const noun = state.q === undefined ? "imports" : "matching imports";
+  const noun = `${state.q === undefined ? "" : "matching "}${matchedCount === 1 ? "import" : "imports"}`;
   const loadedCount =
     loaded === matchedCount
       ? `${loaded} ${noun}`
@@ -130,9 +189,9 @@ export default function ImportsList({
   if (rows.status === "loading") resultStatus = "Loading imports";
   else if (rows.status === "failed") resultStatus = "Results unavailable";
   else if (moreFailed) resultStatus = `${loadedCount}; loading failed`;
-  else if (stale) {
+  else if (stale)
     resultStatus = `Update failed; showing previous results · ${loadedCount}`;
-  } else if (short) resultStatus = `${loadedCount}; loading more`;
+  else if (short) resultStatus = `${loadedCount}; loading more`;
   const announce = data !== null && error === null && !summaryFailed;
   const resetAvailable = !isDefaultView(state, view, today());
   const onReset = useCallback(
@@ -170,214 +229,188 @@ export default function ImportsList({
       view,
     ],
   );
+  const navigation = useMemo(
+    () => (
+      <nav className={styles.modes} aria-label="Imports views">
+        {IMPORTS_VIEWS.map((candidate) => {
+          const count =
+            counts === null || candidate === "History"
+              ? null
+              : candidate === "NeedsAttention"
+                ? counts.needs_attention_count
+                : counts.active_count;
+          return (
+            <Button
+              key={candidate}
+              variant="ghost"
+              size="sm"
+              aria-current={candidate === view ? "page" : undefined}
+              aria-label={
+                count === null
+                  ? undefined
+                  : `${VIEW_LABEL[candidate]}, ${count}`
+              }
+              onClick={() => {
+                if (candidate !== view)
+                  setState(selectView(state, candidate, today()));
+              }}
+            >
+              {VIEW_LABEL[candidate]}
+              {count === null ? null : (
+                <span className={styles.modeCount}>{countText(count)}</span>
+              )}
+            </Button>
+          );
+        })}
+      </nav>
+    ),
+    [counts, setState, state, today, view],
+  );
   usePaneChrome(
     useMemo(
       () => ({
-        query: { kind: "Controls", label: "Search imports", content: toolbar, focusInput },
+        navigation: { label: "Imports views", content: navigation },
+        query: {
+          kind: "Controls",
+          label: "Search imports",
+          content: toolbar,
+          focusInput,
+        },
       }),
-      [focusInput, toolbar],
+      [focusInput, navigation, toolbar],
     ),
   );
 
   const filtered = chips.some((chip) => chip.id !== "q");
   const empty = emptyCopy(view, state.q !== undefined, filtered);
-  const clearSearch = () => {
-    setState({ ...state, q: undefined });
-    inputRef.current?.focus({ preventScroll: true });
-  };
-  const segments = briefSegments(
-    data === null ? null : matchedCount,
-    observation || null,
-    display,
-    new Date(),
-  );
-  const rowsOf = (items: readonly ImportItem[]) =>
-    items.map((item) => (
-      <ImportRow
-        key={item.ref}
-        item={item}
-        selected={item.ref === selected}
-        onSelect={onSelect}
-      />
-    ));
-  const sections =
-    view === "NeedsAttention" && data !== null ? data.pages[0].groups : [];
-
   return (
-    <Tabs
+    <div
+      ref={listRef}
       className={styles.workspace}
-      value={view}
-      onValueChange={(next) => {
-        const target = oneOf(next, IMPORTS_VIEWS);
-        if (target !== undefined && target !== view) {
-          setState(selectView(state, target, today()));
-        }
+      onFocusCapture={(event) => {
+        const target = event.target;
+        const row = target.closest<HTMLElement>("[data-import-ref]");
+        if (row?.dataset.importRef === undefined) return;
+        const remaining = [
+          ...event.currentTarget.querySelectorAll<HTMLElement>(
+            "[data-import-ref]",
+          ),
+        ];
+        ownedFocus.current = {
+          target,
+          importRef: row.dataset.importRef,
+          followingRefs: remaining
+            .slice(remaining.indexOf(row) + 1)
+            .flatMap((item) => item.dataset.importRef ?? []),
+        };
+      }}
+      onBlurCapture={(event) => {
+        if (
+          event.target.isConnected &&
+          (event.relatedTarget === null ||
+            !event.currentTarget.contains(event.relatedTarget)) &&
+          // Chromium blurs a newly disabled command to body before its row
+          // disappears. Keep that owner until settlement or removal;
+          // a real move clears it.
+          !(event.relatedTarget === null && event.target.matches(":disabled"))
+        )
+          ownedFocus.current = null;
       }}
     >
-      <TabsList aria-label="Imports views">
-        {IMPORTS_VIEWS.map((candidate) => {
-          const count =
-            counts === null || candidate === "History"
-              ? 0
-              : candidate === "NeedsAttention"
-                ? counts.needs_attention_count
-                : counts.active_count;
-          return (
-            <TabsTrigger
-              key={candidate}
-              value={candidate}
-              aria-label={
-                count === 0 ? undefined : `${VIEW_LABEL[candidate]}, ${count}`
-              }
-            >
-              {VIEW_LABEL[candidate]}
-              {count === 0 ? null : (
-                <Pill
-                  tone={candidate === "NeedsAttention" ? "warning" : "neutral"}
-                  size="sm"
-                >
-                  {countText(count)}
-                </Pill>
-              )}
-            </TabsTrigger>
-          );
-        })}
-      </TabsList>
-      <TabsContent value={view}>
-        <PaneSurface
-          brief={
-            <div className={styles.brief}>
-              {/* One element, so a reader browsing linearly meets the sentence
-                  once and a count changing under a settled list is spoken. */}
-              <p role="status" aria-live="polite" aria-atomic="true">
-                {counts === null || data === null ? "" : summaryLine(counts)}
-              </p>
-              <p className={styles.freshness}>
-                {segments.map((segment, index) => (
-                  <Fragment key={segment}>
-                    {index === 0 ? null : (
-                      <>
-                        <span aria-hidden="true"> · </span>
-                        <span className="sr-only">, </span>
-                      </>
-                    )}
-                    <span>{segment}</span>
-                  </Fragment>
-                ))}
-              </p>
-            </div>
-          }
-          state={
-            <>
-              {summary.status === "failed" ? (
-                <FeedbackNotice
-                  content={loadFailure(summary.error)}
-                  announcement="Assertive"
-                  actions={[{ label: "Try again", onClick: refresh }]}
-                />
-              ) : null}
-              {rows.status === "failed" ? (
-                <FeedbackNotice
-                  content={loadFailure(rows.error)}
-                  announcement="Assertive"
-                  actions={[{ label: "Try again", onClick: rows.refetch }]}
-                />
-              ) : null}
-              {moreFailed ? (
-                <FeedbackNotice
-                  content={{
-                    ...loadFailure(error),
-                    title: "More imports couldn’t be loaded",
-                    message:
-                      error.code === "E_INVALID_CURSOR"
-                        ? "Refresh this view to start loading again."
-                        : "Retry from the current imports.",
-                  }}
-                  announcement="Assertive"
-                  actions={[
+      <PaneSurface
+        state={
+          <>
+            {summary.status === "failed" ? (
+              <FeedbackNotice
+                content={loadFailure(summary.error)}
+                announcement="Assertive"
+                actions={[{ label: "Try again", onClick: refresh }]}
+              />
+            ) : null}
+            {rows.status === "failed" ? (
+              <FeedbackNotice
+                content={loadFailure(rows.error)}
+                announcement="Assertive"
+                actions={[{ label: "Try again", onClick: rows.refetch }]}
+              />
+            ) : null}
+            {moreFailed ? (
+              <FeedbackNotice
+                content={{
+                  ...loadFailure(error),
+                  title: "More imports couldn’t be loaded",
+                  message:
                     error.code === "E_INVALID_CURSOR"
-                      ? { label: "Refresh", onClick: refresh }
-                      : { label: "Retry", onClick: rows.refetch },
-                  ]}
-                />
+                      ? "Refresh this view to start loading again."
+                      : "Retry from the current imports.",
+                }}
+                announcement="Assertive"
+                actions={[
+                  error.code === "E_INVALID_CURSOR"
+                    ? { label: "Refresh", onClick: refresh }
+                    : { label: "Retry", onClick: rows.refetch },
+                ]}
+              />
+            ) : null}
+            {stale ? (
+              <FeedbackNotice
+                content={STALE_NOTICE}
+                announcement="Polite"
+                actions={[{ label: "Try again", onClick: refresh }]}
+              />
+            ) : null}
+            {rows.status === "loading" ? (
+              <PaneLoadingState label="Loading imports" announcement="Polite" />
+            ) : null}
+          </>
+        }
+        empty={
+          data === null ? undefined : (
+            <div className={styles.empty}>
+              <strong>{empty.title}</strong>
+              <p>{empty.body}</p>
+              {filtered || state.q !== undefined ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setState(withoutFilters({ ...state, q: undefined }));
+                    focusInput();
+                  }}
+                >
+                  {filtered
+                    ? state.q === undefined
+                      ? "Clear filters"
+                      : "Clear search and filters"
+                    : "Clear search"}
+                </Button>
               ) : null}
-              {/* A read that failed over facts the reader still has is a
-                  freshness fact; Try again is a wake that rereads both. */}
-              {stale ? (
-                <FeedbackNotice
-                  content={STALE_NOTICE}
-                  announcement="Polite"
-                  actions={[{ label: "Try again", onClick: refresh }]}
-                />
-              ) : null}
-              {rows.status === "loading" ? (
-                <PaneLoadingState
-                  label="Loading imports"
-                  announcement="Polite"
-                />
-              ) : null}
-            </>
-          }
-          empty={
-            // Only a page that came back empty may say the view is empty.
-            data === null ? undefined : (
-              <div className={styles.empty}>
-                <strong>{empty.title}</strong>
-                <p>{empty.body}</p>
-                {filtered ? (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setState(withoutFilters(state))}
-                  >
-                    Clear filters
-                  </Button>
-                ) : state.q !== undefined ? (
-                  <Button variant="secondary" size="sm" onClick={clearSearch}>
-                    Clear search
-                  </Button>
-                ) : null}
-              </div>
-            )
-          }
-          footer={
+            </div>
+          )
+        }
+        footer={
+          data !== null && data.more && !moreFailed ? (
             <LoadMoreFooter
-              hasMore={data !== null && data.more && !moreFailed}
+              hasMore
               loading={short && error === null}
               onLoadMore={loadMore}
             />
-          }
-        >
-          {items.length > 0 ? (
-            <div ref={listRef} className={styles.list}>
-              {sections.length > 0 ? (
-                sections.map((section) => (
-                  <PaneSection
-                    key={section.stage}
-                    title={`${stageLabel(section.stage)} (${section.count})`}
-                  >
-                    <ResourceList
-                      ariaLabel={`${stageLabel(section.stage)} imports`}
-                    >
-                      {rowsOf(
-                        items.filter(
-                          (item) =>
-                            item.state.kind === "NeedsAttention" &&
-                            item.state.stage === section.stage,
-                        ),
-                      )}
-                    </ResourceList>
-                  </PaneSection>
-                ))
-              ) : (
-                <ResourceList ariaLabel={`${VIEW_LABEL[view]} imports`}>
-                  {rowsOf(items)}
-                </ResourceList>
-              )}
-            </div>
-          ) : null}
-        </PaneSurface>
-      </TabsContent>
-    </Tabs>
+          ) : null
+        }
+      >
+        {items.length > 0 ? (
+          <ResourceList ariaLabel={`${VIEW_LABEL[view]} imports`}>
+            {items.map((item) => (
+              <ImportRow
+                key={item.ref}
+                item={item}
+                selected={item.ref === selected}
+                onSelect={onSelect}
+              />
+            ))}
+          </ResourceList>
+        ) : null}
+      </PaneSurface>
+    </div>
   );
 }

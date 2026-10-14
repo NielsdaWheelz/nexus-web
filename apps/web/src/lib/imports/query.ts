@@ -14,7 +14,7 @@ import type {
   ImportFailureCode,
 } from "@/lib/imports/api";
 import {
-  importFailureCopy,
+  failureFilterLabel,
   KIND_LABEL,
   IMPORT_FAILURE_CODES,
   STAGE_COPY,
@@ -212,7 +212,7 @@ export function appliedFilters(
   if (state.failure_code !== undefined && view !== "InProgress") {
     chip(
       "failure_code",
-      `Reason: ${importFailureCopy(state.failure_code).reason}`,
+      `Reason: ${failureFilterLabel(state.failure_code)}`,
     );
   }
   if (view !== "History") return chips;

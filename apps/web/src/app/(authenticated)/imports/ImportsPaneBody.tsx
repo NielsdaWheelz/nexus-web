@@ -3,14 +3,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ImportInspector from "@/components/imports/ImportInspector";
-import ImportsList from "@/components/imports/ImportsList";
+import ImportsList, {
+  type MatchedImportEvidence,
+} from "@/components/imports/ImportsList";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
-import type { ImportItem, ImportsView } from "@/lib/imports/api";
+import type { ImportsView } from "@/lib/imports/api";
 import { loadFailure } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import {
   decodeImportsUrl,
+  apiQuery,
   encodeImportsUrl,
   firstView,
   selectView,
@@ -27,6 +30,7 @@ const CODEC = {
   encode: (state: ImportsUrlState) => encodeImportsUrl(state),
   basePath: "/imports",
 };
+const ABSENT = { kind: "Absent" } as const;
 
 /**
  * The Imports pane (docs/modules/imports.md): the url owns the view, the
@@ -70,9 +74,16 @@ export default function ImportsPaneBody() {
   const selected = state.selected ?? null;
   // Why the selected import matched is a fact of the listed row, which the
   // detail read cannot know; the list reports it for the current query.
-  const [matched, setMatched] = useState<ImportItem["matched_event"]>({
-    kind: "Absent",
-  });
+  const [evidence, setEvidence] = useState<MatchedImportEvidence | null>(null);
+  const query = view === null ? null : apiQuery(view, state);
+  const matched =
+    evidence?.importRef === selected && evidence.apiQuery === query
+      ? evidence.event
+      : ABSENT;
+  const [openIntent, setOpenIntent] = useState<{
+    ref: string;
+    triggerElement: HTMLButtonElement;
+  } | null>(null);
   usePaneCompanion(
     useMemo<PaneCompanion | null>(
       () =>
@@ -84,7 +95,11 @@ export default function ImportsPaneBody() {
                 {
                   id: "import-detail",
                   body: (
-                    <ImportInspector importRef={selected} matched={matched} />
+                    <ImportInspector
+                      key={selected}
+                      importRef={selected}
+                      matched={matched}
+                    />
                   ),
                 },
               ],
@@ -93,17 +108,21 @@ export default function ImportsPaneBody() {
       [matched, selected],
     ),
   );
-  // A newly selected import opens its inspector; a dismissed inspector keeps
-  // the selection and reopens from the header.
+  // Publication commits in a layout effect. Consume explicit activation only
+  // after its URL selection has landed; restoring a URL never opens details.
   useEffect(() => {
-    if (selected !== null) requestSecondarySurface("import-detail");
-  }, [requestSecondarySurface, selected]);
+    if (openIntent === null || selected !== openIntent.ref) return;
+    requestSecondarySurface("import-detail", {
+      returnFocusTo: openIntent.triggerElement,
+    });
+    setOpenIntent(null);
+  }, [openIntent, requestSecondarySurface, selected]);
   const onSelect = useCallback(
-    (ref: string | null) => {
-      setState({ ...state, selected: ref ?? undefined });
-      if (ref !== null) requestSecondarySurface("import-detail");
+    (ref: string, triggerElement: HTMLButtonElement) => {
+      setState({ ...state, selected: ref });
+      setOpenIntent({ ref, triggerElement });
     },
-    [requestSecondarySurface, setState, state],
+    [setState, state],
   );
 
   // This route restores shell scroll once its list is as tall as it will get.
@@ -117,7 +136,7 @@ export default function ImportsPaneBody() {
       state={state}
       setState={setState}
       today={today}
-      onMatched={setMatched}
+      onMatched={setEvidence}
       onSelect={onSelect}
       onSettled={setListSettled}
     />

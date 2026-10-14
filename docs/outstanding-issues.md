@@ -30,6 +30,7 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 - [open] web / android release · 2026-10-14 session-entry implementation · exact signed-apk qualification, coordinated cutover and production smoke remain: [ticket](tickets/session-entry-release-qualification.md).
+- [deferred] imports / live metadata proof · 2026-10-14 · owner waived provider-dependent no-findings/review proof; available search settings reject research: [ticket](tickets/imports-live-metadata-proof-needs-working-search.md).
 
 - [open] nexus add / css · 2026-10-14 production build · alignment emits an autoprefixer warning and prevents module cache serialization: [ticket](tickets/add-panel-css-build-warning.md).
 
@@ -175,13 +176,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] android / workspace · 2026-09-22 device verification · an intermediate compatibility probe showed an unproven transient bootstrap failure on reconnect: [ticket](tickets/android-reconnect-transient-workspace-bootstrap.md).
 - [open] collection docs · 2026-09-21 council · library and lectern contracts still point to deleted cutovers: [ticket](tickets/collection-contract-docs-reference-deleted-cutovers.md).
 
-### [OPEN] OI-005 — The Imports upload retry guard cannot check the file's size
-frontend · opened 2026-09-08 by Claude (imports cutover, Track E) · P3
-`ImportItem` carries no upload size, so a same-named file of a different size is
-now refused by the server after its bytes are sent instead of by the browser
-before. See
-[docs/tickets/imports-upload-retry-cannot-check-the-file-size.md](tickets/imports-upload-retry-cannot-check-the-file-size.md).
-
 ### [OPEN] OI-013 — `E_PDF_TEXT_UNAVAILABLE` is a catalogued code that names no failure
 backend · opened 2026-09-08 by Claude (imports cutover, Track A) · P3
 The safe-code catalog carries a PDF text warning as if it were a failure; the
@@ -208,13 +202,6 @@ Every Imports defect check is now per row in `_item`/`_state`, and
 `read_import_summary` materializes no row, so the badge is computed from a state
 no owner transition produces. See
 [docs/tickets/imports-summary-read-cannot-see-a-per-row-defect.md](tickets/imports-summary-read-cannot-see-a-per-row-defect.md).
-
-### [OPEN] OI-036 — The Imports Reason filter's X options read as a placeholder
-frontend · opened 2026-09-09 by Claude (imports cutover, D15 visual review) · P3
-Five of the 46 alphabetised Reason options begin with a bare `X`, which in a flat
-menu reads as an unsubstituted template variable rather than the platform name;
-the row and inspector copy, where the source is on screen, reads correctly. See
-[docs/tickets/imports-reason-filter-x-options-read-as-a-placeholder.md](tickets/imports-reason-filter-x-options-read-as-a-placeholder.md).
 
 ### [OPEN] OI-043 — The collapsed count chip scales out of its fixed-width rail
 frontend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain W2) · P3
@@ -407,13 +394,11 @@ unexpected timeouts. See
 - [open] web / mobile viewport verification · 2026-10-10 app navigation reauthor · the nav harness has no playable episode, so the mini-player half of bottom clearance (M10) is unrun: [ticket](tickets/mobile-player-clearance-has-no-browser-proof.md).
 - [open] web / workspace · 2026-10-10 nav harness X1 · the stats pane re-activates itself after its in-place address rewrite, so a quick fork lands behind it: [ticket](tickets/stats-pane-reactivates-after-address-rewrite.md).
 - [open] add content / libraries · 2026-10-10 imports reauthor · Add keeps its own multi-target placement machine beside the shared placement overlay; unify in the libraries rewrite: [ticket](tickets/add-placement-duplicates-library-placement-overlay.md).
-- [open] imports / inspector · 2026-10-10 imports reauthor · a failed "Load earlier events" read shows no notice and no retry: [ticket](tickets/import-history-load-more-failure-is-silent.md).
 - [open] imports / verification · 2026-10-10 imports reauthor · the imports harness does not drive browse preview Add or note-body attachments: [ticket](tickets/imports-harness-lacks-browse-and-note-attachment-journeys.md).
 - [open] resource actions / web · 2026-10-10 workspace host reauthor · a resource's More menu opens with every canonical action blocked ("Actions are refreshing.") for one snapshot round trip: [ticket](tickets/resource-menu-opens-with-actions-blocked.md).
 - [open] workspace / pane return · 2026-10-10 authors reauthor · p3 · the quick-Back anchor fix landed (route content is the anchor root); acceptance waits on authors harness X8: [ticket](tickets/pane-return-anchor-searches-the-collection-bar.md).
 - [open] workspace / verification · 2026-10-10 workspace host reauthor · artifact find results and the podcast Inspector are not driven live (no fixtures): [ticket](tickets/host-companion-artifact-and-podcast-unverified.md).
 - [open] workspace / host canvas · 2026-10-10 workspace host reauthor · p2 · a resume aims the active pane once, before the panes left of it finish growing, so it ends partly or wholly off-screen: [ticket](tickets/resume-scroll-misses-late-pane-growth.md).
-- [open] imports / web · 2026-10-10 workspace host reauthor · p3 · a dismissed imports Inspector reopens whenever the pane remounts (resume, breakpoint round trip): [ticket](tickets/imports-inspector-reopens-on-every-mount.md).
 - [deferred] web / overlays · 2026-10-10 overlay kernel reauthor · page-level menus, floating surfaces and citation cards on a phone do not own Back (the history entry exists only while a modal is open); product call pending: [ticket](tickets/mobile-page-menus-ignore-back.md).
 - [open] web / chat, overlays · 2026-10-10 overlay kernel reauthor · the desktop citation card is a tooltip holding a button (Open in context or Open source) that keyboard focus cannot reach: [ticket](tickets/citation-preview-actions-unreachable-by-keyboard.md).
 - [open] web / reader · 2026-10-10 overlay kernel reauthor (harness D8) · the selection dock anchors to the rect captured at the last selectionchange, so it does not follow a scroll: [ticket](tickets/selection-dock-does-not-follow-scroll.md).
@@ -450,3 +435,6 @@ unexpected timeouts. See
 - [open] generation / queue locks · 2026-10-14 recovery review · tool generation→job order opposes dead-letter job→generation: [ticket](tickets/generation-dead-letter-inverts-tool-lock-order.md).
 - [unverified] x / provider contract · 2026-10-14 review · legitimate omission of requested media expansion objects is not established: [ticket](tickets/x-media-expansion-absence-unqualified.md).
 
+
+- [open] metadata actions / focus · 2026-10-14 imports experience review · preexisting retry/review refusal needs live focus-settlement evidence: [ticket](tickets/metadata-refusal-focus-needs-settlement-proof.md).
+- [open] workspace / browser history · 2026-10-14 physical imports qualification · mobile browser back stays in the followed reader; pane back is separate: [ticket](tickets/mobile-browser-back-does-not-restore-workspace-pane.md).

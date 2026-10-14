@@ -87,9 +87,22 @@ or consolidation layer.
 ## acquisition boundary
 
 `lib/imports/ingest.ts` owns the public url/upload protocol and one
-`AcceptedIngest { kind, mediaId, duplicate, processing }` result. imports copy is
+`AcceptedIngest { kind, mediaId, importRef, processing }` result. imports copy is
 owned by `lib/imports/copy.ts`; native success shapes come from generated types.
 the independent extension owns its capture decoding.
+
+url receipts name the admitted media import; every upload receipt names its exact
+session import, including attention and replay. `uploadIngestFile` publishes each
+successful create's ref through `onImportRef` before transfer or confirmation can
+fail. the add owner retains it under the existing callback fence through phase
+changes, uncertain acceptance and stop. restaging clears the old key/ref. known
+identity does not prove acceptance: unresolved rows retain check-status/retry.
+
+every known-ref row offers `view import`. it uses the existing guarded leave and
+an exact selected imports url with explicit `import-detail` activation. cancellation
+preserves browser work; confirmation may stop/discard it. blocked navigation keeps
+the existing retained-target flow. there is no resumable add session. receipts say
+`saved`; request replay is not evidence of content duplication.
 
 an upload capability whose signing round trip exhausts its window is re-signed
 once by replaying the same key. the storage put runs under the lesser of 240 s and

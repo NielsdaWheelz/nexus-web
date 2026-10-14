@@ -22,7 +22,6 @@ import {
   type SearchImportObligation,
   type ImportStage,
   type ImportState,
-  type ImportSummary,
   type ImportsView,
   type RecoveryOffer,
   type RecoveryRestriction,
@@ -251,19 +250,19 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: "Send the file again, or start a new import.",
   },
   E_TRANSCRIPTION_FAILED: {
-    reason: "Transcription failed",
+    reason: "transcription failed",
     title: "This recording could not be transcribed.",
     explanation: "The audio was reached but no transcript came back.",
     recovery: "SameSource",
   },
   E_TRANSCRIPTION_TIMEOUT: {
-    reason: "Transcription timed out",
+    reason: "transcription timed out",
     title: "Transcribing this recording took too long.",
     explanation: "The recording was still being transcribed when time ran out.",
     recovery: "SameSource",
   },
   E_TRANSCRIPT_UNAVAILABLE: {
-    reason: "No transcript available",
+    reason: "no transcript available",
     title: "This recording has no transcript.",
     explanation: "It can be played; search and quoting need a transcript.",
   },
@@ -350,23 +349,31 @@ export function importFailureCopy(code: ImportFailureCode): FailureCopy {
   return { reason, title: "metadata operation failed.", explanation: reason };
 }
 
+/** The platform name must be recognizable in a mixed list of reasons. */
+export function failureFilterLabel(code: ImportFailureCode): string {
+  const reason = importFailureCopy(code).reason;
+  return code.startsWith("E_X_")
+    ? `X (posts): ${reason.startsWith("X ") ? reason.slice(2) : reason}`
+    : reason;
+}
+
 /**
- * One record per stage: the noun a filter and a group heading use, and the
+ * One record per stage: the noun a filter uses, and the
  * line shown while it runs. A recorded start reads `<label> started` and a
  * failure `<label> failed`; Finalize never collapses into Extract.
  */
 export const STAGE_COPY: Readonly<
   Record<ImportStage, { readonly label: string; readonly working: string }>
 > = {
-  Upload: { label: "Upload", working: "Uploading" },
-  Validate: { label: "Validation", working: "Validating" },
-  Extract: { label: "Extraction", working: "Extracting" },
-  Finalize: { label: "Reader preparation", working: "Finalizing reader" },
-  Index: { label: "Search indexing", working: "Indexing for search" },
-  Metadata: { label: "Metadata research", working: "researching metadata" },
+  Upload: { label: "Upload", working: "uploading" },
+  Validate: { label: "Validation", working: "validating" },
+  Extract: { label: "Extraction", working: "extracting" },
+  Finalize: { label: "Reader preparation", working: "preparing the reader" },
+  Index: { label: "Search indexing", working: "indexing for search" },
+  Metadata: { label: "Metadata", working: "updating metadata" },
   SourceProcessing: {
     label: "Source processing",
-    working: "Source processing",
+    working: "processing the source",
   },
 };
 
@@ -375,7 +382,8 @@ export function stageLabel(stage: ImportStage): string {
 }
 
 const stageReached = (stage: ImportStage) => `${stageLabel(stage)} started`;
-const stageFailed = (stage: ImportStage) => `${stageLabel(stage)} failed`;
+const stageFailed = (stage: ImportStage) =>
+  `${stageLabel(stage).toLowerCase()} failed`;
 
 export const KIND_LABEL: Readonly<Record<MediaKind, string>> = {
   web_article: "Web article",
@@ -398,14 +406,8 @@ export const STATE_KIND_LABEL: Readonly<Record<ImportState["kind"], string>> = {
   Complete: "Complete",
 };
 
-export const ORDER_LABEL: Readonly<Record<ImportsView, string>> = {
-  NeedsAttention: "Stage, oldest issue first",
-  InProgress: "Newest accepted first",
-  History: "Newest matched event first",
-};
-
 /** The bytes arrived and verification refused them (stage Validate). */
-const UPLOAD_REJECTED_LABEL = "Upload rejected";
+const UPLOAD_REJECTED_LABEL = "upload rejected";
 /** The one upload offer; every media offer's label is the action catalog's. */
 export const RETRY_UPLOAD_LABEL = "Retry upload";
 /** Pending is what was started, never what was fixed. */
@@ -425,22 +427,27 @@ function isUploadObligation(item: ImportItem): boolean {
 }
 
 const WAITING = {
-  Queue: "Waiting in queue",
-  Capacity: "Waiting for capacity",
-  RetryBackoff: "Waiting to retry",
+  Queue: "waiting in queue",
+  Capacity: "waiting for capacity",
+  RetryBackoff: "waiting to retry",
+  AwaitingUploadConfirmation: "awaiting upload confirmation",
 } as const;
 
 const COUNTED_UNIT = { Page: "page", Chapter: "chapter" } as const;
 
 /** The one short status line for a row or the inspector. */
-export function statusLine(
+function statusLine(
   item: ImportItem,
   formatTime?: (value: string) => string,
 ): string {
   const state = item.state;
   const source = item.obligations.source;
-  if (state.kind === "NeedsAttention" && source.kind === "Present" &&
-    source.value.state.kind === "NeedsAttention" && state.stage === source.value.state.stage) {
+  if (
+    state.kind === "NeedsAttention" &&
+    source.kind === "Present" &&
+    source.value.state.kind === "NeedsAttention" &&
+    state.stage === source.value.state.stage
+  ) {
     const retained = sourceFailureLine(item);
     if (retained !== null) return retained;
   }
@@ -463,16 +470,23 @@ export function statusLine(
   if (state.kind === "Complete" && item.source_issue_count > 0) {
     return `${pluralize(item.source_issue_count, "source issue")} recorded`;
   }
-  return obligationStatusLine(state, isUploadObligation(item));
+  return obligationStatusLine(state, isUploadObligation(item), formatTime);
 }
 
 /** A failed refresh is separate from the readable publication it retained. */
 export function sourceFailureLine(item: ImportItem): string | null {
   const source = item.obligations.source;
-  if (!item.capabilities.can_open || source.kind === "Absent" ||
-    source.value.state.kind !== "NeedsAttention") return null;
+  if (
+    !item.readiness.can_read ||
+    source.kind === "Absent" ||
+    source.value.state.kind !== "NeedsAttention"
+  )
+    return null;
   const failure = source.value.state.failure_code;
-  if (failure.kind === "Present" && failure.value === "E_SOURCE_POSITION_UNMAPPABLE")
+  if (
+    failure.kind === "Present" &&
+    failure.value === "E_SOURCE_POSITION_UNMAPPABLE"
+  )
     return FAILURE_COPY.E_SOURCE_POSITION_UNMAPPABLE.title;
   const metadata = item.obligations.metadata;
   return metadata.kind === "Present" && metadata.value.retry.purpose === "title"
@@ -484,14 +498,19 @@ export function sourceFailureLine(item: ImportItem): string | null {
 export function obligationStatusLine(
   state: ImportItem["state"],
   upload = false,
+  formatTime?: (value: string) => string,
 ): string {
   switch (state.kind) {
     case "Active": {
       if (state.status === "Queued") {
         // An unrecorded reason names the stage it waits for, never the queue.
-        return state.waiting_reason.kind === "Present"
-          ? WAITING[state.waiting_reason.value]
-          : `${stageLabel(state.stage)} queued`;
+        const waiting =
+          state.waiting_reason.kind === "Present"
+            ? WAITING[state.waiting_reason.value]
+            : `${stageLabel(state.stage).toLowerCase()} queued`;
+        return state.next_retry_at.kind === "Present" && formatTime
+          ? `${waiting} · ${formatTime(state.next_retry_at.value)}`
+          : waiting;
       }
       if (state.progress.kind === "Absent") {
         return STAGE_COPY[state.stage].working;
@@ -499,9 +518,16 @@ export function obligationStatusLine(
       const progress = state.progress.value;
       return progress.kind === "Stage"
         ? STAGE_COPY[progress.stage].working
-        : `Extracting ${COUNTED_UNIT[progress.unit]} ${progress.completed} of ${progress.total}`;
+        : `extracting ${COUNTED_UNIT[progress.unit]} ${progress.completed} of ${progress.total}`;
     }
     case "NeedsAttention":
+      if (
+        state.failure_code.kind === "Present" &&
+        (state.failure_code.value === "E_TRANSCRIPTION_FAILED" ||
+          state.failure_code.value === "E_TRANSCRIPTION_TIMEOUT" ||
+          state.failure_code.value === "E_TRANSCRIPT_UNAVAILABLE")
+      )
+        return FAILURE_COPY[state.failure_code.value].reason;
       if (!upload) return stageFailed(state.stage);
       if (state.stage !== "Upload") return UPLOAD_REJECTED_LABEL;
       return state.failure_code.kind === "Present" &&
@@ -509,79 +535,63 @@ export function obligationStatusLine(
         ? FAILURE_COPY.E_UPLOAD_CAPABILITY_EXPIRED.reason
         : stageFailed("Upload");
     case "Complete":
-      return "Complete";
+      return "complete";
     default:
       return assertNever(state, "Unreachable import state");
   }
 }
 
-/** The reason beside the status line; a failure without a code gets none. */
+/** Only causes that add information beyond the primary consequence. */
 export function reasonLine(item: ImportItem): string | null {
   const state = item.state;
-  return state.kind === "NeedsAttention" &&
-    state.failure_code.kind === "Present"
-    ? importFailureCopy(state.failure_code.value).reason
-    : null;
-}
-
-const STATE_TONE = {
-  Active: "info",
-  NeedsAttention: "warning",
-  Complete: "success",
-} as const;
-
-/** The state pill: one label and one tone for a row and its inspector. */
-export function stateBadge(item: ImportItem): {
-  readonly label: string;
-  readonly tone: "info" | "warning" | "success";
-} {
-  const state = item.state;
-  const issues = item.source_issue_count > 0;
-  let label = "Needs attention";
-  if (state.kind === "Active") {
-    label = state.status === "Queued" ? "Queued" : "In progress";
-  } else if (state.kind === "Complete") {
-    label = issues ? "Readable with issues" : "Complete";
+  if (state.kind !== "NeedsAttention" || state.failure_code.kind === "Absent")
+    return null;
+  const code = state.failure_code.value;
+  switch (code) {
+    // These generic failures add no cause to the stage's failed status.
+    case "E_INGEST_FAILED":
+    case "E_UPLOAD_TRANSPORT_FAILED":
+    case "E_WORKER_HANDLER_FAILED":
+    case "execution_failed":
+    // The primary consequence already names these specific transcript facts.
+    case "E_TRANSCRIPTION_FAILED":
+    case "E_TRANSCRIPTION_TIMEOUT":
+    case "E_TRANSCRIPT_UNAVAILABLE":
+      return null;
+    case "E_SOURCE_POSITION_UNMAPPABLE":
+      return sourceFailureLine(item) === null
+        ? importFailureCopy(code).reason
+        : null;
+    case "E_UPLOAD_CAPABILITY_EXPIRED":
+      return isUploadObligation(item) && state.stage === "Upload"
+        ? null
+        : importFailureCopy(code).reason;
+    default:
+      return importFailureCopy(code).reason;
   }
-  return { label, tone: issues ? "warning" : STATE_TONE[state.kind] };
 }
 
-/**
- * What this import means for the reader now, using its authoritative readiness.
- */
+/** Readiness and the primary obligation are independent, equally current facts. */
 export function consequenceLine(
   item: ImportItem,
-  canRead: boolean,
-  canPlay: boolean,
+  formatTime?: (value: string) => string,
 ): string {
-  const state = item.state;
-  if (state.kind === "NeedsAttention" && state.stage === "Metadata") {
-    const access = canRead
-      ? " You can still read this item."
-      : canPlay
-        ? " You can still play this item."
-        : "";
-    return `${statusLine(item)}.${access}`;
-  }
-  if (state.kind === "NeedsAttention" && state.stage === "Index") {
-    return canRead
-      ? "Search indexing failed. You can still read this document."
-      : "Search indexing failed.";
-  }
-  if (
-    state.kind === "NeedsAttention" &&
-    state.failure_code.kind === "Present"
-  ) {
-    const copy = importFailureCopy(state.failure_code.value);
-    const retained = sourceFailureLine(item);
-    if (retained !== null) return `${retained} ${copy.explanation}`;
-    return `${copy.title} ${copy.explanation}`;
-  }
-  if (state.kind !== "Complete") return statusLine(item);
-  if (item.source_issue_count > 0 && canRead) {
-    return "Some source content is unavailable. You can read the available content.";
-  }
-  return canRead ? "Imported. You can read this document." : "Imported.";
+  const { can_read: canRead, can_play: canPlay } = item.readiness;
+  const access =
+    canRead && canPlay
+      ? "ready to read and play"
+      : canRead
+        ? "ready to read"
+        : canPlay
+          ? "ready to play"
+          : null;
+  const activity =
+    item.state.kind !== "Complete" || item.source_issue_count > 0
+      ? statusLine(item, formatTime)
+      : null;
+  return (
+    [access, activity].filter((part) => part !== null).join(" · ") || "saved"
+  );
 }
 
 const RESTRICTION_LINE: Readonly<Record<RecoveryRestriction, string>> = {
@@ -621,11 +631,6 @@ export function recoveryLine(
   obligation: SourceImportObligation | SearchImportObligation,
 ): string | null {
   const { recovery, unavailable_reason: restriction } = obligation;
-  if (recovery.kind === "Present" && obligation.state.kind === "NeedsAttention" &&
-    obligation.state.failure_code.kind === "Present" &&
-    obligation.state.failure_code.value === "E_SOURCE_POSITION_UNMAPPABLE") {
-    return FAILURE_COPY.E_SOURCE_POSITION_UNMAPPABLE.explanation;
-  }
   if (recovery.kind === "Present") return offerLine(recovery.value);
   if (restriction.kind === "Present")
     return RESTRICTION_LINE[restriction.value];
@@ -654,7 +659,9 @@ export function concurrentWorkLine(item: ImportItem): string | null {
   if (item.obligations.metadata.kind === "Present") {
     const metadata = item.obligations.metadata.value;
     if (metadata.unfinished_operation.kind === "Present")
-      active.push(metadataOperationName(metadata.unfinished_operation.value.purpose));
+      active.push(
+        metadataOperationName(metadata.unfinished_operation.value.purpose),
+      );
     const latest = metadata.operation;
     if (
       item.state.stage !== "Metadata" &&
@@ -670,15 +677,6 @@ export function concurrentWorkLine(item: ImportItem): string | null {
     parts.push(`also needs attention: ${attention.join(", ")}`);
   if (active.length) parts.push(`also in progress: ${active.join(", ")}`);
   return parts.length ? parts.join(" · ") : null;
-}
-
-/** The file a retry needs is the one this import already accepted. */
-export function originalFileFeedback(filename: string): FeedbackContent {
-  return {
-    tone: "Warning",
-    title: "Choose the original file",
-    message: `This import needs ${filename}. Start a new import to bring in a different file.`,
-  };
 }
 
 type Facts = HistoryEntry["facts"];
@@ -938,44 +936,9 @@ export function attentionPhrase(count: number): string {
   return count === 1 ? "1 needs attention" : `${count} need attention`;
 }
 
-/** A count as the badge and the tabs print it; the exact count is spoken. */
+/** A count as the badge and mode navigation print it; the exact count is spoken. */
 export function countText(count: number): string {
   return count > 99 ? "99+" : String(count);
-}
-
-/** `3 need attention · 2 in progress`, or that nothing is outstanding. */
-export function summaryLine(summary: ImportSummary): string {
-  const parts: string[] = [];
-  if (summary.needs_attention_count > 0) {
-    parts.push(attentionPhrase(summary.needs_attention_count));
-  }
-  if (summary.active_count > 0)
-    parts.push(`${summary.active_count} in progress`);
-  return parts.length === 0
-    ? summary.unfinished_work_count > 0
-      ? "Earlier import work is still finishing"
-      : "All imports are settled"
-    : parts.join(" · ");
-}
-
-/**
- * The brief's second line: how much this view matched, then how old it is.
- * A segment the read has not answered is left out with its separator.
- */
-export function briefSegments(
-  matched: number | null,
-  observedAt: string | null,
-  display: Pick<RenderEnvironment, "displayLocale">,
-  now: Date,
-): string[] {
-  const segments: string[] = [];
-  if (matched !== null)
-    segments.push(`${pluralize(matched, "import")} in this view`);
-  if (observedAt !== null) {
-    const age = formatRelativeTime(observedAt, display, now);
-    segments.push(`Last checked ${shown(observedAt, age)}`);
-  }
-  return segments;
 }
 
 export const STALE_NOTICE: FeedbackContent = {
@@ -1020,7 +983,7 @@ export function emptyCopy(
     case "NeedsAttention":
       return {
         title: "No imports need attention",
-        body: "Source, search, or metadata work that needs you appears here.",
+        body: "Failed work and unreviewed metadata results appear here.",
       };
     case "InProgress":
       return {
@@ -1219,10 +1182,9 @@ export function captureErrorFeedback(
   return { tone: "Danger", title, message: CAPTURE_REFUSAL[code], requestId };
 }
 
-/** What a saved capture says: saved, already here, or saved but failed. */
+/** Acceptance records a saved source, independently of processing success. */
 export function captureStatusLine(result: AcceptedIngest): string {
-  if (result.processing === "failed") return "Saved, but ingestion failed";
-  return result.duplicate ? "Already in your library" : "Saved";
+  return result.processing === "failed" ? "saved · processing failed" : "saved";
 }
 
 export type AcceptanceFailure =
@@ -1257,7 +1219,7 @@ const ADD_OUTCOME = {
       tone: "Warning",
       title: "Upload needs attention",
       message:
-        "Use Imports for the available next step, or restage this file as a new import.",
+        "view this import for the available recovery, or edit this item to start a new import.",
     },
   },
   BytesMissing: {
