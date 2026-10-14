@@ -164,7 +164,9 @@ is mandatory but insufficient by itself. the current inspection exposes only
 apparatus key sets. extend its private dataclass with `item_changes` and
 `edge_changes` through existing `_row_changes`, plus
 `installed_metadata_sha256` and `proposed_metadata_sha256` through existing
-`_digest` over normalized metadata. prove publication round-trips that
+`_digest` over normalized metadata. expose typed `status_before` and
+`status_after` too: a status-only normalization still changes the publication.
+prove publication round-trips that
 projection. these outputs make full review and uncertain-commit reconciliation
 possible; the generation-bound `inspection_digest` cannot serve as a postcommit hash.
 
