@@ -157,7 +157,12 @@ def fetch_author_thread(post_id: str) -> AcquiredXSource:
     author = seen.users[root.author_id]
     conversation_id = root.conversation_id or root.id
     candidates = {root.id}
-    params = {**_FIELDS, "query": f"conversation_id:{conversation_id} from:{author.username}"}
+    params = {
+        **_FIELDS,
+        "query": f"conversation_id:{conversation_id} from:{author.username}",
+        # Full-archive search defaults to 30 days; a reply permalink needs earlier ancestors.
+        "start_time": "2006-03-21T00:00:00Z",
+    }
     continuation = True
     while len(candidates) < max_posts:
         params["max_results"] = str(max(10, min(100, max_posts - len(candidates))))

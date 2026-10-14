@@ -74,6 +74,9 @@ hop of direct quotes, reply parents and repost targets. `schemas/x_source.py` ow
 normalized evidence; `services/x_source.py` owns its current persisted snapshot,
 coverage and excerpt. retain full authored wording, url observations, supplied image
 descriptions and attributed context. nested references never trigger another fetch.
+author-thread searches explicitly begin at the provider's archive floor,
+`2006-03-21T00:00:00Z`, on every page; omitting this bound restricts results to
+the last 30 days. the existing post budget still limits acquisition.
 `post_limit` means enumeration stopped at the configured bound; `exhausted` means
 enumeration ended, not that every historical post remains available.
 

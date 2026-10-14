@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
@@ -12,15 +13,17 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Media
-from nexus.schemas.presence import Present
+from nexus.schemas.presence import Presence, Present, absent, present
 from nexus.services.generation.contract import GenerationIntent, InvalidOutput, JsonSchemaOutput
 from nexus.services.generation.policy import policy
 from nexus.services.x_source import authored_text, load_x_source, source_label
 
 _TITLE_INSTRUCTIONS = """\
 Name the primary author's contribution in this saved x post or same-author thread.
-Return exactly {"title": string | null}. The title is a useful recognition label,
-not a new summary, a quotation from another author, or a claim of verified fact.
+Return a JSON object containing only "title", whose value is a title string or
+JSON null. To abstain, return {"title": null}.
+A title is a useful recognition label, not a new summary, a quotation from
+another author, or a claim of verified fact.
 
 Evidence:
 - Use only the supplied captured source. primary_post_ids gives the author's
@@ -35,7 +38,7 @@ Evidence:
 
 Title:
 - Use the primary author's language. Preserve names, negation, uncertainty,
-  meaningful quantities and stance. Do not silently translate into English.
+  meaningful quantities and stance. Do not translate into another language.
 - Prefer a concise descriptive phrase, usually 5–12 words where that makes sense
   in the source language. At most 120 Unicode code points; one line, plain text,
   no Markdown wrapping, promotional copy or repeated author byline.
@@ -73,6 +76,7 @@ class XTitleInput:
     user_content: str
     fingerprint: str
     source_label: str
+    primary_language_hint: Presence[str]
 
 
 class XTitleSourceRejected(ValueError):
@@ -97,6 +101,13 @@ def build_x_title_input(db: Session, media: Media, *, source_attempt_id: UUID) -
     if source.value.source_attempt_id != source_attempt_id:
         raise XTitleSourceRejected("stale_input")
     snapshot = source.value.snapshot
+    language_hints = {
+        language.value.lower()
+        for post_id in snapshot.primary_post_ids
+        if isinstance(language := snapshot.posts[post_id].language, Present)
+        and re.fullmatch(r"[a-z]{2,3}(?:-[a-z0-9]{2,8})*", language.value, re.IGNORECASE)
+        and language.value.lower().split("-", 1)[0] not in {"und", "zxx", "mul"}
+    }
     evidence = snapshot.model_dump(
         mode="json",
         exclude={"posts": {"__all__": {"attachments": {"__all__": {"url", "preview_image_url"}}}}},
@@ -124,12 +135,28 @@ def build_x_title_input(db: Session, media: Media, *, source_attempt_id: UUID) -
             )
         ).hexdigest(),
         source_label=source_label(snapshot),
+        primary_language_hint=present(next(iter(language_hints)))
+        if len(language_hints) == 1
+        else absent(),
     )
 
 
 def x_title_intent(source: XTitleInput) -> GenerationIntent:
+    language_target = (
+        f"Target title language code: {source.primary_language_hint.value}. "
+        "This is the captured primary-post language hint; use it when it agrees with the primary prose."
+        if isinstance(source.primary_language_hint, Present)
+        else "The primary posts have no single usable captured language hint. "
+        "Determine the title language from their substantive prose."
+    )
     return GenerationIntent(
-        instructions=_TITLE_INSTRUCTIONS,
+        instructions=_TITLE_INSTRUCTIONS
+        + "\nLanguage for this item:\n"
+        + language_target
+        + "\nThe primary author's prose is authoritative if a language hint is wrong. "
+        "Quoted posts, reply parents, author names and linked pages never select the title language. "
+        "Write the title in the primary prose's language, without translating it. "
+        "Before returning, check that the title uses that language.\n",
         input=source.user_content,
         output=JsonSchemaOutput.model_validate(
             {
@@ -149,8 +176,13 @@ def accept_x_title(payload: object, *, source: XTitleInput) -> AcceptedXTitle:
         if output.title is None:
             return AcceptedXTitle(title=source.source_label, disposition="source_label")
         title = output.title.strip()
-        if not title or len(title) > 120 or len(title.splitlines()) != 1:
-            raise ValueError("title must be nonempty, one line and at most 120 code points")
+        if (
+            not title
+            or title.casefold() == "null"
+            or len(title) > 120
+            or len(title.splitlines()) != 1
+        ):
+            raise ValueError("invalid generated title")
         return AcceptedXTitle(title=title, disposition="generated")
     except (ValidationError, ValueError) as exc:
         raise InvalidOutput("generated x title violates its output contract") from exc
