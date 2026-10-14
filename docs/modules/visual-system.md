@@ -9,8 +9,8 @@ how nexus says something happened. owners, under `apps/web/src/`:
 - `app/globals.css`: every token, the three rooms, the oracle scope, the
   degradation media list, the reset, grain, scrollbars and find highlights.
 - `lib/theme/room.ts` (room type, cookie name, browser-chrome colours,
-  `parseRoom`), `cookie.ts` (server read), `setAppearanceAction.ts` (server
-  write), `elvishInscriptions.ts`; `components/theme/SolarEffects.tsx`.
+  `parseRoom`), `cookie.ts` (server read), `elvishInscriptions.ts`;
+  `components/theme/SolarEffects.tsx`; the appearance pane owns the browser write.
 - `components/feedback/Feedback.tsx`: signals (huds, persistent notices) and
   in-flow notices.
 - `components/ui/*` except the overlay kernel's files ([overlays](overlays.md));
@@ -25,8 +25,9 @@ how nexus says something happened. owners, under `apps/web/src/`:
 (Solar). the `nx-theme` cookie names the room (absent means Press; a year,
 path `/`, Lax, Secure when deployed); the root layout reads it for the first
 paint and the `theme-color` meta (`ROOM_CHROME`). choosing a doorway repaints at
-once (attribute and meta), then saves; a failed save says "Theme wasn’t saved"
-with Retry. `data-theme` may nest (the settings plates). the oracle and atlas
+once (attribute and meta) and writes the host-only cookie locally: one year,
+path `/`, lax, secure on https. no authenticated request, router refresh or save
+message; the final choice wins even while offline. `data-theme` may nest (the settings plates). the oracle and atlas
 routes set `[data-theme="oracle"]`, a manuscript palette that ignores the room.
 
 ## tokens

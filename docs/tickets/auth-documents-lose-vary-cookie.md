@@ -18,3 +18,11 @@ own), or drop the claim from spec I3 for documents.
 
 acceptance: J13.auth-vary passes, or the invariant is restated for route
 handlers only.
+
+confirmed again on 2026-10-14, session-entry candidate `8aaf889a9`: real protected
+HEAD and next-link rsc responses retain `private, no-store`, but `vary` contains
+only next's rsc/state-tree/prefetch/segment-prefetch fields and `Accept-Encoding`.
+next 15.5.22's `dist/build/templates/app-page.js:293` replaces the field after
+middleware; route/API finalization still retains `Cookie`. this is outside the
+session-entry contract, which requires document non-storage and unchanged next
+representation variation. no new header-delivery layer was introduced.
