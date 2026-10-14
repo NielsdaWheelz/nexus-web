@@ -117,9 +117,12 @@ restored. unrelated apps/services are outside cleanup ownership.
 
 ## merge integration
 
-the cutover was rebased onto `443eda51e75ee3f23af4ed7d7f7d00345da76716` before
-the pr. the sole textual conflict was the issue register; both sets of entries
-were preserved. all 80 changed/deleted cutover source paths retain identical
-bytes/deletion state to the qualified snapshot. `./scripts/test` and diff checks
-passed after integration. live journeys were not replayed; independent review
-checked the newer add/import and transport changes against the shared contracts.
+the cutover was first rebased onto `443eda51e75ee3f23af4ed7d7f7d00345da76716`,
+then onto `b6768bee2469cbc3a43902302836a44d07a11ea7` after metadata-imports
+landed during pr preparation. the issue register preserves both sets of entries.
+imports' inline choices now use the canonical expanded failure vocabulary;
+incoming metadata diagnostics css is retained. the other 78 of 80 cutover source
+paths retain identical bytes/deletion state to the qualified snapshot.
+`./scripts/test` and diff checks passed after integration. live journeys were
+not replayed for these domain-owned choice/style changes; independent review
+checked metadata stages/reasons, add/import, overlays and transport contracts.

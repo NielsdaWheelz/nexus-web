@@ -108,7 +108,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] ingest / replay authority · 2026-10-04 source audit · replay validates current destination write access before reading the saved admission: [ticket](tickets/url-replay-requires-current-destination-write-access.md).
 - [open] media upload retry · 2026-10-04 source audit · the fresh and memo retry paths repeat the same capability generation/expiry in a private result: [ticket](tickets/upload-retry-repeats-capability-result.md).
 
-
 - [open] operator credentials · 2026-10-02 cleanup workflow · skid's three peer bearer fields were printed into a tool transcript; coordinate rotation with active sessions: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
 - [open] processing recovery / release · 2026-09-28 pr #387 investigation · the keats normalizations and gutenberg correction never ran in production (commands are unreleased); run them after the release, then land #387: [ticket](tickets/processing-repairs-await-release-then-387.md).
 - [open] release / vercel candidate · 2026-10-04 pr #524 · exact main merge 031c3c95 vercel candidate build failed at platform quota; green pr preview is a different commit: [ticket](tickets/vercel-main-candidate-build-rate-limited.md).
@@ -273,9 +272,6 @@ unexpected timeouts. See
 - [open] oi-111 · reader publication · 2026-09-15 restoration rehearsal · p2 · web replacement can retain a cursor for a deleted fragment: [ticket](tickets/web-publication-invalidates-saved-reader-cursors.md).
 - [open] oi-113 · interactive worker · 2026-09-15 pr #255 qualification · p2 · exact-image startup is oom-killed at 256 mib; isolate provider imports and qualify real execution demand: [ticket](tickets/interactive-worker-startup-reaches-memory-cap.md).
 
-
-
-
 - [open] oi-125 · epub assets · 2026-09-15 source review · p2 · complete asset bodies, broad media reads and per-request storage clients lack an aggregate allocation budget: [ticket](tickets/epub-asset-response-allocation-and-client-lifetime.md).
 - [open] oi-126 · backend publication · 2026-09-15 restoration release · p2 · disk exhaustion aborts the runner before bundle upload and cleanup: [ticket](tickets/backend-publication-can-exhaust-devbox-disk.md).
 - [open] oi-127 · devbox operations · 2026-09-15 memory diagnosis · p2 · runner stopped and user/docker services restarted during diagnosis; cause remains unresolved: [ticket](tickets/devbox-services-interrupted-memory-diagnosis.md).
@@ -366,7 +362,6 @@ unexpected timeouts. See
 - [open] consumption / stats contracts · 2026-09-28 reauthoring, qualified 2026-10-03 · unproduced `Week` remains; retain read `recordedActiveMs` pending precision/conservation proof: [ticket](tickets/consumption-stats-over-its-line-target.md).
 - [open] consumption / stats pane · 2026-09-28 consumption-stats reauthoring · p3 · timeline modalities all paint `CanvasText` in forced colors: [ticket](tickets/stats-timeline-modalities-merge-in-forced-colors.md).
 
-
 - [open] inbound share / account policy candidate · 2026-10-02 producer review · valid dependency failures reach the defect owner; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/share-account-transient-failures-escape-inline-feedback.md).
 - [open] nexus / command policy candidate · 2026-10-02 producer review · valid auth-dependency503 reaches all three writes; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/nexus-auth-dependency-failure-escapes-retry-feedback.md).
 - [open] local docker / inventory · 2026-10-03 selection-concurrency allocation · full enumeration failed again, then passed at cleanup; intermittent recurrence remains open, cause and initial stopped-state comparison unproved: [ticket](tickets/local-docker-stopped-container-snapshot-missing.md).
@@ -439,16 +434,8 @@ unexpected timeouts. See
 - [deferred] web research · 2026-10-14 owner decision · brave returns payment required; service restoration and dependent qualification deferred: [ticket](tickets/brave-search-payment-required.md).
 
 - [open] android / offline startup · 2026-10-14 · downloaded copy reads offline through native recovery; cold launch retains a hosted error and automatic shelf entry remains unobserved: [ticket](tickets/android-offline-cold-start-keeps-hosted-error.md).
+- [open] local development / worker · 2026-10-13 pane controls · background-worker instructions require the linux container path on macos: [ticket](tickets/background-worker-local-command-requires-linux.md).
 
-
-
-- local background-worker instructions fail on macos cgroup discovery: [ticket](tickets/background-worker-local-command-requires-linux.md).
-
-- youtube browse key rejects the local caller ip: [ticket](tickets/browse-youtube-upstream-forbids-live-query.md).
-
-
-
-
-
+- [open] browse / provider configuration · 2026-10-13 pane controls · youtube key rejects the local caller ip; successful qualification waived: [ticket](tickets/browse-youtube-upstream-forbids-live-query.md).
 
 - [open] android / task ownership · 2026-10-13 pane controls · unrelated add-import debug package and reverse59830 disappeared during qualification; their owner’s cleanup is unconfirmed: [ticket](tickets/android-baseline-drift-during-pane-qualification.md).
