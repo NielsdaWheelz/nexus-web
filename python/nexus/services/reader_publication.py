@@ -96,15 +96,25 @@ def reconcile_navigation_source_issues(
     return tuple(reconciled)
 
 
+def ready_publication_rows_sql() -> str:
+    """Eligible, currently readable publications shared by readers and capabilities."""
+    kinds = ", ".join(f"'{kind}'" for kind in sorted(_ELIGIBLE_KINDS))
+    return f"""
+        SELECT rp.media_id, rp.generation
+        FROM reader_publications rp JOIN media m ON m.id = rp.media_id
+        WHERE m.kind IN ({kinds})
+          AND m.processing_status = '{ProcessingStatus.ready_for_reading.value}'
+    """
+
+
 def read_ready_publication_generation(db: Session, *, media_id: UUID) -> int | None:
     """The generation of one eligible, currently readable publication."""
     generation = db.scalar(
-        text(
-            "SELECT rp.generation FROM reader_publications rp JOIN media m ON m.id = rp.media_id"
-            " WHERE rp.media_id = :media_id AND m.kind = ANY(:kinds)"
-            " AND m.processing_status = 'ready_for_reading'"
-        ),
-        {"media_id": media_id, "kinds": list(_ELIGIBLE_KINDS)},
+        text(f"""
+            SELECT publication.generation FROM ({ready_publication_rows_sql()}) publication
+            WHERE publication.media_id = :media_id
+        """),
+        {"media_id": media_id},
     )
     return None if generation is None else int(generation)
 

@@ -8,7 +8,8 @@ base: [pane-controls pr #578](https://github.com/NielsdaWheelz/nexus-web/pull/57
 `6b9909ed74c55f1c6febff0f02415b5121a92094`, or its integrated descendant.
 use that implementation's shared controls. pr #578 merged as `fa62a6901` on 2026-10-14;
 its final head `5460cc041` has identical web source to this approved baseline.
-this branch qualifies that baseline; integration with later main qualifies the combined change afresh.
+the initial proof qualifies that baseline. the merge follow-up integrates main
+`f30a844a5`; combined qualification is recorded separately in verification.
 
 ## goal and invariants
 
@@ -62,6 +63,12 @@ generate web types from python; do not add same-deploy json decoders.
 
 search current title, original filename and source host with the existing escaped server
 query in every view. filename appears beside differing titles and always in details.
+
+document capabilities use the reader-publication owner's shared eligibility predicate:
+eligible kind, persisted `ready_for_reading`, and an existing publication. pdf also
+requires its original file. project this fact in existing batch media reads; use it
+for read/highlight/quote and the queryable quote projection. preserve transcript,
+playback, download and recovery policy. never infer readability from an uploaded file.
 
 move ref types/parser/formatter/error/helpers from `schemas/imports.py` to
 `schemas/import_refs.py`, updating callers directly. this prevents a media/imports schema cycle.
@@ -253,6 +260,9 @@ and record objections/resolutions. missing runtime access is a blocker, never as
   ticket is removed, with its decision retained here and in verification.
 - api/web/extension cut over together; old extension builds require reload. no database
   migration, telemetry, pipeline rewrite, bulk commands, new notifications or global router.
+- uploaded originals remain downloadable during processing; document reading waits for
+  publication. historical ready rows without a publication retain the reader's refusal
+  and no longer advertise read/highlight/quote/search. no synthetic publication repair.
 - temporary-test deletion gives up future automatic regression protection. retained
   acceptance/evidence and the existing static gate remain; live repair stays the operating model.
 - [url source supersession](tickets/readded-url-returns-a-media-id-that-is-then-superseded.md)
@@ -264,4 +274,4 @@ and record objections/resolutions. missing runtime access is a blocker, never as
 all unwaived acceptance is verified. the owner explicitly skipped provider-dependent
 live no-findings/exact-job review after search configuration failed; it remains
 [unverified](tickets/imports-live-metadata-proof-needs-working-search.md).
-merge and deployment of imports remain outstanding; the pane-controls prerequisite is merged.
+merge qualification and task cleanup are owned by the pr follow-up; deployment is excluded.

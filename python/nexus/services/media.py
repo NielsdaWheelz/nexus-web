@@ -63,6 +63,7 @@ from nexus.services.media_source_ingest import (
 from nexus.services.metadata_operations import metadata_enrichment_views
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
+from nexus.services.reader_publication import ready_publication_rows_sql
 from nexus.services.reading_time import load_reading_time_estimates
 from nexus.services.resource_grants import media_grant_path_exists_sql
 from nexus.services.source_publication import load_source_progress
@@ -182,6 +183,10 @@ _SELECT_EXPRESSIONS: dict[str, str] = {
     "created_at": "m.created_at",
     "updated_at": "m.updated_at",
     "has_file": media_file_exists_sql("m.id"),
+    "reader_publication_ready": f"""EXISTS (
+        SELECT 1 FROM ({ready_publication_rows_sql()}) publication
+        WHERE publication.media_id = m.id
+    )""",
     "is_creator": "m.created_by_user_id = :viewer_id",
     "source_refresh_available": _SOURCE_REFRESH_AVAILABLE_SQL,
     "original_published_date": "m.original_published_date",
@@ -520,6 +525,7 @@ def list_collection_media_for_viewer_by_ids(
                 processing_status=_status_to_str(row["persisted_processing_status"]),
                 last_error_code=cast(str | None, row["last_error_code"]),
                 media_file_exists=bool(row["has_file"]),
+                reader_publication_ready=bool(row["reader_publication_ready"]),
                 external_playback_url_exists=False,
                 pdf_quote_text_ready=pdf_readiness.get(media_id, False),
                 transcript_state=transcript_state,
@@ -787,6 +793,7 @@ def _hydrate_media_out(
                     processing_status=_status_to_str(row["persisted_processing_status"]),
                     last_error_code=row["last_error_code"],
                     media_file_exists=bool(row["has_file"]),
+                    reader_publication_ready=bool(row["reader_publication_ready"]),
                     external_playback_url_exists=row["external_playback_url"] is not None,
                     pdf_quote_text_ready=pdf_readiness.get(media_id, False),
                     transcript_state=_nullable_str(row["transcript_state"]),

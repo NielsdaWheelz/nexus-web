@@ -2,9 +2,9 @@
 
 date: 2026-10-14. branch: `codex/imports-experience-20261014`.
 contract: [plan](imports-experience-plan.md). application implementation complete;
-all unwaived acceptance verified. both temporary proof stacks are deleted;
-the final `./scripts/test` run passed after cleanup and local locked dependency
-repair (exit 0; migration head `0277`). the final
+all unwaived acceptance verified on the initial candidate. both initial proof stacks are deleted;
+its `./scripts/test` run passed after cleanup and local locked dependency
+repair (exit 0; migration head `0277`). the initial candidate's final
 [static receipt](verification/imports-experience-20261014/static-check.txt) is retained.
 
 ## identity and method
@@ -95,7 +95,33 @@ evidence that other metadata refusal paths pass. existing url
 supersession and native replay/dedup semantics remain separately ticketed. no redirect
 or compatibility workaround was added. during finalization, pane-controls pr #578
 merged as `fa62a6901` (head `5460cc041`); its web source matches the approved baseline.
-this imports branch is not merged or deployed, and has not absorbed later release changes.
+the merge follow-up rebased the imports change onto main `f30a844a5`; its combined
+qualification is separate from the initial live proof above. deployment is outside this change.
+
+## main integration
+
+base: `f30a844a5f79c3fbf3f636fe57b4845ac7549d9a`. integration source digest:
+`6acce6e1f20dc0754a287a2ff7cc012092217616e779fba590f952b53bae4b5c`.
+shared runtime resolution retains main's `Refreshing` state and imports' ready-only
+activation. regenerated wire preserves the new lectern contracts and imports cut.
+independent backend, interface and handoff reviewers found no other changed imports owner.
+the combined browser check passed four groups: real snapshot refresh fencing, adjacent
+reader creation/reuse with rendered pdf text, canonical lectern membership, and fixed
+pane search with interaction ownership. it does not replay the initial browser/device proof.
+
+that run exposed an existing capability mismatch: an original pdf file advertised
+readability while the reader returned `409 E_MEDIA_NOT_READY`. one genuine red case
+paused only the normal task worker before public confirmation. reader admission, media
+capabilities and the quote projection now share the publication owner's eligibility.
+two green groups on the same upload proved unavailable reading before publication,
+then normal publication, reader 200 and visible pdf text. downloading stayed available;
+search stayed false, with no indexing success claimed. independent owner review passed.
+the repaired application digest is
+`4f78aaf7f1fdafbaa793acc398b343ae97b2c1050e867bbb6ec365432dbd1294`.
+the combined four and publication two belong to distinct recorded source cuts.
+
+main subsequently advanced to `5dac2889e`; its metadata/action/session integration,
+the final static gate and ci remain pending.
 
 ## retained evidence and deletion
 

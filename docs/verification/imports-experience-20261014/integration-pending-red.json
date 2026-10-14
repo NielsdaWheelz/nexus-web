@@ -1,0 +1,97 @@
+{
+  "run": "pending-red-1792017262696",
+  "phase": "pending-red",
+  "revision": "67d73a77284eeaa892096e4e650ddf6f7af59184",
+  "sourceStart": {
+    "apps/web/src/lib/actions/resourceActionRuntime.tsx": "d5e70ec0da15f8bcfbae7c1e6326b7ae93df41d2d7526a4539eb8185b6e5788a",
+    "apps/web/src/lib/actions/resourceActionSnapshotCache.ts": "6a74fe2ecbaebd41436bc2649a57a360db28702ec567390ab20fb44d87dc7adb",
+    "apps/web/src/lib/actions/resourceActionEnvironment.ts": "323863a365f0010069d0cb27cee3b4e4c5b7210f9ec9c4ee875f93c1055e87ae",
+    "apps/web/src/lib/actions/resourceActionMenu.tsx": "0b3b7f6f1d2bfd3763155a56f7b9f84b108364575dc7b27cc3518c60841bba68",
+    "apps/web/src/lib/lectern/LecternProvider.tsx": "149c65cfdfacf325b3fa78d900bd03802989c1ecf4a1ea8f89ead69c62541253",
+    "apps/web/src/lib/workspace/paneDom.ts": "8f52efab4a72b7f39fb3f0b61bbfc2002f118d6df7c902077765cffd5f1392a7",
+    "apps/web/src/lib/shortcuts.ts": "0e1c1c28db0dbc1f4d7aaea248790fd38183f402e1e8bf576597460fcedc38fe",
+    "apps/web/src/components/imports/ImportActions.tsx": "0d4ce61715333e0eb2d0412b67b16ee7ed4a222092650ca52cb004e869a7c0d9",
+    "apps/web/src/components/imports/ImportsList.tsx": "d951317f77af678a860430c4121e950430c49c838d53495254a3bf88baa72db7",
+    "apps/web/src/components/feedback/Feedback.tsx": "6585429981fa5676ef650bf43c33b73624ac07d14e2810e4e96ada3f92be9085",
+    "apps/web/src/components/ui/Button.module.css": "da7250716d70cbd4494995e9017a4614c2378335662c786c12d4fb86e1fc130f",
+    "apps/web/src/components/workspace/PaneShell.tsx": "741a6787442a238d491009574bbb2903f412e39adb3373c24c859aad92ebdfc4",
+    "python/nexus/services/capabilities.py": "605e11d84824ff0e86020e35bd3c9f11f6894bf2d4bf1a497f4dfbffd7fdf9eb",
+    "python/nexus/services/media.py": "810a41e8fe5b3ae6ecbfdb945b9ada44e1cd563a7df1702b4d61e8224c48014b",
+    "python/nexus/services/reader_publication.py": "cb75534e5b615127585a19e7abb0e2f4da316b5917e051e6a8e0ff32b3dfbc06",
+    "python/nexus/services/reader_document.py": "d4a795055e3566a64132fd50790ff93484ccae8c37f1d7523b0dd2f8bd141dbd"
+  },
+  "scope": "PDF readability agrees with canonical reader publication",
+  "cases": [
+    {
+      "name": "pending PDF has no read capability or imports direct open before a reader publication exists",
+      "result": "fail",
+      "error": "pending publication advertised can_read=true, direct open count=1",
+      "screenshot": "pending-red-1792017262696/failure-1.png"
+    }
+  ],
+  "setup": "ready: valid real PUT, worker stopped before public confirmation, real reader409",
+  "cleanup": "fixture deliberately retained; task worker remains stopped until pending green",
+  "limitations": [
+    "not a replay of prior-base browser, extension or device qualification",
+    "no provider-dependent metadata or indexing success is claimed"
+  ],
+  "readerResponses": [
+    {
+      "status": 409
+    }
+  ],
+  "pendingFixtureFile": "[redacted: private fixture file shared by pending red and green]",
+  "fixture": {
+    "ref": "[redacted: sealed task import reference]",
+    "handle": "[redacted: sealed task upload-session handle]",
+    "filename": "pending-red-1792017262696.pdf",
+    "mediaId": "01a13c8d-76b3-7bf8-9ca1-dd642717d3c4",
+    "title": "pending-red-1792017262696.pdf"
+  },
+  "pendingObservation": {
+    "canRead": true,
+    "sourceState": "Active",
+    "publication": {
+      "status": 409,
+      "code": "E_MEDIA_NOT_READY"
+    },
+    "directOpenCount": 1,
+    "directOpenEnabled": true,
+    "genericOpenAvailability": {
+      "kind": "Available"
+    },
+    "genericOpenMeaning": "navigation to the media/status page remains independent of readable publication",
+    "screenshot": "pending-red-1792017262696/pending-publication.png"
+  },
+  "sourceEnd": {
+    "apps/web/src/lib/actions/resourceActionRuntime.tsx": "d5e70ec0da15f8bcfbae7c1e6326b7ae93df41d2d7526a4539eb8185b6e5788a",
+    "apps/web/src/lib/actions/resourceActionSnapshotCache.ts": "6a74fe2ecbaebd41436bc2649a57a360db28702ec567390ab20fb44d87dc7adb",
+    "apps/web/src/lib/actions/resourceActionEnvironment.ts": "323863a365f0010069d0cb27cee3b4e4c5b7210f9ec9c4ee875f93c1055e87ae",
+    "apps/web/src/lib/actions/resourceActionMenu.tsx": "0b3b7f6f1d2bfd3763155a56f7b9f84b108364575dc7b27cc3518c60841bba68",
+    "apps/web/src/lib/lectern/LecternProvider.tsx": "149c65cfdfacf325b3fa78d900bd03802989c1ecf4a1ea8f89ead69c62541253",
+    "apps/web/src/lib/workspace/paneDom.ts": "8f52efab4a72b7f39fb3f0b61bbfc2002f118d6df7c902077765cffd5f1392a7",
+    "apps/web/src/lib/shortcuts.ts": "0e1c1c28db0dbc1f4d7aaea248790fd38183f402e1e8bf576597460fcedc38fe",
+    "apps/web/src/components/imports/ImportActions.tsx": "0d4ce61715333e0eb2d0412b67b16ee7ed4a222092650ca52cb004e869a7c0d9",
+    "apps/web/src/components/imports/ImportsList.tsx": "d951317f77af678a860430c4121e950430c49c838d53495254a3bf88baa72db7",
+    "apps/web/src/components/feedback/Feedback.tsx": "6585429981fa5676ef650bf43c33b73624ac07d14e2810e4e96ada3f92be9085",
+    "apps/web/src/components/ui/Button.module.css": "da7250716d70cbd4494995e9017a4614c2378335662c786c12d4fb86e1fc130f",
+    "apps/web/src/components/workspace/PaneShell.tsx": "741a6787442a238d491009574bbb2903f412e39adb3373c24c859aad92ebdfc4",
+    "python/nexus/services/capabilities.py": "605e11d84824ff0e86020e35bd3c9f11f6894bf2d4bf1a497f4dfbffd7fdf9eb",
+    "python/nexus/services/media.py": "810a41e8fe5b3ae6ecbfdb945b9ada44e1cd563a7df1702b4d61e8224c48014b",
+    "python/nexus/services/reader_publication.py": "cb75534e5b615127585a19e7abb0e2f4da316b5917e051e6a8e0ff32b3dfbc06",
+    "python/nexus/services/reader_document.py": "d4a795055e3566a64132fd50790ff93484ccae8c37f1d7523b0dd2f8bd141dbd"
+  },
+  "sourceStable": true,
+  "curation": {
+    "source_identity_file": "integration-source.json",
+    "source_cut": "rebased_before_publication_fix",
+    "original_receipt_sha256": "5b515058d1112c4a181a6652b8593df9cc99b0f28f4b6baeddac9dc989c0569d",
+    "redacted_fields": [
+      "fixture.ref",
+      "fixture.handle",
+      "pendingFixtureFile"
+    ],
+    "screenshot_reference_map": "integration-proof-index.json",
+    "preserved": "all original verdicts, setup and cleanup outcomes, parent revision, source-start/end hashes, readiness/capability facts and reader responses"
+  }
+}
