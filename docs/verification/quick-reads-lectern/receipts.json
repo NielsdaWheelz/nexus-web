@@ -1,0 +1,1946 @@
+{
+  "date": "2026-10-14",
+  "baseline": "b6768bee2469cbc3a43902302836a44d07a11ea7",
+  "implementation": "e1af653b2944ca314dace0ee8eeb7ed8cb3f9753",
+  "branch": "codex/quick-reads-lectern-20261014",
+  "imported_spec_sha256": "9ebd9141491e63d2f602a4243746f41451895b5e352251e57317df969334900b",
+  "fixture": {
+    "disposable_nonproduction": true,
+    "web": "http://localhost:3299",
+    "api": "http://127.0.0.1:8299",
+    "viewer": "05d8d4e7-5bd0-4149-8b92-0dde90640679",
+    "second_viewer": "5c242585-ed45-4526-a922-1081245bb228",
+    "media": {
+      "x": "01a13c1c-b1de-71ab-afbb-8018180e8619",
+      "y": "01a13c1c-b259-7c48-841b-75702dfc8368",
+      "absent": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+      "replay": "01a13c1c-b2be-7467-bcef-706bbed0c295",
+      "reactivation": "01a13c1c-b2f1-78c1-861c-b6477891bf00",
+      "long": "01a13c1c-b328-7b45-951d-a0265b28d791",
+      "finished": "01a13c1c-b35e-7cf0-95b4-6b611da4250c",
+      "episode": "01a13c2f-8086-7714-bb4d-29c31a44300e"
+    },
+    "titles": {
+      "x": "lectern proof x",
+      "y": "lectern proof y",
+      "absent": "lectern proof absent",
+      "replay": "lectern proof replay",
+      "reactivation": "lectern proof reactivation",
+      "long": "lectern proof long",
+      "finished": "lectern proof finished",
+      "episode": "lectern proof episode"
+    },
+    "podcast": {
+      "source": "external synthetic podcast index via configured provider boundary",
+      "publication": "ordinary browse search + preview + episode acquisition",
+      "mediaId": "01a13c2f-8086-7714-bb4d-29c31a44300e",
+      "title": "lectern proof episode",
+      "playerDescriptor": "Present",
+      "limits": "no audio request, playback or transcription qualification"
+    }
+  },
+  "baseline_browser": {
+    "phase": "baseline",
+    "origin": "http://localhost:3299",
+    "records": [
+      {
+        "name": "direct-action",
+        "phase": "baseline",
+        "network": [
+          {
+            "method": "GET",
+            "path": "/api/lectern/quick-reads"
+          },
+          {
+            "method": "GET",
+            "path": "/api/lectern/quick-reads"
+          }
+        ],
+        "pageErrors": [],
+        "status": "expected-red",
+        "error": "missing direct add-to-lectern control on a confirmed eligible absent quick read\n\n0 !== 1\n",
+        "screenshot": "direct-action.png"
+      },
+      {
+        "name": "kept-pane-reactivation",
+        "phase": "baseline",
+        "network": [
+          {
+            "method": "GET",
+            "path": "/api/lectern/quick-reads"
+          },
+          {
+            "method": "GET",
+            "path": "/api/lectern/quick-reads"
+          }
+        ],
+        "pageErrors": [],
+        "status": "expected-red",
+        "error": "reactivation did not issue a new quick-read GET",
+        "screenshot": "kept-pane-reactivation.png"
+      }
+    ]
+  },
+  "api": {
+    "red": [
+      {
+        "at": "2026-10-14T20:32:29.707772+00:00",
+        "case": "baseline-move",
+        "stage": "start"
+      },
+      {
+        "command": null,
+        "error": null,
+        "method": "GET",
+        "outcome": null,
+        "path": "/me",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "api_origin": "http://127.0.0.1:8299",
+        "database": "postgres",
+        "stage": "fixture_ready",
+        "viewer_id": "05d8d4e7-5bd0-4149-8b92-0dde90640679"
+      },
+      {
+        "command": {
+          "clientMutationId": "6158d057-0bb1-47fc-bea0-9f7e244e41dd",
+          "kind": "PlaceItems",
+          "mediaIds": [
+            "01a13c1c-b1de-71ab-afbb-8018180e8619"
+          ],
+          "placement": {
+            "kind": "Last"
+          }
+        },
+        "error": null,
+        "method": "POST",
+        "outcome": {
+          "itemIds": [
+            "6c472326-9819-48dd-997a-12ede97e8165"
+          ],
+          "kind": "Placed"
+        },
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "command": {
+          "clientMutationId": "406d2cc2-916d-4ff8-b292-4cebd60c0c1c",
+          "kind": "PlaceItems",
+          "mediaIds": [
+            "01a13c1c-b259-7c48-841b-75702dfc8368"
+          ],
+          "placement": {
+            "kind": "Last"
+          }
+        },
+        "error": null,
+        "method": "POST",
+        "outcome": {
+          "itemIds": [
+            "6733b896-40fc-4a8b-b65f-89ec8477ef0b"
+          ],
+          "kind": "Placed"
+        },
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "command": {
+          "clientMutationId": "0ba48e5f-f06b-4e0e-9d18-2694ebcb3d8f",
+          "kind": "PlaceItems",
+          "mediaIds": [
+            "01a13c1c-b1de-71ab-afbb-8018180e8619"
+          ],
+          "placement": {
+            "kind": "Last"
+          }
+        },
+        "error": null,
+        "method": "POST",
+        "outcome": {
+          "itemIds": [
+            "6c472326-9819-48dd-997a-12ede97e8165"
+          ],
+          "kind": "Placed"
+        },
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "after": [
+          {
+            "added_at": "2026-10-14 20:32:29.781112+00:00",
+            "id": "6733b896-40fc-4a8b-b65f-89ec8477ef0b",
+            "media_id": "01a13c1c-b259-7c48-841b-75702dfc8368",
+            "position": 0
+          },
+          {
+            "added_at": "2026-10-14 20:32:29.741948+00:00",
+            "id": "6c472326-9819-48dd-997a-12ede97e8165",
+            "media_id": "01a13c1c-b1de-71ab-afbb-8018180e8619",
+            "position": 1
+          }
+        ],
+        "before": [
+          {
+            "added_at": "2026-10-14 20:32:29.741948+00:00",
+            "id": "6c472326-9819-48dd-997a-12ede97e8165",
+            "media_id": "01a13c1c-b1de-71ab-afbb-8018180e8619",
+            "position": 0
+          },
+          {
+            "added_at": "2026-10-14 20:32:29.781112+00:00",
+            "id": "6733b896-40fc-4a8b-b65f-89ec8477ef0b",
+            "media_id": "01a13c1c-b259-7c48-841b-75702dfc8368",
+            "position": 1
+          }
+        ],
+        "case": "stale_add_preserves_order",
+        "result": "red"
+      },
+      {
+        "error_type": "AssertionError",
+        "message": "baseline add moved an existing member",
+        "stage": "failed"
+      }
+    ],
+    "ensure-no-move": [
+      {
+        "at": "2026-10-14T20:42:19.898317+00:00",
+        "case": "ensure-no-move",
+        "stage": "start"
+      },
+      {
+        "command": null,
+        "error": null,
+        "method": "GET",
+        "outcome": null,
+        "path": "/me",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "api_origin": "http://127.0.0.1:8299",
+        "database": "postgres",
+        "stage": "fixture_ready",
+        "viewer_id": "05d8d4e7-5bd0-4149-8b92-0dde90640679"
+      },
+      {
+        "command": {
+          "clientMutationId": "d1afd174-8ada-4894-a193-9b422a3b5858",
+          "itemId": "6c472326-9819-48dd-997a-12ede97e8165",
+          "kind": "RemoveItem"
+        },
+        "error": null,
+        "method": "POST",
+        "outcome": {
+          "itemId": "6c472326-9819-48dd-997a-12ede97e8165",
+          "kind": "Removed"
+        },
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "command": {
+          "clientMutationId": "cfb17c05-df77-4e3f-a8a4-857c3ef5966b",
+          "itemId": "6733b896-40fc-4a8b-b65f-89ec8477ef0b",
+          "kind": "RemoveItem"
+        },
+        "error": null,
+        "method": "POST",
+        "outcome": {
+          "itemId": "6733b896-40fc-4a8b-b65f-89ec8477ef0b",
+          "kind": "Removed"
+        },
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "command": {
+          "clientMutationId": "f0e2bf7f-45dd-41c3-8afb-d1f09822156e",
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b1de-71ab-afbb-8018180e8619"
+        },
+        "error": null,
+        "method": "POST",
+        "outcome": {
+          "kind": "Ensured"
+        },
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "command": {
+          "clientMutationId": "1dd20f42-45a3-4d16-a1c8-41f13f70da15",
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b259-7c48-841b-75702dfc8368"
+        },
+        "error": null,
+        "method": "POST",
+        "outcome": {
+          "kind": "Ensured"
+        },
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "command": {
+          "clientMutationId": "f0e2bf7f-45dd-41c3-8afb-d1f09822156e",
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b1de-71ab-afbb-8018180e8619"
+        },
+        "error": null,
+        "method": "POST",
+        "outcome": {
+          "kind": "Ensured"
+        },
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "command": {
+          "clientMutationId": "8c794ac3-8396-4fef-99aa-c52b8957e713",
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b1de-71ab-afbb-8018180e8619"
+        },
+        "error": null,
+        "method": "POST",
+        "outcome": {
+          "kind": "Ensured"
+        },
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "command": {
+          "clientMutationId": "f0e2bf7f-45dd-41c3-8afb-d1f09822156e",
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b259-7c48-841b-75702dfc8368"
+        },
+        "error": {
+          "code": "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH",
+          "message": "Resource mutation id was reused with a different request",
+          "request_id": "33d767a0-61e8-4d62-8555-e6bfb577762e"
+        },
+        "method": "POST",
+        "outcome": null,
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 409
+      },
+      {
+        "command": {
+          "clientMutationId": "9ac887e2-40fa-4e7e-ab9f-caa3c80f0338",
+          "kind": "PlaceItems",
+          "mediaIds": [
+            "01a13c1c-b259-7c48-841b-75702dfc8368"
+          ],
+          "placement": {
+            "kind": "First"
+          }
+        },
+        "error": null,
+        "method": "POST",
+        "outcome": {
+          "itemIds": [
+            "4005d8e2-1b2f-47ab-8439-daf5fe04678c"
+          ],
+          "kind": "Placed"
+        },
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "after": [
+          {
+            "added_at": "2026-10-14 20:42:20.032333+00:00",
+            "id": "4005d8e2-1b2f-47ab-8439-daf5fe04678c",
+            "media_id": "01a13c1c-b259-7c48-841b-75702dfc8368",
+            "position": 0
+          },
+          {
+            "added_at": "2026-10-14 20:42:20.011134+00:00",
+            "id": "fec15675-81e4-4a82-a178-e39f3cc76742",
+            "media_id": "01a13c1c-b1de-71ab-afbb-8018180e8619",
+            "position": 1
+          }
+        ],
+        "before": [
+          {
+            "added_at": "2026-10-14 20:42:20.011134+00:00",
+            "id": "fec15675-81e4-4a82-a178-e39f3cc76742",
+            "media_id": "01a13c1c-b1de-71ab-afbb-8018180e8619",
+            "position": 0
+          },
+          {
+            "added_at": "2026-10-14 20:42:20.032333+00:00",
+            "id": "4005d8e2-1b2f-47ab-8439-daf5fe04678c",
+            "media_id": "01a13c1c-b259-7c48-841b-75702dfc8368",
+            "position": 1
+          }
+        ],
+        "case": "ensure_no_move_and_intentional_place",
+        "result": "green"
+      }
+    ],
+    "replay-after-remove": [
+      {
+        "at": "2026-10-14T20:42:25.188305+00:00",
+        "case": "replay-after-remove",
+        "stage": "start"
+      },
+      {
+        "command": null,
+        "error": null,
+        "method": "GET",
+        "outcome": null,
+        "path": "/me",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "api_origin": "http://127.0.0.1:8299",
+        "database": "postgres",
+        "stage": "fixture_ready",
+        "viewer_id": "05d8d4e7-5bd0-4149-8b92-0dde90640679"
+      },
+      {
+        "command": {
+          "clientMutationId": "3d089293-aab5-4c8f-9cba-9a01a0e5e626",
+          "itemId": "fec15675-81e4-4a82-a178-e39f3cc76742",
+          "kind": "RemoveItem"
+        },
+        "error": null,
+        "method": "POST",
+        "outcome": {
+          "itemId": "fec15675-81e4-4a82-a178-e39f3cc76742",
+          "kind": "Removed"
+        },
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "command": {
+          "clientMutationId": "151a7533-7efa-440f-8bef-d35fa9da96bb",
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b1de-71ab-afbb-8018180e8619"
+        },
+        "error": null,
+        "method": "POST",
+        "outcome": {
+          "kind": "Ensured"
+        },
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "command": {
+          "clientMutationId": "3f32bc7b-c39b-4115-92af-3bb8b317d42c",
+          "itemId": "861bdb90-b333-4993-a808-167a4ef91891",
+          "kind": "RemoveItem"
+        },
+        "error": null,
+        "method": "POST",
+        "outcome": {
+          "itemId": "861bdb90-b333-4993-a808-167a4ef91891",
+          "kind": "Removed"
+        },
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "command": {
+          "clientMutationId": "151a7533-7efa-440f-8bef-d35fa9da96bb",
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b1de-71ab-afbb-8018180e8619"
+        },
+        "error": null,
+        "method": "POST",
+        "outcome": {
+          "kind": "Ensured"
+        },
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "case": "receipt_survives_remove_without_readding",
+        "command": {
+          "clientMutationId": "151a7533-7efa-440f-8bef-d35fa9da96bb",
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b1de-71ab-afbb-8018180e8619"
+        },
+        "result": "green"
+      }
+    ],
+    "admission": [
+      {
+        "at": "2026-10-14T20:48:56.853164+00:00",
+        "case": "admission",
+        "stage": "start"
+      },
+      {
+        "command": null,
+        "error": null,
+        "method": "GET",
+        "outcome": null,
+        "path": "/me",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "api_origin": "http://127.0.0.1:8299",
+        "database": "postgres",
+        "stage": "fixture_ready",
+        "viewer_id": "05d8d4e7-5bd0-4149-8b92-0dde90640679"
+      },
+      {
+        "command": {
+          "clientMutationId": "6b6569fd-c092-4e46-a123-47f753d2358e",
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b35e-7cf0-95b4-6b611da4250c"
+        },
+        "error": {
+          "code": "E_NOT_FOUND",
+          "message": "Media not found",
+          "request_id": "c38b6ff8-9959-4e7b-a20e-daadc3103025"
+        },
+        "method": "POST",
+        "outcome": null,
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 404
+      },
+      {
+        "command": {
+          "clientMutationId": "88fe6152-9f2c-49cb-ba9e-70a4ef9fe397",
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b328-7b45-951d-a0265b28d791"
+        },
+        "error": {
+          "code": "E_MEDIA_DELETING",
+          "message": "A target media is being deleted",
+          "request_id": "f5cbc379-07ce-488e-a27a-8a29a7efd6e2"
+        },
+        "method": "POST",
+        "outcome": null,
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 409
+      },
+      {
+        "case": "readability_and_teardown",
+        "result": "green"
+      }
+    ],
+    "absolute-tail": [
+      {
+        "at": "2026-10-14T20:48:57.274275+00:00",
+        "case": "absolute-tail",
+        "stage": "start"
+      },
+      {
+        "command": null,
+        "error": null,
+        "method": "GET",
+        "outcome": null,
+        "path": "/me",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "api_origin": "http://127.0.0.1:8299",
+        "database": "postgres",
+        "stage": "fixture_ready",
+        "viewer_id": "05d8d4e7-5bd0-4149-8b92-0dde90640679"
+      },
+      {
+        "command": null,
+        "error": null,
+        "method": "GET",
+        "outcome": null,
+        "path": "/lectern",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "command": {
+          "clientMutationId": "48df70a3-8b50-4beb-9119-ded594ed3fc0",
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec"
+        },
+        "error": null,
+        "method": "POST",
+        "outcome": {
+          "kind": "Ensured"
+        },
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "appended": {
+          "added_at": "2026-10-14 20:48:57.337255+00:00",
+          "id": "aabc2b49-204c-426b-ab4a-c88606dac167",
+          "media_id": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+          "position": 2
+        },
+        "case": "append_after_hidden_tail",
+        "result": "green"
+      }
+    ],
+    "capacity": [
+      {
+        "at": "2026-10-14T20:49:00.248931+00:00",
+        "case": "capacity",
+        "stage": "start"
+      },
+      {
+        "command": null,
+        "error": null,
+        "method": "GET",
+        "outcome": null,
+        "path": "/me",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "api_origin": "http://127.0.0.1:8299",
+        "database": "postgres",
+        "stage": "fixture_ready",
+        "viewer_id": "05d8d4e7-5bd0-4149-8b92-0dde90640679"
+      },
+      {
+        "command": null,
+        "error": null,
+        "method": "GET",
+        "outcome": null,
+        "path": "/lectern",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "command": {
+          "clientMutationId": "0d532954-15a2-4a5c-8365-97a776b0f9cd",
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec"
+        },
+        "error": {
+          "code": "E_LIMIT",
+          "message": "Lectern is at its item limit",
+          "request_id": "b4a10100-550b-4b77-806d-099d735e76fd"
+        },
+        "method": "POST",
+        "outcome": null,
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 409
+      },
+      {
+        "command": {
+          "clientMutationId": "8e065220-e774-48e2-aeb5-c1c383a0f25f",
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b1de-71ab-afbb-8018180e8619"
+        },
+        "error": null,
+        "method": "POST",
+        "outcome": {
+          "kind": "Ensured"
+        },
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "canonical_count": 2000,
+        "case": "complete_capacity_and_present_noop",
+        "result": "green",
+        "visible_count": 1999
+      }
+    ],
+    "commit-receipt": [
+      {
+        "at": "2026-10-14T20:49:01.439336+00:00",
+        "case": "commit-receipt",
+        "stage": "start"
+      },
+      {
+        "command": null,
+        "error": null,
+        "method": "GET",
+        "outcome": null,
+        "path": "/me",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "api_origin": "http://127.0.0.1:8299",
+        "database": "postgres",
+        "stage": "fixture_ready",
+        "viewer_id": "05d8d4e7-5bd0-4149-8b92-0dde90640679"
+      },
+      {
+        "command": {
+          "clientMutationId": "3f7aee34-1254-4d5a-bb81-7a21ce60c01f",
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b2be-7467-bcef-706bbed0c295"
+        },
+        "error": null,
+        "method": "POST",
+        "outcome": {
+          "kind": "Ensured"
+        },
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "case": "commit_before_external_access_loss",
+        "command": {
+          "clientMutationId": "3f7aee34-1254-4d5a-bb81-7a21ce60c01f",
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b2be-7467-bcef-706bbed0c295"
+        },
+        "result": "green"
+      }
+    ],
+    "replay-receipt": [
+      {
+        "at": "2026-10-14T20:49:01.709387+00:00",
+        "case": "replay-receipt",
+        "stage": "start"
+      },
+      {
+        "command": null,
+        "error": null,
+        "method": "GET",
+        "outcome": null,
+        "path": "/me",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "api_origin": "http://127.0.0.1:8299",
+        "database": "postgres",
+        "stage": "fixture_ready",
+        "viewer_id": "05d8d4e7-5bd0-4149-8b92-0dde90640679"
+      },
+      {
+        "command": {
+          "clientMutationId": "3f7aee34-1254-4d5a-bb81-7a21ce60c01f",
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b2be-7467-bcef-706bbed0c295"
+        },
+        "error": null,
+        "method": "POST",
+        "outcome": {
+          "kind": "Ensured"
+        },
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 200
+      },
+      {
+        "command": {
+          "clientMutationId": "99284a60-92e9-4c29-a68d-9c41ec7b9121",
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b2be-7467-bcef-706bbed0c295"
+        },
+        "error": {
+          "code": "E_NOT_FOUND",
+          "message": "Media not found",
+          "request_id": "884c630a-e8c7-4281-9a4f-a0bfb24f31da"
+        },
+        "method": "POST",
+        "outcome": null,
+        "path": "/lectern/commands",
+        "stage": "http",
+        "status": 404
+      },
+      {
+        "case": "receipt_survives_access_loss",
+        "command": {
+          "clientMutationId": "3f7aee34-1254-4d5a-bb81-7a21ce60c01f",
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b2be-7467-bcef-706bbed0c295"
+        },
+        "result": "green"
+      }
+    ],
+    "fixture-qualification": [
+      {
+        "fixture": "admission",
+        "returncode": 0,
+        "output": "labelled admission preconditions: existing tombstoned media; reachable teardown barrier\n",
+        "error": ""
+      },
+      {
+        "case": "admission",
+        "returncode": 0,
+        "receipt": "/private/tmp/nexus-lectern-20261014/receipts/api-admission.jsonl"
+      },
+      {
+        "fixture": "admission-restore",
+        "returncode": 0,
+        "output": "admission preconditions removed\n",
+        "error": ""
+      },
+      {
+        "restored": "admission",
+        "result": "passed"
+      },
+      {
+        "fixture": "tail",
+        "returncode": 0,
+        "output": "labelled queue precondition tail canonical 2 visible 1 hidden tail 1\n",
+        "error": ""
+      },
+      {
+        "case": "absolute-tail",
+        "returncode": 0,
+        "receipt": "/private/tmp/nexus-lectern-20261014/receipts/api-absolute-tail.jsonl"
+      },
+      {
+        "fixture": "restore",
+        "returncode": 0,
+        "output": "restored prior queue; deleted labelled capacity/tail fixtures\n",
+        "error": ""
+      },
+      {
+        "restored": "tail",
+        "result": "passed",
+        "removed_synthetic_media": 1
+      },
+      {
+        "fixture": "capacity",
+        "returncode": 0,
+        "output": "labelled queue precondition capacity canonical 2000 visible 1999 hidden tail 1\n",
+        "error": ""
+      },
+      {
+        "case": "capacity",
+        "returncode": 0,
+        "receipt": "/private/tmp/nexus-lectern-20261014/receipts/api-capacity.jsonl"
+      },
+      {
+        "fixture": "restore",
+        "returncode": 0,
+        "output": "restored prior queue; deleted labelled capacity/tail fixtures\n",
+        "error": ""
+      },
+      {
+        "restored": "capacity",
+        "result": "passed",
+        "removed_synthetic_media": 1999
+      },
+      {
+        "case": "commit-receipt",
+        "returncode": 0,
+        "receipt": "/private/tmp/nexus-lectern-20261014/receipts/api-commit-receipt.jsonl"
+      },
+      {
+        "fixture": "replay-hide",
+        "returncode": 0,
+        "output": "replay-hide explicit private fixture tombstone\n",
+        "error": ""
+      },
+      {
+        "case": "replay-receipt",
+        "returncode": 0,
+        "receipt": "/private/tmp/nexus-lectern-20261014/receipts/api-replay-receipt.jsonl"
+      },
+      {
+        "fixture": "replay-restore",
+        "returncode": 0,
+        "output": "replay-restore explicit private fixture tombstone\n",
+        "error": ""
+      },
+      {
+        "restored": "replay",
+        "result": "passed",
+        "final_queue": [
+          {
+            "id": "4005d8e2-1b2f-47ab-8439-daf5fe04678c",
+            "media_id": "01a13c1c-b259-7c48-841b-75702dfc8368",
+            "position": 0,
+            "added_at": "2026-10-14 20:42:20.032333+00:00"
+          },
+          {
+            "id": "8606ec5e-0f0d-4cad-981a-54c1738fb0c4",
+            "media_id": "01a13c1c-b328-7b45-951d-a0265b28d791",
+            "position": 1,
+            "added_at": "2026-10-14 20:43:40.260437+00:00"
+          },
+          {
+            "id": "97b9e659-0acb-4c99-b4df-555dbe5d2885",
+            "media_id": "01a13c1c-b2be-7467-bcef-706bbed0c295",
+            "position": 2,
+            "added_at": "2026-10-14 20:49:01.459351+00:00"
+          }
+        ]
+      },
+      {
+        "result": "all fixture qualifications passed"
+      }
+    ]
+  },
+  "browser_passes": {
+    "direct-action": {
+      "receipt": "browser-green-direct-final",
+      "name": "direct-action",
+      "phase": "green",
+      "network": [
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "POST",
+          "path": "/api/lectern/commands",
+          "body": {
+            "kind": "EnsureItem",
+            "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+            "clientMutationId": "cb0a1abc-0830-4627-aaaa-72193d0c71b9"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        }
+      ],
+      "pageErrors": [],
+      "status": "passed",
+      "screenshot": "direct-action.png"
+    },
+    "kept-pane-reactivation": {
+      "receipt": "browser-green-1",
+      "name": "kept-pane-reactivation",
+      "phase": "green",
+      "network": [
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        }
+      ],
+      "pageErrors": [],
+      "status": "passed",
+      "screenshot": "kept-pane-reactivation.png"
+    },
+    "moved-focus-pending-width": {
+      "receipt": "browser-green-1",
+      "name": "moved-focus-pending-width",
+      "phase": "green",
+      "network": [
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "POST",
+          "path": "/api/lectern/commands",
+          "body": {
+            "kind": "EnsureItem",
+            "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+            "clientMutationId": "ed3dbf2a-d15a-486e-aae4-7342f6a8519e"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        }
+      ],
+      "pageErrors": [],
+      "status": "passed",
+      "screenshot": "moved-focus-pending-width.png"
+    },
+    "delayed-first-delivery": {
+      "receipt": "browser-green-1",
+      "name": "delayed-first-delivery",
+      "phase": "green",
+      "network": [
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "POST",
+          "path": "/api/lectern/commands",
+          "body": {
+            "kind": "EnsureItem",
+            "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+            "clientMutationId": "89890c00-043b-4732-806d-c2dd738f6ff0"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        }
+      ],
+      "pageErrors": [],
+      "status": "passed",
+      "screenshot": "delayed-first-delivery.png"
+    },
+    "lost-receipt-after-removal": {
+      "receipt": "browser-green-1",
+      "name": "lost-receipt-after-removal",
+      "phase": "green",
+      "network": [
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "POST",
+          "path": "/api/lectern/commands",
+          "body": {
+            "kind": "EnsureItem",
+            "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+            "clientMutationId": "8a0814f1-5d3a-4879-9c52-cc956aebaefa"
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/lectern/commands",
+          "body": {
+            "kind": "EnsureItem",
+            "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+            "clientMutationId": "8a0814f1-5d3a-4879-9c52-cc956aebaefa"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        }
+      ],
+      "pageErrors": [],
+      "status": "passed",
+      "screenshot": "lost-receipt-after-removal.png"
+    },
+    "dismissal-and-pane-lifetime": {
+      "receipt": "browser-green-1",
+      "name": "dismissal-and-pane-lifetime",
+      "phase": "green",
+      "network": [
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "POST",
+          "path": "/api/lectern/commands",
+          "body": {
+            "kind": "EnsureItem",
+            "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+            "clientMutationId": "37040e5d-fdc0-4a54-81ac-bd594b6510da"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "POST",
+          "path": "/api/lectern/commands",
+          "body": {
+            "kind": "EnsureItem",
+            "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+            "clientMutationId": "37040e5d-fdc0-4a54-81ac-bd594b6510da"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        }
+      ],
+      "pageErrors": [],
+      "status": "passed",
+      "screenshot": "dismissal-and-pane-lifetime.png"
+    },
+    "acknowledged-facts-failure": {
+      "receipt": "browser-green-1",
+      "name": "acknowledged-facts-failure",
+      "phase": "green",
+      "network": [
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "POST",
+          "path": "/api/lectern/commands",
+          "body": {
+            "kind": "EnsureItem",
+            "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+            "clientMutationId": "04f8e905-cbd6-48a3-a75b-180939948f3d"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        }
+      ],
+      "pageErrors": [],
+      "status": "passed",
+      "screenshot": "acknowledged-facts-failure.png"
+    },
+    "pre-receipt-facts-stay-stale": {
+      "receipt": "browser-green-1",
+      "name": "pre-receipt-facts-stay-stale",
+      "phase": "green",
+      "network": [
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "POST",
+          "path": "/api/lectern/commands",
+          "body": {
+            "kind": "EnsureItem",
+            "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+            "clientMutationId": "f2380823-a73b-4cbe-bef9-04ac738d92a7"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        }
+      ],
+      "pageErrors": [],
+      "status": "passed",
+      "screenshot": "pre-receipt-facts-stay-stale.png"
+    },
+    "initial-quick-read-error": {
+      "receipt": "browser-green-1",
+      "name": "initial-quick-read-error",
+      "phase": "green",
+      "network": [
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        }
+      ],
+      "pageErrors": [],
+      "status": "passed",
+      "screenshot": "initial-quick-read-error.png"
+    },
+    "menu-add-surface": {
+      "receipt": "browser-green-1",
+      "name": "menu-add-surface",
+      "phase": "green",
+      "network": [
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "POST",
+          "path": "/api/lectern/commands",
+          "body": {
+            "kind": "EnsureItem",
+            "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+            "clientMutationId": "205015dc-b7d7-401a-a0e6-747ec46effb3"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        }
+      ],
+      "pageErrors": [],
+      "status": "passed",
+      "screenshot": "menu-add-surface.png"
+    },
+    "suggestions-add-surface": {
+      "receipt": "browser-green-1",
+      "name": "suggestions-add-surface",
+      "phase": "green",
+      "network": [
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "POST",
+          "path": "/api/lectern/commands",
+          "body": {
+            "kind": "EnsureItem",
+            "mediaId": "01a13c1c-b328-7b45-951d-a0265b28d791",
+            "clientMutationId": "6f8d0778-408b-4e7c-b891-ed8e49a3559a"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        }
+      ],
+      "pageErrors": [],
+      "status": "passed",
+      "screenshot": "suggestions-add-surface.png"
+    },
+    "reactivation-retained-error": {
+      "receipt": "browser-green-1",
+      "name": "reactivation-retained-error",
+      "phase": "green",
+      "network": [
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        }
+      ],
+      "pageErrors": [],
+      "status": "passed",
+      "screenshot": "reactivation-retained-error.png"
+    },
+    "transcript-add-surface": {
+      "receipt": "browser-green-transcript-1",
+      "name": "transcript-add-surface",
+      "phase": "green",
+      "network": [
+        {
+          "method": "POST",
+          "path": "/api/lectern/commands",
+          "body": {
+            "kind": "EnsureItem",
+            "mediaId": "01a13c2f-8086-7714-bb4d-29c31a44300e",
+            "clientMutationId": "726b1f51-c187-476c-9d47-f1be5b7ad98a"
+          }
+        }
+      ],
+      "pageErrors": [],
+      "status": "passed",
+      "screenshot": "transcript-add-surface.png"
+    },
+    "narrow-layout": {
+      "receipt": "browser-green-narrow-rem-3",
+      "name": "narrow-layout",
+      "phase": "green",
+      "network": [
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        }
+      ],
+      "pageErrors": [],
+      "status": "passed",
+      "screenshot": "narrow-layout.png"
+    }
+  },
+  "composed": {
+    "quick-read-full-check": {
+      "name": "unconfirmed-check-at-complete-capacity",
+      "status": "passed",
+      "canonical": 2000,
+      "visible": 1999,
+      "commands": [
+        {
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+          "clientMutationId": "a475013c-4b8b-4f42-829e-713d61f8de6f"
+        },
+        {
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+          "clientMutationId": "a475013c-4b8b-4f42-829e-713d61f8de6f"
+        }
+      ],
+      "pageErrors": []
+    },
+    "suggestion-full-red": {
+      "name": "retained-suggestion-capacity",
+      "phase": "red",
+      "status": "expected-red",
+      "stage": "fresh-capacity-guard",
+      "error": "fresh suggestion remains enabled after canonical full snapshot\n\nnull !== 'true'\n",
+      "commands": [
+        {
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b328-7b45-951d-a0265b28d791",
+          "clientMutationId": "496d2e00-0f41-482d-a417-97bd0f16afb1"
+        }
+      ],
+      "pageErrors": []
+    },
+    "suggestion-full-green": {
+      "name": "retained-suggestion-capacity",
+      "phase": "green",
+      "status": "passed",
+      "canonical": 2000,
+      "visible": 1999,
+      "commands": [
+        {
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b328-7b45-951d-a0265b28d791",
+          "clientMutationId": "9eac9905-0923-4214-b36d-83bf3f76ae7c"
+        },
+        {
+          "kind": "EnsureItem",
+          "mediaId": "01a13c1c-b328-7b45-951d-a0265b28d791",
+          "clientMutationId": "9eac9905-0923-4214-b36d-83bf3f76ae7c"
+        }
+      ],
+      "pageErrors": []
+    },
+    "clean-built": {
+      "name": "clean-built-ordinary-journey",
+      "status": "passed",
+      "network": [
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "POST",
+          "path": "/api/lectern/commands",
+          "body": {
+            "kind": "EnsureItem",
+            "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+            "clientMutationId": "6edb90ea-680b-4f94-95a7-e6a579858142"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        },
+        {
+          "method": "POST",
+          "path": "/api/lectern/commands",
+          "body": {
+            "kind": "RemoveItem",
+            "itemId": "fefd4ec5-6737-42c6-ab00-fd5bc2a5b183",
+            "clientMutationId": "71ba981a-9442-4526-ae02-c748fd7f8974"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/lectern/quick-reads"
+        }
+      ],
+      "pageErrors": [],
+      "beforeRows": [
+        "media:01a13c1c-b2f1-78c1-861c-b6477891bf00",
+        "media:01a13c1c-b2be-7467-bcef-706bbed0c295",
+        "media:01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+        "media:01a13c1c-b259-7c48-841b-75702dfc8368",
+        "media:01a13c1c-b1de-71ab-afbb-8018180e8619"
+      ],
+      "addedMembership": {
+        "itemId": "fefd4ec5-6737-42c6-ab00-fd5bc2a5b183",
+        "mediaSummary": {
+          "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+          "mediaKind": "web_article",
+          "title": "lectern proof absent",
+          "contributors": [],
+          "originalPublishedDate": {
+            "kind": "Absent"
+          },
+          "processingStatus": "ready_for_reading",
+          "consumption": {
+            "state": "Unread",
+            "progress": {
+              "kind": "Absent"
+            }
+          },
+          "duration": {
+            "kind": "Present",
+            "value": {
+              "modality": "Read",
+              "estimate": {
+                "totalMinutes": 2,
+                "remainingMinutes": {
+                  "kind": "Present",
+                  "value": 2
+                }
+              }
+            }
+          }
+        },
+        "href": "/media/01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+        "addedAt": "2026-10-14T21:17:13.904210Z",
+        "activation": {
+          "kind": "Readable"
+        }
+      },
+      "afterAddCount": 5,
+      "afterRemoveCount": 4,
+      "afterRemoveAtCapacity": false
+    }
+  },
+  "streaming": {
+    "deadline-before-refactor": {
+      "results": {
+        "origin": "http://localhost:3299",
+        "records": [
+          {
+            "name": "before-headers",
+            "startedAt": "2026-10-14T20:55:58.751Z",
+            "deadlineMs": 30162,
+            "command": {
+              "kind": "EnsureItem",
+              "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+              "clientMutationId": "1f856ce8-5fd1-4818-8d21-310ac2834aad"
+            },
+            "bytesBeforeDeadline": 0,
+            "attempts": 2,
+            "unrelatedRemoval": true,
+            "presentReadPreservedUnconfirmed": true,
+            "status": "passed",
+            "finishedAt": "2026-10-14T20:56:31.704Z"
+          },
+          {
+            "name": "mid-body",
+            "startedAt": "2026-10-14T20:56:31.856Z",
+            "deadlineMs": 30147,
+            "command": {
+              "kind": "EnsureItem",
+              "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+              "clientMutationId": "59efb0ba-1532-4641-83e2-7044239f9ebd"
+            },
+            "bytesBeforeDeadline": 1,
+            "attempts": 2,
+            "unrelatedRemoval": true,
+            "presentReadPreservedUnconfirmed": true,
+            "status": "passed",
+            "finishedAt": "2026-10-14T20:57:04.601Z"
+          }
+        ]
+      },
+      "proxy": {
+        "requests": [
+          {
+            "id": 1,
+            "mode": "before-headers",
+            "command": {
+              "kind": "EnsureItem",
+              "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+              "clientMutationId": "1f856ce8-5fd1-4818-8d21-310ac2834aad"
+            },
+            "bodySha256": "034ea6affcf51bdd879cbc6375fef415a74dcdc6b2c7f083fed6870c5949b901",
+            "startedAtMs": 1792011360482,
+            "bytesForwarded": 0,
+            "status": 200,
+            "upstreamHeadersMs": 84,
+            "upstreamCompleteMs": 84,
+            "downstreamClosedMs": 30054
+          },
+          {
+            "id": 2,
+            "mode": "pass",
+            "command": {
+              "kind": "EnsureItem",
+              "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+              "clientMutationId": "1f856ce8-5fd1-4818-8d21-310ac2834aad"
+            },
+            "bodySha256": "034ea6affcf51bdd879cbc6375fef415a74dcdc6b2c7f083fed6870c5949b901",
+            "startedAtMs": 1792011391484,
+            "bytesForwarded": 2459,
+            "status": 200,
+            "upstreamHeadersMs": 68,
+            "upstreamCompleteMs": 68,
+            "downstreamClosedMs": 69
+          },
+          {
+            "id": 3,
+            "mode": "mid-body",
+            "command": {
+              "kind": "EnsureItem",
+              "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+              "clientMutationId": "59efb0ba-1532-4641-83e2-7044239f9ebd"
+            },
+            "bodySha256": "be6a6faec0d55a535edc34486f4c0223076774d6255601afc52d0c61e34ae6e6",
+            "startedAtMs": 1792011393235,
+            "bytesForwarded": 1,
+            "status": 200,
+            "upstreamHeadersMs": 76,
+            "firstByteForwardedMs": 77,
+            "upstreamCompleteMs": 77,
+            "downstreamClosedMs": 30054
+          },
+          {
+            "id": 4,
+            "mode": "pass",
+            "command": {
+              "kind": "EnsureItem",
+              "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+              "clientMutationId": "59efb0ba-1532-4641-83e2-7044239f9ebd"
+            },
+            "bodySha256": "be6a6faec0d55a535edc34486f4c0223076774d6255601afc52d0c61e34ae6e6",
+            "startedAtMs": 1792011424282,
+            "bytesForwarded": 2459,
+            "status": 200,
+            "upstreamHeadersMs": 68,
+            "upstreamCompleteMs": 68,
+            "downstreamClosedMs": 68
+          }
+        ]
+      }
+    },
+    "body-loss-red": {
+      "results": {
+        "origin": "http://localhost:3299",
+        "proxyOrigin": "http://127.0.0.1:54710",
+        "proxyClosed": true,
+        "records": [
+          {
+            "name": "lost-404-body",
+            "startedAt": "2026-10-14T21:08:44.263Z",
+            "status": "expected-red",
+            "command": {
+              "kind": "EnsureItem",
+              "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+              "clientMutationId": "f3f0cf3f-85fb-4ef4-9e44-70a21d3f9a76"
+            },
+            "upstreamStatus": 404,
+            "bytesBeforeLoss": 1,
+            "fixtureId": "5a7b7047-8ab6-421c-8635-4bc4dd305428",
+            "tombstoneRestored": true,
+            "error": "a real truncated 404 body entered the workspace defect boundary instead of unconfirmed recovery",
+            "finishedAt": "2026-10-14T21:08:48.259Z"
+          }
+        ]
+      },
+      "proxy": {
+        "requests": [
+          {
+            "id": 1,
+            "mode": "mid-body",
+            "command": {
+              "kind": "EnsureItem",
+              "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+              "clientMutationId": "f3f0cf3f-85fb-4ef4-9e44-70a21d3f9a76"
+            },
+            "bodySha256": "55e1f22e4313ddad9a3a6ce9595c775689a30163b90ac8023142959a7fba1b36",
+            "startedAtMs": 1792012127450,
+            "bytesForwarded": 1,
+            "status": 404,
+            "upstreamHeadersMs": 570,
+            "firstByteForwardedMs": 570,
+            "upstreamCompleteMs": 571,
+            "downstreamDestroyedMs": 790,
+            "downstreamClosedMs": 790
+          }
+        ]
+      }
+    },
+    "body-loss-green": {
+      "results": {
+        "origin": "http://localhost:3299",
+        "proxyOrigin": "http://127.0.0.1:54920",
+        "proxyClosed": true,
+        "records": [
+          {
+            "name": "lost-404-body",
+            "startedAt": "2026-10-14T21:09:14.222Z",
+            "command": {
+              "kind": "EnsureItem",
+              "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+              "clientMutationId": "2cd56e34-02f2-4972-9e1c-94e209dacaa9"
+            },
+            "upstreamStatus": 404,
+            "bytesBeforeLoss": 1,
+            "fixtureId": "ffa77f09-44d2-402f-b845-0c35b090fe4d",
+            "tombstoneRestored": true,
+            "attempts": 2,
+            "recovery": "unconfirmed then acknowledged with exact same command",
+            "status": "passed",
+            "finishedAt": "2026-10-14T21:09:17.147Z"
+          }
+        ]
+      },
+      "proxy": {
+        "requests": [
+          {
+            "id": 1,
+            "mode": "mid-body",
+            "command": {
+              "kind": "EnsureItem",
+              "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+              "clientMutationId": "2cd56e34-02f2-4972-9e1c-94e209dacaa9"
+            },
+            "bodySha256": "cf5793cfbb953a2bca0a66ca8d147b6c1112195c10946656ec901c5b3ee912b0",
+            "startedAtMs": 1792012156476,
+            "bytesForwarded": 1,
+            "status": 404,
+            "upstreamHeadersMs": 22,
+            "firstByteForwardedMs": 22,
+            "upstreamCompleteMs": 22,
+            "downstreamDestroyedMs": 185,
+            "downstreamClosedMs": 185
+          },
+          {
+            "id": 2,
+            "mode": "pass",
+            "command": {
+              "kind": "EnsureItem",
+              "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+              "clientMutationId": "2cd56e34-02f2-4972-9e1c-94e209dacaa9"
+            },
+            "bodySha256": "cf5793cfbb953a2bca0a66ca8d147b6c1112195c10946656ec901c5b3ee912b0",
+            "startedAtMs": 1792012156765,
+            "bytesForwarded": 4369,
+            "status": 200,
+            "upstreamHeadersMs": 78,
+            "upstreamCompleteMs": 79,
+            "downstreamClosedMs": 79
+          }
+        ]
+      }
+    },
+    "midbody-after-refactor": {
+      "results": {
+        "origin": "http://localhost:3299",
+        "proxyOrigin": "http://127.0.0.1:55060",
+        "proxyClosed": true,
+        "records": [
+          {
+            "name": "mid-body",
+            "startedAt": "2026-10-14T21:09:28.703Z",
+            "deadlineMs": 30163,
+            "command": {
+              "kind": "EnsureItem",
+              "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+              "clientMutationId": "b386c72d-1048-432a-8731-c2355c38fb4c"
+            },
+            "bytesBeforeDeadline": 1,
+            "attempts": 2,
+            "unrelatedRemoval": true,
+            "presentReadPreservedUnconfirmed": true,
+            "status": "passed",
+            "finishedAt": "2026-10-14T21:10:01.402Z"
+          }
+        ]
+      },
+      "proxy": {
+        "requests": [
+          {
+            "id": 1,
+            "mode": "mid-body",
+            "command": {
+              "kind": "EnsureItem",
+              "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+              "clientMutationId": "b386c72d-1048-432a-8731-c2355c38fb4c"
+            },
+            "bodySha256": "aa4b645de86c52f59429a65c4c528ce5dc0cc7bde4dab1ec2f2e0d09c9b35f74",
+            "startedAtMs": 1792012170182,
+            "bytesForwarded": 1,
+            "status": 200,
+            "upstreamHeadersMs": 73,
+            "firstByteForwardedMs": 74,
+            "upstreamCompleteMs": 74,
+            "downstreamClosedMs": 30059
+          },
+          {
+            "id": 2,
+            "mode": "pass",
+            "command": {
+              "kind": "EnsureItem",
+              "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+              "clientMutationId": "b386c72d-1048-432a-8731-c2355c38fb4c"
+            },
+            "bodySha256": "aa4b645de86c52f59429a65c4c528ce5dc0cc7bde4dab1ec2f2e0d09c9b35f74",
+            "startedAtMs": 1792012201149,
+            "bytesForwarded": 3778,
+            "status": 200,
+            "upstreamHeadersMs": 84,
+            "upstreamCompleteMs": 85,
+            "downstreamClosedMs": 85
+          }
+        ]
+      }
+    },
+    "owner-built": {
+      "results": {
+        "origin": "http://localhost:3299",
+        "proxyOrigin": "http://127.0.0.1:59953",
+        "proxyClosed": true,
+        "records": [
+          {
+            "name": "owner-signout",
+            "startedAt": "2026-10-14T21:19:46.974Z",
+            "command": {
+              "kind": "EnsureItem",
+              "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+              "clientMutationId": "762014c8-784d-4c84-89db-d9c8a79ad4d7"
+            },
+            "attempts": 2,
+            "signedOutRecoveryRemoved": true,
+            "secondOwnerShellMounted": true,
+            "secondOwnerUnchanged": true,
+            "oldReceiptStatus": 200,
+            "oldRequestClosedMs": 274,
+            "lateReleaseAfterSecondLogin": true,
+            "limit": "normal signout navigates the document; this proves the real account boundary, not an artificial same-document owner replacement",
+            "status": "passed",
+            "finishedAt": "2026-10-14T21:20:19.815Z"
+          }
+        ]
+      },
+      "proxy": {
+        "requests": [
+          {
+            "id": 1,
+            "mode": "before-headers",
+            "command": {
+              "kind": "EnsureItem",
+              "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+              "clientMutationId": "762014c8-784d-4c84-89db-d9c8a79ad4d7"
+            },
+            "bodySha256": "42ab0078a545bcda112b633b9f2f1a62ceaf672b50421d808e3921f7623fbe0e",
+            "startedAtMs": 1792012789126,
+            "bytesForwarded": 0,
+            "status": 200,
+            "upstreamHeadersMs": 70,
+            "upstreamCompleteMs": 70,
+            "downstreamClosedMs": 30010
+          },
+          {
+            "id": 2,
+            "mode": "before-headers",
+            "command": {
+              "kind": "EnsureItem",
+              "mediaId": "01a13c1c-b28c-77bc-a1f8-4f341ea050ec",
+              "clientMutationId": "762014c8-784d-4c84-89db-d9c8a79ad4d7"
+            },
+            "bodySha256": "42ab0078a545bcda112b633b9f2f1a62ceaf672b50421d808e3921f7623fbe0e",
+            "startedAtMs": 1792012819224,
+            "bytesForwarded": 0,
+            "status": 200,
+            "upstreamHeadersMs": 66,
+            "upstreamCompleteMs": 67,
+            "downstreamClosedMs": 274
+          }
+        ]
+      }
+    }
+  },
+  "narrow_measurements": [
+    {
+      "text": "add to lectern",
+      "width": 158,
+      "height": 80,
+      "scrollWidth": 156,
+      "clientWidth": 156,
+      "right": 239,
+      "viewport": 320,
+      "fontSize": "26px",
+      "primaryControlRow": "auto"
+    },
+    {
+      "text": "add to lectern",
+      "width": 198,
+      "height": 80,
+      "scrollWidth": 196,
+      "clientWidth": 196,
+      "right": 279,
+      "viewport": 360,
+      "fontSize": "26px",
+      "primaryControlRow": "auto"
+    },
+    {
+      "text": "add to lectern",
+      "width": 223.375,
+      "height": 49,
+      "scrollWidth": 221,
+      "clientWidth": 221,
+      "right": 304.375,
+      "viewport": 390,
+      "fontSize": "26px",
+      "primaryControlRow": "auto"
+    },
+    {
+      "text": "add to lectern",
+      "width": 223.375,
+      "height": 49,
+      "scrollWidth": 221,
+      "clientWidth": 221,
+      "right": 304.375,
+      "viewport": 414,
+      "fontSize": "26px",
+      "primaryControlRow": "auto"
+    }
+  ],
+  "labelled_precondition_restoration": {
+    "stage": "final labelled-precondition restoration",
+    "result": "passed",
+    "counts": {
+      "capacity_precondition_media": 0,
+      "viewer_tombstones": 0,
+      "fixture_teardown_barriers": 0
+    }
+  },
+  "images": {
+    "ordinary-added.png": {
+      "source": "browser-clean-built/added.png",
+      "sha256": "5110221b3a2492e1328b7fba9bcc89afc3859f656627367a333af24c0423b6d4"
+    },
+    "narrow-320.png": {
+      "source": "browser-green-narrow-rem-3/narrow-layout-320.png",
+      "sha256": "a0ba28892bd5be5091eabe780a031135dfb3e8026e50d7698821c68f3ebb8855"
+    },
+    "full-capacity.png": {
+      "source": "browser-capacity/capacity.png",
+      "sha256": "63c9cfa6bea8bd00198d674008bba21f78a01c65ea4fcffc5cb65a7d5e24393b"
+    }
+  },
+  "review": {
+    "owners": [
+      "backend/wire",
+      "command/recovery",
+      "interaction/content"
+    ],
+    "independent_reviews": "backend ↔ command; integrator and backend review interaction; no unresolved implementation blockers"
+  },
+  "static_before_build": "passed",
+  "production_build": "passed",
+  "build_warning": "inherited AddPanel.module.css:22 autoprefixer start alignment/cache warning; ticketed",
+  "cleanup": {
+    "status": "passed",
+    "changes": [
+      "stopped owned api",
+      "stopped owned web",
+      "stopped external fixture provider",
+      "removed owned background worker; borrowed image preserved",
+      "removed owned postgres/minio containers, network and data volumes",
+      "removed owned auth project and data volume, including both disposable accounts",
+      "removed detached baseline worktree",
+      "removed disposable-environment production build artifacts",
+      "deleted complete owned campaign directory, tests and playwright dependencies"
+    ],
+    "remaining_owned_containers": 0,
+    "remaining_owned_volumes": 0,
+    "remaining_owned_networks": 0,
+    "campaign_directory_exists": false
+  },
+  "static_after_cleanup": {
+    "status": "passed",
+    "command": "./scripts/test",
+    "exit_code": 0,
+    "log": "static-checks.txt",
+    "log_sha256": "390190800da46b9d3c68c7b4c6426d2f96aa9833e5c5c49d1d4cab9dd90c01cc"
+  },
+  "provisional_runs": [
+    "first narrow attempt clipped; later four-width pass supersedes it",
+    "initial transcript fixture skipped; later ordinary podcast acquisition/add pass supersedes it",
+    "first suggestion green used playwright click on aria-disabled; corrected keyboard guard passed",
+    "first owner result asserted while loading; final authenticated navigation pass supersedes it",
+    "early readiness probes preceded startup or used unauthenticated health; not product red"
+  ],
+  "limits": [
+    "local chrome; no production/physical handset/screen-reader proof",
+    "synthetic external podcast metadata; no audio playback/transcription/model enrichment proof",
+    "normal signout closes the old document/request; late bytes were not delivered into a fabricated same-document owner replacement",
+    "tests intentionally deleted after proof"
+  ]
+}

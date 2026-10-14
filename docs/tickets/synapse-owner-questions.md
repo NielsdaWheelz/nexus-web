@@ -16,10 +16,7 @@ decision before anyone changes it.
    option: a ✦ in reader Evidence for media.
 3. the Similar lane's work vector (Q5). a media anchor's first chunk vector
    stands for the whole work. option: a document-level embedding.
-4. quick reads include Lectern members (Q7). `GET /lectern/quick-reads` has no
-   member exclusion, unlike At hand. intended?
-
-5. the source side of "already related" (design Q3). the far end of every
+4. the source side of "already related" (design Q3). the far end of every
    relation counts at work grain, and dismissals count at work grain on both
    ends, but relations are read from the source itself: a highlight's scan may
    propose a work its media is already linked to or already proposed. counting
@@ -31,3 +28,7 @@ decision before anyone changes it.
 
 acceptance: each item has a recorded decision; any change it implies gets its
 own ticket.
+
+resolved 2026-10-14: Q7 keeps existing lectern members in quick reads; expose
+membership and direct add. decision and implementation contract:
+[quick reads plan](../quick-reads-lectern-plan.md).
