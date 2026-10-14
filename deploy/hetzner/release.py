@@ -87,8 +87,10 @@ SERVICES = (
 )
 
 MIN_DOCKER_MAJOR = 28
-MIN_MEMORY_TOTAL = 1900 * 1024 * 1024
-MIN_MEMORY_AVAILABLE = 128 * 1024 * 1024
+# normal service caps (2224 MiB), host/daemons (768 MiB), free reserve (256 MiB).
+# swap does not count toward this physical-memory budget.
+MIN_MEMORY_TOTAL = 3248 * 1024 * 1024
+MIN_MEMORY_AVAILABLE = 256 * 1024 * 1024
 MIN_SWAP_TOTAL = 1024 * 1024 * 1024
 MIN_ROOT_FREE = 2 * 1024 * 1024 * 1024
 

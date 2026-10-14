@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 SERVER_NAME="${HCLOUD_SERVER_NAME:-nexus-api-worker}"
-SERVER_TYPE="${HCLOUD_SERVER_TYPE:-cpx11}"
+SERVER_TYPE="${HCLOUD_SERVER_TYPE:-cpx21}"
 LOCATION="${HCLOUD_LOCATION:-hil}"
 IMAGE="${HCLOUD_IMAGE:-ubuntu-24.04}"
 SSH_KEY="${HCLOUD_SSH_KEY:-}"

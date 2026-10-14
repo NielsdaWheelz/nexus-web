@@ -71,12 +71,23 @@ LUKS2 container is opened and mounted; Docker cannot create the Codex agent
 host without that bind source, so preflight refuses to proceed. See
 `docs/runbooks/codex-personal-agent-host.md`.
 
-The host contract is cgroup v2 with the memory controller, Docker Engine 28 or
-newer (the Codex private bridge needs `gateway_mode_ipv4=isolated`), at least
-1 GiB of swap, at least 128 MiB of available memory and 2 GiB free under `/`.
-Preflight measures each of these. Vercel custom-domain auto-assignment must stay
-disabled and Vercel Authentication must protect previews only, so the staged
-production-target deployment is publicly probeable before promotion.
+the host contract is cgroup v2 with the memory controller, docker engine 28 or
+newer (the codex private bridge needs `gateway_mode_ipv4=isolated`), at least
+3,248 mib of actual `MemTotal`, 256 mib of `MemAvailable`, 1 gib of swap and
+2 gib free under `/`. preflight measures these values; swap never counts
+toward the physical-memory requirement. provisioning defaults to the 4 gib
+x86 `cpx21` in hillsboro (`hil`).
+
+normal service limits total 2,224 mib: postgres 512, caddy 48, api 384,
+interactive worker 320, background worker 448, codex egress 64 and native codex
+host 448. the api's memory-plus-swap limit also stays at 384 mib. another
+768 mib covers the host and daemons, with a 256 mib free reserve. this budgets
+for ordinary background conversion, chat and reading to overlap; it does
+not admit concurrent maintenance outside the existing writer-pause procedure.
+
+vercel custom-domain auto-assignment must stay disabled and vercel
+authentication must protect previews only, so the staged production-target
+deployment is publicly probeable before promotion.
 
 ## Immutable artifact lineage
 

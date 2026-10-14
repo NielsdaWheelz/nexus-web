@@ -86,8 +86,8 @@ services:
     # Uvicorn cancels remaining requests after 20s, leaving time for cleanup.
     stop_grace_period: 30s
     mem_reservation: 192m
-    mem_limit: 320m
-    memswap_limit: 320m
+    mem_limit: 384m
+    memswap_limit: 384m
     pids_limit: 256
     env_file:
       - ${NEXUS_CONFIG_FILE:?set a captured content-addressed config}
