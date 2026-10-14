@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from nexus.db.models import EpubNavLocation, EpubTocNode, Media, ProcessingStatus, ReaderPublication
 from nexus.ids import new_uuid7
 from nexus.schemas.presence import Present, nullable_from_presence
-from nexus.schemas.reader_apparatus import NoteRegion
+from nexus.schemas.reader_apparatus import NoteRegion, ReaderApparatusStatus
 from nexus.schemas.source_issues import (
     SOURCE_ISSUES,
     UnresolvedNavigationTarget,
@@ -63,6 +63,8 @@ class ReaderNavigationRepairInspection:
     installed_metadata_sha256: str
     proposed_metadata_sha256: str
     changed: bool
+    status_before: ReaderApparatusStatus
+    status_after: ReaderApparatusStatus
     sections_before: int
     sections_after: int
     toc_before: int
@@ -724,6 +726,8 @@ def _inspection(snapshot: _Snapshot, prepared: _Prepared) -> ReaderNavigationRep
         installed_metadata_sha256=_digest(old),
         proposed_metadata_sha256=_digest(new),
         changed=old != new,
+        status_before=old["status"],
+        status_after=new["status"],
         sections_before=len(old["sections"]),
         sections_after=len(new["sections"]),
         toc_before=len(old["toc"]),
