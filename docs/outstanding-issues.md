@@ -439,3 +439,7 @@ unexpected timeouts. See
 - [open] browse / provider configuration · 2026-10-13 pane controls · youtube key rejects the local caller ip; successful qualification waived: [ticket](tickets/browse-youtube-upstream-forbids-live-query.md).
 
 - [open] android / task ownership · 2026-10-13 pane controls · unrelated add-import debug package and reverse59830 disappeared during qualification; their owner’s cleanup is unconfirmed: [ticket](tickets/android-baseline-drift-during-pane-qualification.md).
+- [open] web / reader, accessibility · 2026-10-14 shortcut-removal review · reader character shortcuts lack focus ownership and annotation keys ignore overlays: [ticket](tickets/reader-character-shortcuts-ignore-focus.md).
+- [open] web / chat, keyboard · 2026-10-14 shortcut-removal review · an active docent walk can steal modified keys such as command/control+p: [ticket](tickets/docent-shortcuts-steal-modified-keys.md).
+- [open] web / player, overlays · 2026-10-14 shortcut-removal review · player shortcuts remain active on a focused library chooser sheet: [ticket](tickets/player-shortcuts-ignore-overlays.md).
+- [open] web / keyboard verification · 2026-10-14 shortcut removal · fixed shortcuts passed static checks; authenticated browser journeys remain unverified: [ticket](tickets/fixed-shortcuts-browser-verification.md).

@@ -1,4 +1,4 @@
-// The identity of every in-app place. The rail, Nexus and keybindings each
+// The identity of every in-app place. The rail and Nexus each
 // project it; a destination without an icon takes its route's icon.
 import { CalendarDays, Sparkles, UserRound, type LucideIcon } from "lucide-react";
 import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";

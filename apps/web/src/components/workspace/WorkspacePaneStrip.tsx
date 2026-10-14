@@ -66,6 +66,10 @@ export default function WorkspacePaneStrip(props: {
     props.onClose(paneId);
   };
   const onKeyDown = (event: KeyboardEvent, index: number) => {
+    if (
+      event.defaultPrevented || event.nativeEvent.isComposing ||
+      event.metaKey || event.ctrlKey || event.altKey || event.shiftKey
+    ) return;
     const last = items.length - 1;
     const byKey: Partial<Record<string, number>> = {
       ArrowRight: index === last ? 0 : index + 1,

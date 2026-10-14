@@ -111,6 +111,29 @@ chord (Cmd/Ctrl+K) pressed while Nexus is open on its root opens the active
 row's Actions menu. Renderers never infer command, ranking, target, or workflow
 meaning from copy or identifiers.
 
+## keyboard shortcuts
+
+app shortcuts are fixed product behavior. `lib/shortcuts.ts` owns their keys,
+labels, reference descriptions, matching, and `aria-keyshortcuts` projection.
+command is the modifier on mac/ios; control is the modifier elsewhere. extra
+modifiers, composing input, and already-handled events do not match. keys follow
+the keyboard layout's `event.key` rather than a physical key position.
+
+- command/control+k opens nexus; on its root it opens the selected result's
+  actions when available. repeated keydown does not perform a second action.
+  the chord yields to any other active overlay owner, including a nested menu.
+- command/control+f belongs to the active pane. it yields to overlays and only
+  prevents browser find when the pane accepts search.
+- command/control+shift+left/right moves between visible panes without wrapping.
+  it yields while typing or while an overlay owns interaction. the pane strip's
+  plain arrow keys only move focus; modified keys reach the shortcut owner.
+
+the same table supplies the read-only `/settings/keybindings` reference, linked
+from settings and searchable in nexus. there is no shortcut preference,
+capture, reassignment, provider, or persistence. old browser-local assignments
+are ignored; they need no migration or cleanup code. destinations and quick
+actions remain accessible through nexus and ordinary controls.
+
 ## Ownership
 
 | Concern                                                           | Owner                                                                                                             |
@@ -136,7 +159,8 @@ meaning from copy or identifiers.
 | Nexus workflow pages and row parts (both surfaces)               | `apps/web/src/components/nexus/NexusPages.tsx` and `NexusRow.tsx`                                                 |
 | Nexus ingress and direct action session                          | `apps/web/src/lib/nexus/events.ts` and `apps/web/src/components/nexus/useNexusController.ts`                      |
 | Daily Page location and append entry                             | `apps/web/src/lib/notes/openDailyPage.ts`; the store delivers the entry to the visit the target lands on          |
-| Keybinding projection                                             | `apps/web/src/app/(authenticated)/settings/keybindings/KeybindingsPaneBody.tsx`                                   |
+| fixed shortcut definitions and projections                      | `apps/web/src/lib/shortcuts.ts`                                                                                   |
+| read-only shortcut reference                                     | `apps/web/src/app/(authenticated)/settings/keybindings/KeybindingsPaneBody.tsx`                                   |
 | Nexus history href canonicalization                              | `python/nexus/services/nexus_history.py`                                                                          |
 
 The separations are deliberate. A destination can exist without occupying

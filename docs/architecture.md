@@ -2049,7 +2049,7 @@ open over Resume and never become panes.
   chat, player, notes editor, Nexus, search, contributors, libraries/
   items, settings — all rendered as pane bodies. UI primitives live in
   `components/ui/*`; cross-cutting hooks in `lib/ui/*`; theming via a `nx-theme`
-  cookie; keybindings in `lib/keybindings.ts`; Android-shell adaptation in
+  cookie; fixed shortcuts in `lib/shortcuts.ts`; Android-shell adaptation in
   `lib/androidShell.ts`.
 
 ---

@@ -31,7 +31,6 @@ export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean
         ) : null}
         {row.action.kind === "Unavailable" ? <span className={styles.rowUnavailable}>{row.action.reason}</span> : null}
       </span>
-      {row.shortcut ? <kbd className={styles.rowShortcut}>{row.shortcut}</kbd> : null}
     </>
   );
 }

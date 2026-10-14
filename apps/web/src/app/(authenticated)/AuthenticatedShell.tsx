@@ -16,7 +16,6 @@ import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import ActivityCaptureLifecycle from "@/lib/consumption/ActivityCaptureLifecycle";
 import { readerSurfaceStyle } from "@/lib/documentReader/DocumentReader";
 import { ImportsProvider } from "@/lib/imports/ImportsProvider";
-import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { MediaSummaryProvider } from "@/lib/media/MediaSummaryProvider";
@@ -54,14 +53,12 @@ export default function AuthenticatedShell(props: {
         <UnauthenticatedApiBoundary>
           <ActivityCaptureLifecycle />
           <ResourceCacheProvider value={props.resources}>
-            <KeybindingsProvider>
-              <ReaderProvider initialProfile={props.readerProfile}>
-                <Workspace
-                  accountId={props.account.accountId}
-                  initialState={props.initialState}
-                />
-              </ReaderProvider>
-            </KeybindingsProvider>
+            <ReaderProvider initialProfile={props.readerProfile}>
+              <Workspace
+                accountId={props.account.accountId}
+                initialState={props.initialState}
+              />
+            </ReaderProvider>
           </ResourceCacheProvider>
         </UnauthenticatedApiBoundary>
       </RenderEnvironmentProvider>

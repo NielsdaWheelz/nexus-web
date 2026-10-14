@@ -23,8 +23,6 @@ import PaneRouteBoundary from "@/components/workspace/PaneRouteBoundary";
 import ResizeHandle from "@/components/workspace/ResizeHandle";
 import { usePaneRefresh } from "@/components/workspace/usePaneRefresh";
 import { present } from "@/lib/api/presence";
-import { matchesKeyEvent } from "@/lib/keybindings";
-import { useKeybindings } from "@/lib/keybindingsProvider";
 import {
   useMobileChrome,
   useMobileChromeHold,
@@ -57,7 +55,9 @@ import {
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
 import { activateTargetAnchor } from "@/lib/panes/targetLinkActivation";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useShareController } from "@/lib/sharing/controller";
+import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
 import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
@@ -149,7 +149,7 @@ function PaneView({
   const mobileViewport = useMobileViewport();
   const { keyboardBottomInsetPx } = useKeyboardInset();
   const { openShare } = useShareController();
-  const searchCombo = useKeybindings()["Pane.Search"];
+  const { platform } = useRenderEnvironment();
   const identityId = useId();
   const landmarkLabelId = useId();
   const paneRef = useRef<HTMLElement>(null);
@@ -208,11 +208,10 @@ function PaneView({
   const openQueryRef = useRef(openQuery);
   openQueryRef.current = openQuery;
   useEffect(() => {
-    if (!isActive || !searchCombo) return;
+    if (!isActive) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (
-        event.defaultPrevented ||
-        !matchesKeyEvent(searchCombo, event) ||
+        !matchesShortcut(SHORTCUTS["Pane.Search"], event, platform) ||
         hasActiveInteractionOwner()
       )
         return;
@@ -220,7 +219,7 @@ function PaneView({
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [isActive, searchCombo]);
+  }, [isActive, platform]);
 
   // ---- refresh, header, actions ------------------------------------------
   const pull =

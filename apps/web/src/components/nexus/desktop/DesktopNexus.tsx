@@ -165,7 +165,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                   <div
                     id={cellId(row.key, "Primary")}
                     role="gridcell"
-                    aria-label={[row.label, row.shortcut, rowFacts(row, true), snippet, reason].filter(Boolean).join(". ")}
+                    aria-label={[row.label, rowFacts(row, true), snippet, reason].filter(Boolean).join(". ")}
                     aria-disabled={reason ? true : undefined}
                     className={styles.primaryCell}
                     data-virtual-active={(selected && activeCell === "Primary") || undefined}
@@ -237,6 +237,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   return (
     <ModalFrame
       open
+      scope="Nexus"
       onDismiss={controller.escape}
       label={controller.dialogLabel}
       initialFocus={controller.initialFocus}
