@@ -44,6 +44,7 @@ export interface ReaderOptions {
   readonly host?: ReaderHost;
 }
 export interface PdfState {
+  /** The page at the reading line, shared with viewport.primary. */
   readonly page: number;
   readonly pages: number;
   /** null: fitted to the width, wherever the pdf opens next. */
@@ -73,7 +74,10 @@ export interface ReaderState {
 export interface Reader {
   getState(): ReaderState;
   subscribe(listener: () => void): () => void;
-  inspect(target: ReaderTarget): Promise<NavOutcome>;
+  inspect(input: {
+    readonly target: ReaderTarget;
+    readonly signal?: AbortSignal;
+  }): Promise<NavOutcome>;
   returnToSpot(): Promise<NavOutcome>;
   continueHere(): void;
   resolveHandoff(choice: "Canonical" | "Device"): Promise<void>;
@@ -107,6 +111,11 @@ export interface ReaderRuntime extends Reader {
   ): void;
   /** Genuine user input only. */
   input(direction: "forward" | "backward" | "none"): void;
+  /** Geometry only: keeps reading mode and origin and never records progress. */
+  reflow(input: {
+    readonly placement: Placement | null;
+    change(): void;
+  }): Promise<NavOutcome>;
   seek(): { settle(moved: boolean): void; cancel(): void } | null;
   /** The window lost the user: blurred (flush false) or hidden (flush true). */
   away(flush: boolean): void;
@@ -333,12 +342,16 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       isAway = false;
       if (state.navigation.positioning) navigator.cancel();
     },
+    reflow(change) {
+      input = { at: -Infinity, direction: "none" };
+      return navigator.reflow(change);
+    },
     seek: () => navigator.seek(),
     away(flush) {
       isAway = true;
       if (flush) void sync?.flush(true);
     },
-    inspect: (target) => navigator.inspect(target),
+    inspect: (input) => navigator.inspect(input),
     returnToSpot: () => navigator.returnToSpot(),
     continueHere() {
       const placement = navigator.continueHere();

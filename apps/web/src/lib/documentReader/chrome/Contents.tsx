@@ -25,7 +25,7 @@ export function Contents({
   if (!ready || ready.doc.kind !== "text" || ready.doc.toc.length === 0)
     return null;
   const go = (at: TextPoint) =>
-    void reader.inspect({ kind: "point", point: { kind: "text", ...at } });
+    void reader.inspect({ target: { kind: "point", point: { kind: "text", ...at } } });
   const list = (nodes: readonly TocNode[]) => (
     <ul className={styles.toc}>
       {nodes.map(({ id, label, at, sectionId, children }) => (

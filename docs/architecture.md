@@ -1081,7 +1081,7 @@ policies the catalog does — `media_source_ingest.source_recovery` for source
 retry/repair and `content_indexing` for search repair — so counts, membership,
 and offered recovery cannot disagree. A published upload keeps its
 `upload:<handle>` identity for life, so one import is one row from acceptance to
-History. its compact collection row keeps the committed query and applied
+History. its stationary query controls keep the committed query and applied
 constraints visible; a failed later page retains loaded rows, marks the loaded
 count as failed, and offers one retry of that cursor. See
 [the imports read owner](modules/imports.md).
@@ -1762,17 +1762,16 @@ Acquisition reuses canonical owners: URL Add calls `/media/from_url`, episode
 Add calls `/podcast-episodes/from-discovery`, and Subscribe calls
 `/podcasts/subscriptions`. Replayable commands use the required
 `Idempotency-Key`, stage Default/All plus named destinations, and replace Preview
-with the canonical owned pane only after success. Browse and Preview deliberately
-publish no Pane Search/Find capability.
+with the canonical owned pane only after success. browse publishes a query focus capability; preview publishes none.
 
 ### 8.11 Collection refinement
 
 Every primary collection pane composes the same visible grammar: input,
 readable order, conditional filters disclosure, applied chips, and an honest
-result status. the controls live in the ordinary body scrollport; the filters
-editor owns disclosure and focus, while domains own clear/reset semantics and
-request policy. the shell hosts the labelled collection publication and its
-`Pane.Search` focus command, without a duplicate menu search action. each
+result status. shared query controls remain above the existing body scrollport;
+inline native options own disclosure/focus, while domains own clear/reset and
+request policy. the shell hosts independent query/navigation publications and
+its `Pane.Search` focus command. each
 domain owns a closed view type, URL codec, option inventory and labels, request
 identity, server query, total order, cursor, and local match fields. this is
 presentation composition, not a query engine: no row-metadata schema, runtime
@@ -1790,10 +1789,10 @@ registry, generic controller, Boolean AST, or client sorting of pageable rows.
 | Podcast episodes | title; contributor names | Newest released | Newest/oldest released; shortest/longest duration | owner SQL |
 | Page/Note direct items | direct item text | Authored order | none | local inspection Filter |
 
-Browse and Search use the same compact collection presentation but keep
-their body-owned remote query, facets, ranking, and provider continuation;
-Preview publishes no collection controls. Page/Note direct items use transient
-editor filtering in authored order. chat messages, TOCs, chapters,
+browse and search use the shared query presentation while retaining their
+remote query, facets, ranking and provider continuation. preview publishes no
+query controls. page/note direct items use permanent local row filtering in
+authored order. chat messages, TOCs, chapters,
 transcripts, sources, citations, trust trails, fork trees, navigation, menus,
 settings choices, destination pickers, and ranked slate/quick-read lists retain
 semantic owner order. Connections, Downloads, Library members/invites,
@@ -1976,9 +1975,9 @@ open over Resume and never become panes.
   section metadata or resource status plus structured credits, never a title.
   Actions/options are typed descriptors (`lib/ui/actionDescriptor.ts`) shared by
   the desktop More menu and companion button and mobile Options. PDF and EPUB
-  may additionally publish one labelled control instrument; `PaneShell` owns
-  its 40px desktop or 48px mobile frame, and expanded Search replaces it in the
-  same contextual track. A pane-scoped error boundary contains chrome and body
+  publish canonical `ReaderNavigation` independently of the shared find query.
+  identity, navigation and query stay above content scrolling; mobile find
+  discloses alongside navigation. a pane-scoped error boundary contains chrome and body
   failures without replacing sibling panes or the workspace.
 - **App navigation is a curated projection, not a feature directory.**
   `lib/navigation/destinations.ts` owns destination identity;

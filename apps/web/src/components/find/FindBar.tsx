@@ -1,17 +1,15 @@
 "use client";
 
-import { forwardRef, useId, type ReactNode } from "react";
+import { forwardRef, useId, useImperativeHandle, useRef } from "react";
 import { ChevronDown, ChevronUp, List, RotateCcw, X } from "lucide-react";
 import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
-import Input from "@/components/ui/Input";
-import PaneToolbar from "@/components/ui/PaneToolbar";
-import Toggle from "@/components/ui/Toggle";
+import ChoiceField from "@/components/ui/ChoiceField";
+import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { absent, present } from "@/lib/api/presence";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { FIND_LIMIT } from "@/lib/find/find";
 import type { FindController, FindResult } from "@/lib/find/useFind";
-import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import styles from "./Find.module.css";
 
 function status(result: FindResult): string {
@@ -23,188 +21,134 @@ function status(result: FindResult): string {
     case "TooMany":
       return `More than ${FIND_LIMIT} matches. Refine your search.`;
     case "Failed":
-      return `Search failed. ${result.message}`;
+      return result.message;
     case "Rows": {
       const count = result.rows.length;
-      const found =
-        count === 0
-          ? "No matches"
-          : `${result.active + 1} of ${count} ${count === 1 ? "match" : "matches"}`;
+      const found = count === 0
+        ? "No matches"
+        : `${result.active + 1} of ${count} ${count === 1 ? "match" : "matches"}`;
       const text = result.partial
         ? `${found} in the ${result.partial}; results are incomplete`
         : found;
-      return result.wrapped
-        ? `${text} Wrapped to ${result.wrapped} match.`
-        : text;
+      return result.wrapped ? `${text}. Wrapped to ${result.wrapped} match.` : text;
     }
   }
 }
 
-/**
- * The pane's find row. PaneShell mounts it while find is expanded; onClose
- * ends the session, and Results shows every match in the pane's Companion.
- */
+/** Shared query presentation; the shell owns disclosure and Companion results. */
 const FindBar = forwardRef<
   HTMLInputElement,
   {
-    readonly find: FindController;
-    readonly onClose: () => void;
+    readonly find: FindController | null;
+    readonly onClear: () => void;
+    readonly onClose?: () => void;
     readonly resultsExpanded: boolean;
     readonly onShowResults: (opener: HTMLElement) => void;
   }
->(function FindBar({ find, onClose, resultsExpanded, onShowResults }, ref) {
+>(function FindBar({ find, onClear, onClose, resultsExpanded, onShowResults }, ref) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  // justify-type-assertion: the toolbar mounts this input before imperative handles run.
+  useImperativeHandle(ref, () => inputRef.current!, []);
   const statusId = useId();
-  // Mobile chrome stays pinned while the bar is in it.
-  useMobileChromeHold(true);
-  const { result } = find;
-  const count = result.kind === "Rows" ? result.rows.length : 0;
-  const text = status(result);
-  const icon = (
-    label: string,
-    title: string,
-    onClick: () => void,
-    glyph: ReactNode,
-    disabled = false,
-  ) => (
-    <Button
-      variant="ghost"
-      size="sm"
-      iconOnly
-      aria-label={label}
-      title={title}
-      disabled={disabled}
-      onClick={onClick}
-    >
-      {glyph}
-    </Button>
-  );
+  const count = find?.result.kind === "Rows" ? find.result.rows.length : 0;
+  const scope = find?.query
+    ? find.narrow ?? "Selected scope unavailable"
+    : find?.narrowLabel ?? "Selected scope unavailable";
+  const scopeOption = find?.query
+    ? find.narrow ? `Limit to ${find.narrow}` : "Selected scope unavailable"
+    : find?.narrowLabel ? `Limit to ${find.narrowLabel.toLowerCase()}` : "Selected scope unavailable";
+  const chips = [
+    ...(find?.matchCase ? [{ id: "case", label: "Match case" }] : []),
+    ...(find?.wholeWord ? [{ id: "word", label: "Whole word" }] : []),
+    ...(find?.narrowed ? [{ id: "scope", label: `Scope: ${scope}` }] : []),
+  ];
   return (
-    <div
-      className={styles.bar}
-      onKeyDown={(event) => {
-        if (event.key !== "Escape" || event.defaultPrevented) return;
-        event.preventDefault();
-        event.stopPropagation();
-        onClose();
-      }}
-    >
-      <PaneToolbar
-        variant="Instrument"
-        search={
-          <Input
-            ref={ref}
-            type="search"
-            size="sm"
-            value={find.query}
-            aria-label={find.label}
-            placeholder={find.label}
-            aria-describedby={statusId}
-            aria-keyshortcuts="Enter Shift+Enter Escape"
-            data-pane-search-input="true"
-            autoComplete="off"
-            autoCapitalize="none"
-            spellCheck={false}
-            onChange={(event) => find.setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (
-                event.key !== "Enter" ||
-                event.altKey ||
-                event.ctrlKey ||
-                event.metaKey
-              )
-                return;
+    <div className={styles.bar} onKeyDown={(event) => {
+      if (!onClose || event.key !== "Escape" || event.defaultPrevented || event.nativeEvent.isComposing) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+    }}>
+      <PaneQueryToolbar
+        inputRef={inputRef}
+        input={{
+          label: find?.label ?? "Find in pane",
+          placeholder: find?.label ?? "Find in pane",
+          value: find?.query ?? "",
+          appliedValue: find?.query ?? "",
+          disabled: find === null,
+          keyShortcuts: "Enter Shift+Enter Escape",
+          onChange: (value) => value ? find?.setQuery(value) : onClear(),
+          onClear,
+          onKeyDown(event) {
+            if (event.nativeEvent.isComposing) return;
+            if (event.key === "Escape" && onClose) {
               event.preventDefault();
-              find.step(event.shiftKey ? -1 : 1);
-            }}
-          />
-        }
-        filters={
-          <div className={styles.group} role="group" aria-label="Find options">
-            {find.narrow ? (
-              <Toggle
-                size="sm"
-                label={find.narrow}
-                checked={find.narrowed}
-                onCheckedChange={find.setNarrowed}
-              />
-            ) : null}
-            <Toggle
-              size="sm"
-              label="Match case"
-              checked={find.matchCase}
-              onCheckedChange={find.setMatchCase}
-            />
-            <Toggle
-              size="sm"
-              label="Whole word"
-              checked={find.wholeWord}
-              onCheckedChange={find.setWholeWord}
-            />
-          </div>
-        }
-        controls={
-          <>
-            <span
-              id={statusId}
-              className={styles.status}
-              role="status"
-              aria-live="polite"
-              aria-atomic="true"
-              title={text}
-            >
-              {text}
-            </span>
-            {result.kind === "Failed" ? (
-              <Button variant="ghost" size="sm" onClick={find.retry}>
-                Retry
-              </Button>
-            ) : null}
-            <div
-              className={styles.group}
-              role="group"
-              aria-label="Match navigation"
-            >
-              {icon(
-                "Previous match",
-                "Previous match (Shift+Enter)",
-                () => find.step(-1),
-                <ChevronUp size={15} aria-hidden="true" />,
-                count === 0,
-              )}
-              {icon(
-                "Next match",
-                "Next match (Enter)",
-                () => find.step(1),
-                <ChevronDown size={15} aria-hidden="true" />,
-                count === 0,
-              )}
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={count === 0}
-              leadingIcon={<List size={15} aria-hidden="true" />}
-              aria-expanded={resultsExpanded}
-              onClick={(event) => onShowResults(event.currentTarget)}
-            >
-              Results
+              event.stopPropagation();
+              onClose();
+            } else if (event.key === "Enter" && !event.altKey && !event.ctrlKey && !event.metaKey) {
+              event.preventDefault();
+              find?.step(event.shiftKey ? -1 : 1);
+            }
+          },
+        }}
+        options={find ? {
+          label: "Options",
+          activeCount: chips.length,
+          content: (
+            <fieldset className={styles.options}>
+              <legend>Find options</legend>
+              <ChoiceField label="Match case" checked={find.matchCase} onChange={find.setMatchCase} />
+              <ChoiceField label="Whole word" checked={find.wholeWord} onChange={find.setWholeWord} />
+              {find.narrowLabel !== null || find.narrowed ? (
+                <ChoiceField label={scopeOption} checked={find.narrowed} onChange={find.setNarrowed} />
+              ) : null}
+            </fieldset>
+          ),
+          onClear() {
+            find.setMatchCase(false);
+            find.setWholeWord(false);
+            find.setNarrowed(false);
+          },
+        } : undefined}
+        chips={{
+          items: chips,
+          onRemove(id) {
+            if (id === "case") find?.setMatchCase(false);
+            else if (id === "word") find?.setWholeWord(false);
+            else find?.setNarrowed(false);
+          },
+        }}
+        status={{
+          id: statusId,
+          content: <span id={statusId} className={styles.status} role="status" aria-live="polite" aria-atomic="true">
+            {find ? status(find.result) : "Find is not ready."}
+          </span>,
+        }}
+        actions={<>
+          <div className={styles.group} role="group" aria-label="Match navigation">
+            <Button variant="ghost" size="sm" iconOnly aria-label="Previous match" title="Previous match (Shift+Enter)" disabled={count === 0} onClick={() => find?.step(-1)}>
+              <ChevronUp size={15} aria-hidden="true" />
             </Button>
-            {find.returnable
-              ? icon(
-                  "Go back to reading position",
-                  "Go back to reading position",
-                  find.goBack,
-                  <RotateCcw size={15} aria-hidden="true" />,
-                )
-              : null}
-            {icon(
-              "Close search",
-              "Close search",
-              onClose,
-              <X size={15} aria-hidden="true" />,
-            )}
-          </>
-        }
+            <Button variant="ghost" size="sm" iconOnly aria-label="Next match" title="Next match (Enter)" disabled={count === 0} onClick={() => find?.step(1)}>
+              <ChevronDown size={15} aria-hidden="true" />
+            </Button>
+          </div>
+          <Button variant="ghost" size="sm" disabled={count === 0} leadingIcon={<List size={15} aria-hidden="true" />} aria-expanded={resultsExpanded} onClick={(event) => onShowResults(event.currentTarget)}>
+            Results
+          </Button>
+          {find?.result.kind === "Failed" ? <Button variant="ghost" size="sm" onClick={find.retry}>Retry</Button> : null}
+          {find?.returnable ? (
+            <Button variant="ghost" size="sm" iconOnly aria-label="Return to reading position" title="Return to reading position" onClick={find.goBack}>
+              <RotateCcw size={15} aria-hidden="true" />
+            </Button>
+          ) : null}
+          {onClose ? (
+            <Button variant="ghost" size="sm" iconOnly aria-label="Close find" title="Close find" onClick={onClose}>
+              <X size={15} aria-hidden="true" />
+            </Button>
+          ) : null}
+        </>}
       />
     </div>
   );

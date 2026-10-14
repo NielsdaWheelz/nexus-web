@@ -271,7 +271,7 @@ export function useLiveReaderTargets(
     const settled = await arrival?.catch(() => null);
     if (!settled) return;
     if (move && !shown(settled.target)) {
-      const outcome = await reader.inspect(settled.target);
+      const outcome = await reader.inspect({ target: settled.target });
       if (outcome.kind !== "Arrived" && outcome.kind !== "Unchanged") return;
     }
     arriveRef.current(settled, move);

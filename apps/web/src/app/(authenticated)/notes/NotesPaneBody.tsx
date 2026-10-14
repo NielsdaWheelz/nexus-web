@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useId, useEffect, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -10,10 +10,10 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import CollectionView from "@/components/collections/CollectionView";
-import SelectField from "@/components/ui/SelectField";
+import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
+import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
+import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
-import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
 import { notePagesResource } from "@/lib/api/resource";
 import {
   isApiError,
@@ -198,7 +198,6 @@ export default function NotesPaneBody() {
   const invalidView = decodedView.kind === "Invalid" || viewInvalid;
   const [committed, setCommitted] = useState<CommittedPagesView | null>(null);
   const capturePaneScroll = usePaneScrollRetention(committed);
-  const sortSelectRef = useRef<HTMLSelectElement | null>(null);
   // A view replacement only writes the URL: the committed rows stay rendered
   // until the requested/committed mismatch it creates is answered.
   const setView = useCallback(
@@ -296,84 +295,34 @@ export default function NotesPaneBody() {
     sourceKey: "Notes.Pages",
     getRowStatus: getFilterStatus,
   });
-  const { inputRef, focusInput } = usePaneCollectionInput();
+  const { inputRef, focusInput } = usePaneQueryInput();
+  const queryStatusId = useId();
   const resetView = useCallback(() => {
     clearQuery();
     setView(CANONICAL_UPDATED_TITLE_INDEX_VIEW);
   }, [clearQuery, setView]);
-  const domainFilterControls = useMemo(
-    () =>
-      invalidView || view === null ? undefined : (
-        <>
-          <SelectField
-            layout="Inline"
-            label="Sort pages"
-            size="sm"
-            ref={sortSelectRef}
-            value={updatedTitleSortOptionOf(view)}
-            onChange={(event) => {
-              setView(
-                updatedTitleViewForSortOption(
-                  event.target.value as UpdatedTitleSortOptionId,
-                ),
-              );
-            }}
-          >
-            {UPDATED_TITLE_SORT_OPTION_IDS.map((optionId) => (
-              <option key={optionId} value={optionId}>
-                {updatedTitleSortOptionLabel(optionId)}
-              </option>
-            ))}
-          </SelectField>
-        </>
-      ),
-    [invalidView, setView, view],
-  );
-  const collection = useMemo(
-    () =>
-      invalidView || view === null
-        ? undefined
-        : {
-            label: "Filter pages",
-            content: (
-              <PaneCollectionBar
-                inputRef={inputRef}
-                inputLabel="Filter pages"
-                placeholder="Filter pages"
-                query={filterQuery}
-                onQueryChange={onQueryChange}
-                onClearQuery={clearQuery}
-                rowStatus={rowStatus}
-                filters={domainFilterControls}
-                controls={view.kind !== "Canonical" ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      sortSelectRef.current?.focus({ preventScroll: true });
-                      resetView();
-                    }}
-                  >
-                    Reset view
-                  </Button>
-                ) : undefined}
-              />
-            ),
-            focusInput,
-          },
-    [
-      resetView,
-      clearQuery,
-      domainFilterControls,
-      filterQuery,
-      focusInput,
-      inputRef,
-      invalidView,
-      onQueryChange,
-      rowStatus,
-      view,
-    ],
-  );
+  const queryControls = invalidView || view === null ? undefined : {
+    kind: "Controls" as const,
+    label: "Filter pages",
+    focusInput,
+    content: (
+      <PaneQueryToolbar
+        inputRef={inputRef}
+        input={{ label: "Filter pages", placeholder: "Filter pages", value: filterQuery, appliedValue: filterQuery, onChange: onQueryChange, onClear: clearQuery }}
+        sort={{
+          label: "Sort",
+          value: updatedTitleSortOptionOf(view),
+          choices: UPDATED_TITLE_SORT_OPTION_IDS.map((value) => ({ value, label: updatedTitleSortOptionLabel(value) })),
+          onChange: (value) => setView(updatedTitleViewForSortOption(
+            // justify-type-assertion: the select offers exactly these ids.
+            value as UpdatedTitleSortOptionId,
+          )),
+        }}
+        status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={rowStatus} query={filterQuery} /> }}
+        onReset={view.kind !== "Canonical" || filterQuery ? resetView : undefined}
+      />
+    ),
+  };
   const filteredPages = useMemo(
     () =>
       pages.filter((page) => matchesPaneFilterQuery(filterQuery, [page.title])),
@@ -382,7 +331,7 @@ export default function NotesPaneBody() {
 
   useSetPaneLabel("Notes");
   usePaneChrome({
-    collection,
+    query: queryControls,
     header: {
       kind: "Section",
       // The metadata describes the exhaustive committed view, never the subset.
@@ -497,7 +446,7 @@ export default function NotesPaneBody() {
                 kind: "Valid",
                 view: CANONICAL_UPDATED_TITLE_INDEX_VIEW,
               });
-              requestAnimationFrame(() => sortSelectRef.current?.focus({ preventScroll: true }));
+              requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
             },
           },
         ]}

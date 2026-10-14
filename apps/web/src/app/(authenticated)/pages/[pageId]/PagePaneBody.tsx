@@ -10,7 +10,7 @@ import {
 } from "@/components/feedback/Feedback";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { usePaneChrome, type PaneFilterRowsSearch } from "@/lib/panes/paneChrome";
+import { usePaneChrome, type PaneQuery } from "@/lib/panes/paneChrome";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { consumePendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
@@ -142,7 +142,7 @@ export default function PagePaneBody({
   const {
     ready,
     query: filterQuery,
-    search,
+    queryControls,
     acceptSurface,
     markReady,
   } = useResourceSurfaceFilterRows(sourceKey, "Filter page items");
@@ -339,7 +339,7 @@ export default function PagePaneBody({
     [markReady],
   );
   const chrome = (
-    <PageChrome page={page} search={search} viewActions={viewActions} />
+    <PageChrome page={page} queryControls={queryControls} viewActions={viewActions} />
   );
   if (defect) throw defect.error;
   if (feedback && !page) {
@@ -407,36 +407,36 @@ export default function PagePaneBody({
 
 function PageChrome({
   page,
-  search,
+  queryControls,
   viewActions,
 }: {
   page: PageView | null;
-  search: PaneFilterRowsSearch;
+  queryControls: PaneQuery;
   viewActions: ActionDescriptor[];
 }) {
   return page ? (
     <MaterializedPageChrome
       page={page}
-      search={search}
+      queryControls={queryControls}
       viewActions={viewActions}
     />
   ) : (
-    <LatentPageChrome search={search} />
+    <LatentPageChrome queryControls={queryControls} />
   );
 }
 
-function LatentPageChrome({ search }: { search: PaneFilterRowsSearch }) {
-  usePaneChrome({ search });
+function LatentPageChrome({ queryControls }: { queryControls: PaneQuery }) {
+  usePaneChrome({ query: queryControls });
   return null;
 }
 
 function MaterializedPageChrome({
   page,
-  search,
+  queryControls,
   viewActions,
 }: {
   page: PageView;
-  search: PaneFilterRowsSearch;
+  queryControls: PaneQuery;
   viewActions: ActionDescriptor[];
 }) {
   const connections = useMemo(
@@ -453,7 +453,7 @@ function MaterializedPageChrome({
     bodies: { linkedItems: connections },
   });
   usePaneChrome({
-    search,
+    query: queryControls,
     actionSubject: page.actionSubject,
     menuActions: viewActions,
   });

@@ -41,6 +41,7 @@ import { useMediaMetadataOperations } from "@/lib/media/mediaMetadataOperations"
 import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
 import { loadMediaPane } from "@/lib/panes/paneResourceLoaders";
 import {
+  paneSourceKey,
   requirePaneRuntime,
   usePaneIsActive,
   usePaneIsVisible,
@@ -243,7 +244,7 @@ function MediaPane({ id }: { readonly id: string }) {
   );
 
   // ---- find ----
-  const source = useReaderState(reader, (s) => s.find);
+  const source = useReaderState(reader, (s) => s.restored ? s.find : null);
   const partial = media?.transcript_state === "partial" || media?.transcript_coverage === "partial";
   const findSource = useMemo<FindSource<unknown> | null>(
     () =>
@@ -258,7 +259,7 @@ function MediaPane({ id }: { readonly id: string }) {
         : source,
     [partial, source],
   );
-  const find = useFind(findSource);
+  const find = useFind({ ownerKey: paneSourceKey(runtime), source: findSource });
 
   // ---- evidence and chrome ----
   const { noteEdit, hovered, hover, focus, closeNoteEdit, noteAccepted, noteMutation } = verbs;
@@ -274,7 +275,7 @@ function MediaPane({ id }: { readonly id: string }) {
         activateResource(activation, { labelHint, disposition, activateTarget }),
       jumpToSource: (target) => {
         const to = targetOfGroup(target.resolution);
-        if (to) void reader.inspect(to);
+        if (to) void reader.inspect({ target: to });
       },
       refresh: store.refresh,
       openLink: (href, disposition) => activateTarget({ target: { href }, disposition }),
@@ -287,7 +288,7 @@ function MediaPane({ id }: { readonly id: string }) {
       const highlight = group.items.find((item) => item.kind === "Highlight");
       if (highlight?.kind === "Highlight") focus(highlight.highlight_id);
       if (to?.kind === "time") seek(to.ms);
-      if (to) void reader.inspect(to);
+      if (to) void reader.inspect({ target: to });
       if (isMobile) closeSecondaryPane();
     },
     [closeSecondaryPane, focus, isMobile, reader, seek],
@@ -321,7 +322,7 @@ function MediaPane({ id }: { readonly id: string }) {
       const embed = doc?.kind === "text" ? doc.embeds.find((e) => `embed:${e.id}` === marker) : undefined;
       if (embed?.fragment_id) {
         const offset = embed.locator.canonical_start_offset ?? 0;
-        void reader.inspect({ kind: "point", point: { kind: "text", unit: embed.fragment_id, offset } });
+        void reader.inspect({ target: { kind: "point", point: { kind: "text", unit: embed.fragment_id, offset } } });
       } else openEvidence(marker);
     },
     [doc, openEvidence, reader],

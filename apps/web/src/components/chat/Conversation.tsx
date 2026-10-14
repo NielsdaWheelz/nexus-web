@@ -9,6 +9,7 @@ import type { AcceptedReceipt } from "@/lib/chat/wire";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { useFind } from "@/lib/find/useFind";
 import {
+  paneSourceKey,
   requirePaneRuntime,
   usePaneHash,
   usePaneIsActive,
@@ -125,14 +126,15 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   useEffect(() => {
     if (ready && targetMessageId) void store.reveal(targetMessageId);
   }, [ready, targetMessageId, store]);
-  const find = useFind(
-    useConversationFindSource({
-      conversationId,
-      activeLeafMessageId: leafId,
-      messages: view.path,
-      scroll,
-    }),
-  );
+  const ownerKey = paneSourceKey(runtime);
+  const findSource = useConversationFindSource({
+    ownerKey,
+    conversationId,
+    activeLeafMessageId: leafId,
+    messages: view.path,
+    scroll,
+  });
+  const find = useFind({ ownerKey, source: findSource });
   const title =
     state.conversation?.title ?? (conversationId ? "Chat" : "New chat");
   useSetPaneLabel(history === "Loading" ? null : title);
@@ -176,10 +178,10 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   usePaneChrome(
     useMemo(
       () => ({
-        search: !conversationId
+        query: !conversationId
           ? undefined
           : loading
-            ? { kind: "Resolving" as const, control: "Find" as const }
+            ? { kind: "Find" as const, find: null }
             : ready && find
               ? { kind: "Find" as const, find }
               : undefined,

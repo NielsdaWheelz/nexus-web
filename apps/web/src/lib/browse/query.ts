@@ -73,9 +73,26 @@ export function browseSections(query: BrowseQuery): readonly BrowseSection[] {
 export function browseSourcesFor(
   kind: "All" | BrowseKind,
 ): readonly BrowseSource[] {
-  return PLAN.filter(([planned]) => planned === kind).map(
-    ([, source]) => source,
-  );
+  return [
+    ...new Set(
+      PLAN.filter(([planned]) => kind === "All" || planned === kind).map(
+        ([, source]) => source,
+      ),
+    ),
+  ];
+}
+
+/** Newest orders the YouTube section; every other section keeps relevance. */
+export function browseSupportsNewest(query: BrowseQuery): boolean {
+  return browseSections(query).some(({ source }) => source === "YouTube");
+}
+
+export function withBrowseFilters(
+  query: BrowseQuery,
+  filters: Pick<BrowseQuery, "kind" | "source">,
+): BrowseQuery {
+  const next = { ...query, ...filters };
+  return browseSupportsNewest(next) ? next : { ...next, sort: "Relevance" };
 }
 
 /** Null iff `kind` or `source` names no planned section. */

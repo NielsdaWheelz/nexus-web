@@ -1,7 +1,7 @@
 "use client";
 
 import { Play } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
@@ -16,10 +16,10 @@ import {
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import PaneSurface from "@/components/ui/PaneSurface";
-import SelectField from "@/components/ui/SelectField";
+import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
+import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
+import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
-import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
 import {
   apiTransportFeedback,
   isApiError,
@@ -132,7 +132,6 @@ export default function LecternPaneBody() {
     () => (view === null ? [] : orderLecternItems(view, items)),
     [items, view],
   );
-  const sortSelectRef = useRef<HTMLSelectElement | null>(null);
 
   const getRowStatus = useCallback(
     (query: string) => {
@@ -164,77 +163,32 @@ export default function LecternPaneBody() {
     clearQuery();
     setDecodedView({ kind: "Valid", view: CANONICAL_LECTERN_VIEW });
   }, [clearQuery, setDecodedView]);
-  const { inputRef, focusInput } = usePaneCollectionInput();
-  const collection = useMemo(
-    () =>
-      view === null
-        ? undefined
-        : {
-            label: "Filter Lectern",
-            focusInput,
-            content: (
-              <PaneCollectionBar
-                inputRef={inputRef}
-                inputLabel="Filter Lectern"
-                placeholder="Filter items"
-                query={query}
-                onQueryChange={onQueryChange}
-                onClearQuery={clearQuery}
-                rowStatus={rowStatus}
-                filters={
-                  <SelectField
-                    layout="Inline"
-                    label="Sort Lectern items"
-                    size="sm"
-                    ref={sortSelectRef}
-                    value={lecternSortOptionOf(view)}
-                    onChange={(event) =>
-                      setDecodedView({
-                        kind: "Valid",
-                        view: lecternViewForSortOption(
-                          event.target.value as LecternSortOptionId,
-                        ),
-                      })
-                    }
-                  >
-                    {LECTERN_SORT_OPTION_IDS.map((id) => (
-                      <option key={id} value={id}>
-                        {lecternSortOptionLabel(id)}
-                      </option>
-                    ))}
-                  </SelectField>
-                }
-                controls={
-                  view.kind === "Custom" ? undefined : (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        sortSelectRef.current?.focus({ preventScroll: true });
-                        resetView();
-                      }}
-                    >
-                      Reset view
-                    </Button>
-                  )
-                }
-              />
-            ),
-          },
-    [
-      clearQuery,
-      focusInput,
-      inputRef,
-      onQueryChange,
-      query,
-      resetView,
-      rowStatus,
-      setDecodedView,
-      view,
-    ],
-  );
+  const { inputRef, focusInput } = usePaneQueryInput();
+  const queryStatusId = useId();
+  const queryControls = view === null ? undefined : {
+    kind: "Controls" as const,
+    label: "Filter Lectern",
+    focusInput,
+    content: (
+      <PaneQueryToolbar
+        inputRef={inputRef}
+        input={{ label: "Filter Lectern", placeholder: "Filter items", value: query, appliedValue: query, onChange: onQueryChange, onClear: clearQuery }}
+        sort={{
+          label: "Sort",
+          value: lecternSortOptionOf(view),
+          choices: LECTERN_SORT_OPTION_IDS.map((value) => ({ value, label: lecternSortOptionLabel(value) })),
+          onChange: (value) => setDecodedView({ kind: "Valid", view: lecternViewForSortOption(
+            // justify-type-assertion: the select offers exactly these ids.
+            value as LecternSortOptionId,
+          ) }),
+        }}
+        status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={rowStatus} query={query} /> }}
+        onReset={view.kind !== "Custom" || query ? resetView : undefined}
+      />
+    ),
+  };
   usePaneChrome({
-    collection,
+    query: queryControls,
     // The count is the whole Lectern, never the filtered subset.
     header: {
       kind: "Section",
@@ -306,7 +260,7 @@ export default function LecternPaneBody() {
                 onClick: () => {
                   resetView();
                   requestAnimationFrame(() =>
-                    sortSelectRef.current?.focus({ preventScroll: true }),
+                    inputRef.current?.focus({ preventScroll: true }),
                   );
                 },
               },

@@ -126,8 +126,7 @@ export function useScrollport(
       if (event.key === "Home" || event.key === "End") {
         event.preventDefault();
         void runtime.inspect({
-          kind: "edge",
-          edge: event.key === "Home" ? "start" : "end",
+          target: { kind: "edge", edge: event.key === "Home" ? "start" : "end" },
         });
       } else if (event.key === " ") {
         const button =

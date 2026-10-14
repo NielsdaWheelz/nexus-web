@@ -1,39 +1,25 @@
+# remaining pane-controls accessibility verification
+
 status: open
-origin: 2026-09-25 pane-controls implementation
-area: collection controls / live verification
+origin: 2026-09-25 pane-controls implementation; narrowed 2026-10-13
+area: collection controls / manual accessibility verification
 
-an isolated loopback browser → bff → api → database stack ran with ordinary
-password auth, two author works and 105 disposable library entries. the
-pre-change proof ran 20 cases: 11 passed, six genuine product assertions
-failed (idle reset, sort-reset focus, duplicate menu search, restored-count
-announcement, hidden browse committed query, absent imports filters trigger),
-and three were blocked. a later imports continuation test established a
-separate genuine red: one real cursor transport abort left `50 of 107 imports`
-looking settled, with no failure or retry owner. after the imports repair, the
-expanded run reports 26/30 pass, zero product failures and four blocked cases.
-it includes real library second-page delay, unloaded-row match, failed
-continuation plus user retry, retained-sort delay; imports failed-continuation
-retry and History reset/selection retention; two-pane shortcut, lectern sort,
-facets and focus, quiet initial count and facet-only announcement, wide/320px
-coarse geometry, and simulated 200% root text. the 200% select clip was fixed
-with a smaller 13px native sort select and collection-specific inset; this
-trades base type size for a complete readable value. the added assertions were
-not run against pre-change code, so their passes are not claimed as reds.
+the earlier search and podcast credential/fixture blockers are resolved by the
+real 2026-10-13 isolated qualification. partial/retained/failed continuation,
+reset/focus, two-pane ownership, unsupported/resolving native find, physical
+android keyboard/chrome and publisher coverage were also exercised. current
+observations and methods: [verification](../pane-controls-verification.md).
 
-blockers: two search cases receive `/api/search` http 500 because the local
-openai credential is rejected by the provider with http 401 `invalid_api_key`.
-followed-podcast smoke receives `/api/podcasts/subscriptions` http 404 because
-`PODCASTS_ENABLED=false` without Podcast Index credentials. podcast-detail
-smoke lacks an ordinary subscribed-show fixture. no dummy credentials or
-fabricated responses were used. actual screen-reader behavior, physical touch,
-actual browser/os 200% text settings, unsupported-pane native find, and the
-other unexercised a1–a6 edge states remain NOT_RUN; css root text simulation
-is distinct evidence.
+the remaining verification debt is spoken screen-reader behavior and actual
+browser/os 200% accessibility settings. the live 200% layout check used a
+browser-applied root-font userstyle; it is distinct evidence. unrelated old
+edge states without a current witness are not silently promoted to pass.
 
-prerequisites: provide working isolated search and Podcast Index credentials;
-subscribe a disposable show through the ordinary api; exercise the remaining
-device/accessibility and edge cases. the owner explicitly authorized removing
-the temporary proof and merging with these checks blocked on 2026-09-25.
-repeat the affected live journeys with a fresh disposable stack and run
-`./scripts/test` when validating. close this ticket only after those journeys
-pass; blocked and NOT_RUN never count as passes.
+prerequisite: an operator using the supported screen reader and actual text
+settings. exercise labelled fields/groups, inline disclosure, changed result
+announcements, clear/reset/chip-removal focus and the narrow reader/query rows.
+record the real observations and file concrete defects at their owners.
+
+acceptance: those interactions remain understandable and reachable with spoken
+feedback and the actual accessibility settings. close only after observing
+both; synthetic layout and native html semantics do not substitute for them.

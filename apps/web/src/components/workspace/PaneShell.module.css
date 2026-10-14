@@ -39,45 +39,29 @@
   min-width: 0;
   min-height: 0;
   background: var(--surface-2);
-  cursor: grab;
 }
 
-.contextualRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: nowrap;
-  flex: 0 0 var(--pane-chrome-instrument-height);
-  min-width: 0;
-  block-size: var(--pane-chrome-instrument-height);
-  min-block-size: var(--pane-chrome-instrument-height);
-  overflow-x: auto;
-  overflow-y: hidden;
-  overscroll-behavior-inline: contain;
+.controlRow {
+  --pane-control-size: max(var(--size-md), 2rem);
+  --pane-control-font-size: var(--text-sm);
+  --pane-control-row-min-height: max(var(--size-lg), 2.5rem);
+  flex: 0 0 auto;
+  min-inline-size: 0;
+  padding-block: var(--space-1);
   padding-inline: var(--space-4);
   border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
   background: var(--surface-2);
 }
 
-.contextualRow > * {
-  flex: 1 1 auto;
-  min-width: 0;
+.controlRow[hidden] {
+  display: none;
 }
 
-.contextualRow[data-contextual-row-variant="Refinement"] {
-  flex: 0 0 auto;
-  block-size: auto;
-  overflow: visible;
-  overscroll-behavior-inline: auto;
-}
-
-.contextualRow :where(button, [role="button"]) {
-  min-inline-size: var(--size-md);
-  min-block-size: var(--size-md);
-}
-
-.contextualRow :where(input, select) {
-  min-block-size: var(--size-md);
+@media (pointer: coarse) {
+  .controlRow {
+    --pane-control-size: max(var(--size-xl), 2.75rem);
+    --pane-control-font-size: var(--text-md);
+  }
 }
 
 .body {
@@ -114,13 +98,6 @@
 .body[data-body-mode="contained"] > .routeContent {
   height: 100%;
   min-height: 0;
-}
-
-.collectionRow {
-  min-inline-size: 0;
-  padding: var(--space-2) var(--space-4);
-  border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
-  background: var(--surface-canvas);
 }
 
 .refreshIndicator {
@@ -203,7 +180,6 @@
 
 .paneShell[data-mobile="true"] {
   border-right: none;
-  --pane-chrome-instrument-height: max(48px, 3rem);
   --mobile-pane-chrome-height: 0px;
   --mobile-pane-content-offset: calc(
     var(--viewport-safe-top) + var(--pane-chrome-header-height) +
@@ -211,27 +187,11 @@
   );
 }
 
-.paneShell[data-mobile="true"] .contextualRow {
-  gap: var(--space-1);
+.paneShell[data-mobile="true"] .controlRow {
   padding-inline: var(--space-2);
 }
 
-.paneShell[data-mobile="true"] .contextualRow :where(button, [role="button"]) {
-  min-inline-size: var(--size-xl);
-  min-block-size: var(--size-xl);
-}
-
-.paneShell[data-mobile="true"] .contextualRow :where(input, select) {
-  min-block-size: var(--size-xl);
-}
-
-.paneShell[data-mobile="true"]
-  .contextualRow[data-contextual-row-variant="Refinement"]
-  :where(label) {
-  min-block-size: var(--size-xl);
-}
-
-/* The contextual row sits below the fixed app bar and retreats with it. */
+/* The complete control stack sits below the fixed app bar and retreats with it. */
 .paneShell[data-mobile="true"] .chrome {
   position: absolute;
   top: calc(var(--viewport-safe-top) + var(--pane-chrome-header-height));
@@ -264,10 +224,6 @@
   padding-left: var(--viewport-safe-left);
 }
 
-.paneShell[data-mobile="true"] .collectionRow {
-  padding-inline: var(--space-2);
-}
-
 .paneShell[data-mobile="true"] .body[data-body-mode="standard"],
 .paneShell[data-mobile="true"] .body[data-body-mode="contained"] {
   padding-top: var(--mobile-pane-content-offset);
@@ -279,14 +235,13 @@
 }
 
 @container primaryPane (max-width: 479px) {
-  .paneShell[data-mobile="false"] .contextualRow {
-    gap: var(--space-1);
+  .paneShell[data-mobile="false"] .controlRow {
     padding-inline: var(--space-3);
   }
 }
 
 @container primaryPane (max-width: 359px) {
-  .paneShell[data-mobile="false"] .contextualRow {
+  .paneShell[data-mobile="false"] .controlRow {
     padding-inline: var(--space-2);
   }
 }
@@ -298,13 +253,11 @@
   }
 
   .chrome,
-  .contextualRow,
-  .collectionRow {
+  .controlRow {
     background: Canvas;
   }
 
-  .contextualRow,
-  .collectionRow {
+  .controlRow {
     border-block-end-color: CanvasText;
   }
 

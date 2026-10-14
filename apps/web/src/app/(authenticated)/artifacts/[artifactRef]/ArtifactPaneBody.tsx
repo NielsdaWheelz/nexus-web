@@ -14,6 +14,7 @@ import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { buildDomTextCursor } from "@/lib/canonicalText/domTextCursor";
 import { resolveDomTextRanges } from "@/lib/canonicalText/domTextRanges";
 import {
+  paneSourceKey,
   requirePaneRuntime,
   usePaneParam,
   usePaneRuntime,
@@ -35,10 +36,11 @@ export default function ArtifactPaneBody() {
   if (ref?.scheme !== "artifact") {
     throw new Error("ArtifactPaneBody requires a canonical Artifact ref");
   }
-  const { activateTarget } = requirePaneRuntime(
+  const runtime = requirePaneRuntime(
     usePaneRuntime(),
     "ArtifactPaneBody",
   );
+  const { activateTarget } = runtime;
   const dossier = useDossier({ kind: "Artifact", artifactRef });
   const head = dossier.head.kind === "Ready" ? dossier.head.value : null;
   useSetPaneLabel(head?.title ?? null);
@@ -54,6 +56,7 @@ export default function ArtifactPaneBody() {
         : {
             key: revisionRef,
             label: "Find in dossier",
+            narrowLabel: null,
             prepare: () => null,
             search(options) {
               const article = articleRef.current;
@@ -71,27 +74,29 @@ export default function ArtifactPaneBody() {
                 }),
               );
             },
-            async reveal(ranges) {
-              ranges[0]?.startContainer.parentElement?.scrollIntoView({
-                block: "center",
-              });
-              return null;
+            async reveal(ranges, signal) {
+              if (signal.aborted) return { kind: "Cancelled" };
+              const target = ranges[0]?.startContainer.parentElement;
+              if (!target?.isConnected)
+                return { kind: "Failed", message: "This match is no longer shown. Retry the search." };
+              target.scrollIntoView({ block: "center" });
+              return { kind: "Shown" };
             },
             paint: highlightPainter((ranges) => ranges),
           },
     [revisionRef],
   );
-  const find = useFind(source);
+  const find = useFind({ ownerKey: paneSourceKey(runtime), source });
   usePaneChrome({
     header: head
       ? { kind: "Resource", resource: { status: "Ready", creditGroups: [] } }
       : dossier.head.kind === "Failed"
         ? { kind: "Resource", resource: { status: "Failed" } }
         : undefined,
-    search: find
+    query: find
       ? { kind: "Find", find }
       : dossier.head.kind === "Loading"
-        ? { kind: "Resolving", control: "Find" }
+        ? { kind: "Find", find: null }
         : undefined,
     actionSubject: { ref: canonicalResourceRef(ref) },
   });

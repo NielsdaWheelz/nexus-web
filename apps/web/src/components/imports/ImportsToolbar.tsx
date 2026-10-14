@@ -1,14 +1,10 @@
 "use client";
 
-import { useId, useRef, useState, type RefObject } from "react";
-import { X } from "lucide-react";
-import AppliedFilters from "@/components/ui/AppliedFilters";
+import { useId, useState, type RefObject } from "react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import PaneToolbar from "@/components/ui/PaneToolbar";
-import SelectField from "@/components/ui/SelectField";
-import Toggle from "@/components/ui/Toggle";
-import CollectionFilterEditor from "@/components/workspace/CollectionFilterEditor";
+import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
+import RadioGroup from "@/components/ui/RadioGroup";
 import type { ImportsView } from "@/lib/imports/api";
 import {
   importFailureCopy,
@@ -66,7 +62,7 @@ const STATE: Choice = {
   options: STATE_KINDS.map((kind) => [kind, STATE_KIND_LABEL[kind]]),
 };
 
-/** The selects each view correlates (`apiQuery` narrows the same way). */
+/** The singular constraints each view correlates (`apiQuery` narrows likewise). */
 const CHOICES: Readonly<Record<ImportsView, readonly Choice[]>> = {
   NeedsAttention: [TYPE, STAGE, REASON],
   InProgress: [TYPE, STAGE],
@@ -81,11 +77,7 @@ function withParam(state: ImportsUrlState, name: string, value: string) {
   return decodeImportsUrl(params);
 }
 
-/**
- * The Imports collection bar: search (a draft committed on Enter; Escape clears
- * the draft only), the filters the view correlates, the applied-filter chips,
- * the result status and Refresh. Every change goes through `onChange`.
- */
+/** Imports owns the submitted draft and url constraints; the toolbar presents them. */
 export default function ImportsToolbar({
   view,
   state,
@@ -111,7 +103,6 @@ export default function ImportsToolbar({
   readonly onRefresh: () => void;
 }) {
   const statusId = useId();
-  const filterTriggerRef = useRef<HTMLButtonElement>(null);
   const committed = state.q ?? "";
   const [draft, setDraft] = useState(committed);
   const [synced, setSynced] = useState(committed);
@@ -124,149 +115,71 @@ export default function ImportsToolbar({
   const clearSearch = () => {
     setDraft("");
     onChange({ ...state, q: undefined });
-    inputRef.current?.focus({ preventScroll: true });
   };
   const datesBound = dateFilterLabel(dateBounds(state));
   const date = (name: "from" | "before", label: string) => (
     <label className={styles.dateField}>
       <span>{label}</span>
-      <input
+      <Input
         type="date"
+        size="sm"
         value={state[name] ?? ""}
         onChange={(event) => set(name, event.target.value)}
       />
     </label>
   );
 
+  const structuredChips = chips.filter((chip) => chip.id !== "q");
   return (
-    <PaneToolbar
-      variant="Collection"
-      search={
-        <form
-          className={styles.search}
-          onSubmit={(event) => {
-            event.preventDefault();
-            set("q", draft.trim());
-          }}
-        >
-          <Input
-            ref={inputRef}
-            type="search"
-            size="sm"
-            aria-label="Search imports"
-            aria-describedby={statusId}
-            aria-keyshortcuts="Escape"
-            placeholder="Search titles, files and sources"
-            value={draft}
-            autoComplete="off"
-            autoCapitalize="none"
-            spellCheck={false}
-            data-pane-collection-input="true"
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== "Escape" || event.defaultPrevented) return;
-              event.preventDefault();
-              event.stopPropagation();
-              setDraft("");
-            }}
-          />
-          {draft || state.q !== undefined ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              type="button"
-              aria-label="Clear text filter"
-              title="Clear text filter"
-              onClick={clearSearch}
-            >
-              <X size={15} aria-hidden="true" />
-            </Button>
-          ) : null}
-          <button type="submit" className="sr-only" tabIndex={-1}>
-            Apply search
-          </button>
-        </form>
-      }
-      filters={
-        <>
-          <span className={styles.sortLabel}>Order: {ORDER_LABEL[view]}</span>
-          <CollectionFilterEditor
-            activeCount={chips.filter((chip) => chip.id !== "q").length}
-            triggerRef={filterTriggerRef}
-            onClearFilters={() => onChange(withoutFilters(state))}
-            onResetView={
-              resetAvailable || draft !== ""
-                ? () => {
-                    setDraft("");
-                    onReset();
-                  }
-                : undefined
-            }
-          >
-            {CHOICES[view].map((choice) => (
-              <SelectField
-                key={choice.name}
-                layout="Inline"
-                label={choice.label}
-                size="sm"
-                value={state[choice.name] ?? ""}
-                onChange={(event) => set(choice.name, event.target.value)}
-              >
-                <option value="">{choice.any}</option>
-                {choice.options.map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </SelectField>
-            ))}
-            {view !== "History" ? null : (
-              <>
-                <Toggle
-                  size="sm"
-                  label="Recorded failures"
-                  checked={state.had_failures === true}
-                  onCheckedChange={(next) =>
-                    set("had_failures", next ? "true" : "")
-                  }
-                />
-                <div
-                  role="group"
-                  aria-label={datesBound}
-                  className={styles.dateGroup}
-                >
-                  <span aria-hidden="true" className={styles.dateGroupLabel}>
-                    {datesBound}
-                  </span>
-                  {date("from", "From")}
-                  {date("before", "Before")}
-                </div>
-              </>
-            )}
-          </CollectionFilterEditor>
-        </>
-      }
-      summary={
-        <div className={styles.summary}>
-          <AppliedFilters
-            chips={[...chips]}
-            onRemove={(id) => set(id, "")}
-            returnFocusTo={filterTriggerRef}
-          />
-          <span
-            id={statusId}
-            className={styles.resultStatus}
-            role={announce ? "status" : undefined}
-            aria-live={announce ? "polite" : undefined}
-          >
-            {resultStatus}
-          </span>
-          <Button variant="ghost" size="sm" onClick={onRefresh}>
-            Refresh
-          </Button>
-        </div>
-      }
+    <PaneQueryToolbar
+      inputRef={inputRef}
+      input={{
+        label: "Search imports",
+        placeholder: "Search titles, files and sources",
+        value: draft,
+        appliedValue: committed,
+        onChange: setDraft,
+        onClear: clearSearch,
+      }}
+      submit={{ onSubmit: () => set("q", draft.trim()) }}
+      options={{
+        label: "Filters",
+        activeCount: structuredChips.length,
+        onClear: () => onChange(withoutFilters(state)),
+        content: <>
+          {CHOICES[view].map((choice) => <RadioGroup
+            key={choice.name}
+            label={choice.label}
+            value={state[choice.name] ?? ""}
+            choices={[{ value: "", label: choice.any }, ...choice.options.map(([value, label]) => ({ value, label }))]}
+            onChange={(value) => set(choice.name, value)}
+          />)}
+          {view === "History" ? <>
+            <RadioGroup
+              label="Recorded failures"
+              value={state.had_failures === undefined ? "" : String(state.had_failures)}
+              choices={[
+                { value: "", label: "Any" },
+                { value: "true", label: "Had failures" },
+                { value: "false", label: "No recorded failures" },
+              ]}
+              onChange={(value) => set("had_failures", value)}
+            />
+            <div role="group" aria-label={datesBound} className={styles.dateGroup}>
+              <span aria-hidden="true" className={styles.dateGroupLabel}>{datesBound}</span>
+              {date("from", "From")}
+              {date("before", "Before")}
+            </div>
+          </> : null}
+        </>,
+      }}
+      chips={{ items: structuredChips, onRemove: (id) => set(id, "") }}
+      status={{ id: statusId, content: <>
+        <span className={styles.sortLabel}>Order: {ORDER_LABEL[view]}</span>
+        <span id={statusId} className={styles.resultStatus} role={announce ? "status" : undefined} aria-live={announce ? "polite" : undefined} aria-atomic={announce ? true : undefined}>{resultStatus}</span>
+      </> }}
+      actions={<Button variant="ghost" size="sm" onClick={onRefresh}>Refresh</Button>}
+      onReset={resetAvailable || draft ? () => { setDraft(""); onReset(); } : undefined}
     />
   );
 }

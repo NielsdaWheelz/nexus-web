@@ -1,7 +1,7 @@
 // Find over a pdf: pdf.js matches (its ligature, hyphenation and whitespace
 // normalization) and paints the text layer; the reader owns scope, the active
 // match and movement (pdf.js find never scrolls). The narrow scope is the page
-// at the reading position when find opens.
+// at the reading position when the first query starts.
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { EventBus, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
 import {
@@ -12,7 +12,6 @@ import {
   type FindSource,
 } from "@/lib/find/find";
 import type { Reader } from "../DocumentReader";
-import { nextFrame } from "../scrollport";
 import type { loadPdfJs } from "./pdfjs";
 
 /** A pdf.js match: 1-based page and its index among that page's matches. */
@@ -53,7 +52,6 @@ export function createPdfFind(
     updateMatchesCountOnProgress: false,
   });
   let pdf: PDFDocumentProxy | null = null;
-  let viewer: PDFViewer | null = null;
   let options: FindOptions | null = null;
   const dispatch = (type: string, details: object = {}) =>
     eventBus.dispatch(type, { source: controller, ...details });
@@ -78,19 +76,26 @@ export function createPdfFind(
     for (const pageIndex of new Set([previous, controller.choice.pageIdx]))
       if (pageIndex >= 0) dispatch("updatetextlayermatches", { pageIndex });
   }
-  let anchorPage = 1;
+  let anchorPage: number | null = null;
 
   const source: FindSource<PdfHit> = {
     key: "",
     label: "Find in PDF",
+    narrowLabel: "This page",
     prepare() {
       const primary = reader.getState().viewport?.primary;
-      anchorPage = primary?.kind === "pdf" ? primary.page : 1;
-      return `This page (${anchorPage})`;
+      anchorPage = primary?.kind === "pdf" ? primary.page : null;
+      return anchorPage === null ? null : `Page ${anchorPage}`;
     },
     async search(next, narrow, signal) {
+      if (narrow && anchorPage === null)
+        return {
+          kind: "Failed",
+          message:
+            "Selected page is unavailable. Clear the search to capture a new page, or turn off the scope option.",
+        };
       Object.assign(controller, {
-        scope: narrow ? anchorPage - 1 : null,
+        scope: narrow && anchorPage !== null ? anchorPage - 1 : null,
         sawText: false,
         choice: { pageIdx: -1, matchIdx: -1 },
       });
@@ -146,7 +151,7 @@ export function createPdfFind(
           });
         }
       }
-      const initial = rows.findIndex((row) => row.at.page >= anchorPage);
+      const initial = rows.findIndex((row) => row.at.page >= (anchorPage ?? 1));
       return {
         kind: "Rows",
         rows,
@@ -154,31 +159,18 @@ export function createPdfFind(
         partial: null,
       };
     },
-    /** To the page, then (once its text layer paints the match) to the match. */
     async reveal(hit, signal) {
+      if (signal.aborted) return { kind: "Cancelled" };
       paint(hit, true);
-      const point = (y: number) => ({
-        kind: "point" as const,
-        point: { kind: "pdf" as const, page: hit.page, y },
-      });
-      let outcome = await reader.inspect(point(0));
-      const page = viewer?.getPageView(hit.page - 1)?.div as HTMLElement;
-      for (let frame = 0; frame < 60 && !signal.aborted; frame += 1) {
-        const match = page?.querySelector(".textLayer .highlight.selected");
-        if (match) {
-          const box = page.getBoundingClientRect();
-          const top = match.getBoundingClientRect().top - box.top;
-          outcome = await reader.inspect(
-            point(Math.max(0, top / box.height - 0.05)),
-          );
-          break;
-        }
-        await nextFrame(signal);
-      }
-      if (outcome.kind !== "Unavailable") return null;
-      return outcome.reason === "CaptureUnavailable"
-        ? "Your reading position could not be captured."
-        : "PDF Find is unavailable. Try again.";
+      const outcome = await reader.inspect({ target: { kind: "pdfMatch", ...hit }, signal });
+      if (outcome.kind === "Cancelled") return { kind: "Cancelled" };
+      if (outcome.kind !== "Unavailable") return { kind: "Shown" };
+      return {
+        kind: "Failed",
+        message: outcome.reason === "CaptureUnavailable"
+          ? "Your reading position could not be captured."
+          : "PDF find is unavailable. Try again.",
+      };
     },
     paint: (rows, active) => paint(rows[active]?.at ?? null, rows.length > 0),
   };
@@ -187,7 +179,6 @@ export function createPdfFind(
     controller,
     /** The find over one opened pdf; its key names the document. */
     attach(next: PDFViewer, document: PDFDocumentProxy, key: string) {
-      viewer = next;
       pdf = document;
       links.setViewer(next);
       links.setDocument(document, null);

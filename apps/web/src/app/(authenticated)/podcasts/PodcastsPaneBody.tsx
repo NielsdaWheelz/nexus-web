@@ -3,18 +3,19 @@
 // The followed shows. The url owns filter, sort and library scope and passes
 // them to the server, which validates them; the text filter stays local.
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useId } from "react";
 import Link from "next/link";
 import { Compass } from "lucide-react";
 import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
-import PodcastViewBar, {
-  podcastViewHref,
-} from "@/components/podcasts/PodcastViewBar";
+import { podcastViewHref } from "@/lib/podcasts/view";
+import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
+import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
+import RadioGroup from "@/components/ui/RadioGroup";
 import Button from "@/components/ui/Button";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
+import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { absent, present } from "@/lib/api/presence";
 import { useResource } from "@/lib/api/useResource";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
@@ -124,60 +125,45 @@ export default function PodcastsPaneBody() {
       }),
     [params, router],
   );
-  const { inputRef, focusInput } = usePaneCollectionInput();
-  const collection = useMemo(() => {
-    const options = libraries.status === "ready" ? libraries.data : [];
-    const library = {
-      param: "library_id",
-      label: "Library",
-      value: libraryId ?? "",
-      defaultValue: "",
-      options: [
-        { value: "", label: "All libraries" },
-        ...options.map((option) => ({ value: option.id, label: option.name })),
-      ],
-      disabled: libraries.status === "loading",
-    };
-    return {
-      label: "Filter followed podcasts",
-      content: (
-        <PodcastViewBar
-          inputRef={inputRef}
-          inputLabel="Filter followed podcasts"
-          placeholder="Filter shows"
-          filterRows={filterRows}
-          sort={{
-            param: "sort",
-            label: "Sort shows",
-            value: sort,
-            defaultValue: "recent_episode",
-            options: SORTS,
-          }}
-          filters={[
-            {
-              param: "filter",
-              label: "Show",
-              value: filter,
-              defaultValue: "all",
-              options: FILTERS,
-            },
-            library,
-          ]}
-          onChange={replaceView}
-        />
-      ),
-      focusInput,
-    };
-  }, [
-    filter,
-    filterRows,
+  const { inputRef, focusInput } = usePaneQueryInput();
+  const queryStatusId = useId();
+  const libraryChoices = [
+    { value: "", label: "All libraries" },
+    ...(libraries.status === "ready" ? libraries.data.map((library) => ({ value: library.id, label: library.name })) : []),
+  ];
+  if (libraryId !== null && !libraryChoices.some((choice) => choice.value === libraryId)) {
+    libraryChoices.push({ value: libraryId, label: libraryId });
+  }
+  const showChoices = FILTERS.some((choice) => choice.value === filter) ? FILTERS : [...FILTERS, { value: filter, label: filter }];
+  const sortChoices = SORTS.some((choice) => choice.value === sort) ? SORTS : [...SORTS, { value: sort, label: sort }];
+  const chips = [
+    ...(filter === "all" ? [] : [{ id: "filter", label: `Show: ${showChoices.find((choice) => choice.value === filter)?.label}` }]),
+    ...(libraryId === null ? [] : [{ id: "library_id", label: `Library: ${libraryChoices.find((choice) => choice.value === libraryId)?.label}` }]),
+  ];
+  const queryControls = {
+    kind: "Controls" as const,
+    label: "Filter followed podcasts",
     focusInput,
-    inputRef,
-    libraries,
-    libraryId,
-    replaceView,
-    sort,
-  ]);
+    content: <PaneQueryToolbar
+      inputRef={inputRef}
+      input={{ label: "Filter followed podcasts", placeholder: "Filter shows", value: filterRows.query, appliedValue: filterRows.query, onChange: filterRows.onQueryChange, onClear: filterRows.clearQuery }}
+      options={{
+        label: "Filters", activeCount: chips.length,
+        onClear: () => replaceView({ filter: null, library_id: null }),
+        content: <>
+          <RadioGroup label="Show" value={filter} choices={showChoices} onChange={(value) => replaceView({ filter: value === "all" ? null : value })} />
+          <RadioGroup label="Library" value={libraryId ?? ""} choices={libraryChoices} disabled={libraries.status === "loading"} onChange={(value) => replaceView({ library_id: value || null })} />
+        </>,
+      }}
+      sort={{ label: "Sort", value: sort, choices: sortChoices, onChange: (value) => replaceView({ sort: value === "recent_episode" ? null : value }) }}
+      chips={{ items: chips, onRemove: (id) => replaceView({ [id]: null }) }}
+      status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} /> }}
+      onReset={sort !== "recent_episode" || chips.length > 0 || filterRows.query ? () => {
+        filterRows.clearQuery();
+        replaceView({ sort: null, filter: null, library_id: null });
+      } : undefined}
+    />,
+  };
   usePaneChrome({
     header: {
       kind: "Section",
@@ -188,7 +174,7 @@ export default function PodcastsPaneBody() {
           : { kind: "None" },
     },
     menuActions: ACTIONS,
-    collection,
+    query: queryControls,
     refresh: {
       kind: "Refreshable",
       sourceKey: `Podcasts.Subscriptions:${key}`,
