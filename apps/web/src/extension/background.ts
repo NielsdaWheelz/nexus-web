@@ -506,7 +506,7 @@ function requireBytes(): CaptureBytes {
 
 function requireSession(): ConnectedSession {
   if (session === null) throw failure("E_CAPTURE_SIGNED_OUT", "Sign in to Nexus first.");
-  if (draft !== null && draft.account !== null && draft.account.userHandle !== session.account.userHandle) {
+  if (draft !== null && draft.account !== null && draft.account.userId !== session.account.userId) {
     throw failure(
       "E_CAPTURE_ACCOUNT_MISMATCH",
       "This capture belongs to another Nexus account. Sign in as that account to continue.",

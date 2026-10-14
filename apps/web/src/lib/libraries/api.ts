@@ -1,14 +1,16 @@
 "use client";
 
-// Typed calls for libraries, their entries, placements and destinations, on the
-// generated wire types. A committed write publishes its change topics; readers
-// reread. Retry rules (the server's contract): a create resends its client id, a
-// rename carries the name it expects to replace, and deletes, placements and
-// moves are absolute, so resending one that already landed changes nothing.
+// Typed calls for libraries, their entries, placements, destinations, members and
+// invitations, on the generated wire types. A committed write publishes the change
+// topics it moved for the viewer; readers reread. Retry rules (the server's
+// contract): a create or an invitation resends its client id, a rename or a role
+// change carries the value it expects to replace, and deletes, placements, moves,
+// leaving, revoking and answering are absolute, so resending one that already
+// landed changes nothing.
 
 import { apiFetch } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
-import type { ListPage } from "@/lib/api/useServerList";
+import { pageQuery, type ListPage } from "@/lib/api/useServerList";
 import type { Schema } from "@/lib/api/wire";
 
 export type Library = Schema<"LibraryOut">;
@@ -17,6 +19,10 @@ export type LibraryEntry =
   | Schema<"LibraryPodcastEntryOut">;
 export type LibraryPlacement = Schema<"LibraryPlacementOut">;
 export type LibraryDestination = Schema<"LibraryDestinationOut">;
+export type LibraryMember = Schema<"LibraryMemberOut">;
+export type LibraryInvitation = Schema<"LibraryInvitationOut">;
+export type ViewerInvitation = Schema<"ViewerInvitationOut">;
+export type LibraryRole = LibraryMember["role"];
 export interface LibraryPlacementTarget {
   readonly kind: "Media" | "Podcast";
   readonly id: string;
@@ -147,4 +153,77 @@ export function destinationsPage(
     `/api/libraries/destinations?${query}`,
     signal,
   );
+}
+
+function page<T>(path: string, cursor: string | null, limit: number, signal: AbortSignal) {
+  return data<ListPage<T>>(`/api/libraries/${path}?${pageQuery("", cursor, limit)}`, signal);
+}
+
+export const membersPage = (id: string, cursor: string | null, limit: number, signal: AbortSignal) =>
+  page<LibraryMember>(`${encodeURIComponent(id)}/members`, cursor, limit, signal);
+
+/** A library's pending invitations, newest first. */
+export const invitationsPage = (
+  id: string,
+  cursor: string | null,
+  limit: number,
+  signal: AbortSignal,
+) => page<LibraryInvitation>(`${encodeURIComponent(id)}/invites`, cursor, limit, signal);
+
+/** The invitations waiting for the viewer, newest first. */
+export const viewerInvitationsPage = (cursor: string | null, limit: number, signal: AbortSignal) =>
+  page<ViewerInvitation>("invites", cursor, limit, signal);
+
+export async function invite(
+  libraryId: string,
+  body: Schema<"CreateInvitationRequest">,
+): Promise<void> {
+  await apiFetch(`${libraryPath(libraryId)}/invites`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function setMemberRole(
+  libraryId: string,
+  userId: string,
+  role: LibraryRole,
+  expectedRole: LibraryRole,
+): Promise<void> {
+  await apiFetch(`${libraryPath(libraryId)}/members/${userId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ role, expected_role: expectedRole }),
+  });
+}
+
+/** Removing the viewer's own row is leaving, so their libraries and All may change. */
+export async function removeMember(libraryId: string, userId: string): Promise<void> {
+  await apiFetch(`${libraryPath(libraryId)}/members/${userId}`, { method: "DELETE" });
+  publishChange("Libraries", "Entries");
+}
+
+export async function leaveLibrary(id: string): Promise<void> {
+  await apiFetch(`${libraryPath(id)}/membership`, { method: "DELETE" });
+  publishChange("Libraries", "Entries");
+}
+
+/** The viewer stays an admin; the new owner may delete and transfer. */
+export async function transferOwnership(libraryId: string, userId: string): Promise<void> {
+  await apiFetch(`${libraryPath(libraryId)}/transfer-ownership`, {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId }),
+  });
+  publishChange("Libraries");
+}
+
+export async function revokeInvitation(id: string): Promise<void> {
+  await apiFetch(`/api/libraries/invites/${id}`, { method: "DELETE" });
+}
+
+/** Accepting joins the library, so the viewer's libraries and All change. */
+export async function respondToInvitation(id: string, accept: boolean): Promise<void> {
+  await apiFetch(`/api/libraries/invites/${id}/${accept ? "accept" : "decline"}`, {
+    method: "POST",
+  });
+  if (accept) publishChange("Libraries", "Entries");
 }

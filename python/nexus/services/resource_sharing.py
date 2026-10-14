@@ -1,26 +1,31 @@
 """The Share overlay's snapshot and create command. One ordered availability check serves both
-audiences, first failing reason first; create re-runs it under the subject's row locks."""
+audiences, first failing reason first; create re-runs it under the subject's row locks. A
+subject the viewer cannot read is 404 to both, so neither reveals that it exists.
+
+Retry rule: a create resends its client id. The same id answers that grant (409 when it names
+another one), and the creator's existing grant for the same audience answers as it is.
+"""
 
 from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media
+from nexus.auth.permissions import can_read_highlight, can_read_media
 from nexus.config import get_settings
 from nexus.db.models import Highlight, MediaTeardownIntent, ResourceGrant, User
 from nexus.db.retries import retry_serializable
 from nexus.db.session import transaction
-from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_sharing import (
     AudienceAvailableOut,
     AudienceUnavailableOut,
     AudienceUnavailableReason,
     CreateResourceShareOut,
+    CreateResourceShareRequest,
     CreationAvailabilityOut,
-    LinkAudienceIn,
     LinkShareOut,
     ReceivedUserShareOut,
     ResourceShareSnapshotOut,
@@ -35,37 +40,32 @@ from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.resolve import resolve_refs
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.routing import route_for_ref
-from nexus.services.sealed_handles import (
-    InvalidSealedHandle,
-    seal_resource_grant,
-    seal_user,
-    unseal_user,
-)
 
 
 def _href(path: str) -> str:
     return get_settings().app_public_url.rstrip("/") + path
 
 
-def _user(user: User) -> ShareUserOut:
-    return ShareUserOut(
-        user_handle=seal_user(user.id),
-        email=user.email,
-        display_name=user.display_name,
-    )
+def _user(user: User, email: str | None) -> ShareUserOut:
+    return ShareUserOut(user_id=user.id, email=email, display_name=user.display_name)
 
 
 def _owned(grant: ResourceGrant, grantee: User | None) -> UserShareOut | LinkShareOut:
-    handle = seal_resource_grant(grant.id)
+    """The creator's grant; the grantee's email only as the creator typed it."""
     if grantee is None:
-        return LinkShareOut(handle=handle, public_href=_href(f"/s#share={grant.share_token}"))
-    return UserShareOut(handle=handle, user=_user(grantee))
+        return LinkShareOut(id=grant.id, public_href=_href(f"/s#share={grant.share_token}"))
+    return UserShareOut(id=grant.id, user=_user(grantee, grant.grantee_email))
+
+
+def _not_found() -> NotFoundError:
+    return NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
 
 
 def _unavailable(
     db: Session, viewer_id: UUID, subject: ResourceRef, *, lock: bool
 ) -> AudienceUnavailableReason | None:
-    """Why the viewer may not grant the subject to anyone now, or None."""
+    """Why the viewer may not grant the subject to anyone now, or None; 404 when the
+    viewer cannot read it."""
     if capability(subject.scheme).sharing not in {"ResourceGrants", "HighlightGrants"}:
         return "UnsupportedSubject"
     if lock:
@@ -75,13 +75,15 @@ def _unavailable(
         owned_by = select(Highlight.anchor_media_id, Highlight.user_id)
         row = db.execute(owned_by.where(Highlight.id == subject.id)).one_or_none()
         if row is None:
-            return "InsufficientAuthority"
+            raise _not_found()
         media_id, owner_id = row
+    if not can_read_media(db, viewer_id, media_id, include_tearing_down=True) or (
+        owner_id != viewer_id and not can_read_highlight(db, viewer_id, subject.id)
+    ):
+        raise _not_found()
     if db.scalar(select(exists().where(MediaTeardownIntent.media_id == media_id))):
         return "Deleting"
-    if owner_id != viewer_id or not can_read_media(
-        db, viewer_id, media_id, include_tearing_down=True
-    ):
+    if owner_id != viewer_id:
         return "InsufficientAuthority"
     if subject.scheme == "highlight" and not resolve_highlight_reader_target(
         db, highlight_id=subject.id
@@ -97,7 +99,7 @@ def get_share_snapshot(
     if not resolve_refs(db, viewer_id=viewer_user_id, refs=[subject])[0].missing:
         route = route_for_ref(db, viewer_id=viewer_user_id, ref=subject, missing=False)
     if route is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
+        raise _not_found()
     mode = capability(subject.scheme).sharing
     user = _unavailable(db, viewer_user_id, subject, lock=False)
     link = user or public_resource_sharing.link_readiness(db, subject)
@@ -119,8 +121,8 @@ def get_share_snapshot(
         shares=[_owned(grant, grantee) for grant, grantee in owned],
         received_access=[
             ReceivedUserShareOut(
-                handle=seal_resource_grant(grant.id),
-                shared_by=_user(creator),
+                id=grant.id,
+                shared_by=_user(creator, creator.email),
                 subject=f"{grant.subject_scheme}:{grant.subject_id}",
             )
             for grant, creator in received
@@ -129,29 +131,27 @@ def get_share_snapshot(
     )
 
 
-def _grantee(db: Session, viewer_id: UUID, handle: str) -> User:
-    """The user a person grant names: someone other than the viewer who still exists."""
-    try:
-        grantee = db.get(User, unseal_user(handle))
-    except InvalidSealedHandle as exc:
-        raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found") from exc
-    if grantee is None:
+def _grantee(db: Session, viewer_id: UUID, audience: UserAudienceIn) -> User:
+    """The user a person grant names: someone other than the viewer who exists, and
+    whose email the typed one is (in any case) when the viewer typed one."""
+    typed = func.lower(User.email) == func.lower(audience.email)
+    row = db.execute(select(User, typed).where(User.id == audience.user_id)).one_or_none()
+    if row is None:
         raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found")
+    grantee, is_theirs = row
     if grantee.id == viewer_id:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "Cannot share a resource with yourself"
         )
+    if audience.email is not None and not is_theirs:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Not this user's email")
     return grantee
 
 
 def create_share(
-    db: Session,
-    *,
-    viewer_user_id: UUID,
-    subject: ResourceRef,
-    audience: UserAudienceIn | LinkAudienceIn,
+    db: Session, *, viewer_user_id: UUID, subject: ResourceRef, body: CreateResourceShareRequest
 ) -> CreateResourceShareOut:
-    """Grant the subject, or return the viewer's existing grant for that audience."""
+    """Grant the subject to one audience, or answer the grant that already does."""
 
     def attempt() -> CreateResourceShareOut:
         with transaction(db):
@@ -160,11 +160,20 @@ def create_share(
                 raise InvalidRequestError(
                     ApiErrorCode.E_INVALID_REQUEST, f"Share unavailable: {reason}"
                 )
-            grantee = None
-            if isinstance(audience, UserAudienceIn):
-                grantee = _grantee(db, viewer_user_id, audience.user_handle)
+            grantee, email = None, None
+            if isinstance(body.audience, UserAudienceIn):
+                grantee, email = _grantee(db, viewer_user_id, body.audience), body.audience.email
             grantee_id = grantee.id if grantee else None
-            grant = resource_grants.find_grant(
+            same = (viewer_user_id, subject.scheme, subject.id, grantee_id)
+            grant = db.get(ResourceGrant, body.id)
+            if grant is not None and same != (
+                grant.created_by_user_id,
+                grant.subject_scheme,
+                grant.subject_id,
+                grant.grantee_user_id,
+            ):
+                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Share id is taken")
+            grant = grant or resource_grants.find_grant(
                 db, creator_id=viewer_user_id, subject=subject, grantee_id=grantee_id
             )
             if grant is not None:
@@ -174,7 +183,12 @@ def create_share(
                     ApiErrorCode.E_INVALID_REQUEST, f"Share unavailable: {reason}"
                 )
             grant = resource_grants.insert_grant(
-                db, creator_id=viewer_user_id, subject=subject, grantee_id=grantee_id
+                db,
+                id=body.id,
+                creator_id=viewer_user_id,
+                subject=subject,
+                grantee_id=grantee_id,
+                grantee_email=email,
             )
             return CreateResourceShareOut(share=_owned(grant, grantee), created=True)
 

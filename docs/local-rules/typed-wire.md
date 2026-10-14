@@ -17,6 +17,10 @@ its wire types are generated from FastAPI's OpenAPI schema, so tsc catches drift
   passes `by_alias` (owner decision 2026-10-13). an alias survives only where
   the name is not ours: a header, a python keyword (`from`), a provider's
   schema field, an opaque sealed payload.
+- users, library invitations and resource grants are addressed by plain uuids
+  (owner decision 2026-10-10); this overrides the sealed-handle default of
+  [../rules/keys-and-identities.md](../rules/keys-and-identities.md) for them.
+  share tokens, upload sessions and discovery targets stay sealed.
 - absence is `null`: an optional value is `T | None` in python and `T | null`
   on the web, its key always present on output. this overrides the
   `Presence<T>` rule of [../rules/boundaries.md](../rules/boundaries.md),

@@ -1,9 +1,5 @@
-"""User service layer.
+"""User service layer: the profile and people search."""
 
-User profile and search operations.
-"""
-
-import re
 from datetime import date, datetime
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -20,7 +16,7 @@ from nexus.schemas.user import (
     UserProfileOut,
     UserSearchOut,
 )
-from nexus.services.sealed_handles import seal_user
+from nexus.text import escape_like
 
 
 def get_user_profile(
@@ -87,44 +83,30 @@ def calendar_local_date(db: Session, user_id: UUID) -> date:
     return datetime.now(ZoneInfo(time_zone)).date()
 
 
-def search_users(db: Session, query: str, viewer_id: UUID, limit: int = 10) -> list[UserSearchOut]:
-    """Search users by email prefix or display_name substring, excluding the viewer."""
+def search_users(db: Session, query: str, viewer_id: UUID, limit: int) -> list[UserSearchOut]:
+    """People to share with or invite: display names containing the query, or the one
+    account whose email it is exactly. An email is returned only on that exact match,
+    so a search never lists addresses. The viewer is left out."""
+    query = query.strip()
     if len(query) < 3:
         raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Search query must be at least 3 characters",
+            ApiErrorCode.E_INVALID_REQUEST, "Search query must be at least 3 characters"
         )
-
-    # Escape LIKE special characters
-    escaped = re.sub(r"([%_\\])", r"\\\1", query)
-
-    result = db.execute(
+    rows = db.execute(
         text("""
-            SELECT id, email, display_name
+            SELECT id AS user_id, display_name,
+                   CASE WHEN lower(email) = lower(:query) THEN email END AS email
             FROM users
-            WHERE id != :viewer_id
-              AND (
-                email ILIKE :prefix_pattern
-                OR display_name ILIKE :contains_pattern
-              )
-            ORDER BY
-              CASE WHEN email ILIKE :prefix_pattern THEN 0 ELSE 1 END,
-              email ASC NULLS LAST
+            WHERE id <> :viewer_id
+              AND (lower(email) = lower(:query) OR display_name ILIKE :contains ESCAPE '\\')
+            ORDER BY (lower(email) = lower(:query)) IS TRUE DESC, lower(display_name), id
             LIMIT :limit
         """),
         {
+            "query": query,
+            "contains": f"%{escape_like(query)}%",
             "viewer_id": viewer_id,
-            "prefix_pattern": f"{escaped}%",
-            "contains_pattern": f"%{escaped}%",
             "limit": limit,
         },
-    )
-
-    return [
-        UserSearchOut(
-            user_handle=seal_user(row[0]),
-            email=row[1],
-            display_name=row[2],
-        )
-        for row in result.fetchall()
-    ]
+    ).mappings()
+    return [UserSearchOut(**row) for row in rows]

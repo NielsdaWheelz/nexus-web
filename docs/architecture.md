@@ -1291,8 +1291,8 @@ create, rename, delete, the index, writable destinations),
 `services/library_entries.py` (the **sole writer** of `library_entries`: the
 `EntryTarget` media|podcast union, the locked append, the move command, filing,
 unfiling and show placement), `services/library_listing.py` (the entry view
-lenses and the one page statement; no DML), and `services/library_sharing.py` (the
-  `memberships` and `library_invitations` tables). Visibility itself is enforced by the boolean
+lenses and the one page statement; no DML), and `services/library_members.py` (the
+  `memberships` and `library_invitations` tables; users and invitations are plain uuids). Visibility itself is enforced by the boolean
   predicates in `auth/permissions.py`; the search/object readers read
   `library_entries` under an explicit Tier-R allowlist. Library list hydration is
   private and total: the repeatable-read membership query filters visibility,
@@ -2220,7 +2220,7 @@ The things most likely to bite you, distilled:
 | Resource graph (edges, refs, citations, connections, links) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `links`, `connections`, `context`, `citations`, `reader_targets`, `cleanup`)                                                     |
 | Universal Dossiers / Media Intelligence                           | `python/nexus/services/dossier/`, `python/nexus/services/media_intelligence.py`, `python/nexus/api/routes/dossiers.py`                                                                               |
 | Model tools (contract, dispatcher, writes, undo, memory)         | `python/nexus/services/tools/`, `python/nexus/api/routes/assistant_writes.py`, [`modules/model-tools.md`](modules/model-tools.md)                                                                      |
-| Libraries / contributors / notes                                  | `python/nexus/services/{libraries,library_entries,library_listing,library_sharing,contributors,notes}.py`                                                                                               |
+| Libraries / contributors / notes                                  | `python/nexus/services/{libraries,library_entries,library_listing,library_members,contributors,notes}.py`                                                                                               |
 | Resource grants / public sharing                                  | [`modules/resource-sharing.md`](modules/resource-sharing.md), `python/nexus/services/{resource_grants,resource_sharing,public_resource_sharing}.py`, `apps/web/src/{components,lib}/sharing/`, `apps/web/src/app/s/` |
 | Podcasts / playback                                               | `python/nexus/services/podcasts/`, `python/nexus/services/consumption/`, `python/nexus/api/routes/{lectern,listening_state}.py`                                                                        |
 | Auth                                                              | `python/nexus/auth/`                                                                                                                                                                                   |

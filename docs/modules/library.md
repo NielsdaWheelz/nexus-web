@@ -23,9 +23,10 @@ their followed shows. Libraries do not own ingestion or asset delivery.
   `library_anchor_facts`).
 - **`services/library_listing.py`** owns the entry view lenses and the one
   keyset page statement; it writes nothing.
-- **`services/library_sharing.py`** owns `memberships` and
-  `library_invitations` (members, roles, transfer, invitations); it authorizes
-  through `libraries.access`. Its routes live in `api/routes/library_members.py`.
+- **`services/library_members.py`** owns `memberships` and
+  `library_invitations`: members, roles, leaving, transfer and the invitation
+  lifecycle; it authorizes through `libraries.access`. Its routes live in
+  `api/routes/library_members.py`.
 
 Web: `lib/libraries/api.ts` (typed calls; a committed write publishes its change
 topics), `views.tsx` (the url's view options), `errors.ts` (the one failure-copy
@@ -33,6 +34,12 @@ map), the two panes, `LibrarySettingsDialog`, and the chooser stack:
 `LibraryChooser` (the listbox) under `DestinationChooser` (pick destinations;
 `DestinationField` on the web, inline in the extension popup) and
 `PlacementOverlay` ("Libraries…", opened through `placementController`).
+Membership: `LibraryMembers` (the inspector's Members tab; its hook runs in the
+library pane), `LibraryInvitations` (the viewer's inbox above the index) and
+`components/users/PeopleSearch` (shared with the Share overlay). Each command is
+request, then reread: one at a time, and after any outcome the lists and the
+library are read again, so a refused command shows its copy and the tab goes
+once the reread says the viewer no longer manages the library.
 
 ## Contract (`/api` via the BFF; `{data}`; pages are `{items, next_cursor}`)
 
@@ -50,11 +57,21 @@ map), the two panes, `LibrarySettingsDialog`, and the chooser stack:
 | `DELETE /libraries/{id}/items/{ref}` → 204 | the last entry of a media anywhere → 409 `E_MEDIA_LAST_REFERENCE` | absent → 204 |
 | `GET /libraries/destinations?q&cursor&limit≤50`, `GET /extension/library-destinations` | named libraries the viewer admins, exact → prefix → contains → name | read |
 | `GET /libraries/{id}/suggestions` | the Reading Slate (below) | read |
+| `GET /libraries/{id}/members?cursor&limit` | admin; `{user_id, role, is_owner, email, display_name, created_at}` by user id | read |
+| `PATCH /libraries/{id}/members/{user_id} {role, expected_role}` → 204 | admin of a mutable library; the owner's role is fixed (403 `E_OWNER_EXIT_FORBIDDEN`) | already that role → ok; changed meanwhile → 409 `{current_role}` |
+| `DELETE /libraries/{id}/members/{user_id}` → 204 | admin, or the viewer themself; never the owner | absent, or a library the viewer cannot see → 204 |
+| `DELETE /libraries/{id}/membership` → 204 | the viewer leaves; the owner transfers first | as above |
+| `POST /libraries/{id}/transfer-ownership {user_id}` → 204 | owner; the target must be a member and becomes admin; the old owner stays admin | already that owner → ok |
+| `POST /libraries/{id}/invites {id, invitee_user_id, invitee_email\|null, role}` → 201 `LibraryInvitationOut` | admin of a mutable library; `invitee_email` is the email the admin typed, stored as typed (one that is not the invitee's, ignoring case, is 400); a member, the inviter included, 409 `E_INVITE_MEMBER_EXISTS`; one pending per invitee 409 `E_INVITE_ALREADY_EXISTS` | same id → that invitation; an id naming another one → 409 `E_RESOURCE_CONFLICT` |
+| `GET /libraries/{id}/invites?cursor&limit` | admin; pending, newest first; `{id, library_id, role, status, invitee_user_id, invitee_email, invitee_display_name, created_at}` | read |
+| `GET /libraries/invites?cursor&limit` | the viewer's pending invitations: `{id, library_id, library_name, role, inviter_email, inviter_display_name, created_at}` | read |
+| `POST /libraries/invites/{id}/accept\|decline` → 204 | the invitee; accept inserts the membership in the same transaction | the same answer again → ok; any other state → 409 `E_INVITE_NOT_PENDING` |
+| `DELETE /libraries/invites/{id}` → 204 | admin of its library | revoked, absent or invisible → 204 |
 
 `LibraryOut`: `{id, name, is_default, system_key, role, can_manage, can_delete,
-can_transfer_ownership, created_at, updated_at}`. `can_manage` (rename, file,
-reorder, manage members) is an admin of a mutable library; delete and transfer
-need its owner. A library is mutable when it is neither the default nor a
+can_transfer_ownership, can_leave, created_at, updated_at}`. `can_manage`
+(rename, file, reorder, manage members) is an admin of a mutable library; delete
+and transfer need its owner; every other member may leave. A library is mutable when it is neither the default nor a
 system library. Entry rows: `{kind:"media", entry_id|null, added_at,
 media_summary}` or `{kind:"podcast", entry_id|null, added_at, podcast_id, title,
 contributors, unplayed_count, published_date|null, sync_status|null}`;
@@ -69,9 +86,18 @@ the caller cannot see is a 404 before anything about the show.
 
 ## Invariants
 
-- One default library per user; the owner is an admin member; default and
-  system libraries take no rename, delete, invitation or member change, and
-  system libraries take no user entry writes.
+- One default library per user; the owner is an admin member and cannot leave
+  or be demoted (transfer first); default and system libraries take no rename,
+  delete, invitation or member change, and system libraries take no user entry
+  writes.
+- At most one pending invitation per (library, invitee), never to oneself
+  (database); accepting writes the membership and the status in one
+  transaction.
+- An invitation shows the invitee's email only as the inviter typed it, or once
+  the invitee is a member; otherwise null (the web shows the display name, else
+  "Unknown person"). People search returns an email only on an exact match, so
+  neither reveals an address the viewer did not already hold. The invitee's
+  inbox names the inviter, email included.
 - An entry files exactly one media or one show, once per library. In a named
   library a show and direct entries for its episodes are mutually exclusive.
 - Positions only order a library (`UNIQUE (library_id, position) DEFERRABLE
@@ -136,7 +162,8 @@ highlights visible to each other.
 ## Membership versus resource sharing
 
 A library is shared only through membership and invitations (the Members tab of
-the inspector); it never has a grant or a public link. Placement ("Libraries…")
+the inspector); it never has a grant or a public link. Users and invitations are
+addressed by plain uuids (owner decision 2026-10-10). Placement ("Libraries…")
 is a resource action of media and shows, separate from Share. See
 [resource sharing](resource-sharing.md).
 

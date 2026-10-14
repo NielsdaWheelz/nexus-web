@@ -1,4 +1,4 @@
-// The one copy map for library, entry and placement failures. A transport
+// The one copy map for library, entry, placement and membership failures. A transport
 // failure gets the shared transport copy; an abort or a handled sign-out shows
 // nothing; any other code is a defect, handed to `fail` (useThrowLater in a
 // handler, a plain throw in render).
@@ -16,6 +16,7 @@ const COPY: Readonly<Record<string, string>> = {
   E_FORBIDDEN: PERMISSIONS,
   E_LIBRARY_FORBIDDEN: PERMISSIONS,
   E_OWNER_REQUIRED: PERMISSIONS,
+  E_OWNER_EXIT_FORBIDDEN: PERMISSIONS,
   E_DEFAULT_LIBRARY_FORBIDDEN: PERMISSIONS,
   E_NAME_INVALID: "Enter a library name of 1 to 100 characters other than All.",
   E_RESOURCE_CONFLICT: "Someone changed this meanwhile. Refresh and try again.",
@@ -27,6 +28,10 @@ const COPY: Readonly<Record<string, string>> = {
   E_INVALID_CURSOR: "The list changed. Refresh it and try again.",
   E_INVITE_NOT_PENDING: "This invitation is no longer pending.",
   E_INVITE_NOT_FOUND: "This invitation is no longer pending.",
+  E_INVITE_ALREADY_EXISTS: "This person already has a pending invitation.",
+  E_INVITE_MEMBER_EXISTS: "This person is already a member.",
+  E_OWNERSHIP_TRANSFER_INVALID: "Only a current member can become the owner.",
+  E_USER_NOT_FOUND: "This person is no longer available.",
 };
 
 type Fail = (defect: { readonly error: unknown }) => void;

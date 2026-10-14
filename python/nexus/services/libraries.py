@@ -85,8 +85,8 @@ class LibraryAccess:
 
     def out(self, viewer_id: UUID) -> LibraryOut:
         """The one capability rule: admins manage a mutable library, its owner deletes
-        or hands it on."""
-        owner = self.mutable and self.owner_user_id == viewer_id
+        or hands it on, and everyone else may leave it."""
+        owner = self.owner_user_id == viewer_id
         return LibraryOut(
             id=self.id,
             name=self.name,
@@ -94,8 +94,9 @@ class LibraryAccess:
             system_key=self.system_key,
             role=self.role,
             can_manage=self.mutable and self.role == "admin",
-            can_delete=owner,
-            can_transfer_ownership=owner,
+            can_delete=self.mutable and owner,
+            can_transfer_ownership=self.mutable and owner,
+            can_leave=self.mutable and not owner,
             created_at=self.created_at,
             updated_at=self.updated_at,
         )

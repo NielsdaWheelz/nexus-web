@@ -1,66 +1,42 @@
-"""Library membership and invitation wire (moved unchanged; rewritten in the
-membership slice)."""
+"""Library membership and invitation wire: snake keys, plain nullable values, plain
+ids; requests forbid unknown keys."""
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from nexus.schemas.library import LibraryRole
-from nexus.services.sealed_handles import LibraryInvitationHandle, UserHandle
-
-LibraryInvitationStatusValue = Literal["pending", "accepted", "declined", "revoked"]
-LibraryGovernanceCursor = Annotated[str, Field(min_length=1)]
-
-
-class _Out(BaseModel):
-    """Output model with every serialized field declared."""
-
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_serialization_defaults_required=True,
-    )
-
-
-class _Row(_Out):
-    """Output model built straight from a DB row or context object."""
-
-    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
 
 class _In(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class UpdateLibraryMemberRequest(BaseModel):
-    role: LibraryRole = Field(..., description="New role for the member ('admin' or 'member')")
+class SetMemberRoleRequest(_In):
+    """`expected_role` is the role the client last read (the expected version)."""
+
+    role: LibraryRole
+    expected_role: LibraryRole
 
 
-class TransferLibraryOwnershipRequest(_In):
-    new_owner_user_handle: UserHandle
+class TransferOwnershipRequest(_In):
+    user_id: UUID
 
 
-class UserLibraryInvitee(_In):
-    kind: Literal["User"]
-    user_handle: UserHandle
+class CreateInvitationRequest(_In):
+    """Retry: resend the same client-minted id. `invitee_email` is the email the inviter
+    typed to find the invitee (theirs, in any case), or null when found by name."""
+
+    id: UUID
+    invitee_user_id: UUID
+    invitee_email: str | None
+    role: LibraryRole
 
 
-class CreateLibraryInviteRequest(BaseModel):
-    invitee: UserLibraryInvitee
-    role: LibraryRole = Field(
-        ..., description="Role to assign to the invitee ('admin' or 'member')"
-    )
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class LibraryGovernancePageInfo(_Out):
-    next_cursor: LibraryGovernanceCursor | None
-
-
-class LibraryMemberOut(_Row):
-    user_handle: UserHandle
+class LibraryMemberOut(BaseModel):
+    user_id: UUID
     role: LibraryRole
     is_owner: bool
     email: str | None
@@ -68,35 +44,25 @@ class LibraryMemberOut(_Row):
     created_at: datetime
 
 
-class LibraryInvitationOut(_Row):
-    invitation_handle: LibraryInvitationHandle
+class LibraryInvitationOut(BaseModel):
+    id: UUID
     library_id: UUID
-    inviter_user_handle: UserHandle
-    invitee_user_handle: UserHandle
     role: LibraryRole
-    status: LibraryInvitationStatusValue
+    status: Literal["pending", "accepted", "declined", "revoked"]
+    invitee_user_id: UUID
+    # the email the inviter typed, else the invitee's own once they are a member, else null
     invitee_email: str | None
     invitee_display_name: str | None
     created_at: datetime
-    responded_at: datetime | None
 
 
-class ViewerLibraryInvitationOut(LibraryInvitationOut):
-    library_name: str
+class ViewerInvitationOut(BaseModel):
+    """A pending invitation addressed to the viewer, with who sent it."""
 
-
-class InviteAcceptMembershipOut(_Row):
+    id: UUID
     library_id: UUID
-    user_handle: UserHandle
+    library_name: str
     role: LibraryRole
-
-
-class AcceptLibraryInviteResponse(_Row):
-    invite: LibraryInvitationOut
-    membership: InviteAcceptMembershipOut
-    idempotent: bool
-
-
-class DeclineLibraryInviteResponse(_Row):
-    invite: LibraryInvitationOut
-    idempotent: bool
+    inviter_email: str | None
+    inviter_display_name: str | None
+    created_at: datetime

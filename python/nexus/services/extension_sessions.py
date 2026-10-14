@@ -16,7 +16,6 @@ from nexus.schemas.extension_capture import (
     CaptureLimits,
     ExtensionSessionOut,
 )
-from nexus.services.sealed_handles import seal_user
 
 _TOKEN_PREFIX = "nx_ext_"
 
@@ -59,7 +58,7 @@ def describe_extension_session(db: Session, user_id: UUID) -> ExtensionSessionOu
     ).one()
     settings = get_settings()
     return ExtensionSessionOut(
-        user_handle=seal_user(user_id),
+        user_id=user_id,
         email=row.email,
         display_name=row.display_name,
         limits=CaptureLimits(

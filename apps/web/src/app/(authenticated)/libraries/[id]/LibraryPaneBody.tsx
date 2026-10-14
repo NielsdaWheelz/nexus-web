@@ -1,9 +1,10 @@
 "use client";
 
 // One library: its entries under the url's view, drag order for those who manage
-// a named library, the Reading Slate, and the inspector's Members and Linked
-// items. The url owns sort, type, view and completion and hands them to the
-// server, which validates and combines them; the text filter stays local.
+// a named library, the Reading Slate, the inspector's Members and Linked items,
+// and Leave for a member who is not its owner. The url owns sort, type, view and
+// completion and hands them to the server, which validates and combines them;
+// the text filter stays local.
 
 import { useCallback, useId, useMemo, useState } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
@@ -12,7 +13,7 @@ import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
-import LibraryMembersSurface from "@/components/libraries/LibraryMembersSurface";
+import LibraryMembers, { useLibraryMembers } from "@/components/libraries/LibraryMembers";
 import ChoiceField from "@/components/ui/ChoiceField";
 import PaneSurface from "@/components/ui/PaneSurface";
 import RadioGroup from "@/components/ui/RadioGroup";
@@ -20,6 +21,7 @@ import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { useChangeStamp } from "@/lib/api/changes";
 import { useResourceSeed } from "@/lib/api/resourceCache";
 import { useServerValue, useThrowLater, type Visit } from "@/lib/api/serverState";
@@ -40,12 +42,12 @@ import {
   addPlacement,
   entriesPage,
   getLibrary,
+  leaveLibrary,
   moveEntry,
   type Library,
   type LibraryEntry,
 } from "@/lib/libraries/api";
 import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
-import { useLibraryMembers } from "@/lib/libraries/useLibraryMembers";
 import {
   ENTRY_TYPES,
   EmptyEntries,
@@ -79,6 +81,7 @@ import {
   usePaneReturnReady,
   usePaneScrollRetention,
 } from "@/lib/workspace/paneReturnMemento";
+import { useLatestWorkspace } from "@/lib/workspace/store";
 
 const DETAIL = definePaneVisitDataKey<Visit<Library>>("Library.Detail");
 const ENTRIES = definePaneVisitDataKey<ListSnapshot<LibraryEntry>>("Library.Entries");
@@ -215,34 +218,19 @@ function LibraryPane({ id }: { readonly id: string }) {
     setDragged(null);
   };
 
-  const membersShown = library?.can_manage === true;
-  const announceAuthorityLoss = useCallback(
-    (message: string) =>
-      setFeedback({ tone: "Warning", title: "Library access changed", message }),
-    [],
-  );
-  const members = useLibraryMembers({
-    libraryId: id,
+  const members = useLibraryMembers(
     library,
-    // the members controller reports a changed library; the pane rereads it.
-    adoptLibrary: detail.refetch,
-    membersActive:
-      active &&
-      membersShown &&
+    active &&
       runtime?.secondaryPane?.group_id === "resource-inspector" &&
       runtime.secondaryPane.visibility === "visible" &&
       runtime.secondaryPane.active_surface_id === "resource-members",
-    announceAuthorityLoss,
-  });
-  const membersBody = useMemo(
-    () => (members ? <LibraryMembersSurface controller={members} /> : null),
-    [members],
+    detail.refetch,
   );
   useResourceInspector({
     scheme: "library",
     handle: library ? id : null,
     bodies: {
-      members: membersShown && membersBody !== null ? membersBody : undefined,
+      members: members ? <LibraryMembers state={members} /> : undefined,
       linkedItems: useMemo(
         () => <ConnectionsSurface resourceRef={{ scheme: "library", id }} />,
         [id],
@@ -281,24 +269,48 @@ function LibraryPane({ id }: { readonly id: string }) {
     },
     [id, refetchDetail, refetchEntries],
   );
-  const menuActions: ActionDescriptor[] = library?.can_manage
-    ? [
-        {
-          kind: "command",
-          id: "ViewAction.Library.AddContent",
-          label: "Add content",
-          restoreFocusOnClose: false,
-          onSelect: () =>
-            requestNexusOpen({
-              kind: "Add",
-              seed: {
-                kind: "Content",
-                initialDestinations: [{ id, name: library.name }],
-              },
-            }),
-        },
-      ]
-    : [];
+  // Leaving asks first in the pane; the left library's panes settle like a deleted one's.
+  const workspace = useLatestWorkspace();
+  const [leaving, setLeaving] = useState<"Asked" | "Running" | null>(null);
+  const leave = async () => {
+    if (leaving !== "Asked") return;
+    setLeaving("Running");
+    try {
+      await leaveLibrary(id);
+      settleDeletedResourcePanes({
+        workspace: workspace(),
+        deletedRef: `library:${id}`,
+        fallbackHref: "/libraries",
+      });
+    } catch (error) {
+      setFeedback(libraryErrorFeedback(error, "You didn’t leave the library", fail));
+    }
+    setLeaving(null);
+  };
+  const menuActions: ActionDescriptor[] = [];
+  if (library?.can_manage) {
+    menuActions.push({
+      kind: "command",
+      id: "ViewAction.Library.AddContent",
+      label: "Add content",
+      restoreFocusOnClose: false,
+      onSelect: () =>
+        requestNexusOpen({
+          kind: "Add",
+          seed: { kind: "Content", initialDestinations: [{ id, name: library.name }] },
+        }),
+    });
+  }
+  if (library?.can_leave) {
+    menuActions.push({
+      kind: "command",
+      id: "ViewAction.Library.Leave",
+      label: "Leave library…",
+      tone: "danger",
+      restoreFocusOnClose: false,
+      onSelect: () => setLeaving("Asked"),
+    });
+  }
   useSetPaneLabel(library ? libraryDisplayName(library) : missing ? "Library" : null);
   usePaneChrome({
     query: invalidView || library === null ? undefined : {
@@ -421,8 +433,22 @@ function LibraryPane({ id }: { readonly id: string }) {
   return (
     <PaneSurface
       state={
-        feedback || loadFailure || summaries.error ? (
+        feedback || leaving || loadFailure || summaries.error ? (
           <>
+            {leaving ? (
+              <FeedbackNotice
+                content={{
+                  tone: "Warning",
+                  title: `Leave “${name}”?`,
+                  message: "You lose access to what only it files. An admin can invite you again.",
+                }}
+                announcement="Assertive"
+                actions={[
+                  { label: "Leave library", onClick: () => void leave() },
+                  { label: "Cancel", onClick: () => setLeaving(null) },
+                ]}
+              />
+            ) : null}
             {feedback ? <FeedbackNotice content={feedback} announcement="Assertive" /> : null}
             {list.status === "ready" ? (
               <MediaSummaryNotice

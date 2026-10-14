@@ -6,54 +6,35 @@
   padding: var(--space-4);
 }
 
-.header,
-.section,
-.rows,
-.invite {
-  display: grid;
-  min-width: 0;
-  gap: var(--space-3);
-}
-
-.header h3,
-.header p,
-.section h4,
-.disclosure {
+.surface h3,
+.surface h4,
+.surface p {
   margin: 0;
 }
 
-.header p,
+.surface p,
 .identity span,
-.disclosure,
-.empty {
+.note {
   color: var(--ink-faint);
   font-size: var(--text-xs);
   line-height: var(--leading-relaxed);
 }
 
-.empty {
-  margin: 0;
+.invite,
+.section {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
 }
 
-.fact {
-  text-transform: capitalize;
-}
-
-.inviteActions,
-.memberActions,
 .row,
-.pageError,
-.confirmationActions {
+.actions {
   display: flex;
   align-items: center;
   gap: var(--space-2);
 }
 
-.inviteActions {
-  justify-content: flex-end;
-}
-
-.memberActions {
+.actions {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
@@ -78,7 +59,7 @@
   font-size: var(--text-sm);
 }
 
-.confirmation {
+.confirm {
   display: grid;
   max-width: 24rem;
   gap: var(--space-2);
@@ -87,34 +68,13 @@
   font-size: var(--text-xs);
 }
 
-.confirmationActions {
-  justify-content: flex-end;
-}
-
-.pageError {
-  justify-content: space-between;
-  flex-wrap: wrap;
-}
-
-.disclosure {
-  border-block-start: 1px solid var(--edge);
-  padding-block-start: var(--space-3);
-}
-
 @container (max-width: 24rem) {
-  .inviteActions,
-  .row,
-  .pageError {
+  .row {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .inviteActions,
-  .confirmationActions {
+  .actions {
     justify-content: flex-start;
-  }
-
-  .row {
-    min-height: 0;
   }
 }
