@@ -1,34 +1,41 @@
-# saved epub contributor repair awaits production preview
+# saved epub contributor preview is a guarded owner-scope no-op
 
-status: open; production preview/apply NOT_RUN
-origin: 2026-10-04 utc, pr #482 closure
+status: owner-deferred remaining repairs; owner preview complete, no changes
+origin: 2026-10-04 pr #482 closure; 2026-10-14 release r4 disposition
 area: epub source contributors
 
 tracking: [github #486](https://github.com/NielsdaWheelz/nexus-web/issues/486)
 
-problem: saved epubs may retain historical misclassified or split contributor
-observations. the parser and guarded repair are implemented and locally qualified;
-production repair remains unperformed. verification (`docs/metadata-enrichment-verification.md` at `407fcc735`)
-records historical unchanged owner checks for epub2/3 roles, identity,
-manual/mixed-source protection, refusal and guarded preview/apply. no new
-implementation is required by this ticket.
+the actual source-only preview covered the release owner's 244 visible saved
+epubs: five unchanged, 239 guarded `unmatched_creator` skips, zero proposals.
+no apply was needed or submitted for this guarded no-op. current credits and
+metadata were not rewritten. a skip is not evidence that the source credits
+are globally correct; this result closes only the inspected viewer scope.
+remaining book contributor repairs were explicitly deferred from the usable release.
 
-prerequisites: separately authorized [aligned release](production-release-pending-since-7dc68929b.md)
-and verified backup; identify the creator/viewer and target saved items; retain
-bounded, checksum-verifiable originals. review the production preview before apply.
+evidence: `release/attempts/58c7ecae6/r4-full-row-census-v1/stdout.jsonl`, sha256
+`68a47fd964498313da48d2b24e5eb6e67b849572a665275b993f1485e0c97841`;
+`scope-reconciliation.out`, sha256
+`35c7640e04f01fff7e47eefbde27b6f1ceab412b1ceb7c782c501e2b5a6b5d66`.
+one legacy source author belongs to another viewer's visible epub; its
+[source preview is owner-deferred](legacy-epub-credit-outside-owner-scope.md).
+this is not global all-saved-credit repair closure.
 
-fix: follow [the source repair contract](../modules/epub.md#contributor-observations-and-saved-repair).
-the repair code lives in `python/nexus/services/epub_contributor_repair.py`
-(moved verbatim from `services/contributors.py` by the 2026-10-10 authors
-reauthor; the authors harness probe P10 proves its preview still runs).
-`python/scripts/repair_epub_contributors.py --viewer-id <uuid> [--media-id <uuid>]`
-previews. add `--apply` only after the reviewed preview and separate authorization.
-use the existing source/credit fences and contributor owner; no research job or
-reader reingestion.
+the parser and guarded repair were already implemented and locally qualified
+by pr #482. follow [the source repair contract](../modules/epub.md#contributor-observations-and-saved-repair)
+through `python/nexus/services/epub_contributor_repair.py` and
+`python/scripts/repair_epub_contributors.py --viewer-id <uuid> [--media-id <uuid>]`.
+no new implementation or broadened source guard is justified by the no-op.
 
-acceptance: correct only uniquely matched historical `epub_opf` observations.
-explicitly skip ambiguous matches, changed sources/credits and previously split names.
-preserve unrelated/manual credits, person identity, reader publications,
-fragments, navigation, progress, index generations and `metadata_enriched_at`.
-retain the production report with media ids, moved/added credits, skip reasons
-and before/after counts.
+next: separately review any remaining viewer/media scope and verified original
+source. inspect actual changed credit rows before authorizing an apply; use a
+bounded maintenance process and verified restored-copy rehearsal with source,
+credit, generation and identity fences. do not file another viewer's media into
+the release owner's library or guess a person identity to create eligibility.
+
+acceptance: a source-proved disposition for the explicitly selected scope.
+correct only uniquely matched historical `epub_opf` observations; skip ambiguity,
+changed sources/credits and previously split names. preserve manual/unrelated
+credits, person identities, reader publications/fragments/navigation, progress,
+index generations and `metadata_enriched_at`. retain exact changed-row and
+protected-state evidence for any future apply.

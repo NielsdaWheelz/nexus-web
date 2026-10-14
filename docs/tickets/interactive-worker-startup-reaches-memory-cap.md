@@ -69,3 +69,21 @@ exact successor5acb211a settled succeeded at20:27:05 utc. the new interactive
 worker retained185.410/320 mib through20:28:29 with zero limit/oom/swap/restart
 events. this covers startup and release probes; representative new tool-using
 chat and recovery remain pending. keep this ticket open.
+
+## 2026-10-14 production recurrence
+
+production `b6768bee2469cbc3a43902302836a44d07a11ea7`, worker
+`sha256:9b5fe72a1aae235446a727608564109c04cf55c364fb1c9491219ba6d18139c4`:
+the same interactive-worker epoch accumulated six `memory.events.max` events
+between the last observation at 09:05:49 utc and resumed observation at
+12:21:56 utc. oom, kill and restart counters did not change. timing and request
+attribution within that gap are not observed. the fresh charge was 309055488
+bytes against 335544320. distinguish file-cache reclaim from anonymous demand
+before judging the incident or the staged release's combined capacity allowance.
+
+evidence: campaign `release/capacity-2g-reaudit-20261014/observer-resume-20261014T122157Z.json`,
+receipt sha256 `0255897895fa1f6070168f8c676ab370340e74452023d083851efff5dc1ef072`.
+the staged lazy-provider composition has independent import evidence; its real
+production worker journeys and operating margin remain to be qualified.
+
+continued production observation, 12:21:56–13:17:16 utc: the same worker epoch added 19 limit events (6→25), with no oom, kill or restart. transient anonymous memory reached 314.0742 mib; peak charge was 319.4727 against 320 mib. current sampled anonymous memory later fell to about 299.9 mib, which must not replace the transient in capacity planning. all four SDKs warmed in the corrected import comparison show no permanent memory saving; selected cold codex imports alone save about 75.7 mib. the conservative mixed-time allowance arithmetic is 808.7534 mib against 832, a 23.2466-mib estimate rather than measured coincident reserve. historical native-host kernel composition remains uncertain. actual corrected production journeys remain pending. evidence: campaign `capacity-2g-reaudit-20261014/aggregate-control-31d69ff7/attempt4-evidence/` and host observer interval receipts.

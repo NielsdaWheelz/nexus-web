@@ -65,3 +65,10 @@ in37.174s and30.954s, both beyond the web deadline. lexical openables requests
 completed in0.248–2.543s. api header logs do not prove browser receipt/body
 completion; user search outcome remains unconfirmed. evidence:
 `api-d23063e4-first-manual.log`. this is now a production latency observation.
+
+2026-10-14 operational evidence: final665 documents-only `pillow`, all scopes,
+limit20, returned200 and rendered20matching rows in16.108s (one request
+`61ab9dd7-630d-473b-af23-4da626d0b997`). api correlation records `/search`
+200/15.384s; it has no semantic/fallback field, so this is not a captured
+semantic-provider/no-fallback proof or a pass for every earlier slow query.
+private receipt: `web-final665-acceptance-20261014T2126Z/evidence/`.
