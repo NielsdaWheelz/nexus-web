@@ -39,6 +39,8 @@ allocator settings do not qualify a normal worker's memory behavior.
    and identity-function execution only. default its transactions to read-only.
    verify privileges, schema and exact database identity through the real
    application connection path. retain a separate write capability for apply.
+   local rehearsal processes must explicitly select the image identity with
+   `NEXUS_RUNTIME_IDENTITY_FILE=/app/runtime-identity.json`.
 4. reader/contributor inspection gets original-source storage inputs and no
    provider keys. those paths only read storage. portrait gets the separate
    rehearsal bucket and its scoped credential, verified original source, and
