@@ -56,8 +56,8 @@ export async function callFastAPI<T>(
     () => controller.abort(),
     options?.timeoutMs ?? FASTAPI_FETCH_TIMEOUT_MS,
   );
-  // Only the exchange and body acquisition use this boundary. Request creation,
-  // JSON parsing and callers' payload handling keep their original defects.
+  // Only the exchange and body acquisition use this boundary. URL/header
+  // validation, JSON parsing and callers' payload handling keep their defects.
   const transportError = (error: unknown): never => {
     if (controller.signal.aborted && isAbortError(error)) {
       throw new ApiError(504, "E_UPSTREAM_TIMEOUT", "Backend service timed out", responseId);
@@ -68,12 +68,13 @@ export async function callFastAPI<T>(
     throw error;
   };
   try {
-    const request = new Request(`${config.fastApiBaseUrl}${path}`, {
-      headers,
+    const url = new URL(`${config.fastApiBaseUrl}${path}`);
+    const requestHeaders = new Headers(headers);
+    const response = await fetch(url, {
+      headers: requestHeaders,
       cache: "no-store",
-    });
-    // Next uses the explicit signal to leave this exchange's lifetime uncached.
-    const response = await fetch(request, { signal: controller.signal }).catch(transportError);
+      signal: controller.signal,
+    }).catch(transportError);
     const upstreamId = response.headers.get("x-request-id");
     if (upstreamId && /^[A-Za-z0-9._:-]{1,128}$/.test(upstreamId)) responseId = upstreamId;
     const contentType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
