@@ -8,7 +8,7 @@ import Link from "next/link";
 import { Compass } from "lucide-react";
 import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
-import { podcastViewHref } from "@/lib/podcasts/view";
+import { viewHref } from "@/lib/collections/view";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import RadioGroup from "@/components/ui/RadioGroup";
@@ -18,7 +18,7 @@ import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useResource } from "@/lib/api/useResource";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
-import { listMemberLibraries } from "@/lib/libraries/client";
+import { memberLibraries } from "@/lib/libraries/api";
 import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import {
@@ -101,7 +101,7 @@ export default function PodcastsPaneBody() {
   });
   const libraries = useResource({
     cacheKey: "podcasts:member-libraries",
-    load: (signal) => listMemberLibraries({ signal }),
+    load: memberLibraries,
   });
   const rows = list.status === "ready" ? list.items : null;
   const complete = list.complete;
@@ -119,7 +119,7 @@ export default function PodcastsPaneBody() {
   });
   const replaceView = useCallback(
     (changes: Readonly<Record<string, string | null>>) =>
-      router.replace(podcastViewHref("/podcasts", params, changes), {
+      router.replace(viewHref("/podcasts", params, changes), {
         viewTransition: { kind: "collection-reflow" },
       }),
     [params, router],

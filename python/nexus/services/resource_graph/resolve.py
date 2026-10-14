@@ -19,7 +19,7 @@ from nexus.auth.permissions import (
     visible_media_ids_cte_sql,
 )
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.services import library_entries, library_entry_listing
+from nexus.services import library_entries, library_listing
 from nexus.services.contributor_credits import (
     media_author_credits_join_sql,
     media_author_names_agg_sql,
@@ -227,7 +227,7 @@ def _library(db: Session, ids: list[UUID], viewer_id: UUID) -> list[ResolvedReso
     out = []
     for row in rows:
         if row.is_default and row.own:
-            count = library_entry_listing.count_default_root_inventory(
+            count = library_listing.count_default_root_inventory(
                 db, viewer_id=viewer_id, library_id=row.id
             )
         else:

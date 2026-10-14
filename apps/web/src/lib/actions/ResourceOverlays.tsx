@@ -93,7 +93,7 @@ export function ResourceOverlays({
                 const result = await subscribeToPodcast({
                   target: { kind: "Canonical", podcast_id: overlay.podcastId },
                   namedLibraryIds: command.namedLibraryIds,
-                  replacementConfirmation: command.replacementConfirmation,
+                  replaceEpisodes: command.replaceEpisodes,
                 });
                 return { href: result.href };
               }}

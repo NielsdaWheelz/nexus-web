@@ -2,7 +2,7 @@
 import type { ComponentType } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { Schema } from "@/lib/api/wire";
-import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
+import type { LibraryDestination } from "@/lib/libraries/api";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
@@ -19,7 +19,7 @@ export type NexusRecent = Schema<"NexusHistoryRecentOut">;
 
 export interface AddSeed {
   readonly kind: "Content";
-  readonly initialDestinations: readonly LibraryDestinationSelection[];
+  readonly initialDestinations: readonly LibraryDestination[];
   readonly initialUrlDraft?: string;
 }
 

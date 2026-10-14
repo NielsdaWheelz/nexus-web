@@ -1,47 +1,80 @@
-/** Pure semantic projection for one library row. */
+/** Rows for the libraries index and a library's entries. */
 
-import { canonicalResourceRef } from "@/lib/sharing/targets";
-import { libraryPresentation } from "@/lib/libraries/presentation";
 import type { CollectionRowView } from "@/lib/collections/types";
+import { presentMedia } from "@/lib/collections/presenters/media";
+import { presentPodcast } from "@/lib/collections/presenters/podcast";
+import type { Library, LibraryEntry } from "@/lib/libraries/api";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 
-export interface LibraryPresenterItem {
-  id: string;
-  name: string;
-  is_default: boolean;
-  role: string;
-  can_rename: boolean;
-  can_delete: boolean;
+/** The one alias: the viewer's default library is shown as All. */
+export function libraryDisplayName(library: {
+  readonly is_default: boolean;
+  readonly name: string;
+}): string {
+  return library.is_default ? "All" : library.name;
 }
 
-export function presentLibrary(
-  item: LibraryPresenterItem,
-): CollectionRowView {
-  const href = `/libraries/${item.id}`;
-  const presentation = libraryPresentation({
-    is_default: item.is_default,
-    name: item.name,
-    role: item.role,
-  });
+export function presentLibrary(library: Library): CollectionRowView {
+  const name = libraryDisplayName(library);
   return {
-    id: item.id,
+    id: library.id,
     kind: "library",
-    primary: {
-      kind: "link",
-      href,
-      paneLabelHint: presentation.name,
-    },
-    title: { text: presentation.name },
+    primary: { kind: "link", href: `/libraries/${library.id}`, paneLabelHint: name },
+    title: { text: name },
     contributors: [],
     publicationDate: null,
     context: {
       kind: "Text",
-      text: presentation.context,
+      text: library.is_default ? "Across your libraries" : library.role,
     },
     activity: null,
     exceptionalStatus: null,
     actionSubject: {
-      ref: canonicalResourceRef({ scheme: "library", id: item.id }),
+      ref: canonicalResourceRef({ scheme: "library", id: library.id }),
     },
     selected: false,
   };
+}
+
+/** A row's identity is the item it files (unique within one library). */
+export const libraryEntryId = (entry: LibraryEntry) =>
+  entry.kind === "media" ? entry.media_summary.media_id : entry.podcast_id;
+
+const ADDED = new Intl.DateTimeFormat(undefined, {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+});
+
+/** `added` labels a show's row with when it was filed (the added sorts). */
+export function presentLibraryEntry(
+  entry: LibraryEntry,
+  added: "Added" | "Added to Nexus" | null,
+): CollectionRowView {
+  if (entry.kind === "media") {
+    const id = entry.media_summary.media_id;
+    return presentMedia(entry.media_summary, {
+      id,
+      primary: { kind: "link", href: `/media/${id}` },
+      actionSubject: { ref: canonicalResourceRef({ scheme: "media", id }) },
+      selected: false,
+    });
+  }
+  const row = presentPodcast({
+    id: entry.podcast_id,
+    title: entry.title,
+    contributors: entry.contributors,
+    unplayedCount: entry.unplayed_count > 0 ? { value: entry.unplayed_count } : null,
+    syncStatus: entry.sync_status,
+    publicationDate: entry.published_date,
+  });
+  return added === null
+    ? row
+    : {
+        ...row,
+        context: {
+          kind: "Text",
+          text: `${added} ${ADDED.format(new Date(entry.added_at))}`,
+        },
+      };
 }

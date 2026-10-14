@@ -140,8 +140,6 @@ def subscribe(
                 ApiErrorCode.E_INVALID_DISCOVERY_TARGET, "Discovery target is not a Podcast"
             )
         show = resolved
-    confirmation = body.replacement_confirmation
-    fingerprint = confirmation.conflict_fingerprint if confirmation is not None else None
 
     def attempt() -> wire.PodcastSubscribeOut:
         with transaction(db):
@@ -168,7 +166,7 @@ def subscribe(
                 viewer_id=viewer_id,
                 podcast_id=podcast_id,
                 library_ids=body.named_library_ids,
-                confirmation_fingerprint=fingerprint,
+                replace_episodes=body.replace_episodes,
             )
             outcome = "DestinationsAdded" if added else "AlreadySubscribed"
             return wire.PodcastSubscribeOut(

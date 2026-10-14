@@ -18,6 +18,7 @@ from nexus.api.routes.highlights import router as highlights_router
 from nexus.api.routes.imports import router as imports_router
 from nexus.api.routes.lectern import router as lectern_router
 from nexus.api.routes.libraries import router as libraries_router
+from nexus.api.routes.library_members import router as library_members_router
 from nexus.api.routes.llm import router as llm_router
 from nexus.api.routes.me import router as me_router
 from nexus.api.routes.media import router as media_router
@@ -50,6 +51,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(extension_sessions_router)
     api_router.include_router(extension_captures_router)
     api_router.include_router(auth_handoff_codes_router)
+    api_router.include_router(library_members_router)
     api_router.include_router(libraries_router)
     api_router.include_router(dossiers_router)
     # Media family. Every router owning a static `/media/<literal>` path

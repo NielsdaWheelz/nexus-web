@@ -13,7 +13,7 @@ import {
   isSameSystemApiDefect,
 } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { getMemberLibrary } from "@/lib/libraries/client";
+import { getLibrary } from "@/lib/libraries/api";
 import {
   LibraryContractDefect,
   isLibraryContractDefect,
@@ -212,7 +212,7 @@ export function useLibraryMembers({
   const searchSequenceRef = useRef(0);
   const wasEligibleRef = useRef(false);
   const authorityLossAnnouncedRef = useRef(false);
-  const previousCapabilityRef = useRef(library?.can_manage_members ?? null);
+  const previousCapabilityRef = useRef(library?.can_manage ?? null);
   const commit = useCallback((reduce: (current: LibraryGovernanceState) => LibraryGovernanceState) => {
     if (!mountedRef.current) return;
     const next = reduce(stateRef.current);
@@ -247,8 +247,8 @@ export function useLibraryMembers({
 
   useEffect(() => {
     const previous = previousCapabilityRef.current;
-    previousCapabilityRef.current = library?.can_manage_members ?? null;
-    if (library === null || library.can_manage_members) return;
+    previousCapabilityRef.current = library?.can_manage ?? null;
+    if (library === null || library.can_manage) return;
     cancelReads();
     if (previous === true) {
       announceObservedAuthorityLoss(
@@ -259,8 +259,8 @@ export function useLibraryMembers({
   }, [announceObservedAuthorityLoss, cancelReads, clearGovernance, library]);
 
   useEffect(() => {
-    if (library?.can_manage_members) authorityLossAnnouncedRef.current = false;
-  }, [library?.can_manage_members]);
+    if (library?.can_manage) authorityLossAnnouncedRef.current = false;
+  }, [library?.can_manage]);
 
   const isCurrentRead = useCallback((controller: AbortController) =>
     mountedRef.current &&
@@ -342,14 +342,14 @@ export function useLibraryMembers({
   ): Promise<GovernanceObservation> => {
     let nextLibrary: LibraryOut;
     try {
-      nextLibrary = await getMemberLibrary(libraryId, controller.signal);
+      nextLibrary = await getLibrary(libraryId, controller.signal);
     } catch (error) {
       if (isApiError(error) && error.status === 404) return { kind: "NotFound" };
       throw error;
     }
     if (!isCurrentRead(controller)) return { kind: "Stale" };
     adoptLibrary(nextLibrary);
-    if (!nextLibrary.can_manage_members) return { kind: "AuthorityLost" };
+    if (!nextLibrary.can_manage) return { kind: "AuthorityLost" };
     try {
       const pages = await loadGovernance(
         controller.signal, minimumMembers, minimumInvites,
@@ -360,10 +360,10 @@ export function useLibraryMembers({
         throw error;
       }
       try {
-        const classified = await getMemberLibrary(libraryId, controller.signal);
+        const classified = await getLibrary(libraryId, controller.signal);
         if (!isCurrentRead(controller)) return { kind: "Stale" };
         adoptLibrary(classified);
-        if (!classified.can_manage_members) return { kind: "AuthorityLost" };
+        if (!classified.can_manage) return { kind: "AuthorityLost" };
       } catch (classificationError) {
         if (isApiError(classificationError) && classificationError.status === 404) {
           return { kind: "NotFound" };
@@ -475,11 +475,11 @@ export function useLibraryMembers({
   }, [adoptLibrary, announceObservedAuthorityLoss, cancelReads, clearGovernance, commit, isCurrentRead, observe]);
 
   useEffect(() => {
-    const eligible = membersActive && library?.can_manage_members === true;
+    const eligible = membersActive && library?.can_manage === true;
     const becameEligible = eligible && !wasEligibleRef.current;
     wasEligibleRef.current = eligible;
     if (becameEligible) void ensureFresh();
-  }, [ensureFresh, library?.can_manage_members, membersActive]);
+  }, [ensureFresh, library?.can_manage, membersActive]);
 
   useEffect(() => {
     const current = stateRef.current;

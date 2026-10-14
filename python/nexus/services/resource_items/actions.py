@@ -35,7 +35,7 @@ from nexus.schemas.resource_items import (
     TranscriptAction,
     TranscriptState,
 )
-from nexus.services import highlights, library_governance
+from nexus.services import highlights, libraries
 from nexus.services.chat import conversations
 from nexus.services.consumption import lectern, projection
 from nexus.services.dossier import engine as dossier_engine
@@ -203,7 +203,7 @@ def _media(db: Session, viewer_id: UUID, media_id: UUID) -> list[ResourceActionO
 
 
 def _library(db: Session, viewer_id: UUID, library_id: UUID) -> list[ResourceActionOut]:
-    facts = library_governance.library_management_facts(
+    facts = libraries.library_management_facts(
         db, viewer_id=viewer_id, library_ids=[library_id]
     ).get(library_id)
     if facts is None or not facts.mutable:

@@ -1,34 +1,23 @@
 "use client";
 
+// Library settings, opened by id: rename (sent with the name it replaces) and
+// delete (owner only, confirmed). Deleting a library never deletes media: items
+// filed only there move to the owner's All. Membership lives in the Members tab.
+
 import { useEffect, useState } from "react";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { useChangeStamp } from "@/lib/api/changes";
-import {
-  modeledApiError,
-  usePaneFreeServerValue,
-  useThrowLater,
-} from "@/lib/api/serverState";
-import {
-  deleteMemberLibrary,
-  getMemberLibrary,
-  renameMemberLibrary,
-} from "@/lib/libraries/client";
-import type { LibraryOut } from "@/lib/libraries/contract";
-import {
-  isReservedLibraryName,
-  RESERVED_LIBRARY_NAME_MESSAGE,
-} from "@/lib/libraries/presentation";
+import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
+import { deleteLibrary, getLibrary, renameLibrary } from "@/lib/libraries/api";
+import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
+import { RESERVED_NAME, isReservedName } from "@/lib/libraries/views";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import styles from "./LibrarySettingsDialog.module.css";
 
-/**
- * Rename or delete one library, loaded by id. Membership, invitations, roles
- * and ownership live only in the universal Share surface.
- */
 export default function LibrarySettingsDialog({
   libraryId,
   onClose,
@@ -36,144 +25,134 @@ export default function LibrarySettingsDialog({
   readonly libraryId: string;
   readonly onClose: () => void;
 }) {
-  const feedback = useFeedback();
+  const fail = useThrowLater();
+  const workspace = useLatestWorkspace();
   const library = usePaneFreeServerValue({
     key: libraryId,
     stale: useChangeStamp("Libraries"),
-    load: (signal) => getMemberLibrary(libraryId, signal),
+    load: (signal) => getLibrary(libraryId, signal),
   });
-  const failed = library.status === "failed" ? library.error : null;
-  useEffect(() => {
-    if (failed === null) return;
-    feedback.publish({
-      kind: "Hud",
-      content: {
-        tone: "Danger",
-        title: "Library settings couldn’t be loaded",
-        requestId: failed.requestId,
-      },
-    });
-    onClose();
-  }, [failed, feedback, onClose]);
-  return library.status === "ready" ? (
-    <Settings library={library.data} onClose={onClose} />
-  ) : null;
-}
+  const current = library.status === "ready" ? library.data : null;
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState<"Rename" | "Delete" | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  // The field follows the stored name until the viewer edits it.
+  useEffect(() => setDraft(null), [current?.name]);
 
-function Settings({
-  library,
-  onClose,
-}: {
-  readonly library: LibraryOut;
-  readonly onClose: () => void;
-}) {
-  const feedback = useFeedback();
-  const fail = useThrowLater();
-  const workspace = useLatestWorkspace();
-  const [draftName, setDraftName] = useState(library.name);
-  const [pending, setPending] = useState<"Rename" | "Delete" | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const trimmedName = draftName.trim();
-  const nameReserved = isReservedLibraryName(trimmedName);
-  const nameChanged = trimmedName.length > 0 && trimmedName !== library.name;
-  const nameId = `library-name-${library.id}`;
+  if (current === null) {
+    const failure =
+      library.status === "failed"
+        ? libraryErrorFeedback(library.error, "Library settings couldn’t be loaded", throwDefect)
+        : null;
+    return (
+      <Dialog open onClose={onClose} title="Library settings">
+        {failure ? (
+          <FeedbackNotice
+            content={failure}
+            announcement="Assertive"
+            actions={[{ label: "Retry", onClick: library.refetch }]}
+          />
+        ) : (
+          <p>Loading…</p>
+        )}
+      </Dialog>
+    );
+  }
 
-  const run = async (op: "Rename" | "Delete", failure: string) => {
-    setPending(op);
+  const name = (draft ?? current.name).trim();
+  const reserved = isReservedName(name);
+  const rename = async () => {
+    setBusy("Rename");
+    setFeedback(null);
     try {
-      if (op === "Rename") await renameMemberLibrary(library.id, trimmedName);
-      else {
-        await deleteMemberLibrary(library.id);
-        settleDeletedResourcePanes({
-          workspace: workspace(),
-          deletedRef: `library:${library.id}`,
-          fallbackHref: "/libraries",
-        });
-        onClose();
-      }
-    } catch (caught) {
-      const error = modeledApiError(caught, fail);
-      if (error !== null)
-        feedback.publish({
-          kind: "Hud",
-          content: { tone: "Danger", title: failure, requestId: error.requestId },
-        });
+      await renameLibrary(libraryId, name, current.name);
+    } catch (error) {
+      setFeedback(libraryErrorFeedback(error, "Library name wasn’t saved", fail));
+      library.refetch();
     } finally {
-      setPending(null);
+      setBusy(null);
+    }
+  };
+  const remove = async () => {
+    setBusy("Delete");
+    setFeedback(null);
+    try {
+      await deleteLibrary(libraryId);
+      settleDeletedResourcePanes({
+        workspace: workspace(),
+        deletedRef: `library:${libraryId}`,
+        fallbackHref: "/libraries",
+      });
+      onClose();
+    } catch (error) {
+      setFeedback(libraryErrorFeedback(error, "Library couldn’t be deleted", fail));
+      setBusy(null);
     }
   };
 
   return (
-    <Dialog
-      open
-      onClose={onClose}
-      title="Library settings"
-      onDismissRequest={() => (pending ? "blocked" : "accepted")}
-    >
+    <Dialog open onClose={onClose} title="Library settings">
       <div className={styles.sections}>
+        {feedback ? <FeedbackNotice content={feedback} announcement="Assertive" /> : null}
         <section className={styles.section}>
-          <label htmlFor={nameId}>Library name</label>
+          <label htmlFor={`library-name-${libraryId}`}>Library name</label>
           <div className={styles.row}>
             <Input
-              id={nameId}
-              value={draftName}
-              disabled={!library.can_rename || pending !== null}
-              aria-invalid={nameReserved || undefined}
-              aria-describedby={nameReserved ? `${nameId}-error` : undefined}
-              onChange={(event) => setDraftName(event.target.value)}
+              id={`library-name-${libraryId}`}
+              value={draft ?? current.name}
+              disabled={!current.can_manage || busy !== null}
+              aria-invalid={reserved || undefined}
+              aria-describedby={reserved ? `library-name-error-${libraryId}` : undefined}
+              onChange={(event) => setDraft(event.target.value)}
             />
-            {library.can_rename ? (
+            {current.can_manage ? (
               <Button
                 variant="secondary"
                 size="sm"
-                loading={pending === "Rename"}
-                disabled={!nameChanged || nameReserved || pending !== null}
-                onClick={() => void run("Rename", "Library name wasn’t saved")}
+                loading={busy === "Rename"}
+                disabled={!name || name === current.name || reserved || busy !== null}
+                onClick={() => void rename()}
               >
                 Save
               </Button>
             ) : null}
           </div>
-          {nameReserved ? (
-            <p id={`${nameId}-error`} className={styles.error} role="alert">
-              {RESERVED_LIBRARY_NAME_MESSAGE}
+          {reserved ? (
+            <p id={`library-name-error-${libraryId}`} className={styles.error} role="alert">
+              {RESERVED_NAME}
             </p>
           ) : null}
         </section>
-        {library.can_delete ? (
+        {current.can_delete ? (
           <section className={styles.danger}>
             <h3>Delete library</h3>
             <p>
-              Deletes this library and its filing structure. It does not delete
-              the underlying media.
+              Deletes “{current.name}” for every member. Items filed only here move to
+              your All; nothing else is deleted.
             </p>
-            {confirmDelete ? (
+            {confirming ? (
               <div className={styles.row}>
                 <Button
                   variant="danger"
                   size="sm"
-                  loading={pending === "Delete"}
-                  disabled={pending !== null}
-                  onClick={() =>
-                    void run("Delete", "Library couldn’t be deleted")
-                  }
+                  loading={busy === "Delete"}
+                  disabled={busy !== null}
+                  onClick={() => void remove()}
                 >
                   Delete library
                 </Button>
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setConfirmDelete(false)}
+                  disabled={busy !== null}
+                  onClick={() => setConfirming(false)}
                 >
                   Cancel
                 </Button>
               </div>
             ) : (
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={() => setConfirmDelete(true)}
-              >
+              <Button variant="danger" size="sm" onClick={() => setConfirming(true)}>
                 Delete library…
               </Button>
             )}

@@ -1,8 +1,11 @@
+/** Url-owned view parameter changes; null removes a parameter. */
+export type ViewChanges = Readonly<Record<string, string | null>>;
+
 /** Preserve unrelated pane-url keys; null removes a domain view parameter. */
-export function podcastViewHref(
+export function viewHref(
   basePath: string,
   current: URLSearchParams,
-  changes: Readonly<Record<string, string | null>>,
+  changes: ViewChanges,
 ): string {
   const next = new URLSearchParams(current);
   for (const [param, value] of Object.entries(changes)) {

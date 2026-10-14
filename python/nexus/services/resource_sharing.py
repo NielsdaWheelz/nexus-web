@@ -29,8 +29,7 @@ from nexus.schemas.resource_sharing import (
     UserAudienceIn,
     UserShareOut,
 )
-from nexus.services import public_resource_sharing, resource_grants
-from nexus.services.library_governance import library_out, lock_library_for_member
+from nexus.services import libraries, public_resource_sharing, resource_grants
 from nexus.services.locator_resolver import resolve_highlight_reader_target
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.resolve import resolve_refs
@@ -104,12 +103,9 @@ def get_share_snapshot(
     link = user or public_resource_sharing.link_readiness(db, subject)
     members = None
     if mode == "LibraryMembership":
-        library = library_out(
-            lock_library_for_member(db, viewer_user_id, subject.id, lock=False),
-            viewer_id=viewer_user_id,
-        )
-        if not library.is_default and library.system_key is None:
-            members = ShareMembersOut(can_manage=library.can_manage_members)
+        library = libraries.access(db, viewer_user_id, subject.id, lock=False)
+        if library.mutable:
+            members = ShareMembersOut(can_manage=library.out(viewer_user_id).can_manage)
     # Only media and highlights have grant rows, so other subjects list none.
     owned = resource_grants.creator_grants(db, creator_id=viewer_user_id, subject=subject)
     received = resource_grants.received_grants(db, recipient_id=viewer_user_id, subject=subject)

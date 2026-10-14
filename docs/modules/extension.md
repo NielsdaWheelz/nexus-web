@@ -279,20 +279,18 @@ spare prompt is a failed acquisition discarded after a manual revocation. A
 `false` result shows which hosts were refused and that the draft is kept; a
 rejected request is shown as a failure.
 
-**The destination chooser** is inline: the shared `LibraryDestinationTrigger`
-disclosing a region that holds the shared `LibraryChooser` with `create={null}`
-(the popup never creates libraries). Opening moves focus into the search box;
-the chooser closes through its trigger, which keeps focus. The popup owns no
-Escape handling: Firefox closes a browser-action popup on Escape at the chrome
-level, before any key event reaches the document (fact, Firefox 156). A
-chooser that loses its enablement closes and never reopens unasked. The search
-state (one request generation over open, typing, retry and Load More; a
-180 ms pause for typed queries; the query trimmed and lowercased) is
-`components/libraries/useLibraryDestinationSearch.ts`, shared with the web
-`LibraryDestinationPicker`; the popup's transport is the `search_destinations`
-command. Toggles send the whole next selection as `set_destinations` and are
-serialized on the next pushed selection. Destinations freeze once saving
-starts.
+**The destination chooser** is inline: the shared `DestinationTrigger`
+disclosing a region that holds the shared `DestinationChooser` with
+`onCreate={null}` (the popup never creates libraries). Opening moves focus into
+the search box; the chooser closes through its trigger, which keeps focus. The
+popup owns no Escape handling: Firefox closes a browser-action popup on Escape at
+the chrome level, before any key event reaches the document (fact, Firefox 156).
+A chooser that loses its enablement closes and never reopens unasked. The
+chooser's transport is the `search_destinations` command (the background reads
+`GET /extension/library-destinations`, a `{items, next_cursor}` page); a reply
+for a superseded query is dropped. Toggles send the whole next selection as
+`set_destinations` and are serialized on the next pushed selection. Destinations
+freeze once saving starts.
 
 **CSS closure.** The popup loads `src/app/globals.css` (the token owner), then
 `src/app/packagedFonts.css` (the next/font families as system stacks; both

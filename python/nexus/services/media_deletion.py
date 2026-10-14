@@ -29,8 +29,8 @@ from nexus.schemas.media import (
 )
 from nexus.services import (
     contributors,
+    libraries,
     library_entries,
-    library_governance,
     media_intelligence_lifecycle,
     metadata_reviews,
     passage_anchors,
@@ -197,7 +197,7 @@ def _remove_media_for_viewer_attempt(
             {"viewer_id": viewer_id},
         ).fetchone()
         default_library_id = UUID(str(default_library[0])) if default_library is not None else None
-        library_governance.lock_library_rows_in_order(
+        libraries.lock_library_rows_in_order(
             db,
             sorted(
                 {
@@ -216,14 +216,12 @@ def _remove_media_for_viewer_attempt(
             db, default_library_id, library_entries.media_target(media_id)
         ):
             removed_from_library_ids.append(default_library_id)
-            library_entries.normalize_positions(db, default_library_id)
         for library_id in sorted(
             library_entries.admin_non_default_library_ids_for_media(
                 db, viewer_id=viewer_id, media_id=media_id
             )
         ):
             library_entries.delete_entry(db, library_id, library_entries.media_target(media_id))
-            library_entries.normalize_positions(db, library_id)
             removed_from_library_ids.append(UUID(str(library_id)))
 
         resource_grants.delete_viewer_media_paths(db, viewer_user_id=viewer_id, media_id=media_id)
@@ -321,12 +319,10 @@ def delete_duplicate_document_media(
     if media is None or media[0] not in _DOCUMENT_KINDS:
         return
 
-    library_governance.lock_library_rows_in_order(
+    libraries.lock_library_rows_in_order(
         db, library_entries.library_ids_for_media(db, loser_media_id)
     )
-    affected_library_ids = library_entries.delete_all_entries_for_media(db, loser_media_id)
-    for library_id in affected_library_ids:
-        library_entries.normalize_positions(db, library_id)
+    library_entries.delete_all_entries_for_media(db, loser_media_id)
     claim_media_teardown(db, loser_media_id)
 
 

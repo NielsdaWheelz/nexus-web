@@ -66,11 +66,9 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] media intelligence / recovery · 2026-10-13 pane-controls qualification · p2 · failed media projections remain terminal after provider recovery and block dossier retries: [ticket](tickets/failed-media-projection-has-no-user-retry.md).
 - [open] release / credentials · 2026-10-13 release investigation · private credential files were printed into session tool results; assess retained-result access while preserving android signing continuity: [ticket](tickets/release-session-credential-output.md).
 - [open] release / lists · 2026-10-10 collection-revision cut · web and api together; 0275 drops viewer_collection_revisions (irreversible, no preflight); old tabs and held cursors fail once: [ticket](tickets/collection-keyset-continuations-release-steps.md).
-- [open] lists / pagination · 2026-10-10 collection-revision cut · p3 · five python cursor codecs, three page envelopes and two more web page hooks remain beside the one keyset codec: [ticket](tickets/list-cursor-codecs-diverge.md).
 - [open] lists / model tools · 2026-10-10 colrev rebase · p3 · an assistant write undo publishes no change topic, so a mounted library or queue view keeps the undone row: [ticket](tickets/assistant-write-undo-publishes-no-change.md).
 - [open] chats index · 2026-10-10 colrev rebase · p3 · "Chat about this…" creates a chat without publishing `Chats`, so a mounted index misses it until reread: [ticket](tickets/chat-create-publishes-no-change.md).
 - [open] consumption / lists · 2026-10-10 collection-revision cut · p3 · every listening heartbeat and reader save rereads consumption-dependent lists; publish only on transitions?: [ticket](tickets/consumption-heartbeats-refetch-lists.md).
-- [open] libraries / entries · 2026-10-10 colrev harness · p3 · re-filing a removed entry keeps its original added time, so "Newest added" puts it where it first was: [ticket](tickets/library-refiling-keeps-original-added-time.md).
 - [open] web / resource graph · 2026-10-10 visual primitives reauthor · p3 · the link composer offers Retry (and a persistent notice) for create failures a retry cannot fix (`E_LINK_SELF`, `E_LINK_CAPABILITY`, `E_NOT_FOUND`): [ticket](tickets/link-composer-offers-retry-for-non-retryable-failures.md).
 - [open] web / render environment · 2026-10-10 visual primitives reauthor · p3 · every viewer sees dates in en-US and UTC; where a viewer's locale and zone come from is undecided: [ticket](tickets/display-locale-and-zone-are-fixed-to-en-us-utc.md).
 - [open] web / settings, reader · 2026-10-10 visual primitives reauthor · p3 · the reader's Focus mode is a tablist whose tabs control no panel; by meaning a radio group: [ticket](tickets/reader-focus-mode-uses-tabs-without-panels.md).
@@ -83,7 +81,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] android / auth · 2026-10-10 auth reauthor · p3 · identity linking cannot complete inside the android shell (spec D1): [ticket](tickets/android-identity-linking-cannot-complete-in-shell.md).
 - [open] web auth / headers · 2026-10-10 auth harness · p3 · next replaces middleware's `Vary: Cookie` on auth documents; harmless while they are private, no-store: [ticket](tickets/auth-documents-lose-vary-cookie.md).
 - [open] contributors / editor · 2026-10-10 authors reauthor · p3 · the editor's name key lowercases instead of casefolding, so "Straße"/"STRASSE" pass its duplicate-create guard: [ticket](tickets/contributor-name-key-casefold-gap.md).
-- [open] libraries / wire · 2026-10-10 authors reauthor · p3 · `LibraryEntryMediaOut.author_mode` reaches the web and nothing reads it: [ticket](tickets/library-entry-author-mode-unread.md).
 - [open] podcasts, browse / reauthoring · 2026-10-10 podcasts/browse rewrite · 4,163 formatted lines against a 3,000 cap; no behaviour cut for budget: [ticket](tickets/podcasts-reauthor-over-line-budget.md).
 - [open] podcasts / backfill data · 2026-10-10 podcasts python reauthor · p3 · backfills a swallowed page failure completed before 0270 are indistinguishable and cannot be walked again: [ticket](tickets/backfills-completed-by-silent-page-failures.md).
 - [open] browse / preview schema · 2026-10-10 podcasts/browse rewrite · p3 · an episode preview's audio href is typed only as a string (spec D10): [ticket](tickets/browse-episode-audio-href-is-untyped.md).
@@ -115,7 +112,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] workspace / budget · 2026-10-09 workspace reauthoring · the rewritten web slice measures 3,220 formatted lines against its 3,000 cap; no behaviour was cut: [ticket](tickets/workspace-reauthor-over-line-budget.md).
 - [open] workspace / daily · 2026-10-10 workspace reauthoring review · an in-pane link to bare `/daily` follows in place to the unsupported pane instead of today: [ticket](tickets/bare-daily-link-opens-unsupported-pane.md).
 - [open] workspace sessions · 2026-10-09 workspace reauthoring (Q9) · `workspace_sessions` rows are never pruned; a cleared device cookie leaves its row forever: [ticket](tickets/workspace-session-rows-never-pruned.md).
-- [open] libraries / pane state · 2026-10-09 workspace harness · a masked-404 library deep link turns its pane into a second Libraries pane: [ticket](tickets/library-masked-404-replaces-the-pane.md).
 - [open] media pane · 2026-10-09 workspace harness · `/media/not-a-uuid` crashes the pane (`Invalid canonical ResourceRef`) instead of rendering not found: [ticket](tickets/media-invalid-id-crashes-the-pane.md).
 - [open] return memento / collections · 2026-10-09 workspace harness · keyboard Back with no dwell focuses the pane landmark, not the activated row: [ticket](tickets/quick-keyboard-back-focuses-the-landmark.md).
 - [open] nexus / mobile focus · 2026-10-09 workspace harness · mobile nexus Places navigates in place and leaves focus on the body: [ticket](tickets/mobile-nexus-places-leaves-focus-on-body.md).
@@ -355,7 +351,6 @@ unexpected timeouts. See
 - [open] library members / confirmation focus · 2026-10-04 mounted controls · canceling a revoke confirmation focuses an adjacent row while the target row still exists; qualify keyboard behavior: [ticket](tickets/library-confirmation-cancel-focuses-adjacent-row.md).
 
 - [open] web / navigation hydration · 2026-10-09 media-row integration · one initial library reload warned beneath AppNav/NavRail; subsequent reloads (and six cold loads on the reauthored rail) were clear, differing attribute unrecorded: [ticket](tickets/app-nav-intermittent-hydration-warning.md).
-- [open] web / library write uncertainty · 2026-10-04 snapshot-owner audit · reorder transport rejection restores rows without proving authoritative order: [ticket](tickets/library-reorder-acknowledgement-loss-leaves-uncertain-order.md).
 - [open] oracle / job recovery · 2026-10-04 source audit, restated by the oracle and generation rewrites · a dead generation job leaves its reading pending forever (its ledger row closes `interrupted`), and a stored streaming reading has no owner: [ticket](tickets/oracle-dead-jobs-can-lose-publication-replay.md).
 - [open] oracle / storage · 2026-10-04 oracle rewrite · 36 plate objects under `oracle/plates/` lost their owner when plates became static assets: [ticket](tickets/oracle-plates-orphaned-r2-objects.md).
 - [open] atlas / projection · 2026-10-04 oracle rewrite · one global sweep over every active-model embedding is untimed at production scale: [ticket](tickets/atlas-global-projection-cost-unmeasured.md).
@@ -368,7 +363,6 @@ unexpected timeouts. See
 - [deferred] daily / prepend scroll · 2026-10-04 source review · dead anchor wiring removed 2026-10-09; whether a daily prepend keeps the visible row in place is unverified in a browser: [ticket](tickets/daily-prepend-scroll-anchoring-is-unverified.md).
 - [deferred] shared media / success contract · 2026-10-09 cutover recheck · native duration modality relationship remains implicit; sole producer verified and duplicate browser conversion removed: [ticket](tickets/media-summary-native-duration-modality-relation-is-implicit.md).
 - [deferred] daily / handoff ownership · 2026-10-04 source review · daily seedless handoff can reappend after remount: [ticket](tickets/daily-seedless-handoff-can-reappend-after-remount.md).
-- [deferred] library / web output aliases · 2026-10-05 source census · two exported entry aliases have no caller; native output remains live: [ticket](tickets/library-entry-unused-export-aliases.md).
 - [deferred] account / display-name bounds · 2026-10-05 source audit · web allows 80 UTF-16 units while native allows 100 code points; choose and align the product contract: [ticket](tickets/account-display-name-has-conflicting-length-bounds.md).
 - [verification credentials require owner rotation](tickets/connections-verification-credential-rotation.md).
 - [open] player / mini progress · 2026-10-09 web dead-code sweep · the mini player progress fill span has no class, so `.miniFill` never applies and no fill shows: [ticket](tickets/player-mini-progress-fill-is-unstyled.md).
@@ -381,7 +375,6 @@ unexpected timeouts. See
 - [open] web / mobile viewport verification · 2026-10-10 app navigation reauthor · no browser can raise a soft keyboard, so the keyboard-inset report stack has no proof: [ticket](tickets/mobile-keyboard-inset-has-no-browser-proof.md).
 - [open] web / mobile viewport verification · 2026-10-10 app navigation reauthor · the nav harness has no playable episode, so the mini-player half of bottom clearance (M10) is unrun: [ticket](tickets/mobile-player-clearance-has-no-browser-proof.md).
 - [open] web / workspace · 2026-10-10 nav harness X1 · the stats pane re-activates itself after its in-place address rewrite, so a quick fork lands behind it: [ticket](tickets/stats-pane-reactivates-after-address-rewrite.md).
-- [open] add content / libraries · 2026-10-10 imports reauthor · Add keeps its own multi-target placement machine beside the shared placement overlay; unify in the libraries rewrite: [ticket](tickets/add-placement-duplicates-library-placement-overlay.md).
 - [open] imports / verification · 2026-10-10 imports reauthor · the imports harness does not drive browse preview Add or note-body attachments: [ticket](tickets/imports-harness-lacks-browse-and-note-attachment-journeys.md).
 - [open] workspace / pane return · 2026-10-10 authors reauthor · p3 · the quick-Back anchor fix landed (route content is the anchor root); acceptance waits on authors harness X8: [ticket](tickets/pane-return-anchor-searches-the-collection-bar.md).
 - [open] workspace / verification · 2026-10-10 workspace host reauthor · artifact find results and the podcast Inspector are not driven live (no fixtures): [ticket](tickets/host-companion-artifact-and-podcast-unverified.md).
@@ -391,6 +384,7 @@ unexpected timeouts. See
 - [open] web / reader · 2026-10-10 overlay kernel reauthor (harness D9) · on firefox the dock's More menu taking focus collapses the selection and the dock closes: [ticket](tickets/firefox-selection-dock-closes-when-its-menu-takes-focus.md).
 
 - [open] api / memory · 2026-10-14 release acceptance · 58c r2 reader/search passed under 384 mib; representative whole-host capacity remains open: [ticket](tickets/api-keats-reader-search-memory-limit.md).
+- [open] web / pane controls · 2026-10-14 absorb review · invalid-view Reset view leaves focus on the body in chats, authors and podcasts: [ticket](tickets/invalid-view-reset-drops-focus-to-body.md).
 
 # post-release handoff
 

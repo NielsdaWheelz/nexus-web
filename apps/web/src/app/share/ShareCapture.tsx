@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import LibraryDestinationField from "@/components/libraries/LibraryDestinationField";
+import DestinationField from "@/components/libraries/DestinationField";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { ApiJson } from "@/lib/api/wire";
 import {
@@ -13,8 +13,7 @@ import { useResource } from "@/lib/api/useResource";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { createRandomId } from "@/lib/createRandomId";
 import { extractUrls } from "@/lib/extractUrls";
-import { createLibrary } from "@/lib/libraries/client";
-import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
+import { createLibrary, type LibraryDestination } from "@/lib/libraries/api";
 import { captureSourceUrl } from "@/lib/imports/ingest";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import { captureToday } from "@/lib/notes/api";
@@ -86,7 +85,7 @@ export default function ShareCapture({
   const urlIdempotencyKeys = useRef<Map<string, string>>(new Map());
   const destinationCreateIds = useRef<Map<string, string>>(new Map());
   const [selectedDestinations, setSelectedDestinations] = useState<
-    readonly LibraryDestinationSelection[]
+    readonly LibraryDestination[]
   >([]);
   const accountResource = useResource<ApiJson<"/me", "get">>({
     cacheKey: trimmed && urls.length === 0 ? "share-capture:account" : null,
@@ -251,19 +250,13 @@ export default function ShareCapture({
             </div>
           ))}
         </div>
-        <LibraryDestinationField
+        <DestinationField
           label="Library destinations"
           emptyLabel="No additional libraries"
-          selected={selectedDestinations}
+          chosen={selectedDestinations}
           onChange={setSelectedDestinations}
-          interaction={
-            creatingDestination
-              ? { kind: "Creating" }
-              : saving
-                ? { kind: "Disabled" }
-                : { kind: "Enabled" }
-          }
-          onCreateDestination={async (name) => {
+          disabled={saving || creatingDestination}
+          onCreate={async (name) => {
             setCreatingDestination(true);
             const normalizedName = name.trim();
             const libraryId =
@@ -272,7 +265,7 @@ export default function ShareCapture({
             destinationCreateIds.current.set(normalizedName, libraryId);
             try {
               const library = await createLibrary({
-                libraryId,
+                id: libraryId,
                 name: normalizedName,
               });
               destinationCreateIds.current.delete(normalizedName);

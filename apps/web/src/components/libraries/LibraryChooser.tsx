@@ -1,270 +1,168 @@
 "use client";
 
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Check, Loader2, Lock, Plus } from "lucide-react";
+// The library listbox every chooser renders: a search combobox over two groups
+// (chosen, then the rest), a row toggled by click or Enter, a read-only row
+// saying why, then an optional Create row and Load more row. It owns only the
+// active option; the caller owns the query, the rows and what a toggle does.
+
 import {
-  FeedbackNotice,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
+import { Check, Loader2, Lock, Plus } from "lucide-react";
+import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import Input from "@/components/ui/Input";
 import styles from "./LibraryChooser.module.css";
 
-export type LibraryChooserItemInteraction =
-  | { kind: "Enabled" }
-  | { kind: "Pending" }
-  | { kind: "ReadOnly"; reason: string };
-
-export interface LibraryChooserItem {
-  id: string;
-  name: string;
-  description?: string;
-  selected: boolean;
-  interaction: LibraryChooserItemInteraction;
+export interface ChooserRow {
+  readonly id: string;
+  readonly name: string;
+  readonly chosen: boolean;
+  /** Why the row cannot be toggled; null when it can. */
+  readonly readOnly: string | null;
+  readonly note?: string | null;
+  readonly pending?: boolean;
 }
 
-export interface LibraryChooserGroup {
-  label: string;
-  items: readonly LibraryChooserItem[];
-}
+type Option =
+  | { readonly key: string; readonly kind: "Row"; readonly row: ChooserRow }
+  | { readonly key: "create"; readonly kind: "Create" }
+  | { readonly key: "more"; readonly kind: "More" };
 
-export interface LibraryChooserProps {
-  query: string;
-  onQueryChange: (query: string) => void;
-  searchPlaceholder: string;
-  searchLabel: string;
-  listLabel: string;
-
-  selectedGroup: LibraryChooserGroup;
-  otherGroup: LibraryChooserGroup;
-
-  onToggle: (id: string) => void;
-
-  /** A mutation or placement reconciliation is in flight: freeze search and activation. */
-  busy: boolean;
-  /** A read (search / Load More / reconcile GET) is in flight: mark the listbox busy without disabling toggles. */
-  loading: boolean;
-  status: string;
-  emptyState: string | null;
-  error: { content: FeedbackContent; onRetry: (() => void) | null } | null;
-  create: { name: string; pending: boolean; onCreate: () => void } | null;
-  loadMore: { pending: boolean; onLoadMore: () => void } | null;
-}
-
-type Actionable =
-  | { kind: "Library"; optionId: string; item: LibraryChooserItem }
-  | { kind: "Create"; optionId: string }
-  | { kind: "LoadMore"; optionId: string };
-
-const READ_ONLY_SHORT = "Read only";
-const LOAD_MORE_IDLE = "Load more libraries";
-const LOAD_MORE_LOADING = "Loading more libraries…";
-
-export default function LibraryChooser({
-  query,
-  onQueryChange,
-  searchPlaceholder,
-  searchLabel,
-  listLabel,
-  selectedGroup,
-  otherGroup,
-  onToggle,
-  busy,
-  loading,
-  status,
-  emptyState,
-  error,
-  create,
-  loadMore,
-}: LibraryChooserProps) {
-  const baseId = useId();
-  const listboxId = `${baseId}-listbox`;
-  const statusId = `${baseId}-status`;
-  const selectedHeaderId = `${baseId}-selected-header`;
-  const otherHeaderId = `${baseId}-other-header`;
-  const optionDomId = (rowId: string) => `${baseId}-option-${rowId}`;
-  const composingRef = useRef(false);
-  const listRef = useRef<HTMLDivElement>(null);
-  const [activeId, setActiveId] = useState<string | null>(null);
-
-  const hasCreate = create !== null;
-  const hasLoadMore = loadMore !== null;
-  const actionables = useMemo<Actionable[]>(() => {
-    const list: Actionable[] = [];
-    for (const item of selectedGroup.items) {
-      list.push({ kind: "Library", optionId: `${baseId}-option-${item.id}`, item });
-    }
-    for (const item of otherGroup.items) {
-      list.push({ kind: "Library", optionId: `${baseId}-option-${item.id}`, item });
-    }
-    if (hasCreate) list.push({ kind: "Create", optionId: `${baseId}-option-create` });
-    if (hasLoadMore) {
-      list.push({ kind: "LoadMore", optionId: `${baseId}-option-load-more` });
-    }
-    return list;
-  }, [baseId, selectedGroup.items, otherGroup.items, hasCreate, hasLoadMore]);
-
-  useEffect(() => {
-    if (actionables.length === 0) {
-      if (activeId !== null) setActiveId(null);
-      return;
-    }
-    if (activeId === null || !actionables.some((a) => a.optionId === activeId)) {
-      setActiveId(actionables[0]!.optionId);
-    }
-  }, [actionables, activeId]);
-
-  const activeDescendant =
-    activeId !== null && actionables.some((a) => a.optionId === activeId)
-      ? activeId
-      : undefined;
-
+export default function LibraryChooser(props: {
+  readonly query: string;
+  readonly onQueryChange: (query: string) => void;
+  readonly label: string;
+  readonly placeholder: string;
+  readonly chosenLabel: string;
+  readonly rows: readonly ChooserRow[];
+  readonly onToggle: (row: ChooserRow) => void;
+  /** A write is in flight: nothing can be chosen. */
+  readonly busy: boolean;
+  /** A read is in flight. */
+  readonly loading: boolean;
+  readonly status: string;
+  readonly empty: string | null;
+  readonly error: {
+    readonly content: FeedbackContent;
+    readonly retry: (() => void) | null;
+  } | null;
+  readonly create: { readonly name: string; readonly run: () => void } | null;
+  readonly more: { readonly loading: boolean; readonly run: () => void } | null;
+}) {
+  const { rows, busy, create, more } = props;
+  const base = useId();
+  const composing = useRef(false);
+  const [active, setActive] = useState<string | null>(null);
+  const chosen = rows.filter((row) => row.chosen);
+  const other = rows.filter((row) => !row.chosen);
+  const options: Option[] = [
+    ...[...chosen, ...other].map((row) => ({
+      key: `row-${row.id}`,
+      kind: "Row" as const,
+      row,
+    })),
+    ...(create ? [{ key: "create" as const, kind: "Create" as const }] : []),
+    ...(more ? [{ key: "more" as const, kind: "More" as const }] : []),
+  ];
+  const current = options.find((option) => option.key === active) ?? options[0] ?? null;
+  const domId = (key: string) => `${base}-${key}`;
+  const list = useRef<HTMLDivElement>(null);
+  // Keep the active option in view by scrolling the list alone: scrollIntoView
+  // would also scroll whatever task holds the chooser.
   useLayoutEffect(() => {
-    const list = listRef.current;
-    if (!list || activeDescendant === undefined) return;
-    const option = document.getElementById(activeDescendant);
-    if (!option || !list.contains(option)) return;
-    const top = list.getBoundingClientRect().top + list.clientTop;
-    const bottom = top + list.clientHeight;
-    const optionRect = option.getBoundingClientRect();
-    // Only the chooser scrolls; scrollIntoView would also move its parent task.
-    if (optionRect.top < top) list.scrollTop += optionRect.top - top;
-    else if (optionRect.bottom > bottom) list.scrollTop += optionRect.bottom - bottom;
-  }, [activeDescendant, actionables]);
+    const option = current && document.getElementById(domId(current.key));
+    if (!list.current || !option || !list.current.contains(option)) return;
+    const box = list.current.getBoundingClientRect();
+    const top = box.top + list.current.clientTop;
+    const bottom = top + list.current.clientHeight;
+    const { top: optionTop, bottom: optionBottom } = option.getBoundingClientRect();
+    if (optionTop < top) list.current.scrollTop += optionTop - top;
+    else if (optionBottom > bottom) list.current.scrollTop += optionBottom - bottom;
+  });
 
-  function activate(optionId: string) {
-    const target = actionables.find((a) => a.optionId === optionId);
-    if (!target) return;
-    switch (target.kind) {
-      case "Library": {
-        if (busy || target.item.interaction.kind !== "Enabled") return;
-        onToggle(target.item.id);
-        return;
-      }
-      case "Create": {
-        if (create === null || busy || create.pending) return;
-        create.onCreate();
-        return;
-      }
-      case "LoadMore": {
-        if (loadMore === null || busy || loadMore.pending) return;
-        loadMore.onLoadMore();
-        return;
-      }
+  const activate = (option: Option) => {
+    if (busy) return;
+    if (option.kind === "Create") create?.run();
+    else if (option.kind === "More") {
+      if (!more?.loading) more?.run();
+    } else if (option.row.readOnly === null && !option.row.pending) {
+      props.onToggle(option.row);
     }
-  }
+  };
 
-  function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
-    if (composingRef.current) return;
-    // Escape stays browser-/surface-owned: do not preventDefault or stopPropagation.
-    if (event.key === "Escape") return;
-    if (
-      event.key === "ArrowDown" ||
-      event.key === "ArrowUp" ||
-      event.key === "Home" ||
-      event.key === "End"
-    ) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (actionables.length === 0) return;
-      const current = actionables.findIndex((a) => a.optionId === activeId);
-      const start = current >= 0 ? current : 0;
-      const last = actionables.length - 1;
-      const next =
-        event.key === "Home"
-          ? 0
-          : event.key === "End"
-            ? last
-            : event.key === "ArrowDown"
-              ? Math.min(last, start + 1)
-              : Math.max(0, start - 1);
-      setActiveId(actionables[next]!.optionId);
-      return;
-    }
-    if (event.key === "Enter") {
-      event.preventDefault();
-      event.stopPropagation();
-      const optionId = activeId ?? actionables[0]?.optionId ?? null;
-      if (optionId !== null) activate(optionId);
-    }
-    // Every other key stays browser-owned.
-  }
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (composing.current || current === null) return;
+    const index = options.indexOf(current);
+    const last = options.length - 1;
+    const next = {
+      ArrowDown: Math.min(last, index + 1),
+      ArrowUp: Math.max(0, index - 1),
+      Home: 0,
+      End: last,
+    }[event.key];
+    if (next === undefined && event.key !== "Enter") return;
+    // Escape and every other key stay with the browser and the surface.
+    event.preventDefault();
+    event.stopPropagation();
+    if (next === undefined) activate(current);
+    else setActive(options[next]!.key);
+  };
 
-  function renderTrailing(item: LibraryChooserItem) {
-    if (item.interaction.kind === "Pending") {
-      return (
-        <span className={styles.spinner}>
-          <Loader2 size={16} aria-hidden="true" />
+  const option = (item: Option, content: ReactNode) => (
+    <div
+      key={item.key}
+      id={domId(item.key)}
+      role="option"
+      aria-selected={item.kind === "Row" && item.row.chosen}
+      aria-disabled={(item.kind === "Row" && item.row.readOnly !== null) || undefined}
+      aria-busy={
+        (item.kind === "Row" && item.row.pending) ||
+        (item.kind === "More" && more?.loading) ||
+        undefined
+      }
+      className={styles.option}
+      data-action={item.kind === "Row" ? undefined : item.kind}
+      data-active={item === current || undefined}
+      onMouseDown={(event) => event.preventDefault()}
+      onMouseMove={() => setActive(item.key)}
+      onClick={() => activate(item)}
+    >
+      {content}
+    </div>
+  );
+  const rowOption = (row: ChooserRow) => {
+    const note = [row.note, row.readOnly].filter(Boolean).join(" · ");
+    return option(
+      { key: `row-${row.id}`, kind: "Row", row },
+      <>
+        <span className={styles.text}>
+          <span className={styles.name}>{row.name}</span>
+          {note ? <span className={styles.note}>{note}</span> : null}
         </span>
-      );
-    }
-    if (item.interaction.kind === "ReadOnly") {
-      return (
-        <span className={styles.readOnly}>
+        {row.pending ? (
+          <Loader2 className={styles.spinner} size={16} aria-hidden="true" />
+        ) : row.readOnly !== null ? (
           <Lock size={16} aria-hidden="true" />
-          <span>{READ_ONLY_SHORT}</span>
-          {item.description ? null : (
-            <span className={styles.srOnly}>{item.interaction.reason}</span>
-          )}
-        </span>
-      );
-    }
-    if (item.selected) {
-      return (
-        <span className={styles.check}>
-          <Check size={16} aria-hidden="true" />
-        </span>
-      );
-    }
-    return null;
-  }
-
-  function renderOption(item: LibraryChooserItem) {
-    const optionId = optionDomId(item.id);
-    const readOnly = item.interaction.kind === "ReadOnly";
-    const pending = item.interaction.kind === "Pending";
-    return (
-      <div
-        key={item.id}
-        id={optionId}
-        role="option"
-        aria-selected={item.selected}
-        aria-disabled={readOnly || undefined}
-        aria-busy={pending || undefined}
-        className={styles.option}
-        data-active={optionId === activeId || undefined}
-        onMouseDown={(event) => event.preventDefault()}
-        onMouseMove={() => setActiveId(optionId)}
-        onClick={() => activate(optionId)}
-      >
-        <span className={styles.optionText}>
-          <span className={styles.optionName}>{item.name}</span>
-          {item.description ? (
-            <span className={styles.optionDescription}>{item.description}</span>
-          ) : null}
-        </span>
-        {renderTrailing(item)}
-      </div>
+        ) : row.chosen ? (
+          <Check className={styles.check} size={16} aria-hidden="true" />
+        ) : null}
+      </>,
     );
-  }
-
-  function renderGroup(group: LibraryChooserGroup, headerId: string) {
-    if (group.items.length === 0) return null;
-    return (
-      <div role="group" aria-labelledby={headerId} className={styles.group}>
-        <div id={headerId} className={styles.groupHeader}>
-          {group.label}
+  };
+  const group = (key: string, label: string, items: readonly ChooserRow[]) =>
+    items.length === 0 ? null : (
+      <div role="group" aria-labelledby={domId(key)}>
+        <div id={domId(key)} className={styles.groupHeader}>
+          {label}
         </div>
-        {group.items.map(renderOption)}
+        {items.map(rowOption)}
       </div>
     );
-  }
-
-  const showEmptyState =
-    emptyState !== null &&
-    error === null &&
-    create === null &&
-    selectedGroup.items.length === 0 &&
-    otherGroup.items.length === 0;
 
   return (
     <div className={styles.chooser}>
@@ -273,105 +171,75 @@ export default function LibraryChooser({
           bare
           className={styles.search}
           role="combobox"
-          aria-label={searchLabel}
-          aria-controls={listboxId}
+          aria-label={props.label}
+          aria-controls={domId("listbox")}
           aria-expanded={true}
-          aria-activedescendant={activeDescendant}
-          aria-describedby={statusId}
+          aria-activedescendant={current ? domId(current.key) : undefined}
+          aria-describedby={domId("status")}
           aria-autocomplete="list"
-          value={query}
+          value={props.query}
           readOnly={busy}
-          placeholder={searchPlaceholder}
+          placeholder={props.placeholder}
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
-          onChange={(event) => onQueryChange(event.target.value)}
-          onCompositionStart={() => {
-            composingRef.current = true;
-          }}
-          onCompositionEnd={() => {
-            composingRef.current = false;
-          }}
+          onChange={(event) => props.onQueryChange(event.target.value)}
+          onCompositionStart={() => (composing.current = true)}
+          onCompositionEnd={() => (composing.current = false)}
           onKeyDown={onKeyDown}
         />
       </div>
-      <div
-        id={statusId}
-        role={error === null ? "status" : undefined}
-        className={styles.srOnly}
-      >
-        {error === null ? status : ""}
+      <div id={domId("status")} role="status" className="sr-only">
+        {props.error ? "" : props.status}
       </div>
-      {error !== null ? (
+      {props.error ? (
         <FeedbackNotice
-          content={error.content}
+          content={props.error.content}
           announcement="Assertive"
           actions={
-            error.onRetry === null || busy
-              ? undefined
-              : [{ label: "Retry", onClick: error.onRetry }]
+            props.error.retry && !busy
+              ? [{ label: "Retry", onClick: props.error.retry }]
+              : undefined
           }
         />
       ) : null}
       <div
-        ref={listRef}
-        id={listboxId}
+        ref={list}
+        id={domId("listbox")}
         role="listbox"
-        aria-label={listLabel}
+        aria-label="Library options"
         aria-multiselectable="true"
-        aria-busy={busy || loading || undefined}
+        aria-busy={busy || props.loading || undefined}
         className={styles.list}
       >
-        {renderGroup(selectedGroup, selectedHeaderId)}
-        {renderGroup(otherGroup, otherHeaderId)}
-        {create !== null ? (
-          <div
-            id={optionDomId("create")}
-            role="option"
-            aria-selected={false}
-            aria-busy={create.pending || undefined}
-            className={`${styles.actionRow} ${styles.createRow}`}
-            data-active={optionDomId("create") === activeId || undefined}
-            onMouseDown={(event) => event.preventDefault()}
-            onMouseMove={() => setActiveId(optionDomId("create"))}
-            onClick={() => activate(optionDomId("create"))}
-          >
-            {create.pending ? (
-              <span className={styles.spinner}>
-                <Loader2 size={16} aria-hidden="true" />
-              </span>
-            ) : (
-              <Plus size={16} aria-hidden="true" />
-            )}
-            <span className={styles.optionName}>Create “{create.name}”</span>
-          </div>
-        ) : null}
-        {loadMore !== null ? (
-          <div
-            id={optionDomId("load-more")}
-            role="option"
-            aria-selected={false}
-            aria-busy={loadMore.pending || undefined}
-            className={`${styles.actionRow} ${styles.loadMoreRow}`}
-            data-active={optionDomId("load-more") === activeId || undefined}
-            onMouseDown={(event) => event.preventDefault()}
-            onMouseMove={() => setActiveId(optionDomId("load-more"))}
-            onClick={() => activate(optionDomId("load-more"))}
-          >
-            {loadMore.pending ? (
-              <span className={styles.spinner}>
-                <Loader2 size={16} aria-hidden="true" />
-              </span>
-            ) : (
-              <Plus size={16} aria-hidden="true" />
-            )}
-            <span className={styles.optionName}>
-              {loadMore.pending ? LOAD_MORE_LOADING : LOAD_MORE_IDLE}
-            </span>
-          </div>
-        ) : null}
-        {showEmptyState ? (
-          <div className={styles.empty}>{emptyState}</div>
+        {group("chosen", props.chosenLabel, chosen)}
+        {group("other", "Other libraries", other)}
+        {create
+          ? option(
+              { key: "create", kind: "Create" },
+              <>
+                <Plus size={16} aria-hidden="true" />
+                <span className={styles.name}>Create “{create.name}”</span>
+              </>,
+            )
+          : null}
+        {more
+          ? option(
+              { key: "more", kind: "More" },
+              <>
+                {more.loading ? (
+                  <Loader2 className={styles.spinner} size={16} aria-hidden="true" />
+                ) : (
+                  <Plus size={16} aria-hidden="true" />
+                )}
+                <span className={styles.name}>
+                  {more.loading ? "Loading more libraries…" : "Load more libraries"}
+                </span>
+              </>,
+            )
+          : null}
+        {rows.length === 0 && !create && props.empty ? (
+          <div className={styles.empty}>{props.empty}</div>
         ) : null}
       </div>
     </div>

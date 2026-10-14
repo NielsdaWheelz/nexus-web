@@ -239,7 +239,7 @@ export default function BrowsePreviewPaneBody() {
         const result = await subscribeToPodcast({
           target: { kind: "Discovery", target: preview.target },
           namedLibraryIds,
-          replacementConfirmation: command.replacementConfirmation,
+          replaceEpisodes: command.replaceEpisodes,
         });
         return { href: result.href };
       }

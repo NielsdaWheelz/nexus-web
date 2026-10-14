@@ -12,15 +12,16 @@ from nexus.auth.extension import get_extension_viewer
 from nexus.auth.middleware import Viewer
 from nexus.db.session import DbSession
 from nexus.logging import get_request_id
-from nexus.responses import ok, ok_page
+from nexus.responses import Data, ok
+from nexus.schemas.collection_page import CollectionPage
 from nexus.schemas.extension_capture import BrowserCapture, BrowserCaptureIntent
-from nexus.schemas.library import LibraryPageInfo
+from nexus.schemas.library import LibraryDestinationOut
 from nexus.schemas.media import (
     ConfirmUploadSessionRequest,
     RetryUploadSessionRequest,
     UploadTransportFailureRequest,
 )
-from nexus.services import library_governance, media_upload_sessions
+from nexus.services import libraries, media_upload_sessions
 
 router = APIRouter(prefix="/extension", tags=["extension"])
 
@@ -29,16 +30,15 @@ router = APIRouter(prefix="/extension", tags=["extension"])
 def list_library_destinations(
     viewer: Annotated[Viewer, Depends(get_extension_viewer)],
     db: DbSession,
-    q: str | None = Query(default=None, max_length=100),
-    cursor: str | None = Query(default=None),
-    limit: int = Query(default=25, ge=1, le=50),
-) -> dict:
+    q: Annotated[str, Query(max_length=100)] = "",
+    cursor: Annotated[str | None, Query(min_length=1)] = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 25,
+) -> Data[CollectionPage[LibraryDestinationOut]]:
     """The viewer's writable named libraries; the extension cannot create one."""
-    result, next_cursor = library_governance.list_writable_library_destinations(
-        db, viewer.user_id, q=(q or "").strip().lower(), cursor=cursor, limit=limit
-    )
-    return ok_page(
-        result, LibraryPageInfo(has_more=next_cursor is not None, next_cursor=next_cursor)
+    return Data(
+        data=libraries.list_writable_library_destinations(
+            db, viewer.user_id, q=q, cursor=cursor, limit=limit
+        )
     )
 
 

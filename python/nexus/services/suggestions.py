@@ -26,7 +26,7 @@ from nexus.schemas.suggestions import (
     SuggestionItemOut,
     SuggestionsOut,
 )
-from nexus.services import highlights, library_entries, library_governance, notes, reading_time
+from nexus.services import highlights, libraries, library_entries, notes, reading_time
 from nexus.services import media as media_service
 from nexus.services.consumption import projection
 from nexus.services.consumption import service as consumption_service
@@ -80,7 +80,7 @@ def build_quick_reads(db: Session, *, viewer_id: UUID) -> QuickReadsOut:
 
 def build_library_suggestions(db: Session, *, viewer_id: UUID, library_id: UUID) -> SuggestionsOut:
     """Up to ten relational suggestions for an admin-owned, non-system library."""
-    context = library_governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
+    context = libraries.access(db, viewer_id, library_id, lock=False)
     if context.system_key is not None or context.role != "admin":
         return SuggestionsOut(items=[])
     anchors = library_entries.library_anchor_facts(

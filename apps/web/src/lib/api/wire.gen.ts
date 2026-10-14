@@ -934,15 +934,32 @@ export interface paths {
         };
         /**
          * List Libraries
-         * @description List the viewer's libraries in the requested view.
+         * @description `sort` = created_desc | name_asc | name_desc; absent is oldest created.
          */
         get: operations["list_libraries_libraries_get"];
         put?: never;
-        /**
-         * Create Library
-         * @description Create a non-default library owned and admin'd by the caller.
-         */
+        /** Create Library */
         post: operations["create_library_libraries_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/destinations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Destinations
+         * @description The named libraries the viewer may file into, best match first.
+         */
+        get: operations["list_destinations_libraries_destinations_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1029,7 +1046,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/libraries/writable-destinations": {
+    "/libraries/placements/{ref}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1037,10 +1054,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List Writable Library Destinations
-         * @description Rank the named libraries the viewer may file into.
+         * List Placements
+         * @description Where one media or show sits among the viewer's libraries.
          */
-        get: operations["list_writable_library_destinations_libraries_writable_destinations_get"];
+        get: operations["list_placements_libraries_placements__ref__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1058,22 +1075,16 @@ export interface paths {
         };
         /**
          * Get Library
-         * @description Read one library. Non-members get a masked 404.
+         * @description Members only; anyone else gets 404.
          */
         get: operations["get_library_libraries__library_id__get"];
         put?: never;
         post?: never;
-        /**
-         * Delete Library
-         * @description Delete a library. Owner-only; a non-owner admin gets E_OWNER_REQUIRED.
-         */
+        /** Delete Library */
         delete: operations["delete_library_libraries__library_id__delete"];
         options?: never;
         head?: never;
-        /**
-         * Rename Library
-         * @description Rename a library. Admin-only; not the default or a system library.
-         */
+        /** Rename Library */
         patch: operations["rename_library_libraries__library_id__patch"];
         trace?: never;
     };
@@ -1085,10 +1096,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List Library Entries
-         * @description List a library's entries under a view lens (see `parse_entries_query`).
+         * List Entries
+         * @description `sort`, `entry_type`, `projection`, `completion`: see `library_listing`.
          */
-        get: operations["list_library_entries_libraries__library_id__entries_get"];
+        get: operations["list_entries_libraries__library_id__entries_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1097,7 +1108,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/libraries/{library_id}/entries/reorder": {
+    "/libraries/{library_id}/entries/{entry_id}/position": {
         parameters: {
             query?: never;
             header?: never;
@@ -1105,16 +1116,13 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        put?: never;
+        /** Move Entry */
+        put: operations["move_entry_libraries__library_id__entries__entry_id__position_put"];
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
-        /**
-         * Patch Library Entry Order
-         * @description Replace the full entry ordering for a library.
-         */
-        patch: operations["patch_library_entry_order_libraries__library_id__entries_reorder_patch"];
+        patch?: never;
         trace?: never;
     };
     "/libraries/{library_id}/invites": {
@@ -1136,6 +1144,24 @@ export interface paths {
          */
         post: operations["create_library_invite_libraries__library_id__invites_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/items/{ref}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Place Item */
+        put: operations["place_item_libraries__library_id__items__ref__put"];
+        post?: never;
+        /** Unplace Item */
+        delete: operations["unplace_item_libraries__library_id__items__ref__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1185,30 +1211,6 @@ export interface paths {
         patch: operations["update_library_member_role_libraries__library_id__members__user_handle__patch"];
         trace?: never;
     };
-    "/libraries/{library_id}/podcasts/{podcast_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Add Subscribed Podcast To Library
-         * @description Place an existing active podcast subscription in one named library.
-         */
-        put: operations["add_subscribed_podcast_to_library_libraries__library_id__podcasts__podcast_id__put"];
-        post?: never;
-        /**
-         * Remove Podcast From Library
-         * @description Remove a podcast reference from one non-default library.
-         */
-        delete: operations["remove_podcast_from_library_libraries__library_id__podcasts__podcast_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/libraries/{library_id}/suggestions": {
         parameters: {
             query?: never;
@@ -1217,10 +1219,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get Library Suggestions
-         * @description Read the library's Reading Slate.
+         * Get Suggestions
+         * @description The library's Reading Slate.
          */
-        get: operations["get_library_suggestions_libraries__library_id__suggestions_get"];
+        get: operations["get_suggestions_libraries__library_id__suggestions_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1713,41 +1715,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/media/{media_id}/libraries": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Media Libraries */
-        get: operations["get_media_libraries_media__media_id__libraries_get"];
-        put?: never;
-        /** Add Media Libraries */
-        post: operations["add_media_libraries_media__media_id__libraries_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/media/{media_id}/libraries/{library_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Remove Media Library */
-        delete: operations["remove_media_library_media__media_id__libraries__library_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/media/{media_id}/listening-state": {
         parameters: {
             query?: never;
@@ -1966,24 +1933,6 @@ export interface paths {
          */
         post: operations["retry_ingest_media__media_id__retry_post"];
         delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/media/{media_id}/saved-in-nexus": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Add Media Saved In Nexus */
-        put: operations["add_media_saved_in_nexus_media__media_id__saved_in_nexus_put"];
-        post?: never;
-        /** Remove Media Saved In Nexus */
-        delete: operations["remove_media_saved_in_nexus_media__media_id__saved_in_nexus_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2447,26 +2396,6 @@ export interface paths {
         put?: never;
         /** Mark Podcast Episode Selection Played */
         post: operations["mark_podcast_episode_selection_played_podcasts__podcast_id__episodes_mark_played_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/podcasts/{podcast_id}/libraries": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Podcast Libraries
-         * @description Read the canonical library placement inventory for one podcast.
-         */
-        get: operations["get_podcast_libraries_podcasts__podcast_id__libraries_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2973,14 +2902,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** AbsentLibraryPlacementRelationOut */
-        AbsentLibraryPlacementRelationOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Absent";
-        };
         /** AcceptLibraryInviteResponse */
         AcceptLibraryInviteResponse: {
             /** Idempotent */
@@ -3350,27 +3271,6 @@ export interface components {
              * @enum {string}
              */
             mode: "automatic";
-        };
-        /** AvailableLibraryPlacementAvailabilityOut */
-        AvailableLibraryPlacementAvailabilityOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Available";
-        };
-        /** BlockedLibraryPlacementAvailabilityOut */
-        BlockedLibraryPlacementAvailabilityOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Blocked";
-            /**
-             * Reason
-             * @enum {string}
-             */
-            reason: "RequiresAdmin" | "RequiresSubscription" | "SystemManaged" | "Inherited";
         };
         BrowseCandidate: components["schemas"]["OwnedMediaCandidate"] | components["schemas"]["EpubCandidate"] | components["schemas"]["WebArticleCandidate"] | components["schemas"]["VideoCandidate"] | components["schemas"]["PodcastCandidate"];
         /**
@@ -3806,10 +3706,10 @@ export interface components {
              */
             route: "CodexPersonal";
         };
-        /** CollectionPage[Annotated[Union[LibraryMediaListItemOut, LibraryPodcastListItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
-        CollectionPage_Annotated_Union_LibraryMediaListItemOut__LibraryPodcastListItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
+        /** CollectionPage[Annotated[Union[LibraryMediaEntryOut, LibraryPodcastEntryOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
+        CollectionPage_Annotated_Union_LibraryMediaEntryOut__LibraryPodcastEntryOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Items */
-            items: (components["schemas"]["LibraryMediaListItemOut"] | components["schemas"]["LibraryPodcastListItemOut"])[];
+            items: (components["schemas"]["LibraryMediaEntryOut"] | components["schemas"]["LibraryPodcastEntryOut"])[];
             /** Next Cursor */
             next_cursor: string | null;
         };
@@ -3824,6 +3724,13 @@ export interface components {
         CollectionPage_ConversationListItemOut_: {
             /** Items */
             items: components["schemas"]["ConversationListItemOut"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** CollectionPage[LibraryDestinationOut] */
+        CollectionPage_LibraryDestinationOut_: {
+            /** Items */
+            items: components["schemas"]["LibraryDestinationOut"][];
             /** Next Cursor */
             next_cursor: string | null;
         };
@@ -4312,17 +4219,17 @@ export interface components {
              */
             role: "admin" | "member";
         };
-        /** CreateLibraryRequest */
+        /**
+         * CreateLibraryRequest
+         * @description Retry: resend the same client-minted id.
+         */
         CreateLibraryRequest: {
             /**
-             * Library Id
+             * Id
              * Format: uuid
              */
-            library_id: string;
-            /**
-             * Name
-             * @description Library name (1-100 chars)
-             */
+            id: string;
+            /** Name */
             name: string;
         };
         /** CreateLinkOut */
@@ -4462,12 +4369,6 @@ export interface components {
             materialized: boolean;
             outline: components["schemas"]["OutlineOut"];
         };
-        /** DataPage[LibraryDestinationOut, LibraryPageInfo] */
-        DataPage_LibraryDestinationOut_LibraryPageInfo_: {
-            /** Data */
-            data: components["schemas"]["LibraryDestinationOut"][];
-            page: components["schemas"]["LibraryPageInfo"];
-        };
         /** DataPage[LibraryInvitationOut, LibraryGovernancePageInfo] */
         DataPage_LibraryInvitationOut_LibraryGovernancePageInfo_: {
             /** Data */
@@ -4546,9 +4447,9 @@ export interface components {
         Data_ChatRunResponse_: {
             data: components["schemas"]["ChatRunResponse"];
         };
-        /** Data[CollectionPage[Annotated[Union[LibraryMediaListItemOut, LibraryPodcastListItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]]] */
-        Data_CollectionPage_Annotated_Union_LibraryMediaListItemOut__LibraryPodcastListItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____: {
-            data: components["schemas"]["CollectionPage_Annotated_Union_LibraryMediaListItemOut__LibraryPodcastListItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+        /** Data[CollectionPage[Annotated[Union[LibraryMediaEntryOut, LibraryPodcastEntryOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]]] */
+        Data_CollectionPage_Annotated_Union_LibraryMediaEntryOut__LibraryPodcastEntryOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____: {
+            data: components["schemas"]["CollectionPage_Annotated_Union_LibraryMediaEntryOut__LibraryPodcastEntryOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
         };
         /** Data[CollectionPage[Annotated[Union[MediaContributorWorkItemOut, PodcastContributorWorkItemOut, ExternalContributorWorkItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]]] */
         Data_CollectionPage_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____: {
@@ -4557,6 +4458,10 @@ export interface components {
         /** Data[CollectionPage[ConversationListItemOut]] */
         Data_CollectionPage_ConversationListItemOut__: {
             data: components["schemas"]["CollectionPage_ConversationListItemOut_"];
+        };
+        /** Data[CollectionPage[LibraryDestinationOut]] */
+        Data_CollectionPage_LibraryDestinationOut__: {
+            data: components["schemas"]["CollectionPage_LibraryDestinationOut_"];
         };
         /** Data[CollectionPage[LibraryOut]] */
         Data_CollectionPage_LibraryOut__: {
@@ -4774,14 +4679,6 @@ export interface components {
         Data_PodcastEpisodeQueryTranscriptRequestOut_: {
             data: components["schemas"]["PodcastEpisodeQueryTranscriptRequestOut"];
         };
-        /** Data[PodcastPlacementAdditionOut] */
-        Data_PodcastPlacementAdditionOut_: {
-            data: components["schemas"]["PodcastPlacementAdditionOut"];
-        };
-        /** Data[PodcastPlacementRemovalOut] */
-        Data_PodcastPlacementRemovalOut_: {
-            data: components["schemas"]["PodcastPlacementRemovalOut"];
-        };
         /** Data[PodcastRefreshAcceptedOut] */
         Data_PodcastRefreshAcceptedOut_: {
             data: components["schemas"]["PodcastRefreshAcceptedOut"];
@@ -4893,10 +4790,10 @@ export interface components {
         Data_WorkspaceSessionsOut_: {
             data: components["schemas"]["WorkspaceSessionsOut"];
         };
-        /** Data[list[LibraryPlacementOptionOut]] */
-        Data_list_LibraryPlacementOptionOut__: {
+        /** Data[list[LibraryPlacementOut]] */
+        Data_list_LibraryPlacementOut__: {
             /** Data */
-            data: components["schemas"]["LibraryPlacementOptionOut"][];
+            data: components["schemas"]["LibraryPlacementOut"][];
         };
         /** Data[list[OracleConcordanceOut]] */
         Data_list_OracleConcordanceOut__: {
@@ -4949,14 +4846,6 @@ export interface components {
             device_handle: string;
             /** Label */
             label: string;
-        };
-        /** DirectLibraryPlacementRelationOut */
-        DirectLibraryPlacementRelationOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Direct";
         };
         /** DismissDiscoveryMutation */
         DismissDiscoveryMutation: {
@@ -6163,16 +6052,6 @@ export interface components {
              */
             kind: "Ineligible";
         };
-        /** InheritedLibraryPlacementRelationOut */
-        InheritedLibraryPlacementRelationOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Inherited";
-            /** Provenance */
-            provenance: components["schemas"]["LibraryIdentityOut"][];
-        };
         /** InsertNote */
         InsertNote: {
             /** After */
@@ -6320,122 +6199,17 @@ export interface components {
         /** LibraryDestinationOut */
         LibraryDestinationOut: {
             /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /**
              * Id
              * Format: uuid
              */
             id: string;
             /** Name */
             name: string;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-        };
-        /** LibraryEntryMediaCapabilitiesOut */
-        LibraryEntryMediaCapabilitiesOut: {
-            /** Can Delete */
-            can_delete: boolean;
-            /** Can Edit Authors */
-            can_edit_authors: boolean;
-            /** Can Quote */
-            can_quote: boolean;
-            /** Can Refresh Source */
-            can_refresh_source: boolean;
-            /** Can Retry */
-            can_retry: boolean;
-            /** Can Retry Metadata */
-            can_retry_metadata: boolean;
-        };
-        /** LibraryEntryMediaOut */
-        LibraryEntryMediaOut: {
-            /**
-             * Author Mode
-             * @enum {string}
-             */
-            author_mode: "automatic" | "manual";
-            /** Canonical Source Url */
-            canonical_source_url: string | null;
-            capabilities: components["schemas"]["LibraryEntryMediaCapabilitiesOut"];
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Last Engaged At */
-            last_engaged_at: string | null;
-        };
-        /** LibraryEntryOrderRequest */
-        LibraryEntryOrderRequest: {
-            /** Entry Ids */
-            entry_ids: string[];
-        };
-        /** LibraryEntryPlacementOut */
-        LibraryEntryPlacementOut: {
-            /**
-             * Library Entry Id
-             * Format: uuid
-             */
-            library_entry_id: string;
-            /** Position */
-            position: number;
-        };
-        /** LibraryEntryPodcastOut */
-        LibraryEntryPodcastOut: {
-            /** Contributors */
-            contributors: components["schemas"]["ContributorCreditOut"][];
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Published Date */
-            published_date: string | null;
-            /** Title */
-            title: string;
-            /**
-             * Unplayed Count
-             * @default 0
-             */
-            unplayed_count: number;
-        };
-        /** LibraryEntryPodcastSubscriptionOut */
-        LibraryEntryPodcastSubscriptionOut: {
-            /**
-             * Auto Queue
-             * @default false
-             */
-            auto_queue: boolean;
-            /** Default Playback Speed */
-            default_playback_speed: number | null;
-            /** Pause Shortening Mode */
-            pause_shortening_mode: ("Off" | "Natural") | null;
-            sync_status: components["schemas"]["PodcastSyncStatus"];
         };
         /** LibraryGovernancePageInfo */
         LibraryGovernancePageInfo: {
             /** Next Cursor */
             next_cursor: string | null;
-        };
-        /** LibraryIdentityOut */
-        LibraryIdentityOut: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Name */
-            name: string;
         };
         /** LibraryInvitationOut */
         LibraryInvitationOut: {
@@ -6472,30 +6246,21 @@ export interface components {
              */
             status: "pending" | "accepted" | "declined" | "revoked";
         };
-        /** LibraryLibraryPlacementDestinationOut */
-        LibraryLibraryPlacementDestinationOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Library";
-            library: components["schemas"]["LibraryIdentityOut"];
-        };
-        /** LibraryMediaListItemOut */
-        LibraryMediaListItemOut: {
+        /** LibraryMediaEntryOut */
+        LibraryMediaEntryOut: {
             /**
              * Added At
              * Format: date-time
              */
             added_at: string;
+            /** Entry Id */
+            entry_id: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "media";
-            media: components["schemas"]["LibraryEntryMediaOut"];
             media_summary: components["schemas"]["MediaSummaryOut"];
-            placement: components["schemas"]["LibraryEntryPlacementOut"] | null;
         };
         /** LibraryMemberOut */
         LibraryMemberOut: {
@@ -6522,12 +6287,8 @@ export interface components {
         LibraryOut: {
             /** Can Delete */
             can_delete: boolean;
-            /** Can Edit Entries */
-            can_edit_entries: boolean;
-            /** Can Manage Members */
-            can_manage_members: boolean;
-            /** Can Rename */
-            can_rename: boolean;
+            /** Can Manage */
+            can_manage: boolean;
             /** Can Transfer Ownership */
             can_transfer_ownership: boolean;
             /**
@@ -6544,8 +6305,6 @@ export interface components {
             is_default: boolean;
             /** Name */
             name: string;
-            /** Owner User Handle */
-            owner_user_handle: string;
             /**
              * Role
              * @enum {string}
@@ -6559,41 +6318,57 @@ export interface components {
              */
             updated_at: string;
         };
-        /** LibraryPageInfo */
-        LibraryPageInfo: {
+        /**
+         * LibraryPlacementOut
+         * @description One library the item could sit in; `is_default` is the viewer's All (Saved in
+         *     Nexus). Inherited: an episode included through its filed show.
+         */
+        LibraryPlacementOut: {
+            /** Blocked */
+            blocked: ("RequiresAdmin" | "RequiresSubscription" | "SystemManaged") | null;
+            /** Is Default */
+            is_default: boolean;
             /**
-             * Has More
-             * @default false
+             * Library Id
+             * Format: uuid
              */
-            has_more: boolean;
-            /** Next Cursor */
-            next_cursor: string | null;
+            library_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Relation
+             * @enum {string}
+             */
+            relation: "Absent" | "Direct" | "Inherited";
         };
-        /** LibraryPlacementOptionOut */
-        LibraryPlacementOptionOut: {
-            /** Availability */
-            availability: components["schemas"]["AvailableLibraryPlacementAvailabilityOut"] | components["schemas"]["BlockedLibraryPlacementAvailabilityOut"];
-            /** Destination */
-            destination: components["schemas"]["SavedInNexusLibraryPlacementDestinationOut"] | components["schemas"]["LibraryLibraryPlacementDestinationOut"];
-            /** Relation */
-            relation: components["schemas"]["AbsentLibraryPlacementRelationOut"] | components["schemas"]["DirectLibraryPlacementRelationOut"] | components["schemas"]["InheritedLibraryPlacementRelationOut"];
-        };
-        /** LibraryPodcastListItemOut */
-        LibraryPodcastListItemOut: {
+        /** LibraryPodcastEntryOut */
+        LibraryPodcastEntryOut: {
             /**
              * Added At
              * Format: date-time
              */
             added_at: string;
+            /** Contributors */
+            contributors: components["schemas"]["ContributorCreditOut"][];
+            /** Entry Id */
+            entry_id: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "podcast";
-            placement: components["schemas"]["LibraryEntryPlacementOut"] | null;
-            podcast: components["schemas"]["LibraryEntryPodcastOut"];
-            reading_time_estimate: components["schemas"]["ReadingTimeEstimateOut"] | null;
-            subscription: components["schemas"]["LibraryEntryPodcastSubscriptionOut"] | null;
+            /**
+             * Podcast Id
+             * Format: uuid
+             */
+            podcast_id: string;
+            /** Published Date */
+            published_date: string | null;
+            sync_status: components["schemas"]["PodcastSyncStatus"] | null;
+            /** Title */
+            title: string;
+            /** Unplayed Count */
+            unplayed_count: number;
         };
         /** LinkAudienceIn */
         LinkAudienceIn: {
@@ -6990,11 +6765,6 @@ export interface components {
          * @enum {string}
          */
         MediaKind: "web_article" | "epub" | "pdf" | "video" | "podcast_episode";
-        /** MediaLibrariesRequest */
-        MediaLibrariesRequest: {
-            /** Library Ids */
-            library_ids?: string[];
-        };
         /**
          * MediaOut
          * @description The media detail wire.
@@ -7674,6 +7444,14 @@ export interface components {
              */
             link_id: string;
         };
+        /**
+         * MoveEntryRequest
+         * @description Put the entry immediately before `before_entry_id`; null puts it last.
+         */
+        MoveEntryRequest: {
+            /** Before Entry Id */
+            before_entry_id: string | null;
+        };
         /** NeedsAttention */
         NeedsAttention: {
             capabilities: components["schemas"]["UploadSessionCapabilities"];
@@ -8313,6 +8091,14 @@ export interface components {
             /** Zoom */
             zoom: number | null;
         };
+        /**
+         * PlaceItemRequest
+         * @description `replace_episodes` confirms that a show replaces its directly filed episodes.
+         */
+        PlaceItemRequest: {
+            /** Replace Episodes */
+            replace_episodes: boolean;
+        };
         /** PlaceItemsCommand */
         PlaceItemsCommand: {
             /**
@@ -8670,22 +8456,6 @@ export interface components {
             /** Website Url */
             website_url: string | null;
         };
-        /** PodcastPlacementAdditionOut */
-        PodcastPlacementAdditionOut: {
-            /**
-             * Outcome
-             * @enum {string}
-             */
-            outcome: "Added" | "AlreadyPresent";
-        };
-        /** PodcastPlacementRemovalOut */
-        PodcastPlacementRemovalOut: {
-            /**
-             * Outcome
-             * @enum {string}
-             */
-            outcome: "Removed" | "AlreadyAbsent";
-        };
         /** PodcastPreview */
         PodcastPreview: {
             /** Contributors */
@@ -8788,11 +8558,6 @@ export interface components {
              */
             kind: "Podcasts";
         };
-        /** PodcastReplacementConfirmation */
-        PodcastReplacementConfirmation: {
-            /** Conflict Fingerprint */
-            conflict_fingerprint: string;
-        };
         /** PodcastSubscribeOut */
         PodcastSubscribeOut: {
             backfill: components["schemas"]["PodcastBackfillOut"];
@@ -8815,7 +8580,8 @@ export interface components {
         PodcastSubscribeRequest: {
             /** Named Library Ids */
             named_library_ids?: string[];
-            replacement_confirmation: components["schemas"]["PodcastReplacementConfirmation"] | null;
+            /** Replace Episodes */
+            replace_episodes: boolean;
             /** Target */
             target: components["schemas"]["PodcastDiscoveryCommitTarget"] | components["schemas"]["PodcastCanonicalCommitTarget"];
         };
@@ -10135,6 +9901,16 @@ export interface components {
              */
             kind: "Removed";
         };
+        /**
+         * RenameLibraryRequest
+         * @description `expected_name` is the name the client last read (the expected version).
+         */
+        RenameLibraryRequest: {
+            /** Expected Name */
+            expected_name: string;
+            /** Name */
+            name: string;
+        };
         /** RepairSearchOffer */
         RepairSearchOffer: {
             /**
@@ -10531,14 +10307,6 @@ export interface components {
              * @enum {string}
              */
             tool_authority: "ReadOnly" | "AdditiveWrites";
-        };
-        /** SavedInNexusLibraryPlacementDestinationOut */
-        SavedInNexusLibraryPlacementDestinationOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "SavedInNexus";
         };
         /** SearchImportObligation */
         SearchImportObligation: {
@@ -12201,14 +11969,6 @@ export interface components {
              * @enum {string}
              */
             role: "admin" | "member";
-        };
-        /** UpdateLibraryRequest */
-        UpdateLibraryRequest: {
-            /**
-             * Name
-             * @description New library name (1-100 chars)
-             */
-            name: string;
         };
         /**
          * UpdateProfileRequest
@@ -14237,7 +13997,7 @@ export interface operations {
     list_library_destinations_extension_library_destinations_get: {
         parameters: {
             query?: {
-                q?: string | null;
+                q?: string;
                 cursor?: string | null;
                 limit?: number;
             };
@@ -14253,9 +14013,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_CollectionPage_LibraryDestinationOut__"];
                 };
             };
             /** @description Validation Error */
@@ -14733,6 +14491,39 @@ export interface operations {
             };
         };
     };
+    list_destinations_libraries_destinations_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_CollectionPage_LibraryDestinationOut__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_viewer_invites_libraries_invites_get: {
         parameters: {
             query?: {
@@ -14858,18 +14649,13 @@ export interface operations {
             };
         };
     };
-    list_writable_library_destinations_libraries_writable_destinations_get: {
+    list_placements_libraries_placements__ref__get: {
         parameters: {
-            query?: {
-                /** @description Name search query */
-                q?: string | null;
-                /** @description Pagination cursor */
-                cursor?: string | null;
-                /** @description Maximum results */
-                limit?: number;
-            };
+            query?: never;
             header?: never;
-            path?: never;
+            path: {
+                ref: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -14880,7 +14666,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DataPage_LibraryDestinationOut_LibraryPageInfo_"];
+                    "application/json": components["schemas"]["Data_list_LibraryPlacementOut__"];
                 };
             };
             /** @description Validation Error */
@@ -14965,7 +14751,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["UpdateLibraryRequest"];
+                "application/json": components["schemas"]["RenameLibraryRequest"];
             };
         };
         responses: {
@@ -14989,7 +14775,7 @@ export interface operations {
             };
         };
     };
-    list_library_entries_libraries__library_id__entries_get: {
+    list_entries_libraries__library_id__entries_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -15006,7 +14792,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_CollectionPage_Annotated_Union_LibraryMediaListItemOut__LibraryPodcastListItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____"];
+                    "application/json": components["schemas"]["Data_CollectionPage_Annotated_Union_LibraryMediaEntryOut__LibraryPodcastEntryOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____"];
                 };
             };
             /** @description Validation Error */
@@ -15020,18 +14806,19 @@ export interface operations {
             };
         };
     };
-    patch_library_entry_order_libraries__library_id__entries_reorder_patch: {
+    move_entry_libraries__library_id__entries__entry_id__position_put: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 library_id: string;
+                entry_id: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["LibraryEntryOrderRequest"];
+                "application/json": components["schemas"]["MoveEntryRequest"];
             };
         };
         responses: {
@@ -15114,6 +14901,70 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Data_LibraryInvitationOut_"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    place_item_libraries__library_id__items__ref__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlaceItemRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unplace_item_libraries__library_id__items__ref__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -15228,71 +15079,7 @@ export interface operations {
             };
         };
     };
-    add_subscribed_podcast_to_library_libraries__library_id__podcasts__podcast_id__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                library_id: string;
-                podcast_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_PodcastPlacementAdditionOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    remove_podcast_from_library_libraries__library_id__podcasts__podcast_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                library_id: string;
-                podcast_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_PodcastPlacementRemovalOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_library_suggestions_libraries__library_id__suggestions_get: {
+    get_suggestions_libraries__library_id__suggestions_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -16228,100 +16015,6 @@ export interface operations {
             };
         };
     };
-    get_media_libraries_media__media_id__libraries_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_list_LibraryPlacementOptionOut__"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    add_media_libraries_media__media_id__libraries_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["MediaLibrariesRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    remove_media_library_media__media_id__libraries__library_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-                library_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     put_listening_state_media__media_id__listening_state_put: {
         parameters: {
             query?: never;
@@ -16746,64 +16439,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Data_SourceRetryAdmission_"];
                 };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    add_media_saved_in_nexus_media__media_id__saved_in_nexus_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    remove_media_saved_in_nexus_media__media_id__saved_in_nexus_delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -17713,37 +17348,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_PodcastEpisodeMarkPlayedOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_podcast_libraries_podcasts__podcast_id__libraries_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                podcast_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_list_LibraryPlacementOptionOut__"];
                 };
             };
             /** @description Validation Error */

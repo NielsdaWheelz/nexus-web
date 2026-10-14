@@ -144,15 +144,13 @@ def library_add(value: LibraryAddInput, call: Call) -> LibraryAddSuccess:
     else:
         target = library_entries.podcast_target(ref.id)
         inserted = library_entries.place_subscribed_podcast_in_named_library_in_current_transaction(
-            db, viewer_id=viewer, library_id=library_id, podcast_id=ref.id
+            db, viewer_id=viewer, library_id=library_id, podcast_id=ref.id, replace_episodes=False
         )
     name = db.execute(
         text("SELECT name FROM libraries WHERE id = :id"), {"id": library_id}
     ).scalar_one()
     if inserted:
-        entry_id = library_entries.entry_id_for_target_in_current_transaction(
-            db, library_id=library_id, target=target
-        )
+        entry_id = library_entries.entry_id(db, library_id, target)
         call.created_refs.append(
             {
                 "kind": "entry",
@@ -347,9 +345,7 @@ def _unfile(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
     else:
         db.execute(text("SELECT 1 FROM podcasts WHERE id = :id FOR UPDATE"), {"id": item_id})
     target = (library_entries.media_target if media else library_entries.podcast_target)(item_id)
-    current = library_entries.entry_id_for_target_in_current_transaction(
-        db, library_id=library_id, target=target
-    )
+    current = library_entries.entry_id(db, library_id, target)
     if current != UUID(ref["id"]):
         return
     if media:

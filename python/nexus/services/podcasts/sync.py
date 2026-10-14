@@ -27,7 +27,7 @@ from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.jobs.queue import JobExecutionContext, JobResult, JobRow, enqueue_job
 from nexus.logging import get_logger
 from nexus.schemas import podcast as wire
-from nexus.services import library_governance
+from nexus.services import libraries
 from nexus.services.consumption import lectern
 
 from .feed import fetch_page, merge
@@ -73,9 +73,7 @@ def refresh(db: Session, viewer_id: UUID, scope: wire.PodcastRefreshManualScope)
         params["podcast_id"] = scope.podcast_id
     with transaction(db):
         if isinstance(scope, wire.PodcastRefreshLibraryScope):
-            library = library_governance.lock_library_for_member(
-                db, viewer_id, scope.library_id, lock=False
-            )
+            library = libraries.access(db, viewer_id, scope.library_id, lock=False)
             if not library.is_default:
                 params["library_id"] = scope.library_id
                 predicate = """AND podcast_id IN (

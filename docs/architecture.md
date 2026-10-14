@@ -1284,15 +1284,14 @@ reading; a status-snapshot SSE follows it. Plates are static web assets.
 
 ### 8.5 Libraries, sharing & the default library's virtual read surface
 
-Content organization + access control, split into three owned modules:
-`services/library_governance.py` (the `libraries`/`memberships` tables: CRUD,
-roles, ownership transfer, membership guards, ingest access checks),
-`services/library_entries.py` (the **sole writer** of `library_entries` — the
-`EntryTarget` media|podcast union, the locked append, canonical position
-ordering, and all item-in-library commands; it also composes the URL-only
-factual view lenses, the fixed `Unfiled`/`In Progress` entry projections, and
-the hide-finished completion filter for reads — no DML on
-  alternate views, positions unchanged), and `services/library_sharing.py` (the
+Content organization + access control, split into four owned modules:
+`services/libraries.py` (the `libraries` table and the viewer's authority over
+one: `access()` returns the row plus the viewer's role, the one capability rule;
+create, rename, delete, the index, writable destinations),
+`services/library_entries.py` (the **sole writer** of `library_entries`: the
+`EntryTarget` media|podcast union, the locked append, the move command, filing,
+unfiling and show placement), `services/library_listing.py` (the entry view
+lenses and the one page statement; no DML), and `services/library_sharing.py` (the
   `memberships` and `library_invitations` tables). Visibility itself is enforced by the boolean
   predicates in `auth/permissions.py`; the search/object readers read
   `library_entries` under an explicit Tier-R allowlist. Library list hydration is
@@ -1324,7 +1323,7 @@ the hide-finished completion filter for reads — no DML on
   and route-specific no-store/no-referrer/noindex/CSP policy. See
   [`modules/resource-sharing.md`](modules/resource-sharing.md).
 - **Writable destinations**: destination pickers use
-  `GET /libraries/writable-destinations`; default libraries, member-only
+  `GET /libraries/destinations`; default libraries, member-only
   libraries, duplicate IDs, and inaccessible IDs are not valid write
   destinations.
 - **The default library's read surface is a live, deduplicated personal
@@ -1388,7 +1387,7 @@ the hide-finished completion filter for reads — no DML on
   policy-neutral read ports from consumption, libraries, the resource graph,
   contributors and the semantic index. it owns quick reads, lectern and library
   suggestions; fact owners retain their tables and mutations. library entry
-  ordering belongs to `library_entry_listing`. `GET /libraries/{id}/suggestions`
+  ordering belongs to `library_listing`. `GET /libraries/{id}/suggestions`
   returns at most ten deterministic, destination-addable suggestions outside
   complete membership. successful add preserves visible survivors and appends
   at most one novel result. suggestion payloads carry target, factual publication date,
@@ -2221,7 +2220,7 @@ The things most likely to bite you, distilled:
 | Resource graph (edges, refs, citations, connections, links) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `links`, `connections`, `context`, `citations`, `reader_targets`, `cleanup`)                                                     |
 | Universal Dossiers / Media Intelligence                           | `python/nexus/services/dossier/`, `python/nexus/services/media_intelligence.py`, `python/nexus/api/routes/dossiers.py`                                                                               |
 | Model tools (contract, dispatcher, writes, undo, memory)         | `python/nexus/services/tools/`, `python/nexus/api/routes/assistant_writes.py`, [`modules/model-tools.md`](modules/model-tools.md)                                                                      |
-| Libraries / contributors / notes                                  | `python/nexus/services/{library_governance,library_entries,library_invitations,contributors,notes}.py`                                                                                                 |
+| Libraries / contributors / notes                                  | `python/nexus/services/{libraries,library_entries,library_listing,library_sharing,contributors,notes}.py`                                                                                               |
 | Resource grants / public sharing                                  | [`modules/resource-sharing.md`](modules/resource-sharing.md), `python/nexus/services/{resource_grants,resource_sharing,public_resource_sharing}.py`, `apps/web/src/{components,lib}/sharing/`, `apps/web/src/app/s/` |
 | Podcasts / playback                                               | `python/nexus/services/podcasts/`, `python/nexus/services/consumption/`, `python/nexus/api/routes/{lectern,listening_state}.py`                                                                        |
 | Auth                                                              | `python/nexus/auth/`                                                                                                                                                                                   |

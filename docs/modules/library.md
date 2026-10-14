@@ -1,529 +1,147 @@
 # Libraries
 
-Libraries organize access to content; they do not own media ingestion or asset
-delivery.
+Libraries are named, shareable collections of media and podcast shows, and the
+access group for what they file: membership is what lets a co-member read the
+media filed in a library. Every account owns one default library, presented as
+**All**, whose listing is a live union of everything the viewer can reach plus
+their followed shows. Libraries do not own ingestion or asset delivery.
 
-media publication labels and ordering use the original work's publication date.
-unknown originals never borrow edition dates. podcast-container release ordering
-keeps its provider timestamp. date ownership lives in [media metadata](media-metadata.md).
+## Modules and what each owns
 
-The domain is split into four owned modules, each owning its own tables:
+- **`services/libraries.py`** owns the `libraries` table and the viewer's
+  authority over one: `access(db, viewer, library, lock=)` returns a
+  `LibraryAccess` (the row plus the viewer's role) with `require_*` methods and
+  `.out(viewer)`, the one capability rule. Create, rename, delete, the index,
+  writable destinations (`list_writable_library_destinations`,
+  `resolve_writable_destinations`), `default_library_id`, system libraries and
+  `library_management_facts` (action snapshots).
+- **`services/library_entries.py`** is the **sole writer of `library_entries`**:
+  `ensure_entry` (the only inserter), deletes, the read accessors, the placement
+  inventory, media filing and unfiling, show placement, the move command, and
+  the relations atlas, search and suggestions compose
+  (`library_media_ids_cte_sql`, `destination_membership_rows_sql`,
+  `library_anchor_facts`).
+- **`services/library_listing.py`** owns the entry view lenses and the one
+  keyset page statement; it writes nothing.
+- **`services/library_sharing.py`** owns `memberships` and
+  `library_invitations` (members, roles, transfer, invitations); it authorizes
+  through `libraries.access`. Its routes live in `api/routes/library_members.py`.
 
-- **`services/library_governance.py`** owns the `libraries` table: library CRUD,
-  the viewer's libraries index, the
-  membership guards (`lock_library_for_member` returns a frozen
-  `LibraryMembershipContext`; `require_admin` / `require_non_default`), the
-  writable-destination contract ingest paths call
-  (`list_writable_library_destinations`,
-  `validate_writable_library_destinations`,
-  `resolve_writable_non_default_library_ids`,
-  `default_library_id_for_user`), and Universal Dossier subject cleanup through
-  the dossier engine.
-- **`services/library_entries.py`** is the **sole writer and lifecycle owner of
-  the `library_entries` table**. It owns the `EntryTarget` discriminated union
-  (`{kind: "media"|"podcast", id}` — a faithful model of the
-  exactly-one-target check) and the `media_target`/`podcast_target` constructors,
-  the single canonical entry ordering constant (`_ENTRY_ORDER = "position ASC,
-created_at DESC, id DESC"`), the locked `ensure_entry` append, deletes and
-  `normalize_positions`, all read accessors, and the item-in-library
-  commands (`list_item_libraries`,
-  `ensure_media_in_library_in_current_transaction`,
-  `remove_podcast_from_library`, `reorder_entries`,
-  `ensure_media_in_libraries_for_viewer`, `remove_media_from_library`,
-  `assign_libraries_for_media_in_current_transaction`,
-  named Podcast placement/compaction, and unsubscribe placement teardown).
-- **`services/library_entry_listing.py`** owns the entry listing path:
-  `parse_entries_query` and the view lenses (the factual Title/Creator/
-  Published/Added/Remaining orders, each ascending or descending, the
-  all-items/unfiled/in-progress projections and the hide-finished completion
-  filter),
-  the sort-key plan and strict keyset cursor codec, `count_default_root_inventory`,
-  `list_library_entries`, and hydration into the wire DTOs. It reads through
-  `library_entries` and writes nothing; `library_entries` never imports it.
-- **`services/library_sharing.py`** owns the `memberships` and
-  `library_invitations` tables: member listing, role changes, removal,
-  ownership transfer, and
-  create/list/list-for-viewer/accept/decline/revoke. Accept is one transaction
-  — membership upsert, then invite status update — and returns
-  `{invite, membership, idempotent}`. The membership commit alone is what
-  changes the accepting user's default-library list/count on the very next
-  read; there is no backfill job, projection worker, or provenance row to
-  catch up afterward.
+Web: `lib/libraries/api.ts` (typed calls; a committed write publishes its change
+topics), `views.tsx` (the url's view options), `errors.ts` (the one failure-copy
+map), the two panes, `LibrarySettingsDialog`, and the chooser stack:
+`LibraryChooser` (the listbox) under `DestinationChooser` (pick destinations;
+`DestinationField` on the web, inline in the extension popup) and
+`PlacementOverlay` ("Libraries…", opened through `placementController`).
 
-Media capabilities call these services to attach or validate visibility, then
-return to their own owners for ingestion, playback, files, or assets.
+## Contract (`/api` via the BFF; `{data}`; pages are `{items, next_cursor}`)
 
-## output contract
+| route | contract | retry rule |
+|---|---|---|
+| `GET /libraries?sort=created_desc\|name_asc\|name_desc` | absent sort is oldest created (All first); names sort as shown | read |
+| `POST /libraries {id, name}` → 201 `LibraryOut` | `All` (casefold) and 1–100 chars enforced | same id and owner → that row; another owner's id → 409 `E_RESOURCE_CONFLICT` |
+| `GET /libraries/{id}` | members only; anyone else 404 `E_LIBRARY_NOT_FOUND` | read |
+| `PATCH /libraries/{id} {name, expected_name}` → `LibraryOut` | admin of a named, non-system library | already that name → ok; renamed meanwhile → 409 `{current_name}` |
+| `DELETE /libraries/{id}` → 204 | owner; media held nowhere else move to the owner's All; nothing else is deleted | absent or invisible → 204 |
+| `GET /libraries/{id}/entries?sort&entry_type&projection&completion` | every combination composes; `unfiled` only on All | read |
+| `PUT /libraries/{id}/entries/{entry_id}/position {before_entry_id\|null}` → 204 | admin, named; entry absent 404, neighbour absent 409 | absolute |
+| `GET /libraries/placements/{ref}` | `[{library_id, name, is_default, relation, blocked}]`; `ref` is `media:<id>` or `podcast:<id>` | read |
+| `PUT /libraries/{id}/items/{ref} {replace_episodes}` → 204 | file a media (All = Saved in Nexus) or a followed show (named only) | keyed by (library, item): a no-op when already there |
+| `DELETE /libraries/{id}/items/{ref}` → 204 | the last entry of a media anywhere → 409 `E_MEDIA_LAST_REFERENCE` | absent → 204 |
+| `GET /libraries/destinations?q&cursor&limit≤50`, `GET /extension/library-destinations` | named libraries the viewer admins, exact → prefix → contains → name | read |
+| `GET /libraries/{id}/suggestions` | the Reading Slate (below) | read |
 
-`api/routes/libraries.py` returns typed `Data` or `DataPage` models for every
-json success; its three bodyless commands retain 204. generated wire types own
-both server seed and browser transport shapes. collection pages carry a
-presence cursor inside `data` (`{items, nextCursor}`); governance pages carry a
-presence cursor in `page`; writable destinations retain their snake-case page
-fields. All of them use the one keyset cursor of architecture §8.12; the three
-envelope spellings remain ([ticket](../tickets/list-cursor-codecs-diverge.md)).
+`LibraryOut`: `{id, name, is_default, system_key, role, can_manage, can_delete,
+can_transfer_ownership, created_at, updated_at}`. `can_manage` (rename, file,
+reorder, manage members) is an admin of a mutable library; delete and transfer
+need its owner. A library is mutable when it is neither the default nor a
+system library. Entry rows: `{kind:"media", entry_id|null, added_at,
+media_summary}` or `{kind:"podcast", entry_id|null, added_at, podcast_id, title,
+contributors, unplayed_count, published_date|null, sync_status|null}`;
+`entry_id` is null on All, whose rows are not stored entries.
 
-web projections retain media presentation, progress presence, zero-count
-suppression, subscription sync and request identity and value-coherence checks. the
-library slate uses its generated output contract; other untyped slate producers
-and the versioned extension destination boundary retain their decoders. the
-router keeps its default serializer and existing aliases, nullable keys and
-response bytes.
+Show placement where a library files some of the show's episodes directly is
+refused with 409 `E_PODCAST_REPLACES_EPISODES {conflicts[{library_id,
+library_name, episode_count}]}` unless `replace_episodes`: the show then takes
+the earliest displaced episode's position, those episode rows go, and the
+episodes stay in the viewer's All. Subscribe carries the same flag. A library
+the caller cannot see is a 404 before anything about the show.
 
-## Membership sharing versus resource sharing
+## Invariants
 
-A library is shared only through membership/invitation governance. It never has
-a `resource_grants` row or anonymous public reader. Copying a library URL changes
-no access; a non-member remains masked. Default and system libraries are
-copy-only and cannot accept membership changes.
+- One default library per user; the owner is an admin member; default and
+  system libraries take no rename, delete, invitation or member change, and
+  system libraries take no user entry writes.
+- An entry files exactly one media or one show, once per library. In a named
+  library a show and direct entries for its episodes are mutually exclusive.
+- Positions only order a library (`UNIQUE (library_id, position) DEFERRABLE
+  INITIALLY DEFERRED`). Gaps are fine; `move_entry` renumbers 0..n-1 and appends
+  take `MAX(position)+1` under the library row lock.
+- Lock order, every writer: podcast row, then media rows (uuid asc), then
+  library rows (uuid asc). `ensure_entry` takes its own media and library
+  locks and answers 404 for a row deleted while it waited. The media lock is
+  also the teardown barrier: a filing and a teardown claim never both commit,
+  and a filer that cannot read the media gets 404, never `E_MEDIA_DELETING`.
+- A document media with no entry and no grant is torn down; unfiling never
+  removes a media's last entry (only deleting the media does), and deleting a
+  library re-files the media it alone held.
+- Non-members get the masked 404 on every library route.
+- Only `library_entries.py` issues DML on `library_entries`; readers (the
+  allowlist: `auth/permissions.py`, `search/scope.py`, `contributors.py`,
+  `note_indexing.py`, `dossier/inputs.py`, `tools/writes.py`) only SELECT.
 
-The Library pane's capability-gated **Members** Inspector tab is the sole
-non-default membership-governance UI, including invitation lifecycle, roles,
-removal, and ownership transfer. Library Share retains member-only link actions
-and exposes one authorized **Manage members** activation into that tab.
-`LibrarySettingsDialog` owns name settings only. Media and podcast
-placement is a separate top-level `Libraries…` resource relationship action
-backed by `LibraryEntryEditor`; it never appears inside Share. Library entries
-are organization references rather than access-grant provenance. See
-[resource-sharing.md](resource-sharing.md).
+## All, the default library's live read
 
-the members controller owns one command slot through authoritative settlement;
-refreshes cannot reopen admission while a sent command remains pending. see
-[library command settlement](library-command-settlement.md).
+All is the union of the media reachable through the viewer's non-system
+memberships and the viewer's followed shows. A media appears once: its row is
+the direct All entry if any, else the earliest shared one, and that entry's
+creation is when it was **added** (re-saving moves it to the top of Recently
+added). A followed show is one row that folds in its episodes. **Unfiled** keeps
+media filed nowhere but All. Losing a membership removes that library's media on
+the next read. Filing into All always writes a direct row, which survives a
+later membership loss.
 
-The admin member and pending-invitation reads return exact
-`{data, page: {next_cursor: string | null}}` envelopes. Members traverse
-immutable `user_id ASC`; invitations traverse the indexed
-`created_at DESC, id DESC` keyset. Their opaque cursors are bound to viewer,
-Library, endpoint, and invitation status. Member, invitation, and user-search
-person fields carry absence as `null`; governance commands
-return fully hydrated projections and use the standard serializable retry
-boundary.
+## Views and the panes
 
-Library entry mutations are commands, not refreshed read models. Media add,
-reorder and media removal are bodyless commands (removal answers 204);
-idempotent Podcast placement add/removal returns its `outcome`. After a
-successful write the placement editor rereads the placement inventory. Every
-placement write is idempotent, so a transport failure is retried by resending
-the write. A refused write rereads the
-inventory and offers no retry, and a missing target ends the editor. An idle
-editor rereads when `Libraries` or `Entries` moved after its read.
-Agent filing receives only inserted/already-present truth for Undo and never
-hydrates an entry payload.
+The url owns `sort`, `entry_type`, `projection` (`unfiled`, `in_progress`) and
+`completion=unfinished` and passes them to the server, which validates them and
+ANDs their predicates; the panes never re-apply a lens to live summaries, so a
+row leaves Hide finished or In Progress on the next read (the `Consumption`
+stamp rereads those views). A show has no read state, so the engagement lenses
+list no shows. Local text filtering is a visit-local view over the shown rows.
+The panes show the view in the shared pane query toolbar
+([workspace](workspace.md)): the text filter and the sort select stay above the
+rows; Type, View and Hide finished are inline options, each applied one a
+removable chip; Clear filters keeps text and sort; Reset view clears all of it.
+Drag order is offered on a complete, unfiltered, own-order view of a named
+library the viewer manages; a drop sends one move, the dragged order shows until
+the reread lands, and a failure shows its copy and rereads. A library the
+viewer cannot see says "Library not found" in place, on the first read or on a
+reread (deleted meanwhile, or the viewer left or was removed).
+
+## Reading Slate
+
+`services/suggestions.py` owns relevance (see [connections](connections.md)).
+`GET /libraries/{id}/suggestions` returns up to ten suggestions outside the
+library's complete placement, related to one of five anchors; member-only and
+system libraries get none. Add files through the placement route.
 
 ## System libraries
 
-`libraries.system_key` (nullable, unique where present) is the policy handle for
-system-maintained libraries — there are **no name-based checks**. The Oracle
-Corpus is one such library (`system_key = 'oracle_corpus'`). A system library
-behaves like any library for reads (it appears in `GET /libraries`, opens, and is
-searchable with `scope=library:<id>`) but is **protected from user mutation**:
-rename, delete, share, and entry edits are blocked. `ensure_system_library` is the
-idempotent (by `system_key`) creator, and the seed is an explicit system-maintenance
-command, never a user request — system libraries still never bypass
-`library_entries`.
+`libraries.system_key` marks a system-maintained library (the Oracle Corpus).
+It reads like any library and is never user-mutable; `ensure_system_library` and
+`join_system_library` maintain it, and its membership never makes co-members'
+highlights visible to each other.
 
-`join_system_library` adds a user as `member` (the oracle does this for every
-asker). That membership is permanent: there is no leave path, and
-`remove_library_member` refuses system libraries. It grants reach to the
-library's media and nothing between members: highlight visibility counts only
-shared **non-system** libraries (`permissions.highlight_library_intersection_exists`
-and its text twin), so co-members of a system library never see each other's
-highlights.
+## Membership versus resource sharing
 
-`LibraryOut` carries the policy to the client so UI never infers protection or
-owner authority from names, roles, or raw identity: `system_key`, plus the
-booleans `can_rename` / `can_delete` / `can_edit_entries` /
-`can_manage_members` / `can_transfer_ownership`.
-`library_governance._library_capabilities` is the one place they are computed.
-A library is mutable only when `system_key IS NULL` and it is not the default
-library. Rename, entry editing, and member management require an admin; delete
-and ownership transfer require the current owner.
+A library is shared only through membership and invitations (the Members tab of
+the inspector); it never has a grant or a public link. Placement ("Libraries…")
+is a resource action of media and shows, separate from Share. See
+[resource sharing](resource-sharing.md).
 
-## The `library_entries` sole-writer rule
+## Library dossier
 
-Every INSERT/UPDATE/DELETE on `library_entries` goes through
-`library_entries.py`; no other module issues DML against the table.
-
-- **Reference-mutation order.** Media-entry adds/removals lock affected media
-  UUIDs in ascending order before affected library UUIDs in ascending order.
-  `ensure_entry` remains the only inserter and the locked library row is the
-  per-library append point, so concurrent appends cannot both derive the same
-  `MAX(position)+1`. Library teardown snapshots its media lock set before taking
-  those locks and restarts the whole bounded transaction if revalidation finds
-  that the set changed; it never acquire-expands while holding a library lock.
-- **Position invariant.** Migration `0131` makes the per-library position a DB
-  invariant: `UNIQUE (library_id, position) DEFERRABLE INITIALLY DEFERRED`. The
-  set-based `reorder_entries` (one `unnest(...) WITH ORDINALITY` UPDATE) and the
-  renormalizer rely on deferral to swap positions within a transaction.
-- **Explicit cleanup.** `0131` also drops the `media_id`/`podcast_id`
-  `ON DELETE CASCADE` FKs — entry cleanup on media/podcast deletion is now
-  explicit in app code, not the database. Zero-reference document cleanup runs
-  while the media lock is held; object-store deletion happens only after commit.
-- **One read tier (Tier-R).** Writes have one owner; visibility/search readers
-  read the table under an explicit allowlist: `auth/permissions.py`,
-  `services/search/scope.py`, `services/contributors.py`,
-  `services/note_indexing.py`, and
-  `services/dossier/inputs.py`. `services/object_refs.py` is deleted;
-  its former note/@-mention reads are superseded by `services/resource_items/
-  targets.py` (target search) and the shared frontend target controller — see
-  [connections](connections.md).
-  Visibility itself remains the boolean predicates in `auth/permissions.py`;
-  `services/highlights.py` reuses `permissions.highlight_library_intersection_exists`
-  rather than re-implementing the intersection.
-
-## The default library's virtual read surface
-
-The default library holds no provenance, closure, or backfill machinery. Its
-read surface — "personal All" — is a live union, computed on every read, of:
-
-1. the distinct Media reachable through the viewer's current non-system
-   memberships; and
-2. the viewer's active Podcast subscriptions.
-
-Media is deduplicated by `media_id` (a direct entry in the viewer's own default
-library wins over an indirect shared-Library entry; ties within a kind resolve
-by earliest entry). The Podcast arm is virtual: Default stores no Podcast
-`library_entries` row and the DTO exposes `placement: Absent`, never a fabricated
-entry ID or position. The resulting union is root-subsumed before projection,
-exact-type filtering, ordering, pagination, and count: each active subscription
-contributes exactly one Podcast root and excludes all of that Podcast's child
-episode Media rows from All. The child entries remain physical facts. Therefore
-sync, backfill, and explicit Episode Add cannot increase a subscribed show's All
-root cardinality. Losing a membership removes that Library's Media contribution
-on the next read; unsubscribing removes the virtual show row and retained child
-episodes immediately resurface with their consumption state intact.
-
-- **The one actor-authorized filing command.**
-  `library_entries.ensure_media_in_library_in_current_transaction` is the sole
-  path that files media
-  into any library, including the default one. Filing into the default
-  library always inserts (or idempotently keeps) a direct, physical
-  `library_entries` row there — there is no separate "intrinsic" bookkeeping
-  distinct from the row itself. A work already visible virtually through
-  another membership can still be explicitly filed; that direct row is what
-  survives a later membership loss that would otherwise have removed it from
-  view.
-- **Stateless keyset pagination, one strict cursor codec.** Listing any
-  library never touches a snapshot table. Every listing uses the shared keyset
-  cursor (architecture §8.12) bound to `(viewer, library, view)`; its decode
-  checks the digest and every sort-key value's kind. Concurrent membership or
-  ordering changes fall under the keyset guarantee, never a 409. A cursor from
-  the wrong viewer, library or view is `400 E_INVALID_CURSOR`, never
-  reinterpreted.
-- **Total list hydration.** The repeatable-read membership query is the sole
-  visibility filter and emits one exact Media-or-Podcast target per row. Batched
-  hydration must preserve that cardinality and order; a missing admitted target
-  or malformed target row is an invariant defect, never a silently shortened
-  page with an advanced cursor. No cross-service entry-hydration API exists.
-- **Libraries index views.** `GET /libraries` accepts `sort=created|name` plus
-  `direction=asc|desc`. `Created — oldest` is canonical and omits both keys; the
-  only valid non-default pairs are `created+desc` and `name+asc|desc`. A partial
-  pair, an unknown value, a duplicate key, or the explicit default pair is
-  `400 E_INVALID_REQUEST`. The name order sorts on the presented name — `All`
-  for the viewer's Default library, otherwise the authored `name` — so the
-  server order matches `libraryPresentation`, then on `id ASC` in both
-  directions. Cursors bind viewer and order plan (`Libraries`).
-- **Fixed entry projections.** `GET /libraries/{id}/entries` accepts
-  `projection=unfiled|in-progress` (omitted means All items). `Unfiled` is
-  valid only for the viewer's own Default library: direct-Default media with
-  no other current, non-system membership placement visible to the viewer
-  (read-only shared libraries count as filing; system and inaccessible foreign
-  libraries do not). `In Progress` is exactly the canonical consumption
-  relation's `read_state = 'InProgress'` (composed from
-  `consumption.projection.engagement_fact_rows_sql()`; podcast-show rows never
-  match), and combining it with `completion=unfinished` is
-  `400 E_INVALID_REQUEST` — the projection union makes that state
-  unrepresentable. Projection applies before completion, ordering, keyset, and
-  `limit + 1`. These are URL-owned query projections — not Libraries, saved
-  searches, or persisted collections — and there is deliberately no generic
-  smart-view platform behind them.
-- **Podcast placement and child subsumption.** Named Podcast placement is exactly
-  `library_entries(podcast_id)`. In one named Library, a Podcast entry and direct
-  entries for its episodes are mutually exclusive. Subscribe/filing confirms
-  and compacts direct child placements through the Library owner; later removing
-  the parent does not recreate them. Adding an episode to a Library that already
-  contains its Podcast returns `IncludedThroughPodcast` rather than creating a
-  redundant child entry. Default/All instead applies the active subscription's
-  parent-over-child subsumption as the root-set read predicate above;
-  named-Library behavior is otherwise unchanged. The canonical named-placement
-  PUT requires an already-active subscription, rechecks it under the owning
-  transaction, and never subscribes as a side effect.
-- **Media deletion counts physical references only.** Whether a document
-  media has any reference left — the question that gates last-reference
-  teardown — is answered by counting physical `library_entries` rows for
-  that `media_id` and nothing else; there is no closure/intrinsic count to
-  reconcile against it. `services/media_deletion.py` is a pure orchestrator
-  over the public `library_entries` API; it issues zero direct
-  `library_entries` DML of its own.
-- **Placement removal is convergent and non-destructive.**
-  `ensure_media_absent_from_library_for_viewer` authorizes a mutable target
-  library, succeeds when the entry is already absent without exposing media
-  existence, and removes exactly one present entry. It supports every
-  media kind and refuses the final lifetime reference with
-  `409 E_MEDIA_LAST_REFERENCE`; it never hides or deletes the media resource.
-  Whole-resource `DELETE /media/{id}` accepts no query string.
-
-## reading-time projection and ordering
-
-`services/reading_time.py` owns document estimates within the shared media
-summary used by library rows, lectern, author works, search, browse, episode
-lists, and suggestions slates. it composes the stored-count relation from
-`media_document_metrics.py`, document quote-readiness from `capabilities.py`, and
-viewer-scoped current-position facts from `consumption/reader_cursor.py`.
-requests aggregate stored integers, never document text. estimates cover
-quotable web articles, epubs and pdfs with positive canonical word counts.
-
-raw total seconds are `word_count / 4.0` (240 words/minute). missing or empty
-cursors have the full duration remaining. positioned web/epub cursors use their
-current whole-document progression; a missing progression or positioned pdf has
-unknown remaining time. percentage and remainder use the same current cursor;
-moving backward lowers percentage and increases remaining time. completion is
-sticky until unread/reset; marking unread preserves the cursor.
-
-`schemas/reading_time.py` owns the estimate contract, exposed through generated
-wire types on the web. each stored-media entry requires `mediaSummary`, whose `duration`
-contains modality and a presence-wrapped estimate. present estimates have
-positive total minutes and a presence-wrapped nonnegative remainder. document
-display uses half-up 1/5/15-minute rounding, retaining exact zero. `mediaSummary`
-owns the displayed consumption state and percentage; nested `media` retains
-operational capabilities.
-
-`sort=remaining&direction=asc|desc` orders the full entry query by missing value
-last, raw remaining seconds in the requested direction, title, then existing
-target identity keys. it preserves other filters, includes finished items unless
-filtered, and never changes authored positions. cursor keys use finite
-`FloatOrNull` values and retain the view binding. a reading position that moves
-a row across an open continuation falls under the keyset guarantee; the tab's
-own progress publishes `Consumption`, which rereads these views.
-
-rows show title, author credits, original publication year, state/current
-percentage, and known remaining minutes at canonical 1×. finished hides time;
-absent facts disappear. the first two authors link; overflow opens through the
-existing metadata action. every local filter includes all author credits.
-publisher, edition date, and source appear only in metadata. `presentMedia`
-owns this identity across stored-media collection occurrences.
-
-## Presentation: Default is presented as All
-
-`apps/web/src/lib/libraries/presentation.ts` is the single frontend owner of
-the Default display alias: `libraryPresentation(library)` yields
-`{name: "All", context: "Across your libraries"}` when `isDefault`, else the
-authored name and viewer role. No component independently derives the Default
-display name. Server-owned label surfaces project the same alias when
-`is_default` — resource-target search candidates (which match the token `All`
-and never the stored seeded name), Library and Dossier labels in
-`resource_graph/resolve.py`, and Atlas constellation labels. The stored seeded
-name is neither displayed nor retained as a search alias, and `All`
-(trimmed, Unicode-casefolded) is a reserved name: create and rename of any
-non-default library reject it with `400 E_NAME_INVALID`
-(`library_governance._validate_library_name`).
-
-Writable destination selection describes selected, additional, non-default
-Libraries only. Default/All is implicit for acquired Media and active Podcast
-subscriptions. `LibraryDestinationField` requires a caller-supplied
-`emptyLabel` and defines no semantic default: Media intake and Android Share
-pass **No additional libraries**; Podcast Subscribe, episode Add, and OPML pass
-**No libraries selected**.
-
-## Frontend entry-view lifecycle
-
-the pane URL owns the requested `LibraryEntryView` (order + projection + entry
-type). `lib/libraries/useLibraryEntries.ts` owns the library read, the entries
-list (`useServerList`, architecture §8.12) and drag reorder; `LibraryPaneBody`
-renders one `LibraryPane` per library id, so a new id remounts it. the pane
-retains presentation, focus, local filtering, member governance, inspector and
-chrome; commands expose operations rather than setters. the list's completion
-fact is its absent cursor (`entries.complete`); no loaded rows means loading,
-never completion. reorder and Slate require it.
-A same-visit query replacement is in-place: pane chrome, controls, focus, live
-ShellScroll position, Slate, and Inspector stay mounted while the exact first
-page loads. The full query remains runtime/history identity.
-`lib/libraries/libraryView.ts` is the sole owner of the closed view types, the
-strict URL codec, API query construction, projection/order option availability,
-entry-type transitions, and exact view formatting. The closed inventory is All
-types plus Web articles, EPUBs, PDFs, Videos, Podcast episodes, and Podcast
-shows. Omitted `entry_type` means All types; Podcast shows compose only with All
-items / show finished.
-
-- the list's key is the library id plus the view's query; a new view keeps the
-  shown rows until its first page lands and abandons the old continuation.
-  its `stale` token is the `Entries` stamp, the `Consumption` stamp when the
-  view follows consumption (Remaining order, In progress, unfinished), and the
-  media query revision, so any of those rereads the loaded prefix.
-- placement and consumption writers publish their change topics after the
-  write. confirmed reorder shows the dragged order until the reread commits,
-  publishes `Entries`, and rolls back when the server refuses it.
-- every mounted library pane rereads on any `Entries` change; an acknowledged
-  teardown save still publishes after its reader unmounts. the account-scoped
-  `MediaSummaryProvider` patches retained facts without changing occurrence
-  order, pagination or focus. it refreshes through
-  `POST /media/summaries/resolve` (1–100 unique `mediaIds`; one result per id in
-  request order; missing and invisible both read absent), one batch in flight,
-  no per-row requests and no timers. mounted In progress, Unfinished, and Remaining
-  time views independently reconcile the whole retained prefix, including
-  inactive and empty panes; restored views revalidate on return. ordinary fact
-  updates preserve list geometry. duration calculation remains server-owned.
-- While requested and committed views differ, prior rows and row navigation
-  remain available; continuation, reorder, and entry mutations do not. Reorder
-  exists only for a complete, editable, non-default
-  `Canonical + All items (all) + All types` view.
-- Failure retains and labels the prior rows. A continuation that fails in
-  transport or with a 5xx offers **Retry**; an invalid cursor offers **Refresh
-  list** without clearing rows.
-- pane return paints the visit's rows at once and rereads only when a topic
-  the view follows moved since they were read. Refresh settles when the
-  reread commits or fails. a library members governance finds gone shows
-  "Library not found".
-- A matching commit atomically swaps view, rows, and cursor, resets the
-  collection region, and lets `CollectionView` own the single row transition;
-  reduced motion performs the same commit without animation.
-- the route bootstrap seeds `Canonical + All items (all)`; a first visit to
-  that view paints the seed and reads no first page.
-- podcast settings saves reach the pane through its own facts and visits;
-  there is no settings install publisher or confirmed library-entry floor.
-- modeled recovery notices remain; unexpected request rejection reaches the
-  existing defect boundary. rejected reorder transport retains ordering
-  uncertainty: a failed acknowledgement does not prove server rollback.
-
-pane-local text filtering is a visit-local view over the committed rows. it matches
-presented entry title and contributor display/credited names after the
-server-owned projection and before the existing order. it never enters
-`LibraryEntryView`, request, cursor, snapshot, or published pane-header
-metadata. the local input and readable `Sort entries` select use the stationary
-shared pane query toolbar. `Type`, `View`, and applicable `Hide finished` use
-inline options; applied type/projection/completion chips remain visible when
-options collapse. `Clear filters` removes only those constraints, preserving
-local text and order; `Reset view` restores canonical order and clears local
-text. chip removal preserves the other fields and moves focus before the
-focused chip disappears. pane search focuses its input. a query-key row change
-bypasses the collection View Transition, while domain commits and mutations
-retain the existing transition and requested/committed lifecycle.
-
-History: `docs/cutovers/library-entry-view-continuity-hard-cutover.md` at `ebd648197`.
-
-## suggestions
-
-`python/nexus/services/suggestions.py` is the sole relevance-policy owner (see
-[connections.md](connections.md) for its invariants). It
-composes public, policy-neutral read ports from `library_entries`, consumption,
-the resource graph, contributor credits, media/podcasts, and the semantic index;
-those modules retain their tables and mutations.
-
-- library entry ordering belongs to `library_entry_listing`; suggestions owns
-  suggestions, not ordering within the library.
-- `GET /libraries/{id}/suggestions` returns zero to ten deterministic suggestions
-  outside complete destination placement. A library suggestion must have a
-  factual graph, shared-author, or calibrated semantic relation to one of five
-  representative complete-placement anchors; recency cannot qualify it.
-- A non-default, non-system admin library accepts media plus actively
-  subscribed podcasts. Default accepts media suggestions only. Member-only and
-  system libraries return an empty suggestions result because their actor-facing filing
-  commands cannot add entries. `Finished` media remains eligible for an
-  addable destination.
-- Every read uses one repeatable-read, read-only snapshot and performs no
-  request-time AI, generation, embedding, scheduled job, or persisted
-  recommendation state.
-
-The frontend renders **Suggested for this library** after the complete entry
-inventory in a fixed comfortable List, independent of the main collection's
-empty state, Gallery choice, or density. Add delegates to the existing
-media/podcast filing command. It does not synthesize a `LibraryEntry`; visible
-suggestion survivors stay in order, at most one canonical replacement is appended,
-and the main entry projection reloads on the next pane activation.
-
-suggestion rows carry factual publication dates, consumption and shared reading
-estimates; graph/author/semantic evidence stays internal to ranking. relation
-explanations and inline related-item expansion are absent from collection rows;
-resource connections remain available inside the opened resource.
-
-## Writable library destinations
-
-`library_ids` in ingest and assignment request bodies means selected
-non-default libraries where the viewer can write entries. It does not mean every
-library the viewer can read.
-
-- **Search/list.** `GET /libraries/writable-destinations` is the sole backend
-  list contract for destination pickers (`LibraryDestinationField` +
-  `LibraryChooserSurface` + `LibraryDestinationPicker` adapter on the
-  frontend). It excludes the default library and member-only libraries,
-  performs server-side search, and pages with the shared keyset cursor
-  (architecture §8.12) over rank + `lower(name)` + name + id, ascending, bound
-  to viewer and query (`LibraryDestinations`). A blank query is
-  alphabetical; a non-empty query ranks exact → prefix → contains matches, then
-  alphabetically within each rank. A foreign or malformed cursor returns
-  `400 E_INVALID_CURSOR`.
-- **Standing placement ordering.** `library_entries.list_item_libraries` (the
-  `Libraries…` resource-action listing) orders `lower(name) ASC, name ASC, id
-  ASC`; the `LibraryChooser` client filters that complete inventory by
-  substring locally rather than re-querying.
-- **Validation.** Write paths call
-  `validate_writable_library_destinations` or
-  `resolve_writable_non_default_library_ids`; default IDs, duplicate IDs,
-  inaccessible IDs, and member-only IDs are invalid for destination arrays.
-- **Assignment.** Media intake and canonical-duplicate workflows attach the
-  viewer's default library plus selected destinations by calling
-  `assign_libraries_for_media_in_current_transaction` inside their existing
-  acceptance transaction; there is no standalone transaction wrapper.
-  `ensure_media_in_libraries_for_viewer` adds post-hoc destinations atomically
-  as a bodyless command.
-
-The canonical HTTP placement surface is:
-
-```text
-GET    /media/{media_id}/libraries
-POST   /media/{media_id}/libraries
-PUT    /media/{media_id}/saved-in-nexus
-DELETE /media/{media_id}/saved-in-nexus
-DELETE /media/{media_id}/libraries/{library_id}
-GET    /podcasts/{podcast_id}/libraries
-PUT    /libraries/{library_id}/podcasts/{podcast_id}
-DELETE /libraries/{library_id}/podcasts/{podcast_id}
-```
-
-The GETs return the strict destination/relation/availability inventory. Media
-POST, Saved PUT and the media removals are idempotent bodyless commands (204);
-Podcast placement returns its outcome. There is no inverse
-library-to-media write route and no scoped resource-delete query mode.
-
-## Composition Rules
-
-- URL ingest validates requested writable destination IDs at the durable
-  acceptance boundary. `media_source_ingest.py` owns source-attempt creation and
-  assigns default plus selected destinations through `library_entries` inside
-  the media creation transaction.
-- Source-specific materializers such as X, remote file, YouTube, and web-article
-  adapters do not own durable acceptance, retry, dispatch, or destination
-  policy. They may attach deduped canonical media only by calling
-  `library_entries` from the shared source-ingest transaction.
-- Library entries never make a private media file public.
-- Oracle plates are static web assets, not library resources.
-- The default library's virtual read surface affects which media rows are
-  visible, not object-storage keys.
-
-## Library Resource Inspector And Dossier
-
-The Library primary pane owns entries and the route-keyed membership controller.
-One shared inspector action opens the pane-local Resource Inspector with
-capability-gated `Members | Connections | Dossier`; Members is present only for
-mutable Libraries the viewer can administer, and Dossier remains default. The
-same publication drives desktop and mobile; no feature-specific column, modal,
-drawer, or second governance state machine exists.
-
-Library Dossier is one binding of the Universal Dossier engine. Its head is
-keyed by the Library subject and Library audience, so membership is the read and
-generation boundary. The binding collects direct entries, expands Podcast
-entries to Episodes, intersects all Media with the library owner's visibility,
-and offers the claims of the first eight members; the head stores the coverage
-counts and the input fingerprint freshness compares. Generate, Regenerate,
-provenance, and retry use the same API and surface as every other eligible
-resource.
-
-Dossier citations are `resource_edges` sourced from
-`artifact_revision:<id>`, never a Library-owned citation table. A successful
-regenerate gives the stable `artifact:<id>` head a new revision id and deletes
-the replaced revision's citation edges.
-
-The revision body is one accepted semantic `content_html` article plus its
-derived `content_text`, both on the head. Library search/chat consume the text;
-the Dossier surface renders the article into a shadow root of the pane.
+Library Dossier is one binding of the Universal Dossier engine keyed by the
+library subject and audience: membership is its read and generation boundary.
+Its citations are `resource_edges` from `artifact_revision:<id>`.

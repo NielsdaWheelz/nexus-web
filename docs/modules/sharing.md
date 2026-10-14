@@ -17,19 +17,14 @@ Resource access grants and anonymous public reading are separately owned by
   for browser empty shares, blocks URL ingest until the user taps Save, and sends
   selected destination IDs plus a stable per-URL `Idempotency-Key` in the first
   ingest request.
-- **Library destination UI** (`LibraryDestinationField` +
-  `LibraryChooserSurface` + `LibraryDestinationPicker`) — the field renders a
-  compact trigger/summary in flow and opens the shared, portaled
-  `LibraryChooserSurface` (desktop anchored popover; mobile `MobileSheet`)
-  outside layout. `LibraryDestinationPicker` is the always-mounted search
-  adapter: it GETs `GET /libraries/writable-destinations` immediately on open,
-  debounces non-empty query changes, and creates libraries through the shared
-  `lib/libraries/client.ts` client under one request-generation/abort owner.
-  `LibraryChooser` renders the multi-select combobox/listbox with named
-  Selected/Other groups and keeps create-in-flight state observable so parents
-  cannot submit before a new destination has been selected.
+- **Library destination UI** (`DestinationField`: a trigger and summary in
+  flow, opening `DestinationChooser` in the shared `ChooserSurface`, a desktop
+  anchored popover or the phone `MobileSheet`). The chooser searches
+  `GET /libraries/destinations` (exact → prefix → contains → name, paged), one
+  abortable read at a time, keeps the chosen libraries on top, and creates a
+  library with a client-minted id that a retry resends.
 - **Backend ingest owners** validate `library_ids` through
-  `library_governance.validate_writable_library_destinations` before work starts,
+  `libraries.resolve_writable_destinations` before work starts,
   then write default plus selected destinations through `library_entries`. Source
   owners attach destinations inside their creation transaction whenever they
   create new media; upload confirm (local uploads and extension captures alike)
