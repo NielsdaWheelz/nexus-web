@@ -6,13 +6,18 @@ origin: 2026-10-14; reviewed head
 `b6768bee2469cbc3a43902302836a44d07a11ea7` plus the working tree, captured as
 `fb6c5b1bd7bdae63204fdd28a735524bb3d4c932`. initial tracked patch sha256:
 `5c1a84af8c5cb656ac67074157e3c9dbc11c269f993d1e1dadf2b890ec523ea2`.
-the snapshot includes prior working changes; review this feature against that
-snapshot. the original checkout was not edited by this campaign.
+the snapshot includes prior working changes and is retained under
+`proof/session-entry-20261014-isolated` (`83791a509`). the feature branch now replays
+only its feature commits onto pinned main `f30a844a5`; review its delta against
+that main revision. concurrent work advanced main; this campaign did not edit the
+original checkout.
 
 user decisions: usable active content takes precedence over earlier chrome;
 retain mounted work through expected server-rerender failures; use an isolated
 live stack for failure tests, then a non-destructive production smoke check.
 this contract supersedes the earlier resolver-navigation proposal.
+verification scope amendment, 2026-10-14: per user instruction, semantic checks
+suffice; no voiceover or spoken screen-reader qualification is required.
 auth, workspace/proof and design reviews challenged each handoff. the acceptance
 contract remains normative; the qualification receipt records observed results.
 
@@ -350,7 +355,7 @@ writes. no mocked internal modules or authentication bypass.
 | independent content | server bootstrap requests only the active loader; successful seed prevents duplicate initial client read; actual active control works; unrelated 400 ms delay adds no bootstrap dependency |
 | strict restoration | cold required failure causes no workspace PUT; malformed row returns `E_INTERNAL` and stays unchanged; absence still starts normally; valid restore/deep link preserves pane ids, widths, history and active selection; broken response stream is recoverable, malformed json/unknown codes/401 terminate |
 | mounted rerender | edit a fixture; use real `loadLinkedIdentities` with refreshable credentials, or router refresh; fail a required reread; retain identical draft DOM node, selection, pane ids/store; retry clears notice with correct focus and no remount; viewer change discards prior workspace; existing autosave remains allowed |
-| presentation/native | three rooms, collapsed rail, portrait, 850px coarse landscape, keyboard, screen reader, forced colours; meaningful single announcement; physical android sign-in/renewal and loop/connection terminals |
+| presentation/native | three rooms, collapsed rail, portrait, 850px coarse landscape, keyboard, semantic accessibility, forced colours; meaningful single announcement; physical android sign-in/renewal and loop/connection terminals |
 
 baseline red must fail on behavior: visible restoration, unrelated server seed,
 lost retry focus, unbounded request or overwritten invalid row. missing future
@@ -407,11 +412,17 @@ the [issue register](outstanding-issues.md) links their source evidence and acce
 
 ## qualification receipt
 
-application head: `e9741da69` (feature commits follow the captured baseline).
+initial application head: `e9741da69` (feature commits follow the captured baseline).
+integrated application head: `8076f177dd7967e24e01c7c033255144dc67679c`, atop
+`f30a844a5`. 15 affected cases passed after integration, including three added
+notice-focus cases: terminal failure, moved focus, and current-pane dismissal.
+56 distinct target cases passed in total; no baseline-only pass is counted.
+the integrated production build and unchanged static gate passed.
+shared `Feedback.tsx` is byte-identical to pinned main; its existing busy and
+return-focus contracts replace the feature's earlier duplicated plumbing.
 production-mode next 15.5.22, real fastapi, isolated postgres and supabase;
-provider-issued es256 tokens with a real 130-second lifetime. 53 distinct target
-cases passed across the campaign and affected reruns; the unchanged static gate
-and production build passed. no auth bypass,
+provider-issued es256 tokens with a real 130-second lifetime. the initial 53 target
+cases passed across the campaign and affected reruns. no auth bypass,
 forged token, internal mock, application failpoint or permanent test dependency.
 
 baseline red observed visible restoration and an automatic resolver post, lost
@@ -426,7 +437,7 @@ recovery requests and displayed restoration/retry after an actual redirect cycle
 | bounded recovery | stable focused button; duplicate activation suppressed; real refresh response withheld beyond 12 s settles unconfirmed, preserves predecessor and never navigates late |
 | target/content | password inherited/explicit/unsafe targets; outage query/hash; provider/native link targets; active-only server seed, consume-once seed, real actionable control and normal read after a seed deadline |
 | strict data | cold failures produce no substitute PUT; corrupt row/timestamp remain intact with `E_INTERNAL`; broken streams recover; malformed json, unknown/internal codes, bootstrap 401 and active-seed defects terminate |
-| continuity | actual identities action/refresh preserves draft node, selection and pane ids; repeated guarded notice retry/focus; new viewer retires the old subtree during a held data read; valid deep link preserves widths/visits/history |
+| continuity | actual identities action/refresh preserves draft node, selection and pane ids; repeated guarded notice retry/focus; terminal handoff, moved focus, and dismissal without revival; new viewer retires the old subtree during a held data read; valid deep link preserves widths/visits/history |
 | presentation | three rooms visually reviewed, forced colours and keyboard ring; static skeleton at collapsed desktop, portrait and 850px coarse landscape; one active loading announcement, inactive loader silent; local room changes issue no operation even after genuine jwt expiry, and the final room survives renewal/reload |
 | android/extension | six physical sm_s906w checks: password sign-in, silent renewal, two-path loop (with inherited fragment), persistent no-retry defect, real downloads/leave handoff, connection retry; cookies preserved. real extension bearer/state accepted by the extension bff |
 
@@ -437,7 +448,7 @@ proxy exits use the existing private finalizer. postgres already forbids json
 null: that proposed counterexample was rejected by the real constraint, so no
 extra row-query machinery was added.
 
-warm comparison: one warm-up plus four measured runs per source, identical real
+initial-source warm comparison: one warm-up plus four measured runs per source, identical real
 libraries/chats fixture and 400 ms unrelated chats delay. medians, milliseconds:
 
 | source | ttfb | visible pane strip | active control actionable |
@@ -449,20 +460,30 @@ these include browser/driver and hydration overhead; they are local observations
 not an sla. separate no-js dependency proof counted one active/zero inactive
 server reads; the baseline counted one/one.
 
-limits: accessibility currently proves the live semantic/announcement structure;
-spoken screen-reader output has not yet been verified. cookie refusal was reproduced by dropping auth
+limits: accessibility proves semantic/announcement structure. spoken output was
+not tested, as requested. cookie refusal was reproduced by dropping auth
 Set-Cookie fields at the final delivery proxy; the current response remained
 usable and the next deliberate navigation resolved without a recovery loop.
 next replaces document `vary` with its rsc fields; `private, no-store` survives.
 the existing [variance ticket](tickets/auth-documents-lose-vary-cookie.md) remains.
 production outage behavior was not injected or inferred.
 
-signed android candidate: package `app.nexus.android`, proposed 0.2.16/code 19;
+integrated signed android candidate: package `app.nexus.android`, proposed 0.3.1/code 21;
 release lint/build and signature verification passed. apk sha256:
-`1e20e75927dcf1e9550a988cbcc925161edf8d58a85e25b1d3586eecf8432c05`.
+`be715539977bbcef48f3b1058795cd41f9f29c40b5e004fa758a657b5668aa0e`.
 signer sha256: `40e566dc0cde3b63ea8bf8f0779802938c0ba19d5c32d4810f28fdc546fd8b17`,
-matching the published certificate. physical failure injection used the same
-android source in a separate debug app id; the installed personal app was not
+matching published 0.3.0/code 20. physical failure injection used identical
+`MainActivity.kt` source in a separate debug app id; the installed personal app was not
 replaced. installing the exact signed production apk, App Links/provider checks,
 coordinated publication and production smoke are release gates under
 [the runbook](../deployment.md) and [distribution rules](../README.md#android-release-distribution).
+
+release evidence remains tracked in [the release ticket](tickets/session-entry-release-qualification.md).
+
+cleanup confirmed: the temporary campaign directory, frozen worktree, test runners,
+proxies, dependencies, credentials, raw logs/screenshots and owned browser profiles
+were removed. owned next/api/proxy processes stopped; isolated auth/data containers,
+volumes and networks were removed; synthetic identities were destroyed with them.
+the device proof app and its adb forward/reverse were removed. all owned ports
+were checked released. source worktree and normal signed build artifact remain.
+no test harness, test-only production seam, dependency or ci job was retained.

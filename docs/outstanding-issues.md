@@ -30,7 +30,6 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 - [open] web / android release · 2026-10-14 session-entry implementation · exact signed-apk qualification, coordinated cutover and production smoke remain: [ticket](tickets/session-entry-release-qualification.md).
-- [open] web / loading verification · 2026-10-14 session-entry review · source/semantic repair passed; spoken slow-pane output is unverified: [ticket](tickets/pane-loading-status-stays-busy-until-removed.md).
 
 - [open] nexus add / css · 2026-10-14 production build · alignment emits an autoprefixer warning and prevents module cache serialization: [ticket](tickets/add-panel-css-build-warning.md).
 
