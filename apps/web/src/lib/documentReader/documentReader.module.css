@@ -311,6 +311,11 @@
   scroll-padding-top: var(--space-4);
 }
 
+/* pdf.js sizes its canvas and text layer from the page's content box. */
+.pdfScrollport :global(.pdfViewer .page) {
+  box-sizing: content-box;
+}
+
 @media (max-width: 768px),
   (max-width: 900px) and (orientation: landscape) and (pointer: coarse) {
   .scrollport,

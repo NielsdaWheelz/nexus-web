@@ -2,8 +2,8 @@
 
 // Every unit of a text publication mounted in one scroll. Units off screen
 // skip rendering (content-visibility) at an estimated height. The surface
-// reports viewports, positions to targets (then pins the arrival against
-// late layout for up to 3s), paints decorations as custom highlights and
+// reports viewports, preserves the measured passage through layout changes,
+// paints decorations as custom highlights and
 // turns clicks into links, notes and marks; only a time stamp seeks.
 import {
   useCallback,
@@ -17,7 +17,7 @@ import {
 import { createPortal } from "react-dom";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import type { DocumentReaderViewProps } from "../DocumentReader";
-import { clock, type ReaderTarget, type Structure, type TextDocument } from "../model";
+import { clock, type Placement, type ReaderTarget, type Structure, type TextDocument } from "../model";
 import type { NavOutcome } from "../navigator";
 import type { ReaderRuntime, SurfaceHandle } from "../runtime";
 import { nextFrame, useScrollport } from "../scrollport";
@@ -25,8 +25,6 @@ import { createTextFind } from "./find";
 import { createTextGeometry, type TextGeometry } from "./geometry";
 import { createPainter, type Painter } from "./paint";
 import styles from "../documentReader.module.css";
-
-const PIN_MS = 3_000;
 
 /** An epub link to another spine unit, or a same-unit fragment link. */
 function linkTarget(link: HTMLAnchorElement): ReaderTarget | null {
@@ -62,10 +60,9 @@ export default function TextSurface({
   const column = useRef<HTMLDivElement>(null);
   const geometry = useRef<TextGeometry | null>(null);
   const painter = useRef<Painter | null>(null);
-  const pin = useRef<{
-    to: Parameters<SurfaceHandle["position"]>[0];
-    until: number;
-  } | null>(null);
+  // A resize is observed after layout. Keep the last measured point and
+  // pixel offset so the navigator can preserve the passage from before it.
+  const placement = useRef<Placement | null>(null);
   const viewRef = useRef(view);
   viewRef.current = view;
   const hovered = useRef("");
@@ -83,6 +80,7 @@ export default function TextSurface({
   const measure = useCallback(() => {
     const capture = geometry.current?.capture();
     if (!capture) return;
+    placement.current = { ...capture.placement, identity: doc.identity };
     runtime.viewport(capture.viewport);
     const { primary } = capture.viewport;
     painter.current?.focus(
@@ -90,7 +88,7 @@ export default function TextSurface({
       primary.kind === "text" ? primary : null,
       selecting.current,
     );
-  }, [runtime]);
+  }, [doc.identity, runtime]);
   useScrollport(scrollport, runtime, measure, scrollIndicator);
 
   useLayoutEffect(() => {
@@ -118,7 +116,7 @@ export default function TextSurface({
           await nextFrame(signal);
           if (signal.aborted) return { kind: "Cancelled" };
           if (text.arrived(to)) {
-            pin.current = { to, until: performance.now() + PIN_MS };
+            placement.current = handle.capture();
             return {
               kind:
                 Math.abs(port.scrollTop - before) < 1 ? "Unchanged" : "Arrived",
@@ -129,27 +127,21 @@ export default function TextSurface({
       },
     };
     const detach = runtime.attach(handle);
-    // Late layout (images, fonts, units at their real height, the host's
-    // content above the text) keeps an arrival in place.
-    const unpin = () => {
-      pin.current = null;
-    };
+    // Width, typography, images, realised units and host chrome all change
+    // geometry. The same navigator fence owns every resulting adjustment;
+    // an active jump retains its target and later genuine input cancels it.
     const observer = new ResizeObserver(() => {
-      const held = pin.current;
-      if (held && performance.now() < held.until) text.scrollTo(held.to);
-      measure();
+      void runtime.reflow({ placement: placement.current, change: measure });
     });
+    observer.observe(port);
     observer.observe(column.current!);
     if (lead.current) observer.observe(lead.current);
-    for (const name of ["wheel", "touchstart", "keydown", "pointerdown"])
-      port.addEventListener(name, unpin);
     measure();
     return () => {
       detach();
       observer.disconnect();
       paint.dispose();
-      for (const name of ["wheel", "touchstart", "keydown", "pointerdown"])
-        port.removeEventListener(name, unpin);
+      placement.current = null;
       geometry.current = null;
       painter.current = null;
     };
@@ -254,7 +246,7 @@ export default function TextSurface({
     const to = link && linkTarget(link);
     if (to) {
       event.preventDefault();
-      void runtime.inspect(to);
+      void runtime.inspect({ target: to });
       return;
     }
     if (link?.getAttribute("href") === "#") event.preventDefault();

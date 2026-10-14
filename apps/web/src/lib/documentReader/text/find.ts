@@ -1,6 +1,6 @@
 // Find over a text publication: every unit is searched (all are mounted);
 // the narrow scope is the section (a transcript's chapter) at the reading
-// position when find opens. A reveal is a reader jump, so the reader holds the
+// position when the first query starts. A reveal is a reader jump, so the reader holds the
 // way back. Paint registers static ranges for units in the paint window only,
 // and repaints as units enter it.
 import {
@@ -43,6 +43,7 @@ export function createTextFind(
       : doc.format === "epub"
         ? "Find in book"
         : "Find in article",
+    narrowLabel: doc.sections.length > 0 ? "This section" : null,
     prepare() {
       const primary = reader.getState().viewport?.primary;
       anchor = primary?.kind === "text" ? primary : null;
@@ -52,13 +53,22 @@ export function createTextFind(
         start === undefined
           ? null
           : [start, starts.find((s) => s > start) ?? doc.length];
-      return extent && (transcript ? "This chapter" : "This section");
+      return extent && anchor
+        ? (structure.sectionAt({ kind: "text", ...anchor })?.label ?? null)
+        : null;
     },
     search(options, narrow) {
+      const scope = narrow ? extent : null;
+      if (narrow && scope === null)
+        return {
+          kind: "Failed",
+          message:
+            "Selected section is unavailable. Clear the search to capture a new section, or turn off the scope option.",
+        };
       const units = doc.units.flatMap((unit) => {
-        if (!narrow || !extent) return [{ id: unit.id, text: unit.text }];
-        const from = Math.max(0, extent[0] - unit.start);
-        const to = Math.min(unit.length, extent[1] - unit.start);
+        if (scope === null) return [{ id: unit.id, text: unit.text }];
+        const from = Math.max(0, scope[0] - unit.start);
+        const to = Math.min(unit.length, scope[1] - unit.start);
         const text = Array.from(unit.text).slice(from, to).join("");
         return to > from ? [{ id: unit.id, text, base: from }] : [];
       });
@@ -81,12 +91,16 @@ export function createTextFind(
         anchor,
       );
     },
-    async reveal(hit) {
-      const outcome = await reader.inspect({ kind: "range", ...hit });
-      if (outcome.kind !== "Unavailable") return null;
-      return outcome.reason === "CaptureUnavailable"
-        ? "Reading position is unavailable."
-        : "Find request unavailable. Retry.";
+    async reveal(hit, signal) {
+      const outcome = await reader.inspect({ target: { kind: "range", ...hit }, signal });
+      if (outcome.kind === "Cancelled") return { kind: "Cancelled" };
+      if (outcome.kind !== "Unavailable") return { kind: "Shown" };
+      return {
+        kind: "Failed",
+        message: outcome.reason === "CaptureUnavailable"
+          ? "Reading position is unavailable."
+          : "Find request unavailable. Retry.",
+      };
     },
     paint(rows, active) {
       last = [rows, active];

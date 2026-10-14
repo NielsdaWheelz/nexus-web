@@ -45,6 +45,7 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] backup / later squash · 2026-10-13 release · backup credentials cannot read bucket lifecycle policy; verify and report retention before dropping cutover receipts: [ticket](tickets/backup-retention-policy-unverified.md).
 - [open] release / later tooling rewrite · 2026-10-13 release · the old script alone fails current source/candidate guards; rehearse an executable rollback: [ticket](tickets/release-tooling-rollback-needs-candidate.md).
 - [open] release tooling · 2026-10-13 · main advancement invalidates a qualified immutable candidate under the current tip-only controller: [ticket](tickets/release-tip-movement-invalidates-qualified-candidate.md).
+- [open] media intelligence / recovery · 2026-10-13 pane-controls qualification · p2 · failed media projections remain terminal after provider recovery and block dossier retries: [ticket](tickets/failed-media-projection-has-no-user-retry.md).
 - [open] release / credentials · 2026-10-13 release investigation · private credential files were printed into session tool results; assess retained-result access while preserving android signing continuity: [ticket](tickets/release-session-credential-output.md).
 - [open] release / lists · 2026-10-10 collection-revision cut · web and api together; 0275 drops viewer_collection_revisions (irreversible, no preflight); old tabs and held cursors fail once: [ticket](tickets/collection-keyset-continuations-release-steps.md).
 - [open] lists / pagination · 2026-10-10 collection-revision cut · p3 · five python cursor codecs, three page envelopes and two more web page hooks remain beside the one keyset codec: [ticket](tickets/list-cursor-codecs-diverge.md).
@@ -128,7 +129,7 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] android / auth · 2026-10-04 offline reauthoring harness · a force-stop right after login loses the session cookie; cookies flush only on page finish and pause: [ticket](tickets/android-session-cookie-not-flushed-after-login.md).
 - [open] hosted workspace / panes · 2026-10-04 offline review-fix harness · a restored pane whose media was deleted (404) replaced the whole workspace on android; the resolution registry is deleted, the android reproduction is still needed: [ticket](tickets/workspace-restore-fails-on-deleted-media-pane.md).
 - [open] reader / accessibility · 2026-09-26 reader navigation acceptance · talkback exposed the held-position live region, but its spoken words could not be independently observed: [ticket](tickets/reader-navigation-talkback-spoken-announcement-unverified.md).
-- [open] collection controls / live verification · 2026-09-25 pane-controls implementation · 26/30 live checks pass; search/podcast prerequisites and device/accessibility cases remain blocked or not run: [ticket](tickets/pane-controls-live-proof-blocked.md).
+- [open] collection controls / accessibility verification · 2026-09-25, narrowed 2026-10-13 · live source/device checks passed; spoken screen-reader and actual accessibility-setting checks remain: [ticket](tickets/pane-controls-live-proof-blocked.md).
 - [open] podcast publisher transcript · 2026-09-26 reader acceptance · configured discovery through publisher transcript read/find remains unqualified: [ticket](tickets/podcast-publisher-transcript-journey-unqualified.md).
 - [open] android offline reading · 2026-09-26 source-note implementation · authored note links work, but downloaded readers lack aligned evidence inspection: [ticket](tickets/offline-reader-lacks-source-apparatus-inspection.md).
 - [open] player / release · 2026-10-05 player re-author · web, api and a signed apk ship together after old activity outboxes drain: [ticket](tickets/player-cutover-release-steps.md).
@@ -403,12 +404,11 @@ unexpected timeouts. See
 - [deferred] search · 2026-10-10 search reauthor · ANN post-filtering can thin semantic hits under medium-selectivity scopes until iterative scans are enabled: [ticket](tickets/semantic-recall-under-filtered-scopes.md).
 - [open] search verification · 2026-10-10 search reauthor · video, episode and podcast search, `format:video|episode` and episode citation have no live proof: [ticket](tickets/search-video-episode-paths-lack-live-proof.md).
 - [deferred] search / link picker · 2026-10-10 search reauthor review · an unbounded `exclude_refs` list sets an unbounded ranking depth for link targets: [ticket](tickets/link-target-exclusions-set-an-unbounded-k.md).
-- [open] web / mobile chrome verification · 2026-10-10 app navigation reauthor · the reauthored chrome and bottom geometry are unverified inside the android webview (no handset): [ticket](tickets/mobile-chrome-unverified-in-android-webview.md).
+- [open] android / bottom insets · 2026-10-13 pane controls · physical webview motion, ime and rotation pass in three-button navigation; gesture-mode safe-area clearance remains unverified: [ticket](tickets/mobile-chrome-unverified-in-android-webview.md).
 - [open] web / mobile chrome verification · 2026-10-10 app navigation reauthor · reader tap reveal relies on a scrollport click listener for ios tap dispatch; unverified on a real ios device: [ticket](tickets/mobile-chrome-ios-tap-dispatch-unverified.md).
 - [open] web / mobile viewport verification · 2026-10-10 app navigation reauthor · no browser can raise a soft keyboard, so the keyboard-inset report stack has no proof: [ticket](tickets/mobile-keyboard-inset-has-no-browser-proof.md).
 - [open] web / mobile viewport verification · 2026-10-10 app navigation reauthor · the nav harness has no playable episode, so the mini-player half of bottom clearance (M10) is unrun: [ticket](tickets/mobile-player-clearance-has-no-browser-proof.md).
 - [open] web / workspace · 2026-10-10 nav harness X1 · the stats pane re-activates itself after its in-place address rewrite, so a quick fork lands behind it: [ticket](tickets/stats-pane-reactivates-after-address-rewrite.md).
-- [open] web / find · 2026-10-10 app navigation reauthor · on webkit the mobile find bar sits 3px above its contextual row, over the top bar: [ticket](tickets/webkit-find-bar-overlaps-the-top-bar.md).
 - [open] add content / libraries · 2026-10-10 imports reauthor · Add keeps its own multi-target placement machine beside the shared placement overlay; unify in the libraries rewrite: [ticket](tickets/add-placement-duplicates-library-placement-overlay.md).
 - [open] api / typed wire · 2026-10-10 imports reauthor · `POST /media/{id}/refresh` returns an untyped body: [ticket](tickets/media-refresh-route-has-no-model.md).
 - [open] imports / inspector · 2026-10-10 imports reauthor · a failed "Load earlier events" read shows no notice and no retry: [ticket](tickets/import-history-load-more-failure-is-silent.md).
@@ -439,3 +439,16 @@ unexpected timeouts. See
 - [deferred] web research · 2026-10-14 owner decision · brave returns payment required; service restoration and dependent qualification deferred: [ticket](tickets/brave-search-payment-required.md).
 
 - [open] android / offline startup · 2026-10-14 · downloaded copy reads offline through native recovery; cold launch retains a hosted error and automatic shelf entry remains unobserved: [ticket](tickets/android-offline-cold-start-keeps-hosted-error.md).
+
+
+
+- local background-worker instructions fail on macos cgroup discovery: [ticket](tickets/background-worker-local-command-requires-linux.md).
+
+- youtube browse key rejects the local caller ip: [ticket](tickets/browse-youtube-upstream-forbids-live-query.md).
+
+
+
+
+
+
+- [open] android / task ownership · 2026-10-13 pane controls · unrelated add-import debug package and reverse59830 disappeared during qualification; their owner’s cleanup is unconfirmed: [ticket](tickets/android-baseline-drift-during-pane-qualification.md).

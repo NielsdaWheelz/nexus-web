@@ -6,46 +6,31 @@ import {
   paneFilterRowsStatusMessage,
   type PaneFilterRowsStatus as Status,
 } from "@/lib/panes/paneFilterRows";
-import styles from "./PaneCollectionBar.module.css";
-
-/**
- * A filter's status under `id`. Visible (a collection row): terse text, and a
- * changed settled count spoken once after 400ms, never on mount. Hidden (the
- * filter row): the full sentence, spoken 160ms after the query changes.
- */
+/** Visible counts, with settled changes spoken once after 400ms, never on mount. */
 export default function PaneFilterRowsStatus(props: {
   readonly status: Status;
   readonly query: string;
   readonly id: string;
-  readonly visible: boolean;
 }) {
-  const { status, query, visible } = props;
+  const { status, query } = props;
   const [announcement, setAnnouncement] = useState("");
   const lastSettled = useRef<string | null>(null);
   const message = paneFilterRowsStatusMessage(status, query);
   useEffect(() => {
     setAnnouncement("");
-    if (visible) {
-      if (status.kind !== "Complete" || lastSettled.current === message) return;
-      const first = lastSettled.current === null;
-      lastSettled.current = message;
-      if (first) return;
-    } else if (!query.trim()) return;
-    const timeout = window.setTimeout(
-      () => setAnnouncement(message),
-      visible ? 400 : 160,
-    );
+    if (status.kind !== "Complete" || lastSettled.current === message) return;
+    const first = lastSettled.current === null;
+    lastSettled.current = message;
+    if (first) return;
+    const timeout = window.setTimeout(() => setAnnouncement(message), 400);
     return () => window.clearTimeout(timeout);
-  }, [message, query, status.kind, visible]);
+  }, [message, status.kind]);
   return (
     <>
-      {visible ? (
-        <span id={props.id} className={styles.status} title={message}>
-          {paneCollectionRowsStatusMessage(status, query)}
-        </span>
-      ) : null}
+      <span id={props.id} title={message}>
+        {paneCollectionRowsStatusMessage(status, query)}
+      </span>
       <span
-        id={visible ? undefined : props.id}
         className="sr-only"
         role="status"
         aria-live="polite"

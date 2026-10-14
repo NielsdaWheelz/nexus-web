@@ -8,6 +8,7 @@
   padding-inline: var(--space-4);
   border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
   background: var(--surface-2);
+  cursor: grab;
 }
 
 .navigation {

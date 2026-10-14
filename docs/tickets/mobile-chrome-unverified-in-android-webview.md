@@ -1,22 +1,25 @@
-# mobile chrome is unverified inside the android webview
+# android gesture-mode bottom insets remain unverified
 
 status: open · origin: 2026-10-10 app navigation reauthor (cleanup/appnav-reauthor) · area: web / mobile chrome, android shell
 
-the rewritten mobile chrome (`apps/web/src/lib/mobileShell/chrome.tsx`) and
-bottom geometry (`lib/mobileShell/viewport.tsx`) were verified only in
-playwright-managed chromium and webkit at 390x844 (touch, dpr 3): the c2nv nav
-harness, J5-J10, D2 and M1-M12 on both engines. no handset was available, so
-the android webview was not exercised: chrome retreat and tap reveal inside the
-shell, `inert` as the only hit-test gate on the shell's chromium, the
-module-written `--mobile-chrome-collapse` under real momentum scroll, and real
-safe-area insets feeding `--viewport-safe-*` and the Nexus offset.
+the 2026-10-13 pane-controls session qualified the physical android webview in
+the isolated `app.nexus.android.panecontrols.debug` package. native gestures
+proved forward retreat, inert hit testing, reverse reveal, partial retreat
+settling, plain-tap reveal, find hold and close release. saved restore remained
+shown. configuration rotation from 360×780 to 780×360 and back also showed
+chrome; the original portrait lock was restored. real ime reduced the visual
+viewport to 360×477 while clear, close, and section navigation remained usable
+at 44px with 16px text. the nexus control ended at y720 in the 780px viewport.
 
-what to do: on a handset with the debug app over `adb reverse` against a local
-stack (reference_isolated_live_stack recipe), read the long article: scroll down
-(chrome retreats, the top bar is not tappable), scroll up past 8px (it returns),
-fling and stop mid-retreat (it settles to an end, never frozen), tap blank text
-while hidden or moving (it returns), open More and Find (it stays shown), rotate
-(it resets shown). check the Nexus control rests above the gesture bar.
+evidence: [durable qualification record](../pane-controls-verification.md);
+disposable native receipts were removed after qualification. apk sha256 `0fa9d18cac25bf4067703f0770e040e312f23293ff00fde5d5a05c95d90771c7`.
+the handset used three-button system navigation. that proves clearance above
+its navigation area, but does not qualify gesture-mode safe-area values.
 
-resolved when: that session's observations are recorded here and match, or a
-defect found there has its own ticket.
+what to do: on an android device already using gesture navigation, open a
+reader and its native keyboard; inspect `--viewport-safe-*` and the nexus
+control against the actual system gesture area in both orientations.
+
+resolved when: the control clears that area and remains reachable, or a
+concrete defect has its own ticket. do not repeat the already qualified motion
+journey merely to close this remaining inset check.

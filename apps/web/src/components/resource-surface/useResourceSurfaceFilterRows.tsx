@@ -1,7 +1,11 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
+import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
+import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
+import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
+import type { PaneQuery } from "@/lib/panes/paneChrome";
 import {
   matchesPaneFilterQuery,
-  usePaneTransientFilterRows,
+  usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import type { ResourceSurface } from "@/lib/resources/resourceItems";
 import { resourceSurfaceFilterFields } from "./resourceSurfaceFilterFields";
@@ -50,12 +54,23 @@ export function useResourceSurfaceFilterRows(
     },
     [filterRows, ready],
   );
-  const { query, search } = usePaneTransientFilterRows({
+  const { query, onQueryChange, clearQuery, rowStatus } = usePaneFilterRows({
     sourceKey,
-    inputLabel,
-    placeholder: "Filter items",
     getRowStatus,
   });
+  const statusId = useId();
+  const { inputRef, focusInput } = usePaneQueryInput();
+  const queryControls: PaneQuery = {
+    kind: "Controls",
+    label: inputLabel,
+    focusInput,
+    content: <PaneQueryToolbar
+      inputRef={inputRef}
+      input={{ label: inputLabel, placeholder: "Filter items", value: query, appliedValue: query, onChange: onQueryChange, onClear: clearQuery }}
+      status={{ id: statusId, content: <PaneFilterRowsStatus id={statusId} status={rowStatus} query={query} /> }}
+      onReset={query ? clearQuery : undefined}
+    />,
+  };
   const acceptSurface = useCallback(
     (surface: ResourceSurface) =>
       setState({
@@ -72,5 +87,5 @@ export function useResourceSurfaceFilterRows(
       ),
     [sourceKey],
   );
-  return { ready, query, search, acceptSurface, markReady };
+  return { ready, query, queryControls, acceptSurface, markReady };
 }

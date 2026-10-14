@@ -1,15 +1,10 @@
 "use client";
 
 import { Plus } from "lucide-react";
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useId, useMemo } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
-import Button from "@/components/ui/Button";
-import SelectField from "@/components/ui/SelectField";
-import PaneCollectionBar, {
-  usePaneCollectionInput,
-} from "@/components/workspace/PaneCollectionBar";
 import { useChangeStamp } from "@/lib/api/changes";
 import { conversationsInitialResource } from "@/lib/api/resource";
 import { useResourceSeed } from "@/lib/api/resourceCache";
@@ -37,6 +32,9 @@ import {
   type UpdatedTitleSortOptionId,
 } from "@/lib/collections/updatedTitleIndexView";
 import { isAbortError } from "@/lib/errors";
+import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
+import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
+import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import {
   matchesPaneFilterQuery,
@@ -110,7 +108,6 @@ export default function ConversationsPaneBody() {
   });
   usePaneReturnReady(list.status !== "loading" || invalid);
   const captureScroll = usePaneScrollRetention(list.items);
-  const sortRef = useRef<HTMLSelectElement | null>(null);
   const setView = useCallback(
     (next: UpdatedTitleIndexView) => {
       captureScroll();
@@ -135,14 +132,15 @@ export default function ConversationsPaneBody() {
       ),
   });
   const { query, clearQuery } = filterRows;
-  const { inputRef, focusInput } = usePaneCollectionInput();
+  const { inputRef, focusInput } = usePaneQueryInput();
+  const queryStatusId = useId();
   const reset = useCallback(() => {
     clearQuery();
     setView(CANONICAL);
     requestAnimationFrame(() =>
-      sortRef.current?.focus({ preventScroll: true }),
+      inputRef.current?.focus({ preventScroll: true }),
     );
-  }, [clearQuery, setView]);
+  }, [clearQuery, inputRef, setView]);
   const { refetch } = list;
   const execute = useCallback<PaneRefreshExecute>(async () => {
     try {
@@ -157,53 +155,28 @@ export default function ConversationsPaneBody() {
     }
   }, [refetch]);
   usePaneChrome({
-    collection: invalid
-      ? undefined
-      : {
-          label: "Filter chats",
-          focusInput,
-          content: (
-            <PaneCollectionBar
-              inputRef={inputRef}
-              inputLabel="Filter chats"
-              placeholder="Filter chats"
-              query={query}
-              onQueryChange={filterRows.onQueryChange}
-              onClearQuery={clearQuery}
-              rowStatus={filterRows.rowStatus}
-              filters={
-                <SelectField
-                  layout="Inline"
-                  label="Sort chats"
-                  size="sm"
-                  ref={sortRef}
-                  value={updatedTitleSortOptionOf(view)}
-                  onChange={(event) =>
-                    setView(
-                      updatedTitleViewForSortOption(
-                        // justify-type-assertion: the options are exactly the ids
-                        event.target.value as UpdatedTitleSortOptionId,
-                      ),
-                    )
-                  }
-                >
-                  {UPDATED_TITLE_SORT_OPTION_IDS.map((id) => (
-                    <option key={id} value={id}>
-                      {updatedTitleSortOptionLabel(id)}
-                    </option>
-                  ))}
-                </SelectField>
-              }
-              controls={
-                view.kind === "Canonical" ? undefined : (
-                  <Button variant="ghost" size="sm" onClick={reset}>
-                    Reset view
-                  </Button>
-                )
-              }
-            />
-          ),
-        },
+    query: invalid ? undefined : {
+      kind: "Controls",
+      label: "Filter chats",
+      focusInput,
+      content: (
+        <PaneQueryToolbar
+          inputRef={inputRef}
+          input={{ label: "Filter chats", placeholder: "Filter chats", value: query, appliedValue: query, onChange: filterRows.onQueryChange, onClear: clearQuery }}
+          sort={{
+            label: "Sort",
+            value: updatedTitleSortOptionOf(view),
+            choices: UPDATED_TITLE_SORT_OPTION_IDS.map((value) => ({ value, label: updatedTitleSortOptionLabel(value) })),
+            onChange: (value) => setView(updatedTitleViewForSortOption(
+              // justify-type-assertion: the select offers exactly these ids.
+              value as UpdatedTitleSortOptionId,
+            )),
+          }}
+          status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={query} /> }}
+          onReset={view.kind !== "Canonical" || query ? reset : undefined}
+        />
+      ),
+    },
     refresh: { kind: "Refreshable", sourceKey: "Conversations:mine", execute },
     menuActions: NEW_CHAT,
     header: {

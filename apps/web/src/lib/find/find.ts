@@ -41,14 +41,20 @@ export type FindOutcome<L> =
   | { readonly kind: "TooMany" }
   | { readonly kind: "Failed"; readonly message: string };
 
+export type FindReveal =
+  | { readonly kind: "Shown" }
+  | { readonly kind: "Cancelled" }
+  | { readonly kind: "Failed"; readonly message: string };
+
 /**
  * Everything a surface supplies; useFind owns query state, debounce, staleness,
  * stepping and results.
  * - key names the searched snapshot: a new key re-prepares and re-runs the live query.
- * - prepare runs when find opens. It freezes the reading anchor and the narrow
- *   scope, and returns the narrow scope's label or null.
+ * - narrowLabel names the available scope before a query captures it.
+ * - prepare runs at the first nonempty query. It freezes the reading anchor
+ *   and scope, and returns the captured scope's label or null if unavailable.
  * - search returns rows in document order; `initial` is the first at or after the anchor.
- * - reveal resolves to null once the row is shown, or to the refusal text.
+ * - reveal distinguishes a shown row, cancelled movement and a refusal.
  * - paint is declarative: the rows and active index after every change; ([], -1) clears.
  * - returnToOrigin exists only where find owns the way back (no reader owns movement).
  * Methods, not function properties: parameter bivariance lets any FindSource<L>
@@ -57,13 +63,14 @@ export type FindOutcome<L> =
 export interface FindSource<L> {
   readonly key: string;
   readonly label: string;
+  readonly narrowLabel: string | null;
   prepare(): string | null;
   search(
     options: FindOptions,
     narrow: boolean,
     signal: AbortSignal,
   ): Promise<FindOutcome<L>> | FindOutcome<L>;
-  reveal(at: L, signal: AbortSignal): Promise<string | null>;
+  reveal(at: L, signal: AbortSignal): Promise<FindReveal>;
   paint(rows: readonly FindRow<L>[], active: number): void;
   returnToOrigin?(): void;
 }

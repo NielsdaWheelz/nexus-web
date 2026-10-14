@@ -13,8 +13,10 @@ the reader is three facts and one policy.
   (web fragments, epub spine documents, transcript segments) or one pdf, under one
   `identity` (`g<generation>`; transcripts: a digest of the ordered segment ids).
   read once from one snapshot, never mixed with another read.
-- **placement**: where the eye is, `{identity, point, topPx, zoom}`. measured, never
-  stored. capture and return use it.
+- **placement**: where the eye is, `{identity, point, offsetPx, zoom}`. measured,
+  never stored. `offsetPx` is relative to the visible reading line: positive
+  below, negative above. capture, reflow and return use it; chrome insets can
+  change without burying the captured passage.
 - **cursor**: where the reader intends to resume. durable, revisioned, multi-device
   (`reader_media_state`).
 - **mode**: `Reading | Exploring{origin}`. while reading, reader-intent viewports
@@ -53,7 +55,7 @@ lib/documentReader
   scrollport.ts        genuine-input classification and the measure loop
   text/                TextSurface · geometry (caret, capture, ranges) · paint · find
   pdf/                 PdfSurface (pdf.js PDFViewer) · geometry (quads) · pdfjs · find
-  chrome/              MapRail + PositionRibbon · Contents + SourceIssuesNotice
+  chrome/              ReaderNavigation · MapRail + PositionRibbon · Contents + SourceIssuesNotice
 lib/canonicalText      domTextCursor, domTextRanges, codepoints (dom ↔ canonical offsets)
 lib/find               useFind, FindBar contract, highlightPainter (shared by every pane)
 ```
@@ -122,8 +124,8 @@ exploring with the saved cursor as origin; else a positioned cursor applies;
 else a cold target (`?fragment`) applies; else the start. a cursor naming a unit
 this publication lacks opens at the start with *saved reading spot unavailable*
 and saves nothing until genuine input. any genuine input before restore skips it.
-after arrival the text surface pins the placement against late layout (images,
-fonts, units rendering at their real height) for 3 s or until input.
+late layout follows the same geometry fence as ordinary reflow; it cannot emit
+reading activity or retreat host chrome as though the user had scrolled.
 
 **save.** a reading viewport reports `locatorAt(primary, terminal)`; the sync
 saves after 500 ms idle or 5 s after the first unsaved move, one request in
@@ -143,7 +145,7 @@ hydration, reflow and inspection cannot clear unread. Genuine post-command input
 can save the same locator to resume it.
 
 **jumps.** contents, section and page buttons, links, footnotes, evidence rows,
-rail markers, find, home/end and scrollbar seeks call `reader.inspect(target)`:
+rail markers, find, home/end and scrollbar seeks call `reader.inspect({target, signal?})`:
 capture the departure, flush an eligible unsaved locator, enter exploring (the
 first origin is kept across later jumps), position, roll back on failure. the
 status strip says *reading spot held · section, page n or nn%* with *back to your
@@ -162,29 +164,56 @@ before it). epub internal links (`data-nexus-fragment-id`,
 repeat across spine documents). document embeds render as cards portalled into
 their placeholders inside a `data-document-embed-ui` wrapper, outside the
 canonical text. the public reader hydrates token-authorised images per unit as
-units near the viewport.
+units near the viewport. the surface retains its last measured placement before
+a resize observer reports layout changes. width, typography, host chrome and
+realised-unit changes preserve that passage through the internal navigator
+`reflow({placement, change})` operation. it keeps mode and origin, retires
+earlier input intent and saves nothing; an active jump retains its target and
+later genuine input cancels positioning.
 
 **pdf surface.** pdf.js `PDFViewer`; zoom 0.5–2 in quarter steps (a stored zoom
 outside is clamped; `null` while fitted to the width, so a position reopens fitted
-anywhere); fitted pages refit when the pane resizes, and the host's chrome is held
-while pdf.js scales (its scroll is not reading); links and `#page=`/`#nameddest`
+anywhere). fitting and explicit zoom use the internal navigator `reflow`
+operation: capture the live reading line, change scale synchronously and restore
+under the existing cancellable positioning fence. it preserves reading/exploring
+mode and the first origin, clears earlier input intent and records no progress;
+an already-active jump keeps authority over its target. links and `#page=`/`#nameddest`
 destinations route through `inspect`; a file that fails to open is retried once
 with a fresh url from the source; the hosted pane asks for the width that shows
 the widest page at scale 1 (or at its zoom); positions locate pages by their boxes
 (pdf.js's current page lags a scroll); marks are per-page overlay rects
 (`data-reader-mark`, class `hl-<colour>`) under the text layer, hit-tested in page
-space; pages keep their source colours.
+space; pages keep their source colours. the page counter and announcement use
+the same reading-line page as capture, including overlapping page borders. next
+is disabled at the actual viewport end, even when a fully visible final page is
+below that line. the pdf.js page keeps its required content-box sizing so canvas
+text and text-layer highlights agree.
 
 **selection.** `selectionchange` (120 ms desktop, 400 ms phone) → a capture clipped
 to one unit (or one pdf page: quads plus `exact`) → the host's dock. the host acts
 on the retained capture, never the live selection. focus dimming is suspended
 while a selection is live.
 
-**find.** the attached surface publishes a `FindSource` into reader state; the
-host passes it to `useFind`. text matches canonical text with `lib/find`
-(narrow scope: this chapter or section); pdf uses pdf.js matching with a scoped
-controller that never scrolls (narrow scope: this page); an aborted pdf search
-rejects instead of hanging. reveal is an inspect. a partial transcript says so.
+**find.** the attached surface publishes a `FindSource`; hosted media exposes
+it only after restore. `useFind` receives the pane's required `ownerKey`.
+visibility/focus does not capture a session: the first nonempty query freezes
+the current section/page; later navigation and option changes retain it. idle
+scope labels describe capability; active labels name the captured scope.
+requested narrowing without a valid scope fails explicitly, never broadens.
+clear aborts the exact operation and removes text/results/paint, while preserving
+preferences and the reader's held first departure. owner retirement resets the
+session; a publication change retains text/preferences and recaptures once
+against the restored replacement.
+
+text searches canonical units and paints css highlights; pdf searches and paints
+through pdf.js. `FindSource.reveal` returns `Shown | Cancelled | Failed`;
+activation succeeds only for `Shown`. `inspect({target, signal?})` links external
+abort to one navigation request. pdf match page arrival, canvas/text-layer
+readiness and match positioning form one request with the transient
+`pdfMatch {page, index}` target. every wait checks cancellation before geometry
+writes; clear/new navigation cannot finish an old reveal. cancellation preserves
+completed movement; an unavailable target retains existing failure rollback.
+query/section/page controls never adopt inspected positions as saved progress.
 
 ## paint: css custom highlights
 
@@ -238,7 +267,7 @@ the dom is never rewritten (`text/paint.ts`).
 | `useAnnotationVerbs.ts` | selection and mark verbs: highlight, note (created under the open editor), link (creates nothing until confirmed), ask, ask in existing chat, learn, share, note chord `n`; app-global highlight intents while the mark is mounted |
 | `SelectionDock.tsx` | the dock (Highlight with colours, Note, Link, Ask, More), the quick note (floating or sheet), the highlight menu, the overlap chooser, recolour dialog, link dialog, chat chooser |
 | `evidence/` | Evidence: type filters, all items / follow text, passage groups in document order (*go to passage*), whole-document items, *needs attention*; rows by kind with actions, notes, source notes and associations |
-| `chrome.tsx` | pane chrome: header, section or pdf instrument, find, inspector bodies, view menu (activity, reader settings, theme), the 52 px document-map rail (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+shift+F, shift+Esc, Esc) |
+| `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (activity, reader settings, theme), the 52 px document-map rail (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+shift+F, shift+Esc, Esc) |
 | `Transcript.tsx` | transcript states and request; playback, show notes with seekable times, chapters following the player |
 | `activity.ts` | consumption activity from reader viewports (word ordinal when reading) |
 | `Embeds.tsx` | embed cards |
@@ -272,13 +301,9 @@ anything paints.
 
 ## verification
 
-- `./scripts/test` (static: types, lint incl. the import rule, generated wire,
-  unit tests, builds of the shelf and the extension). it does not exercise the
-  reader.
-- the live harness (isolated stack, playwright-managed browsers): the `R.*`
-  reader journeys per surface, `S.*` public shares, `O.*` shelf copies, the
-  `G/W/E/P/T/C/D` find subset, and `R.HL.*` for the paint conditions (paint,
-  reflow, mutate, static, lazy, hit, select, find, shadow) on chromium, firefox
-  and webkit.
-- by hand: android webview paint and taps (literal colours, ≥ api 34 emulator and
-  a current phone), real safari.
+`./scripts/test` checks static consistency, generated contracts and shelf/
+extension builds. it runs no unit or live suite. affected behavior is qualified
+under [the local verification contract](../local-rules/testing-standards.md).
+historical reader harnesses are retired. the pane controls change uses a
+user-authorized disposable live proof, removed after qualification; retain its
+observations and material limits, rather than a second test platform.

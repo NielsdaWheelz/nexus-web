@@ -74,7 +74,7 @@ export function MapRail({
           position: structure.fraction(point),
           kind: "contents",
           label: section.label,
-          go: () => void reader.inspect({ kind: "point", point }),
+          go: () => void reader.inspect({ target: { kind: "point", point } }),
         };
       }),
     ),

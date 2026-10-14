@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useLayoutEffect, useRef, type RefObject } from "react";
 import Chip from "./Chip";
 import styles from "./AppliedFilters.module.css";
 
@@ -13,10 +13,33 @@ export default function AppliedFilters({
   onRemove,
   returnFocusTo,
 }: {
-  chips: AppliedFilterChip[];
+  chips: readonly AppliedFilterChip[];
   onRemove: (id: string) => void;
   returnFocusTo: RefObject<HTMLElement | null>;
 }) {
+  const pendingFocus = useRef<{
+    removed: HTMLButtonElement;
+    focused: HTMLElement | null;
+    neighbours: HTMLButtonElement[];
+  } | null>(null);
+
+  useLayoutEffect(() => {
+    const pending = pendingFocus.current;
+    if (!pending || pending.removed.isConnected) return;
+    pendingFocus.current = null;
+    if (
+      pending.focused?.isConnected ||
+      document.activeElement !== document.body
+    ) {
+      return;
+    }
+    // Removing one constraint can also remove its dependent neighbours.
+    (
+      pending.neighbours.find((button) => button.isConnected) ??
+      returnFocusTo.current
+    )?.focus({ preventScroll: true });
+  }, [chips, returnFocusTo]);
+
   if (chips.length === 0) return null;
   return (
     <div
@@ -31,11 +54,13 @@ export default function AppliedFilters({
         if (!button) return;
         const buttons = [...event.currentTarget.querySelectorAll("button")];
         const index = buttons.indexOf(button);
-        (
-          buttons[index + 1] ??
-          buttons[index - 1] ??
-          returnFocusTo.current
-        )?.focus({ preventScroll: true });
+        const neighbours = [
+          ...buttons.slice(index + 1),
+          ...buttons.slice(0, index).reverse(),
+        ];
+        const focused = neighbours[0] ?? returnFocusTo.current;
+        pendingFocus.current = { removed: button, focused, neighbours };
+        focused?.focus({ preventScroll: true });
       }}
     >
       {chips.map((chip) => (

@@ -13,6 +13,7 @@ import {
   searchContributors,
   type ContributorSearchItem,
 } from "@/lib/contributors/api";
+import styles from "./ContributorFilter.module.css";
 
 /**
  * Display names for applied handles: remembered on add, else fetched with
@@ -69,46 +70,29 @@ export default function ContributorFilter({
         )
       : [];
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: "var(--space-2)",
-      }}
-    >
-      <label>
+    <div className={styles.filter}>
+      <label className={styles.label}>
         <span>Authors</span>
         <Input
           type="search"
           value={query}
           placeholder="Find an author"
-          style={{ width: "min(340px, 100%)" }}
           onChange={(event) => setQuery(event.target.value)}
         />
       </label>
       {search.error !== null && search.errorIdentity === q ? (
-        <p
-          role="alert"
-          style={{ color: "var(--ink-muted)", fontSize: "var(--text-sm)" }}
-        >
+        <p role="alert" className={styles.message}>
           Couldn’t load authors.
         </p>
       ) : null}
       {suggestions.length > 0 ? (
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "var(--space-1)",
-            maxWidth: "360px",
-          }}
-        >
+        <div className={styles.suggestions}>
           {suggestions.map((item) => (
             <Button
               key={item.handle}
               variant="secondary"
               size="sm"
-              style={{ justifyContent: "flex-start" }}
+              className={styles.suggestion}
               onClick={() => {
                 onAdd(item);
                 setQuery("");

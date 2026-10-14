@@ -32,12 +32,12 @@
 }
 
 .sm {
-  font-size: var(--text-sm);
+  font-size: var(--pane-control-font-size, var(--text-sm));
 }
 
 .md,
 .lg {
-  font-size: var(--text-base);
+  font-size: var(--pane-control-font-size, var(--text-base));
 }
 
 .input {
@@ -45,15 +45,15 @@
 }
 
 :where(.input, .select, .selectWrap).sm {
-  height: var(--size-sm);
+  height: var(--pane-control-size, var(--size-sm));
 }
 
 :where(.input, .select, .selectWrap).md {
-  height: var(--size-lg);
+  height: var(--pane-control-size, var(--size-lg));
 }
 
 :where(.input, .select, .selectWrap).lg {
-  height: var(--size-xl);
+  height: var(--pane-control-size, var(--size-xl));
 }
 
 .textarea {
@@ -82,8 +82,7 @@
   outline: none;
 }
 
-/* The wrapper keeps the select's size height, so a taller select (a toolbar's
-   32px floor) overflows it rather than growing the row. */
+/* The select and wrapper consume the same size, including pane controls. */
 .selectWrap {
   position: relative;
   display: inline-flex;

@@ -5,7 +5,7 @@
 // validates it; the text filter stays local. While the pane is active it loads
 // every page, so the filter and the "N works" count cover all works.
 
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useId, useMemo } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
@@ -14,13 +14,12 @@ import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import Button from "@/components/ui/Button";
 import PaneSurface from "@/components/ui/PaneSurface";
-import SelectField from "@/components/ui/SelectField";
-import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
+import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
+import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
 import {
   apiTransportFeedback,
   isApiError,
@@ -241,62 +240,27 @@ function AuthorPane({ handle }: { readonly handle: string }) {
     },
     [handle, params, router],
   );
-  const sortRef = useRef<HTMLSelectElement>(null);
+  const { inputRef, focusInput } = usePaneQueryInput();
+  const queryStatusId = useId();
   const resetView = useCallback(() => {
     clearQuery();
     setView("");
-    // The pressed button goes away with the view: keep focus on the control.
-    requestAnimationFrame(() =>
-      sortRef.current?.focus({ preventScroll: true }),
-    );
-  }, [clearQuery, setView]);
-  const { inputRef, focusInput } = usePaneCollectionInput();
+    requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
+  }, [clearQuery, inputRef, setView]);
   const invalidView =
     works.status === "failed" && works.failure?.error.code === "E_INVALID_REQUEST";
-  const collection = useMemo(
-    () =>
-      invalidView
-        ? undefined
-        : {
-            label: "Filter works",
-            content: (
-              <PaneCollectionBar
-                inputRef={inputRef}
-                inputLabel="Filter works"
-                placeholder="Filter works"
-                query={filterRows.query}
-                onQueryChange={filterRows.onQueryChange}
-                onClearQuery={filterRows.clearQuery}
-                rowStatus={filterRows.rowStatus}
-                filters={
-                  <SelectField
-                    ref={sortRef}
-                    layout="Inline"
-                    label="Sort works"
-                    size="sm"
-                    value={view}
-                    onChange={(event) => setView(event.target.value)}
-                  >
-                    {SORTS.map((sort) => (
-                      <option key={sort.id} value={sort.id}>
-                        {sort.label}
-                      </option>
-                    ))}
-                  </SelectField>
-                }
-                controls={
-                  view === "" ? undefined : (
-                    <Button variant="ghost" size="sm" onClick={resetView}>
-                      Reset view
-                    </Button>
-                  )
-                }
-              />
-            ),
-            focusInput,
-          },
-    [filterRows, focusInput, inputRef, invalidView, resetView, setView, view],
-  );
+  const queryControls = invalidView ? undefined : {
+    kind: "Controls" as const,
+    label: "Filter works",
+    focusInput,
+    content: <PaneQueryToolbar
+      inputRef={inputRef}
+      input={{ label: "Filter works", placeholder: "Filter works", value: filterRows.query, appliedValue: filterRows.query, onChange: filterRows.onQueryChange, onClear: clearQuery }}
+      sort={{ label: "Sort", value: view, choices: SORTS.map(({ id, label }) => ({ value: id, label })), onChange: setView }}
+      status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} /> }}
+      onReset={view || filterRows.query ? resetView : undefined}
+    />,
+  };
 
   const ref =
     detail.status === "ready"
@@ -342,7 +306,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
     return { kind: "Complete" as const, announcement: "Refreshing author" };
   }, [refetchDetail, refetchWorks]);
   usePaneChrome({
-    collection,
+    query: queryControls,
     actionSubject:
       detail.status === "ready"
         ? { ref: assumeCanonicalResourceRef(detail.data.actionSubject.ref) }

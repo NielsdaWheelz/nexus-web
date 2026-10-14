@@ -165,8 +165,8 @@ them.
 
 A body contributes to its shell by rendering, into a store that `PaneShell`
 creates for that mounted body (`lib/panes/paneChrome.tsx`), through three hooks:
-`usePaneChrome` (`{ header, collection | search + instrument, menuActions,
-actionSubject, refresh }`, collection excluding search and instrument by type),
+`usePaneChrome` (`{ header, navigation, query, menuActions, actionSubject,
+refresh }` with independent navigation and query capabilities),
 `usePaneCompanion` (the Companion's tabs and default) and `usePaneLayout` (a
 reader's intrinsic width and rail). Each writes its slot in a layout effect and
 clears its own value as it unmounts; the shell subscribes in a layout effect
@@ -194,49 +194,49 @@ six explicitly supported finite standard-scroll panes publish it. Refresh never
 reloads the route or polls for completion, and the gesture is never its only
 path.
 
-`collection` publishes one labelled compact control row as the first child
-of the pane body's existing scrollport. `PaneToolbar` owns its quiet layout;
-`PaneCollectionBar` adapts local text and settled-count announcements, while
-remote forms retain their own query/commit rules. domains own order, facet
-options, chips, clear/reset and retrieval. `CollectionFilterEditor` discloses
-facet fields in an anchored desktop dialog or the existing mobile sheet;
-applied chips and the concise count remain visible at the list boundary.
-`focusInput` reveals, focuses and selects the mounted input. collection cannot
-coexist with `search` or `instrument`; a document may still combine transient
-search and instrument. the row scrolls with results and has no separate mobile
-chrome height or scrollport.
+`PaneShell` composes identity, supported navigation and supported query above
+its existing content scrollport (`auto minmax(0, 1fr)`). controls stay stationary;
+readers keep their own document viewport and collection return anchors stay in
+`.routeContent`. canvas dragging begins only in the identity header's
+noninteractive region. controls and option labels never drag the canvas.
 
-`search` remains transient document/editor find: `FilterRows` matches direct
-page/note items, while `Find` publishes the pane's `useFind` controller
-(`lib/find`); its `FindSource` owns where text comes from, how a match is
-revealed and how it is painted. `PaneShell` owns the shared Pane.Search command,
-transient expanded row (`FindBar` or the filter `PaneSearchBar`, whose input is
-described by its status), focus, and the bindable `Pane.Search` keydown. the row
-stays expanded for one source (pane,
-visit, route, path), not one query string: a reader consuming its own deep
-link (one replace) keeps its find open, while leaving that source ends the expansion,
-so going back to it starts closed. every end of an expansion, by the user or by
-leaving the source, dismisses the search it expanded (`find.close()` or the
-filter's `onDismiss`): media and chat bodies mount by resource and outlive a
-same-path push, so nothing else would clear their query and paint. Only the
-active `PaneShell` listens for `Pane.Search`, with no editable-target guard, so
-Cmd/Ctrl+F reaches Page and Note editors; it yields while any modal or transient
-overlay owns global commands (`hasActiveInteractionOwner`: Nexus, a menu, the
-filters popover, the mobile Companion sheet) and prevents native Find only when
-the pane opened its search. Cmd/Ctrl+K remains Nexus retrieval. Across a live
-desktop↔mobile resize the active shell stays mounted, so a request in the
-resize gap opens the same expansion and its input is focused a frame later; no
-handoff exists.
+`query` is `Controls {label, content, focusInput}` or `Find {find}`. absent means
+unsupported; null find means a promised source is not ready. desktop renders
+every supported field, including a disabled resolving find field. mobile keeps
+ordinary collection/page/note controls visible; find starts collapsed, coexists
+with navigation when opened, and closes by clearing text and collapsing. only
+active, visible mobile find holds chrome. navigation/find disclosure and empty
+focused inputs survive an active-pane breakpoint change; source retirement
+ends disclosure and transient companion results.
 
-`usePaneFilterRows` owns visit-local text and honest partial, complete,
-retained, or failed-row status. the collection presenter shows concise visual
-status and speaks changed settled counts once, including restoration after a
-text clear; initial mounting stays quiet. facet editor dismissal preserves
-applied state and returns focus on keyboard escape; removing a focused chip
-moves focus to its surviving neighbor or trigger. the source key excludes the
-domain view: same-path refinement preserves text, focus, and scroll. a new
-source retires local text.
-`usePaneScrollRetention` restores the scrollport once the new view commits.
+`PaneQueryToolbar` owns presentation: input/clear, optional submit/match actions,
+inline options disclosure and native sort. chips, status and expanded options
+share one bounded refinement region, capped by the shell's declared geometry
+contract. checkboxes represent booleans/sets; uniquely named radio groups
+represent singular choices. domains own options, draft/applied text, timing,
+results, urls and reset. clear removes draft AND applied text while retaining
+facets/order; browse immediately returns to its empty-query state. an aborted
+response cannot publish as current. browse labels its provider-scoped control
+“youtube sort”; other sources keep relevance. newest survives facet removal
+while the planned sections include youtube and resets only when the scope
+excludes it.
+
+clear and reset preserve a live focus target; chip removal uses the surviving
+neighbour/input. options escape collapses only options, preserving selections.
+desktop input escape clears nonempty text; mobile find escape clears/collapses.
+only the active capable pane consumes `Pane.Search` (cmd/ctrl+f); existing
+interaction overlays win and unsupported/resolving panes retain native find.
+menu commands focus the permanent desktop field. source identity is
+`paneSourceKey(runtime)` (`visitId:routeId:pathname`), excluding query/hash.
+
+`usePaneFilterRows` owns source-local text and honest complete/partial/retained/
+failed status for local rows. `useFind({ownerKey, source, presentation?})` owns
+find lifetime, frozen first-query scope, cancellation and painting. the shell
+retires only its disclosure/results; ordinary clear preserves find preferences
+and a held return origin. publication replacement retains text/preferences,
+retires old geometry, then recaptures after restore. `FindBar` adapts the shared
+query toolbar; companion results remain transient. current capability and
+keyboard details are specified in [the pane controls plan](../pane-controls-plan.md).
 
 A resource pane publishes only its canonical `actionSubject`
 (`ResourceActionSubject`). `PaneShell` composes its pane commands and the body's
@@ -274,12 +274,11 @@ mounted region while open, and the hover title is the projected
 `Show inspector`/`Hide inspector` command copy.
 
 `ContextualActionMenu` projects every remaining command through the existing
-`ActionMenu` in desktop and mobile chrome. PDF publishes page controls; EPUB and
-web articles publish section controls when navigation has at least one section.
-Each publishes one labelled `instrument` containing control content only.
-`PaneShell` owns its 40px desktop or 48px mobile contextual frame and renders it
-as an accessible group. Expanded Search takes exclusive occupancy of that same
-track.
+`ActionMenu` in desktop and mobile chrome. `ReaderNavigation` presents canonical
+section navigation for structured text and page entry/navigation/zoom for pdf.
+page entry commits on enter, validates an integer in range, and discards its
+draft on blur/escape. no-section documents omit section controls. navigation
+and queries wrap to pane width and share the declared control density.
 
 `PaneHeaderIdentity` owns the single route-level `h1` for every pane kind. Body
 outlines start at `h2`, and imported reader headings are projected beneath the
@@ -424,9 +423,9 @@ activity fact. Successful Add or Subscribe replaces Preview with the canonical
 owned pane after any eligible one-shot position transfer; failure leaves Preview
 and its staged destination choices intact.
 
-browse publishes its remote query and facets as a collection band. its form
+browse publishes its submitted query and inline facets as stationary query controls. its form
 retains draft/commit semantics; the body owns requests and section continuation.
-preview keeps its resource controls and has no collection publication.
+preview keeps its resource controls and publishes no query capability.
 
 ## Target Activation
 
@@ -568,8 +567,9 @@ The media reader publishes its geometry with `usePaneLayout`
 known, and the Document Map overview rail (52px) sits beside the body and widens
 the pane. Both are desktop-only; mobile ignores the publication. Clamping is
 render-only (`primaryWidth`): the stored `primaryWidthPx` is what the user chose
-(null follows the reader column), so a wider column never rewrites it and a
-narrower one gives it back.
+(null follows the reader column), and is clamped only at render time to the 320px floor or a pdf
+intrinsic minimum. the reader column is the preferred default, rather than a
+minimum; typography changes preserve a manually narrowed pane.
 
 The passive mobile reader position ribbon does not participate in fixed primary
 chrome. It remains reader-relative, uses the reader-owned semantic range, and
@@ -621,7 +621,7 @@ stamp it was read under, and a return rereads when the stamp moved
 (architecture §8.12). `usePaneScrollRetention` holds the live offset across a
 same-path view swap. The scrollport registers its route content
 (`usePaneReturnScrollport`'s `contentRef`), so the anchor search starts past
-any collection row. Reader, Chat transcripts, and Atlas keep their separate
+the stationary query controls. Reader, Chat transcripts, and Atlas keep their separate
 scroll/location owners. Mementos and visit data are never persisted and are
 forgotten when their visit leaves every stack.
 

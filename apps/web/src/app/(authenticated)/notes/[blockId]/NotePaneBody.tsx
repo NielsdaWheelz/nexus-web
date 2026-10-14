@@ -50,7 +50,7 @@ export default function NotePaneBody() {
   const {
     ready,
     query: filterQuery,
-    search,
+    queryControls,
     acceptSurface,
   } = useResourceSurfaceFilterRows(sourceRef, "Filter note items");
   const [label, setLabel] = useState<string | null>(null);
@@ -151,7 +151,7 @@ export default function NotePaneBody() {
     [acceptSurface],
   );
   usePaneChrome({
-    search,
+    query: queryControls,
     // The pane's canonical identity is its route key, never a fact of the
     // filter-row state it happened to be gated on. The snapshot owns missing.
     actionSubject: {

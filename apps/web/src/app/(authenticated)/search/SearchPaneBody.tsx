@@ -8,6 +8,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -19,20 +20,15 @@ import {
 } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
 import Button from "@/components/ui/Button";
-import { X } from "lucide-react";
-import Input from "@/components/ui/Input";
-import PaneToolbar from "@/components/ui/PaneToolbar";
+import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
+import ChoiceField from "@/components/ui/ChoiceField";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import CollectionView from "@/components/collections/CollectionView";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
+import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import ContributorFilter, { useContributorFilterLabels } from "@/components/contributors/ContributorFilter";
 import type { ContributorSearchItem } from "@/lib/contributors/api";
-import KindChips from "@/components/search/KindChips";
-import CollectionFilterEditor from "@/components/workspace/CollectionFilterEditor";
-import AppliedFilters, {
-  type AppliedFilterChip,
-} from "@/components/ui/AppliedFilters";
+import type { AppliedFilterChip } from "@/components/ui/AppliedFilters";
 import { presentSearchResult } from "@/lib/collections/presenters/search";
 import { useMediaQueryRevision, useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
@@ -200,7 +196,8 @@ export default function SearchPaneBody() {
   );
 
   const [draft, setDraft] = useState(query.text);
-  const [forcedClear, setForcedClear] = useState(0);
+  const draftCommitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const statusId = useId();
   const [mounted, setMounted] = useState(false);
   const [optimisticRequestedKinds, setOptimisticRequestedKinds] = useState<
     ReadonlySet<SearchKind> | null
@@ -209,10 +206,7 @@ export default function SearchPaneBody() {
   const expectedQueryStringRef = useRef<string | null>(queryString);
   const draftRef = useRef(query.text);
   const draftPinnedRef = useRef(false);
-  const escapeClearedDraftRef = useRef(false);
-  const preserveCommittedTextRef = useRef(false);
-  const filterTriggerRef = useRef<HTMLButtonElement>(null);
-  const { inputRef: searchInputRef, focusInput } = usePaneCollectionInput();
+  const { inputRef: searchInputRef, focusInput } = usePaneQueryInput();
   const { labels: authorLabels, remember: rememberAuthor } = useContributorFilterLabels(query.authors);
 
   useEffect(() => {
@@ -234,12 +228,9 @@ export default function SearchPaneBody() {
 
   const updateQuery = useCallback(
     (mutate: (current: SearchQuery) => SearchQuery) => {
-      const pending = pendingQueryRef.current;
-      replaceQuery(mutate(preserveCommittedTextRef.current
-        ? { ...pending, text: query.text }
-        : pending));
+      replaceQuery(mutate(pendingQueryRef.current));
     },
-    [query.text, replaceQuery],
+    [replaceQuery],
   );
 
   // Sync URL-backed state while preserving a locally edited draft until the URL
@@ -254,7 +245,7 @@ export default function SearchPaneBody() {
     if (isSupersededUrl) {
       return;
     }
-    const preserveDraft = draftPinnedRef.current && (!isExpectedUrl || preserveCommittedTextRef.current);
+    const preserveDraft = draftPinnedRef.current && !isExpectedUrl;
     if (preserveDraft) {
       pendingQueryRef.current = { ...query, text: draftRef.current };
     } else {
@@ -270,23 +261,23 @@ export default function SearchPaneBody() {
 
   // Debounced: parse the box, absorb completed operators into the query.
   useEffect(() => {
-    const escapeClearedDraft = escapeClearedDraftRef.current;
-    escapeClearedDraftRef.current = false;
-    if (escapeClearedDraft && draft === "") {
-      return;
-    }
     const handle = setTimeout(() => {
+      draftCommitRef.current = null;
       const parsed = parseSearchInput(draft);
       const merged = applyParsedInput(pendingQueryRef.current, parsed);
       if (queryKey(merged) !== expectedQueryStringRef.current) {
         replaceQuery(merged);
       }
     }, SEARCH_DEBOUNCE_MS);
-    return () => clearTimeout(handle);
+    draftCommitRef.current = handle;
+    return () => {
+      clearTimeout(handle);
+      if (draftCommitRef.current === handle) draftCommitRef.current = null;
+    };
     // query/queryString intentionally omitted: this effect reacts to box edits;
     // the equality guard prevents a replace loop when the URL already matches.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: URL query changes sync draft through the separate query.text effect; this debounce reacts only to box edits and explicit text clear.
-  }, [draft, forcedClear]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: URL query changes sync draft through the separate query.text effect; this debounce reacts only to box edits; clear commits synchronously.
+  }, [draft]);
 
   // First page: refetched (immediately, then aborted) whenever the effective
   // query changes; blank queries make no request. Pagination is appended below.
@@ -553,8 +544,6 @@ export default function SearchPaneBody() {
   }, [updateQuery]);
 
   const updateDraft = useCallback((nextDraft: string) => {
-    escapeClearedDraftRef.current = false;
-    preserveCommittedTextRef.current = false;
     draftRef.current = nextDraft;
     draftPinnedRef.current = true;
     expectedQueryStringRef.current = null;
@@ -564,8 +553,18 @@ export default function SearchPaneBody() {
     };
     setDraft(nextDraft);
   }, []);
-  const resetView = useCallback(() => {
+  const clearText = useCallback(() => {
+    if (draftCommitRef.current !== null) clearTimeout(draftCommitRef.current);
+    draftCommitRef.current = null;
     updateDraft("");
+    draftPinnedRef.current = false;
+    replaceQuery({ ...pendingQueryRef.current, text: "" });
+  }, [replaceQuery, updateDraft]);
+  const resetView = useCallback(() => {
+    if (draftCommitRef.current !== null) clearTimeout(draftCommitRef.current);
+    draftCommitRef.current = null;
+    updateDraft("");
+    draftPinnedRef.current = false;
     replaceQuery(emptySearchQuery());
   }, [replaceQuery, updateDraft]);
 
@@ -591,132 +590,51 @@ export default function SearchPaneBody() {
           : "Ready to search.";
 
   const announceResultStatus = error === null;
-  const toolbar = useMemo(() => (
-    <PaneToolbar
-      variant="Collection"
-      search={
-        <div className={styles.searchInputRow}>
-          <Input
-            ref={searchInputRef}
-            aria-label="Search content"
-            className={styles.searchInputField}
-            size="md"
-            value={draft}
-            onChange={(event) => updateDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== "Escape" || event.defaultPrevented) return;
-              event.preventDefault();
-              event.stopPropagation();
-              updateDraft("");
-              preserveCommittedTextRef.current = true;
-              escapeClearedDraftRef.current = true;
-            }}
-            placeholder="Search your Nexus"
-            disabled={!mounted}
-          />
-          {draft || query.text ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              aria-label="Clear text filter"
-              title="Clear text filter"
-              onClick={() => {
-                updateDraft("");
-                if (!draft && query.text) setForcedClear((value) => value + 1);
-                searchInputRef.current?.focus({ preventScroll: true });
-              }}
-            >
-              <X size={15} aria-hidden="true" />
-            </Button>
-          ) : null}
-        </div>
-      }
-      filters={
-        <>
-          <span className={styles.sortLabel}>Order: relevance</span>
-          <CollectionFilterEditor
-            activeCount={appliedChips.length}
-            triggerRef={filterTriggerRef}
-            onClearFilters={clearAllFilters}
-            onResetView={draft || query.text || filtersActive ? resetView : undefined}
-          >
-            <KindChips
-              selected={optimisticRequestedKinds}
-              disabled={disabledKindSet}
-              disabledReason={disabledReason}
-              onToggle={toggleKind}
-            />
-            <div className={styles.formatGroup} role="group" aria-label="Formats">
-              <span>Formats</span>
-              <div className={styles.formatOptions}>
-                {MEDIA_FORMATS.map((format) => (
-                  <Button
-                    key={format}
-                    size="sm"
-                    variant="pill"
-                    aria-pressed={query.formats.includes(format)}
-                    onClick={() => toggleFormat(format)}
-                  >
-                    {MEDIA_FORMAT_LABELS[format]}
-                  </Button>
-                ))}
-              </div>
+  const queryControls = {
+    kind: "Controls" as const,
+    label: "Search content",
+    focusInput,
+    content: <PaneQueryToolbar
+      inputRef={searchInputRef}
+      input={{ label: "Search content", placeholder: "Search your Nexus", value: draft, appliedValue: query.text, onChange: updateDraft, onClear: clearText, disabled: !mounted }}
+      options={{
+        label: "Filters",
+        activeCount: appliedChips.length,
+        onClear: clearAllFilters,
+        content: <>
+          <fieldset className={styles.optionGroup}>
+            <legend>Content types</legend>
+            <div className={styles.choices}>
+              {SEARCH_KINDS.map((kind) => <ChoiceField
+                key={kind}
+                label={SEARCH_KIND_LABELS[kind]}
+                checked={(optimisticRequestedKinds === null || optimisticRequestedKinds.has(kind)) && !disabledKindSet.has(kind)}
+                disabled={disabledKindSet.has(kind)}
+                description={disabledKindSet.has(kind) ? disabledReason ?? undefined : undefined}
+                onChange={() => toggleKind(kind)}
+              />)}
             </div>
-            <ContributorFilter selectedHandles={query.authors} onAdd={addAuthor} />
-            <p className={styles.operatorHint}>
-              You can also type format:pdf or author:le-guin in search.
-            </p>
-          </CollectionFilterEditor>
-        </>
-      }
-      summary={
-        <div className={styles.summary}>
-          {query.text && query.text !== draft ? (
-            <span className={styles.committedQuery}>Search: {query.text}</span>
-          ) : null}
-          <AppliedFilters
-            chips={appliedChips}
-            onRemove={removeFilter}
-            returnFocusTo={filterTriggerRef}
-          />
-          <span
-            role={announceResultStatus ? "status" : undefined}
-            aria-live={announceResultStatus ? "polite" : undefined}
-          >
-            {resultStatus}
-          </span>
-        </div>
-      }
-    />
-  ), [
-    addAuthor,
-    appliedChips,
-    announceResultStatus,
-    clearAllFilters,
-    disabledKindSet,
-    disabledReason,
-    draft,
-    filtersActive,
-    mounted,
-    optimisticRequestedKinds,
-    query.authors,
-    query.formats,
-    query.text,
-    removeFilter,
-    resetView,
-    resultStatus,
-    searchInputRef,
-    toggleFormat,
-    toggleKind,
-    updateDraft,
-  ]);
-  const collection = useMemo(
-    () => ({ label: "Search controls", content: toolbar, focusInput }),
-    [focusInput, toolbar],
-  );
+          </fieldset>
+          <fieldset className={styles.optionGroup}>
+            <legend>Formats</legend>
+            <div className={styles.choices}>
+              {MEDIA_FORMATS.map((format) => <ChoiceField key={format} label={MEDIA_FORMAT_LABELS[format]} checked={query.formats.includes(format)} onChange={() => toggleFormat(format)} />)}
+            </div>
+          </fieldset>
+          <ContributorFilter selectedHandles={query.authors} onAdd={addAuthor} />
+          <p className={styles.operatorHint}>You can also type format:pdf or author:le-guin in search.</p>
+        </>,
+      }}
+      chips={{ items: appliedChips, onRemove: removeFilter }}
+      status={{ id: statusId, content: <>
+        <span>Order: relevance</span>
+        <span id={statusId} role={announceResultStatus ? "status" : undefined} aria-live={announceResultStatus ? "polite" : undefined} aria-atomic={announceResultStatus ? true : undefined}>{resultStatus}</span>
+      </> }}
+      onReset={draft || query.text || filtersActive ? resetView : undefined}
+    />,
+  };
   usePaneChrome({
-    collection,
+    query: queryControls,
     header: {
       kind: "Section",
       meta: searching
@@ -763,7 +681,7 @@ export default function SearchPaneBody() {
       content={{
         tone: "Info",
         title: "Search everything in your Nexus",
-        message: "Narrow with the kind chips or filters.",
+        message: "Open filters to narrow by content type, format or author.",
       }}
       announcement="None"
     />

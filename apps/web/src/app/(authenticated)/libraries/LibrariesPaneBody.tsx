@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useId, useEffect, useRef, useState } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
 import {
@@ -9,10 +9,6 @@ import {
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import SelectField from "@/components/ui/SelectField";
-import PaneCollectionBar, {
-  usePaneCollectionInput,
-} from "@/components/workspace/PaneCollectionBar";
 import { isInvalidViewError } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
 import { librariesResource } from "@/lib/api/resource";
@@ -59,6 +55,9 @@ import {
   libraryPresentation,
   RESERVED_LIBRARY_NAME_MESSAGE,
 } from "@/lib/libraries/presentation";
+import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
+import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
+import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import {
   matchesPaneFilterQuery,
@@ -124,7 +123,6 @@ export default function LibrariesPaneBody() {
     (list.failure?.op === "Load" && isInvalidViewError(list.failure.error));
   usePaneReturnReady(list.status !== "loading" || invalid);
   const captureScroll = usePaneScrollRetention(list.items);
-  const sortRef = useRef<HTMLSelectElement | null>(null);
   const setView = useCallback(
     (next: LibrariesIndexView) => {
       captureScroll();
@@ -247,14 +245,15 @@ export default function LibrariesPaneBody() {
   });
   const { query, clearQuery } = filterRows;
   const filtering = query.trim() !== "";
-  const { inputRef, focusInput } = usePaneCollectionInput();
+  const { inputRef, focusInput } = usePaneQueryInput();
+  const queryStatusId = useId();
   const resetView = useCallback(() => {
     clearQuery();
     setView(CANONICAL_LIBRARIES_INDEX_VIEW);
     requestAnimationFrame(() =>
-      sortRef.current?.focus({ preventScroll: true }),
+      inputRef.current?.focus({ preventScroll: true }),
     );
-  }, [clearQuery, setView]);
+  }, [clearQuery, inputRef, setView]);
   const { refetch } = list;
   const execute = useCallback<PaneRefreshExecute>(
     async ({ reportProgress }) => {
@@ -279,54 +278,28 @@ export default function LibrariesPaneBody() {
     [refetch],
   );
   usePaneChrome({
-    collection:
-      invalid || view === null
-        ? undefined
-        : {
-            label: "Filter libraries",
-            focusInput,
-            content: (
-              <PaneCollectionBar
-                inputRef={inputRef}
-                inputLabel="Filter libraries"
-                placeholder="Filter libraries"
-                query={query}
-                onQueryChange={filterRows.onQueryChange}
-                onClearQuery={clearQuery}
-                rowStatus={filterRows.rowStatus}
-                filters={
-                  <SelectField
-                    layout="Inline"
-                    label="Sort libraries"
-                    size="sm"
-                    ref={sortRef}
-                    value={librariesSortOptionOf(view)}
-                    onChange={(event) =>
-                      setView(
-                        librariesViewForSortOption(
-                          // justify-type-assertion: the options are exactly the ids
-                          event.target.value as LibrariesSortOptionId,
-                        ),
-                      )
-                    }
-                  >
-                    {LIBRARIES_SORT_OPTION_IDS.map((id) => (
-                      <option key={id} value={id}>
-                        {librariesSortOptionLabel(id)}
-                      </option>
-                    ))}
-                  </SelectField>
-                }
-                controls={
-                  view.kind === "Canonical" ? undefined : (
-                    <Button variant="ghost" size="sm" onClick={resetView}>
-                      Reset view
-                    </Button>
-                  )
-                }
-              />
-            ),
-          },
+    query: invalid || view === null ? undefined : {
+      kind: "Controls",
+      label: "Filter libraries",
+      focusInput,
+      content: (
+        <PaneQueryToolbar
+          inputRef={inputRef}
+          input={{ label: "Filter libraries", placeholder: "Filter libraries", value: query, appliedValue: query, onChange: filterRows.onQueryChange, onClear: clearQuery }}
+          sort={{
+            label: "Sort",
+            value: librariesSortOptionOf(view),
+            choices: LIBRARIES_SORT_OPTION_IDS.map((value) => ({ value, label: librariesSortOptionLabel(value) })),
+            onChange: (value) => setView(librariesViewForSortOption(
+              // justify-type-assertion: the select offers exactly these ids.
+              value as LibrariesSortOptionId,
+            )),
+          }}
+          status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={query} /> }}
+          onReset={view.kind !== "Canonical" || query ? resetView : undefined}
+        />
+      ),
+    },
     refresh: { kind: "Refreshable", sourceKey: "Libraries.Index", execute },
     header: {
       kind: "Section",

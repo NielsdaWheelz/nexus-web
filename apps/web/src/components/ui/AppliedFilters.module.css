@@ -4,6 +4,7 @@
   gap: var(--space-2);
   align-items: center;
   min-inline-size: 0;
+  max-inline-size: 100%;
 }
 
 /* A long label wraps inside its chip (outranking Chip's height on weight). */

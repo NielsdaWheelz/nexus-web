@@ -13,16 +13,14 @@ import {
   useState,
   type RefObject,
 } from "react";
-import { X } from "lucide-react";
 import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
-import { useViewControls } from "@/components/podcasts/PodcastViewBar";
+import RadioGroup from "@/components/ui/RadioGroup";
 import Button from "@/components/ui/Button";
-import Input from "@/components/ui/Input";
 import PaneSurface from "@/components/ui/PaneSurface";
-import PaneToolbar from "@/components/ui/PaneToolbar";
+import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { usePaneCollectionInput } from "@/components/workspace/PaneCollectionBar";
+import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { isInvalidViewError, type ApiError } from "@/lib/api/client";
 import type { Presence } from "@/lib/api/presence";
 import { requestWithRetry } from "@/lib/api/retryPolicy";
@@ -35,7 +33,9 @@ import {
   browseHref,
   browseSections,
   browseSourcesFor,
+  browseSupportsNewest,
   readBrowseQuery,
+  withBrowseFilters,
   type BrowseQuery,
   type BrowseSection,
 } from "@/lib/browse/query";
@@ -102,19 +102,14 @@ function sectionErrorMessage(error: ApiError): string {
   }
 }
 
-/** The search draft (committed on submit) and the kind/source/sort selects. */
-function BrowseToolbar({
-  query,
-  summary,
-  inputRef,
-  onQuery,
-}: {
+/** Browse owns submitted text, exclusive kind/source choices and provider order. */
+function BrowseToolbar({ query, summary, inputRef, onQuery }: {
   readonly query: BrowseQuery;
   readonly summary: string;
   readonly inputRef: RefObject<HTMLInputElement | null>;
   readonly onQuery: (query: BrowseQuery | null) => void;
 }) {
-  const helpId = useId();
+  const statusId = useId();
   const [draft, setDraft] = useState(query.text);
   const [committed, setCommitted] = useState(query.text);
   if (committed !== query.text) {
@@ -124,162 +119,64 @@ function BrowseToolbar({
   const normalized = draft.trim().normalize("NFC");
   const invalid = browseDraftInvalid(normalized);
   const sources = browseSourcesFor(query.kind);
-  const youTube = query.kind === "Video" && query.source === "YouTube";
-  const controls = useViewControls({
-    sort: youTube
-      ? {
-          param: "sort",
-          label: "Sort results",
-          value: query.sort,
-          defaultValue: "Relevance",
-          options: [
-            { value: "Relevance", label: "Relevance" },
-            { value: "Newest", label: "Newest first" },
-          ],
-        }
-      : null,
-    filters: [
-      {
-        param: "kind",
-        label: "Kind",
-        value: query.kind,
-        defaultValue: "All",
-        options: [
-          { value: "All", label: "All kinds" },
-          ...BROWSE_KINDS.map((kind) => ({
-            value: kind,
-            label: BROWSE_KIND_LABELS[kind],
-          })),
-        ],
-      },
-      ...(sources.length < 2 && query.source === null
-        ? []
-        : [
-            {
-              param: "source",
-              label: "Source",
-              value: query.source ?? "",
-              defaultValue: "",
-              options: [
-                { value: "", label: "All sources" },
-                ...sources.map((source) => ({
-                  value: source,
-                  label: BROWSE_SOURCE_LABELS[source],
-                })),
-              ],
-            },
-          ]),
-    ],
-    // A new kind drops source and sort; a new source drops sort.
-    onChange: (changes) =>
-      onQuery(
-        "kind" in changes
-          ? {
-              ...query,
-              kind: BROWSE_KINDS.find((kind) => kind === changes.kind) ?? "All",
-              source: null,
-              sort: "Relevance",
-            }
-          : "source" in changes
-            ? {
-                ...query,
-                source:
-                  sources.find((source) => source === changes.source) ?? null,
-                sort: "Relevance",
-              }
-            : {
-                ...query,
-                sort: changes.sort === "Newest" ? "Newest" : "Relevance",
-              },
-      ),
-    onReset:
-      draft !== "" || browseHref(query) !== "/browse"
-        ? () => {
-            setDraft("");
-            onQuery(null);
-          }
-        : undefined,
-  });
-  return (
-    <PaneToolbar
-      variant="Collection"
-      search={
-        <form
-          className={styles.searchForm}
-          role="search"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (invalid) {
-              inputRef.current?.focus();
-              return;
-            }
-            setDraft(normalized);
-            onQuery({ ...query, text: normalized });
-          }}
-        >
-          <Input
-            ref={inputRef}
-            type="search"
-            aria-label="Search"
-            size="md"
-            value={draft}
-            maxLength={200}
-            placeholder="Search across sources"
-            aria-describedby={invalid ? helpId : undefined}
-            aria-invalid={invalid || undefined}
-            onChange={(event) => setDraft(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if (event.key !== "Escape" || event.defaultPrevented) return;
-              event.preventDefault();
-              event.stopPropagation();
-              setDraft("");
-            }}
-          />
-          {draft ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              iconOnly
-              aria-label="Clear text filter"
-              title="Clear text filter"
-              onClick={() => {
-                setDraft("");
-                inputRef.current?.focus({ preventScroll: true });
-              }}
-            >
-              <X size={15} aria-hidden="true" />
-            </Button>
-          ) : null}
-          <Button type="submit" size="sm">
-            Search
-          </Button>
-        </form>
-      }
-      filters={
-        <>
-          {youTube ? null : (
-            <span className={styles.note}>Order: relevance</span>
-          )}
-          {controls.selects}
-        </>
-      }
-      summary={
-        <div className={styles.summary}>
-          {query.text && query.text !== draft ? (
-            <span className={styles.committedQuery}>Search: {query.text}</span>
-          ) : null}
-          {controls.chips}
-          {invalid ? (
-            <p id={helpId} className={styles.note}>
-              Use 1–200 characters without control characters.
-            </p>
-          ) : null}
-          {query.text ? <span>{summary}</span> : null}
-        </div>
-      }
-    />
-  );
+  const youTube = browseSupportsNewest(query);
+  const mixedSources = youTube && browseSections(query).length > 1;
+  const chips = [
+    ...(query.kind === "All" ? [] : [{ id: "kind", label: `Kind: ${BROWSE_KIND_LABELS[query.kind]}` }]),
+    ...(query.source === null ? [] : [{ id: "source", label: `Source: ${BROWSE_SOURCE_LABELS[query.source]}` }]),
+  ];
+  return <PaneQueryToolbar
+    inputRef={inputRef}
+    input={{
+      label: "Search across sources",
+      placeholder: "Search across sources",
+      value: draft,
+      appliedValue: query.text,
+      maxLength: 200,
+      error: invalid ? "Use up to 200 characters without control characters." : undefined,
+      onChange: setDraft,
+      onClear: () => { setDraft(""); onQuery({ ...query, text: "" }); },
+    }}
+    submit={{ onSubmit: () => {
+      if (invalid) { inputRef.current?.focus({ preventScroll: true }); return; }
+      setDraft(normalized);
+      onQuery({ ...query, text: normalized });
+    } }}
+    options={{
+      label: "Filters",
+      activeCount: chips.length,
+      onClear: () => onQuery(withBrowseFilters(query, { kind: "All", source: null })),
+      content: <>
+        <RadioGroup
+          label="Kind"
+          value={query.kind}
+          choices={[{ value: "All", label: "All kinds" }, ...BROWSE_KINDS.map((value) => ({ value, label: BROWSE_KIND_LABELS[value] }))]}
+          onChange={(value) => onQuery(withBrowseFilters(query, { kind: BROWSE_KINDS.find((kind) => kind === value) ?? "All", source: null }))}
+        />
+        {sources.length > 1 || query.source !== null ? <RadioGroup
+          label="Source"
+          value={query.source ?? ""}
+          choices={[{ value: "", label: "All sources" }, ...sources.map((value) => ({ value, label: BROWSE_SOURCE_LABELS[value] }))]}
+          onChange={(value) => onQuery(withBrowseFilters(query, { kind: query.kind, source: sources.find((source) => source === value) ?? null }))}
+        /> : null}
+      </>,
+    }}
+    sort={youTube ? {
+      label: "YouTube sort", value: query.sort,
+      choices: [{ value: "Relevance", label: "Relevance" }, { value: "Newest", label: "Newest first" }],
+      onChange: (value) => onQuery({ ...query, sort: value === "Newest" ? "Newest" : "Relevance" }),
+    } : undefined}
+    chips={{ items: chips, onRemove: (id) => onQuery(withBrowseFilters(query, {
+      kind: id === "kind" ? "All" : query.kind,
+      source: null,
+    })) }}
+    status={{ id: statusId, content: <>
+      {mixedSources ? <span>Other sources: relevance</span> : null}
+      {!youTube ? <span>Order: relevance</span> : null}
+      <span id={statusId}>{query.text ? summary : "Enter a search term to browse sources."}</span>
+    </> }}
+    onReset={draft || browseHref(query) !== "/browse" ? () => { setDraft(""); onQuery(null); } : undefined}
+  />;
 }
 
 export default function BrowsePaneBody() {
@@ -294,7 +191,7 @@ export default function BrowsePaneBody() {
   );
   const fail = useThrowLater();
   const idPrefix = useId();
-  const { inputRef, focusInput } = usePaneCollectionInput();
+  const { inputRef, focusInput } = usePaneQueryInput();
 
   // The visit keeps settled sections; one still loading is asked again.
   const runRef = useRef<Run | null>(null);
@@ -338,6 +235,7 @@ export default function BrowsePaneBody() {
         fetchBrowsePage({ q, ...section, cursor, signal: attempt });
       requestWithRetry(load, signal).then(
         (page) => {
+          if (signal.aborted) return;
           const items = [...(from?.items ?? []), ...page.items];
           settle({
             status: "ready",
@@ -428,12 +326,13 @@ export default function BrowsePaneBody() {
       }),
     [router],
   );
-  const collection = useMemo(
+  const queryControls = useMemo(
     () =>
       query === null
         ? undefined
         : {
-            label: "Browse controls",
+            kind: "Controls" as const,
+            label: "Search across sources",
             content: (
               <BrowseToolbar
                 query={query}
@@ -447,7 +346,7 @@ export default function BrowsePaneBody() {
     [focusInput, inputRef, onQuery, query, summary],
   );
   usePaneChrome({
-    collection,
+    query: queryControls,
     header: { kind: "Section", meta: { kind: "None" } },
   });
 

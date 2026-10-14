@@ -1,0 +1,52 @@
+.navigation {
+  min-inline-size: 0;
+}
+
+.row,
+.position,
+.page {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-inline-size: 0;
+}
+
+.row {
+  flex-wrap: wrap;
+  min-block-size: var(--pane-control-row-min-height);
+}
+
+.position {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+}
+
+.count,
+.page {
+  color: var(--ink-muted);
+  font-size: var(--pane-control-font-size);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.section {
+  flex: 1 1 12rem;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.pageInput {
+  min-inline-size: var(--pane-control-size);
+  text-align: center;
+}
+
+.zoom {
+  flex: 0 0 auto;
+}
+
+.error {
+  margin: var(--space-1) 0 0;
+  color: var(--danger);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}

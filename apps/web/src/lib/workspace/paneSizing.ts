@@ -10,10 +10,10 @@ export function estimatePrimaryWidthPx(profile: ReaderProfile): number {
 }
 
 /**
- * The stored width (null follows the column) clamped to [min, max]: min is a
- * reader's intrinsic width once it publishes one, else the column; max is the
- * route's, never below min. Clamping is render-only: the store keeps what the
- * user chose, so a narrower column gives the user's width back.
+ * The stored width (null follows the preferred reader column) clamped to
+ * [min, max]. Responsive panes can shrink to 320px; a reader's intrinsic width
+ * can raise that floor. The route's maximum never falls below it. Clamping is
+ * render-only, so an intrinsic layout never overwrites the user's chosen width.
  */
 export function primaryWidth(input: {
   readonly storedPx: number | null;
@@ -25,7 +25,7 @@ export function primaryWidth(input: {
   readonly minWidthPx: number;
   readonly maxWidthPx: number;
 } {
-  const minWidthPx = Math.ceil(input.intrinsicPx ?? input.columnPx);
+  const minWidthPx = Math.max(320, Math.ceil(input.intrinsicPx ?? 0));
   const maxWidthPx = Math.max(input.routeMaxPx, minWidthPx);
   const stored = Math.round(input.storedPx ?? Math.ceil(input.columnPx));
   return {

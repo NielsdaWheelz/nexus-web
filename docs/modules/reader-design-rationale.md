@@ -260,14 +260,14 @@ quote is fixed: editing, moving or deleting the highlight afterwards cannot
 change the displayed or prompted passage. new-chat send is atomic, so a failed
 first send leaves no conversation behind.
 
-## regression strategy
+## verification strategy
 
-the reader harness (isolated stack, playwright-managed browsers) is the
-behavioural contract: `R.*` journeys per surface, `S.*` public shares, `O.*`
-shelf copies, the find subset, and `R.HL.*` for the paint conditions on
-chromium, firefox and webkit. by hand: android webview paint and taps, real
-safari, the largest book on the phone.
+reader behavior needs actual surfaces, publication geometry and saved-state
+readbacks. qualify affected journeys through the existing live product path,
+including cancellation, first-departure return, progress isolation and mobile
+keyboard/chrome motion. browser emulation does not prove physical input or
+assistive technology. record the observations and unverified distinctions.
 
-## static verification
-
-`./scripts/test` checks static consistency. it does not exercise the reader.
+`./scripts/test` checks static consistency; historical reader harnesses are
+retired. [local testing standards](../local-rules/testing-standards.md) own
+manual qualification and justified future tests.
