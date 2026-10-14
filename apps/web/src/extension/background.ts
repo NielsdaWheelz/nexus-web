@@ -1,139 +1,126 @@
-// The one owner of a Firefox capture: a persistent MV2 background page that
-// pins a target by native document identity, reads it through content.ts,
-// holds the nexus credential, drives the upload lifecycle through
-// captureClient and persists every step in captureStore, so a restart resumes
-// the same operation instead of repeating it. The popup renders the view
-// state pushed on the "nexus-capture-view" port and sends CaptureCommands;
-// content scripts speak ContentRequest/ContentReply on their own port and
-// never see the credential.
+// The one owner of a Firefox capture: a persistent MV2 background page. It pins a
+// target by native document identity, reads it through content.ts, holds the
+// credential (storage.local) and the draft (memory only: a Firefox restart
+// forgets it), and saves in three steps: create the session (the draft's id) ->
+// PUT the bytes to the signed url -> confirm. Any failure shows the error with
+// Retry, which re-runs the three steps with the same id; nexus advances the
+// session or answers what it already published. The popup renders the state
+// pushed on its port and sends Commands; content scripts never see the bearer.
 //
 // invariants:
-// - one active draft; a second activation resumes it, never replaces it
-// - a target is pinned by document id; a replacement document (even a
-//   same-url reload) fails every later operation instead of being read
-// - save freezes bytes, operation key, destinations and account, and persists
-//   `prepared` before the first capture mutation; every replay reuses them
-// - the draft's session generation is one nexus named (an UploadRequired, or
-//   the current one a retry conflict reported), never inferred; a frozen
-//   operation continues by reading status first, so no request is replayed
-// - when no work runs for a stored draft (after a restart, or once discard or
-//   disconnect aborted it) the persisted state says so: an interrupted
-//   download is a draft again, a frozen draft is `resumable`; no capture
-//   mutation (create, put, confirm, retry, delete) happens until an explicit
-//   `resume`, and the identity read is the only network call a popup open
-//   performs; there are no timers, keepalives or offline resubmission
-// - a command that needs origins Firefox has not granted waits for the grant
-//   the popup requests, before its first mutation; a denial changes nothing;
-//   only a repeated such command takes that wait over, and pinning never
-//   pre-empts running work
-// - the credential is forgotten only on confirmed revocation, or when nexus
-//   answers 401 (it is already invalid); a frozen draft it leaves behind is
-//   `resumable`, because both its continuation and its discard go through
-//   nexus as its bound account
+// - one draft; activation pins only an empty slot or replaces a saved receipt
+// - a target is pinned by document id; a replacement document (even a same-url
+//   reload) fails every later read instead of being read
+// - the draft's id, bytes and libraries are fixed from the first save to Discard
+// - a command that needs origins waits for the grant the popup requests, before
+//   its first network call; a denial changes nothing; one long command at a time
 
 import { isAbortError } from "@/lib/errors";
 import type { LibraryDestination } from "@/lib/libraries/api";
 import {
-  UPLOAD_VERIFICATION_CODES,
-  type PublishedUpload,
-  type UploadResponse,
-} from "@/extension/uploadSessionContract";
-import {
-  expectArray,
-  expectExactRecord,
-  expectNullableString,
-  expectOneOf,
-  expectRecord,
-  expectString,
-} from "@/lib/validation";
-import { captureClient, isFailureCode, putCaptureBytes, type CaptureClient } from "@/extension/captureClient";
-import {
-  ARTICLE_PACKET_MAX_BYTES,
-  CAPTURE_CONTENT_TYPE,
   CONTENT_PORT,
+  CONTENT_TYPE,
   CaptureFailureError,
   VIEW_PORT,
-  captureFailure,
-  fetchFailure,
-  readDocumentResponse,
-  serializeArticlePacket,
+  failure,
+  readDocument,
+  serializePacket,
   sha256Hex,
   urlFilename,
-  decodeDestination,
-  type CaptureCommand,
   type CaptureFailure,
-  type CaptureIntent,
   type CapturePhase,
-  type CaptureTargetView,
-  type CaptureViewState,
+  type Command,
   type CommandResult,
   type DocumentKind,
   type DocumentRead,
-  type ExtensionSession,
-} from "@/extension/captureContract";
+  type TargetView,
+  type ViewState,
+} from "@/extension/capture";
 import {
-  captureStore,
-  type CaptureBytes,
-  type CaptureCredential,
-  type CaptureDraftRecord,
-  type CaptureTarget,
-  type DocumentSource,
-} from "@/extension/captureStore";
+  nexus,
+  putBytes,
+  type ExtensionSession,
+  type Nexus,
+  type UploadAnswer,
+} from "@/extension/nexusClient";
 import type { ContentReply, ContentRequest } from "@/extension/content";
 
-// pinned by the build (apps/web/scripts/build-extension.mjs)
 declare const __NEXUS_ORIGIN__: string;
 declare const __NEXUS_STORAGE_ORIGIN__: string;
 
-const NEXUS_ORIGIN = __NEXUS_ORIGIN__;
-const STORAGE_ORIGIN = __NEXUS_STORAGE_ORIGIN__;
 const MENU_ID = "nexus-capture-link";
-const ARTICLE_FILENAME = "article.json";
-
-// Codes after which the same intent can never succeed; every other failure is
-// offered a retry of the same operation.
-const TERMINAL_CODES = new Set<string>([
-  ...UPLOAD_VERIFICATION_CODES,
+const CREDENTIAL_KEY = "nexusCaptureCredential";
+/** Codes after which the same request can never succeed: no Retry. */
+const TERMINAL = new Set([
+  "E_SOURCE_INTEGRITY",
+  "E_INVALID_FILE_TYPE",
+  "E_FILE_TOO_LARGE",
+  "E_CAPTURE_TOO_LARGE",
   "E_INVALID_REQUEST",
-  "E_IDEMPOTENCY_CONFLICT",
-  "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH",
   "E_UPLOAD_INTENT_MISMATCH",
-  "E_UPLOAD_SESSION_NOT_FOUND",
+  "E_RESOURCE_CONFLICT",
   "E_LIBRARY_FORBIDDEN",
   "E_FORBIDDEN",
   "E_CAPTURE_PAGE_GONE",
-  "E_CAPTURE_ACCOUNT_MISMATCH",
 ]);
 
-// --- state ------------------------------------------------------------------
+const INTERRUPTED: CaptureFailure = {
+  code: "E_CAPTURE_INTERRUPTED",
+  message: "The capture was interrupted.",
+  requestId: null,
+};
 
-/** signed in means both an identity and the client its credential authorizes, never one */
-type ConnectedSession = ExtensionSession & { client: CaptureClient };
+type DocumentSource =
+  | {
+      kind: "page";
+      tabId: number;
+      documentId: string;
+      pageUrl: string;
+      sameOrigin: boolean;
+    }
+  | { kind: "extension" };
 
-let draft: CaptureDraftRecord | null = null;
-let bytes: CaptureBytes | null = null;
-/** why the last activation pinned nothing; shown while no draft exists */
-let unsupported: string | null = null;
-/** a frozen draft no work runs for awaits an explicit `resume` */
-let resumable = false;
-let credential: CaptureCredential | null = null;
-/** the identity nexus confirmed for the credential */
-let session: ConnectedSession | null = null;
+type DocumentTarget = {
+  kind: "document";
+  windowId: number;
+  url: string;
+  source: DocumentSource;
+};
+
+interface Draft {
+  /** the capture session's id: minted at pin, sent by every save of this draft */
+  id: string;
+  target: { kind: "article"; windowId: number; url: string } | DocumentTarget;
+  view: TargetView;
+  phase: CapturePhase;
+  destinations: LibraryDestination[];
+  locked: boolean;
+  /** what a save sends; a document's arrive with its first save */
+  bytes: {
+    kind: "web_article" | DocumentKind;
+    blob: Blob;
+    filename: string;
+    sizeBytes: number;
+    sha256: string;
+  } | null;
+}
+
+let token: string | null = null;
+let session: (ExtensionSession & { client: Nexus }) | null = null;
 let revocationFailure: CaptureFailure | null = null;
-/** the one long-running command, abortable by discard/disconnect */
-let active: { controller: AbortController; settled: Promise<void> } | null = null;
-/** `active` awaits an origin grant (set only by `awaitOrigins`): a repeated
-    command takes the wait over instead of being refused */
+let draft: Draft | null = null;
+let unsupported: string | null = null;
+let active: { controller: AbortController; done: Promise<void> } | null = null;
+/** `active` waits for an origin grant: a repeated command may take it over */
 let awaitingGrant = false;
-/** the injection currently waiting for its content port */
 let contentWaiter: {
   accepts: (sender: browser.runtime.MessageSender) => boolean;
   resolve: (port: browser.runtime.Port) => void;
 } | null = null;
 const viewPorts = new Set<browser.runtime.Port>();
+let pushing = Promise.resolve();
 
-// Firefox never persists menu items of a persistent background page: create on
-// every load, unconditionally.
+// a persistent background page's menu items are not persisted: create on load
 browser.menus.create({
   id: MENU_ID,
   title: "Add link to Nexus…",
@@ -141,631 +128,548 @@ browser.menus.create({
   targetUrlPatterns: ["http://*/*", "https://*/*"],
 });
 
-const ready = start();
-
-async function start(): Promise<void> {
-  draft = await captureStore.draft.read();
-  bytes = await captureStore.bytes.read();
-  credential = await captureStore.credential.read();
-  await recover();
-}
-
-/** No work runs for the stored draft: an interrupted download left nothing
-    frozen, so the target is a draft again; a frozen draft waits for an
-    explicit resume. */
-async function recover(): Promise<void> {
-  resumable = draft !== null && draft.intent !== null && draft.phase.kind !== "saved";
-  if (draft?.phase.kind === "acquiring") await setDraft({ ...draft, phase: { kind: "draft" } });
-  else await pushState();
-}
-
-// --- messaging --------------------------------------------------------------
-
-browser.runtime.onMessage.addListener((message: unknown, sender: browser.runtime.MessageSender) => {
-  // commands come from this extension's popup only: our id, no tab
-  if (sender.id !== browser.runtime.id || sender.tab !== undefined) return undefined;
-  return handle(message);
+const ready = browser.storage.local.get(CREDENTIAL_KEY).then((stored) => {
+  token =
+    (stored[CREDENTIAL_KEY] as { token?: string } | undefined)?.token ?? null;
 });
+
+browser.runtime.onMessage.addListener(
+  (message: unknown, sender: browser.runtime.MessageSender) => {
+    // commands come from this extension's popup only: our id, no tab
+    if (sender.id !== browser.runtime.id || sender.tab !== undefined)
+      return undefined;
+    return handle(message as Command);
+  },
+);
 
 browser.runtime.onConnect.addListener((port) => {
   const sender = port.sender;
-  if (sender?.id !== browser.runtime.id) {
-    port.disconnect();
-    return;
-  }
-  if (port.name === VIEW_PORT && sender.tab === undefined) {
-    void attachView(port);
-    return;
-  }
-  if (port.name === CONTENT_PORT && sender.tab !== undefined && contentWaiter?.accepts(sender)) {
-    const { resolve } = contentWaiter;
+  const ours = sender?.id === browser.runtime.id;
+  if (ours && port.name === VIEW_PORT && sender?.tab === undefined) {
+    viewPorts.add(port);
+    port.onDisconnect.addListener(() => viewPorts.delete(port));
+    // the popup shows signed out when nexus cannot say who this is
+    void ready.then(() => ensureSession().catch(describe)).then(pushState);
+  } else if (
+    ours &&
+    port.name === CONTENT_PORT &&
+    sender &&
+    contentWaiter?.accepts(sender)
+  ) {
+    contentWaiter.resolve(port);
     contentWaiter = null;
-    resolve(port);
-    return;
+  } else {
+    port.disconnect();
   }
-  port.disconnect();
 });
 
-browser.menus.onClicked.addListener((info, tab) => {
-  void menuClick(info, tab);
-});
+browser.menus.onClicked.addListener((info, tab) => void menuClick(info, tab));
 
-async function attachView(port: browser.runtime.Port): Promise<void> {
-  viewPorts.add(port);
-  port.onDisconnect.addListener(() => viewPorts.delete(port));
+async function handle(sent: Command): Promise<CommandResult> {
   await ready;
   try {
-    await ensureSession();
-  } catch (error) {
-    // the popup shows signed-out; the next open tries again
-    await recordFailure(error);
-  }
-  await pushState();
-}
-
-async function handle(message: unknown): Promise<CommandResult> {
-  await ready;
-  try {
-    return await command(decodeCommand(message));
-  } catch (error) {
-    return { kind: "failure", failure: await recordFailure(error), state: await viewState() };
-  }
-}
-
-async function command(sent: CaptureCommand): Promise<CommandResult> {
-  switch (sent.kind) {
-    case "activate":
-      await activate();
-      break;
-    case "resume":
-      await exclusive(resume, true);
-      break;
-    case "set_destinations":
-      await setDestinations(sent.destinations);
-      break;
-    case "search_destinations":
-      return {
-        kind: "page",
-        page: await requireClient().searchDestinations(sent.q, sent.cursor),
-        state: await viewState(),
-      };
-    case "login":
-      await login();
-      break;
-    case "save":
-      await exclusive(save, true);
-      break;
-    case "retry":
-      await exclusive(retry, true);
-      break;
-    case "discard":
-      await interrupting(discard);
-      break;
-    case "disconnect":
-      await interrupting(disconnect);
-      break;
-  }
-  return { kind: "state", state: await viewState() };
-}
-
-function decodeCommand(raw: unknown): CaptureCommand {
-  const kind = expectOneOf(
-    expectRecord(raw, "command").kind,
-    ["activate", "resume", "set_destinations", "search_destinations", "login", "save", "retry", "discard", "disconnect"],
-    "command.kind",
-  );
-  switch (kind) {
-    case "set_destinations": {
-      const sent = expectExactRecord(raw, ["kind", "destinations"], "command");
-      return {
-        kind,
-        destinations: expectArray(
-          sent.destinations,
-          (value, index) => decodeDestination(value, `command.destinations[${index}]`),
-          "command.destinations",
-        ),
-      };
+    switch (sent.kind) {
+      case "activate":
+        await activate();
+        break;
+      case "set_destinations":
+        if (draft === null || draft.locked) {
+          throw failure(
+            "E_CAPTURE_LOCKED",
+            "Libraries are fixed once a capture is saved.",
+          );
+        }
+        setDraft({ ...draft, destinations: sent.destinations });
+        break;
+      case "search_destinations": {
+        const page = await requireSession().client.destinations(
+          sent.q,
+          sent.cursor,
+        );
+        return { kind: "page", page };
+      }
+      case "login":
+        await login();
+        break;
+      case "save":
+      case "retry":
+        await exclusive(save, true);
+        break;
+      case "discard":
+        await interrupt();
+        discard();
+        break;
+      case "disconnect":
+        await interrupt();
+        await exclusive(disconnect, true);
+        break;
     }
-    case "search_destinations": {
-      const sent = expectExactRecord(raw, ["kind", "q", "cursor"], "command");
-      return {
-        kind,
-        q: expectString(sent.q, "command.q"),
-        cursor: expectNullableString(sent.cursor, "command.cursor"),
-      };
-    }
-    default:
-      expectExactRecord(raw, ["kind"], "command");
-      return { kind };
+    return { kind: "state", state: await viewState() };
+  } catch (error) {
+    return { kind: "failure", failure: await describe(error) };
   }
 }
 
-/** Runs one long command; a second one while it runs is refused. A command
-    that awaits origins itself (`awaitsOrigins`) may instead take over a running
-    one that awaits its grant: the popup asked again, and nothing was mutated
-    before it. Pinning never takes anything over. */
-async function exclusive(run: (signal: AbortSignal) => Promise<void>, awaitsOrigins = false): Promise<void> {
+/** One long command at a time. A command that waits for origins may take over a
+    running one still waiting for its grant (nothing was sent yet). */
+async function exclusive(
+  run: (signal: AbortSignal) => Promise<void>,
+  takesOverGrantWait = false,
+): Promise<void> {
   if (active !== null) {
-    if (!awaitingGrant || !awaitsOrigins) throw failure("E_CAPTURE_BUSY", "Nexus is still working on this capture.");
-    active.controller.abort();
-    await active.settled;
-    active = null;
+    if (!(awaitingGrant && takesOverGrantWait)) {
+      throw failure(
+        "E_CAPTURE_BUSY",
+        "Nexus is still working on this capture.",
+      );
+    }
+    await interrupt();
   }
   const controller = new AbortController();
-  const settled = run(controller.signal).catch((error: unknown) => {
+  const done = run(controller.signal).catch((error: unknown) => {
     if (!isAbortError(error)) throw error;
   });
-  active = { controller, settled };
+  active = { controller, done };
   try {
-    await settled;
+    await done;
   } finally {
-    active = null;
+    if (active?.controller === controller) active = null;
   }
 }
 
-/** Aborts the running command, waits for it to settle, records that nothing
-    runs for the draft any more, then runs `run`. */
-async function interrupting(run: (signal: AbortSignal) => Promise<void>): Promise<void> {
-  if (active !== null) {
-    active.controller.abort();
-    await active.settled.catch(() => undefined);
-    active = null;
-    await recover();
+/** Abort the running command and wait for it; a save it cut short reads failed. */
+async function interrupt(): Promise<void> {
+  if (active === null) return;
+  active.controller.abort();
+  await active.done.catch(() => undefined);
+  active = null;
+  const phase = draft?.phase.kind;
+  if (
+    phase === "acquiring" ||
+    phase === "uploading" ||
+    phase === "confirming"
+  ) {
+    setPhase({ kind: "failed", failure: INTERRUPTED, retryable: true });
   }
-  await exclusive(run);
 }
 
-// --- view state -------------------------------------------------------------
+// --- view state ----------------------------------------------------------------
 
-async function viewState(): Promise<CaptureViewState> {
+async function viewState(): Promise<ViewState> {
   return {
-    connection:
-      session !== null
-        ? { kind: "connected", account: session.account }
-        : revocationFailure !== null
-          ? { kind: "revocation_failed", failure: revocationFailure }
-          : { kind: "signed_out" },
+    account:
+      session === null
+        ? null
+        : {
+            userId: session.user_id,
+            email: session.email,
+            displayName: session.display_name,
+          },
+    revocationFailure,
     requiredOrigins: await requiredOrigins(),
-    view:
-      draft !== null
-        ? {
-            kind: "draft",
-            draft: {
-              id: draft.id,
-              target: draft.view,
-              phase: draft.phase,
-              destinations: draft.destinations,
-              resumable,
-            },
-          }
-        : unsupported !== null
-          ? { kind: "unsupported", reason: unsupported }
-          : { kind: "empty" },
+    draft:
+      draft === null
+        ? null
+        : {
+            target: draft.view,
+            phase: draft.phase,
+            destinations: draft.destinations,
+            locked: draft.locked,
+          },
+    unsupported,
   };
 }
 
-/** nexus and storage always; the target origin while the background itself
-    still has to download the document (frozen bytes need no publisher);
-    minus what Firefox already granted */
-async function requiredOrigins(): Promise<string[]> {
-  const patterns = [originPattern(NEXUS_ORIGIN), originPattern(STORAGE_ORIGIN)];
-  if (draft?.target.kind === "document" && draft.intent === null && downloadsInBackground(draft.target.source)) {
-    patterns.push(originPattern(draft.target.url));
-  }
-  const missing: string[] = [];
-  for (const pattern of patterns) {
-    if (!(await browser.permissions.contains({ origins: [pattern] }))) missing.push(pattern);
-  }
-  return missing;
+/** Pushes go out in order, each with the state as it is when it is sent. */
+function pushState(): void {
+  pushing = pushing
+    .then(async () => {
+      const state = await viewState();
+      for (const port of viewPorts) {
+        try {
+          port.postMessage(state);
+        } catch {
+          // justify-ignore-error: Firefox marks a port dead before onDisconnect fires
+          viewPorts.delete(port);
+        }
+      }
+    })
+    // justify-ignore-error: a push that cannot be read is replaced by the next one
+    .catch(() => undefined);
 }
 
-/** Firefox match patterns carry no port: the host matches every port. */
-function originPattern(url: string): string {
-  const parsed = new URL(url);
-  return `${parsed.protocol}//${parsed.hostname}/*`;
+function setDraft(next: Draft | null, reason: string | null = null): void {
+  draft = next;
+  unsupported = next === null ? reason : null;
+  pushState();
+}
+
+function setPhase(phase: CapturePhase): void {
+  if (draft !== null) setDraft({ ...draft, phase });
+}
+
+/** nexus and storage always; the target's origin while the background must still
+    download the document itself; minus what Firefox already granted. Match
+    patterns carry no port: the host matches every port. */
+async function requiredOrigins(): Promise<string[]> {
+  const origins = [__NEXUS_ORIGIN__, __NEXUS_STORAGE_ORIGIN__];
+  const target = draft?.target;
+  if (
+    target?.kind === "document" &&
+    draft?.bytes === null &&
+    downloadsInBackground(target.source)
+  ) {
+    origins.push(target.url);
+  }
+  const missing: string[] = [];
+  for (const origin of origins) {
+    const { protocol, hostname } = new URL(origin);
+    const pattern = `${protocol}//${hostname}/*`;
+    if (!(await browser.permissions.contains({ origins: [pattern] })))
+      missing.push(pattern);
+  }
+  return missing;
 }
 
 function downloadsInBackground(source: DocumentSource): boolean {
   return source.kind === "extension" || !source.sameOrigin;
 }
 
-/** Waits until Firefox reports every required origin. The popup asks in its
-    click handler right after sending the command, and the grant arrives here
-    as `permissions.onAdded`, whether or not the popup outlived the doorhanger;
-    a denial fires nothing, so the wait ends only with a grant or an abort.
-    Meanwhile nothing is mutated: the phase is unchanged and `requiredOrigins`
-    stays listed, so a reopened popup asks again. No timers. The listener is
-    installed before the check, so a grant landing between them is seen. */
+/** Wait until Firefox reports every required origin. The popup asks inside its
+    click and may close under the doorhanger, so the grant arrives here as
+    `permissions.onAdded`; a denial fires nothing and the wait ends only with a
+    grant or an abort. The listener is installed before the check. */
 async function awaitOrigins(signal: AbortSignal): Promise<void> {
   for (;;) {
     if (signal.aborted) throw signal.reason;
-    let settled = (): void => undefined;
-    const outcome = new Promise<void>((resolve) => {
-      settled = () => resolve();
-    });
-    browser.permissions.onAdded.addListener(settled);
-    signal.addEventListener("abort", settled, { once: true });
+    let wake = (): void => undefined;
+    const granted = new Promise<void>((resolve) => (wake = resolve));
+    browser.permissions.onAdded.addListener(wake);
+    signal.addEventListener("abort", wake, { once: true });
     try {
       if ((await requiredOrigins()).length === 0) return;
       awaitingGrant = true;
-      await outcome;
+      await granted;
     } finally {
       awaitingGrant = false;
-      browser.permissions.onAdded.removeListener(settled);
-      signal.removeEventListener("abort", settled);
+      browser.permissions.onAdded.removeListener(wake);
+      signal.removeEventListener("abort", wake);
     }
   }
 }
 
-/** Best effort: a popup that closed is dropped, never a reason for a lifecycle
-    step to fail; the durable record carries the state for its next connect. */
-async function pushState(): Promise<void> {
-  const state = await viewState();
-  for (const port of viewPorts) {
-    try {
-      port.postMessage({ kind: "state", state });
-    } catch {
-      // justify-ignore-error: Firefox marks a port disconnected before it
-      // delivers onDisconnect, so a dead port can still sit in the set.
-      viewPorts.delete(port);
-    }
-  }
-}
+// --- failures ------------------------------------------------------------------
 
-async function setDraft(next: CaptureDraftRecord): Promise<void> {
-  await captureStore.draft.write(next);
-  draft = next;
-  await pushState();
-}
-
-async function setPhase(phase: CapturePhase): Promise<void> {
-  await setDraft({ ...requireDraft(), phase });
-}
-
-/** A new draft replaces whatever the slot held (a receipt, or nothing);
-    memory never outruns the store, so a failed write leaves an empty slot. */
-async function replaceDraft(next: CaptureDraftRecord, nextBytes: CaptureBytes | null): Promise<void> {
-  await captureStore.draft.clear();
-  draft = null;
-  bytes = null;
-  unsupported = null;
-  resumable = false;
-  if (nextBytes !== null) await captureStore.bytes.write(nextBytes);
-  bytes = nextBytes;
-  await setDraft(next);
-}
-
-/** Empties the slot; `reason` is why nothing could be pinned in its place,
-    shown while no draft exists. */
-async function clearDraft(reason: string | null = null): Promise<void> {
-  await captureStore.draft.clear();
-  draft = null;
-  bytes = null;
-  unsupported = reason;
-  resumable = false;
-  await pushState();
-}
-
-function newDraft(target: CaptureTarget, view: CaptureTargetView): CaptureDraftRecord {
-  return {
-    id: crypto.randomUUID(),
-    target,
-    view,
-    phase: { kind: "draft" },
-    destinations: [],
-    account: session?.account ?? null,
-    intent: null,
-    session: null,
-  };
-}
-
-// --- failures ---------------------------------------------------------------
-
-function failure(code: string, message: string, requestId: string | null = null): CaptureFailureError {
-  return new CaptureFailureError(captureFailure(code, message, requestId));
-}
-
-/** The failure to show for `error`; a 401 also forgets the credential nexus
-    no longer honours. */
-async function recordFailure(error: unknown): Promise<CaptureFailure> {
+/** The failure to show; a 401 also forgets the credential nexus no longer honours. */
+async function describe(error: unknown): Promise<CaptureFailure> {
   if (error instanceof CaptureFailureError) {
     if (error.status === 401) await forgetCredential();
     return error.failure;
   }
-  if (isAbortError(error)) return captureFailure("E_CAPTURE_INTERRUPTED", "The capture was interrupted.");
-  return captureFailure(
-    "E_CAPTURE_DEFECT",
-    `Nexus capture stopped unexpectedly: ${error instanceof Error ? error.message : String(error)}`,
-  );
+  if (isAbortError(error)) return INTERRUPTED;
+  const detail = error instanceof Error ? error.message : String(error);
+  return {
+    code: "E_CAPTURE_DEFECT",
+    message: `Nexus capture stopped unexpectedly: ${detail}`,
+    requestId: null,
+  };
 }
 
-/** Records a failed phase for an error inside save/retry/resume; aborts
-    propagate. So does a 401: every nexus call here follows the freeze, so it
-    signs the draft out from under a frozen operation nexus never judged, which
-    is no phase failure. The command answers it, and forgetting the credential
-    leaves the draft resumable. */
-async function recordPhaseFailure(error: unknown): Promise<void> {
-  if (isAbortError(error) || (error instanceof CaptureFailureError && error.status === 401)) throw error;
-  const recorded = await recordFailure(error);
-  await setPhase({ kind: "failed", failure: recorded, retryable: !TERMINAL_CODES.has(recorded.code) });
-}
-
-function contentDefect(reply: ContentReply): CaptureFailureError {
-  return failure("E_CAPTURE_CONTENT", `The page script answered ${reply.kind} out of turn.`);
-}
-
-function requireDraft(): CaptureDraftRecord {
-  if (draft === null) throw failure("E_CAPTURE_NO_DRAFT", "Nothing is pinned. Open a page and try again.");
-  return draft;
-}
-
-function requireBytes(): CaptureBytes {
-  if (bytes === null) throw failure("E_CAPTURE_BYTES_LOST", "The captured bytes are no longer stored. Discard and capture again.");
-  return bytes;
-}
-
-function requireSession(): ConnectedSession {
-  if (session === null) throw failure("E_CAPTURE_SIGNED_OUT", "Sign in to Nexus first.");
-  if (draft !== null && draft.account !== null && draft.account.userId !== session.account.userId) {
-    throw failure(
-      "E_CAPTURE_ACCOUNT_MISMATCH",
-      "This capture belongs to another Nexus account. Sign in as that account to continue.",
-    );
-  }
+function requireSession(): NonNullable<typeof session> {
+  if (session === null)
+    throw failure("E_CAPTURE_SIGNED_OUT", "Sign in to Nexus first.");
   return session;
 }
 
-function requireClient(): CaptureClient {
-  return requireSession().client;
+function requireDraft(): Draft {
+  if (draft === null)
+    throw failure("E_CAPTURE_PHASE", "There is nothing to save.");
+  return draft;
 }
 
-// --- identity ---------------------------------------------------------------
+// --- identity ------------------------------------------------------------------
 
-/** The first successful identity lookup binds an unbound draft to its account. */
 async function ensureSession(signal?: AbortSignal): Promise<void> {
-  if (session !== null || credential === null) return;
-  const client = captureClient(credential.token);
+  if (session !== null || token === null) return;
+  const client = nexus(token);
   session = { ...(await client.session(signal)), client };
-  if (draft !== null && draft.account === null) await setDraft({ ...draft, account: session.account });
+  pushState();
 }
 
-/** The credential leaves (confirmed revocation, or a 401). A frozen draft is
-    continued and discarded through nexus by its bound account, so with the
-    account gone no work can run for it: it is normalized as after any
-    interruption and waits, resumable, for the sign-in. */
 async function forgetCredential(): Promise<void> {
-  await captureStore.credential.clear();
-  credential = null;
+  await browser.storage.local.remove(CREDENTIAL_KEY);
+  token = null;
   session = null;
   revocationFailure = null;
-  await recover();
+  pushState();
 }
 
 async function login(): Promise<void> {
   if (revocationFailure !== null) {
-    throw failure("E_CAPTURE_REVOCATION_PENDING", "Finish disconnecting before signing in again.");
+    throw failure(
+      "E_CAPTURE_REVOCATION_PENDING",
+      "Finish disconnecting before signing in again.",
+    );
   }
-  // a held credential is confirmed, never replaced: only a confirmed revocation
-  // or a 401 forgets it, so a token nexus still honours is never orphaned by a
-  // second sign-in after an identity read that merely could not be reached
-  if (credential !== null) {
+  if (token !== null) {
+    // a held credential is confirmed, never replaced: only a revocation or a 401
+    // forgets it, so a token nexus still honours is never orphaned
     await exclusive(async (signal) => {
       await awaitOrigins(signal);
       await ensureSession(signal);
     }, true);
     return;
   }
-  // the window to return to: the pinned target's, else the one the popup is in
-  const windowId = draft?.target.windowId ?? (await browser.windows.getLastFocused()).id ?? null;
-  // only a flow that opened the auth window took the focus and owes a reopen,
-  // which follows the command's end so the reopened popup's activation runs
+  // the window to come back to: the pinned target's, else the popup's
+  const windowId =
+    draft?.target.windowId ??
+    (await browser.windows.getLastFocused()).id ??
+    null;
+  // only a flow that opened the sign-in window took the focus and owes a reopen
   let opened = false;
-  await exclusive(async (signal) => {
-    // the nexus host permission covers the identity read after the flow
-    await awaitOrigins(signal);
-    opened = true;
-    const state = crypto.randomUUID();
-    const redirectUri = browser.identity.getRedirectURL();
-    let finalUrl: string;
-    try {
-      finalUrl = await browser.identity.launchWebAuthFlow({
-        url: `${NEXUS_ORIGIN}/extension/connect/start?redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`,
-        interactive: true,
-      });
-    } catch (error) {
-      throw failure("E_CAPTURE_LOGIN", `Sign-in did not complete: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    const reply = new URLSearchParams(new URL(finalUrl).hash.slice(1));
-    if (reply.get("state") !== state) {
-      throw failure("E_CAPTURE_LOGIN_STATE", "The sign-in reply did not match this sign-in attempt.");
-    }
-    const error = reply.get("error");
-    if (error !== null) throw failure("E_CAPTURE_LOGIN", `Nexus sign-in failed: ${error}.`, reply.get("request_id"));
-    const token = reply.get("token");
-    if (token === null || token === "") throw failure("E_CAPTURE_LOGIN", "Nexus sign-in returned no token.");
-    credential = { token };
-    session = null;
-    await captureStore.credential.write(credential);
-    await ensureSession(signal);
-  }, true).finally(() => (opened && windowId !== null ? reopenPopup(windowId) : undefined));
+  try {
+    await exclusive(async (signal) => {
+      await awaitOrigins(signal);
+      opened = true;
+      const state = crypto.randomUUID();
+      const redirect = encodeURIComponent(browser.identity.getRedirectURL());
+      let reply: URLSearchParams;
+      try {
+        const finalUrl = await browser.identity.launchWebAuthFlow({
+          url: `${__NEXUS_ORIGIN__}/extension/connect/start?redirect_uri=${redirect}&state=${state}`,
+          interactive: true,
+        });
+        reply = new URLSearchParams(new URL(finalUrl).hash.slice(1));
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw failure("E_CAPTURE_LOGIN", `Sign-in did not complete: ${detail}`);
+      }
+      if (reply.get("state") !== state) {
+        throw failure(
+          "E_CAPTURE_LOGIN_STATE",
+          "The sign-in reply did not match this sign-in.",
+        );
+      }
+      const issued = reply.get("token");
+      if (!issued) {
+        const reason = reply.get("error") ?? "no token";
+        throw failure(
+          "E_CAPTURE_LOGIN",
+          `Nexus sign-in failed: ${reason}.`,
+          reply.get("request_id"),
+        );
+      }
+      await browser.storage.local.set({ [CREDENTIAL_KEY]: { token: issued } });
+      token = issued;
+      session = null;
+      await ensureSession(signal);
+    }, true);
+  } finally {
+    if (opened && windowId !== null) await reopenPopup(windowId);
+  }
 }
 
-/** Firefox ≥ 149 opens the popup without a gesture but only in the focused
-    window. If it cannot, the work waits for the next activation. */
+/** Firefox ≥ 149 reopens the popup without a gesture, in the focused window only. */
 async function reopenPopup(windowId: number): Promise<void> {
   try {
     await browser.windows.update(windowId, { focused: true });
     await browser.browserAction.openPopup({ windowId });
   } catch {
-    // justify-ignore-error: the window may be gone; the draft is persisted
-    // and the next toolbar click resumes it.
+    // justify-ignore-error: the window may be gone; the next toolbar click shows the state
   }
 }
 
-/** Revocation is a nexus call, so it waits for the origin grant like every
-    other; a denial leaves the credential and the draft as they were. */
+/** Revocation keeps the credential until nexus confirms it (the only handle on a
+    token it still honours); a failure is shown with Retry. */
 async function disconnect(signal: AbortSignal): Promise<void> {
-  if (credential === null) throw failure("E_CAPTURE_SIGNED_OUT", "Not connected to Nexus.");
+  if (token === null)
+    throw failure("E_CAPTURE_SIGNED_OUT", "Not connected to Nexus.");
   await awaitOrigins(signal);
   try {
-    await captureClient(credential.token).revokeSession(signal);
+    await nexus(token).revoke(signal);
   } catch (error) {
     if (isAbortError(error)) throw error;
-    // keep the credential: it is the only handle on the token nexus still honours
-    revocationFailure = await recordFailure(error);
+    revocationFailure = await describe(error);
     session = null;
-    await pushState();
+    pushState();
     return;
   }
   await forgetCredential();
 }
 
-// --- pinning ----------------------------------------------------------------
+// --- pinning -------------------------------------------------------------------
 
 async function activate(): Promise<void> {
-  // running work (a login awaiting its grant, a pin) is never pre-empted:
-  // the popup renders what the port pushes
-  if (active !== null) return;
-  if (draft !== null && draft.phase.kind !== "saved") return;
-  const tab = await activeTab();
-  if (typeof tab === "string") {
-    // a receipt outlives an unsupported tab; an empty popup learns the reason
-    if (draft === null) {
-      unsupported = tab;
-      await pushState();
+  // running work and an unsaved draft are never replaced
+  if (active !== null || (draft !== null && draft.phase.kind !== "saved"))
+    return;
+  const [tab] = await browser.tabs.query({
+    active: true,
+    lastFocusedWindow: true,
+  });
+  if (tab?.id === undefined || tab.windowId === undefined || !tab.url) {
+    return setDraft(draft, "Nexus cannot read this tab.");
+  }
+  if (!/^https?:$/.test(new URL(tab.url).protocol)) {
+    return setDraft(draft, "Only http(s) pages can be saved.");
+  }
+  // the receipt stays until the user leaves its page
+  if (draft !== null && pageOf(draft) === tab.url) return;
+  const { id: tabId, windowId, url } = tab;
+  await exclusive(async (signal) => {
+    let injection: Injection;
+    try {
+      injection = await inject(
+        { tabId },
+        (sender) => sender.tab?.id === tabId && sender.frameId === 0,
+        signal,
+      );
+    } catch (error) {
+      // an http(s) tab Firefox will not script is a document the background downloads
+      if (!(
+        error instanceof CaptureFailureError &&
+        error.failure.code === "E_CAPTURE_INJECTION"
+      )) {
+        throw error;
+      }
+      return setDraft(
+        documentDraft(windowId, url, { kind: "extension" }, urlFilename(url)),
+      );
     }
-    return;
-  }
-  // the receipt for this very page stays until the user leaves it
-  if (draft !== null) {
-    const page = draft.target.kind === "document" && draft.target.source.kind === "page" ? draft.target.source.pageUrl : draft.target.url;
-    if (page === tab.url) return;
-  }
-  await exclusive((signal) => pinTab(tab, signal));
+    const reply = await injection.request({ kind: "extract" });
+    if (reply.kind === "unreadable") return setDraft(null, reply.message);
+    if (reply.kind !== "article") {
+      throw failure(
+        "E_CAPTURE_CONTENT",
+        `The page script answered ${reply.kind}.`,
+      );
+    }
+    const bytes = serializePacket(reply.packet);
+    // a url may carry signed access parameters: the host stands in for a title
+    const host = new URL(reply.packet.url).hostname;
+    setDraft({
+      id: crypto.randomUUID(),
+      target: { kind: "article", windowId, url: reply.packet.url },
+      view: {
+        kind: "article",
+        title: reply.packet.title || host,
+        host,
+        previewText: reply.previewText,
+      },
+      phase: { kind: "draft" },
+      destinations: [],
+      locked: false,
+      bytes: {
+        kind: "web_article",
+        blob: new Blob([bytes], { type: CONTENT_TYPE.web_article }),
+        filename: "article.json",
+        sizeBytes: bytes.byteLength,
+        sha256: await sha256Hex(bytes),
+      },
+    });
+  });
 }
 
-interface ActiveTab {
-  id: number;
-  windowId: number;
-  url: string;
+function pageOf(current: Draft): string {
+  const target = current.target;
+  return target.kind === "document" && target.source.kind === "page"
+    ? target.source.pageUrl
+    : target.url;
 }
 
-async function activeTab(): Promise<ActiveTab | string> {
-  const [tab] = await browser.tabs.query({ active: true, lastFocusedWindow: true });
-  if (tab?.id === undefined || tab.windowId === undefined || !tab.url) return "Nexus cannot read this tab.";
-  const scheme = new URL(tab.url).protocol;
-  if (scheme !== "http:" && scheme !== "https:") return "Only http(s) pages can be saved.";
-  return { id: tab.id, windowId: tab.windowId, url: tab.url };
-}
-
-/** Toolbar activation: extract the article now, from the live document; an
-    http(s) tab Firefox will not let us inject is a document to download. */
-async function pinTab(tab: ActiveTab, signal: AbortSignal): Promise<void> {
-  let injection: Injection;
-  try {
-    injection = await inject({ tabId: tab.id }, (sender) => sender.tab?.id === tab.id && sender.frameId === 0, signal);
-  } catch (error) {
-    if (!isFailureCode(error, "E_CAPTURE_INJECTION")) throw error;
-    await replaceDraft(documentDraft(tab.windowId, tab.url, { kind: "extension" }, urlFilename(tab.url)), null);
-    return;
-  }
-  const reply = await injection.request({ kind: "extract" });
-  // the page cannot be pinned: a receipt for another page makes way for the reason
-  if (reply.kind === "unreadable") {
-    await clearDraft(reply.message);
-    return;
-  }
-  if (reply.kind !== "article") throw contentDefect(reply);
-  const serialized = serializeArticlePacket(reply.packet);
-  if (serialized.byteLength > ARTICLE_PACKET_MAX_BYTES) {
-    await clearDraft("The article is too large to capture.");
-    return;
-  }
-  const url = reply.packet.url;
-  // the host stands in for a missing title: a url may carry signed access
-  // parameters, which are retained as data and never displayed
+function documentDraft(
+  windowId: number,
+  url: string,
+  source: DocumentSource,
+  label: string | null,
+): Draft {
   const host = new URL(url).hostname;
-  await replaceDraft(
-    newDraft(
-      { kind: "article", windowId: tab.windowId, url },
-      { kind: "article", title: reply.packet.title || host, host, previewText: reply.previewText },
-    ),
-    {
-      kind: "web_article",
-      blob: new Blob([serialized], { type: CAPTURE_CONTENT_TYPE.web_article }),
-      filename: ARTICLE_FILENAME,
-      contentType: CAPTURE_CONTENT_TYPE.web_article,
-      sizeBytes: serialized.byteLength,
+  return {
+    id: crypto.randomUUID(),
+    target: { kind: "document", windowId, url, source },
+    view: {
+      kind: "document",
+      title: label || host,
+      host,
+      documentKind: "unknown",
     },
-  );
+    phase: { kind: "draft" },
+    destinations: [],
+    locked: false,
+    bytes: null,
+  };
 }
 
-function documentDraft(windowId: number, url: string, source: DocumentSource, label: string | null): CaptureDraftRecord {
-  const host = new URL(url).hostname;
-  return newDraft(
-    { kind: "document", windowId, url, source },
-    { kind: "document", title: label || host, host, documentKind: "unknown" },
-  );
-}
-
-/** Context menu: bind the clicked element in its frame now, retain that
-    document's identity, then bring the popup up on it. */
-async function menuClick(info: browser.menus.OnClickData, tab: browser.tabs.Tab | undefined): Promise<void> {
+/** Context menu: bind the clicked link in its frame now, keep that document's id,
+    then bring the popup up on it. A busy or unsaved slot is left alone. */
+async function menuClick(
+  info: browser.menus.OnClickData,
+  tab: browser.tabs.Tab | undefined,
+): Promise<void> {
   await ready;
-  if (info.menuItemId !== MENU_ID || tab?.id === undefined || tab.windowId === undefined) return;
-  const { windowId } = tab;
-  const tabId = tab.id;
-  // the slot is pinned only when it is free and idle; otherwise the popup
-  // shows the work in progress
+  if (
+    info.menuItemId !== MENU_ID ||
+    tab?.id === undefined ||
+    tab.windowId === undefined
+  )
+    return;
+  const { id: tabId, windowId } = tab;
+  const frameId = info.frameId ?? 0;
   if (active === null && (draft === null || draft.phase.kind === "saved")) {
     try {
-      await exclusive((signal) => pinLink(tabId, windowId, info, signal));
+      await exclusive(async (signal) => {
+        const { linkUrl, targetElementId } = info;
+        if (
+          typeof linkUrl !== "string" ||
+          typeof targetElementId !== "number"
+        ) {
+          throw failure(
+            "E_CAPTURE_LINK",
+            "Firefox did not report the clicked link.",
+          );
+        }
+        const injection = await inject(
+          { tabId, frameIds: [frameId] },
+          (sender) => sender.tab?.id === tabId && sender.frameId === frameId,
+          signal,
+        );
+        const reply = await injection.request({
+          kind: "bind",
+          targetElementId,
+          linkUrl,
+        });
+        if (reply.kind !== "bound") {
+          return setDraft(
+            null,
+            "The clicked link is no longer on the page. Right-click it again.",
+          );
+        }
+        const source: DocumentSource = {
+          kind: "page",
+          tabId,
+          documentId: injection.documentId,
+          pageUrl: info.pageUrl ?? "",
+          sameOrigin: reply.sameOrigin,
+        };
+        const label = info.linkText?.trim() || urlFilename(linkUrl);
+        setDraft(documentDraft(windowId, linkUrl, source, label));
+      });
     } catch (error) {
-      await clearDraft((await recordFailure(error)).message);
+      setDraft(null, (await describe(error)).message);
     }
   }
   await reopenPopup(windowId);
 }
 
-async function pinLink(tabId: number, windowId: number, info: browser.menus.OnClickData, signal: AbortSignal): Promise<void> {
-  const { linkUrl, targetElementId } = info;
-  const frameId = info.frameId ?? 0;
-  if (typeof linkUrl !== "string" || typeof targetElementId !== "number") {
-    throw failure("E_CAPTURE_LINK", "Firefox did not report the clicked link.");
-  }
-  const injection = await inject(
-    { tabId, frameIds: [frameId] },
-    (sender) => sender.tab?.id === tabId && sender.frameId === frameId,
-    signal,
-  );
-  const reply = await injection.request({ kind: "bind", targetElementId, linkUrl });
-  if (reply.kind === "unbound") {
-    await clearDraft("The clicked link is no longer on the page. Right-click it again.");
-    return;
-  }
-  if (reply.kind !== "bound") throw contentDefect(reply);
-  await replaceDraft(
-    documentDraft(
-      windowId,
-      linkUrl,
-      { kind: "page", tabId, frameId, documentId: injection.documentId, pageUrl: info.pageUrl ?? "", sameOrigin: reply.sameOrigin },
-      info.linkText?.trim() || urlFilename(linkUrl),
-    ),
-    null,
-  );
-}
-
-// --- content injection ------------------------------------------------------
+// --- page scripts --------------------------------------------------------------
 
 interface Injection {
   /** the native id Firefox attached to the connecting document */
   documentId: string;
-  port: browser.runtime.Port;
   request(message: ContentRequest): Promise<ContentReply>;
 }
 
-/** Injects content.js into `target` and waits for the one port that
-    injection opens; `accepts` names the sender it may come from. */
+/** Inject content.js into `target` and wait for the one port it opens. */
 async function inject(
   target: browser.scripting.InjectionTarget,
   accepts: (sender: browser.runtime.MessageSender) => boolean,
@@ -782,35 +686,48 @@ async function inject(
       { once: true },
     );
   });
-  let results: browser.scripting.InjectionResult[];
+  let result: browser.scripting.InjectionResult | undefined;
   try {
-    results = await browser.scripting.executeScript({ target, files: ["content.js"] });
+    [result] = await browser.scripting.executeScript({
+      target,
+      files: ["content.js"],
+    });
   } catch (error) {
     contentWaiter = null;
+    const detail = error instanceof Error ? error.message : String(error);
     throw failure(
       "E_CAPTURE_INJECTION",
-      `Firefox did not let Nexus read this page: ${error instanceof Error ? error.message : String(error)}`,
+      `Firefox did not let Nexus read this page: ${detail}`,
     );
   }
-  const result = results[0];
   if (result === undefined || result.error !== undefined) {
     contentWaiter = null;
-    throw failure("E_CAPTURE_CONTENT", `The page script failed: ${String(result?.error?.message ?? result?.error ?? "no result")}`);
+    throw failure(
+      "E_CAPTURE_CONTENT",
+      `The page script failed: ${String(result?.error ?? "no result")}`,
+    );
   }
   const port = await arrival;
   const documentId = port.sender?.documentId;
   if (typeof documentId !== "string") {
     port.disconnect();
-    throw failure("E_CAPTURE_CONTENT", "Firefox attached no document identity to the page script.");
+    throw failure(
+      "E_CAPTURE_CONTENT",
+      "Firefox attached no document identity to the page script.",
+    );
   }
   return {
     documentId,
-    port,
     request: (message) =>
       new Promise<ContentReply>((resolve, reject) => {
         port.onMessage.addListener((reply) => resolve(reply as ContentReply));
         port.onDisconnect.addListener(() =>
-          reject(failure("E_CAPTURE_PAGE_GONE", "The page changed before Nexus finished reading it.")),
+          reject(
+            failure(
+              "E_CAPTURE_PAGE_GONE",
+              "The page changed before Nexus finished reading it.",
+            ),
+          ),
         );
         signal.addEventListener(
           "abort",
@@ -825,75 +742,132 @@ async function inject(
   };
 }
 
-// --- save / transfer --------------------------------------------------------
+// --- save ----------------------------------------------------------------------
 
-async function setDestinations(destinations: readonly LibraryDestination[]): Promise<void> {
-  const current = requireDraft();
-  if (current.phase.kind !== "draft") throw failure("E_CAPTURE_FROZEN", "Libraries cannot change once a capture is saved.");
-  await setDraft({ ...current, destinations });
-}
-
+/** Save and Retry are one operation: acquire the bytes once, then create -> PUT ->
+    confirm with the draft's id. A failure is shown with Retry unless the same
+    request can never succeed. */
 async function save(signal: AbortSignal): Promise<void> {
-  const current = requireDraft();
-  if (current.phase.kind !== "draft") throw failure("E_CAPTURE_PHASE", "This capture is already being saved.");
-  const { client, account, limits } = requireSession();
+  if (draft === null || draft.phase.kind === "saved") {
+    throw failure("E_CAPTURE_PHASE", "There is nothing to save.");
+  }
+  const { client, limits } = requireSession();
   await awaitOrigins(signal);
+  setDraft({ ...requireDraft(), locked: true });
   try {
-    if (current.target.kind === "document") {
-      await setPhase({ kind: "acquiring" });
-      const acquired = await acquireDocument(current.target, { pdf: limits.maxPdfBytes, epub: limits.maxEpubBytes }, signal);
-      bytes = acquired;
-      await setDraft({ ...requireDraft(), view: { ...current.view, kind: "document", documentKind: acquired.kind } });
+    let bytes = requireDraft().bytes;
+    if (bytes === null) {
+      setPhase({ kind: "acquiring" });
+      const { target, view } = requireDraft();
+      const documentLimits = {
+        pdf: limits.max_pdf_bytes,
+        epub: limits.max_epub_bytes,
+      };
+      const read = await acquireDocument(
+        target as DocumentTarget,
+        documentLimits,
+        signal,
+      );
+      if (read.kind === "failed") throw new CaptureFailureError(read.failure);
+      // a background-owned copy: the page that handed the blob over may go away
+      const buffer = await read.blob.arrayBuffer();
+      bytes = {
+        kind: read.documentKind,
+        blob: new Blob([buffer], { type: CONTENT_TYPE[read.documentKind] }),
+        filename: read.filename,
+        sizeBytes: read.sizeBytes,
+        sha256: await sha256Hex(buffer),
+      };
+      const classified: TargetView = {
+        kind: "document",
+        title: view.title,
+        host: view.host,
+        documentKind: read.documentKind,
+      };
+      setDraft({ ...requireDraft(), bytes, view: classified });
     }
-    const frozen = requireBytes();
-    const limit = frozen.kind === "pdf" ? limits.maxPdfBytes : frozen.kind === "epub" ? limits.maxEpubBytes : limits.maxArticlePacketBytes;
-    if (frozen.sizeBytes > limit) {
-      throw failure("E_FILE_TOO_LARGE", `This ${frozen.kind} is larger than ${Math.round(limit / 1024 / 1024)} MB.`);
+    const limit =
+      bytes.kind === "pdf"
+        ? limits.max_pdf_bytes
+        : bytes.kind === "epub"
+          ? limits.max_epub_bytes
+          : limits.max_article_packet_bytes;
+    if (bytes.sizeBytes > limit) {
+      const megabytes = Math.round(limit / 2 ** 20);
+      throw failure(
+        "E_FILE_TOO_LARGE",
+        `This ${bytes.kind} is larger than ${megabytes} MB.`,
+      );
     }
-    const intent = { operationKey: crypto.randomUUID(), sha256: await sha256Hex(await frozen.blob.arrayBuffer()) };
-    // the intent is durable before the first capture mutation
-    await setDraft({ ...requireDraft(), account, intent, phase: { kind: "prepared" } });
-    await settle(client, await client.createCapture(captureIntent(), intent.operationKey, signal), signal);
+    setPhase({ kind: "uploading" });
+    const { id, target, destinations } = requireDraft();
+    let answer: UploadAnswer = await client.create(
+      {
+        id,
+        kind: bytes.kind,
+        source_url: target.url,
+        filename: bytes.filename,
+        content_type: CONTENT_TYPE[bytes.kind],
+        size_bytes: bytes.sizeBytes,
+        sha256: bytes.sha256,
+        library_ids: destinations.map((library) => library.id),
+      },
+      signal,
+    );
+    if (answer.kind === "UploadRequired") {
+      await putBytes(answer, bytes.blob, signal);
+      setPhase({ kind: "confirming" });
+      answer = await client.confirm(id, answer.generation, signal);
+    }
+    if (answer.kind === "Rejected") {
+      throw failure(
+        answer.code,
+        `Nexus rejected the captured bytes (${answer.code}).`,
+      );
+    }
+    const openUrl = `${__NEXUS_ORIGIN__}/media/${encodeURIComponent(answer.media_id)}`;
+    setDraft({
+      ...requireDraft(),
+      phase: { kind: "saved", openUrl },
+      bytes: null,
+    });
   } catch (error) {
-    await recordPhaseFailure(error);
+    if (isAbortError(error)) throw error;
+    // a 401 forgets the credential; Retry returns with the account
+    const shown = await describe(error);
+    setPhase({
+      kind: "failed",
+      failure: shown,
+      retryable: !TERMINAL.has(shown.code),
+    });
   }
 }
 
-function captureIntent(): CaptureIntent {
-  const current = requireDraft();
-  const frozen = requireBytes();
-  if (current.intent === null) throw failure("E_CAPTURE_PHASE", "This capture has not been saved yet.");
-  return {
-    kind: frozen.kind,
-    sourceUrl: current.target.url,
-    filename: frozen.filename,
-    contentType: frozen.contentType,
-    sizeBytes: frozen.sizeBytes,
-    sha256: current.intent.sha256,
-    libraryIds: current.destinations.map((destination) => destination.id),
-  };
-}
-
-type DocumentBytes = CaptureBytes & { kind: DocumentKind };
-
-/** One bounded get in the context chosen at pinning: the page principal for a
-    same-origin link, else the background with the granted origin. */
+/** One bounded get in the context chosen at pinning: the page's own principal for
+    a same-origin link (its cookies), else the background with the granted origin. */
 async function acquireDocument(
-  target: Extract<CaptureTarget, { kind: "document" }>,
+  target: DocumentTarget,
   limits: Record<DocumentKind, number>,
   signal: AbortSignal,
-): Promise<DocumentBytes> {
-  if (downloadsInBackground(target.source)) {
+): Promise<DocumentRead> {
+  const source = target.source;
+  if (source.kind === "extension" || downloadsInBackground(source)) {
     let response: Response;
     try {
-      response = await fetch(target.url, { credentials: "include", redirect: "follow", signal });
+      response = await fetch(target.url, {
+        credentials: "include",
+        redirect: "follow",
+        signal,
+      });
     } catch (error) {
       if (isAbortError(error)) throw error;
-      throw new CaptureFailureError(fetchFailure());
+      throw failure(
+        "E_CAPTURE_FETCH",
+        "The link could not be downloaded. Check the connection and retry.",
+      );
     }
-    return storeDocument(await readDocumentResponse(response, limits));
+    return readDocument(response, limits);
   }
-  const source = target.source as Extract<DocumentSource, { kind: "page" }>;
   let injection: Injection;
   try {
     injection = await inject(
@@ -902,231 +876,42 @@ async function acquireDocument(
       signal,
     );
   } catch (error) {
-    if (!isFailureCode(error, "E_CAPTURE_INJECTION")) throw error;
-    throw failure("E_CAPTURE_PAGE_GONE", "The page holding this link is gone. Right-click the link again.");
-  }
-  const reply = await injection.request({ kind: "download", url: target.url, limits });
-  if (reply.kind !== "document") return storeDocument(reply);
-  // the page keeps its blob until the store committed
-  let stored = false;
-  try {
-    const acquired = await storeDocument(reply);
-    stored = true;
-    return acquired;
-  } finally {
-    try {
-      injection.port.postMessage({ kind: stored ? "stored" : "store_failed" } satisfies ContentRequest);
-    } catch {
-      // justify-ignore-error: the page closed its port first; the handed-over
-      // blob is the background's own copy, so nothing depends on the ack.
+    if (!(
+      error instanceof CaptureFailureError &&
+      error.failure.code === "E_CAPTURE_INJECTION"
+    )) {
+      throw error;
     }
-  }
-}
-
-async function storeDocument(read: ContentReply | DocumentRead): Promise<DocumentBytes> {
-  if (read.kind === "failed") throw new CaptureFailureError(read.failure);
-  if (read.kind !== "document") throw contentDefect(read);
-  const acquired: DocumentBytes = {
-    kind: read.documentKind,
-    blob: read.blob,
-    filename: read.filename,
-    contentType: CAPTURE_CONTENT_TYPE[read.documentKind],
-    sizeBytes: read.sizeBytes,
-  };
-  await captureStore.bytes.write(acquired);
-  return acquired;
-}
-
-/** Drives one upload answer to its end: PUT the frozen bytes to a capability,
-    confirm, and keep the receipt; attention and publication are recorded. */
-async function settle(client: CaptureClient, response: UploadResponse, signal: AbortSignal): Promise<void> {
-  switch (response.kind) {
-    case "Published":
-      await published(response);
-      return;
-    case "NeedsAttention": {
-      const attention = response.failure;
-      await setPhase({
-        kind: "failed",
-        failure:
-          attention.kind === "VerificationFailed"
-            ? captureFailure(attention.code, `Nexus rejected the captured bytes (${attention.code}).`)
-            : attention.kind === "TransportFailed"
-              ? captureFailure("E_UPLOAD_TRANSPORT", `The upload did not complete (${attention.reason.kind}). Retry to send it again.`)
-              : captureFailure("E_CAPTURE_CAPABILITY_EXPIRED", "The upload window expired. Retry to open a new one."),
-        retryable: response.capabilities.canRetryUpload,
-      });
-      return;
-    }
-    case "UploadRequired": {
-      const { sessionHandle: handle, generation } = response;
-      await setDraft({ ...requireDraft(), session: { handle, generation }, phase: { kind: "transferring" } });
-      const put = await putCaptureBytes(response, requireBytes().blob, signal);
-      if (put.kind === "expired") {
-        throw failure("E_CAPTURE_CAPABILITY_EXPIRED", "The upload window closed before the upload started. Retry to open a new one.");
-      }
-      if (put.kind === "failed") {
-        await client.reportTransportFailure(
-          handle,
-          { ...put.reason, generation, duration_ms: put.durationMs, request_id: crypto.randomUUID() },
-          signal,
-        );
-        throw failure("E_UPLOAD_TRANSPORT", `The upload did not complete (${put.reason.kind}). Retry to send it again.`);
-      }
-      await setPhase({ kind: "confirming" });
-      await published(await client.confirmCapture(handle, generation, signal));
-    }
-  }
-}
-
-/** Publication releases the bytes and keeps a small receipt in the slot. The
-    receipt names the media only: `idempotency_outcome` says whether this
-    answer was a replay, not whether the media was matched, and nexus reports
-    no content match. */
-async function published(receipt: PublishedUpload): Promise<void> {
-  await captureStore.bytes.clear();
-  bytes = null;
-  await setDraft({
-    ...requireDraft(),
-    phase: {
-      kind: "saved",
-      mediaId: receipt.mediaId,
-      openUrl: `${NEXUS_ORIGIN}/media/${encodeURIComponent(receipt.mediaId)}`,
-    },
-  });
-}
-
-/** Explicit retry of the same operation: with nothing frozen the draft is
-    acquired and saved again; a frozen one continues from nexus's view of it. */
-async function retry(signal: AbortSignal): Promise<void> {
-  const current = requireDraft();
-  if (current.phase.kind !== "failed" || resumable) throw failure("E_CAPTURE_PHASE", "There is nothing to retry.");
-  if (current.intent !== null) {
-    await proceed(signal);
-    return;
-  }
-  requireClient();
-  await awaitOrigins(signal);
-  await setPhase({ kind: "draft" });
-  await save(signal);
-}
-
-/** After a restart or an interruption, the frozen draft continues only when
-    asked: the popup shows explicit "resume". */
-async function resume(signal: AbortSignal): Promise<void> {
-  if (!resumable) throw failure("E_CAPTURE_PHASE", "There is nothing to resume.");
-  await proceed(signal);
-}
-
-/** Continues the frozen operation from nexus's view of it. Every guard runs
-    before `resumable` clears and the first mutation, so an early throw (signed
-    out, another account) leaves a resumable draft resumable. Without a
-    session handle the create is replayed with the same key; nexus answers by
-    the session's current state and advances a dead generation itself. With
-    one, status decides: a receipt is accepted; a live capability is confirmed
-    first and the bytes are sent only when nexus finds none staged; a dead
-    generation is advanced once, fenced by the generation last seen, then the
-    bytes are sent and confirmed. */
-async function proceed(signal: AbortSignal): Promise<void> {
-  const current = requireDraft();
-  const client = requireClient();
-  if (current.intent === null) throw failure("E_CAPTURE_PHASE", "This capture has not been saved yet.");
-  await awaitOrigins(signal);
-  resumable = false;
-  try {
-    await setPhase({ kind: "prepared" });
-    if (current.session === null) {
-      await settle(client, await client.createCapture(captureIntent(), current.intent.operationKey, signal), signal);
-      return;
-    }
-    const { handle, generation } = current.session;
-    const status = await client.captureStatus(handle, signal);
-    if (status.kind === "UploadRequired") {
-      await setDraft({ ...requireDraft(), session: { handle, generation: status.generation }, phase: { kind: "confirming" } });
-      try {
-        await published(await client.confirmCapture(handle, status.generation, signal));
-      } catch (error) {
-        if (!isFailureCode(error, "E_STORAGE_MISSING")) throw error;
-        await settle(client, status, signal);
-      }
-      return;
-    }
-    if (status.kind === "Published" || !status.capabilities.canRetryUpload) {
-      await settle(client, status, signal);
-      return;
-    }
-    const frozen = requireBytes();
-    const advanced = await client.retryCapture(
-      handle,
-      {
-        filename: frozen.filename,
-        content_type: frozen.contentType,
-        size_bytes: frozen.sizeBytes,
-        client_mutation_id: crypto.randomUUID(),
-        expected_generation: generation,
-      },
-      signal,
+    throw failure(
+      "E_CAPTURE_PAGE_GONE",
+      "The page holding this link is gone. Right-click the link again.",
     );
-    if (advanced.kind === "GenerationConflict") {
-      // nexus holds a generation this draft never saw (an admitted retry whose
-      // answer was lost): adopt it, so the next press fences on the truth
-      await setDraft({ ...requireDraft(), session: { handle, generation: advanced.generation } });
-      throw failure("E_RESOURCE_CONFLICT", "Nexus had already moved this upload on. Retry once more.");
-    }
-    await settle(client, advanced, signal);
-  } catch (error) {
-    await recordPhaseFailure(error);
   }
+  const reply = await injection.request({
+    kind: "download",
+    url: target.url,
+    limits,
+  });
+  if (reply.kind !== "document" && reply.kind !== "failed") {
+    throw failure(
+      "E_CAPTURE_CONTENT",
+      `The page script answered ${reply.kind}.`,
+    );
+  }
+  return reply;
 }
 
-/** Discard settles what it interrupts: an unsubmitted draft is cleared; a
-    frozen one resolves its uncertain create and deletes the unpublished
-    session; a session that turns out published is reported saved instead. A
-    create nexus refuses for good (a terminal code: a destination lost, the
-    intent no longer accepted) names nothing this client can delete, so the
-    slot is released; any other refusal keeps the draft for another attempt.
-    The frozen path calls nexus, so it waits for the origin grant first; a
-    denial leaves the draft as it was. */
-async function discard(signal: AbortSignal): Promise<void> {
+/** Discard forgets the draft now. A session nexus created is removed in passing;
+    if that fails, Imports still offers Remove. */
+function discard(): void {
   const current = draft;
-  if (current === null) {
-    unsupported = null;
-    await pushState();
-    return;
+  setDraft(null);
+  if (
+    current !== null &&
+    current.locked &&
+    current.phase.kind !== "saved" &&
+    session !== null
+  ) {
+    void session.client.remove(current.id).catch(() => undefined);
   }
-  if (current.phase.kind === "saved" || current.intent === null) {
-    await clearDraft();
-    return;
-  }
-  const client = requireClient();
-  await awaitOrigins(signal);
-  let handle = current.session?.handle ?? null;
-  if (handle === null) {
-    let response: UploadResponse;
-    try {
-      response = await client.createCapture(captureIntent(), current.intent.operationKey, signal);
-    } catch (error) {
-      if (!(error instanceof CaptureFailureError) || !TERMINAL_CODES.has(error.failure.code)) throw error;
-      await clearDraft();
-      return;
-    }
-    if (response.kind === "Published") {
-      await published(response);
-      return;
-    }
-    handle = response.sessionHandle;
-  }
-  try {
-    await client.deleteCapture(handle, signal);
-  } catch (error) {
-    if (isFailureCode(error, "E_UPLOAD_ALREADY_PUBLISHED")) {
-      // published means saved, never cancelled: status must show the receipt
-      const status = await client.captureStatus(handle, signal);
-      if (status.kind !== "Published") throw failure("E_CAPTURE_STATUS", "Nexus reports this capture as published but shows no receipt.");
-      await published(status);
-      return;
-    }
-    if (!isFailureCode(error, "E_UPLOAD_SESSION_NOT_FOUND")) throw error;
-  }
-  await clearDraft();
 }

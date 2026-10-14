@@ -89,7 +89,6 @@ from nexus.services.media_upload_sessions import (
     UPLOAD_SESSION_DERIVED_STATE_SQL,
 )
 from nexus.services.metadata_operations import metadata_operations_sql
-from nexus.services.sealed_handles import seal_upload_session, unseal_upload_session
 from nexus.services.source_attempts import (
     SourceRecoveryFacts,
     source_recovery,
@@ -251,20 +250,20 @@ WITH visible_media AS (
     SELECT id AS session_id, kind AS upload_kind, filename,
         input_origin->>'kind' AS origin_kind,
         input_origin->>'source_url' AS capture_source_url,
-        upload_generation, published_media_id, created_at AS session_created_at,
+        published_media_id, created_at AS session_created_at,
         updated_at AS session_updated_at, verification_error_code,
-        verification_failed_at, transport_failed_at, upload_url_expires_at,
+        verification_failed_at, upload_url_expires_at,
         {UPLOAD_SESSION_DERIVED_STATE_SQL} AS derived_state
     FROM media_upload_sessions WHERE created_by_user_id = :viewer_id
 ), import_refs AS (
     SELECT 'upload' AS ref_kind, session_id, published_media_id AS media_id,
-        upload_kind, filename, origin_kind, capture_source_url, upload_generation,
-        derived_state, session_created_at, session_updated_at, verification_error_code,
-        verification_failed_at, transport_failed_at, upload_url_expires_at
+        upload_kind, filename, origin_kind, capture_source_url, derived_state,
+        session_created_at, session_updated_at, verification_error_code,
+        verification_failed_at, upload_url_expires_at
     FROM upload_sessions
     UNION ALL
     SELECT 'media', NULL, media_id, NULL, NULL, NULL, NULL, NULL,
-        NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        NULL, NULL, NULL, NULL, NULL
     FROM media_work w WHERE NOT EXISTS (
         SELECT 1 FROM upload_sessions s WHERE s.published_media_id = w.media_id
     )
@@ -272,7 +271,7 @@ WITH visible_media AS (
     SELECT r.ref_kind, r.session_id, r.media_id,
         CASE WHEN r.ref_kind = 'media' THEN 'media:' || r.media_id::text
             ELSE 'upload:' || md5(r.session_id::text) END AS ref_key,
-        r.derived_state, r.origin_kind, r.upload_generation,
+        r.derived_state, r.origin_kind,
         CASE WHEN r.media_id IS NULL THEN r.filename ELSE w.title END AS title,
         r.filename AS original_filename,
         COALESCE(w.media_kind, r.upload_kind) AS media_kind,
@@ -290,7 +289,6 @@ WITH visible_media AS (
             CASE WHEN w.attempt_status = 'failed' THEN w.attempt_error_code
                 ELSE {_catalogued_queue_code("w.source_job_error_code")} END
             WHEN r.derived_state = 'VerificationFailed' THEN r.verification_error_code
-            WHEN r.derived_state = 'TransportFailed' THEN 'E_UPLOAD_TRANSPORT_FAILED'
             WHEN r.derived_state = 'CapabilityExpired' THEN 'E_UPLOAD_CAPABILITY_EXPIRED'
             END AS source_failure_code,
         CASE WHEN r.derived_state IS NULL OR r.derived_state = 'Published' THEN
@@ -298,7 +296,6 @@ WITH visible_media AS (
                 THEN COALESCE(w.source_job_finished_at, w.source_job_updated_at)
                 ELSE COALESCE(w.attempt_finished_at, w.attempt_updated_at) END
             WHEN r.derived_state = 'VerificationFailed' THEN r.verification_failed_at
-            WHEN r.derived_state = 'TransportFailed' THEN r.transport_failed_at
             WHEN r.derived_state = 'CapabilityExpired' THEN r.upload_url_expires_at
             END AS source_failed_at,
         CASE WHEN r.derived_state IS NULL OR r.derived_state = 'Published'
@@ -584,8 +581,8 @@ def read_import_page(db: Session, *, viewer_id: UUID, query: ImportListQuery) ->
 def _import_row(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) -> RowMapping:
     params = _base_params(viewer_id)
     match ref:
-        case UploadImportRef(session_handle=session_handle):
-            params["session_id"] = unseal_upload_session(session_handle)
+        case UploadImportRef(session_id=session_id):
+            params["session_id"] = session_id
             predicate = "session_id = :session_id"
         case MediaImportRef(media_id=media_id):
             params["media_id"] = media_id
@@ -768,7 +765,7 @@ def _source_obligation(row: RowMapping, media: MediaOut | None) -> SourceImportO
                 "state": state.model_dump(),
                 "recovery": None
                 if rejected or row["origin_kind"] == "BrowserCapture"
-                else RetryUploadOffer(expected_generation=int(row["upload_generation"])),
+                else RetryUploadOffer(),
                 "unavailable_reason": "UploadRejected" if rejected else None,
             }
         )
@@ -832,9 +829,7 @@ def _item(
         # justify-defect: `failed` is a note-index status; no media owner writes it.
         raise AssertionError("media content index reports a status no owner writes")
     if row["ref_kind"] == "upload":
-        ref = format_import_ref(
-            UploadImportRef(session_handle=seal_upload_session(row["session_id"]))
-        )
+        ref = format_import_ref(UploadImportRef(session_id=row["session_id"]))
     else:
         ref = format_import_ref(MediaImportRef(media_id=row["media_id"]))
     host = row["source_host"]

@@ -1,22 +1,24 @@
-"""Durable upload-session lifecycle and atomic media publication owner.
+"""Upload sessions: bytes go browser -> storage directly (Vercel caps bodies at
+4.5 MB) and become media only after the server verifies them.
 
-One lifecycle for local PDF/EPUB uploads and browser captures (PDF, EPUB and
-article packets). A session's intent, including its ``input_origin``, is
-immutable; every capture mutation (status, transport failure, retry, confirm)
-loads the session by viewer AND origin kind, so an extension credential never
-reaches a local upload and vice versa. Removal is not a capture mutation: the
-account credential removes the viewer's own unpublished session of either
-origin, because a browser capture's bytes live in the extension and only the
-extension can retry it, while the web can still discard it. Publication
-verifies a fresh per-confirmation candidate object and records exactly that
-object, and every success or failure write is fenced by the generation it
-inspected.
+One lifecycle for local PDF/EPUB uploads and browser captures (PDF, EPUB,
+article packets). The client mints the session id. A session's intent never
+changes (I5); each create of an unpublished, unrejected session advances its
+generation, so a new staging path fences abandoned bytes and the signed url is
+fresh. Confirm copies the current generation's staged object to a fresh
+candidate, verifies that candidate, and publishes it exactly once: publication
+is the ``published_at`` write under the session row lock. A capture whose exact
+bytes the account already holds reuses that media (I8).
+
+Every capture route loads the session by viewer AND origin kind (I6): the
+extension credential never reaches a local upload. Staged objects expire with
+R2's ``uploads/`` rule; unreferenced candidates are the storage sweep's.
 """
 
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal, cast, get_args
 from urllib.parse import urlparse
@@ -34,54 +36,36 @@ from nexus.db.models import (
     MediaUploadSessionDestination,
     ProcessingStatus,
 )
-from nexus.db.retries import admit_serializable
 from nexus.db.session import transaction
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
 from nexus.logging import get_logger
 from nexus.schemas.extension_capture import (
     ARTICLE_PACKET_MAX_BYTES,
-    INPUT_ORIGIN_ADAPTER,
     ArticlePacket,
     BrowserCapture,
-    BrowserCaptureIntent,
-    InputOriginKind,
+    CreateCaptureRequest,
     LocalFile,
     decode_article_packet,
 )
 from nexus.schemas.import_history import (
-    SafeFailureCode,
     UploadAccepted,
-    UploadFacts,
     UploadFailed,
     UploadPublished,
     UploadRecoveryAccepted,
+    UploadVerificationFailureCode,
 )
 from nexus.schemas.import_refs import UploadImportRef, format_import_ref
 from nexus.schemas.media import (
-    CapabilityExpired,
-    CreateUploadSessionRequest,
-    NeedsAttention,
+    CreateUploadRequest,
     Published,
-    RetryUploadSessionRequest,
-    TransportFailed,
-    UploadHttpRejectedFailureRequest,
+    Rejected,
     UploadRequired,
-    UploadRequiredHeaders,
-    UploadSessionCapabilities,
-    UploadSessionResponse,
-    UploadTransportFailureRequest,
-    VerificationFailed,
+    UploadSessionOut,
 )
-from nexus.schemas.upload_failures import (
-    UploadTransportAbortedFailure,
-    UploadTransportHttpRejectedFailure,
-    UploadTransportNetworkFailure,
-    UploadTransportTimeoutFailure,
-    UploadVerificationFailureCode,
-)
-from nexus.services import libraries, library_entries, source_types
+from nexus.services import libraries, library_entries
 from nexus.services import source_attempts as sa
+from nexus.services import source_types as st
 from nexus.services.file_ingest_validation import (
     has_valid_file_signature,
     validate_file_ingest_request,
@@ -91,193 +75,148 @@ from nexus.services.import_history import (
     delete_upload_history_in_current_transaction,
 )
 from nexus.services.media_processing_state import mark_extracting
-from nexus.services.resource_mutation_replay import (
-    canonical_json_bytes,
-    lookup_replay,
-    record_replay,
-)
-from nexus.services.sealed_handles import seal_upload_session, unseal_upload_session
 from nexus.services.url_normalize import normalize_url_for_display
 from nexus.storage.client import StorageClient, StorageError, get_storage_client
 from nexus.storage.paths import (
     build_upload_session_staging_storage_path,
     build_upload_verification_candidate_storage_path,
 )
-from nexus.tasks.storage_object_cleanup import (
-    StoragePathCleanupInFlight,
-    finalize_upload_session_storage_object_write,
-    reserve_upload_session_storage_object_write_in_current_transaction,
-)
 
 logger = get_logger(__name__)
 
-_STAGED_RETENTION = timedelta(hours=24)
-_CAPABILITY_MIN_LIFE = timedelta(seconds=1)
-"""A live capability with less life than this is reported expired, not re-signed:
-``expires_in`` is whole seconds, so it would be minted already dead."""
-_TERMINAL_VERIFICATION_CODES: frozenset[str] = frozenset(get_args(UploadVerificationFailureCode))
-_STORAGE_EXTENSIONS = {"pdf": "pdf", "epub": "epub", "web_article": "json"}
+OriginKind = Literal["LocalFile", "BrowserCapture"]
+_EXTENSIONS = {"pdf": "pdf", "epub": "epub", "web_article": "json"}
 _SOURCE_TYPES = {
-    ("web_article", False): source_types.BROWSER_ARTICLE_CAPTURE,
-    ("pdf", False): source_types.BROWSER_PDF_CAPTURE,
-    ("epub", False): source_types.BROWSER_EPUB_CAPTURE,
-    ("pdf", True): source_types.UPLOADED_PDF_FILE,
-    ("epub", True): source_types.UPLOADED_EPUB_FILE,
+    ("pdf", "LocalFile"): st.UPLOADED_PDF_FILE,
+    ("epub", "LocalFile"): st.UPLOADED_EPUB_FILE,
+    ("pdf", "BrowserCapture"): st.BROWSER_PDF_CAPTURE,
+    ("epub", "BrowserCapture"): st.BROWSER_EPUB_CAPTURE,
+    ("web_article", "BrowserCapture"): st.BROWSER_ARTICLE_CAPTURE,
 }
-"""The attempt's source type by ``(kind, local file)``; a local ``web_article`` does not exist."""
-
 UPLOAD_SESSION_DERIVED_STATE_SQL = """
         CASE
             WHEN published_at IS NOT NULL THEN 'Published'
             WHEN verification_error_code IS NOT NULL THEN 'VerificationFailed'
-            WHEN transport_failed_at IS NOT NULL THEN 'TransportFailed'
             WHEN upload_url_expires_at <= now() THEN 'CapabilityExpired'
             ELSE 'AwaitingBytes'
         END"""
-"""The one set-wise expression of the derived-session-state precedence.
+"""The one statement of a session's state, for Imports' set-wise reads."""
 
-The per-row surfaces below project the same order, so no consumer re-derives
-the rule independently.
-"""
-
-UPLOAD_SESSION_ATTENTION_STATES = ("VerificationFailed", "TransportFailed", "CapabilityExpired")
-"""Derived states that are an unresolved user obligation."""
+UPLOAD_SESSION_ATTENTION_STATES = ("VerificationFailed", "CapabilityExpired")
 
 
 @dataclass(frozen=True, slots=True)
-class _Intent:
-    kind: Literal["pdf", "epub", "web_article"]
-    filename: str
-    content_type: str
-    size_bytes: int
-    library_ids: tuple[UUID, ...]
-    input_origin: LocalFile | BrowserCapture
-
-    def canonical_bytes(self) -> bytes:
-        return _intent_bytes(
-            kind=self.kind,
-            filename=self.filename,
-            content_type=self.content_type,
-            size_bytes=self.size_bytes,
-            library_ids=self.library_ids,
-            input_origin=self.input_origin.model_dump(mode="json"),
-        )
-
-
-def _intent_bytes(
-    *,
-    kind: str,
-    filename: str,
-    content_type: str,
-    size_bytes: int,
-    library_ids: tuple[UUID, ...],
-    input_origin: dict[str, object],
-) -> bytes:
-    """The one comparison form of an intent: same key, different bytes is a conflict."""
-    return canonical_json_bytes(
-        {
-            "kind": kind,
-            "filename": filename,
-            "content_type": content_type,
-            "size_bytes": size_bytes,
-            "library_ids": [str(library_id) for library_id in library_ids],
-            "input_origin": input_origin,
-        }
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class _Capability:
-    """One generation's immutable facts, carried out of the transaction that
-    admitted it so the signed URL is minted with no transaction open."""
+class _Generation:
+    """One generation's facts, carried out of its transaction so signing and
+    verification run with none open."""
 
     session_id: UUID
     generation: int
     kind: str
     content_type: str
-    expected_size_bytes: int
+    size_bytes: int
     expires_at: datetime
+    candidate_media_id: UUID
+    capture: BrowserCapture | None
 
     @classmethod
-    def of(cls, session: MediaUploadSession) -> _Capability:
+    def of(cls, session: MediaUploadSession) -> _Generation:
+        origin = cast(dict[str, str], session.input_origin)
+        capture = None
+        if origin["kind"] == "BrowserCapture":
+            # our own row: constructed, never validated again
+            capture = BrowserCapture.model_construct(
+                source_url=origin["source_url"], sha256=origin["sha256"]
+            )
         return cls(
-            session_id=session.id,
-            generation=session.upload_generation,
-            kind=session.kind,
-            content_type=session.content_type,
-            expected_size_bytes=session.expected_size_bytes,
-            expires_at=session.upload_url_expires_at,
+            session.id,
+            session.upload_generation,
+            session.kind,
+            session.content_type,
+            session.expected_size_bytes,
+            session.upload_url_expires_at,
+            session.candidate_media_id,
+            capture,
         )
 
+    @property
     def staging_path(self) -> str:
         return build_upload_session_staging_storage_path(
-            self.session_id, self.generation, _STORAGE_EXTENSIONS[self.kind]
+            self.session_id, self.generation, _EXTENSIONS[self.kind]
         )
 
 
-@dataclass(frozen=True, slots=True)
-class _Candidate:
-    """One verified candidate object: exactly what publication records."""
-
-    storage_path: str
-    size_bytes: int
-    sha256: str
-    packet: ArticlePacket | None
+# --- create ------------------------------------------------------------------------
 
 
-# =============================================================================
-# Create
-# =============================================================================
-
-
-def create_upload_session(
+def create_session(
     db: Session,
     *,
     viewer_id: UUID,
-    request: CreateUploadSessionRequest | BrowserCaptureIntent,
-    input_origin: LocalFile | BrowserCapture,
-    idempotency_key: str | None,
-) -> UploadSessionResponse:
-    """Accept one upload intent and mint the capability for its current generation.
+    request: CreateUploadRequest | CreateCaptureRequest,
+    origin: LocalFile | BrowserCapture,
+) -> UploadSessionOut:
+    """Accept an intent, or advance the same session's generation, and sign its PUT.
 
-    The idempotency key identifies the intent, not one capability: a live
-    generation is re-signed and its expiry extended, while a transport failure
-    or a lapsed capability advances the generation instead, fencing abandoned
-    bytes behind a new staging path.
+    Retry rule: the same id with the same intent advances an unpublished,
+    unrejected session (a new staging path, a fresh url); a published session
+    answers ``Published``, a rejected one ``Rejected``; the same id with another
+    intent is 409 ``E_UPLOAD_INTENT_MISMATCH``; another user's id is 409
+    ``E_RESOURCE_CONFLICT``. Destinations are the first create's.
     """
-    intent = _normalize_intent(request, input_origin)
-    clean_key = (idempotency_key or "").strip()
-    if not clean_key:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Idempotency-Key is required.")
-    if len(clean_key) > 255:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Idempotency-Key is too long.")
-    created = False
+    answer = _admit(db, viewer_id, request, origin, *_validated_intent(request, origin))
+    if not isinstance(answer, _Generation):
+        return answer
+    try:
+        signed = get_storage_client().sign_upload(
+            answer.staging_path,
+            content_type=answer.content_type,
+            size_bytes=answer.size_bytes,
+            expires_in=get_settings().signed_url_expiry_s,
+        )
+    except StorageError as exc:
+        raise ApiError(ApiErrorCode.E_SIGN_UPLOAD_FAILED, "Failed to initialize upload.") from exc
+    return UploadRequired(
+        import_ref=format_import_ref(UploadImportRef(session_id=answer.session_id)),
+        session_id=answer.session_id,
+        generation=answer.generation,
+        upload_url=signed.upload_url,
+        content_type=answer.content_type,
+        expires_at=answer.expires_at,
+    )
+
+
+def _admit(
+    db: Session,
+    viewer_id: UUID,
+    request: CreateUploadRequest | CreateCaptureRequest,
+    origin: LocalFile | BrowserCapture,
+    kind: str,
+    filename: str,
+    content_type: str,
+) -> UploadSessionOut | _Generation:
     with transaction(db):
-        sa.lock_identity(db, f"media_upload:{viewer_id}:{clean_key}")
-        session = db.execute(
-            select(MediaUploadSession)
-            .where(
-                MediaUploadSession.created_by_user_id == viewer_id,
-                MediaUploadSession.idempotency_key == clean_key,
-            )
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        ).scalar_one_or_none()
-        now = _db_now(db)
+        # a racing first create of the same id waits here, then finds the row
+        sa.lock_identity(db, f"upload_session:{request.id}")
+        now = _now(db)
+        expires_at = now + timedelta(seconds=get_settings().signed_url_expiry_s)
+        session = db.get(
+            MediaUploadSession, request.id, with_for_update=True, populate_existing=True
+        )
         if session is None:
-            libraries.resolve_writable_destinations(db, viewer_id, list(intent.library_ids))
+            library_ids = sorted(set(request.library_ids))
+            libraries.resolve_writable_destinations(db, viewer_id, library_ids)
             session = MediaUploadSession(
-                id=new_uuid7(),
+                id=request.id,
                 created_by_user_id=viewer_id,
                 candidate_media_id=new_uuid7(),
-                kind=intent.kind,
-                filename=intent.filename,
-                content_type=intent.content_type,
-                expected_size_bytes=intent.size_bytes,
-                input_origin=intent.input_origin.model_dump(mode="json"),
-                idempotency_key=clean_key,
+                kind=kind,
+                filename=filename,
+                content_type=content_type,
+                expected_size_bytes=request.size_bytes,
+                input_origin=origin.model_dump(mode="json"),
                 upload_generation=1,
-                upload_url_expires_at=now + timedelta(seconds=get_settings().signed_url_expiry_s),
+                upload_url_expires_at=expires_at,
                 created_at=now,
                 updated_at=now,
             )
@@ -287,515 +226,296 @@ def create_upload_session(
                 MediaUploadSessionDestination(
                     upload_session_id=session.id, library_id=library_id, created_at=now
                 )
-                for library_id in intent.library_ids
+                for library_id in library_ids
             )
-            created = True
-            _record_event(db, session.id, UploadAccepted(generation=1), stage="Upload")
+            facts: UploadAccepted | UploadRecoveryAccepted = UploadAccepted(generation=1)
         else:
-            stored = _intent_bytes(
-                kind=session.kind,
-                filename=session.filename,
-                content_type=session.content_type,
-                size_bytes=session.expected_size_bytes,
-                library_ids=_destinations(db, session.id),
-                input_origin=session.input_origin,
+            if session.created_by_user_id != viewer_id:
+                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Upload session id is taken.")
+            stored = (
+                session.kind,
+                session.filename,
+                session.content_type,
+                session.expected_size_bytes,
+                session.input_origin,
             )
-            if stored != intent.canonical_bytes():
+            sent = (
+                kind,
+                filename,
+                content_type,
+                request.size_bytes,
+                origin.model_dump(mode="json"),
+            )
+            if stored != sent:
                 raise ConflictError(
-                    ApiErrorCode.E_IDEMPOTENCY_CONFLICT,
-                    "Idempotency key was reused for a different upload intent.",
+                    ApiErrorCode.E_UPLOAD_INTENT_MISMATCH, "This file does not match the upload."
                 )
             if session.published_at is not None:
-                return _published(session, "Reused")
+                return _published(session)
             if session.verification_error_code is not None:
-                return _verification_failed(session)
-            if session.transport_failed_at is not None or session.upload_url_expires_at <= now:
-                _advance_generation(session, now)
-                _record_event(
-                    db,
-                    session.id,
-                    UploadRecoveryAccepted(generation=session.upload_generation),
-                    stage="Upload",
+                code = cast(UploadVerificationFailureCode, session.verification_error_code)
+                return Rejected(
+                    import_ref=format_import_ref(UploadImportRef(session_id=session.id)),
+                    session_id=session.id,
+                    code=code,
                 )
-            else:
-                session.upload_url_expires_at = now + timedelta(
-                    seconds=get_settings().signed_url_expiry_s
-                )
-                session.updated_at = now
-        capability = _Capability.of(session)
-        _reserve_staged_bytes(db, capability)
-    logger.info(
-        "IntentAccepted",
-        upload_session_id=str(capability.session_id),
-        generation=capability.generation,
-    )
-    return _sign(
-        capability,
-        outcome="Created" if created else "Reused",
-        expires_in=get_settings().signed_url_expiry_s,
-    )
+            session.upload_generation += 1
+            session.upload_url_expires_at = expires_at
+            session.updated_at = now
+            facts = UploadRecoveryAccepted(generation=session.upload_generation)
+        append_upload_event(
+            db, session_id=session.id, facts=facts, stage="Upload", failure_code=None
+        )
+        return _Generation.of(session)
 
 
-# =============================================================================
-# Status
-# =============================================================================
-
-
-def read_upload_session(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    origin_kind: InputOriginKind,
-    session_handle: str,
-) -> UploadSessionResponse:
-    """The session's current projection. A live capability is re-signed for its
-    remaining lifetime only; reading never extends or advances anything."""
-    with transaction(db):
-        session = _owned_session_for_update(db, viewer_id, origin_kind, session_handle)
-        now = _db_now(db)
-        if session.published_at is not None:
-            return _published(session, "Reused")
-        if session.verification_error_code is not None:
-            return _verification_failed(session)
-        if session.transport_failed_at is not None:
-            handle = seal_upload_session(session.id)
-            return NeedsAttention(
-                import_ref=format_import_ref(UploadImportRef(session_handle=handle)),
-                session_handle=handle,
-                failure=_transport_failure(session),
-                capabilities=UploadSessionCapabilities(can_retry_upload=True, can_remove=True),
+def _validated_intent(
+    request: CreateUploadRequest | CreateCaptureRequest, origin: LocalFile | BrowserCapture
+) -> tuple[str, str, str]:
+    """(kind, filename, content type), normalized; a refusal is a 400 before any write."""
+    content_type = request.content_type.split(";", 1)[0].strip().lower()
+    filename = request.filename.strip().replace("\\", "/").rsplit("/", 1)[-1].strip()
+    if not filename or len(filename) > 255:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid upload filename.")
+    if request.kind == "web_article":
+        if not isinstance(origin, BrowserCapture) or content_type != "application/json":
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_FILE_TYPE, "Article packets are browser captures."
             )
-        if session.upload_url_expires_at <= now + _CAPABILITY_MIN_LIFE:
-            return _capability_expired(session.id, session.upload_url_expires_at)
-        capability = _Capability.of(session)
-    return _sign(
-        capability,
-        outcome="Reused",
-        expires_in=int((capability.expires_at - now).total_seconds()),
-    )
+        if request.size_bytes > ARTICLE_PACKET_MAX_BYTES:
+            raise InvalidRequestError(
+                ApiErrorCode.E_CAPTURE_TOO_LARGE, "Article packet exceeds its size limit."
+            )
+        return request.kind, filename, content_type
+    try:
+        validate_file_ingest_request(request.kind, content_type, request.size_bytes)
+    except InvalidRequestError as exc:
+        if exc.code is ApiErrorCode.E_FILE_TOO_LARGE:
+            raise
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_FILE_TYPE, "Unsupported document type."
+        ) from exc
+    return request.kind, filename, content_type
 
 
-# =============================================================================
-# Transport failure and retry
-# =============================================================================
-
-
-def record_transport_failure(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    origin_kind: InputOriginKind,
-    session_handle: str,
-    failure: UploadTransportFailureRequest,
-) -> None:
-    """Record a browser phase report. Telemetry the caller can never be refused."""
-    with transaction(db):
-        session = _owned_session_for_update(db, viewer_id, origin_kind, session_handle)
-        if failure.generation != session.upload_generation or session.published_at is not None:
-            return
-        now = _db_now(db)
-        session.transport_failure_kind = failure.kind
-        session.transport_http_status = (
-            failure.status if isinstance(failure, UploadHttpRejectedFailureRequest) else None
-        )
-        session.transport_failed_at = now
-        session.updated_at = now
-        _record_event(
-            db,
-            session.id,
-            UploadFailed(
-                generation=session.upload_generation,
-                transport=_transport_failure(session).reason,
-            ),
-            stage="Upload",
-            failure_code="E_UPLOAD_TRANSPORT_FAILED",
-        )
+# --- confirm -----------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
-class _AdmittedRetry:
-    """The memoized receipt of one admitted retry: a generation and its expiry."""
+class _Candidate:
+    storage_path: str
+    size_bytes: int
+    sha256: str
+    packet: ArticlePacket | None
 
-    generation: int
-    expires_at: datetime
 
-
-def retry_upload_session(
+def confirm_session(
     db: Session,
     *,
     viewer_id: UUID,
-    origin_kind: InputOriginKind,
-    session_handle: str,
-    request: RetryUploadSessionRequest,
-) -> UploadRequired | NeedsAttention:
-    """Admit one new upload generation, exactly once per ``client_mutation_id``.
-
-    A replay re-mints the admitted generation for its remaining life and never
-    extends it, so a replayed retry can report ``CapabilityExpired`` where a
-    fresh create would still hand back a usable capability.
-    """
-    filename = _normalize_filename(request.filename)
-    content_type = _normalize_content_type(request.content_type)
-    session_id = unseal_upload_session(session_handle)
-    scope = f"media_upload_retry:{session_id}"
-    request_bytes = canonical_json_bytes(request.model_dump(mode="json"))
-
-    def admit() -> tuple[_Capability, _AdmittedRetry]:
-        session = _owned_session_for_update(db, viewer_id, origin_kind, session_handle)
-        memo = lookup_replay(
-            db,
-            viewer_id=viewer_id,
-            scope=scope,
-            client_mutation_id=request.client_mutation_id,
-            request_bytes=request_bytes,
-        )
-        if session.published_at is not None:
-            raise ConflictError(
-                ApiErrorCode.E_UPLOAD_ALREADY_PUBLISHED, "Upload is already published."
-            )
-        if session.verification_error_code is not None:
-            raise ConflictError(
-                ApiErrorCode.E_UPLOAD_INTENT_MISMATCH,
-                "A rejected upload session cannot be retried.",
-            )
-        if memo is not None:
-            admitted = _AdmittedRetry(
-                generation=int(str(memo["generation"])),
-                expires_at=datetime.fromisoformat(str(memo["expires_at"])),
-            )
-            if session.upload_generation != admitted.generation:
-                raise ConflictError(
-                    ApiErrorCode.E_UPLOAD_GENERATION_STALE,
-                    "Upload generation is no longer current.",
-                )
-            db.commit()
-            return replace(_Capability.of(session), expires_at=admitted.expires_at), admitted
-        # Intent is compared before any content-type judgement, so picking the
-        # wrong file reads as a mismatch the user can repair. The persisted
-        # intent was validated on create and is immutable.
-        if (filename, content_type, request.size_bytes) != (
-            session.filename,
-            session.content_type,
-            session.expected_size_bytes,
-        ):
-            raise ConflictError(
-                ApiErrorCode.E_UPLOAD_INTENT_MISMATCH,
-                "Retry request does not match the upload intent.",
-            )
-        if request.expected_generation != session.upload_generation:
-            raise ConflictError(
-                ApiErrorCode.E_RESOURCE_CONFLICT,
-                "The inspected upload generation is no longer current.",
-                details={"current": {"generation": session.upload_generation}},
-            )
-        _advance_generation(session, _db_now(db))
-        _record_event(
-            db,
-            session.id,
-            UploadRecoveryAccepted(generation=session.upload_generation),
-            stage="Upload",
-        )
-        capability = _Capability.of(session)
-        _reserve_staged_bytes(db, capability)
-        admitted = _AdmittedRetry(
-            generation=capability.generation, expires_at=capability.expires_at
-        )
-        record_replay(
-            db,
-            viewer_id=viewer_id,
-            scope=scope,
-            client_mutation_id=request.client_mutation_id,
-            request_bytes=request_bytes,
-            response_json={
-                "generation": admitted.generation,
-                "expires_at": admitted.expires_at.isoformat(),
-            },
-        )
-        db.commit()
-        return capability, admitted
-
-    capability, admitted = admit_serializable(db, "retry_upload_session", admit)
-    now = _db_now(db)
-    db.rollback()
-    if admitted.expires_at <= now + _CAPABILITY_MIN_LIFE:
-        return _capability_expired(session_id, admitted.expires_at)
-    return _sign(
-        capability,
-        outcome="Reused",
-        expires_in=int((admitted.expires_at - now).total_seconds()),
-    )
-
-
-# =============================================================================
-# Confirm
-# =============================================================================
-
-
-def confirm_upload_session(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    origin_kind: InputOriginKind,
-    session_handle: str,
+    origin_kind: OriginKind,
+    session_id: UUID,
     generation: int,
     request_id: str | None,
 ) -> Published:
-    """Copy the staged object to a fresh candidate, verify that candidate, publish it.
+    """Verify the current generation's bytes and publish them once.
 
-    Every confirmation owns its own candidate path, so a delayed confirmation
-    can never overwrite bytes another one published. Publication is the
-    ``published_at`` write under the session row lock: a concurrent confirm
-    blocks on that lock and converges on the same ``Published``. A browser
-    capture whose exact bytes the account already holds reuses that media and
-    adds only placements and a receipt.
+    Retry rule: a published session answers ``Published`` whatever the generation;
+    a stale generation is 409 ``E_UPLOAD_GENERATION_STALE``; a recorded rejection
+    answers its code again.
     """
     with transaction(db):
-        session = _owned_session_for_update(db, viewer_id, origin_kind, session_handle)
+        session = _owned(db, viewer_id, origin_kind, session_id)
         if session.published_at is not None:
-            return _published(session, "Reused")
-        if generation != session.upload_generation:
-            raise ConflictError(
-                ApiErrorCode.E_UPLOAD_GENERATION_STALE,
-                "Upload generation is no longer current.",
-            )
-        if session.verification_error_code is not None:
-            raise InvalidRequestError(
-                ApiErrorCode(session.verification_error_code),
-                "Uploaded source was rejected during verification.",
-            )
-        capability = _Capability.of(session)
-        candidate_media_id = session.candidate_media_id
-        input_origin = INPUT_ORIGIN_ADAPTER.validate_python(session.input_origin)
-    capture = input_origin if isinstance(input_origin, BrowserCapture) else None
-
+            return _published(session)
+        _require_current(session, generation)
+        current = _Generation.of(session)
     client = get_storage_client()
-    session_id = capability.session_id
-    staging_path = capability.staging_path()
     candidate_path = build_upload_verification_candidate_storage_path(
-        candidate_media_id, new_uuid7(), _STORAGE_EXTENSIONS[capability.kind]
-    )
-    logger.info(
-        "ConfirmStarted",
-        upload_session_id=str(session_id),
-        generation=generation,
-        request_id=request_id,
+        current.candidate_media_id, new_uuid7(), _EXTENSIONS[current.kind]
     )
     try:
-        _reserve_candidate_bytes(db, session_id=session_id, candidate_path=candidate_path)
         try:
-            client.copy_object(staging_path, candidate_path)
+            client.copy_object(current.staging_path, candidate_path)
         except StorageError as exc:
             raise _storage_error(exc) from exc
-        candidate = _measure_candidate(
-            client,
-            storage_path=candidate_path,
-            kind=capability.kind,
-            expected_content_type=capability.content_type,
-            expected_size_bytes=capability.expected_size_bytes,
-            capture=capture,
-        )
+        candidate = _measure(client, candidate_path, current)
     except ApiError as exc:
-        if exc.code.value in _TERMINAL_VERIFICATION_CODES:
-            _record_terminal_verification_failure(
-                db, session_id=session_id, generation=generation, error_code=exc.code
-            )
+        if exc.code.value in get_args(UploadVerificationFailureCode):
+            code = cast(UploadVerificationFailureCode, exc.code.value)
+            _record_rejection(db, session_id, generation, code)
         logger.info(
-            "ConfirmFailed",
-            upload_session_id=str(session_id),
-            generation=generation,
-            request_id=request_id,
-            error_code=exc.code.value,
+            "upload_confirm_failed", upload_session_id=str(session_id), error_code=exc.code.value
         )
         raise
 
     with transaction(db):
-        session = _owned_session_for_update(db, viewer_id, origin_kind, session_handle)
-        now = _db_now(db)
+        session = _owned(db, viewer_id, origin_kind, session_id)
         if session.published_at is not None:
-            return _published(session, "Reused")
-        if generation != session.upload_generation:
-            raise ConflictError(
-                ApiErrorCode.E_UPLOAD_GENERATION_STALE,
-                "Upload generation is no longer current.",
-            )
+            return _published(session)
+        _require_current(session, generation)
+        now = _now(db)
+        capture = current.capture
         media = None
         if capture is not None:
-            sa.lock_identity(db, f"browser_capture:{viewer_id}:{capability.kind}:{capture.sha256}")
-            media = _readable_browser_capture(
-                db, viewer_id=viewer_id, kind=capability.kind, sha256=capture.sha256
-            )
-        destination_ids = list(_destinations(db, session.id))
-        libraries.resolve_writable_destinations(db, viewer_id, destination_ids)
-        created = media is None
-        if media is None:
-            media = Media(
-                id=candidate_media_id,
-                kind=capability.kind,
-                title=_new_media_title(session, candidate, capture),
-                requested_url=None if capture is None else capture.source_url,
-                canonical_source_url=(
-                    None if capture is None else normalize_url_for_display(capture.source_url)
-                ),
-                provider=None if capture is None else "browser_capture",
-                browser_capture_sha256=None if capture is None else capture.sha256,
-                processing_status=ProcessingStatus.pending,
-                created_by_user_id=viewer_id,
-                created_at=now,
-                updated_at=now,
-            )
-            db.add(media)
-            if capability.kind != "web_article":
-                db.add(
-                    MediaFile(
-                        media_id=media.id,
-                        storage_path=candidate.storage_path,
-                        content_type=capability.content_type,
-                        size_bytes=candidate.size_bytes,
-                        source_sha256=candidate.sha256,
-                    )
+            sa.lock_identity(db, f"browser_capture:{viewer_id}:{current.kind}:{capture.sha256}")
+            media = _held_capture(db, viewer_id, current.kind, capture.sha256)
+        destination_ids = list(
+            db.scalars(
+                select(MediaUploadSessionDestination.library_id).where(
+                    MediaUploadSessionDestination.upload_session_id == session.id
                 )
-            db.flush()
-        library_entries.assign_libraries_for_media_in_current_transaction(
-            db, viewer_id, media.id, destination_ids
+            )
         )
-        if created:
+        libraries.resolve_writable_destinations(db, viewer_id, destination_ids)
+        if media is None:
+            media = _new_media(db, session, current, candidate, now)
             attempt = sa.create_attempt(
                 db,
                 id=new_uuid7(),
                 media=media,
                 actor_id=viewer_id,
-                source_type=_SOURCE_TYPES[(capability.kind, capture is None)],
+                source_type=_SOURCE_TYPES[
+                    (current.kind, "BrowserCapture" if capture else "LocalFile")
+                ],
                 requested_url=media.requested_url,
                 canonical_source_url=media.canonical_source_url,
                 provider=media.provider,
                 provider_target_ref=None,
-                payload=_source_payload(session, candidate, capture, destination_ids),
+                payload={
+                    "library_ids": [str(library_id) for library_id in destination_ids],
+                    # a packet's only copy; a file's bytes are its media_file
+                    **({"storage_path": candidate.storage_path} if candidate.packet else {}),
+                },
             )
             mark_extracting(db, media)
             sa.enqueue_attempt(db, attempt, actor_id=viewer_id, request_id=request_id)
+            published_attempt_id = attempt.id
         else:
-            attempt = sa.latest_attempt(db, media.id, lock=False)
-            if attempt is None:
-                raise ApiError(ApiErrorCode.E_INTERNAL, "Reused capture has no source attempt.")
-        published_attempt_id = attempt.id
-        published_media_id = media.id
-        session.published_media_id = published_media_id
+            latest = sa.latest_attempt(db, media.id, lock=False)
+            assert latest is not None  # every published media was accepted through an attempt
+            published_attempt_id = latest.id
+        library_entries.assign_libraries_for_media_in_current_transaction(
+            db, viewer_id, media.id, destination_ids
+        )
+        session.published_media_id = media.id
         session.published_source_attempt_id = published_attempt_id
-        session.published_at = now
-        session.transport_failure_kind = None
-        session.transport_http_status = None
-        session.transport_failed_at = None
-        session.updated_at = now
-        _record_event(
+        session.published_at = session.updated_at = now
+        append_upload_event(
             db,
-            session.id,
-            UploadPublished(
-                generation=generation,
-                media_id=published_media_id,
-                source_attempt_id=published_attempt_id,
+            session_id=session.id,
+            facts=UploadPublished(
+                generation=generation, media_id=media.id, source_attempt_id=published_attempt_id
             ),
             stage="Upload",
+            failure_code=None,
         )
-
-    # A candidate the published media references is retained; a reused media
-    # references none, so the finalizer rejects and reclaims it.
-    finalize_upload_session_storage_object_write(
-        db, upload_session_id=session_id, storage_path=candidate.storage_path, storage_client=client
-    )
-    logger.info(
-        "Published",
-        upload_session_id=str(session_id),
-        generation=generation,
-        request_id=request_id,
-        media_id=str(published_media_id),
-        source_attempt_id=str(published_attempt_id),
-    )
-    handle = seal_upload_session(session_id)
-    return Published(
-        import_ref=format_import_ref(UploadImportRef(session_handle=handle)),
-        session_handle=handle,
-        media_id=published_media_id,
-        source_attempt_id=published_attempt_id,
-        idempotency_outcome="Created",
-    )
+        logger.info("upload_published", upload_session_id=str(session_id), media_id=str(media.id))
+        return _published(session)
 
 
-def _measure_candidate(
-    storage_client: StorageClient,
-    *,
-    storage_path: str,
-    kind: str,
-    expected_content_type: str,
-    expected_size_bytes: int,
-    capture: BrowserCapture | None,
-) -> _Candidate:
-    """Head, then stream the candidate object: size, content type, digest, and the
-    file signature or the strict article packet. A packet's disagreement with its
-    intent is an invalid object; a file's is a source-integrity failure."""
-    if kind == "web_article":
-        max_bytes = ARTICLE_PACKET_MAX_BYTES
-        too_large = ApiErrorCode.E_CAPTURE_TOO_LARGE
-        mismatch = ApiErrorCode.E_INVALID_FILE_TYPE
-    else:
-        max_bytes = get_settings().max_pdf_bytes if kind == "pdf" else get_settings().max_epub_bytes
-        too_large = ApiErrorCode.E_FILE_TOO_LARGE
-        mismatch = ApiErrorCode.E_SOURCE_INTEGRITY
+def _new_media(
+    db: Session,
+    session: MediaUploadSession,
+    current: _Generation,
+    candidate: _Candidate,
+    now: datetime,
+) -> Media:
+    capture = current.capture
+    title = session.filename
+    if candidate.packet is not None and capture is not None:
+        # an article is titled by its packet, else its host: a url may carry signed
+        # access parameters, kept as data and never displayed
+        title = candidate.packet.title.strip()[:255] or (
+            urlparse(capture.source_url).hostname or capture.source_url
+        )
+    media = Media(
+        id=current.candidate_media_id,
+        kind=current.kind,
+        title=title,
+        requested_url=capture.source_url if capture else None,
+        canonical_source_url=normalize_url_for_display(capture.source_url) if capture else None,
+        provider="browser_capture" if capture else None,
+        browser_capture_sha256=capture.sha256 if capture else None,
+        processing_status=ProcessingStatus.pending,
+        created_by_user_id=session.created_by_user_id,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(media)
+    if candidate.packet is None:
+        db.add(
+            MediaFile(
+                media_id=media.id,
+                storage_path=candidate.storage_path,
+                content_type=current.content_type,
+                size_bytes=candidate.size_bytes,
+                source_sha256=candidate.sha256,
+            )
+        )
+    db.flush()
+    return media
+
+
+def _measure(client: StorageClient, path: str, current: _Generation) -> _Candidate:
+    """Head, then stream, the candidate: size, content type, digest, and the file
+    signature or the strict article packet. A packet that disagrees with its intent
+    is an invalid object; a file that does is a source-integrity failure."""
+    packet_kind = current.kind == "web_article"
+    settings = get_settings()
+    limit = (
+        ARTICLE_PACKET_MAX_BYTES
+        if packet_kind
+        else settings.max_pdf_bytes
+        if current.kind == "pdf"
+        else settings.max_epub_bytes
+    )
+    too_large = ApiErrorCode.E_CAPTURE_TOO_LARGE if packet_kind else ApiErrorCode.E_FILE_TOO_LARGE
+    mismatch = ApiErrorCode.E_INVALID_FILE_TYPE if packet_kind else ApiErrorCode.E_SOURCE_INTEGRITY
     try:
-        metadata = storage_client.head_object(storage_path)
-    except StorageError as exc:
-        raise _storage_error(exc) from exc
-    if metadata is None:
-        raise InvalidRequestError(
-            ApiErrorCode.E_STORAGE_MISSING, "Uploaded source is missing from storage."
-        )
-    if metadata.size_bytes > max_bytes:
-        raise InvalidRequestError(too_large, "Uploaded source exceeds its size limit.")
-    if metadata.size_bytes != expected_size_bytes:
-        raise InvalidRequestError(mismatch, "Uploaded source size does not match its intent.")
-    if _normalize_content_type(metadata.content_type) != expected_content_type:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_FILE_TYPE, "Uploaded source has an invalid content type."
-        )
-    digest = hashlib.sha256()
-    body = bytearray()
-    measured = 0
-    try:
-        for chunk in storage_client.stream_object(storage_path):
+        head = client.head_object(path)
+        if head is None:
+            raise InvalidRequestError(ApiErrorCode.E_STORAGE_MISSING, "The upload never arrived.")
+        if head.size_bytes > limit:
+            raise InvalidRequestError(too_large, "Uploaded source exceeds its size limit.")
+        if head.size_bytes != current.size_bytes:
+            raise InvalidRequestError(mismatch, "Uploaded source size does not match its intent.")
+        if head.content_type.split(";", 1)[0].strip().lower() != current.content_type:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_FILE_TYPE, "Uploaded source has another content type."
+            )
+        digest, body, measured = hashlib.sha256(), bytearray(), 0
+        for chunk in client.stream_object(path):
             measured += len(chunk)
-            if measured > max_bytes:
+            if measured > limit:
                 raise InvalidRequestError(too_large, "Uploaded source exceeds its size limit.")
             digest.update(chunk)
-            if kind == "web_article" or len(body) < 5:
+            if packet_kind or len(body) < 5:
                 body.extend(chunk)
     except StorageError as exc:
         raise _storage_error(exc) from exc
-    if measured != expected_size_bytes:
-        raise InvalidRequestError(mismatch, "Uploaded source changed while being verified.")
     sha256 = digest.hexdigest()
-    if capture is not None and sha256 != capture.sha256:
-        raise InvalidRequestError(mismatch, "Uploaded source does not match its intent digest.")
+    if measured != current.size_bytes or (
+        current.capture is not None and sha256 != current.capture.sha256
+    ):
+        raise InvalidRequestError(mismatch, "Uploaded source does not match its intent.")
     packet = None
-    if kind == "web_article":
+    if packet_kind:
         packet = decode_article_packet(bytes(body))
-        if capture is None or packet.url != capture.source_url:
+        if current.capture is None or packet.url != current.capture.source_url:
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_FILE_TYPE, "Article packet url does not match its intent."
             )
-    elif not has_valid_file_signature(bytes(body[:5]), kind):
+    elif not has_valid_file_signature(bytes(body[:5]), current.kind):
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_FILE_TYPE, "Uploaded source has an invalid file signature."
         )
-    return _Candidate(storage_path=storage_path, size_bytes=measured, sha256=sha256, packet=packet)
+    return _Candidate(path, measured, sha256, packet)
 
 
-def _readable_browser_capture(
-    db: Session, *, viewer_id: UUID, kind: str, sha256: str
-) -> Media | None:
-    """The oldest media of this account holding exactly these captured bytes that
-    the viewer can still read, row-locked so teardown cannot claim it
-    mid-publication. Only the chosen row is locked, never a twin the viewer
-    cannot read (deleted, tearing down); the lock may have waited behind a
-    teardown, so readability is decided again on the locked row."""
+def _held_capture(db: Session, viewer_id: UUID, kind: str, sha256: str) -> Media | None:
+    """The account's oldest readable media holding these exact captured bytes,
+    row-locked; readability is decided again after the lock (a teardown may win)."""
     for media_id in db.scalars(
         select(Media.id)
         .where(
@@ -805,168 +525,66 @@ def _readable_browser_capture(
         )
         .order_by(Media.created_at, Media.id)
     ).all():
-        if not can_read_media(db, viewer_id, media_id):
-            continue
-        media = db.get(Media, media_id, with_for_update=True)
-        if media is not None and can_read_media(db, viewer_id, media_id):
-            return media
+        if can_read_media(db, viewer_id, media_id):
+            media = db.get(Media, media_id, with_for_update=True)
+            if media is not None and can_read_media(db, viewer_id, media_id):
+                return media
     return None
 
 
-def _new_media_title(
-    session: MediaUploadSession, candidate: _Candidate, capture: BrowserCapture | None
-) -> str:
-    """A file is titled by its filename; an article by its packet title, else by
-    its source host: the url may carry signed access parameters, which are
-    retained as data and never displayed."""
-    if candidate.packet is None or capture is None:
-        return session.filename
-    return candidate.packet.title.strip()[:255] or (
-        urlparse(capture.source_url).hostname or capture.source_url
-    )
-
-
-def _source_payload(
-    session: MediaUploadSession,
-    candidate: _Candidate,
-    capture: BrowserCapture | None,
-    destination_ids: list[UUID],
-) -> dict[str, object]:
-    library_ids = [str(library_id) for library_id in destination_ids]
-    if candidate.packet is not None and capture is not None:
-        return {
-            "storage_path": candidate.storage_path,
-            "content_type": session.content_type,
-            "size_bytes": candidate.size_bytes,
-            "sha256": candidate.sha256,
-            "source_url": capture.source_url,
-            "library_ids": library_ids,
-        }
-    payload: dict[str, object] = {
-        "filename": session.filename,
-        "content_type": session.content_type,
-        "size_bytes": candidate.size_bytes,
-        "source_sha256": candidate.sha256,
-        "storage_path": candidate.storage_path,
-        "library_ids": library_ids,
-    }
-    if capture is not None:
-        payload["source_url"] = capture.source_url
-    return payload
-
-
-def _record_terminal_verification_failure(
-    db: Session, *, session_id: UUID, generation: int, error_code: ApiErrorCode
+def _record_rejection(
+    db: Session, session_id: UUID, generation: int, code: UploadVerificationFailureCode
 ) -> None:
-    """A deterministic rejection settles the session: only removal remains.
-
-    Fenced like success: only an unpublished session whose current generation is
-    still the inspected one is settled, so a stale result cannot reject bytes a
-    newer generation is about to deliver.
-    """
+    """A deterministic refusal settles the session, fenced like publication: only
+    the current generation of an unpublished session is rejected."""
     with transaction(db):
-        session = db.execute(
-            select(MediaUploadSession)
-            .where(MediaUploadSession.id == session_id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        ).scalar_one_or_none()
+        session = db.get(
+            MediaUploadSession, session_id, with_for_update=True, populate_existing=True
+        )
         if (
             session is None
             or session.published_at is not None
             or session.upload_generation != generation
         ):
             return
-        now = _db_now(db)
-        _record_event(
+        session.verification_error_code = code
+        session.verification_failed_at = session.updated_at = _now(db)
+        append_upload_event(
             db,
-            session.id,
-            UploadFailed(generation=generation, transport=None),
+            session_id=session_id,
+            facts=UploadFailed(generation=generation),
             stage="Validate",
-            failure_code=error_code.value,
+            failure_code=code,
         )
-        session.verification_error_code = error_code.value
-        session.verification_failed_at = now
-        session.transport_failure_kind = None
-        session.transport_http_status = None
-        session.transport_failed_at = None
-        session.updated_at = now
 
 
-def _reserve_candidate_bytes(db: Session, *, session_id: UUID, candidate_path: str) -> None:
-    """Hold the candidate object well past this confirm's own lifetime."""
-    retain_until = _db_now(db) + _STAGED_RETENTION
-    try:
-        with transaction(db):
-            reserve_upload_session_storage_object_write_in_current_transaction(
-                db,
-                upload_session_id=session_id,
-                storage_path=candidate_path,
-                retain_until=retain_until,
-            )
-    except StoragePathCleanupInFlight as exc:
-        # The sweep for this exact candidate is already deleting it: nothing
-        # deterministic was rejected, so the confirm stays transient.
-        raise ApiError(
-            ApiErrorCode.E_STORAGE_ERROR, "Uploaded source storage is unavailable."
-        ) from exc
+# --- remove and support teardown -----------------------------------------------------
 
 
-# =============================================================================
-# Delete and support teardown
-# =============================================================================
-
-
-def delete_upload_session(
-    db: Session, *, viewer_id: UUID, origin_kind: InputOriginKind | None, session_handle: str
+def delete_session(
+    db: Session, *, viewer_id: UUID, origin_kind: OriginKind | None, session_id: UUID
 ) -> None:
-    """Remove an unpublished session, handing every staged generation to the sweeper.
+    """Remove an unpublished session. Retry rule: absent is done; published is 409.
 
-    ``origin_kind`` is the caller's credential scope: the extension bearer names
-    ``BrowserCapture``; the account credential passes ``None`` and removes its
-    own session of either origin.
+    ``origin_kind`` is the credential's scope: the extension names
+    ``BrowserCapture``; the account passes ``None`` and removes either origin.
     """
     with transaction(db):
-        session = _owned_session_for_update(db, viewer_id, origin_kind, session_handle)
+        try:
+            session = _owned(db, viewer_id, origin_kind, session_id)
+        except NotFoundError:
+            return
         if session.published_at is not None:
             raise ConflictError(
                 ApiErrorCode.E_UPLOAD_ALREADY_PUBLISHED, "Upload is already published."
             )
-        now = _db_now(db)
-        write_margin = timedelta(seconds=get_settings().storage_object_cleanup_write_window_seconds)
-        delete_not_before = max(now, session.upload_url_expires_at) + write_margin
-        for generation in range(1, session.upload_generation + 1):
-            try:
-                reserve_upload_session_storage_object_write_in_current_transaction(
-                    db,
-                    upload_session_id=session.id,
-                    storage_path=build_upload_session_staging_storage_path(
-                        session.id, generation, _STORAGE_EXTENSIONS[session.kind]
-                    ),
-                    retain_until=delete_not_before,
-                )
-            # justify-ignore-error: a claimed sweep of this exact staged path is
-            # already the durable cleanup intent a 204 requires, and strictly
-            # stronger evidence than a freshly armed reservation.
-            except StoragePathCleanupInFlight:
-                logger.info(
-                    "upload_staged_cleanup_already_in_flight",
-                    upload_session_id=str(session.id),
-                    generation=generation,
-                )
-        db.execute(
-            delete(MediaUploadSessionDestination).where(
-                MediaUploadSessionDestination.upload_session_id == session.id
-            )
-        )
-        delete_upload_history_in_current_transaction(db, session_id=session.id)
-        db.delete(session)
+        _delete_rows(db, [session.id])
 
 
 def delete_library_destination_support_in_current_transaction(
     db: Session, *, library_id: UUID
 ) -> None:
-    """Remove upload-intent references to a library being deleted by its owner."""
+    """A deleted library leaves every upload intent that named it."""
     db.execute(
         delete(MediaUploadSessionDestination).where(
             MediaUploadSessionDestination.library_id == library_id
@@ -975,242 +593,74 @@ def delete_library_destination_support_in_current_transaction(
 
 
 def delete_published_media_support_in_current_transaction(db: Session, *, media_id: UUID) -> None:
-    """Remove every capture receipt of a media before its media and source attempts."""
+    """Every receipt of a media goes before the media and its attempts."""
     session_ids = list(
-        db.execute(
+        db.scalars(
             select(MediaUploadSession.id)
             .where(MediaUploadSession.published_media_id == media_id)
             .order_by(MediaUploadSession.id)
             .with_for_update()
-        ).scalars()
+        )
+    )
+    _delete_rows(db, session_ids)
+
+
+def _delete_rows(db: Session, session_ids: list[UUID]) -> None:
+    db.execute(
+        delete(MediaUploadSessionDestination).where(
+            MediaUploadSessionDestination.upload_session_id.in_(session_ids)
+        )
     )
     for session_id in session_ids:
-        db.execute(
-            delete(MediaUploadSessionDestination).where(
-                MediaUploadSessionDestination.upload_session_id == session_id
-            )
-        )
         delete_upload_history_in_current_transaction(db, session_id=session_id)
     db.execute(delete(MediaUploadSession).where(MediaUploadSession.id.in_(session_ids)))
 
 
-# =============================================================================
-# Projections and helpers
-#
-# ``UPLOAD_SESSION_DERIVED_STATE_SQL`` is the set-wise owner of the derived-state
-# precedence; the per-row surfaces below project the same order — published,
-# then a terminal verification failure, then transport failure or a lapsed
-# capability.
-# =============================================================================
+# --- helpers -----------------------------------------------------------------------
 
 
-def _verification_failed(session: MediaUploadSession) -> NeedsAttention:
-    if session.verification_failed_at is None or session.verification_error_code is None:
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Terminal verification has no recorded failure.")
-    handle = seal_upload_session(session.id)
-    return NeedsAttention(
-        import_ref=format_import_ref(UploadImportRef(session_handle=handle)),
-        session_handle=handle,
-        failure=VerificationFailed(
-            code=cast(UploadVerificationFailureCode, session.verification_error_code),
-            failed_at=session.verification_failed_at,
-        ),
-        capabilities=UploadSessionCapabilities(can_retry_upload=False, can_remove=True),
-    )
-
-
-def _capability_expired(session_id: UUID, expired_at: datetime) -> NeedsAttention:
-    handle = seal_upload_session(session_id)
-    return NeedsAttention(
-        import_ref=format_import_ref(UploadImportRef(session_handle=handle)),
-        session_handle=handle,
-        failure=CapabilityExpired(expired_at=expired_at),
-        capabilities=UploadSessionCapabilities(can_retry_upload=True, can_remove=True),
-    )
-
-
-def _transport_failure(session: MediaUploadSession) -> TransportFailed:
-    if session.transport_failed_at is None:
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Transport failure has no timestamp.")
-    match session.transport_failure_kind:
-        case "Network":
-            reason = UploadTransportNetworkFailure()
-        case "Timeout":
-            reason = UploadTransportTimeoutFailure()
-        case "HttpRejected":
-            reason = UploadTransportHttpRejectedFailure(status=session.transport_http_status or 0)
-        case _:
-            reason = UploadTransportAbortedFailure()
-    return TransportFailed(reason=reason, failed_at=session.transport_failed_at)
-
-
-def _published(session: MediaUploadSession, outcome: Literal["Created", "Reused"]) -> Published:
-    if session.published_media_id is None or session.published_source_attempt_id is None:
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Published upload has no publication identity.")
-    handle = seal_upload_session(session.id)
-    return Published(
-        import_ref=format_import_ref(UploadImportRef(session_handle=handle)),
-        session_handle=handle,
-        media_id=session.published_media_id,
-        source_attempt_id=session.published_source_attempt_id,
-        idempotency_outcome=outcome,
-    )
-
-
-def _sign(
-    capability: _Capability,
-    *,
-    outcome: Literal["Created", "Reused"],
-    expires_in: int,
-) -> UploadRequired:
-    storage = get_storage_client()
-    try:
-        signed = storage.sign_upload(
-            capability.staging_path(),
-            content_type=capability.content_type,
-            size_bytes=capability.expected_size_bytes,
-            expires_in=expires_in,
-        )
-    except StorageError as exc:
-        raise ApiError(ApiErrorCode.E_SIGN_UPLOAD_FAILED, "Failed to initialize upload.") from exc
-    handle = seal_upload_session(capability.session_id)
-    return UploadRequired(
-        import_ref=format_import_ref(UploadImportRef(session_handle=handle)),
-        session_handle=handle,
-        generation=capability.generation,
-        upload_url=signed.upload_url,
-        required_headers=UploadRequiredHeaders.model_validate(
-            {"Content-Type": capability.content_type}
-        ),
-        expires_at=capability.expires_at,
-        idempotency_outcome=outcome,
-    )
-
-
-def _advance_generation(session: MediaUploadSession, now: datetime) -> None:
-    """A new generation fences abandoned bytes behind a new staging path."""
-    session.upload_generation += 1
-    session.upload_url_expires_at = now + timedelta(seconds=get_settings().signed_url_expiry_s)
-    session.transport_failure_kind = None
-    session.transport_http_status = None
-    session.transport_failed_at = None
-    session.updated_at = now
-
-
-def _reserve_staged_bytes(db: Session, capability: _Capability) -> None:
-    reserve_upload_session_storage_object_write_in_current_transaction(
-        db,
-        upload_session_id=capability.session_id,
-        storage_path=capability.staging_path(),
-        retain_until=(
-            capability.expires_at
-            + _STAGED_RETENTION
-            - timedelta(seconds=get_settings().signed_url_expiry_s)
-        ),
-    )
-
-
-def _owned_session_for_update(
-    db: Session, viewer_id: UUID, origin_kind: InputOriginKind | None, session_handle: str
+def _owned(
+    db: Session, viewer_id: UUID, origin_kind: OriginKind | None, session_id: UUID
 ) -> MediaUploadSession:
-    """The one session loader: the viewer's own session, row-locked, of the caller's
-    provenance when the caller has one (``None`` admits either origin). Anything
-    else, including another origin's session, is not found."""
+    """The viewer's own session, row-locked, of the caller's origin when it has one;
+    anything else (another origin included) is not found."""
     query = select(MediaUploadSession).where(
-        MediaUploadSession.id == unseal_upload_session(session_handle),
-        MediaUploadSession.created_by_user_id == viewer_id,
+        MediaUploadSession.id == session_id, MediaUploadSession.created_by_user_id == viewer_id
     )
     if origin_kind is not None:
         query = query.where(MediaUploadSession.input_origin["kind"].astext == origin_kind)
-    session = db.execute(
-        query.with_for_update().execution_options(populate_existing=True)
-    ).scalar_one_or_none()
+    session = db.scalar(query.with_for_update().execution_options(populate_existing=True))
     if session is None:
         raise NotFoundError(ApiErrorCode.E_UPLOAD_SESSION_NOT_FOUND, "Upload session not found.")
     return session
 
 
-def _destinations(db: Session, session_id: UUID) -> tuple[UUID, ...]:
-    return tuple(
-        db.execute(
-            select(MediaUploadSessionDestination.library_id)
-            .where(MediaUploadSessionDestination.upload_session_id == session_id)
-            .order_by(MediaUploadSessionDestination.library_id)
-        ).scalars()
+def _require_current(session: MediaUploadSession, generation: int) -> None:
+    if generation != session.upload_generation:
+        raise ConflictError(
+            ApiErrorCode.E_UPLOAD_GENERATION_STALE, "Upload generation is no longer current."
+        )
+    if session.verification_error_code is not None:
+        raise InvalidRequestError(
+            ApiErrorCode(session.verification_error_code), "The upload was rejected."
+        )
+
+
+def _published(session: MediaUploadSession) -> Published:
+    assert session.published_media_id is not None
+    return Published(
+        import_ref=format_import_ref(UploadImportRef(session_id=session.id)),
+        session_id=session.id,
+        media_id=session.published_media_id,
+        created=session.published_media_id == session.candidate_media_id,
     )
 
 
-def _record_event(
-    db: Session,
-    session_id: UUID,
-    facts: UploadFacts,
-    *,
-    stage: Literal["Upload", "Validate"],
-    failure_code: SafeFailureCode | None = None,
-) -> None:
-    append_upload_event(
-        db,
-        session_id=session_id,
-        facts=facts,
-        stage=stage,
-        failure_code=failure_code,
-    )
-
-
-def _normalize_intent(
-    request: CreateUploadSessionRequest | BrowserCaptureIntent,
-    input_origin: LocalFile | BrowserCapture,
-) -> _Intent:
-    kind = cast(Literal["pdf", "epub", "web_article"], request.kind.lower())
-    content_type = _normalize_content_type(request.content_type)
-    if kind == "web_article":
-        if not isinstance(input_origin, BrowserCapture) or content_type != "application/json":
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_FILE_TYPE, "Article packets are browser captures."
-            )
-        if request.size_bytes > ARTICLE_PACKET_MAX_BYTES:
-            raise InvalidRequestError(
-                ApiErrorCode.E_CAPTURE_TOO_LARGE, "Article packet exceeds the packet-size limit."
-            )
-    else:
-        try:
-            validate_file_ingest_request(kind, content_type, request.size_bytes)
-        except InvalidRequestError as exc:
-            # The shared validator reports kind/content-type rejections with its
-            # own codes; this surface declares E_INVALID_FILE_TYPE.
-            if exc.code is ApiErrorCode.E_FILE_TOO_LARGE:
-                raise
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_FILE_TYPE, "Upload intent has an unsupported document type."
-            ) from exc
-    return _Intent(
-        kind=kind,
-        filename=_normalize_filename(request.filename),
-        content_type=content_type,
-        size_bytes=request.size_bytes,
-        library_ids=tuple(sorted(set(request.library_ids))),
-        input_origin=input_origin,
-    )
-
-
-def _normalize_filename(filename: str) -> str:
-    clean = filename.strip().replace("\\", "/").rsplit("/", 1)[-1].strip()
-    if not clean or len(clean) > 255:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid upload filename.")
-    return clean
-
-
-def _normalize_content_type(content_type: str) -> str:
-    return content_type.split(";", 1)[0].strip().lower()
+def _now(db: Session) -> datetime:
+    return db.execute(select(func.now())).scalar_one()
 
 
 def _storage_error(exc: StorageError) -> ApiError:
     if exc.code == ApiErrorCode.E_STORAGE_MISSING.value:
-        return InvalidRequestError(
-            ApiErrorCode.E_STORAGE_MISSING, "Uploaded source is missing from storage."
-        )
-    return ApiError(ApiErrorCode.E_STORAGE_ERROR, "Uploaded source storage is unavailable.")
-
-
-def _db_now(db: Session) -> datetime:
-    return db.execute(select(func.now())).scalar_one()
+        return InvalidRequestError(ApiErrorCode.E_STORAGE_MISSING, "The upload never arrived.")
+    return ApiError(ApiErrorCode.E_STORAGE_ERROR, "Upload storage is unavailable.")

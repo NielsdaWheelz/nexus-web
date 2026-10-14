@@ -109,7 +109,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
           continue;
         }
         let uploaded;
-        try { uploaded = await uploadIngestFile({ file, libraryIds: [] }); }
+        try { uploaded = await uploadIngestFile({ file, libraryIds: [], id: crypto.randomUUID() }); }
         catch (error) {
           if (handleUnauthenticatedApiError(error)) return;
           feedback.publish({ kind: "Persistent", key: `connection-upload:${selfRef}:${file.name}`, announcement: "Polite", content: captureErrorFeedback(error, "AddAttachment") });

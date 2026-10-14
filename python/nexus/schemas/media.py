@@ -9,16 +9,14 @@ from pydantic import UUID4, BaseModel, ConfigDict, Field, model_validator
 from nexus.db.models import MediaKind, ProcessingStatus
 from nexus.db.models import TranscriptCoverage as MediaTranscriptCoverage
 from nexus.db.models import TranscriptState as MediaTranscriptState
-from nexus.schemas.client_mutation import ClientMutationUuidText
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributor_credit import ContributorCreditOut
+from nexus.schemas.import_history import UploadVerificationFailureCode
 from nexus.schemas.import_refs import ImportRef
 from nexus.schemas.media_summary import MediaDurationOut, MediaProcessingStatus
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.publication_dates import PublicationDate
 from nexus.schemas.source_issues import SourceIssue
-from nexus.schemas.upload_failures import UploadTransportFailure, UploadVerificationFailureCode
-from nexus.services.sealed_handles import UploadSessionHandle
 
 
 class _Strict(BaseModel):
@@ -323,125 +321,53 @@ MediaDeleteResult = Annotated[
 ]
 
 
-class CreateUploadSessionRequest(_Strict):
-    kind: Literal["Pdf", "Epub"]
+class CreateUploadRequest(_Strict):
+    """``id`` is the client's session id; a resend advances an unpublished session."""
+
+    id: UUID
+    kind: Literal["pdf", "epub"]
     filename: str = Field(min_length=1, max_length=255)
     content_type: str
     size_bytes: int = Field(gt=0)
     library_ids: list[UUID] = Field(default_factory=list)
 
 
-class RetryUploadSessionRequest(_Strict):
-    filename: str = Field(min_length=1, max_length=255)
-    content_type: str
-    size_bytes: int = Field(gt=0)
-    client_mutation_id: ClientMutationUuidText
-    expected_generation: int = Field(ge=1)
-
-
-class ConfirmUploadSessionRequest(_Strict):
+class ConfirmUploadRequest(_Strict):
     generation: int = Field(ge=1)
-
-
-class _UploadTransportFailureBase(_Strict):
-    generation: int = Field(ge=1)
-    duration_ms: int = Field(ge=0)
-    request_id: str = Field(min_length=1, max_length=255)
-
-
-class UploadNetworkFailureRequest(_UploadTransportFailureBase):
-    kind: Literal["Network"]
-
-
-class UploadTimeoutFailureRequest(_UploadTransportFailureBase):
-    kind: Literal["Timeout"]
-
-
-class UploadHttpRejectedFailureRequest(_UploadTransportFailureBase):
-    kind: Literal["HttpRejected"]
-    status: int = Field(ge=100, le=599)
-
-
-class UploadAbortedFailureRequest(_UploadTransportFailureBase):
-    kind: Literal["Aborted"]
-
-
-UploadTransportFailureRequest = Annotated[
-    UploadNetworkFailureRequest
-    | UploadTimeoutFailureRequest
-    | UploadHttpRejectedFailureRequest
-    | UploadAbortedFailureRequest,
-    Field(discriminator="kind"),
-]
-
-
-class UploadRequiredHeaders(BaseModel):
-    """The headers the storage PUT must carry, keyed by their HTTP names."""
-
-    content_type: str = Field(alias="Content-Type")
-
-    model_config = ConfigDict(extra="forbid", serialize_by_alias=True)
 
 
 class UploadRequired(_Strict):
+    """PUT the exact bytes to ``upload_url`` with ``Content-Type: content_type`` before
+    ``expires_at``, then confirm ``generation``."""
+
     kind: Literal["UploadRequired"] = "UploadRequired"
     import_ref: ImportRef
-    session_handle: UploadSessionHandle
+    session_id: UUID
     generation: int = Field(ge=1)
-    method: Literal["PUT"] = "PUT"
     upload_url: str
-    required_headers: UploadRequiredHeaders
+    content_type: str
     expires_at: datetime
-    idempotency_outcome: Literal["Created", "Reused"]
 
 
 class Published(_Strict):
     kind: Literal["Published"] = "Published"
     import_ref: ImportRef
-    session_handle: UploadSessionHandle
+    session_id: UUID
     media_id: UUID
-    source_attempt_id: UUID
-    idempotency_outcome: Literal["Created", "Reused"]
+    created: bool
+    """The session's own media (false: a capture reused identical bytes, I8)."""
 
 
-class VerificationFailed(_Strict):
-    kind: Literal["VerificationFailed"] = "VerificationFailed"
-    code: UploadVerificationFailureCode
-    failed_at: datetime
+class Rejected(_Strict):
+    """Verification refused the bytes; only removal remains."""
 
-
-class TransportFailed(_Strict):
-    kind: Literal["TransportFailed"] = "TransportFailed"
-    reason: UploadTransportFailure
-    failed_at: datetime
-
-
-class CapabilityExpired(_Strict):
-    kind: Literal["CapabilityExpired"] = "CapabilityExpired"
-    expired_at: datetime
-
-
-UploadSessionFailure = Annotated[
-    VerificationFailed | TransportFailed | CapabilityExpired, Field(discriminator="kind")
-]
-
-
-class UploadSessionCapabilities(_Strict):
-    can_retry_upload: bool
-    can_remove: bool
-
-
-class NeedsAttention(_Strict):
-    kind: Literal["NeedsAttention"] = "NeedsAttention"
+    kind: Literal["Rejected"] = "Rejected"
     import_ref: ImportRef
-    session_handle: UploadSessionHandle
-    failure: UploadSessionFailure
-    capabilities: UploadSessionCapabilities
+    session_id: UUID
+    code: UploadVerificationFailureCode
 
 
-UploadSessionResponse = Annotated[
-    UploadRequired | Published | NeedsAttention, Field(discriminator="kind")
-]
+UploadSessionOut = Annotated[UploadRequired | Published | Rejected, Field(discriminator="kind")]
 
 
 class RetrySourceRequest(_Strict):

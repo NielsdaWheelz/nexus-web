@@ -23,11 +23,12 @@ import {
 } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
+  UploadSessionError,
   fetchImportSummary,
   subscribeImportsInvalidations,
   type ImportSummary,
 } from "@/lib/imports/api";
-import { removeUploadSession, retryUploadSession } from "@/lib/imports/ingest";
+import { removeUploadSession, uploadIngestFile } from "@/lib/imports/ingest";
 import { useChangeStamp } from "@/lib/api/changes";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 
@@ -36,13 +37,8 @@ const POLL_MS = 5_000;
 const CLOSED_PANE_WINDOW_MS = 15 * 60_000;
 
 export type UploadCommand =
-  | {
-      readonly kind: "RetryUpload";
-      readonly handle: string;
-      readonly file: File;
-      readonly expectedGeneration: number;
-    }
-  | { readonly kind: "RemoveUpload"; readonly handle: string };
+  | { readonly kind: "RetryUpload"; readonly sessionId: string; readonly file: File }
+  | { readonly kind: "RemoveUpload"; readonly sessionId: string };
 
 interface ImportsContextValue {
   readonly summary: ServerValue<ImportSummary>;
@@ -61,8 +57,8 @@ interface ImportsContextValue {
 const ImportsContext = createContext<ImportsContextValue | null>(null);
 
 /** One command against one import is pending at most once (contract D7). */
-export function pendingKey(command: Pick<UploadCommand, "kind" | "handle">) {
-  return `${command.handle}|${command.kind}`;
+export function pendingKey(command: Pick<UploadCommand, "kind" | "sessionId">) {
+  return `${command.sessionId}|${command.kind}`;
 }
 
 export function ImportsProvider({ children }: { children: ReactNode }) {
@@ -170,15 +166,16 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
     settle(new Set(pendingRef.current).add(key));
     try {
       if (command.kind === "RetryUpload") {
-        await retryUploadSession({
-          sessionHandle: command.handle,
-          file: command.file,
-          expectedGeneration: command.expectedGeneration,
-        });
+        // the session's own id: it advances, or answers what it published;
+        // its destinations are the first create's
+        const { file, sessionId: id } = command;
+        await uploadIngestFile({ file, libraryIds: [], id });
       } else {
-        await removeUploadSession(command.handle);
+        await removeUploadSession(command.sessionId);
       }
     } catch (error) {
+      // a session that moved on (published or replaced elsewhere) is done
+      if (error instanceof UploadSessionError && error.outcome.kind === "Superseded") return;
       if (!handleUnauthenticatedApiError(error)) throw error;
     } finally {
       const next = new Set(pendingRef.current);

@@ -169,8 +169,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create Extension Session Route */
-        post: operations["create_extension_session_route_auth_extension_sessions_post"];
+        /**
+         * Create Session
+         * @description A new token per call; the extension keeps the last and may revoke any.
+         */
+        post: operations["create_session_auth_extension_sessions_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -185,14 +188,17 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Read Current Extension Session Route
+         * Read Session
          * @description The account behind the bearer and the byte limits its captures must respect.
          */
-        get: operations["read_current_extension_session_route_auth_extension_sessions_current_get"];
+        get: operations["read_session_auth_extension_sessions_current_get"];
         put?: never;
         post?: never;
-        /** Revoke Current Extension Session Route */
-        delete: operations["revoke_current_extension_session_route_auth_extension_sessions_current_delete"];
+        /**
+         * Revoke Session
+         * @description A revoked or unknown token is 401, which the extension reads as done.
+         */
+        delete: operations["revoke_session_auth_extension_sessions_current_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -603,25 +609,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/extension/captures/{session_handle}": {
+    "/extension/captures/{session_id}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Read Capture */
-        get: operations["read_capture_extension_captures__session_handle__get"];
+        get?: never;
         put?: never;
         post?: never;
         /** Delete Capture */
-        delete: operations["delete_capture_extension_captures__session_handle__delete"];
+        delete: operations["delete_capture_extension_captures__session_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/extension/captures/{session_handle}/confirm": {
+    "/extension/captures/{session_id}/confirm": {
         parameters: {
             query?: never;
             header?: never;
@@ -631,41 +636,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** Confirm Capture */
-        post: operations["confirm_capture_extension_captures__session_handle__confirm_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/extension/captures/{session_handle}/retry": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Retry Capture */
-        post: operations["retry_capture_extension_captures__session_handle__retry_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/extension/captures/{session_handle}/transport-failure": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Record Capture Transport Failure */
-        post: operations["record_capture_transport_failure_extension_captures__session_handle__transport_failure_post"];
+        post: operations["confirm_capture_extension_captures__session_id__confirm_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1499,15 +1470,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create Upload Session */
-        post: operations["create_upload_session_media_uploads_post"];
+        /** Create Upload */
+        post: operations["create_upload_media_uploads_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/media/uploads/{session_handle}": {
+    "/media/uploads/{session_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1517,14 +1488,14 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete Upload Session */
-        delete: operations["delete_upload_session_media_uploads__session_handle__delete"];
+        /** Delete Upload */
+        delete: operations["delete_upload_media_uploads__session_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/media/uploads/{session_handle}/confirm": {
+    "/media/uploads/{session_id}/confirm": {
         parameters: {
             query?: never;
             header?: never;
@@ -1533,42 +1504,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Confirm Upload Session */
-        post: operations["confirm_upload_session_media_uploads__session_handle__confirm_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/media/uploads/{session_handle}/retry": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Retry Upload Session */
-        post: operations["retry_upload_session_media_uploads__session_handle__retry_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/media/uploads/{session_handle}/transport-failure": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Record Upload Transport Failure */
-        post: operations["record_upload_transport_failure_media_uploads__session_handle__transport_failure_post"];
+        /** Confirm Upload */
+        post: operations["confirm_upload_media_uploads__session_id__confirm_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3355,29 +3292,6 @@ export interface components {
          * @enum {string}
          */
         BrowseSource: "Nexus" | "ProjectGutenberg" | "Brave" | "YouTube" | "PodcastIndex";
-        /** BrowserCaptureIntent */
-        BrowserCaptureIntent: {
-            /**
-             * Content Type
-             * @enum {string}
-             */
-            content_type: "application/pdf" | "application/epub+zip" | "application/json";
-            /** Filename */
-            filename: string;
-            /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "web_article" | "pdf" | "epub";
-            /** Library Ids */
-            library_ids?: string[];
-            /** Sha256 */
-            sha256: string;
-            /** Size Bytes */
-            size_bytes: number;
-            /** Source Url */
-            source_url: string;
-        };
         /** CancelledChatFailure */
         CancelledChatFailure: {
             /** Can Rerun */
@@ -3448,18 +3362,17 @@ export interface components {
             /** Can Search */
             can_search: boolean;
         };
-        /** CapabilityExpired */
-        CapabilityExpired: {
-            /**
-             * Expired At
-             * Format: date-time
-             */
-            expired_at: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "CapabilityExpired";
+        /**
+         * CaptureLimits
+         * @description The byte limits the extension checks before it sends anything.
+         */
+        CaptureLimits: {
+            /** Max Article Packet Bytes */
+            max_article_packet_bytes: number;
+            /** Max Epub Bytes */
+            max_epub_bytes: number;
+            /** Max Pdf Bytes */
+            max_pdf_bytes: number;
         };
         /** ChapterOut */
         ChapterOut: {
@@ -3849,8 +3762,8 @@ export interface components {
             /** Total */
             total: number;
         };
-        /** ConfirmUploadSessionRequest */
-        ConfirmUploadSessionRequest: {
+        /** ConfirmUploadRequest */
+        ConfirmUploadRequest: {
             /** Generation */
             generation: number;
         };
@@ -4269,6 +4182,37 @@ export interface components {
              */
             source_type: "remote_epub_url";
         };
+        /**
+         * CreateCaptureRequest
+         * @description ``id`` is the extension's session id, minted once per draft and resent on retry.
+         */
+        CreateCaptureRequest: {
+            /**
+             * Content Type
+             * @enum {string}
+             */
+            content_type: "application/pdf" | "application/epub+zip" | "application/json";
+            /** Filename */
+            filename: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "web_article" | "pdf" | "epub";
+            /** Library Ids */
+            library_ids?: string[];
+            /** Sha256 */
+            sha256: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Source Url */
+            source_url: string;
+        };
         /** CreateConversationRequest */
         CreateConversationRequest: {
             /** Initial Context Refs */
@@ -4371,17 +4315,25 @@ export interface components {
              */
             id: string;
         };
-        /** CreateUploadSessionRequest */
-        CreateUploadSessionRequest: {
+        /**
+         * CreateUploadRequest
+         * @description ``id`` is the client's session id; a resend advances an unpublished session.
+         */
+        CreateUploadRequest: {
             /** Content Type */
             content_type: string;
             /** Filename */
             filename: string;
             /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
              * Kind
              * @enum {string}
              */
-            kind: "Pdf" | "Epub";
+            kind: "pdf" | "epub";
             /** Library Ids */
             library_ids?: string[];
             /** Size Bytes */
@@ -4485,10 +4437,10 @@ export interface components {
             /** Data */
             data: components["schemas"]["SourceRepairAdmission"] | components["schemas"]["SearchRepairAdmission"];
         };
-        /** Data[Annotated[Union[UploadRequired, Published, NeedsAttention], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
-        Data_Annotated_Union_UploadRequired__Published__NeedsAttention___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
+        /** Data[Annotated[Union[UploadRequired, Published, Rejected], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
+        Data_Annotated_Union_UploadRequired__Published__Rejected___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Data */
-            data: components["schemas"]["UploadRequired"] | components["schemas"]["Published"] | components["schemas"]["NeedsAttention"];
+            data: components["schemas"]["UploadRequired"] | components["schemas"]["Published"] | components["schemas"]["Rejected"];
         };
         /** Data[AssistantWritePage] */
         Data_AssistantWritePage_: {
@@ -4609,6 +4561,14 @@ export interface components {
         /** Data[DossierHeadOut] */
         Data_DossierHeadOut_: {
             data: components["schemas"]["DossierHeadOut"];
+        };
+        /** Data[ExtensionSessionOut] */
+        Data_ExtensionSessionOut_: {
+            data: components["schemas"]["ExtensionSessionOut"];
+        };
+        /** Data[ExtensionTokenOut] */
+        Data_ExtensionTokenOut_: {
+            data: components["schemas"]["ExtensionTokenOut"];
         };
         /** Data[Finish] */
         Data_Finish_: {
@@ -4839,11 +4799,6 @@ export interface components {
         Data_Union_ReaderCursorEmpty__ReaderCursorPositioned__: {
             /** Data */
             data: components["schemas"]["ReaderCursorEmpty"] | components["schemas"]["ReaderCursorPositioned"];
-        };
-        /** Data[Union[UploadRequired, NeedsAttention]] */
-        Data_Union_UploadRequired__NeedsAttention__: {
-            /** Data */
-            data: components["schemas"]["UploadRequired"] | components["schemas"]["NeedsAttention"];
         };
         /** Data[UserProfileOut] */
         Data_UserProfileOut_: {
@@ -5421,6 +5376,34 @@ export interface components {
              * @enum {string}
              */
             kind: "Existing";
+        };
+        /** ExtensionSessionOut */
+        ExtensionSessionOut: {
+            /** Display Name */
+            display_name: string | null;
+            /** Email */
+            email: string | null;
+            limits: components["schemas"]["CaptureLimits"];
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+        };
+        /** ExtensionTokenOut */
+        ExtensionTokenOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Token */
+            token: string;
         };
         /**
          * ExternalContributorWorkItemOut
@@ -7439,21 +7422,6 @@ export interface components {
             expected_override_revision: number | null;
             terminal_listening: components["schemas"]["ListeningIn"];
         };
-        /** NeedsAttention */
-        NeedsAttention: {
-            capabilities: components["schemas"]["UploadSessionCapabilities"];
-            /** Failure */
-            failure: components["schemas"]["VerificationFailed"] | components["schemas"]["TransportFailed"] | components["schemas"]["CapabilityExpired"];
-            /** Import Ref */
-            import_ref: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "NeedsAttention";
-            /** Session Handle */
-            session_handle: string;
-        };
         /** NewAuthorBinding */
         NewAuthorBinding: {
             /** Display Name */
@@ -8802,11 +8770,8 @@ export interface components {
         };
         /** Published */
         Published: {
-            /**
-             * Idempotency Outcome
-             * @enum {string}
-             */
-            idempotency_outcome: "Created" | "Reused";
+            /** Created */
+            created: boolean;
             /** Import Ref */
             import_ref: string;
             /**
@@ -8819,13 +8784,11 @@ export interface components {
              * Format: uuid
              */
             media_id: string;
-            /** Session Handle */
-            session_handle: string;
             /**
-             * Source Attempt Id
+             * Session Id
              * Format: uuid
              */
-            source_attempt_id: string;
+            session_id: string;
         };
         /** QuickReadsOut */
         QuickReadsOut: {
@@ -9783,6 +9746,29 @@ export interface components {
              */
             expected_attempt_id: string;
         };
+        /**
+         * Rejected
+         * @description Verification refused the bytes; only removal remains.
+         */
+        Rejected: {
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE";
+            /** Import Ref */
+            import_ref: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Rejected";
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            session_id: string;
+        };
         /** RejectedChatAdmission */
         RejectedChatAdmission: {
             /**
@@ -10157,8 +10143,6 @@ export interface components {
         };
         /** RetryUploadOffer */
         RetryUploadOffer: {
-            /** Expected Generation */
-            expected_generation: number;
             /**
              * Input
              * @default ChooseOriginalFile
@@ -10170,19 +10154,6 @@ export interface components {
              * @enum {string}
              */
             kind: "RetryUpload";
-        };
-        /** RetryUploadSessionRequest */
-        RetryUploadSessionRequest: {
-            /** Client Mutation Id */
-            client_mutation_id: string;
-            /** Content Type */
-            content_type: string;
-            /** Expected Generation */
-            expected_generation: number;
-            /** Filename */
-            filename: string;
-            /** Size Bytes */
-            size_bytes: number;
         };
         /**
          * ReviewMetadataResultAction
@@ -11543,21 +11514,6 @@ export interface components {
              */
             user_id: string;
         };
-        /** TransportFailed */
-        TransportFailed: {
-            /**
-             * Failed At
-             * Format: date-time
-             */
-            failed_at: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "TransportFailed";
-            /** Reason */
-            reason: components["schemas"]["UploadTransportNetworkFailure"] | components["schemas"]["UploadTransportTimeoutFailure"] | components["schemas"]["UploadTransportHttpRejectedFailure"] | components["schemas"]["UploadTransportAbortedFailure"];
-        };
         /** TrustCitationOut */
         TrustCitationOut: {
             citation: components["schemas"]["CitationOut"];
@@ -11767,20 +11723,6 @@ export interface components {
              */
             display_name?: string | null;
         };
-        /** UploadAbortedFailureRequest */
-        UploadAbortedFailureRequest: {
-            /** Duration Ms */
-            duration_ms: number;
-            /** Generation */
-            generation: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Aborted";
-            /** Request Id */
-            request_id: string;
-        };
         /** UploadAccepted */
         UploadAccepted: {
             /** Generation */
@@ -11803,8 +11745,8 @@ export interface components {
         };
         /**
          * UploadFailed
-         * @description A transport is a client-reported upload failure; null is a
-         *     server-side verification rejection whose code is on the envelope.
+         * @description A failed upload generation; the envelope's code says why (a verification
+         *     rejection, or ``E_UPLOAD_TRANSPORT_FAILED`` on rows from before 0283).
          */
         UploadFailed: {
             /** Generation */
@@ -11814,8 +11756,6 @@ export interface components {
              * @enum {string}
              */
             kind: "UploadFailed";
-            /** Transport */
-            transport: (components["schemas"]["UploadTransportNetworkFailure"] | components["schemas"]["UploadTransportTimeoutFailure"] | components["schemas"]["UploadTransportHttpRejectedFailure"] | components["schemas"]["UploadTransportAbortedFailure"]) | null;
         };
         /** UploadHistoryBaseline */
         UploadHistoryBaseline: {
@@ -11826,36 +11766,6 @@ export interface components {
              * @enum {string}
              */
             kind: "UploadHistoryBaseline";
-        };
-        /** UploadHttpRejectedFailureRequest */
-        UploadHttpRejectedFailureRequest: {
-            /** Duration Ms */
-            duration_ms: number;
-            /** Generation */
-            generation: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "HttpRejected";
-            /** Request Id */
-            request_id: string;
-            /** Status */
-            status: number;
-        };
-        /** UploadNetworkFailureRequest */
-        UploadNetworkFailureRequest: {
-            /** Duration Ms */
-            duration_ms: number;
-            /** Generation */
-            generation: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Network";
-            /** Request Id */
-            request_id: string;
         };
         /** UploadPublished */
         UploadPublished: {
@@ -11887,8 +11797,14 @@ export interface components {
              */
             kind: "UploadRecoveryAccepted";
         };
-        /** UploadRequired */
+        /**
+         * UploadRequired
+         * @description PUT the exact bytes to ``upload_url`` with ``Content-Type: content_type`` before
+         *     ``expires_at``, then confirm ``generation``.
+         */
         UploadRequired: {
+            /** Content Type */
+            content_type: string;
             /**
              * Expires At
              * Format: date-time
@@ -11896,11 +11812,6 @@ export interface components {
             expires_at: string;
             /** Generation */
             generation: number;
-            /**
-             * Idempotency Outcome
-             * @enum {string}
-             */
-            idempotency_outcome: "Created" | "Reused";
             /** Import Ref */
             import_ref: string;
             /**
@@ -11909,79 +11820,12 @@ export interface components {
              */
             kind: "UploadRequired";
             /**
-             * Method
-             * @default PUT
-             * @constant
+             * Session Id
+             * Format: uuid
              */
-            method: "PUT";
-            required_headers: components["schemas"]["UploadRequiredHeaders"];
-            /** Session Handle */
-            session_handle: string;
+            session_id: string;
             /** Upload Url */
             upload_url: string;
-        };
-        /**
-         * UploadRequiredHeaders
-         * @description The headers the storage PUT must carry, keyed by their HTTP names.
-         */
-        UploadRequiredHeaders: {
-            /** Content-Type */
-            "Content-Type": string;
-        };
-        /** UploadSessionCapabilities */
-        UploadSessionCapabilities: {
-            /** Can Remove */
-            can_remove: boolean;
-            /** Can Retry Upload */
-            can_retry_upload: boolean;
-        };
-        /** UploadTimeoutFailureRequest */
-        UploadTimeoutFailureRequest: {
-            /** Duration Ms */
-            duration_ms: number;
-            /** Generation */
-            generation: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Timeout";
-            /** Request Id */
-            request_id: string;
-        };
-        /** UploadTransportAbortedFailure */
-        UploadTransportAbortedFailure: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Aborted";
-        };
-        /** UploadTransportHttpRejectedFailure */
-        UploadTransportHttpRejectedFailure: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "HttpRejected";
-            /** Status */
-            status: number;
-        };
-        /** UploadTransportNetworkFailure */
-        UploadTransportNetworkFailure: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Network";
-        };
-        /** UploadTransportTimeoutFailure */
-        UploadTransportTimeoutFailure: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Timeout";
         };
         /**
          * UserAudienceIn
@@ -12067,24 +11911,6 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
-        };
-        /** VerificationFailed */
-        VerificationFailed: {
-            /**
-             * Code
-             * @enum {string}
-             */
-            code: "E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE";
-            /**
-             * Failed At
-             * Format: date-time
-             */
-            failed_at: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "VerificationFailed";
         };
         /** VideoCandidate */
         VideoCandidate: {
@@ -12707,7 +12533,7 @@ export interface operations {
             };
         };
     };
-    create_extension_session_route_auth_extension_sessions_post: {
+    create_session_auth_extension_sessions_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -12722,14 +12548,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ExtensionTokenOut_"];
                 };
             };
         };
     };
-    read_current_extension_session_route_auth_extension_sessions_current_get: {
+    read_session_auth_extension_sessions_current_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -12744,14 +12568,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ExtensionSessionOut_"];
                 };
             };
         };
     };
-    revoke_current_extension_session_route_auth_extension_sessions_current_delete: {
+    revoke_session_auth_extension_sessions_current_delete: {
         parameters: {
             query?: never;
             header?: never;
@@ -13588,7 +13410,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["BrowserCaptureIntent"];
+                "application/json": components["schemas"]["CreateCaptureRequest"];
             };
         };
         responses: {
@@ -13598,9 +13420,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_Annotated_Union_UploadRequired__Published__Rejected___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
                 };
             };
             /** @description Validation Error */
@@ -13614,45 +13434,12 @@ export interface operations {
             };
         };
     };
-    read_capture_extension_captures__session_handle__get: {
+    delete_capture_extension_captures__session_id__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                session_handle: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_capture_extension_captures__session_handle__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_handle: string;
+                session_id: string;
             };
             cookie?: never;
         };
@@ -13676,18 +13463,18 @@ export interface operations {
             };
         };
     };
-    confirm_capture_extension_captures__session_handle__confirm_post: {
+    confirm_capture_extension_captures__session_id__confirm_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                session_handle: string;
+                session_id: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ConfirmUploadSessionRequest"];
+                "application/json": components["schemas"]["ConfirmUploadRequest"];
             };
         };
         responses: {
@@ -13697,80 +13484,8 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_Published_"];
                 };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    retry_capture_extension_captures__session_handle__retry_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_handle: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RetryUploadSessionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    record_capture_transport_failure_extension_captures__session_handle__transport_failure_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_handle: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UploadNetworkFailureRequest"] | components["schemas"]["UploadTimeoutFailureRequest"] | components["schemas"]["UploadHttpRejectedFailureRequest"] | components["schemas"]["UploadAbortedFailureRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -15455,7 +15170,7 @@ export interface operations {
             };
         };
     };
-    create_upload_session_media_uploads_post: {
+    create_upload_media_uploads_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -15464,7 +15179,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateUploadSessionRequest"];
+                "application/json": components["schemas"]["CreateUploadRequest"];
             };
         };
         responses: {
@@ -15474,7 +15189,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_Annotated_Union_UploadRequired__Published__NeedsAttention___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+                    "application/json": components["schemas"]["Data_Annotated_Union_UploadRequired__Published__Rejected___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
                 };
             };
             /** @description Validation Error */
@@ -15488,12 +15203,12 @@ export interface operations {
             };
         };
     };
-    delete_upload_session_media_uploads__session_handle__delete: {
+    delete_upload_media_uploads__session_id__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                session_handle: string;
+                session_id: string;
             };
             cookie?: never;
         };
@@ -15517,18 +15232,18 @@ export interface operations {
             };
         };
     };
-    confirm_upload_session_media_uploads__session_handle__confirm_post: {
+    confirm_upload_media_uploads__session_id__confirm_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                session_handle: string;
+                session_id: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ConfirmUploadSessionRequest"];
+                "application/json": components["schemas"]["ConfirmUploadRequest"];
             };
         };
         responses: {
@@ -15540,74 +15255,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Data_Published_"];
                 };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    retry_upload_session_media_uploads__session_handle__retry_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_handle: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RetryUploadSessionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_Union_UploadRequired__NeedsAttention__"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    record_upload_transport_failure_media_uploads__session_handle__transport_failure_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_handle: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UploadNetworkFailureRequest"] | components["schemas"]["UploadTimeoutFailureRequest"] | components["schemas"]["UploadHttpRejectedFailureRequest"] | components["schemas"]["UploadAbortedFailureRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Validation Error */
             422: {

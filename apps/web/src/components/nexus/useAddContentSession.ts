@@ -667,7 +667,7 @@ export function useAddContentSession(): AddContentSessionController {
         result = await uploadIngestFile({
           file: source.file,
           libraryIds,
-          idempotencyKey: intent.id,
+          id: intent.id,
           signal,
           onPhaseChange,
           onImportRef: (ref) => {

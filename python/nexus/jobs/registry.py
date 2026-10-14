@@ -147,13 +147,6 @@ def registry() -> dict[str, JobDefinition]:
             keep_dead=True,
             on_dead="nexus.jobs.dead_letters:media_teardown",
         ),
-        "storage_object_cleanup": JobDefinition(
-            "background",
-            "nexus.tasks.storage_object_cleanup:storage_object_cleanup",
-            max_attempts=5,
-            retry_delays=_HOURS,
-            keep_dead=True,
-        ),
         # Background upkeep, one job per slot.
         "podcast_refresh_due_job": JobDefinition(
             "background",

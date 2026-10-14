@@ -524,15 +524,9 @@ class MediaUploadSession(Base):
     content_type: Mapped[str] = mapped_column(Text, nullable=False)
     expected_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     input_origin: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
     upload_generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
     upload_url_expires_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False
-    )
-    transport_failure_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
-    transport_http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    transport_failed_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
     )
     verification_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     verification_failed_at: Mapped[datetime | None] = mapped_column(

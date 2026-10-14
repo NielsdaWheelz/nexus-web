@@ -12,7 +12,7 @@ in the same serializable transaction as the deletes.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -27,17 +27,10 @@ from nexus.jobs.queue import (
     JobRow,
     RescheduleRequested,
     get_job,
-    jobs_for_payload,
     update_running_job_payload,
 )
 from nexus.services import media_deletion
 from nexus.storage.client import get_storage_client
-from nexus.tasks.storage_object_cleanup import (
-    STORAGE_OBJECT_CLEANUP_JOB_KIND,
-    iso,
-    now_utc,
-    parse_iso,
-)
 
 _UNPREPARED = "Unprepared"
 _PATHS_PREPARED = "PathsPrepared"
@@ -46,6 +39,10 @@ _VOIDED = "Voided"
 _NOOP = "NoOp"
 _STALE = "Stale"
 _TERMINAL_CHECKPOINTS = frozenset({_VOIDED, _NOOP, _STALE})
+
+
+def _now(db: Session) -> datetime:
+    return db.execute(text("SELECT now()")).scalar_one()
 
 
 def _exact_intent_id(db: Session, media_id: UUID) -> UUID | None:
@@ -106,23 +103,11 @@ def _prepare(
             _write_checkpoint(db, context, job, {"kind": terminal})
             return {"disposition": terminal}
 
-        storage_paths = set(media_deletion.enumerate_media_storage_paths(db, media_id))
-        # Wait out the object-store clock-skew grace and every armed writer's own
-        # deadline, and sweep the paths those writers hold.
+        storage_paths = media_deletion.enumerate_media_storage_paths(db, media_id)
+        # Wait out the object-store clock-skew grace; a write that lands after the
+        # deletion leaves an unowned object, which the orphan sweep reclaims.
         grace = int(get_settings().media_teardown_cleanup_grace_seconds)
-        cleanup_not_before = now_utc(db) + timedelta(seconds=grace)
-        for writer in jobs_for_payload(
-            db,
-            kind=STORAGE_OBJECT_CLEANUP_JOB_KIND,
-            match={"mediaId": str(media_id)},
-            statuses=("pending", "failed", "running"),
-        ):
-            path = writer.payload.get("storagePath")
-            if isinstance(path, str):
-                storage_paths.add(path)
-            deadline = writer.payload.get("writeMayLandUntil")
-            if isinstance(deadline, str):
-                cleanup_not_before = max(cleanup_not_before, parse_iso(deadline))
+        cleanup_not_before = _now(db) + timedelta(seconds=grace)
         _write_checkpoint(
             db,
             context,
@@ -130,12 +115,12 @@ def _prepare(
             {
                 "kind": _PATHS_PREPARED,
                 "storagePaths": sorted(storage_paths),
-                "cleanupNotBefore": iso(cleanup_not_before),
+                "cleanupNotBefore": cleanup_not_before.astimezone(UTC).isoformat(),
             },
         )
 
     # Re-run immediately for the deletion step, on the queue's own clock.
-    return RescheduleRequested(now_utc(db))
+    return RescheduleRequested(_now(db))
 
 
 def _commit_or_void(
@@ -188,7 +173,7 @@ def _commit_or_void(
 
     next_kind = retry_serializable(db, "media_teardown_commit", op)
     if next_kind == _DELETION_COMMITTED:
-        return RescheduleRequested(parse_iso(str(checkpoint["cleanupNotBefore"])))
+        return RescheduleRequested(datetime.fromisoformat(str(checkpoint["cleanupNotBefore"])))
     return {"disposition": next_kind}
 
 
@@ -196,8 +181,8 @@ def _cleanup_storage(
     db: Session, checkpoint: Mapping[str, Any]
 ) -> Mapping[str, Any] | RescheduleRequested:
     """DeletionCommitted: wait out cleanupNotBefore, then delete the persisted paths."""
-    cleanup_not_before: datetime = parse_iso(str(checkpoint["cleanupNotBefore"]))
-    if now_utc(db) < cleanup_not_before:
+    cleanup_not_before = datetime.fromisoformat(str(checkpoint["cleanupNotBefore"]))
+    if _now(db) < cleanup_not_before:
         return RescheduleRequested(cleanup_not_before)
 
     client = get_storage_client()

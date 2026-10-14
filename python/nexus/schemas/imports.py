@@ -1,6 +1,6 @@
 """Imports workspace wire contracts (`docs/modules/imports.md`).
 
-One import is either an upload obligation (`upload:<handle>`) or visible media
+One import is either an upload obligation (`upload:<session id>`) or visible media
 with a recorded source attempt or metadata job (`media:<uuid>`). A published upload keeps
 its upload identity, so exactly one wire row exists per import for its whole
 life. Every model here is strict (`extra="forbid"`) and every union is
@@ -96,7 +96,6 @@ ImportState = Annotated[
 
 class RetryUploadOffer(BaseModel):
     kind: Literal["RetryUpload"] = "RetryUpload"
-    expected_generation: int = Field(ge=1)
     input: Literal["ChooseOriginalFile"] = "ChooseOriginalFile"
 
     model_config = ConfigDict(extra="forbid")

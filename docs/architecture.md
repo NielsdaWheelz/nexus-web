@@ -650,11 +650,11 @@ The **registry** (`jobs/registry.py`) is the one table of kinds: lane, handler
 retention and hook paths. Lanes, budgets and prune retention derive from it. See
 [modules/jobs.md](modules/jobs.md).
 
-Kinds (18): interactive `chat_run`, `dossier_build`, `enrich_metadata`,
+Kinds (17): interactive `chat_run`, `dossier_build`, `enrich_metadata`,
 `oracle_reading_generate`, `podcast_sync_subscription_job`; background
 `ingest_media_source`, `media_content_reindex_job`, `note_reindex_job`,
 `media_unit_build`, `connection_discovery_scan`, `podcast_backfill_subscription`,
-`media_teardown`, `storage_object_cleanup`, and the periodic
+`media_teardown`, and the periodic
 `podcast_refresh_due_job`, `atlas_project_job`, `storage_orphan_sweep`,
 `prune_background_jobs_job`,
 `purge_expired_auth_handoff_codes`. The Project Gutenberg catalog sync is an
@@ -1053,29 +1053,25 @@ is a soft warning that coexists with readable media. metadata research has its
 own retained job/outcome projection and never changes the source-error triple.
 
 **Capture entry points**: `POST /media/from-url` with source recovery
-(`api/routes/media_sources.py`), `POST /media/uploads` (`api/routes/media_ingest.py`)
-plus session-scoped confirm/retry/transport-failure/delete,
-and, behind the extension bearer, `POST /extension/captures` with its
-session-scoped `GET`/`confirm`/`retry`/`transport-failure`/`DELETE` routes
+(`api/routes/media_sources.py`), `POST /media/uploads` (`api/routes/media_uploads.py`)
+plus session-scoped confirm/delete, and, behind the extension bearer,
+`POST /extension/captures` with its session-scoped `confirm`/`DELETE` routes
 (`api/routes/extension_captures.py`, owned by the same upload-session service).
+A create carries the client's session id; resending it is the retry.
 Routes are transport adapters; they call exactly one service owner. (The media routers are split per capability:
-`media.py` catalog, `media_sources.py` and `media_ingest.py` ingest, `media_assets.py` image/EPUB-asset
+`media.py` catalog, `media_sources.py` and `media_uploads.py` ingest, `media_assets.py` image/EPUB-asset
 serving, `reader.py` reader read-model, `playback.py`, and
 `podcast_transcripts.py` — each importing only the services it delegates to.)
 Ingest `library_ids` are writable non-default destinations; media services
 validate them through library governance and assign default plus selected
 destinations through `library_entries`.
 
-An upload session is durable intent, not media: signed capability expiry never
+An upload session is durable intent, not media: signed url expiry never
 deletes it, and media/source attempt/exact queue job publish atomically only
-after byte verification. Confirmation is fenced by a *renewable* verification
-lease: the verifier extends it under the session row lock at every phase
-boundary, and publication requires the lease token — not a non-expired lease — so
-a slow but unstolen verifier still publishes while a stolen one never does. Every
-confirm is idempotent: one locked read of the session row owns the
-already-published decision, so a replay that queues behind the winning
-publication returns the same projection rather than a conflict. Its publication
-response returns the stable media and source-attempt identities. Url acceptance carries a
+after byte verification of the current generation. Every confirm is idempotent:
+one locked read of the session row owns the already-published decision, so a
+resend that queues behind the winning publication returns the same `Published`
+rather than a conflict (`docs/modules/ingest.md`). Url acceptance carries a
 client-minted attempt id and returns `media_id`, `source_attempt_id`, `created` and
 `processing_status`. Provider,
 network, sanitization, extraction, and post-acceptance storage failures update
@@ -1089,7 +1085,7 @@ media with a source attempt into `Active | NeedsAttention | Complete`, answers
 policies the catalog does — `source_attempts.source_recovery` for source
 retry/repair and `content_indexing` for search repair — so counts, membership,
 and offered recovery cannot disagree. A published upload keeps its
-`upload:<handle>` identity for life, so one import is one row from acceptance to
+`upload:<session id>` identity for life, so one import is one row from acceptance to
 History. its stationary query controls keep the committed query and applied
 constraints visible; a failed later page retains loaded rows, marks the loaded
 count as failed, and offers one retry of that cursor. See
@@ -2080,7 +2076,7 @@ DOM with Mozilla Readability, and PDF/EPUB bytes fetched in the browser); bytes
 go straight to the signed storage capability, never through the BFF. These
 routes use a **separate** BFF proxy path (`proxyExtensionToFastAPI`) that forwards
 the extension bearer rather than the Supabase cookie. Published captures enter
-the normal ingest pipeline. See `docs/modules/extension.md`.
+the normal ingest pipeline. See `docs/modules/ingest.md`.
 
 ---
 
