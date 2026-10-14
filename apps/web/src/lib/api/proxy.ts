@@ -233,10 +233,10 @@ export async function proxyExtensionToFastAPI(
   const id = requestId(request.headers.get("x-request-id"));
   const authorization = request.headers.get("authorization") ?? "";
   if (!authorization.toLowerCase().startsWith("bearer ")) {
-    return proxyError(id, 401, "E_UNAUTHENTICATED", "Extension token required");
+    return finish(proxyError(id, 401, "E_UNAUTHENTICATED", "Extension token required"));
   }
   const headers = pickHeaders(request.headers, ["content-type", "accept", "idempotency-key"]);
   headers.set("authorization", authorization);
   headers.set("accept-encoding", "identity");
-  return forward({ request, path, id, headers, responseHeaderNames: ["content-type"] });
+  return finish(await forward({ request, path, id, headers, responseHeaderNames: ["content-type"] }));
 }
