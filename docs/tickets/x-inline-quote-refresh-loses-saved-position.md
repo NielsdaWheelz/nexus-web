@@ -21,8 +21,10 @@ link footer, absent from both the new parent and separately prepared child.
 this is a representation change, not edited source prose. the owner explicitly
 approved preserving this copy and recording its conflict on 2026-10-14; this
 does not block the x-title release. it remains unnamed under the new path.
-private evidence:
-`/private/tmp/nexus-x-titles-proof-20261014/archive-range-8e08-green.private.json`.
+sanitized evidence:
+`/private/tmp/nexus-x-titles-proof-20261014/archive-range-receipt.json` retains
+exact source/cursor identities, offsets, hashes and match facts. raw source
+fixtures and temporary checks were deleted after qualification.
 
 prerequisite: a separately authorized reader contract that conserves
 this exact position across inline quotations and document embeds. do not guess a

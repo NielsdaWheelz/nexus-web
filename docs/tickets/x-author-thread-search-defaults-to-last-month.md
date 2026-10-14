@@ -21,7 +21,7 @@ reported `exhausted`. the saved terminal cursor is offset 134 in a 134-character
 fragment; its complete fragment and exact 64-character window each have zero
 matches in the replacement. the old readable publication and cursor remain
 intact. no diagnostic publication, cursor edit, admission or retry occurred.
-private evidence: `/private/tmp/nexus-x-titles-proof-20261014/production-source-position-114a.private.json`.
+sanitized evidence: `/private/tmp/nexus-x-titles-proof-20261014/archive-range-live-red.log`.
 
 final first-census observation: 52 successful snapshots each have exactly one
 title job; all 28 successful author-thread snapshots contain exactly one primary
@@ -40,7 +40,9 @@ permalink retains preceding posts across pages, and the existing post/page
 budget still stops with `post_limit`. at `22:58:00Z`, detached corrected
 acquisition restored the three known `114a` posts; its saved fragment and
 64-character window each match exactly once at the same terminal offset 134.
-receipt: `archive-range-114a-green.private.json` in the private evidence directory.
+receipt: `archive-range-receipt.json` in the private evidence directory; it retains
+exact source/cursor identities, offsets, hashes and match locations. temporary
+checks and raw source fixtures were deleted after qualification.
 production deployment and ordinary recovery remain outstanding.
 
 the second `8e08` refusal has a separate proven cause: unchanged inline quote
