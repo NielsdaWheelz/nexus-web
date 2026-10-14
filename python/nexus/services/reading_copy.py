@@ -10,7 +10,9 @@ text placeholders (offline web articles are text-only). The zip also carries
 from __future__ import annotations
 
 import json
+import time
 import zipfile
+from io import TextIOWrapper
 from pathlib import Path
 from uuid import UUID
 
@@ -79,7 +81,12 @@ def build_reading_copy(db: Session, *, viewer_id: UUID, media_id: UUID, path: Pa
 
     storage = get_storage_client()
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("reader.json", json.dumps(reader, ensure_ascii=False))
+        # Opening by name would reset the member timestamp to 1980.
+        reader_info = zipfile.ZipInfo("reader.json", time.localtime()[:6])
+        reader_info.compress_type = archive.compression
+        with archive.open(reader_info, "w") as output:
+            with TextIOWrapper(output, encoding="utf-8") as writer:
+                json.dump(reader, writer, ensure_ascii=False)
         for member, storage_path in objects:
             with archive.open(member, "w") as output:
                 try:
