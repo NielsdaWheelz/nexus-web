@@ -1,9 +1,13 @@
 # retained-book repair plan
 
-status: design only; implementation, new qualification and production repair NOT_RUN.
+status: implementation in draft prs [#608](https://github.com/NielsdaWheelz/nexus-web/pull/608)
+and [#609](https://github.com/NielsdaWheelz/nexus-web/pull/609); static checks,
+local source probes and operator containment proofs passed. restored-database qualification is in progress;
+production repair and consumer acceptance remain NOT_RUN.
 owner decisions settled 2026-10-14. planning base: `75b17c0301be59da4a45dec8b35ab97d998e9199`.
-recorded production: `665e7b3af03282d37ac1a2aac3c6589e2a0f5932`, schema 0277.
+planning-time production: `665e7b3af03282d37ac1a2aac3c6589e2a0f5932`, schema 0277.
 recheck identities before execution. this work does not gate the usable release.
+execution: [maintenance runbook](runbooks/retained-book-repair.md).
 
 ## outcome and scope
 
@@ -117,7 +121,8 @@ from parser refusal. unknown exceptions remain failed, never unchanged.
 
 ## lane b: note bodies and navigation
 
-finish/re-scope draft #584, currently `e3df92b6f7c09d59a5623e889ec5aa18c347ac64`.
+finish/re-scope draft #584, initially `e3df92b6f7c09d59a5623e889ec5aa18c347ac64`.
+implementation pr #609 supersedes that narrower draft; retain its prior evidence.
 reuse retained-source correspondence, `_exact_epub_span`,
 `_align_apparatus_keys` and the publication/apparatus owners. consolidate the
 two repeated numeric-body predicates narrowly. absent old html is admissible
@@ -259,9 +264,14 @@ and capacity leases before taking the verification baseline; preserve portrait's
 historical attempts/jobs and terminal history, record any fixture cascade effects.
 the temporary harness uses unmodified `JobWorker.run_once()` plus
 `ChildExecutor.open(settings)` in the deployed worker image under its actual
-448 mib contract. before each source/index step, assert its exact job is the
-only eligible/expired background work. do not start periodic scheduling, invoke
-handlers directly or patch the registry. leave other follow-on jobs unconsumed;
+448 mib contract. source admission must leave its exact job as the only
+eligible/expired background work. after source success, freeze the exact index
+job and any newly produced, retained asset-cleanup jobs proved to reference
+portrait's new resources. consume ordinary claims only from that list, each
+at most once, stopping when index succeeds; the bound is asset-cleanup count
+plus one turn. stop on retry, failure, uncertainty or an unexpected next claim.
+do not rewrite priorities, start periodic scheduling, invoke handlers directly
+or patch the registry. leave other follow-on jobs unconsumed;
 declare any real provider calls. normal production entrypoint proof remains live.
 
 1. **red:** freeze exact scope/source hashes and failure receipts. temporary
