@@ -25,9 +25,9 @@ export default async function AuthenticatedLayout() {
   const viewer = await verifySession();
   const renderEnvironment = await loadRenderEnvironment();
   return (
-    <AuthenticatedWorkspaceErrorBoundary>
+    <AuthenticatedWorkspaceErrorBoundary key={viewer.userId}>
       <Suspense fallback={<Skeleton collapsed={renderEnvironment.navCollapsed} />}>
-        <Workspace viewerId={viewer.userId} renderEnvironment={renderEnvironment} />
+        <Workspace renderEnvironment={renderEnvironment} />
       </Suspense>
     </AuthenticatedWorkspaceErrorBoundary>
   );
@@ -45,7 +45,7 @@ function Skeleton(props: { collapsed: boolean }) {
   );
 }
 
-async function Workspace(props: { viewerId: string; renderEnvironment: RenderEnvironment }) {
+async function Workspace(props: { renderEnvironment: RenderEnvironment }) {
   let result: EntryResult;
   try {
     result = { kind: "Ready", bootstrap: await loadWorkspaceBootstrap() };
@@ -54,6 +54,6 @@ async function Workspace(props: { viewerId: string; renderEnvironment: RenderEnv
     result = { kind: "Unavailable", requestId: error.requestId };
   }
   return (
-    <WorkspaceEntry key={props.viewerId} result={result} renderEnvironment={props.renderEnvironment} />
+    <WorkspaceEntry result={result} renderEnvironment={props.renderEnvironment} />
   );
 }
