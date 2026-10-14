@@ -126,3 +126,13 @@ paths retain identical bytes/deletion state to the qualified snapshot.
 `./scripts/test` and diff checks passed after integration. live journeys were
 not replayed for these domain-owned choice/style changes; independent review
 checked metadata stages/reasons, add/import, overlays and transport contracts.
+
+release handoff, 2026-10-14: the coordinator removed the temporary main freeze
+and authorized rebase/checks/merge after production runtime `665e7b3af` and
+schema 0277 were qualified. rebased onto docs tip
+`88c9bfa6a85faaffccbbd520fdb6c0b2b7c2ade1`; preserved release follow-ups and
+retired the resolved native-host entry. frontend source remains byte-identical
+to held head `6b9909ed74c55f1c6febff0f02415b5121a92094`. refreshed locked
+python dependencies; `./scripts/test` and diff checks passed. independent reader
+and query review found the release transport/archive changes compatible. no
+new live replay or production change was made for this integration.
