@@ -1,0 +1,32 @@
+{
+  "name": "Nexus public resource sharing bytes",
+  "description": "Rate limit anonymous resource-share pdf and epub image byte reads by Vercel-validated source IP.",
+  "active": true,
+  "conditionGroup": [
+    {
+      "conditions": [
+        {
+          "type": "path",
+          "op": "re",
+          "value": "^/api/public/resource-share/(?:file|assets/[0-9]{1,9})$"
+        }
+      ]
+    }
+  ],
+  "action": {
+    "mitigate": {
+      "action": "rate_limit",
+      "rateLimit": {
+        "algo": "fixed_window",
+        "window": 60,
+        "limit": 600,
+        "keys": [
+          "ip"
+        ],
+        "action": "deny"
+      },
+      "redirect": null,
+      "actionDuration": null
+    }
+  }
+}
