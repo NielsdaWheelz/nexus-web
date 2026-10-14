@@ -1,34 +1,37 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+// The atlas pane: the viewer's sky (/atlas), the oracle's folios as a second
+// layer (?layer=readings opens it), and what a pick means: a work opens in the
+// pane; a folio's first pick traces its concordance, the second enters it.
+import { useMemo, useRef, useState } from "react";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { apiFetch, type ApiPath } from "@/lib/api/client";
 import {
-  FeedbackNotice,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
-import { apiFetch } from "@/lib/api/client";
-import { usePaneFreeServerValue } from "@/lib/api/serverState";
-import type { ApiJson } from "@/lib/api/wire";
-import { failureCopy } from "@/lib/oracle/oracle";
+  usePaneFreeServerValue,
+  useServerValue,
+  type ServerValue,
+  type Visit,
+} from "@/lib/api/serverState";
+import type { Schema } from "@/lib/api/wire";
+import { failureCopy, type OracleReadingSummary } from "@/lib/oracle/oracle";
 import {
   requirePaneRuntime,
   usePaneRuntime,
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
+import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import { OracleTheme } from "../oracle/ornaments";
 import styles from "./atlas.module.css";
-import {
-  corpusStar,
-  drawSky,
-  fitCanvas,
-  folioStar,
-  spanningTree,
-  toScreen,
-  type Scene,
-  type Star,
-} from "./sky";
+import SkyCanvas from "./SkyCanvas";
+import { corpusStar, folioStar, spanningTree, type Star } from "./sky";
 
-const IDLE_TURN_PER_SECOND = (0.5 * Math.PI) / 180;
-const HIT_RADIUS = 22;
+const SKY = definePaneVisitDataKey<Visit<Schema<"AtlasOut">>>("Atlas.Sky");
+
+/** The `data` of one GET. */
+const read =
+  <T,>(path: ApiPath) =>
+  async (signal: AbortSignal) =>
+    (await apiFetch<{ data: T }>(path, { signal })).data;
 
 export default function GrandAtlasPaneBody() {
   const { activateTarget } = requirePaneRuntime(
@@ -39,235 +42,119 @@ export default function GrandAtlasPaneBody() {
   const [layers, setLayers] = useState({ corpus: true, readings: fromLanding });
   const [hovered, setHovered] = useState<Star | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const headline = useRef<HTMLDivElement>(null);
 
-  const atlas = usePaneFreeServerValue({
-    key: "atlas",
+  const atlas = useServerValue({
+    key: "/atlas",
     stale: "",
-    load: (signal) =>
-      apiFetch<ApiJson<"/atlas", "get">>("/api/atlas", { signal }),
+    visit: SKY,
+    load: read<Schema<"AtlasOut">>("/api/atlas"),
   });
-  // The readings layer loads when first shown; a folio's first tap loads its peers.
+  // The readings layer loads when shown; a folio's first pick loads its peers.
   const readings = usePaneFreeServerValue({
-    key: layers.readings ? "oracle-readings" : null,
+    key: layers.readings ? "/oracle/readings" : null,
     stale: "",
-    load: (signal) =>
-      apiFetch<ApiJson<"/oracle/readings", "get">>("/api/oracle/readings", {
-        signal,
-      }),
+    load: read<OracleReadingSummary[]>("/api/oracle/readings"),
   });
   const concordance = usePaneFreeServerValue({
-    key: selected === null ? null : `concordance:${selected}`,
+    key: selected && `/oracle/readings/${selected}/concordance`,
     stale: "",
-    load: (signal) =>
-      apiFetch<ApiJson<"/oracle/readings/{reading_id}/concordance", "get">>(
-        `/api/oracle/readings/${selected}/concordance`,
-        { signal },
-      ),
+    load: read<Schema<"OracleConcordanceOut">[]>(
+      `/api/oracle/readings/${selected}/concordance`,
+    ),
   });
-  const sky = atlas.status === "ready" ? atlas.data.data : null;
+  const sky = atlas.status === "ready" ? atlas.data : null;
   const peers =
-    concordance.status === "ready"
-      ? concordance.data.data.map((peer) => peer.id)
-      : [];
+    concordance.status === "ready" ? concordance.data.map((p) => p.id) : [];
 
   const corpus = useMemo(() => sky?.stars.map(corpusStar) ?? [], [sky]);
-  const read = readings.status === "ready" ? readings.data.data : null;
-  const folios = useMemo(() => read?.map(folioStar) ?? [], [read]);
+  const folios = useMemo(
+    () => (readings.status === "ready" ? readings.data.map(folioStar) : []),
+    [readings],
+  );
   const tree = useMemo(() => {
-    const at = new Map(
-      corpus.filter((star) => !star.nebula).map((star) => [star.id, star.at]),
-    );
+    const at = new Map(corpus.flatMap((s) => (s.nebula ? [] : [[s.id, s.at]])));
     return (sky?.constellations ?? []).flatMap((c) =>
       spanningTree(c.member_media_ids, at),
     );
   }, [sky, corpus]);
-  const stars = [
-    ...(layers.corpus ? corpus : []),
-    ...(layers.readings ? folios : []),
-  ];
-
-  // The animation loop reads the latest scene through a ref, never re-subscribing.
-  const latest: Scene = {
-    stars,
-    edges: layers.corpus ? (sky?.edges ?? []) : [],
-    constellations: layers.corpus ? (sky?.constellations ?? []) : [],
+  const scene = {
+    stars: [
+      ...(layers.corpus ? corpus : []),
+      ...(layers.readings ? folios : []),
+    ],
+    edges: (layers.corpus && sky?.edges) || [],
+    constellations: (layers.corpus && sky?.constellations) || [],
     tree: layers.corpus ? tree : [],
     hovered: hovered?.id ?? null,
     selected,
     peers,
   };
-  const scene = useRef(latest);
-  scene.current = latest;
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const frameRef = useRef<HTMLDivElement | null>(null);
-  const camera = useRef(0);
-  const drag = useRef<{
-    pointer: number;
-    startX: number;
-    startY: number;
-    lastX: number;
-  } | null>(null);
-  const screen = () =>
-    canvasRef.current && frameRef.current
-      ? fitCanvas(canvasRef.current, frameRef.current, camera.current)
-      : null;
-  const screenRef = useRef(screen);
+  // Touch has no hover: the selected folio keeps its label, for a mouse too.
+  const label =
+    hovered ?? folios.find((folio) => folio.id === selected) ?? null;
 
-  useEffect(() => {
-    const ctx = canvasRef.current?.getContext("2d");
-    if (!ctx) return;
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
-    let last = 0;
-    let raf = 0;
-    const tick = (now: number) => {
-      const still = reduced.matches;
-      if (!drag.current && !still && last > 0) {
-        camera.current =
-          (camera.current + (IDLE_TURN_PER_SECOND * (now - last)) / 1000) %
-          (Math.PI * 2);
-      }
-      last = now;
-      const s = screenRef.current();
-      if (s) drawSky(ctx, s, scene.current, still ? 0 : now / 1000);
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, []);
-
-  const hit = (clientX: number, clientY: number): Star | null => {
-    const s = screen();
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!s || !rect) return null;
-    let nearest: Star | null = null;
-    let best = HIT_RADIUS ** 2;
-    for (const star of scene.current.stars) {
-      const pos = toScreen(star.at, s);
-      const distance =
-        (pos.x - (clientX - rect.left)) ** 2 +
-        (pos.y - (clientY - rect.top)) ** 2;
-      if (distance < best) [nearest, best] = [star, distance];
-    }
-    return nearest;
+  const open = (href: string) =>
+    activateTarget({ target: { href }, disposition: { kind: "Follow" } });
+  const pick = (star: Star | null) => {
+    if (star?.layer === "corpus") open(`/media/${star.id}`);
+    else if (star !== null && star.id === selected) open(`/oracle/${star.id}`);
+    else setSelected(star?.id ?? null);
   };
-
-  const choose = (star: Star | null) => {
-    if (star?.layer === "corpus") {
-      activateTarget({
-        target: { href: `/media/${star.id}` },
-        disposition: { kind: "Follow" },
-      });
-    } else if (star !== null && scene.current.selected === star.id) {
-      // A folio's first tap traces its concordance; the second enters it.
-      activateTarget({
-        target: { href: `/oracle/${star.id}` },
-        disposition: { kind: "Follow" },
-      });
-    } else {
-      scene.current = { ...scene.current, selected: star?.id ?? null };
-      setSelected(star?.id ?? null);
-    }
+  // A retried first load drops its notice, so Retry leaves focus on the headline.
+  const retry = (value: ServerValue<unknown>) => () => {
+    headline.current?.focus();
+    value.refetch();
   };
-
-  const errors = [
-    atlas.status === "failed" &&
-      failureCopy(atlas.error, "The Atlas couldn’t be loaded"),
-    readings.status === "failed" &&
-      failureCopy(readings.error, "The readings layer couldn’t be loaded"),
-  ].filter((error): error is FeedbackContent => error !== false);
+  const failure = (value: ServerValue<unknown>, title: string) =>
+    value.status === "failed" && (
+      <FeedbackNotice
+        key={title}
+        content={failureCopy(value.error, title)}
+        announcement="Assertive"
+        actions={[{ label: "Retry", onClick: retry(value) }]}
+      />
+    );
   const count = corpus.length;
 
   return (
     <OracleTheme>
       <div className={styles.surface}>
-        <div className={styles.headline}>
+        <div className={styles.headline} ref={headline} tabIndex={-1}>
           <span className={styles.title}>The Atlas</span>
           <span className={styles.gold}>·</span>
           <span className={styles.subtitle}>
-            {sky === null && atlas.status !== "failed"
+            {atlas.status === "loading"
               ? "charting the corpus…"
               : `${count} ${count === 1 ? "star" : "stars"}`}
           </span>
         </div>
-        {errors.map((error) => (
-          <FeedbackNotice
-            key={error.title}
-            content={error}
-            announcement="Assertive"
-          />
-        ))}
+        {failure(atlas, "The Atlas couldn’t be loaded")}
+        {failure(readings, "The readings layer couldn’t be loaded")}
 
-        <div ref={frameRef} className={styles.frame}>
-          <canvas
-            ref={canvasRef}
-            className={styles.canvas}
-            role="img"
-            aria-label="A celestial chart of the whole library"
-            onPointerDown={(event) => {
-              event.preventDefault();
-              event.currentTarget.setPointerCapture(event.pointerId);
-              const { pointerId: pointer, clientX, clientY } = event;
-              drag.current = {
-                pointer,
-                startX: clientX,
-                startY: clientY,
-                lastX: clientX,
-              };
-            }}
-            onPointerMove={(event) => {
-              const d = drag.current;
-              if (d?.pointer !== event.pointerId)
-                return setHovered(hit(event.clientX, event.clientY));
-              const turn =
-                ((event.clientX - d.lastX) / event.currentTarget.clientWidth) *
-                Math.PI *
-                2;
-              camera.current =
-                (camera.current - turn + Math.PI * 4) % (Math.PI * 2);
-              d.lastX = event.clientX;
-            }}
-            onPointerUp={(event) => {
-              const d = drag.current;
-              if (d?.pointer !== event.pointerId) return;
-              drag.current = null;
-              if (
-                Math.hypot(event.clientX - d.startX, event.clientY - d.startY) <
-                4
-              )
-                choose(hit(event.clientX, event.clientY));
-            }}
-            onPointerCancel={() => (drag.current = null)}
-            onPointerLeave={() => {
-              drag.current = null;
-              setHovered(null);
-            }}
-          />
-
-          {hovered && (
+        <div className={styles.frame}>
+          <SkyCanvas scene={scene} onHover={setHovered} onPick={pick} />
+          {label && (
             <div className={styles.label} aria-live="polite">
-              {hovered.corpus ? (
+              {label.layer === "corpus" ? (
                 <>
-                  <span className={styles.labelTitle}>
-                    {hovered.corpus.title}
-                  </span>
+                  <span className={styles.labelTitle}>{label.work.title}</span>
                   <span className={styles.labelKind}>
-                    {hovered.corpus.kind} · {hovered.corpus.magnitude}{" "}
-                    {hovered.corpus.magnitude === 1
-                      ? "highlight"
-                      : "highlights"}
+                    {label.work.kind} · {label.work.magnitude}{" "}
+                    {label.work.magnitude === 1 ? "highlight" : "highlights"}
                   </span>
                 </>
               ) : (
                 <>
                   <span className={styles.labelFolio}>
-                    Folio {hovered.folio?.folio_number}
+                    Folio {label.folio.folio_number}
                   </span>
-                  {hovered.folio?.folio_motto && (
+                  {label.folio.folio_motto && (
                     <span className={styles.labelTitle}>
-                      {hovered.folio.folio_motto}
+                      {label.folio.folio_motto}
                     </span>
                   )}
-                  {selected === hovered.id && (
+                  {selected === label.id && (
                     <span className={styles.labelHint}>
                       {peers.length > 0
                         ? `Constellation of ${peers.length} · click again to enter`
@@ -278,7 +165,6 @@ export default function GrandAtlasPaneBody() {
               )}
             </div>
           )}
-
           <div className={styles.toggles}>
             {(["corpus", "readings"] as const).map((layer) => (
               <button
@@ -287,10 +173,7 @@ export default function GrandAtlasPaneBody() {
                 className={styles.toggle}
                 aria-pressed={layers[layer]}
                 onClick={() =>
-                  setLayers((current) => ({
-                    ...current,
-                    [layer]: !current[layer],
-                  }))
+                  setLayers((now) => ({ ...now, [layer]: !now[layer] }))
                 }
               >
                 {layer === "corpus" ? "Corpus" : "Readings"}
@@ -300,14 +183,29 @@ export default function GrandAtlasPaneBody() {
           <div className={styles.legend}>
             Drag to turn the sky · click a star to open the work
           </div>
+          {/* The visible layers for screen readers; a link opens in the pane. */}
           <ul className={styles.srOnly}>
-            {corpus.map((star) => (
-              <li key={star.id}>
-                <a href={`/media/${star.id}`}>
-                  {star.corpus?.title} ({star.corpus?.kind})
-                </a>
-              </li>
-            ))}
+            {scene.stars.map((star) => {
+              const href =
+                star.layer === "corpus"
+                  ? `/media/${star.id}`
+                  : `/oracle/${star.id}`;
+              return (
+                <li key={star.id}>
+                  <a
+                    href={href}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      open(href);
+                    }}
+                  >
+                    {star.layer === "corpus"
+                      ? `${star.work.title} (${star.work.kind})`
+                      : `Folio ${star.folio.folio_number}${star.folio.folio_motto ? `: ${star.folio.folio_motto}` : ""}`}
+                  </a>
+                </li>
+              );
+            })}
           </ul>
         </div>
       </div>

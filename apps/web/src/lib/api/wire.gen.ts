@@ -3277,8 +3277,6 @@ export interface components {
              * @enum {string}
              */
             kind: "context" | "contradicts";
-            /** Origin */
-            origin: string;
             /**
              * Source Media Id
              * Format: uuid
