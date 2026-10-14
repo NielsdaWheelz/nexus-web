@@ -39,7 +39,7 @@ function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNo
 
 function retainedLabel({ target }: Retained): string {
   if (target.kind === "InternalHref") return target.labelHint ?? target.href;
-  return target.entry.kind === "AppendNote" ? "Quick Note" : "Today";
+  return target.entry.kind === "View" ? "Today" : "Quick Note";
 }
 
 function Page({ controller, mobile }: { controller: NexusController; mobile: boolean }) {
@@ -62,13 +62,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
                 key={row.key}
                 type="button"
                 aria-disabled={row.action.kind === "Unavailable" || undefined}
-                onClick={(event) =>
-                  controller.activate(
-                    row.action,
-                    { disposition: { kind: "Follow" } },
-                    event.currentTarget,
-                  )
-                }
+                onClick={() => controller.activate(row.action, { disposition: { kind: "Follow" } })}
               >
                 <row.icon size={18} aria-hidden="true" />
                 <span>
@@ -92,6 +86,21 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
             />
           ) : (
             <p>{`Creating “${page.title}”…`}</p>
+          )}
+        </section>
+      );
+    case "CaptureToday":
+      return (
+        <section className={styles.page}>
+          <Header title="Add to Today" onBack={controller.back} />
+          {page.submit.kind === "Retryable" ? (
+            <FeedbackNotice
+              content={page.submit.content}
+              announcement="Assertive"
+              actions={[{ label: "Retry", onClick: controller.retryCapture }]}
+            />
+          ) : (
+            <p role="status">{`Adding “${page.text}” to Today…`}</p>
           )}
         </section>
       );

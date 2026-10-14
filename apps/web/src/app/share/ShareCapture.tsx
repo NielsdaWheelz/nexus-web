@@ -17,7 +17,7 @@ import { createLibrary } from "@/lib/libraries/client";
 import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
 import { captureSourceUrl } from "@/lib/imports/ingest";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
-import { captureDailyPageNote } from "@/lib/notes/api";
+import { captureToday } from "@/lib/notes/api";
 import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
 import styles from "./share.module.css";
 
@@ -76,14 +76,12 @@ export default function ShareCapture({
   const [attempt, setAttempt] = useState(0);
   // Capture fires once per attempt. The guard survives React's mount-effect
   // double-invoke. Once the profile read succeeds, the account-local date and
-  // both replay identities stay frozen across retries and midnight.
+  // the note id (a retry lands once) stay frozen across retries and midnight.
   const capturedAttempt = useRef<number | null>(null);
   const noteId = useRef(createRandomId());
-  const noteMutationId = useRef(createRandomId("share-note-mutation"));
   const plainTextAttempt = useRef<{
     localDate: string;
     noteId: string;
-    clientMutationId: string;
   } | null>(null);
   const urlIdempotencyKeys = useRef<Map<string, string>>(new Map());
   const destinationCreateIds = useRef<Map<string, string>>(new Map());
@@ -121,18 +119,10 @@ export default function ShareCapture({
               calendarTimeZone,
             ),
             noteId: noteId.current,
-            clientMutationId: noteMutationId.current,
           };
           plainTextAttempt.current = frozen;
         }
-        await captureDailyPageNote(frozen.localDate, {
-          note_id: frozen.noteId,
-          client_mutation_id: frozen.clientMutationId,
-          body_pm_json: {
-            type: "paragraph",
-            content: [{ type: "text", text: trimmed }],
-          },
-        });
+        await captureToday(frozen.localDate, frozen.noteId, trimmed);
         setResults([
           {
             label: trimmed,

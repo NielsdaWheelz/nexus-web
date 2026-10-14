@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ExternalLink, LocateFixed, MessageSquare } from "lucide-react";
 import HtmlRenderer from "@/components/HtmlRenderer";
-import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
+import AnnotationNoteEditor from "@/components/notes/AnnotationNoteEditor";
 import ContextEdgeMenu from "@/components/resources/ContextEdgeMenu";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import MachineText from "@/components/ui/MachineText";
@@ -16,7 +16,7 @@ import { connectionMutationErrorMessage, mutateConnection, type ConnectionMutati
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import ConnectionCreation from "@/components/connections/ConnectionCreation";
 import type { ResourceActivation } from "@/lib/resources/activation";
-import { fetchResourceSurface } from "@/lib/resourceSurface/api";
+import { fetchNote } from "@/lib/notes/api";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import type { AnnotationVerbs } from "../useAnnotationVerbs";
@@ -126,24 +126,11 @@ function NoteEditorHost({
     if (typeof currentNote.current === "object" && currentNote.current?.note_block_id === noteBlockId) return;
     let live = true;
     setNote("loading");
-    void fetchResourceSurface(`note_block:${noteBlockId}`).then(
-      ({ source }) => {
+    void fetchNote(noteBlockId).then(
+      (row) => {
         if (!live) return;
-        if (source.item.ref !== `note_block:${noteBlockId}` || source.content.kind !== "note_body") {
-          // justify-defect: a note surface projects the requested note body.
-          throw new TypeError("Link note surface has the wrong identity or content");
-        }
-        const { body, links } = source.item.version_by_lane;
-        if (body === undefined || links === undefined) {
-          // justify-defect: an editable note exposes both owned version lanes.
-          throw new TypeError("Link note surface is missing note versions");
-        }
-        setNote({
-          note_block_id: noteBlockId,
-          body_pm_json: source.content.bodyPmJson,
-          body_text: source.content.bodyText,
-          version_by_lane: { body, links },
-        });
+        const { body_pm_json, body_text, body_version } = row;
+        setNote({ note_block_id: noteBlockId, body_pm_json, body_text, body_version });
       },
     ).catch((error: unknown) => {
       if (!live || handleUnauthenticatedApiError(error)) return;
@@ -163,8 +150,8 @@ function NoteEditorHost({
       ) : note === "failed" ? (
         <div role="alert">The note couldn’t be loaded. <button type="button" className={styles.textButton} onClick={() => setRetry((value) => value + 1)}>Retry</button></div>
       ) : (
-        <HighlightNoteEditor
-          target={{ ...target, ownerKey: `${target.kind}:${target.id}` }}
+        <AnnotationNoteEditor
+          target={target}
           note={note}
           editable
           focusRequest={verbs.noteEdit?.kind === target.kind && verbs.noteEdit.id === target.id ? verbs.noteEdit.request : 0}

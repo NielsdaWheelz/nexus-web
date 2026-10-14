@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession
@@ -11,13 +11,12 @@ from nexus.responses import Data
 from nexus.schemas.highlights import (
     CreateMediaHighlightRequest,
     LinkedNoteBlockRef,
-    SetHighlightNoteRequest,
     TypedHighlightOut,
     UpdateHighlightRequest,
 )
-from nexus.schemas.resource_items import NoteBodyVersionsOut
+from nexus.schemas.notes import AnnotationNoteRequest
 from nexus.services import highlights as highlights_service
-from nexus.services import notes as notes_service
+from nexus.services import notes
 from nexus.services import pdf_highlights as pdf_highlights_service
 
 router = APIRouter(tags=["highlights"])
@@ -56,43 +55,35 @@ def update_highlight(
 
 
 @router.put("/highlights/{highlight_id}/note")
-def set_highlight_note(
-    highlight_id: UUID, request: SetHighlightNoteRequest, viewer: ViewerDep, db: DbSession
+def put_highlight_note(
+    highlight_id: UUID, request: AnnotationNoteRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[LinkedNoteBlockRef]:
-    block = notes_service.set_highlight_note_body_pm_json(
+    """Create the highlight's one note and attach it. That note already attached has
+    landed; another note attached is 409 E_NOTE_CONFLICT. Later edits are outline
+    ``set_body`` commands."""
+    note = notes.attach_highlight_note(
         db,
         viewer.user_id,
         highlight_id=highlight_id,
-        block_id=request.note_block_id,
+        note_id=request.note_id,
         body_pm_json=request.body_pm_json,
-        expected_body=request.expected_body,
-        client_mutation_id=request.client_mutation_id,
     )
     return Data(
         data=LinkedNoteBlockRef(
-            note_block_id=block.id,
-            body_pm_json=block.body_pm_json,
-            body_text=block.body_text,
-            version_by_lane=NoteBodyVersionsOut.model_validate(block.version_by_lane),
+            note_block_id=note.id,
+            body_pm_json=note.body_pm_json,
+            body_text=note.body_text,
+            body_version=note.body_version,
         )
     )
 
 
-@router.delete("/highlights/{highlight_id}/note", status_code=204)
+@router.delete("/highlights/{highlight_id}/note/{note_id}", status_code=204)
 def delete_highlight_note(
-    highlight_id: UUID,
-    viewer: ViewerDep,
-    db: DbSession,
-    client_mutation_id: Annotated[str, Query(min_length=1, max_length=120)],
-    note_block_id: Annotated[UUID, Query()],
+    highlight_id: UUID, note_id: UUID, viewer: ViewerDep, db: DbSession
 ) -> Response:
-    notes_service.detach_highlight_note(
-        db,
-        viewer.user_id,
-        highlight_id=highlight_id,
-        note_block_id=note_block_id,
-        client_mutation_id=client_mutation_id,
-    )
+    """Detach the note (idempotent); the note stays."""
+    notes.detach_highlight_note(db, viewer.user_id, highlight_id=highlight_id, note_id=note_id)
     return Response(status_code=204)
 
 

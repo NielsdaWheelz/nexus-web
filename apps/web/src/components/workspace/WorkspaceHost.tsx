@@ -109,11 +109,12 @@ export default function WorkspaceHost() {
     wasActive.current = activeId;
     const { store, active } = latest.current;
     const delivery = store.pendingPaneEntryDeliveryByPaneId.get(activeId);
-    // an appended note on mobile keeps its editor's focus.
+    // a note entry on mobile keeps its editor's focus.
+    const entry = delivery?.entry.kind;
     if (
       isMobile &&
-      delivery?.entry.kind === "AppendNote" &&
-      delivery.visitId === active?.pane.current_visit.id
+      (entry === "AppendNote" || entry === "FocusNote") &&
+      delivery?.visitId === active?.pane.current_visit.id
     ) {
       pendingFocus.current = null;
       return;

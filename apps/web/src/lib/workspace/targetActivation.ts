@@ -22,13 +22,10 @@ export type WorkspaceTargetDisposition =
  * The consuming pane claims an entry before acting and owns every outcome.
  */
 export type WorkspacePaneEntry =
-  // daily page: the quick note's text
-  | {
-      readonly kind: "AppendNote";
-      readonly noteId: string;
-      readonly clientMutationId: string;
-      readonly initialText: string;
-    }
+  // page or daily pane: a new empty row at the end, focused (a latent day: its draft)
+  | { readonly kind: "AppendNote" }
+  // page or daily pane: the caret at the end of that note's row
+  | { readonly kind: "FocusNote"; readonly noteBlockId: string }
   // page pane: focus the title
   | { readonly kind: "EditPageTitle"; readonly pageId: string }
   // note pane: focus the body
@@ -58,10 +55,7 @@ export interface WorkspaceTargetActivationRequest {
   target: WorkspaceTarget;
   disposition: WorkspaceTargetDisposition;
   /** Hand `entry` to the exact visit the target lands on. */
-  paneEntryActivation?: {
-    activationId: string;
-    entry: WorkspacePaneEntry | null;
-  };
+  entry?: WorkspacePaneEntry;
 }
 
 export interface PaneEntryDelivery {

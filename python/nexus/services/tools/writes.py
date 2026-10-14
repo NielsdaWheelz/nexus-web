@@ -17,9 +17,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.schemas.notes import DailyCaptureRequest
 from nexus.schemas.resource_graph import CitationSnapshot
-from nexus.schemas.resource_items import AbsentExpectedBody
 from nexus.services import highlights, library_entries, note_bodies, notes, text_quote, users
 from nexus.services.consumption import lectern
 from nexus.services.consumption import service as consumption
@@ -198,21 +196,17 @@ def note_create(value: NoteCreateInput, call: Call) -> NoteCreateSuccess:
     note_id = uuid5(call.id, "nexus.note.create:note_block")
     if value.page_uri:
         page = _ref(value.page_uri, ("page",))
-        note_id = notes.append_note_block_to_page_in_current_transaction(
+        notes.append_note_in_current_transaction(
             db, viewer, page_id=page.id, note_id=note_id, body_pm_json=body
-        ).id
+        )
         label = "page"
     else:
-        notes.capture_daily_page_note_in_current_transaction(
+        notes.capture_in_current_transaction(
             db,
             viewer,
             local_date=users.calendar_local_date(db, viewer),
-            request=DailyCaptureRequest(
-                note_id=note_id,
-                client_mutation_id=f"assistant:{uuid5(call.id, 'nexus.note.create:daily_capture')}",
-                body_pm_json=body,
-            ),
-            page_id_candidate=uuid5(call.id, "nexus.note.create:daily_page"),
+            note_id=note_id,
+            body_pm_json=body,
         )
         label = "today's note"
     call.created_refs.append({"kind": "note_block", "id": str(note_id), "label": label})
@@ -255,19 +249,18 @@ def highlight_create(value: HighlightCreateInput, call: Call) -> HighlightCreate
     call.created_refs.append({"kind": "highlight", "id": str(highlight.id), "label": exact})
     note_uri = None
     if value.note and value.note.strip():
-        block = notes.set_highlight_note_body_pm_json_in_current_transaction(
+        note_id = uuid5(call.id, "nexus.highlight.create:note_block")
+        notes.attach_highlight_note_in_current_transaction(
             db,
             viewer,
             highlight_id=highlight.id,
-            block_id=uuid5(call.id, "nexus.highlight.create:note_block"),
+            note_id=note_id,
             body_pm_json=note_bodies.pm_doc_from_markdown_projection(value.note),
-            expected_body=AbsentExpectedBody(kind="absent"),
-            client_mutation_id=f"assistant:{uuid5(call.id, 'nexus.highlight.create:note_mutation')}",
         )
         call.created_refs.append(
-            {"kind": "note_block", "id": str(block.id), "label": "highlight note"}
+            {"kind": "note_block", "id": str(note_id), "label": "highlight note"}
         )
-        note_uri = f"note_block:{block.id}"
+        note_uri = f"note_block:{note_id}"
     return HighlightCreateSuccess(
         exact=exact, highlight_uri=f"highlight:{highlight.id}", note_uri=note_uri
     )
@@ -327,7 +320,7 @@ def revert(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
         elif kind == "highlight":
             highlights.delete_highlight_in_current_transaction(db, viewer_id, target)
         elif kind == "note_block":
-            notes.remove_note_block_in_current_transaction(db, viewer_id, target)
+            note_bodies.delete_note(db, viewer_id=viewer_id, note_id=target)
         elif kind == "queue":
             consumption.remove_lectern_item_in_current_transaction(
                 db, viewer_id=viewer_id, item_id=target

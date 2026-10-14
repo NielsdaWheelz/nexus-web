@@ -329,7 +329,7 @@ def get_navigation_target(
     ):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Passage not found")
     if owner.scheme == "note_block":
-        note_bodies.get_note_block_for_owner_or_404(db, viewer_id, owner.id)
+        note_bodies.owned_note(db, viewer_id=viewer_id, note_id=owner.id)
     elif not can_read_media(db, viewer_id, owner.id):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Passage not found")
 

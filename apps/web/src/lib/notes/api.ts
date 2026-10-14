@@ -1,26 +1,32 @@
-import { apiFetch, decodeApiPayload } from "@/lib/api/client";
+// The notes requests outside the outline: pages (create, delete, the index), quick
+// capture into a day, one note's row, and which day a locator names. Writers of pages
+// publish "Notes".
+import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import { notePagesResource } from "@/lib/api/resource";
 import type { ListPage } from "@/lib/api/useServerList";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { UpdatedTitleIndexView } from "@/lib/collections/updatedTitleIndexView";
-import { withNotePageActionSubject, type NotePage } from "@/lib/notes/pageContract";
-import { isLocalDate } from "@/lib/localDate";
-import { projectResourceSurface, type ResourceSurface } from "@/lib/resources/resourceItems";
+import { formatLocalDateInTimeZone, isLocalDate } from "@/lib/localDate";
 
 export type NotePageSummary = Schema<"NotePageSummaryOut">;
 
-/** Creates a page by its client id (a retry returns it). Publishes "Notes". */
-export async function createPage(
-  id: string,
-  title: string,
-): Promise<NotePageSummary> {
-  const { data } = await apiFetch<ApiJson<"/notes/pages", "post">>(
-    "/api/notes/pages",
-    { method: "POST", body: JSON.stringify({ id, title }) },
-  );
+/** Creates a page by its client id; a retry returns it, another owner's id is 409. */
+export async function createPage(id: string, title: string): Promise<NotePageSummary> {
+  const { data } = await apiFetch<ApiJson<"/notes/pages", "post">>("/api/notes/pages", {
+    method: "POST",
+    body: JSON.stringify({ id, title }),
+  });
   publishChange("Notes");
   return data;
+}
+
+/** Deletes the page (a missing one too); its notes are kept. */
+export async function deletePage(pageId: string): Promise<void> {
+  await apiFetch(`/api/notes/pages/${encodeURIComponent(pageId)}` as ApiPath, {
+    method: "DELETE",
+  });
+  publishChange("Notes");
 }
 
 /** One keyset page of the viewer's pages in `view`. */
@@ -38,84 +44,39 @@ export async function fetchNotePages(input: {
   return data;
 }
 
-export type DailyPageDescriptor =
-  | Schema<"LatentDailyPageDescriptor">
-  | (Omit<Schema<"MaterializedDailyPageDescriptor">, "page" | "surface"> & {
-      page: NotePage;
-      surface: ResourceSurface;
-    });
-
-export async function readDailyPage(
+/** Appends `text` as one note last on the day's page; a retry with the same note id
+ * has landed. Resolves the page's id. */
+export async function captureToday(
   localDate: string,
-): Promise<DailyPageDescriptor> {
-  if (!isLocalDate(localDate)) {
-    throw new TypeError("localDate must be a valid YYYY-MM-DD date");
-  }
-  const { data } = await apiFetch<ApiJson<"/notes/daily/{local_date}", "get">>(
-    `/api/notes/daily/${localDate}`,
-    { cache: "no-store" },
-  );
-  if (data.kind === "Latent") return data;
-  return {
-    ...data,
-    page: withNotePageActionSubject(data.page),
-    surface: projectResourceSurface(data.surface),
-  };
-}
-
-export type DailyCaptureInput = Schema<"DailyCaptureRequest">;
-export type DailyCaptureResult = Omit<Schema<"DailyCaptureResult">, "surface"> & {
-  surface: ResourceSurface;
-};
-
-export function acceptDailyCaptureResult(result: Schema<"DailyCaptureResult">): DailyCaptureResult {
-  const surface = projectResourceSurface(result.surface);
-  if (surface.source.item.ref !== `page:${result.page_id}`) {
-    throw new TypeError("daily capture result.surface source must match pageId");
-  }
-  return { ...result, surface };
-}
-
-export async function captureDailyPageNote(
-  localDate: string,
-  input: DailyCaptureInput,
-): Promise<DailyCaptureResult> {
-  if (!isLocalDate(localDate)) {
-    throw new TypeError("localDate must be a valid YYYY-MM-DD date");
-  }
-  const response = await apiFetch<ApiJson<"/notes/daily/{local_date}/captures", "post">>(
-    `/api/notes/daily/${localDate}/captures`,
-    {
-      method: "POST",
-      body: JSON.stringify(input),
-    },
-  );
-  const result = decodeApiPayload(
-    response,
-    () => acceptDailyCaptureResult(response.data),
-    "Capture daily page note",
-  );
-  if (
-    result.client_mutation_id !== input.client_mutation_id ||
-    result.local_date !== localDate
-  ) {
-    throw new TypeError("daily capture response identity does not match request");
-  }
-  return result;
-}
-
-export async function fetchNotePage(pageId: string): Promise<NotePage> {
-  const { data } = await apiFetch<ApiJson<"/notes/pages/{page_id}", "get">>(
-    `/api/notes/pages/${pageId}`,
-    { cache: "no-store" },
-  );
-  return withNotePageActionSubject(data);
-}
-
-/** Deletes the page; its note blocks are kept. Publishes "Notes". */
-export async function deletePage(pageId: string): Promise<void> {
-  await apiFetch(`/api/notes/pages/${encodeURIComponent(pageId)}`, {
-    method: "DELETE",
+  noteId: string,
+  text: string,
+): Promise<string> {
+  const path = `/api/notes/daily/${localDate}/captures` as ApiPath;
+  const { data } = await apiFetch<ApiJson<"/notes/daily/{local_date}/captures", "post">>(path, {
+    method: "POST",
+    body: JSON.stringify({ note_id: noteId, text }),
   });
   publishChange("Notes");
+  return data.page_id;
+}
+
+export async function fetchNote(noteId: string): Promise<Schema<"NoteBlockOut">> {
+  const path = `/api/notes/blocks/${encodeURIComponent(noteId)}` as ApiPath;
+  const { data } = await apiFetch<ApiJson<"/notes/blocks/{note_id}", "get">>(path, {
+    cache: "no-store",
+  });
+  return data;
+}
+
+export type DailyLocator = { readonly kind: "Today" } | { readonly kind: "LocalDate"; readonly value: string };
+
+/** The YYYY-MM-DD a locator names in the account's calendar time zone. */
+export function dailyDateFor(locator: DailyLocator, calendarTimeZone: string): string {
+  const date =
+    locator.kind === "Today"
+      ? formatLocalDateInTimeZone(new Date(), calendarTimeZone)
+      : locator.value;
+  // justify-defect: locators come from the launcher's parser and the daily route.
+  if (!isLocalDate(date)) throw new TypeError("A daily page date is YYYY-MM-DD");
+  return date;
 }

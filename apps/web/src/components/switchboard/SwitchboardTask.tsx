@@ -44,9 +44,9 @@ export default function SwitchboardTask({
   const activeHref = controller.panes.find((pane) => pane.current)?.href;
   const section = activeHref ? sectionDestinationIdForHref(activeHref) : null;
   const accountId = isAccountDestinationId(section) ? section : null;
-  const activate = (row: NexusRow, fork: boolean, origin: HTMLElement) => {
+  const activate = (row: NexusRow, fork: boolean) => {
     controller.setActive(row.key);
-    controller.activate(row.action, { disposition: { kind: fork ? "Fork" : "Follow" } }, origin, row);
+    controller.activate(row.action, { disposition: { kind: fork ? "Fork" : "Follow" } }, row);
   };
   // A pointer click counts only if its pointerdown began inside the open task; keyboard clicks always count.
   const admitClick = (event: MouseEvent<HTMLDivElement>) => {
@@ -115,7 +115,7 @@ export default function SwitchboardTask({
               controller.setActive(rows[index < 0 ? (step === 1 ? 0 : rows.length - 1) : (index + step) % rows.length]!.key);
             } else if (event.key === "Enter" && index >= 0) {
               event.preventDefault();
-              activate(rows[index]!, event.shiftKey, event.currentTarget);
+              activate(rows[index]!, event.shiftKey);
             }
           }}
         />
@@ -141,7 +141,7 @@ export default function SwitchboardTask({
                       aria-current={row.state === "Current" ? "page" : undefined}
                       aria-disabled={unavailable !== null || undefined}
                       aria-label={unavailable === null ? undefined : `${row.label}. Unavailable. ${unavailable}`}
-                      onClick={(event) => activate(row, event.shiftKey, event.currentTarget)}
+                      onClick={(event) => activate(row, event.shiftKey)}
                     >
                       <NexusRowBody row={row} desktop={false} />
                     </button>

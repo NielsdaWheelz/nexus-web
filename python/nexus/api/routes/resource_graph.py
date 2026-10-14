@@ -4,18 +4,18 @@ chat's automatic context fact."""
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession
 from nexus.responses import Data
+from nexus.schemas.notes import AnnotationNoteRequest
 from nexus.schemas.resource_graph import (
     ConnectionPageOut,
     ConnectionQueryRequest,
     CreateLinkOut,
     CreateLinkRequest,
     LinkNoteOut,
-    PutLinkNoteRequest,
 )
 from nexus.services.resource_graph import connections, context, links
 
@@ -44,28 +44,19 @@ def delete_link(link_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
 
 @router.put("/resource-graph/links/{link_id}/note")
 def put_link_note(
-    link_id: UUID, body: PutLinkNoteRequest, viewer: ViewerDep, db: DbSession
+    link_id: UUID, body: AnnotationNoteRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[LinkNoteOut]:
+    """Create the link's one note and attach it to both ends. That note already attached
+    has landed; another note attached is 409 E_NOTE_CONFLICT."""
     return Data(
         data=links.put_link_note(db, viewer_id=viewer.user_id, link_id=link_id, request=body)
     )
 
 
-@router.delete("/resource-graph/links/{link_id}/note", status_code=204)
-def delete_link_note(
-    link_id: UUID,
-    viewer: ViewerDep,
-    db: DbSession,
-    note_block_id: Annotated[UUID, Query()],
-    client_mutation_id: Annotated[str, Query(min_length=1, max_length=120)],
-) -> Response:
-    links.detach_link_note(
-        db,
-        viewer_id=viewer.user_id,
-        link_id=link_id,
-        note_block_id=note_block_id,
-        client_mutation_id=client_mutation_id,
-    )
+@router.delete("/resource-graph/links/{link_id}/note/{note_id}", status_code=204)
+def delete_link_note(link_id: UUID, note_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
+    """Detach the note from the link (idempotent); the note and the link stay."""
+    links.detach_link_note(db, viewer_id=viewer.user_id, link_id=link_id, note_id=note_id)
     return Response(status_code=204)
 
 

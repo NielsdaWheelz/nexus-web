@@ -1,6 +1,7 @@
 """User link commands: create (with a minted highlight or passage anchor), remove, and the
-link's one ordinary note. Each command is SERIALIZABLE with retry; create and the note
-commands replay their exact first response for a repeated ``client_mutation_id``.
+link's one ordinary note. Each command is SERIALIZABLE with retry; create replays its
+exact first response for a repeated ``client_mutation_id``; the note commands are
+idempotent by the client's note id.
 """
 
 from __future__ import annotations
@@ -17,21 +18,18 @@ from sqlalchemy.orm import Session
 from nexus.db.models import ResourceEdge
 from nexus.db.retries import retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
+from nexus.schemas.notes import AnnotationNoteRequest
 from nexus.schemas.resource_graph import (
     CreateLinkOut,
     CreateLinkRequest,
     LinkEndpoint,
     LinkNoteOut,
-    PutLinkNoteRequest,
 )
-from nexus.schemas.resource_items import NoteBodyVersionsOut
 from nexus.services import highlights, note_bodies, passage_anchors, pdf_highlights
-from nexus.services.note_indexing import enqueue_note_reindex
 from nexus.services.resource_graph import edges
 from nexus.services.resource_graph.connections import connection_for_edge
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible, resolve_refs
-from nexus.services.resource_items import versions
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
@@ -112,71 +110,59 @@ def delete_link(db: Session, *, viewer_id: UUID, link_id: UUID) -> None:
 
 
 def put_link_note(
-    db: Session, *, viewer_id: UUID, link_id: UUID, request: PutLinkNoteRequest
+    db: Session, *, viewer_id: UUID, link_id: UUID, request: AnnotationNoteRequest
 ) -> LinkNoteOut:
-    """Write the link's one ordinary note: the first write (expected absent) attaches it
-    to both endpoints, later writes edit the canonical body."""
+    """Create the link's one note and attach it to both ends (two ``link_note`` edges).
+    Retry: that note already attached has landed; another note attached, or the note id
+    taken, is 409. Later edits are outline ``set_body`` commands."""
 
     def op() -> LinkNoteOut:
         link = _link(db, viewer_id, link_id)
         attached = _attached_notes(db, viewer_id, link)
-        first = request.expected_body.kind == "absent"
-        if first and attached:
-            raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Link already has a note")
-        if not first and request.note_block_id not in attached:
-            raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note is no longer attached")
-        note_bodies.require_expected_body(
-            db,
-            viewer_id=viewer_id,
-            block_id=request.note_block_id,
-            expected_body=request.expected_body,
-        )
-        block = note_bodies.upsert_note_body(
-            db,
-            viewer_id=viewer_id,
-            block_id=request.note_block_id,
-            body_pm_json=request.body_pm_json,
-        )
-        note = ResourceRef("note_block", block.id)
-        if first:
+        if request.note_id not in attached:
+            taken = note_bodies.note_exists(db, viewer_id=viewer_id, note_id=request.note_id)
+            if attached or taken:
+                raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Link already has a note")
+            note_bodies.ensure_note(
+                db,
+                viewer_id=viewer_id,
+                note_id=request.note_id,
+                body_pm_json=request.body_pm_json,
+                reason="link_note",
+            )
+            note = note_bodies.note_ref(request.note_id)
             for endpoint in (link.source, link.target):
                 edges.create_edge(
                     db,
                     viewer_id=viewer_id,
                     input=edges.EdgeCreate(note, endpoint, "context", "link_note"),
                 )
-        enqueue_note_reindex(db, note_block_id=block.id, reason="link_note")
-        return LinkNoteOut(
-            note_block_id=block.id,
-            body_pm_json=block.body_pm_json,
-            body_text=block.body_text,
-            version_by_lane=NoteBodyVersionsOut.model_validate(
-                versions.versions_for_ref(db, viewer_id=viewer_id, ref=note)
-            ),
+        saved = note_bodies.read_note(db, viewer_id=viewer_id, note_id=request.note_id)
+        out = LinkNoteOut(
+            note_block_id=saved.id,
+            body_pm_json=saved.body_pm_json,
+            body_text=saved.body_text,
+            body_version=saved.body_version,
             connection=connection_for_edge(
                 db, viewer_id=viewer_id, edge_id=link.id, ref=link.source
             ),
         )
+        db.commit()
+        return out
 
-    scope = f"link_note:{link_id}"
-    body = request.model_dump(mode="json")
-    key = request.client_mutation_id
-    return _replayed(db, viewer_id, scope, key, body, LinkNoteOut.model_validate, op)
+    return retry_serializable(db, "put_link_note", op)
 
 
-def detach_link_note(
-    db: Session, *, viewer_id: UUID, link_id: UUID, note_block_id: UUID, client_mutation_id: str
-) -> None:
-    """Detach the link's note from both endpoints; the note and the link stay."""
+def detach_link_note(db: Session, *, viewer_id: UUID, link_id: UUID, note_id: UUID) -> None:
+    """Detach the note from both ends (idempotent); the note and the link stay."""
 
     def op() -> None:
-        link = _link(db, viewer_id, link_id)
-        if note_block_id not in _attached_notes(db, viewer_id, link):
-            raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note is no longer attached")
-        edges.detach_link_notes(db, viewer_id=viewer_id, link=link, note_block_id=note_block_id)
+        link = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=link_id)
+        if link is not None and note_id in _attached_notes(db, viewer_id, link):
+            edges.detach_link_notes(db, viewer_id=viewer_id, link=link, note_block_id=note_id)
+        db.commit()
 
-    body = {"operation": "detach", "noteBlockId": str(note_block_id)}
-    _replayed(db, viewer_id, f"link_note:{link_id}", client_mutation_id, body, lambda _: None, op)
+    retry_serializable(db, "detach_link_note", op)
 
 
 def materialize_link_endpoint(

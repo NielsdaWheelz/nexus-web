@@ -2,7 +2,6 @@
 
 // The Nexus mount: one controller, the desktop palette or the mobile switchboard.
 import { useRef } from "react";
-import MobileQuickNoteHandoff from "@/components/switchboard/MobileQuickNoteHandoff";
 import NexusButton from "@/components/switchboard/NexusButton";
 import SwitchboardTask from "@/components/switchboard/SwitchboardTask";
 import DesktopNexus from "./desktop/DesktopNexus";
@@ -17,7 +16,6 @@ export default function Nexus() {
   return (
     <>
       <SwitchboardTask controller={controller} returnFocusTo={() => buttonRef.current} />
-      <MobileQuickNoteHandoff ref={controller.handoff} />
       <NexusButton
         buttonRef={buttonRef}
         paneCount={controller.panes.length}

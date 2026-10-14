@@ -19,7 +19,7 @@ menu appears on every row, header, dock and pane chrome that shows a resource.
   (blocked `PermissionDenied` for a non-creator, `TemporarilyUnavailable` while no refresh is
   offered); `RetryMetadata` carries the retry with its `purpose` (title or bibliography).
 - `GET /resource-items/{ref}` → `ResourceItemOut {ref, scheme, id, label, summary, activation,
-  missing, version_by_lane}` (`services/resource_items/items.py`); open an item with
+  missing}` (`services/resource_items/items.py`); open an item with
   `activateResource(item.activation, …)`, never by handing its href to the workspace.
 - `services/resource_items/capabilities.py` is the static policy, one row per scheme, read
   through `capability(scheme)`; `make generate-resource-capabilities` writes the columns the

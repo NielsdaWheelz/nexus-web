@@ -26,7 +26,7 @@ before the readers relied on them.
 | ResourceRef | `services/resource_graph/refs.py` | a string that parses is canonical; `require_ref` is the one 400 for request refs |
 | Hydration | `resolve.py` | one loader per scheme whose SQL selects only rows the viewer may see (a podcast: any persisted show, a public catalog row); missing, forbidden and unknown hydrate as `(resource unavailable)`; writes use `assert_ref_visible` (404) |
 | Edge (fact) | `edges.py` | the shape law per origin (`_ENDPOINTS` + `_validate`), endpoint visibility, bare-pair uniqueness (400); flush-only; the only module that builds rows and, with `cleanup.py`, deletes them |
-| Link | `edges.create_link` / `restore_link` (store), `links.py` (commands) | canonical order, unordered-pair reuse (`created=false`), ranks at chats and outline endpoints, `links` version bumps on both ends |
+| Link | `edges.create_link` (store, under a client link id when given), `links.py` (commands) | canonical order, unordered-pair reuse (`created=false`), ranks at chats and outline endpoints, `links` version bumps on both ends |
 | LinkNote | `edges.detach_link_notes`, `links.put_link_note` | a note attached to both ends of a link; detaching never deletes the note |
 | Citation | `citations.py` | dense 1..N per output; `_citation_outs` is the one hydration (visibility, activation, jump, media abstract) |
 | Jump | `reader_targets.py` | position lives in the target and is recomputed on read; callers pass only visible targets |

@@ -41,11 +41,10 @@ import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import {
   createPage,
+  dailyDateFor,
   fetchNotePages,
   type NotePageSummary,
 } from "@/lib/notes/api";
-import { resolveDailyLocalDate } from "@/lib/notes/openDailyPage";
-import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import {
   matchesPaneFilterQuery,
@@ -204,10 +203,12 @@ export default function NotesPaneBody() {
       (page) => {
         setRetry(null);
         title.setValue("");
-        setPendingNoteFocus(page.id, create.titled ? "body" : "title");
         runtime.activateTarget({
           target: { href: `/pages/${page.id}`, labelHint: page.title },
           disposition: { kind: "Follow" },
+          entry: create.titled
+            ? { kind: "AppendNote" }
+            : { kind: "EditPageTitle", pageId: page.id },
         });
       },
       (error: unknown) => {
@@ -229,7 +230,7 @@ export default function NotesPaneBody() {
   const openToday = () =>
     runtime.activateTarget({
       target: {
-        href: `/daily/${resolveDailyLocalDate({ kind: "Today" }, calendarTimeZone)}`,
+        href: `/daily/${dailyDateFor({ kind: "Today" }, calendarTimeZone)}`,
       },
       disposition: { kind: "Adopt" },
     });

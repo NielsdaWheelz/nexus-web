@@ -185,33 +185,15 @@ def replace_edges_for_origin(
 
 
 def create_link(
-    db: Session, *, viewer_id: UUID, source: ResourceRef, target: ResourceRef
-) -> EdgeWrite:
-    """Create or reuse the viewer's one link between two directly linkable resources."""
-    return _link(db, viewer_id, source, target, None)
-
-
-def restore_link(
     db: Session,
     *,
     viewer_id: UUID,
     source: ResourceRef,
     target: ResourceRef,
-    link_id: UUID,
-    created_at: datetime,
-) -> None:
-    """Re-create a receipt-owned link under its old identity; never retarget a live one."""
-    if not _link(db, viewer_id, source, target, (link_id, created_at)).created:
-        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Restored link already exists")
-
-
-def _link(
-    db: Session,
-    viewer_id: UUID,
-    source: ResourceRef,
-    target: ResourceRef,
-    identity: tuple[UUID, datetime] | None,
+    link_id: UUID | None = None,
 ) -> EdgeWrite:
+    """Create or reuse the viewer's one link between two directly linkable resources; a
+    new link takes ``link_id`` when given (an outline's client-minted id)."""
     if source == target:
         _invalid("An edge cannot relate a resource to itself")
     if (
@@ -243,8 +225,8 @@ def _link(
         target_scheme=b.scheme,
         target_id=b.id,
     )
-    if identity is not None:
-        row.id, row.created_at = identity
+    if link_id is not None:
+        row.id = link_id
     db.add(row)
     db.flush()
     for endpoint, other in ((a, b), (b, a)):
