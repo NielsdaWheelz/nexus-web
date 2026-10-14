@@ -41,7 +41,7 @@ from nexus.services.media_deletion import (
     delete_duplicate_document_media,
 )
 from nexus.services.media_processing_state import mark_ready_for_reading, mark_stage_warning
-from nexus.services.metadata_dispatch import enqueue_metadata_enrichment
+from nexus.services.metadata_operations import enqueue_metadata_enrichment
 from nexus.services.source_adapters import PreparedFileSource, acquire, publish_prepared_file
 from nexus.services.source_outcome import SourceRunOutcome, source_outcome_to_job_result
 from nexus.services.source_publication import (

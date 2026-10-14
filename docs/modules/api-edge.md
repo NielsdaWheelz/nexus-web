@@ -109,7 +109,7 @@ server components: callFastAPI ────────────────�
 - `api/routes/stream.py`: `GET /stream/...` authenticated like every route.
   The chat run stream is a cursor stream (`id: <seq>`, `?after=<seq>`, closes
   after `done`); oracle readings, dossier builds, media processing, metadata
-  (never terminal) and podcast subscriptions are snapshot streams (`state` on
+  (done once nothing is unfinished) and podcast subscriptions are snapshot streams (`state` on
   change, `done` when terminal, the whole snapshot again on reconnect). The
   first read happens before any byte; every wake re-reads committed state in a
   fresh session; a keepalive comment follows 15 s of quiet; an entity gone

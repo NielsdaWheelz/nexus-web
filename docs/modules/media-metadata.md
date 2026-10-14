@@ -4,9 +4,9 @@
 grounded x titles. each owns bounded input and strict generated-output acceptance.
 `tasks/enrich_metadata.py` composes them with
 the contributor owner and generation service. `services/metadata_operations.py`
-projects existing jobs setwise for detail, streams, imports and history; it stores
-no shadow activity state. `services/metadata_reviews.py` owns personal review of
-an exact no-findings result and its removal with viewer/media state.
+owns the operation: admission and enqueue, the setwise projection of existing jobs
+for detail, streams, imports and history (no shadow activity state), and personal
+review of an exact no-findings result with its removal with viewer/media state.
 
 ## bibliography
 
@@ -74,8 +74,10 @@ real isolated live receipt; controlled responses qualify domain behavior only.
 
 one `enrich_metadata` job freezes `purpose=bibliography|title`; title jobs also freeze
 the published x source's successful `source_attempt_id`. every attempt builds its
-input, generates once and publishes. the purpose-specific decoder accepts output
-or fails `invalid_output`; the queue stores the settled outcome as its result.
+input, generates once and publishes. the purpose's decoder (`accept_findings`: the one
+`MetadataFindings` model, and only handles the input offered; `accept_x_title` for a
+title) accepts the output or fails the generation `invalid_output`; the queue stores the
+settled outcome as the job's result.
 
 publication starts from a fresh session, locks media before the exact job claim,
 and rechecks authorization, eligibility and the frozen source/bibliographic
@@ -146,37 +148,45 @@ receive local brands. requested-media identity stays checked. chapter
 presentation remains owned by that ingress as described in the
 [reader module](reader-implementation.md).
 
-- `POST /media/{id}/metadata-enrichment`: creator-only, replayable admission;
-  body `{client_mutation_id, expected_job_id: UUID | null}`; 202 returns
-  `{media_id, job_id}` in the existing data envelope.
+- `POST /media/{id}/metadata-enrichment`: creator-only admission; body
+  `{expected_job_id: UUID | null}` (any other key is 400); 202 returns
+  `{media_id, job_id, last_enriched_at}` in the data envelope. retry rule: an
+  `expected_job_id` older than the latest job (or null while one exists) answers
+  202 with the latest job, so a resend after a lost answer finds the run it
+  started (as does another tab's click: both asked for research after what they
+  saw). the latest answers only a request of its own purpose: an
+  `expected_job_id` that is no job of this media, or a latest job of another
+  purpose than the media's (an x article's bibliography run from before 0278), is
+  409 `E_RESOURCE_CONFLICT`; the latest with unfinished work, an ineligible media,
+  a title without its x source context (`source_context_missing`) or a non-creator
+  is 409 `E_RETRY_NOT_ALLOWED` (403 for a non-creator first).
 - `GET /media/{id}` includes `metadata_enrichment`: latest operation, precise
   retry permission, `last_enriched_at`, unfinished count and oldest unfinished
   operation. latest and oldest use `(created_at, id)`; a newer terminal result
   does not hide older live work.
 - `POST /media/{media_id}/metadata-enrichment/{job_id}/review`: any current
-  reader may mark that exact no-findings result reviewed for themselves. body
-  `{client_mutation_id}`; 200 returns `{job_id, reviewed_at}`. review never changes
-  the immutable outcome or bibliography. an unknown/foreign job or inaccessible
-  media returns 404; another result returns `E_RESOURCE_CONFLICT`.
+  reader may mark that exact no-findings result reviewed for themselves; no
+  body; 204. retry rule: an existing review stands (204, one row). review never
+  changes the immutable outcome or bibliography. an inaccessible media is 404
+  `E_MEDIA_NOT_FOUND`; a job that is not this media's metadata job is 404
+  `E_NOT_FOUND` ("Metadata result not found"); another result is 409
+  `E_RESOURCE_CONFLICT`.
 - `/stream/media/{id}/metadata/events` emits the same typed view, authorizes each
-  snapshot and stays open after terminal/absent activity to discover later jobs.
+  snapshot and ends (`done`) once `unfinished_count` is 0: an idle media answers
+  one frame.
 
-replay follows authorization and precedes fresh-admission barriers. a fresh
-request must name the latest observed job; any pending/running/scheduled retry
-blocks it. a lost response resends the original intent.
-successful source publication commits its automatic metadata obligation in the
-same transaction. jobs are not coalesced with stale work. every enqueue locks the
-media and stamps a strictly ordered database creation time. successful playable
-video ingestion requests research even without a provider snippet.
+admission locks the media row only (never job rows: they are read through
+`ix_metadata_jobs_media_created`); the lock serializes it with automatic enqueues.
+no `client_mutation_id` and no replay ledger. successful source publication
+commits its automatic metadata obligation in the same transaction. jobs are not
+coalesced with stale work. every enqueue locks the media and stamps a strictly
+ordered database creation time. successful playable video ingestion requests
+research even without a provider snippet.
 
-review reauthorizes before replay, locks media, reauthorizes again and repeats
-the replay lookup before validating the exact job. review plus receipt commits
-atomically. the scope is `media_metadata_result_review:{media_id}` and the
-canonical request contains only `job_id`. duplicate intents and new mutation ids
-for an existing review return its original database timestamp. the same mutation
-id for a different job conflicts. removing media from one viewer clears only
-their reviews; physical teardown clears all reviews while retaining jobs.
-operator deletion of a user or retained job must remove dependent reviews first.
+review locks the media, reauthorizes and inserts at most one row per (viewer,
+job). removing media from one viewer clears only their reviews; physical teardown
+clears all reviews while retaining jobs. operator deletion of a user or retained
+job must remove dependent reviews first.
 
 imports exposes metadata independently of source/search. its latest failure or
 unreviewed no-findings result needs attention; any unfinished job keeps observation
@@ -202,16 +212,22 @@ not. client admission and review receipts also invalidate imports so an idle
 workspace wakes. the successful timestamp independently
 invalidates facts when an older job publishes behind a newer latest job.
 
-one shared browser observer serves visible details and the `metadata…` overlay
-for each media id. no collection-row subscriptions or browser polling. reconnect
-reconciles missed work; closing details detaches observation without cancelling
-research. bibliographic rereads preserve reader locator, selection and playback.
-changed research publishes `Metadata` (architecture §8.12) while the media is
-observed — by an open view, or by the tab that admitted the run, which follows
-it until it settles, a later job is latest or the stream ends. a media's first
-frame in a tab is its baseline, never a change, unless it shows a run that tab
-admitted already completed (it settled before the stream opened); unchanged
-success refreshes activity only. row menus use their inspected action expectation.
+one view per media id per tab (`lib/media/mediaMetadataOperations.ts`) serves
+the media pane and the `metadata…` overlay; imports renders its rows from its own
+read. no collection-row subscriptions or browser polling. the tab follows a
+media's stream while research can change it: on a mount (one short read when
+idle), an admission (answered or lost: a lost answer may hide a landed run), a review, a
+reconnect, and when the media's processing stream settles (a successful import
+may have started research). a followed run is followed to its end even after its
+pane closes, so lists still learn its title. an automatic run that starts while a
+settled pane stays visible shows on the next mount, visibility change or overlay
+open. bibliographic rereads preserve reader locator, selection and playback. a
+frame whose stamp moved past the tab's known stamp publishes `Metadata`
+(architecture §8.12) when its run changed a summary field (title, contributors,
+first publication) or its fields are unknown; the admission's
+`last_enriched_at` seeds the known stamp, so a run that lands before the first
+frame still counts. unchanged success refreshes activity only. row menus use
+their inspected action expectation.
 
 each successful stamp rereads media and reloads the reader through its source port.
 title-job admission also rereads: source publication and its new naming obligation
@@ -228,7 +244,8 @@ it reads the media through the shared server-state hook (`useServerValue`, keyed
 by media id, refetched on each new enrichment stamp or latest title-job id), so reopening it shows the
 last values at once while it rereads. it separates reading status from research,
 preserves existing facts during reread, and shows safe outcomes/model activity
-without prompts or tracebacks.
+(`selection`: the generation's route, model, or a provider route's `model_ref`,
+and reasoning) without prompts or tracebacks.
 live-disconnected and detail-reread failures have distinct reconnect/reread
 actions. neither action starts new research.
 

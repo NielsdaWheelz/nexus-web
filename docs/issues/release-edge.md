@@ -79,6 +79,5 @@ signed url, and opens offline.
   (devtools) and the second view is a cache hit;
 - phone: listening sync and one offline copy (epub and pdf);
 - one extension capture; one `/s` link with a pdf range request;
-- vercel usage for the first week: every open media pane holds a metadata
-  stream invocation that reconnects every 280 s
-  ([metadata-stream-never-terminates](metadata-stream-never-terminates.md)).
+- vercel usage for the first week: an idle media pane holds no metadata stream
+  invocation (the media slice ends that stream; see release-media.md).

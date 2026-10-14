@@ -220,14 +220,17 @@ async def stream_media_events(
 async def stream_metadata_events(
     request: Request, media_id: UUID, viewer: ViewerDep
 ) -> StreamingResponse:
-    """Metadata enrichment state; never terminal, so later automatic jobs still show."""
+    """Metadata enrichment state until nothing is unfinished (an idle media: one frame).
+
+    Only a new run changes the view then; the client reopens the stream on admission and
+    on every read that can follow one."""
 
     def read() -> Snapshot:
         with _snapshot() as db:
             view = metadata_operations.metadata_enrichment_for_viewer(
                 db, viewer_id=viewer.user_id, media_id=media_id
             )
-        return view.model_dump(mode="json"), False
+        return view.model_dump(mode="json"), view.unfinished_count == 0
 
     return await _snapshot_stream(request, "media_events", media_id, read)
 

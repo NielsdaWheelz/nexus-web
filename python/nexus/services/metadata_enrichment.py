@@ -1,7 +1,8 @@
-"""Bibliographic research ingress, bounded source context, and scalar publication.
+"""Research input, the model contract, and applying findings to a media.
 
-The operation owner composes these rules with contributor publication, its
-successful timestamp, and the durable outcome in one fenced transaction.
+The input freezes identifying facts and the opening text in the caller's snapshot; its
+fingerprint covers every fact the result depends on, so publication refuses a result
+asked about superseded input (I9). A null finding keeps the stored value.
 """
 
 from __future__ import annotations
@@ -11,22 +12,23 @@ import html
 import json
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from pydantic import ValidationError
-from sqlalchemy import func, select, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
-from nexus.db.models import Media, PodcastEpisode
-from nexus.schemas.metadata_enrichment import (
-    AcceptedMetadataContributorCredit,
-    AcceptedMetadataContributorRoleSlice,
-    AcceptedMetadataEnrichment,
-    MetadataEnrichmentOutput,
-    MetadataField,
-)
+from nexus.db.models import Media
+from nexus.schemas.metadata_enrichment import METADATA_FIELDS, MetadataField, MetadataFindings
 from nexus.services.contributor_credits import load_contributor_credits_for_media
-from nexus.services.contributor_taxonomy import parse_contributor_handle
+from nexus.services.contributor_taxonomy import (
+    NOT_OBSERVED,
+    ContributorHandle,
+    ContributorObservation,
+    ContributorObservationBatch,
+    ObservedRoleSlices,
+)
 from nexus.services.generation.contract import InvalidOutput
 from nexus.services.generation.policy import policy
 from nexus.services.reader_publication import (
@@ -94,141 +96,116 @@ Contributors and other fields:
   established; do not fabricate findings to make the operation succeed.\
 """
 
-_METADATA_INPUT_MAX_BYTES = policy("metadata_enrichment").input_max_bytes
+_INPUT_MAX_BYTES = policy("metadata_enrichment").input_max_bytes
 _SOURCE_READ_MAX_CHARS = 64_000
 _HINT_MAX_BYTES = 1_024
-
-
-class MetadataInvalidOutput(InvalidOutput):
-    """Generated metadata violates the bibliographic output contract."""
+_SCALAR_FIELDS: tuple[MetadataField, ...] = (
+    "original_published_date",
+    "edition_published_date",
+    "edition_isbn",
+    "publisher",
+    "language",
+    "description",
+)
 
 
 class MetadataInputTooLarge(ValueError):
-    """Complete identifying context cannot fit the admitted input budget."""
+    """The identifying facts alone exceed the admitted input budget."""
 
 
 @dataclass(frozen=True, slots=True)
 class MetadataResearchInput:
-    """Bounded model evidence and its complete, private concurrency identity."""
+    """The model's input, its private fingerprint, and the handles a result may name."""
 
     user_content: str
     fingerprint: str
+    handles: frozenset[str]
 
 
-def metadata_enrichment_agent_definition() -> tuple[str, dict[str, object]]:
-    return _ENRICHMENT_SYSTEM_PROMPT, MetadataEnrichmentOutput.model_json_schema()
+def research_intent_definition() -> tuple[str, dict[str, Any]]:
+    return _ENRICHMENT_SYSTEM_PROMPT, MetadataFindings.model_json_schema()
 
 
-def validate_structured_enrichment(
-    payload: object, *, admitted_handles: frozenset[str] = frozenset()
-) -> AcceptedMetadataEnrichment:
-    """Accept one generated result; unknown values become null immediately."""
+def accept_findings(payload: object, *, handles: frozenset[str]) -> MetadataFindings:
+    """The generated result, or ``InvalidOutput``: a contract violation or an unoffered handle."""
     try:
-        output = MetadataEnrichmentOutput.model_validate(payload)
-        contributors = None
-        if output.contributors is not None:
-            slices: list[AcceptedMetadataContributorRoleSlice] = []
-            for role_slice in output.contributors:
-                credits: list[AcceptedMetadataContributorCredit] = []
-                for credit in role_slice.credits:
-                    handle = None
-                    if credit.contributor_handle is not None:
-                        if credit.contributor_handle not in admitted_handles:
-                            raise ValueError("contributor handle was not supplied for this item")
-                        handle = parse_contributor_handle(credit.contributor_handle)
-                    credits.append(
-                        AcceptedMetadataContributorCredit(
-                            contributor_handle=handle,
-                            credited_name=credit.credited_name,
-                            raw_role=credit.raw_role,
-                        )
-                    )
-                slices.append(
-                    AcceptedMetadataContributorRoleSlice(role=role_slice.role, credits=credits)
-                )
-            contributors = slices
-        return AcceptedMetadataEnrichment(
-            title=output.title,
-            contributors=contributors,
-            original_published_date=None
-            if output.original_published_date is None
-            else output.original_published_date,
-            edition_published_date=None
-            if output.edition_published_date is None
-            else output.edition_published_date,
-            edition_isbn=output.edition_isbn,
-            publisher=output.publisher,
-            language=output.language,
-            description=output.description,
-        )
-    except (ValidationError, ValueError) as exc:
-        raise MetadataInvalidOutput("generated metadata violates its output contract") from exc
+        findings = MetadataFindings.model_validate(payload)
+    except ValidationError as exc:
+        raise InvalidOutput("generated metadata violates its output contract") from exc
+    named = {
+        credit.contributor_handle
+        for role in findings.contributors or []
+        for credit in role.credits
+        if credit.contributor_handle is not None
+    }
+    if not named <= handles:
+        raise InvalidOutput("generated metadata names a contributor the input did not supply")
+    return findings
 
 
-def _get_content_sample(db: Session, media: Media) -> str:
-    """First available source prefix: at most 64,000 raw characters across all reads."""
-    remaining = _SOURCE_READ_MAX_CHARS
-    max_words = get_settings().metadata_enrichment_max_content_words
-    raw = (
-        db.scalar(select(func.left(Media.plain_text, remaining)).where(Media.id == media.id)) or ""
-    )
-    remaining -= len(raw)
-    sample = _clean_sample_text(raw)
-    if sample:
-        return " ".join(sample.split()[:max_words])
+def unresolved_fields(findings: MetadataFindings) -> list[MetadataField]:
+    return [name for name in METADATA_FIELDS if getattr(findings, name) is None]
 
-    if remaining <= 0:
-        return ""
-    rows = db.execute(
-        text("""
-            SELECT left(canonical_text, :max_chars)
-            FROM fragments
-            WHERE media_id = :media_id
-              AND canonical_text IS NOT NULL AND btrim(canonical_text) <> ''
-            ORDER BY idx ASC
-            LIMIT 4
-        """),
-        {"media_id": media.id, "max_chars": remaining // 4},
-    ).fetchall()
-    parts = [str(row[0]) for row in rows]
-    remaining -= sum(len(part) for part in parts)
-    sample = _clean_sample_text("\n".join(parts))
-    if sample:
-        return " ".join(sample.split()[:max_words])
 
-    if remaining > 0 and media.kind == "podcast_episode":
-        raw = (
-            db.scalar(
-                text(
-                    "SELECT left(description_text, :max_chars) FROM podcast_episodes WHERE media_id = :media_id"
-                ),
-                {"media_id": media.id, "max_chars": remaining},
+def contributor_observation(findings: MetadataFindings) -> ContributorObservationBatch:
+    """The findings' credits as the contributor owner's observation."""
+    if findings.contributors is None:
+        return NOT_OBSERVED
+    return ObservedRoleSlices(
+        managed_roles=frozenset(item.role for item in findings.contributors),
+        credits=tuple(
+            ContributorObservation(
+                credited_name=credit.credited_name,
+                role=item.role,
+                raw_role=credit.raw_role,
+                identity_key=None,
+                contributor_handle=None
+                if credit.contributor_handle is None
+                else ContributorHandle(credit.contributor_handle),
             )
-            or ""
-        )
-        remaining -= len(raw)
-        sample = _clean_sample_text(raw)
-        if sample:
-            return " ".join(sample.split()[:max_words])
-    if remaining <= 0:
-        return ""
-    raw = (
-        db.scalar(select(func.left(Media.description, remaining)).where(Media.id == media.id)) or ""
+            for item in findings.contributors
+            for credit in item.credits
+        ),
     )
-    return " ".join(_clean_sample_text(raw).split()[:max_words])
 
 
-def _clean_sample_text(value: str) -> str:
-    text_value = html.unescape(value)
-    text_value = re.sub(r"(?is)<(script|style)\b[^>]*>.*?</\1>", " ", text_value)
-    text_value = re.sub(r"(?s)<[^>]+>", " ", text_value)
-    return " ".join(text_value.split())
+def _clean(value: str) -> str:
+    value = html.unescape(value)
+    value = re.sub(r"(?is)<(script|style)\b[^>]*>.*?</\1>", " ", value)
+    return " ".join(re.sub(r"(?s)<[^>]+>", " ", value).split())
+
+
+def _opening_words(db: Session, media: Media) -> list[str]:
+    """The first source with text: plain text, the first four fragments, episode notes, then
+    the description; at most 64,000 raw characters read across all of them."""
+    reads = [
+        "SELECT left(plain_text, :n) FROM media WHERE id = :m",
+        """SELECT string_agg(part, E'\\n' ORDER BY idx) FROM (
+               SELECT idx, left(canonical_text, :n / 4) AS part FROM fragments
+               WHERE media_id = :m AND btrim(coalesce(canonical_text, '')) <> ''
+               ORDER BY idx LIMIT 4) first_fragments""",
+        *(
+            ["SELECT left(description_text, :n) FROM podcast_episodes WHERE media_id = :m"]
+            if media.kind == "podcast_episode"
+            else []
+        ),
+        "SELECT left(description, :n) FROM media WHERE id = :m",
+    ]
+    budget = _SOURCE_READ_MAX_CHARS
+    for sql in reads:
+        if budget <= 0:
+            break
+        raw = db.scalar(text(sql), {"m": media.id, "n": budget}) or ""
+        budget -= len(raw)
+        if words := _clean(raw).split():
+            return words[: get_settings().metadata_enrichment_max_content_words]
+    return []
 
 
 def build_metadata_research_input(db: Session, media: Media) -> MetadataResearchInput:
-    """Freeze identifying facts and canonical source evidence in the caller's snapshot."""
+    """Freeze the identifying facts and the opening text in the caller's snapshot."""
     credits = load_contributor_credits_for_media(db, [media.id]).get(media.id, [])
-    hints: dict[str, object] = {
+    known: dict[str, object] = {
         "kind": str(media.kind),
         "media_ref": f"media:{media.id}",
         "current_title": media.title,
@@ -255,54 +232,36 @@ def build_metadata_research_input(db: Session, media: Media) -> MetadataResearch
         "current_language": media.language,
         "current_description": media.description,
     }
-    if media.kind == "podcast_episode":
-        hints["podcast_title"] = db.scalar(
-            text(
-                "SELECT p.title FROM podcast_episodes pe JOIN podcasts p ON p.id = pe.podcast_id WHERE pe.media_id = :media_id"
-            ),
-            {"media_id": media.id},
-        )
-
     source: dict[str, object] = {"kind": str(media.kind)}
-    if media.kind in {"video", "podcast_episode"}:
+    if media.kind == "podcast_episode":
+        episode = db.execute(
+            text("""
+                SELECT p.title, pe.rss_metadata_fingerprint FROM podcast_episodes pe
+                JOIN podcasts p ON p.id = pe.podcast_id WHERE pe.media_id = :m
+            """),
+            {"m": media.id},
+        ).one()
+        known["podcast_title"] = episode.title
+        source["rss_metadata_fingerprint"] = episode.rss_metadata_fingerprint
+    if media.kind in ("video", "podcast_episode"):
         source["content_revision"] = read_transcript_content_revision(db, media_id=media.id)
     else:
         source["reader_generation"] = read_publication_generation(db, media_id=media.id)
-    if media.kind == "podcast_episode":
-        source["rss_metadata_fingerprint"] = db.execute(
-            select(PodcastEpisode.rss_metadata_fingerprint).where(
-                PodcastEpisode.media_id == media.id
-            )
-        ).scalar_one()
 
-    # Keep the untruncated facts private. A change beyond a displayed hint still
-    # invalidates research; index progress and administrative state never do.
-    facts: dict[str, object] = {"known_metadata": hints.copy(), "source": source}
+    # The untruncated facts stay private: a change past a clamped hint still invalidates.
+    facts: dict[str, object] = {"known_metadata": dict(known), "source": source}
     for name in ("current_title", "current_publisher", "current_description", "podcast_title"):
-        value = hints.get(name)
-        if isinstance(value, str):
-            hints[name] = (
-                _clean_sample_text(value)
-                .encode("utf-8")[:_HINT_MAX_BYTES]
-                .decode("utf-8", errors="ignore")
-            )
-    context = {
-        "known_metadata": hints,
-        "opening_text": "",
-    }
-    encoded = json.dumps(context, ensure_ascii=False, separators=(",", ":"))
-    fixed_bytes = len(encoded.encode("utf-8"))
-    if fixed_bytes > _METADATA_INPUT_MAX_BYTES:
+        if isinstance(value := known.get(name), str):
+            clamped = _clean(value).encode("utf-8")[:_HINT_MAX_BYTES]
+            known[name] = clamped.decode("utf-8", errors="ignore")
+    context: dict[str, object] = {"known_metadata": known, "opening_text": ""}
+    fixed = len(json.dumps(context, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    if fixed > _INPUT_MAX_BYTES:
         raise MetadataInputTooLarge("complete metadata context exceeds the generation input limit")
-
-    words = _clean_sample_text(_get_content_sample(db, media)).split()[
-        : get_settings().metadata_enrichment_max_content_words
-    ]
-    # Count the encoded JSON string, including escapes, before appending each
-    # whole word. No cut splits a UTF-8 character, JSON value or identity roster.
-    available = _METADATA_INPUT_MAX_BYTES - fixed_bytes
+    # Whole words while their encoded json cost fits: no cut splits a character or a value.
+    available = _INPUT_MAX_BYTES - fixed
     selected: list[str] = []
-    for word in words:
+    for word in _opening_words(db, media):
         cost = len(json.dumps(word, ensure_ascii=False).encode("utf-8")) - 2 + bool(selected)
         if cost > available:
             break
@@ -313,43 +272,22 @@ def build_metadata_research_input(db: Session, media: Media) -> MetadataResearch
     return MetadataResearchInput(
         user_content=json.dumps(context, ensure_ascii=False, separators=(",", ":")),
         fingerprint=hashlib.sha256(
-            json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
-                "utf-8"
-            )
+            json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest(),
+        handles=frozenset(c.contributor_handle for c in credits if c.contributor_handle),
     )
 
 
-def admitted_contributor_handles(user_content: str) -> frozenset[str]:
-    """Read the complete identity roster from our own frozen generation input."""
-    context = json.loads(user_content)
-    return frozenset(
-        credit["contributor_handle"]
-        for credit in context["known_metadata"]["current_contributors"]
-        if credit["contributor_handle"] is not None
-    )
-
-
-def merge_enrichment(
-    db: Session, media: Media, enrichment: AcceptedMetadataEnrichment
-) -> list[MetadataField]:
-    """Apply changed, present scalars; the operation owns credits, stamps and outcomes."""
+def merge_findings(db: Session, media: Media, findings: MetadataFindings) -> list[MetadataField]:
+    """Apply the present, changed title and scalars; the caller owns credits and stamps."""
     changed: list[MetadataField] = []
-    if enrichment.title is not None and enrichment.title != media.title:
-        if not replace_reader_document_title(db, media=media, title=enrichment.title):
-            media.title = enrichment.title
+    if findings.title is not None and findings.title != media.title:
+        if not replace_reader_document_title(db, media=media, title=findings.title):
+            media.title = findings.title
         changed.append("title")
-    scalar_fields: tuple[MetadataField, ...] = (
-        "original_published_date",
-        "edition_published_date",
-        "edition_isbn",
-        "publisher",
-        "language",
-        "description",
-    )
-    for field in scalar_fields:
-        value = getattr(enrichment, field)
-        if value is not None and value != getattr(media, field):
-            setattr(media, field, value)
-            changed.append(field)
+    for name in _SCALAR_FIELDS:
+        value = getattr(findings, name)
+        if value is not None and value != getattr(media, name):
+            setattr(media, name, value)
+            changed.append(name)
     return changed

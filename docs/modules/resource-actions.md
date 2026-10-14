@@ -46,10 +46,10 @@ menu appears on every row, header, dock and pane chrome that shows a resource.
   "check add" and checks it instead of sending another. the quick-read and transcript add
   controls read the media's verbs on mount and whenever its lectern membership changes; only
   that read says "on lectern".
-- source refresh sends the expectation the viewer saw, so the hud's "confirm request" resends
-  it and the refresh that landed answers; metadata research keeps an unconfirmed request's
-  client id, keyed by that expectation, so its "confirm request" replays it. an access reply
-  (401/403/404) settles nothing.
+- source refresh and metadata research send the expectation the viewer saw, so a lost
+  answer's "confirm request" hud resends it and the run that landed answers (metadata: the
+  retry rule, [media metadata](media-metadata.md), and its view is read again either way);
+  an access reply (401/403/404) settles nothing.
 
 ## invariants
 

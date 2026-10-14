@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Schema } from "@/lib/api/wire";
 import { openStream } from "@/lib/api/stream";
+import { reconnectMetadataOperations } from "@/lib/media/mediaMetadataOperations";
 
 export type MediaProcessingSnapshot = Schema<"MediaProcessingSnapshotOut">;
 
@@ -39,7 +40,10 @@ export function useMediaProcessingStatus(
         return { type, data };
       },
       isTerminal: (event) => event.type === "done",
-      onEvent: (event) => setLatest({ mediaId: streamId, snapshot: event.data }),
+      onEvent: (event) =>
+        setLatest({ mediaId: streamId, snapshot: event.data }),
+      // A settled import may have started research: read the metadata view again.
+      onComplete: () => reconnectMetadataOperations(streamId),
       onError: (error) =>
         console.error("Media processing stream failed:", error),
     });

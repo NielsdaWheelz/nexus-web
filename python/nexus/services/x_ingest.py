@@ -25,7 +25,7 @@ from nexus.services.media_source_ingest import (
     accept_embedded_source,
     complete_x_post_snapshot_attempt,
 )
-from nexus.services.metadata_dispatch import enqueue_metadata_enrichment
+from nexus.services.metadata_operations import enqueue_metadata_enrichment
 from nexus.services.reader_publication import (
     ReplaceSourceIssues,
     read_publication_generation,

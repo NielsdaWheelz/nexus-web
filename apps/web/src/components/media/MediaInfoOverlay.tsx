@@ -281,7 +281,7 @@ function MediaInfo({
         fact(
           "model",
           operation?.selection != null
-            ? `${operation.selection.provider} / ${operation.selection.model} / ${operation.selection.reasoning}`
+            ? `${operation.selection.route} / ${operation.selection.model} / ${operation.selection.reasoning}`
             : null,
         ),
         fact(

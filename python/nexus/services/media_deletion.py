@@ -32,7 +32,7 @@ from nexus.services import (
     libraries,
     library_entries,
     media_intelligence_lifecycle,
-    metadata_reviews,
+    metadata_operations,
     passage_anchors,
     resource_grants,
 )
@@ -272,7 +272,7 @@ def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> 
     """
     from nexus.services import highlights as highlights_service
 
-    metadata_reviews.delete_viewer_media_reviews(db, viewer_id=viewer_id, media_id=media_id)
+    metadata_operations.delete_viewer_media_reviews(db, viewer_id=viewer_id, media_id=media_id)
     highlight_rows = db.scalars(
         select(Highlight)
         .where(Highlight.user_id == viewer_id, Highlight.anchor_media_id == media_id)
@@ -377,7 +377,7 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         return None
 
     storage_paths = enumerate_media_storage_paths(db, media_id)
-    metadata_reviews.delete_media_reviews(db, media_id=media_id)
+    metadata_operations.delete_media_reviews(db, media_id=media_id)
     dossier_engine.on_subject_deleted(db, ResourceRef(scheme="media", id=media_id))
     resource_grants.delete_media_and_child_highlight_subjects(db, media_id)
     _delete_by_media_id(db, media_id, "document_embeds", "document_embed_artifact_states")

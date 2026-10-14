@@ -372,9 +372,8 @@ def _head_out(
     if scheme == "media":
         projection = read_single(db, media_id=subject_id, requester_user_id=viewer_id)
         if projection.status != "not_available":
-            status = "Failed" if projection.status == "suspended" else projection.status.title()
-            summary = projection.summary_md
-            abstract = MediaAbstractOut(status=cast(Any, status), summary_md=summary)
+            status = cast(Any, projection.status.title())
+            abstract = MediaAbstractOut(status=status, summary_md=projection.summary_md)
     revision = (
         None if head is None or head.revision_id is None else _revision_out(db, head, viewer_id)
     )

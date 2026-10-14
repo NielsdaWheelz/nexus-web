@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
@@ -20,16 +20,11 @@ from nexus.schemas.media_summary import (
     ResolvedMediaSummariesOut,
     ResolveMediaSummariesIn,
 )
-from nexus.schemas.metadata_enrichment import (
-    MetadataEnrichmentAccepted,
-    MetadataEnrichmentRequest,
-    MetadataResultReviewed,
-    MetadataResultReviewRequest,
-)
+from nexus.schemas.metadata_enrichment import MetadataEnrichmentAccepted, MetadataEnrichmentRequest
 from nexus.services import contributors as contributors_service
 from nexus.services import media as media_service
 from nexus.services import media_deletion as media_deletion_service
-from nexus.services import metadata_dispatch, metadata_reviews
+from nexus.services import metadata_operations
 
 router = APIRouter(tags=["media"])
 
@@ -85,35 +80,29 @@ def get_media(media_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession) ->
 
 @router.post("/media/{media_id}/metadata-enrichment", status_code=202)
 def enrich_media_metadata(
-    media_id: UUID,
-    body: MetadataEnrichmentRequest,
-    viewer: ViewerDep,
-    db: DbSession,
+    media_id: UUID, body: MetadataEnrichmentRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[MetadataEnrichmentAccepted]:
+    """A resend after the job landed answers that job (it is newer than ``expected_job_id``)."""
     return Data(
-        data=metadata_dispatch.admit_metadata_enrichment(
+        data=metadata_operations.admit_metadata_enrichment(
             db,
             viewer_id=viewer.user_id,
             media_id=media_id,
-            request=body,
+            expected_job_id=body.expected_job_id,
             request_id=get_request_id(),
         )
     )
 
 
-@router.post("/media/{media_id}/metadata-enrichment/{job_id}/review")
+@router.post("/media/{media_id}/metadata-enrichment/{job_id}/review", status_code=204)
 def review_media_metadata_result(
-    media_id: UUID,
-    job_id: UUID,
-    body: MetadataResultReviewRequest,
-    viewer: ViewerDep,
-    db: DbSession,
-) -> Data[MetadataResultReviewed]:
-    return Data(
-        data=metadata_reviews.review_metadata_result(
-            db, viewer_id=viewer.user_id, media_id=media_id, job_id=job_id, request=body
-        )
+    media_id: UUID, job_id: UUID, viewer: ViewerDep, db: DbSession
+) -> Response:
+    """Idempotent: an existing review stands."""
+    metadata_operations.review_metadata_result(
+        db, viewer_id=viewer.user_id, media_id=media_id, job_id=job_id
     )
+    return Response(status_code=204)
 
 
 @router.put("/media/{media_id}/authors")
