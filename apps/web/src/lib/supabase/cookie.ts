@@ -1,7 +1,5 @@
-// the edge-safe half of the supabase boundary (auth.ts is the server half): the
-// session cookie's grammar and its network-free classification. it imports no
-// sdk, so middleware's edge bundle stays free of @supabase/*. replacing the
-// provider means rewriting this file and auth.ts behind the same exports.
+// the session cookie's grammar and network-free classification. auth.ts owns
+// provider operations; replacing the provider changes these two modules.
 import { getEnv } from "@/lib/env";
 import { isRecord } from "@/lib/validation";
 
@@ -96,6 +94,13 @@ export function decodeSessionCookie(cookies: readonly CookieValue[]): {
         ? raw.refresh_token
         : null,
   };
+}
+
+// a read-only consumer forwards this bearer for verification. the proactive
+// renewal margin belongs to response owners, never to authorization decisions.
+export function readBearer(cookies: readonly CookieValue[]): string | null {
+  const session = decodeSessionCookie(cookies);
+  return session?.bearer ? session.accessToken : null;
 }
 
 // anonymous: no session cookie at all. ended: unreadable, not a bearer, or

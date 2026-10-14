@@ -1,7 +1,16 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { assertNever } from "@/lib/assertNever";
 import { createExtensionSession } from "@/lib/auth/internal";
-import { finish, getVerification, redirectTo } from "@/lib/auth/session";
-import { loginPath, parseReturnTarget, recoverPath } from "@/lib/auth/urls";
+import {
+  ended,
+  finish,
+  redirectTo,
+  resolveEntry,
+  type Effect,
+  type LiveSession,
+} from "@/lib/auth/session";
+import { loginPath, parseReturnTarget, unavailablePath } from "@/lib/auth/urls";
 import { createRandomId } from "@/lib/createRandomId";
 import { getEnv } from "@/lib/env";
 import { AuthUnavailable } from "@/lib/supabase/auth";
@@ -34,33 +43,45 @@ export async function GET(request: Request): Promise<NextResponse> {
     );
   }
 
-  // a signed-out viewer signs in and comes back here; an unresolved session
-  // resolves first.
+  // this route owns resolution after validating the external destination.
   const target = parseReturnTarget(`${url.pathname}${url.search}`);
-  let verification;
+  let live: LiveSession;
   try {
-    verification = await getVerification();
+    live = await resolveEntry((await cookies()).getAll());
   } catch (error) {
     if (!(error instanceof AuthUnavailable)) throw error;
-    return finish(redirectTo(recoverPath(target)));
+    return finish(redirectTo(unavailablePath(target), 303));
   }
-  if (verification.kind === "Anonymous") {
-    return finish(redirectTo(loginPath(target)));
+  switch (live.kind) {
+    case "Anonymous":
+      return finish(redirectTo(loginPath(target), 303));
+    case "Ended":
+      return finish(redirectTo(loginPath(target), 303), ended(live.cookieNames));
+    case "Live":
+      break;
+    default:
+      return assertNever(live);
   }
-  if (verification.kind !== "Verified") {
-    return finish(redirectTo(recoverPath(target)));
+  const effect: Effect = { kind: "Write", writes: live.writes };
+  try {
+    const requestId = createRandomId();
+    const token = await createExtensionSession(live.accessToken, requestId);
+    const outcome: Record<string, string> = token
+      ? { token }
+      : { error: "session_failed", request_id: requestId };
+    redirectUri.hash = new URLSearchParams(
+      state === null ? outcome : { ...outcome, state },
+    ).toString();
+    return finish(NextResponse.redirect(redirectUri), effect);
+  } catch (error) {
+    // containment still publishes a successor whose refresh token was spent.
+    console.error("Extension session creation failed:", error);
+    return finish(
+      NextResponse.json(
+        { error: { code: "E_INTERNAL", message: "Extension session creation failed" } },
+        { status: 500 },
+      ),
+      effect,
+    );
   }
-
-  const requestId = createRandomId();
-  const token = await createExtensionSession(
-    verification.accessToken,
-    requestId,
-  );
-  const outcome: Record<string, string> = token
-    ? { token }
-    : { error: "session_failed", request_id: requestId };
-  redirectUri.hash = new URLSearchParams(
-    state === null ? outcome : { ...outcome, state },
-  ).toString();
-  return finish(NextResponse.redirect(redirectUri));
 }

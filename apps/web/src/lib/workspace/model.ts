@@ -1,6 +1,7 @@
 // The workspace state and the rules the server entry and the client store
 // share. The shape is the api's (python validates every save and stored read),
-// so the web has no decoder: a stored row python cannot read arrives as null.
+// so the web has no decoder. Only a missing row is null; invalid saved state
+// fails the read before a client store can mount and autosave a replacement.
 import type { Schema } from "@/lib/api/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";

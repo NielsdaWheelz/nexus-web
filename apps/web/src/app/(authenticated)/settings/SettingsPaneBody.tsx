@@ -18,7 +18,7 @@ const SETTINGS_ITEMS: {
   {
     href: "/settings/appearance",
     title: "Appearance",
-    description: "Study, Press, or follow your operating system.",
+    description: "Study, Press, or Solar.",
   },
   {
     href: "/settings/reader",

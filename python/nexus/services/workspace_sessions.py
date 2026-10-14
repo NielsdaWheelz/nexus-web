@@ -1,27 +1,13 @@
-"""Per user + device workspace sessions: last write wins; an unreadable row reads as absent."""
+"""Per user + device workspace sessions: last write wins; stored state must validate."""
 
 from uuid import UUID
 
-from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from nexus.db.models import WorkspaceSession
-from nexus.logging import get_logger
 from nexus.schemas.workspace_session import WorkspaceSessionsOut, WorkspaceState
-
-logger = get_logger(__name__)
-
-
-def _readable(state: dict[str, object] | None) -> WorkspaceState | None:
-    if state is None:
-        return None
-    try:
-        return WorkspaceState.model_validate(state)
-    except ValidationError as error:
-        logger.warning("workspace_session_unreadable", errors=error.error_count())
-        return None
 
 
 def get_workspace_sessions(db: Session, user_id: UUID, device_id: str) -> WorkspaceSessionsOut:
@@ -36,7 +22,14 @@ def get_workspace_sessions(db: Session, user_id: UUID, device_id: str) -> Worksp
         .order_by(WorkspaceSession.updated_at.desc(), WorkspaceSession.id.desc())
         .limit(1)
     )
-    return WorkspaceSessionsOut(own=_readable(own), most_recent_elsewhere=_readable(elsewhere))
+    # justify-defect: saved state was validated on write. Only a missing row is
+    # absent; invalid persisted state must fail before entry can overwrite it.
+    return WorkspaceSessionsOut(
+        own=WorkspaceState.model_validate(own) if own is not None else None,
+        most_recent_elsewhere=WorkspaceState.model_validate(elsewhere)
+        if elsewhere is not None
+        else None,
+    )
 
 
 def put_workspace_session(

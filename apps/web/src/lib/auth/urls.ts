@@ -7,8 +7,7 @@ import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
 export type ReturnTarget = string & { readonly __returnTarget: unique symbol };
 export const OAUTH_PROVIDERS = ["google", "github"] as const;
 export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];
-// the only feedback /login renders from its query. "Your session ended." comes
-// from the ended-feedback cookie, never from the url.
+// query feedback; ended-session feedback comes from its cookie, never the url.
 export type LoginError = "oauth_start_failed" | "sign_in_failed";
 
 export const DEFAULT_RETURN_TARGET =
@@ -23,6 +22,8 @@ export const isOAuthProvider = (value: unknown): value is OAuthProvider =>
 // the pathname and search of a protected request: server components cannot
 // see the url. the hash never reaches the server.
 export const REQUEST_PATH_HEADER = "x-nexus-request-path";
+// routing context only: middleware overwrites this; it grants no identity.
+export const REQUEST_METHOD_HEADER = "x-nexus-request-method";
 
 export function firstParam(
   value: string | string[] | undefined,
@@ -43,6 +44,13 @@ export function parseReturnTarget(
     url = new URL(value, "http://localhost");
   } catch {
     return DEFAULT_RETURN_TARGET;
+  }
+  if (url.searchParams.has("_rsc")) {
+    // remove transport pairs without reserializing the other query bytes.
+    url.search = url.search.slice(1)
+      .split("&")
+      .filter((pair) => !new URLSearchParams(pair).has("_rsc"))
+      .join("&");
   }
   const target = `${url.pathname}${url.search}${url.hash}`;
   const authPath =
@@ -74,8 +82,8 @@ function withNext(
 export const loginPath = (target: ReturnTarget, error?: LoginError) =>
   withNext("/login", target, error ? { error } : {});
 
-export const recoverPath = (target: ReturnTarget) =>
-  withNext("/auth/session/recover", target);
+export const unavailablePath = (target: ReturnTarget) =>
+  withNext("/auth/session/unavailable", target);
 
 // handoff: the android shell's challenge (hex sha-256 of its verifier). email:
 // an email-change confirmation, which may open in a browser that holds no

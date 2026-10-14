@@ -25,7 +25,7 @@
   width: var(--navbar-collapsed-width);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 768px), (max-width: 900px) and (orientation: landscape) and (pointer: coarse) {
   .main {
     width: 100%;
   }
@@ -55,19 +55,24 @@
 .error {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   gap: var(--space-3);
   min-height: 100dvh;
-  padding: var(--space-6);
-  text-align: center;
+  width: 100%;
+  max-width: 28rem;
+  margin-inline: auto;
+  padding-top: max(var(--space-6), var(--viewport-safe-top));
+  padding-right: max(var(--space-6), var(--viewport-safe-right));
+  padding-bottom: max(var(--space-6), var(--viewport-safe-bottom));
+  padding-left: max(var(--space-6), var(--viewport-safe-left));
 }
 
 .error:focus {
   outline: none;
 }
 
-.error h2 {
+.error h1 {
   margin: 0;
   font-size: var(--text-lg);
   color: var(--ink);

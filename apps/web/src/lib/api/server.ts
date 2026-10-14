@@ -4,7 +4,8 @@ import { cookies } from "next/headers";
 import { ApiError } from "@/lib/api/client";
 import { getEnv } from "@/lib/env";
 import { createRandomId } from "@/lib/createRandomId";
-import { readSession } from "@/lib/supabase/cookie";
+import { isAbortError } from "@/lib/errors";
+import { readBearer } from "@/lib/supabase/cookie";
 import { isRecord } from "@/lib/validation";
 
 const FASTAPI_FETCH_TIMEOUT_MS = 30_000;
@@ -26,55 +27,83 @@ function readApiErrorBody(body: unknown): {
 }
 
 /**
- * Server-side equivalent of `apiFetch`: reads the Supabase session cookie,
- * forwards the access token to FastAPI, and parses the response with the same
- * ApiError semantics as the browser path. The page/session gate owns browser
- * recovery; this server consumer never redirects or refreshes. It forwards
- * only an active session and reports every other cookie state as
- * `E_UNAUTHENTICATED`. Route handlers that own a response resolve refreshable
- * sessions inline before calling FastAPI. The deadline covers both response
- * headers and body consumption.
+ * Forwards a decoded cookie bearer to the verifying API without reapplying the
+ * session owner's renewal margin. This consumer never redirects or refreshes.
+ * Transport failures remain distinct from invalid same-system JSON; the deadline
+ * covers both response headers and body consumption.
  */
 export async function callFastAPI<T>(
   path: string,
   options?: { timeoutMs?: number },
 ): Promise<T> {
   const cookieStore = await cookies();
-  const session = readSession(cookieStore.getAll());
-  if (session.state !== "active") {
+  const bearer = readBearer(cookieStore.getAll());
+  if (bearer === null) {
     throw new ApiError(401, "E_UNAUTHENTICATED", "Authentication required");
   }
   const config = getEnv().internalApi;
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${session.accessToken}`,
+    Authorization: `Bearer ${bearer}`,
   };
   if (config.internalSecret) {
     headers["X-Nexus-Internal"] = config.internalSecret;
   }
   const requestId = createRandomId();
+  let responseId = requestId;
   headers["X-Request-ID"] = requestId;
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
     options?.timeoutMs ?? FASTAPI_FETCH_TIMEOUT_MS,
   );
+  // Only the exchange and body acquisition use this boundary. Request creation,
+  // JSON parsing and callers' payload handling keep their original defects.
+  const transportError = (error: unknown): never => {
+    if (controller.signal.aborted && isAbortError(error)) {
+      throw new ApiError(504, "E_UPSTREAM_TIMEOUT", "Backend service timed out", responseId);
+    }
+    if (error instanceof TypeError) {
+      throw new ApiError(0, "E_NETWORK", "Network request failed", responseId);
+    }
+    throw error;
+  };
   try {
-    const response = await fetch(`${config.fastApiBaseUrl}${path}`, {
+    const request = new Request(`${config.fastApiBaseUrl}${path}`, {
       headers,
       cache: "no-store",
-      signal: controller.signal,
     });
+    // Next uses the explicit signal to leave this exchange's lifetime uncached.
+    const response = await fetch(request, { signal: controller.signal }).catch(transportError);
+    const upstreamId = response.headers.get("x-request-id");
+    if (upstreamId && /^[A-Za-z0-9._:-]{1,128}$/.test(upstreamId)) responseId = upstreamId;
+    const contentType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
+    // The same narrow gateway contract as the BFF proxy. Claimed JSON must
+    // still decode, even when its status is a gateway failure.
+    if ([502, 503, 504].includes(response.status) && contentType !== "application/json") {
+      controller.abort();
+      throw new ApiError(
+        response.status,
+        response.status === 504 ? "E_UPSTREAM_TIMEOUT" : "E_UPSTREAM",
+        response.status === 504 ? "Backend service timed out" : "Backend service unavailable",
+        responseId,
+      );
+    }
     if (response.status === 204 || response.status === 205) {
+      // justify-type-assertion: these statuses intentionally carry no JSON body.
       return undefined as T;
     }
+    const text = await response.text().catch(transportError);
     let body: unknown;
     try {
-      body = await response.json();
-    } catch {
+      body = JSON.parse(text);
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      // justify-defect: this owned JSON transport returned an undecodable body.
       throw new ApiError(
         response.status,
         "E_INVALID_RESPONSE",
         "API returned a non-JSON response",
+        responseId,
       );
     }
     if (!response.ok) {
@@ -83,20 +112,11 @@ export async function callFastAPI<T>(
         response.status,
         err.code ?? "E_UNKNOWN",
         err.message ?? `Request failed with status ${response.status}`,
-        err.requestId,
+        err.requestId ?? responseId,
       );
     }
+    // justify-type-assertion: generated wire types describe this same-deploy API.
     return body as T;
-  } catch (error) {
-    if (controller.signal.aborted) {
-      throw new ApiError(
-        504,
-        "E_UPSTREAM_TIMEOUT",
-        "Backend service timed out",
-        requestId,
-      );
-    }
-    throw error;
   } finally {
     clearTimeout(timeout);
   }

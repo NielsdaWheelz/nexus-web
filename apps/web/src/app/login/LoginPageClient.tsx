@@ -16,6 +16,7 @@ import {
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { useAuthForm, WRONG_ADDRESS } from "@/lib/auth/useAuthForm";
+import { useReturnTarget } from "@/lib/auth/useReturnTarget";
 import {
   DEFAULT_RETURN_TARGET,
   nativeGoogleDeepLink,
@@ -33,7 +34,7 @@ type Feedback = {
   announcement: FeedbackAnnouncement;
 };
 
-const INITIAL: Record<LoginError | "session_ended", Feedback> = {
+const INITIAL: Record<LoginError, Feedback> = {
   oauth_start_failed: {
     content: {
       tone: "Danger",
@@ -49,14 +50,6 @@ const INITIAL: Record<LoginError | "session_ended", Feedback> = {
       message: "Please try again.",
     },
     announcement: "Assertive",
-  },
-  session_ended: {
-    content: {
-      tone: "Info",
-      title: "Your session ended.",
-      message: "Please sign in again.",
-    },
-    announcement: "Polite",
   },
 };
 
@@ -122,15 +115,17 @@ function ProviderLink({
   disabled,
 }: {
   provider: OAuthProvider;
-  nextPath: ReturnTarget;
+  nextPath: ReturnTarget | null;
   isShell: boolean;
   disabled: boolean;
 }) {
-  const href = !isShell
-    ? oauthPath(provider, nextPath)
-    : provider === "google"
-      ? nativeGoogleDeepLink(nextPath)
-      : startDeepLink(provider, nextPath);
+  const href = disabled || nextPath === null
+    ? undefined
+    : !isShell
+      ? oauthPath(provider, nextPath)
+      : provider === "google"
+        ? nativeGoogleDeepLink(nextPath)
+        : startDeepLink(provider, nextPath);
   return (
     <Button
       asChild
@@ -191,13 +186,14 @@ export default function LoginPageClient({
   isShell: boolean;
 }) {
   const connectivity = useConnectivity();
+  const target = useReturnTarget(nextPath);
   const [revealed, setRevealed] = useState(false);
   const [emailError, setEmailError] = useState<FeedbackContent | null>(null);
   const [passwordError, setPasswordError] = useState<FeedbackContent | null>(
     null,
   );
   const [feedback, setFeedback] = useState<Feedback | null>(
-    initial ? INITIAL[initial] : null,
+    initial && initial !== "session_ended" ? INITIAL[initial] : null,
   );
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
@@ -233,6 +229,8 @@ export default function LoginPageClient({
     setRevealed(false);
     passwordRef.current?.focus();
   });
+  const completedTarget = target.kind === "Ready" ? target.target : null;
+  const controlsPending = pending || completedTarget === null;
 
   function validate(): boolean {
     const email = emailRef.current;
@@ -255,7 +253,7 @@ export default function LoginPageClient({
 
   return (
     <AuthSurface
-      title="Sign in"
+      title={initial === "session_ended" ? "sign in to continue" : "Sign in"}
       description={
         isShell
           ? "Use the account connected to this Nexus."
@@ -277,15 +275,15 @@ export default function LoginPageClient({
 
         <ProviderLink
           provider="google"
-          nextPath={nextPath}
+          nextPath={completedTarget}
           isShell={isShell}
-          disabled={pending}
+          disabled={controlsPending}
         />
 
         <Disclosure
           label="Use email and password"
           className={authStyles.passwordDisclosure}
-          pending={pending}
+          pending={controlsPending}
         >
           <form
             aria-label="Sign in with email and password"
@@ -294,10 +292,13 @@ export default function LoginPageClient({
             method="post"
             action="/auth/password/sign-in"
             noValidate
-            onSubmit={(event) => void submit(event, nextPath, { validate })}
+            onSubmit={(event) => {
+              if (target.kind === "Pending") return event.preventDefault();
+              void submit(event, target.target, { validate });
+            }}
           >
-            {nextPath === DEFAULT_RETURN_TARGET ? null : (
-              <input type="hidden" name="next" value={nextPath} />
+            {completedTarget === null || completedTarget === DEFAULT_RETURN_TARGET ? null : (
+              <input type="hidden" name="next" value={completedTarget} />
             )}
             <label className={authStyles.field}>
               <span className={authStyles.label}>Email</span>
@@ -311,6 +312,7 @@ export default function LoginPageClient({
                 inputMode="email"
                 spellCheck={false}
                 required
+                disabled={completedTarget === null}
                 onChange={() => setEmailError(null)}
                 aria-invalid={emailError ? true : undefined}
                 aria-describedby={
@@ -344,6 +346,7 @@ export default function LoginPageClient({
                   size="lg"
                   autoComplete="current-password"
                   required
+                  disabled={completedTarget === null}
                   onChange={() => setPasswordError(null)}
                   aria-invalid={passwordError ? true : undefined}
                   aria-describedby={
@@ -358,6 +361,7 @@ export default function LoginPageClient({
                   size="lg"
                   iconOnly
                   type="button"
+                  disabled={completedTarget === null}
                   aria-label={revealed ? "Hide password" : "Show password"}
                   aria-controls="password-sign-in-password"
                   onClick={() => setRevealed((current) => !current)}
@@ -382,7 +386,7 @@ export default function LoginPageClient({
             <Link className={authStyles.forgot} href="/forgot-password">
               Forgot password?
             </Link>
-            <Button variant="primary" size="lg" type="submit" loading={pending}>
+            <Button variant="primary" size="lg" type="submit" loading={pending} disabled={completedTarget === null}>
               {pending ? "Signing in…" : "Sign in"}
             </Button>
           </form>
@@ -391,14 +395,14 @@ export default function LoginPageClient({
         <Disclosure
           label="Other ways to sign in"
           className={authStyles.otherDisclosure}
-          pending={pending}
+          pending={controlsPending}
         >
           <div className={authStyles.methodBody}>
             <ProviderLink
               provider="github"
-              nextPath={nextPath}
+              nextPath={completedTarget}
               isShell={isShell}
-              disabled={pending}
+              disabled={controlsPending}
             />
           </div>
         </Disclosure>

@@ -1,10 +1,9 @@
 import type { ResourceDescriptor } from "@/lib/api/resource";
 
-// Paint-adjacent prefetch deadline for the server fetcher — never paint-blocking:
-// callFastAPI aborts the upstream here, a timed-out seed is omitted, and the client
-// useResource fetches normally. only speculative pane resources use this budget;
-// required account, reader-profile and workspace-session reads use the normal
-// server-request deadline.
+// Per-request deadline for the active pane's server seed, awaited before first
+// shell mount. A timed-out prefetch is omitted and the pane reads on the client.
+// Required account, reader-profile and workspace-session reads use the normal
+// server-request deadline; inactive panes are never seeded by entry.
 export const PREFETCH_OPTS = { timeoutMs: 500 } as const;
 
 // One fetch-and-parse over a ResourceDescriptor with the transport injected —

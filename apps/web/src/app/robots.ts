@@ -10,7 +10,6 @@ export default function robots(): MetadataRoute.Robots {
         "/account/password",
         "/auth/invite",
         "/auth/recovery",
-        "/auth/session/recover",
         "/android",
         "/privacy",
         "/terms",

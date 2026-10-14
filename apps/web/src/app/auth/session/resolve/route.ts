@@ -1,20 +1,18 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { assertNever } from "@/lib/assertNever";
 import {
   ended,
   finish,
-  getVerification,
   isSameOrigin,
+  resolveEntry,
   type Effect,
 } from "@/lib/auth/session";
-import { AuthUnavailable, refresh } from "@/lib/supabase/auth";
-import { authCookieNames } from "@/lib/supabase/cookie";
+import { AuthUnavailable } from "@/lib/supabase/auth";
 
 export const runtime = "nodejs";
 
-// the one place a page's session is refreshed: 204 live (rotated when
-// refreshed), 401 ended (cleared, with feedback) or anonymous, 503 provider
-// unavailable (credentials kept, Retry-After 3), 403 cross-site.
+// explicit retry only: entry navigation already resolves in middleware.
 export async function POST(request: Request): Promise<NextResponse> {
   const answer = (status: number, effect?: Effect) =>
     finish(new NextResponse(null, { status }), effect);
@@ -25,21 +23,24 @@ export async function POST(request: Request): Promise<NextResponse> {
     return answer(403);
   }
   try {
-    const verification = await getVerification();
-    if (verification.kind === "Verified") return answer(204);
-    if (verification.kind === "Anonymous") return answer(401);
-    if (verification.kind === "SessionEnded") {
-      return answer(401, ended(verification.cookieNames));
+    const live = await resolveEntry((await cookies()).getAll());
+    switch (live.kind) {
+      case "Live":
+        return answer(204, { kind: "Write", writes: live.writes });
+      case "Anonymous":
+        return answer(401);
+      case "Ended":
+        return answer(401, ended(live.cookieNames));
+      default:
+        return assertNever(live);
     }
-    const presented = (await cookies()).getAll();
-    const refreshed = await refresh(presented);
-    return refreshed.kind === "Refreshed"
-      ? answer(204, { kind: "Write", writes: refreshed.writes })
-      : answer(401, ended(authCookieNames(presented)));
   } catch (error) {
-    if (!(error instanceof AuthUnavailable)) throw error;
-    const unavailable = answer(503);
-    unavailable.headers.set("Retry-After", "3");
-    return unavailable;
+    if (error instanceof AuthUnavailable) {
+      const unavailable = answer(503);
+      unavailable.headers.set("Retry-After", "3");
+      return unavailable;
+    }
+    console.error("Session resolution failed:", error);
+    return answer(500);
   }
 }
