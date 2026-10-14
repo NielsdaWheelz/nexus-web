@@ -119,8 +119,8 @@ after deleting the campaign, `./scripts/test` exited zero: formatting/lint,
 pyright, wire freshness, web/extension type checks and the single canonical
 `0277` migration head passed. the unchanged gate also built the shelf and
 extension. existing [custom-highlight minifier warnings](tickets/offline-css-minifier-rejects-highlight-syntax.md)
-recurred; pyright's version notice was informational. no application change
-followed qualification or this final gate.
+recurred; pyright's version notice was informational. qualified application code
+remained unchanged through this gate.
 
 ## pr integration
 
