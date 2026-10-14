@@ -17,6 +17,9 @@ import {
   UploadSessionError,
   type HistoryEntry,
   type ImportItem,
+  type ImportFailureCode,
+  type SourceImportObligation,
+  type SearchImportObligation,
   type ImportStage,
   type ImportState,
   type ImportSummary,
@@ -27,6 +30,10 @@ import {
   type UploadSessionOutcome,
 } from "@/lib/imports/api";
 import type { AcceptedIngest } from "@/lib/imports/ingest";
+import {
+  METADATA_FAILURE_COPY,
+  metadataOperationSummary,
+} from "@/lib/media/mediaMetadataCopy";
 import type { MediaKind } from "@/lib/media/kind";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { pluralize } from "@/lib/text/pluralize";
@@ -322,6 +329,20 @@ export function isSafeFailureCode(raw: string): raw is SafeFailureCode {
   return Object.hasOwn(FAILURE_COPY, raw);
 }
 
+/** Metadata owns its reasons; imports only composes the two vocabularies. */
+export const IMPORT_FAILURE_CODES: readonly ImportFailureCode[] = [
+  ...SAFE_FAILURE_CODES,
+  ...(Object.keys(
+    METADATA_FAILURE_COPY,
+  ) as (keyof typeof METADATA_FAILURE_COPY)[]),
+];
+
+export function importFailureCopy(code: ImportFailureCode): FailureCopy {
+  if (isSafeFailureCode(code)) return FAILURE_COPY[code];
+  const reason = METADATA_FAILURE_COPY[code];
+  return { reason, title: "metadata research failed.", explanation: reason };
+}
+
 /**
  * One record per stage: the noun a filter and a group heading use, and the
  * line shown while it runs. A recorded start reads `<label> started` and a
@@ -335,6 +356,7 @@ export const STAGE_COPY: Readonly<
   Extract: { label: "Extraction", working: "Extracting" },
   Finalize: { label: "Reader preparation", working: "Finalizing reader" },
   Index: { label: "Search indexing", working: "Indexing for search" },
+  Metadata: { label: "Metadata research", working: "researching metadata" },
   SourceProcessing: {
     label: "Source processing",
     working: "Source processing",
@@ -370,7 +392,7 @@ export const STATE_KIND_LABEL: Readonly<Record<ImportState["kind"], string>> = {
 };
 
 export const ORDER_LABEL: Readonly<Record<ImportsView, string>> = {
-  NeedsAttention: "Stage, oldest failure first",
+  NeedsAttention: "Stage, oldest issue first",
   InProgress: "Newest accepted first",
   History: "Newest matched event first",
 };
@@ -404,8 +426,38 @@ const WAITING = {
 const COUNTED_UNIT = { Page: "page", Chapter: "chapter" } as const;
 
 /** The one short status line for a row or the inspector. */
-export function statusLine(item: ImportItem): string {
+export function statusLine(
+  item: ImportItem,
+  formatTime?: (value: string) => string,
+): string {
   const state = item.state;
+  if (state.kind !== "Complete" && state.stage === "Metadata") {
+    const metadata = item.obligations.metadata;
+    if (metadata.kind === "Present") {
+      const operation =
+        state.kind === "Active"
+          ? metadata.value.unfinished_operation
+          : metadata.value.operation;
+      if (operation.kind === "Present") {
+        const latest = metadata.value.operation;
+        return latest.kind === "Present" &&
+          latest.value.job_id !== operation.value.job_id
+          ? `${metadataOperationSummary(latest.value, formatTime)} · ${metadataOperationSummary(operation.value, formatTime)}`
+          : metadataOperationSummary(operation.value, formatTime);
+      }
+    }
+  }
+  if (state.kind === "Complete" && item.source_issue_count > 0) {
+    return `${pluralize(item.source_issue_count, "source issue")} recorded`;
+  }
+  return obligationStatusLine(state, isUploadObligation(item));
+}
+
+/** A source/search slot can be read without inventing a whole import row. */
+export function obligationStatusLine(
+  state: ImportItem["state"],
+  upload = false,
+): string {
   switch (state.kind) {
     case "Active": {
       if (state.status === "Queued") {
@@ -423,16 +475,14 @@ export function statusLine(item: ImportItem): string {
         : `Extracting ${COUNTED_UNIT[progress.unit]} ${progress.completed} of ${progress.total}`;
     }
     case "NeedsAttention":
-      if (!isUploadObligation(item)) return stageFailed(state.stage);
+      if (!upload) return stageFailed(state.stage);
       if (state.stage !== "Upload") return UPLOAD_REJECTED_LABEL;
       return state.failure_code.kind === "Present" &&
         state.failure_code.value === "E_UPLOAD_CAPABILITY_EXPIRED"
         ? FAILURE_COPY.E_UPLOAD_CAPABILITY_EXPIRED.reason
         : stageFailed("Upload");
     case "Complete":
-      return item.source_issue_count > 0
-        ? `${pluralize(item.source_issue_count, "source issue")} recorded`
-        : "Imported";
+      return "Complete";
     default:
       return assertNever(state, "Unreachable import state");
   }
@@ -443,7 +493,7 @@ export function reasonLine(item: ImportItem): string | null {
   const state = item.state;
   return state.kind === "NeedsAttention" &&
     state.failure_code.kind === "Present"
-    ? FAILURE_COPY[state.failure_code.value].reason
+    ? importFailureCopy(state.failure_code.value).reason
     : null;
 }
 
@@ -473,8 +523,20 @@ export function stateBadge(item: ImportItem): {
  * What this import means for the reader now. Search indexing is the one stage
  * whose failure leaves a usable document, and only when it is readable.
  */
-export function consequenceLine(item: ImportItem, canRead: boolean): string {
+export function consequenceLine(
+  item: ImportItem,
+  canRead: boolean,
+  canPlay: boolean,
+): string {
   const state = item.state;
+  if (state.kind === "NeedsAttention" && state.stage === "Metadata") {
+    const access = canRead
+      ? " You can still read this item."
+      : canPlay
+        ? " You can still play this item."
+        : "";
+    return `${statusLine(item)}.${access}`;
+  }
   if (state.kind === "NeedsAttention" && state.stage === "Index") {
     return canRead
       ? "Search indexing failed. You can still read this document."
@@ -484,7 +546,7 @@ export function consequenceLine(item: ImportItem, canRead: boolean): string {
     state.kind === "NeedsAttention" &&
     state.failure_code.kind === "Present"
   ) {
-    const copy = FAILURE_COPY[state.failure_code.value];
+    const copy = importFailureCopy(state.failure_code.value);
     return `${copy.title} ${copy.explanation}`;
   }
   if (state.kind !== "Complete") return statusLine(item);
@@ -527,21 +589,53 @@ function offerLine(offer: RecoveryOffer): string {
  * The Recovery sentence: what the offered command reuses and repeats, why the
  * server offers none, or that the work finished. Running work has none.
  */
-export function recoveryLine(item: ImportItem): string | null {
-  const { recovery, unavailable_reason: restriction } = item.capabilities;
+export function recoveryLine(
+  obligation: SourceImportObligation | SearchImportObligation,
+): string | null {
+  const { recovery, unavailable_reason: restriction } = obligation;
   if (recovery.kind === "Present") return offerLine(recovery.value);
   if (restriction.kind === "Present")
     return RESTRICTION_LINE[restriction.value];
-  switch (item.state.kind) {
-    case "Active":
-      return null;
-    case "NeedsAttention":
-      return "No recovery is offered for this import.";
-    case "Complete":
-      return "This import finished. There is nothing to recover.";
-    default:
-      return assertNever(item.state, "Unreachable import state");
+  return obligation.state.kind === "NeedsAttention"
+    ? "No recovery is offered for this work."
+    : null;
+}
+
+export function concurrentWorkLine(item: ImportItem): string | null {
+  if (item.state.kind !== "NeedsAttention") return null;
+  const attention: string[] = [];
+  const active: string[] = [];
+  for (const [key, label] of [
+    ["source", "source processing"],
+    ["search", "search indexing"],
+  ] as const) {
+    const slot = item.obligations[key];
+    if (slot.kind === "Absent") continue;
+    if (slot.value.state.kind === "Active") active.push(label);
+    if (
+      slot.value.state.kind === "NeedsAttention" &&
+      slot.value.state.stage !== item.state.stage
+    )
+      attention.push(label);
   }
+  if (item.obligations.metadata.kind === "Present") {
+    const metadata = item.obligations.metadata.value;
+    if (metadata.unfinished_count > 0) active.push("metadata research");
+    const latest = metadata.operation;
+    if (
+      item.state.stage !== "Metadata" &&
+      latest.kind === "Present" &&
+      (latest.value.status === "failed" ||
+        (latest.value.status === "no_findings" &&
+          latest.value.reviewed_at.kind === "Absent"))
+    )
+      attention.push("metadata research");
+  }
+  const parts = [];
+  if (attention.length)
+    parts.push(`also needs attention: ${attention.join(", ")}`);
+  if (active.length) parts.push(`also in progress: ${active.join(", ")}`);
+  return parts.length ? parts.join(" · ") : null;
 }
 
 /** The file a retry needs is the one this import already accepted. */
@@ -590,6 +684,8 @@ function eventLabel(entry: HistoryEntry): string {
   const facts = entry.facts;
   const stage = entry.stage.kind === "Present" ? entry.stage.value : null;
   switch (facts.kind) {
+    case "MetadataOperation":
+      return metadataOperationSummary(facts.operation);
     case "UploadAccepted":
       return "Upload accepted";
     case "UploadExecutionStarted":
@@ -667,9 +763,11 @@ export function eventLine(entry: HistoryEntry): string {
   const facts = entry.facts;
   const reason =
     entry.failure_code.kind === "Present"
-      ? ` ${FAILURE_COPY[entry.failure_code.value].reason}.`
+      ? ` ${importFailureCopy(entry.failure_code.value).reason}.`
       : "";
   switch (facts.kind) {
+    case "MetadataOperation":
+      return `${label}${reason}`;
     case "UploadFailed":
       // A transport failure records what the transport did; a rejection only
       // its verification code. Either way the reason is said once.
@@ -819,7 +917,11 @@ export function summaryLine(summary: ImportSummary): string {
   }
   if (summary.active_count > 0)
     parts.push(`${summary.active_count} in progress`);
-  return parts.length === 0 ? "All imports are settled" : parts.join(" · ");
+  return parts.length === 0
+    ? summary.unfinished_work_count > 0
+      ? "Earlier import work is still finishing"
+      : "All imports are settled"
+    : parts.join(" · ");
 }
 
 /**
@@ -884,12 +986,12 @@ export function emptyCopy(
     case "NeedsAttention":
       return {
         title: "No imports need attention",
-        body: "An import that stops and needs you appears here.",
+        body: "Source, search, or metadata work that needs you appears here.",
       };
     case "InProgress":
       return {
         title: "No imports are in progress",
-        body: "An import being uploaded, extracted or indexed appears here.",
+        body: "Uploads, source processing, search indexing, and metadata research appear here.",
       };
     case "History":
       return {

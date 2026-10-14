@@ -2,6 +2,9 @@
 
 import type { ReactNode } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
+import MetadataResearchActions, {
+  MetadataReviewButton,
+} from "@/components/media/MetadataResearchActions";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import PaneSection from "@/components/ui/PaneSection";
 import Pill from "@/components/ui/Pill";
@@ -27,13 +30,23 @@ import {
   loadFailure,
   matchLine,
   momentText,
+  obligationStatusLine,
+  importFailureCopy,
   recoveryLine,
   stageLabel,
   stateBadge,
 } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
+import {
+  earlierMetadataRuns,
+  METADATA_FAILURE_COPY,
+  METADATA_FIELD_LABELS,
+  METADATA_RETRY_BLOCKED_COPY,
+  METADATA_REVIEW_HELP,
+  metadataOperationSummary,
+} from "@/lib/media/mediaMetadataCopy";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import { ImportActions } from "./ImportRow";
+import { ImportObligationActions } from "./ImportRow";
 import styles from "./Imports.module.css";
 
 /** The server no longer has this import, or never had one by that ref. */
@@ -80,12 +93,17 @@ export default function ImportInspector({
   const { item, readiness, history_coverage: coverage } = detail.data;
   const issues = detail.data.source_issues;
   const badge = stateBadge(item);
-  const recovery = recoveryLine(item);
-  // A media import's other actions live on its row; an upload's Remove is its
-  // recovery when it has no offer (design §10 B9).
-  const actionable =
-    item.capabilities.recovery.kind === "Present" ||
-    (item.media_ref.kind === "Absent" && item.capabilities.can_remove);
+  const metadata =
+    item.obligations.metadata.kind === "Present"
+      ? item.obligations.metadata.value
+      : null;
+  const operation =
+    metadata?.operation.kind === "Present" ? metadata.operation.value : null;
+  const earlierRuns = metadata === null ? 0 : earlierMetadataRuns(metadata);
+  const mediaId =
+    item.media_ref.kind === "Present"
+      ? item.media_ref.value.slice("media:".length)
+      : null;
   const state = item.state;
   const field = (label: string, value: ReactNode) => (
     <div>
@@ -103,7 +121,9 @@ export default function ImportInspector({
           <Pill tone={badge.tone} size="sm">
             {badge.label}
           </Pill>
-          <span>{consequenceLine(item, readiness.can_read)}</span>
+          <span>
+            {consequenceLine(item, readiness.can_read, readiness.can_play)}
+          </span>
         </p>
         {matched.kind === "Present" ? (
           <p className={styles.rowMatched}>
@@ -119,14 +139,105 @@ export default function ImportInspector({
           />
         </PaneSection>
       ) : null}
-      {recovery === null && !actionable ? null : (
-        <PaneSection title="Recovery">
-          {recovery === null ? null : <p>{recovery}</p>}
-          {actionable ? (
+      {(["source", "search"] as const).map((key) => {
+        const slot = item.obligations[key];
+        if (slot.kind === "Absent") return null;
+        const recovery = recoveryLine(slot.value);
+        const state = slot.value.state;
+        return (
+          <PaneSection key={key} title={key === "source" ? "Source" : "Search"}>
+            <p>{obligationStatusLine(state)}</p>
+            {state.kind === "NeedsAttention" &&
+            state.failure_code.kind === "Present" ? (
+              <p>{importFailureCopy(state.failure_code.value).reason}</p>
+            ) : null}
+            {recovery === null ? null : <p>{recovery}</p>}
             <div className={styles.inspectorActions}>
-              <ImportActions item={item} />
+              <ImportObligationActions item={item} obligation={key} />
             </div>
+          </PaneSection>
+        );
+      })}
+      {metadata === null || mediaId === null ? null : (
+        <PaneSection title="Metadata">
+          <p>
+            {operation === null
+              ? "no recorded metadata research"
+              : metadataOperationSummary(operation, (at) =>
+                  momentText(at, display),
+                )}
+          </p>
+          {operation?.status === "failed" ? (
+            <p>{METADATA_FAILURE_COPY[operation.code]}</p>
           ) : null}
+          {operation?.status === "no_findings" &&
+          operation.reviewed_at.kind === "Absent" ? (
+            <p>{METADATA_REVIEW_HELP}</p>
+          ) : null}
+          {operation?.status === "completed" &&
+          operation.outcome.unresolved_fields.length > 0 ? (
+            <p>
+              not established by this run:{" "}
+              {operation.outcome.unresolved_fields
+                .map((name) => METADATA_FIELD_LABELS[name])
+                .join(", ")}
+            </p>
+          ) : null}
+          {earlierRuns > 0 ? (
+            <p>
+              {earlierRuns} earlier metadata{" "}
+              {earlierRuns === 1 ? "run remains" : "runs remain"} unfinished
+            </p>
+          ) : null}
+          {metadata.unfinished_operation.kind === "Present" &&
+          metadata.unfinished_operation.value.job_id !== operation?.job_id ? (
+            <p>
+              {metadataOperationSummary(
+                metadata.unfinished_operation.value,
+                (at) => momentText(at, display),
+              )}{" "}
+              · {moment(metadata.unfinished_operation.value.created_at)} ·{" "}
+              <code>{metadata.unfinished_operation.value.job_id}</code>
+            </p>
+          ) : null}
+          {metadata.retry.status === "blocked" ? (
+            <p>{METADATA_RETRY_BLOCKED_COPY[metadata.retry.reason]}</p>
+          ) : null}
+          <div className={styles.inspectorActions}>
+            <MetadataResearchActions mediaId={mediaId} view={metadata} />
+          </div>
+          {operation === null ? null : (
+            <details className={styles.diagnostics}>
+              <summary>Research details</summary>
+              <dl>
+                {field("Job", <code>{operation.job_id}</code>)}
+                {operation.generation_id.kind === "Present"
+                  ? field(
+                      "Generation",
+                      <code>{operation.generation_id.value}</code>,
+                    )
+                  : null}
+                {field("Requested", moment(operation.created_at))}
+                {operation.started_at.kind === "Present"
+                  ? field("Started", moment(operation.started_at.value))
+                  : null}
+                {operation.status === "completed"
+                  ? field("Finished", moment(operation.outcome.completed_at))
+                  : operation.status === "failed" ||
+                      operation.status === "no_findings"
+                    ? field("Finished", moment(operation.completed_at))
+                    : null}
+                {operation.status === "waiting" &&
+                operation.until.kind === "Present"
+                  ? field("Next retry", moment(operation.until.value))
+                  : null}
+                {operation.status === "no_findings" &&
+                operation.reviewed_at.kind === "Present"
+                  ? field("Reviewed", moment(operation.reviewed_at.value))
+                  : null}
+              </dl>
+            </details>
+          )}
         </PaneSection>
       )}
       <PaneSection
@@ -139,6 +250,7 @@ export default function ImportInspector({
       >
         <Attempts
           importRef={importRef}
+          mediaId={mediaId}
           updatedAt={item.updated_at}
           matchedId={matched.kind === "Present" ? matched.value.id : null}
         />
@@ -172,14 +284,16 @@ function attempts(entries: readonly HistoryEntry[]) {
   for (const entry of entries) {
     const facts = entry.facts;
     const [id, label] =
-      "generation" in facts
-        ? [`Upload:${facts.generation}`, `Upload attempt ${facts.generation}`]
-        : "source_attempt_id" in facts
-          ? [`Source:${facts.source_attempt_id}`, "Source attempt"]
-          : [
-              `Index:${facts.revision}`,
-              `Search index revision ${facts.revision}`,
-            ];
+      facts.kind === "MetadataOperation"
+        ? [`Metadata:${facts.operation.job_id}`, "Metadata research"]
+        : "generation" in facts
+          ? [`Upload:${facts.generation}`, `Upload attempt ${facts.generation}`]
+          : "source_attempt_id" in facts
+            ? [`Source:${facts.source_attempt_id}`, "Source attempt"]
+            : [
+                `Index:${facts.revision}`,
+                `Search index revision ${facts.revision}`,
+              ];
     let group = groups.get(id);
     if (group === undefined) {
       group = { label, entries: [] };
@@ -198,10 +312,12 @@ function attempts(entries: readonly HistoryEntry[]) {
  */
 function Attempts({
   importRef,
+  mediaId,
   updatedAt,
   matchedId,
 }: {
   readonly importRef: string;
+  readonly mediaId: string | null;
   readonly updatedAt: string;
   readonly matchedId: string | null;
 }) {
@@ -240,6 +356,15 @@ function Attempts({
                 aria-current={entry.id === matchedId ? "true" : undefined}
               >
                 <span>{eventLine(entry)}</span>
+                {mediaId !== null &&
+                entry.facts.kind === "MetadataOperation" &&
+                entry.facts.operation.status === "no_findings" &&
+                entry.facts.operation.reviewed_at.kind === "Absent" ? (
+                  <MetadataReviewButton
+                    mediaId={mediaId}
+                    jobId={entry.facts.operation.job_id}
+                  />
+                ) : null}
                 {entry.id === matchedId ? (
                   <Pill tone="info" size="sm">
                     <span aria-hidden="true">{MATCHED_LABEL}</span>
@@ -249,6 +374,51 @@ function Attempts({
                 <time dateTime={entry.occurred_at}>
                   {momentText(entry.occurred_at, display)}
                 </time>
+                {entry.facts.kind === "MetadataOperation" ? (
+                  <details className={styles.diagnostics}>
+                    <summary>Research details</summary>
+                    <dl>
+                      <div>
+                        <dt>Job</dt>
+                        <dd>
+                          <code>{entry.facts.operation.job_id}</code>
+                        </dd>
+                      </div>
+                      {entry.facts.operation.generation_id.kind ===
+                      "Present" ? (
+                        <div>
+                          <dt>Generation</dt>
+                          <dd>
+                            <code>
+                              {entry.facts.operation.generation_id.value}
+                            </code>
+                          </dd>
+                        </div>
+                      ) : null}
+                      <div>
+                        <dt>Requested</dt>
+                        <dd>
+                          {momentText(
+                            entry.facts.operation.created_at,
+                            display,
+                          )}
+                        </dd>
+                      </div>
+                      {entry.facts.operation.status === "no_findings" &&
+                      entry.facts.operation.reviewed_at.kind === "Present" ? (
+                        <div>
+                          <dt>Reviewed</dt>
+                          <dd>
+                            {momentText(
+                              entry.facts.operation.reviewed_at.value,
+                              display,
+                            )}
+                          </dd>
+                        </div>
+                      ) : null}
+                    </dl>
+                  </details>
+                ) : null}
               </li>
             ))}
           </ol>

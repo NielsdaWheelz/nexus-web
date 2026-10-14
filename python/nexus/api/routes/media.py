@@ -21,10 +21,15 @@ from nexus.schemas.media_summary import (
     ResolvedMediaSummariesOut,
     ResolveMediaSummariesIn,
 )
-from nexus.schemas.metadata_enrichment import MetadataEnrichmentAccepted, MetadataEnrichmentRequest
+from nexus.schemas.metadata_enrichment import (
+    MetadataEnrichmentAccepted,
+    MetadataEnrichmentRequest,
+    MetadataResultReviewed,
+    MetadataResultReviewRequest,
+)
 from nexus.schemas.presence import absent, present
 from nexus.services import contributors as contributors_service
-from nexus.services import library_entries, media_source_ingest, metadata_dispatch
+from nexus.services import library_entries, media_source_ingest, metadata_dispatch, metadata_reviews
 from nexus.services import media as media_service
 from nexus.services import media_deletion as media_deletion_service
 
@@ -95,6 +100,21 @@ def enrich_media_metadata(
             media_id=media_id,
             request=body,
             request_id=getattr(request.state, "request_id", None),
+        )
+    )
+
+
+@router.post("/media/{media_id}/metadata-enrichment/{job_id}/review")
+def review_media_metadata_result(
+    media_id: UUID,
+    job_id: UUID,
+    body: MetadataResultReviewRequest,
+    viewer: ViewerDep,
+    db: DbSession,
+) -> Data[MetadataResultReviewed]:
+    return Data(
+        data=metadata_reviews.review_metadata_result(
+            db, viewer_id=viewer.user_id, media_id=media_id, job_id=job_id, request=body
         )
     )
 

@@ -91,7 +91,7 @@ def run_youtube_video_ingest(
         observations=source_contributor_observations(
             media_id=media_id, observation=observation, source="youtube_metadata"
         ),
-        metadata_enrichment=present(snippet is not None),
+        metadata_enrichment=present(True),
     )
 
 

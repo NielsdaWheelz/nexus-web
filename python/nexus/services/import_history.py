@@ -18,12 +18,14 @@ translate a job's transition into its history, inside that transition.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
 from nexus.ids import new_uuid7
@@ -39,6 +41,7 @@ from nexus.schemas.import_history import (
     IndexFacts,
     IndexFailed,
     IndexRetryScheduled,
+    MetadataOperationFacts,
     PartialHistoryCoverage,
     SafeFailureCode,
     SourceFacts,
@@ -206,57 +209,103 @@ def _owner_sources(owner: HistoryOwner) -> tuple[list[tuple[HistoryTable, str]],
 
 
 def events_of_import_sql(*, session_id_expr: str, media_id_expr: str) -> str:
-    """Set-wise twin of `_owner_sources` for a query over many imports at once:
-    every event whose owner the two SQL expressions name (a NULL expression
-    names none), in the column shape `history_entry` decodes."""
-    return " UNION ALL ".join(
-        f"SELECT '{table}' AS event_table, id, occurred_at, event_type, stage, failure_code,"
-        f" payload FROM {table} WHERE {column} = {expr}"
-        for table, column, expr in (
-            (UPLOAD_EVENTS_TABLE, "session_id", session_id_expr),
-            (PROCESSING_EVENTS_TABLE, "media_id", media_id_expr),
+    """Composed read relation; metadata operations never enter the event writer."""
+    # Metadata is a read projection; worker history hooks do not import its runtime.
+    from nexus.services.metadata_operations import metadata_operations_sql
+
+    recorded = " UNION ALL ".join(
+        f"SELECT '{table}' AS event_table, '{prefix}:' || id::text AS id, id AS storage_id,"
+        f" occurred_at, event_type, stage, failure_code, payload,"
+        f" event_type = 'Failed' AS is_failure FROM {table} WHERE {column} = {expr}"
+        for table, prefix, column, expr in (
+            (UPLOAD_EVENTS_TABLE, "upload", "session_id", session_id_expr),
+            (PROCESSING_EVENTS_TABLE, "processing", "media_id", media_id_expr),
         )
     )
+    return (
+        recorded
+        + f""" UNION ALL
+        SELECT 'metadata' AS event_table, 'metadata:' || job_id::text AS id,
+            job_id AS storage_id, occurred_at, NULL::text AS event_type,
+            'Metadata' AS stage, failure_code, NULL::jsonb AS payload,
+            effective_status = 'failed' AS is_failure
+        FROM ({metadata_operations_sql()}) metadata_history
+        WHERE media_id = {media_id_expr}
+    """
+    )
+
+
+def history_entries(
+    db: Session, *, viewer_id: UUID, rows: Sequence[RowMapping | Mapping[str, Any]]
+) -> list[HistoryEntry]:
+    """Hydrate a page or matched rows with one metadata-owner batch."""
+    from nexus.services.metadata_operations import metadata_operations_for_jobs
+
+    operations = metadata_operations_for_jobs(
+        db,
+        viewer_id=viewer_id,
+        job_ids=[row["storage_id"] for row in rows if row["event_table"] == "metadata"],
+    )
+    entries: list[HistoryEntry] = []
+    for row in rows:
+        if row["event_table"] == "metadata":
+            entries.append(
+                HistoryEntry(
+                    id=row["id"],
+                    occurred_at=row["occurred_at"],
+                    stage=present("Metadata"),
+                    failure_code=presence_from_nullable(row["failure_code"]),
+                    facts=MetadataOperationFacts(operation=operations[row["storage_id"]]),
+                )
+            )
+        else:
+            entries.append(
+                history_entry(
+                    table=row["event_table"],
+                    event_id=row["storage_id"],
+                    occurred_at=row["occurred_at"],
+                    event_type=row["event_type"],
+                    stage=row["stage"],
+                    failure_code=row["failure_code"],
+                    payload=row["payload"],
+                )
+            )
+    return entries
 
 
 def read_history_page(
     db: Session,
     *,
+    viewer_id: UUID,
     owner: HistoryOwner,
-    before: Presence[tuple[datetime, UUID]],
+    before: Presence[tuple[datetime, str]],
     limit: int,
 ) -> list[HistoryEntry]:
-    """One page of this import's history, newest first, keyset-paged on
-    `(occurred_at, id)`."""
-    sources, params = _owner_sources(owner)
-    params["limit"] = limit
+    """Recorded events and retained operations, keyset-paged by time and text id."""
+    params: dict[str, object] = {"viewer_id": viewer_id, "limit": limit}
+    if isinstance(owner, UploadHistoryOwner):
+        params["session_id"] = owner.session_id
+        params["media_id"] = nullable_from_presence(owner.media_id)
+    else:
+        params["session_id"] = None
+        params["media_id"] = owner.media_id
     keyset = ""
     if isinstance(before, Present):
-        occurred_at, event_id = before.value
-        params["before_occurred_at"] = occurred_at
-        params["before_id"] = event_id
-        keyset = " AND (occurred_at, id) < (:before_occurred_at, :before_id)"
-    # Table and predicate come from `_owner_sources`, never from a caller value.
-    branches = " UNION ALL ".join(
-        f"SELECT '{table}' AS source_table, id, occurred_at, event_type, stage, failure_code,"
-        f" payload FROM {table} WHERE {predicate}{keyset}"
-        for table, predicate in sources
-    )
-    rows = db.execute(
-        text(f"{branches} ORDER BY occurred_at DESC, id DESC LIMIT :limit"), params
-    ).all()
-    return [
-        history_entry(
-            table=row.source_table,
-            event_id=row.id,
-            occurred_at=row.occurred_at,
-            event_type=row.event_type,
-            stage=row.stage,
-            failure_code=row.failure_code,
-            payload=row.payload,
+        params["before_occurred_at"], params["before_id"] = before.value
+        keyset = "WHERE (occurred_at, id) < (:before_occurred_at, :before_id)"
+    relation = events_of_import_sql(session_id_expr=":session_id", media_id_expr=":media_id")
+    rows = (
+        db.execute(
+            text(
+                f"SELECT * FROM ({relation}) entries {keyset} "
+                "ORDER BY occurred_at DESC, id DESC LIMIT :limit"
+            ),
+            params,
         )
-        for row in rows
-    ]
+        .mappings()
+        .all()
+    )
+    return history_entries(db, viewer_id=viewer_id, rows=rows)
 
 
 def history_entry(
@@ -273,7 +322,7 @@ def history_entry(
     query's correlated match both read the same columns)."""
     return HistoryEntry.model_validate(
         {
-            "id": event_id,
+            "id": f"{'upload' if table == UPLOAD_EVENTS_TABLE else 'processing'}:{event_id}",
             "occurred_at": occurred_at,
             "stage": presence_from_nullable(stage),
             "failure_code": presence_from_nullable(failure_code),

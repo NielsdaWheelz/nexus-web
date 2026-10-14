@@ -49,3 +49,7 @@ s3 behavior. this is not a production image change or a new ci/test suite.
 acceptance: obtain the selected pin with a fresh pull under the documented
 development access policy, without relying on a pre-existing cache; manually
 verify the existing local bucket setup and basic s3 read/write behavior.
+
+2026-10-13 metadata qualification: the mc pin again returned `pull access denied`
+on mac. isolated setup used the cached server image’s bundled mc; no deployment
+pin changed. [receipt](../metadata-imports-verification.md); temporary setup deleted.

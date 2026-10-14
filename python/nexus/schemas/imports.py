@@ -1,7 +1,7 @@
 """Imports workspace wire contracts (`docs/modules/imports.md`).
 
-One import is either an upload obligation (`upload:<handle>`) or a media row
-that has at least one source attempt (`media:<uuid>`). A published upload keeps
+One import is either an upload obligation (`upload:<handle>`) or visible media
+with a recorded source attempt or metadata job (`media:<uuid>`). A published upload keeps
 its upload identity, so exactly one wire row exists per import for its whole
 life. Every model here is strict (`extra="forbid"`) and every union is
 discriminated on `kind`, so a widened producer is a type error in each consumer.
@@ -23,8 +23,16 @@ from pydantic_core import core_schema
 
 from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.schemas.import_history import HistoryCoverage, HistoryEntry, SafeFailureCode, Stage
+from nexus.schemas.import_history import (
+    HistoryCoverage,
+    HistoryEntry,
+    ImportFailureCode,
+    SafeFailureCode,
+    SourceStage,
+    Stage,
+)
 from nexus.schemas.media import SourceProgress
+from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.presence import Presence, Present
 from nexus.schemas.source_issues import SourceIssue
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
@@ -133,10 +141,9 @@ def format_import_ref(ref: ParsedImportRef) -> ImportRef:
             return ImportRef(f"{_MEDIA_REF_PREFIX}{ref.media_id}")
 
 
-class ImportStateActive(BaseModel):
+class _ImportStateActiveFields(BaseModel):
     kind: Literal["Active"] = "Active"
     status: Literal["Queued", "Processing"]
-    stage: Stage
     waiting_reason: Presence[WaitingReason]
     progress: Presence[SourceProgress]
     next_retry_at: Presence[datetime]
@@ -144,10 +151,14 @@ class ImportStateActive(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ImportStateActive(_ImportStateActiveFields):
+    stage: Stage
+
+
 class ImportStateNeedsAttention(BaseModel):
     kind: Literal["NeedsAttention"] = "NeedsAttention"
     stage: Stage
-    failure_code: Presence[SafeFailureCode]
+    failure_code: Presence[ImportFailureCode]
 
     model_config = ConfigDict(extra="forbid")
 
@@ -198,16 +209,42 @@ class RepairSearchOffer(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-RecoveryOffer = Annotated[
-    RetryUploadOffer | RetrySourceOffer | RepairSourceOffer | RepairSearchOffer,
+SourceRecoveryOffer = Annotated[
+    RetryUploadOffer | RetrySourceOffer | RepairSourceOffer,
     Field(discriminator="kind"),
 ]
 
 
-class Capabilities(BaseModel):
-    can_open: bool
-    can_remove: bool
-    recovery: Presence[RecoveryOffer]
+class SourceImportStateActive(_ImportStateActiveFields):
+    stage: SourceStage
+
+
+class SourceImportStateNeedsAttention(BaseModel):
+    kind: Literal["NeedsAttention"] = "NeedsAttention"
+    stage: SourceStage
+    failure_code: Presence[SafeFailureCode]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SearchImportStateActive(_ImportStateActiveFields):
+    stage: Literal["Index"] = "Index"
+
+
+class SearchImportStateNeedsAttention(BaseModel):
+    kind: Literal["NeedsAttention"] = "NeedsAttention"
+    stage: Literal["Index"] = "Index"
+    failure_code: Presence[SafeFailureCode]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SourceImportObligation(BaseModel):
+    state: Annotated[
+        SourceImportStateActive | SourceImportStateNeedsAttention | ImportStateComplete,
+        Field(discriminator="kind"),
+    ]
+    recovery: Presence[SourceRecoveryOffer]
     unavailable_reason: Presence[ModeledRecoveryRestriction]
 
     model_config = ConfigDict(extra="forbid")
@@ -222,6 +259,40 @@ class Capabilities(BaseModel):
         return self
 
 
+class SearchImportObligation(BaseModel):
+    state: Annotated[
+        SearchImportStateActive | SearchImportStateNeedsAttention | ImportStateComplete,
+        Field(discriminator="kind"),
+    ]
+    recovery: Presence[RepairSearchOffer]
+    unavailable_reason: Presence[Literal["NotOwner"]]
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _one_recovery_answer(self) -> Self:
+        # justify-service-invariant-check: the owner policy must not simultaneously
+        # offer a repair and refuse it; Presence fields cannot express that relation.
+        if isinstance(self.recovery, Present) and isinstance(self.unavailable_reason, Present):
+            raise ValueError("a search obligation offers recovery or refuses it, never both")
+        return self
+
+
+class ImportObligations(BaseModel):
+    source: Presence[SourceImportObligation]
+    search: Presence[SearchImportObligation]
+    metadata: Presence[MetadataEnrichmentView]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class Capabilities(BaseModel):
+    can_open: bool
+    can_remove: bool
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ImportItem(BaseModel):
     ref: ImportRef
     title: NonemptyString
@@ -233,6 +304,7 @@ class ImportItem(BaseModel):
     updated_at: datetime
     matched_event: Presence[HistoryEntry]
     capabilities: Capabilities
+    obligations: ImportObligations
     source_issue_count: int = Field(ge=0, strict=True)
 
     model_config = ConfigDict(extra="forbid")
@@ -271,6 +343,7 @@ class ImportSummary(BaseModel):
     observed_at: datetime
     needs_attention_count: int = Field(ge=0)
     active_count: int = Field(ge=0)
+    unfinished_work_count: int = Field(ge=0)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -338,7 +411,7 @@ class ImportListQuery(BaseModel):
     q: str | None = None
     media_kind: MediaKind | None = None
     stage: Stage | None = None
-    failure_code: SafeFailureCode | None = None
+    failure_code: ImportFailureCode | None = None
     state: ImportCurrentState | None = None
     had_failures: bool | None = None
     matched_from: datetime | None = Field(default=None, alias="from")

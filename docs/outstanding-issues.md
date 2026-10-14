@@ -29,6 +29,8 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+- [open] local credentials · 2026-10-13 metadata qualification · p1 · reviewer reports local provider keys in a retained tool result; owner rotation required: [ticket](tickets/metadata-qualification-provider-key-output.md).
+- [open] storage / cleanup · 2026-10-13 specification review · p2 · superseded-object deletion logs failures without durable retry: [ticket](tickets/superseded-storage-deletion-is-best-effort.md).
 - [open] web / workspace persistence · 2026-10-13 add/import live verification · p2 · context teardown can reach workspace save without its body: [ticket](tickets/workspace-session-unload-can-send-empty-body.md).
 - [deferred] nexus query / share extraction · 2026-10-13 add/import cutover · shared prose extraction still combines ambiguous urls and strips valid punctuation; add is repaired: [ticket](tickets/add-link-paste-mutates-url-input.md).
 - [open] release / native host · 2026-10-13 release · legacy uvicorn exits 143 before outer cleanup; qualify the exact-image reviewed-reset exception and preserve uncertain outcomes: [ticket](tickets/legacy-codex-host-sigterm-cutover.md).
@@ -44,7 +46,7 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] web / settings, reader · 2026-10-10 visual primitives reauthor · p3 · the reader's Focus mode is a tablist whose tabs control no panel; by meaning a radio group: [ticket](tickets/reader-focus-mode-uses-tabs-without-panels.md).
 - [open] release / workers · 2026-10-10 jobs runtime reauthor · migration 0276 runs with every worker stopped; no chat run in flight when the workers stop; drop ten retired worker env knobs: [ticket](tickets/jobs-runtime-release-steps.md).
 - [open] jobs runtime / interactive lane · 2026-10-10 jobs runtime reauthor · p2 · the interactive worker ignores SIGTERM inside a running job, so a long chat run makes the release's stop exit 137: [ticket](tickets/interactive-worker-ignores-sigterm-mid-job.md).
-- [open] jobs / verification · 2026-10-10 jobs runtime reauthor · p3 · five design §15 checks (reindex OOM, prune batch limit, enrich_metadata budget and media unit requeue, search repair, teardown death) never ran live: [ticket](tickets/jobs-runtime-checks-not-run-live.md).
+- [open] jobs / verification · 2026-10-10 jobs runtime reauthor, narrowed 2026-10-13 · p3 · reindex OOM, prune batch limit, media unit requeue, dead-index search repair, teardown exhaustion and one source-hook producer remain unqualified: [ticket](tickets/jobs-runtime-checks-not-run-live.md).
 - [open] jobs / database · 2026-10-10 jobs runtime reauthor · p3 · 13 `background_jobs` indexes are unverified against the claim, wait, prune and payload queries: [ticket](tickets/background-job-indexes-unverified.md).
 - [open] imports / import history · 2026-10-10 jobs runtime reauthor · p3 · an embedding provider outage reads as "Processing failed" (`E_WORKER_HANDLER_FAILED`) in import history: [ticket](tickets/import-history-reads-embedding-outage-as-handler-failure.md).
 - [open] release / web auth · 2026-10-10 auth reauthor · before promoting set one `NEXUS_EXTENSION_REDIRECT_ORIGINS` and check hosted `jwt_expiry` > 120 s; after, forbid the three retired origin vars: [ticket](tickets/auth-reauthor-release-steps.md).
@@ -77,7 +79,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] ingest / x thread acquisition · 2026-10-04 spec review · distinct keys can create duplicate thread media/jobs because nullable source identity has no unique constraint or lock; source-qualified: [ticket](tickets/concurrent-x-author-admission-duplicates-media.md).
 - [open] ingest / reuse deletion race · 2026-10-04 spec review · lookup may outlive a hard delete while the missing-row reference barrier silently continues into a foreign key or refresh defect; source-qualified: [ticket](tickets/url-reuse-after-hard-delete-raises-foreign-key.md).
 - [open] ingest / canonical teardown replay · 2026-10-04 source audit · loser teardown deletes the attempt carrying the original viewer/key, losing admission identity while history survives: [ticket](tickets/canonical-source-teardown-deletes-admission-replay.md).
-- [open] ingest / canonical settlement ordering · 2026-10-04 source-acquisition review · physical loser deletion can preempt later winner credit/index/embed/terminal phases; intent alone does not reject the fence, runtime unproved: [ticket](tickets/canonical-teardown-can-preempt-source-settlement.md).
 - [open] ingest / joined admission replay · 2026-10-04 source audit · joining an in-flight provider attempt forgets the new key; exact replay after settlement creates another terminal receipt: [ticket](tickets/joined-url-admission-does-not-record-its-replay-key.md).
 - [open] chat prompt · 2026-10-10 chat runs rewrite · the turn's context moved from the instructions to the input head (B11); unmeasured on a real model until the owner's post-deploy smoke: [ticket](tickets/chat-prompt-layout-unmeasured.md).
 - [open] chat storage · 2026-10-10 chat runs rewrite · every run keeps its whole frozen prompt after it ends (O(n²) per chat): [ticket](tickets/chat-run-intents-retained-forever.md).

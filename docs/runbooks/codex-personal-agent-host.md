@@ -8,7 +8,9 @@ openai names.
 
 ## composition
 
-all of it is declared in `deploy/hetzner/docker-compose.yml`.
+production composition is declared in `deploy/hetzner/docker-compose.yml`.
+the local counterpart is the optional `codex` profile in
+`docker/docker-compose.worker.yml`; see local enrollment below.
 
 - `python -m apps.codex_agent.main` requires `auth.json` mode `0600`, prepares
   `home/` and `tmp/` in the account directory and `cwds/` in the socket volume,
@@ -49,9 +51,9 @@ streams at that address's port `443`. codex refuses a peer without a valid
 certificate for the name, but a compromised host could send anything after its
 clienthello. accepted: exploiting it takes both the host and that dns.
 
-to change the allowlist, edit both lists together (the proxy's `map` in
-`x-codex-egress-conf` and the host's `extra_hosts`), run the codex host harness,
-then release. a mismatch fails closed. the release asserts that docker applied
+to change the allowlist, edit the proxy's `map` in `x-codex-egress-conf` and the
+host's `extra_hosts` together, including their local-compose counterparts, then
+qualify the affected egress before release. a mismatch fails closed. the release asserts that docker applied
 the declaration (internal gateway-less network whose only members are the host
 and the proxy, the host's confinement and its one bind); the harness proves the
 declaration behaves.
@@ -109,6 +111,56 @@ sudo mv /srv/nexus/codex-state/codex/codex-personal/auth.json \
 ```
 
 never print, copy or archive `auth.json` or a device code.
+
+## local enrollment
+
+local workers, api and web remain useful without this profile or an account.
+metadata research requires the profile plus nonblank `OPENAI_API_KEY` and
+`BRAVE_SEARCH_API_KEY` in the local compose environment (`.env` or exported
+variables). workers receive explicitly declared settings, never the account
+directory. the host receives neither provider key nor the application `.env`.
+api/web remain host-native; imports, metadata admission and metadata reads use
+the shared database. local chat/model-catalog parity is outside this setup.
+
+from the checkout root, after the worker build prerequisites in
+[`apps/worker/README.md`](../../apps/worker/README.md#docker):
+
+```sh
+export NEXUS_LOCAL_CODEX_ACCOUNT_DIR="$PWD/.nexus-local/codex/codex-personal"
+sudo install -d -o 10001 -g 10001 -m 0700 "$NEXUS_LOCAL_CODEX_ACCOUNT_DIR"
+compose_local() {
+  docker compose --project-name "${LOCAL_COMPOSE_PROJECT:-nexus-local}" \
+    --file docker/docker-compose.yml --file docker/docker-compose.worker.yml \
+    --profile codex "$@"
+}
+compose_local build nexus-codex-agent-host
+compose_local stop --timeout 45 nexus-codex-agent-host
+compose_local run --rm nexus-codex-agent-host python -m apps.codex_agent.enroll
+compose_local up -d --wait nexus-codex-agent-host
+compose_local up -d worker-interactive worker-background
+```
+
+complete the device login shown by the one-off; keep its credentials private.
+enrollment writes `auth.json` mode `0600` and refuses to replace an existing file.
+use a separate local login; never copy production account state. re-enrollment
+requires stopping the host and retiring its old local file first.
+
+the bind defaults to `../.nexus-local/codex/codex-personal` relative to the first
+compose file. `create_host_path: false` makes explicitly requested native startup
+fail if that directory is absent; ordinary worker startup does not require it.
+the shared socket volume and both networks belong to the compose project. the
+private subnet defaults to `172.31.0.0/24`; another concurrent local stack sets
+`NEXUS_LOCAL_CODEX_SUBNET_PREFIX` to a different unused /24 prefix. literal host
+entries point only the two allowed names to the local proxy, whose own dns still
+resolves their public upstreams. no host socket bind, tcp bridge or published port.
+local services use docker's ordinary logging, not the production journald driver.
+
+`compose_local logs nexus-codex-agent-host codex-egress-policy` explains host/proxy
+startup failures. catalog health proves the socket and native protocol; worker
+health proves queue progress. neither proves provider tools. qualify one isolated
+metadata operation with the exact model/effort and actual search/read executions.
+missing tool keys or host availability produce visible research failure; repair
+that dependency, then deliberately retry the affected metadata operation.
 
 ## diagnostics
 

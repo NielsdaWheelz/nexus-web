@@ -262,8 +262,13 @@ export const RESOURCE_ACTION_CATALOG = {
     group: "Manage",
   },
   "ResourceOperation.Media.RetryMetadata": {
-    label: "re-enrich metadata",
+    label: "research metadata",
     icon: Sparkles,
+    group: "Manage",
+  },
+  "ResourceOperation.Media.ReviewMetadataResult": {
+    label: "mark reviewed",
+    icon: CircleCheck,
     group: "Manage",
   },
   "ResourceOperation.Media.EditAuthors": {

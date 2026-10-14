@@ -5,16 +5,39 @@
 #   docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml \
 #     up -d worker-interactive worker-background
 
+x-worker-build: &worker-build
+  context: ..
+  dockerfile: docker/Dockerfile.backend
+  target: worker
+  secrets:
+    - universal_memory_deploy_key
+  args:
+    SOURCE_SHA: ${NEXUS_LOCAL_SOURCE_SHA:?set the exact local Git SHA}
+
+# Same two-name TLS passthrough policy as the production host. Keep this map
+# and the host's extra_hosts together; the host has no general egress route.
+x-codex-egress-conf: &codex-egress-conf |
+  pid /tmp/nginx.pid;
+  events {}
+  stream {
+      resolver 127.0.0.11 ipv6=off valid=30s;
+      map $$ssl_preread_server_name $$upstream {
+          chatgpt.com     chatgpt.com:443;
+          auth.openai.com auth.openai.com:443;
+          default         127.0.0.1:1;
+      }
+      server {
+          listen 443;
+          ssl_preread on;
+          proxy_pass $$upstream;
+          proxy_connect_timeout 10s;
+          proxy_timeout 20m;
+      }
+  }
+
 services:
   worker-interactive:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.backend
-      target: worker
-      secrets:
-        - universal_memory_deploy_key
-      args:
-        SOURCE_SHA: ${NEXUS_LOCAL_SOURCE_SHA:?set the exact local Git SHA}
+    build: *worker-build
     environment:
       - DATABASE_URL=${WORKER_DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/postgres}
       - SUPABASE_JWKS_URL=${WORKER_SUPABASE_JWKS_URL:-http://host.docker.internal:54321/auth/v1/.well-known/jwks.json}
@@ -28,7 +51,14 @@ services:
       - NEXUS_ENV=${NEXUS_ENV:-local}
       - NEXUS_RUNTIME_IDENTITY_FILE=/app/local-runtime-identity.json
       - WORKER_LANE=interactive
+      - BRAVE_SEARCH_API_KEY
+      - BRAVE_SEARCH_BASE_URL=${BRAVE_SEARCH_BASE_URL:-https://api.search.brave.com/res/v1}
+      - BRAVE_SEARCH_TIMEOUT_SECONDS=${BRAVE_SEARCH_TIMEOUT_SECONDS:-8}
+      - METADATA_ENRICHMENT_MAX_CONTENT_WORDS=${METADATA_ENRICHMENT_MAX_CONTENT_WORDS:-1000}
       - DATABASE_STATEMENT_TIMEOUT_MS=300000
+      - OPENAI_API_KEY
+      - TRANSCRIPT_EMBEDDING_MODEL_OPENAI=${TRANSCRIPT_EMBEDDING_MODEL_OPENAI:-text-embedding-3-small}
+      - TRANSCRIPT_EMBEDDING_DIMENSIONS=${TRANSCRIPT_EMBEDDING_DIMENSIONS:-256}
       - NEXUS_CODEX_NATIVE_SOCKET=/tmp/codex-daemon-10001/app-server.sock
       - MEMORY_CLIENT_CONFIG_PATH=/run/secrets/nexus-memory-client.json
     depends_on:
@@ -62,14 +92,7 @@ services:
       start_period: 10s
 
   worker-background:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.backend
-      target: worker
-      secrets:
-        - universal_memory_deploy_key
-      args:
-        SOURCE_SHA: ${NEXUS_LOCAL_SOURCE_SHA:?set the exact local Git SHA}
+    build: *worker-build
     environment:
       - DATABASE_URL=${WORKER_DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/postgres}
       - SUPABASE_JWKS_URL=${WORKER_SUPABASE_JWKS_URL:-http://host.docker.internal:54321/auth/v1/.well-known/jwks.json}
@@ -84,6 +107,9 @@ services:
       - NEXUS_RUNTIME_IDENTITY_FILE=/app/local-runtime-identity.json
       - WORKER_LANE=background
       - DATABASE_STATEMENT_TIMEOUT_MS=300000
+      - OPENAI_API_KEY
+      - TRANSCRIPT_EMBEDDING_MODEL_OPENAI=${TRANSCRIPT_EMBEDDING_MODEL_OPENAI:-text-embedding-3-small}
+      - TRANSCRIPT_EMBEDDING_DIMENSIONS=${TRANSCRIPT_EMBEDDING_DIMENSIONS:-256}
       - NEXUS_CODEX_NATIVE_SOCKET=/tmp/codex-daemon-10001/app-server.sock
     depends_on:
       postgres:
@@ -108,9 +134,107 @@ services:
       retries: 3
       start_period: 10s
 
+  codex-egress-policy:
+    profiles: ["codex"]
+    image: nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
+    restart: unless-stopped
+    mem_reservation: 16m
+    mem_limit: 64m
+    memswap_limit: 64m
+    pids_limit: 32
+    user: "101:101"
+    environment:
+      NGINX_CONF: *codex-egress-conf
+    entrypoint:
+      - sh
+      - -c
+      - printf '%s' "$$NGINX_CONF" > /tmp/nginx.conf && exec nginx -e stderr -c /tmp/nginx.conf -g 'daemon off;'
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m
+    networks:
+      codex_private:
+        ipv4_address: ${NEXUS_LOCAL_CODEX_SUBNET_PREFIX:-172.31.0}.2
+      codex_proxy_egress: {}
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "443"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
+  nexus-codex-agent-host:
+    profiles: ["codex"]
+    build: *worker-build
+    restart: on-failure:3
+    mem_reservation: 256m
+    mem_limit: 448m
+    memswap_limit: 448m
+    pids_limit: 64
+    cpus: 1.0
+    command: ["python", "-m", "apps.codex_agent.main"]
+    user: "10001:10001"
+    environment:
+      NEXUS_CODEX_CREDENTIAL_FILE: /var/lib/nexus-codex/codex/codex-personal/auth.json
+      NEXUS_CODEX_NATIVE_SOCKET: /tmp/codex-daemon-10001/app-server.sock
+    depends_on:
+      codex-egress-policy:
+        condition: service_healthy
+    working_dir: /tmp
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    extra_hosts:
+      - "chatgpt.com:${NEXUS_LOCAL_CODEX_SUBNET_PREFIX:-172.31.0}.2"
+      - "auth.openai.com:${NEXUS_LOCAL_CODEX_SUBNET_PREFIX:-172.31.0}.2"
+    networks:
+      codex_private:
+        ipv4_address: ${NEXUS_LOCAL_CODEX_SUBNET_PREFIX:-172.31.0}.3
+    init: true
+    stop_grace_period: 45s
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    ulimits:
+      core: 0
+      nofile: 1024
+    volumes:
+      - type: bind
+        source: ${NEXUS_LOCAL_CODEX_ACCOUNT_DIR:-../.nexus-local/codex/codex-personal}
+        target: /var/lib/nexus-codex/codex/codex-personal
+        read_only: false
+        bind:
+          create_host_path: false
+          propagation: rprivate
+      - nexus_codex_run:/tmp/codex-daemon-10001
+    healthcheck:
+      test: ["CMD", "python", "-m", "apps.codex_agent.health"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
 volumes:
   nexus_codex_run:
 
 secrets:
   universal_memory_deploy_key:
     file: ${UNIVERSAL_MEMORY_DEPLOY_KEY_FILE:?set the private dependency build key file}
+
+networks:
+  codex_private:
+    driver: bridge
+    internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+    ipam:
+      config:
+        - subnet: ${NEXUS_LOCAL_CODEX_SUBNET_PREFIX:-172.31.0}.0/24
+  codex_proxy_egress:
+    driver: bridge

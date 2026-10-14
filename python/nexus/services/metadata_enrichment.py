@@ -10,13 +10,14 @@ import hashlib
 import html
 import json
 import re
+from dataclasses import dataclass
 
 from pydantic import ValidationError
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
-from nexus.db.models import Media
+from nexus.db.models import Media, PodcastEpisode
 from nexus.schemas.metadata_enrichment import (
     AcceptedMetadataContributorCredit,
     AcceptedMetadataContributorRoleSlice,
@@ -24,12 +25,16 @@ from nexus.schemas.metadata_enrichment import (
     MetadataEnrichmentOutput,
     MetadataField,
 )
-from nexus.schemas.presence import Present, absent, present
+from nexus.schemas.presence import Present, absent, presence_from_nullable, present
 from nexus.services.contributor_credits import load_contributor_credits_for_media
 from nexus.services.contributor_taxonomy import parse_contributor_handle
 from nexus.services.generation.contract import InvalidOutput
 from nexus.services.generation.policy import policy
-from nexus.services.reader_publication import replace_reader_document_title
+from nexus.services.reader_publication import (
+    read_publication_generation,
+    replace_reader_document_title,
+)
+from nexus.services.transcripts.state import read_transcript_content_revision
 
 _ENRICHMENT_SYSTEM_PROMPT = """\
 Research bibliographic and descriptive metadata for the saved item. Identify the
@@ -103,6 +108,14 @@ class MetadataInputTooLarge(ValueError):
     """Complete identifying context cannot fit the admitted input budget."""
 
 
+@dataclass(frozen=True, slots=True)
+class MetadataResearchInput:
+    """Bounded model evidence and its complete, private concurrency identity."""
+
+    user_content: str
+    fingerprint: str
+
+
 def metadata_enrichment_agent_definition() -> tuple[str, dict[str, object]]:
     return _ENRICHMENT_SYSTEM_PROMPT, MetadataEnrichmentOutput.model_json_schema()
 
@@ -155,7 +168,7 @@ def validate_structured_enrichment(
         raise MetadataInvalidOutput("generated metadata violates its output contract") from exc
 
 
-def get_content_sample(db: Session, media: Media) -> str:
+def _get_content_sample(db: Session, media: Media) -> str:
     """First available source prefix: at most 64,000 raw characters across all reads."""
     remaining = _SOURCE_READ_MAX_CHARS
     max_words = get_settings().metadata_enrichment_max_content_words
@@ -167,39 +180,24 @@ def get_content_sample(db: Session, media: Media) -> str:
     if sample:
         return " ".join(sample.split()[:max_words])
 
-    for source in ("chunks", "fragments"):
-        if remaining <= 0:
-            return ""
-        query = (
-            """
-            SELECT left(cc.chunk_text, :max_chars)
-            FROM content_chunks cc
-            JOIN content_index_states mcis
-              ON mcis.owner_kind = cc.owner_kind AND mcis.owner_id = cc.owner_id
-             AND mcis.status = 'ready'
-            WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
-              AND btrim(cc.chunk_text) <> ''
-            ORDER BY cc.chunk_idx ASC
-            LIMIT 4
-            """
-            if source == "chunks"
-            else """
+    if remaining <= 0:
+        return ""
+    rows = db.execute(
+        text("""
             SELECT left(canonical_text, :max_chars)
             FROM fragments
             WHERE media_id = :media_id
               AND canonical_text IS NOT NULL AND btrim(canonical_text) <> ''
             ORDER BY idx ASC
             LIMIT 4
-            """
-        )
-        rows = db.execute(
-            text(query), {"media_id": media.id, "max_chars": remaining // 4}
-        ).fetchall()
-        parts = [str(row[0]) for row in rows]
-        remaining -= sum(len(part) for part in parts)
-        sample = _clean_sample_text("\n".join(parts))
-        if sample:
-            return " ".join(sample.split()[:max_words])
+        """),
+        {"media_id": media.id, "max_chars": remaining // 4},
+    ).fetchall()
+    parts = [str(row[0]) for row in rows]
+    remaining -= sum(len(part) for part in parts)
+    sample = _clean_sample_text("\n".join(parts))
+    if sample:
+        return " ".join(sample.split()[:max_words])
 
     if remaining > 0 and media.kind == "podcast_episode":
         raw = (
@@ -230,10 +228,8 @@ def _clean_sample_text(value: str) -> str:
     return " ".join(text_value.split())
 
 
-def build_enrichment_user_content(
-    db: Session, media: Media, content_sample: str, *, admission_facts: str = ""
-) -> str:
-    """One complete, byte-bounded JSON input, including the operation's frozen facts."""
+def build_metadata_research_input(db: Session, media: Media) -> MetadataResearchInput:
+    """Freeze identifying facts and canonical source evidence in the caller's snapshot."""
     credits = load_contributor_credits_for_media(db, [media.id]).get(media.id, [])
     hints: dict[str, object] = {
         "kind": str(media.kind),
@@ -270,11 +266,23 @@ def build_enrichment_user_content(
             {"media_id": media.id},
         )
 
-    # Descriptive hints may be shortened; their complete facts still participate
-    # in the source fence, so a change outside the displayed prefix is detected.
-    facts_digest = hashlib.sha256(
-        json.dumps(hints, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    source: dict[str, object] = {"kind": str(media.kind)}
+    if media.kind in {"video", "podcast_episode"}:
+        source["content_revision"] = read_transcript_content_revision(db, media_id=media.id)
+    else:
+        source["reader_generation"] = presence_from_nullable(
+            read_publication_generation(db, media_id=media.id)
+        ).model_dump(mode="json")
+    if media.kind == "podcast_episode":
+        source["rss_metadata_fingerprint"] = db.execute(
+            select(PodcastEpisode.rss_metadata_fingerprint).where(
+                PodcastEpisode.media_id == media.id
+            )
+        ).scalar_one()
+
+    # Keep the untruncated facts private. A change beyond a displayed hint still
+    # invalidates research; index progress and administrative state never do.
+    facts: dict[str, object] = {"known_metadata": hints.copy(), "source": source}
     for name in ("current_title", "current_publisher", "current_description", "podcast_title"):
         value = hints.get(name)
         if isinstance(value, str):
@@ -285,8 +293,6 @@ def build_enrichment_user_content(
             )
     context = {
         "known_metadata": hints,
-        "metadata_facts_digest": facts_digest,
-        "admission_facts": admission_facts,
         "opening_text": "",
     }
     encoded = json.dumps(context, ensure_ascii=False, separators=(",", ":"))
@@ -294,7 +300,7 @@ def build_enrichment_user_content(
     if fixed_bytes > _METADATA_INPUT_MAX_BYTES:
         raise MetadataInputTooLarge("complete metadata context exceeds the generation input limit")
 
-    words = _clean_sample_text(content_sample).split()[
+    words = _clean_sample_text(_get_content_sample(db, media)).split()[
         : get_settings().metadata_enrichment_max_content_words
     ]
     # Count the encoded JSON string, including escapes, before appending each
@@ -308,7 +314,15 @@ def build_enrichment_user_content(
         selected.append(word)
         available -= cost
     context["opening_text"] = " ".join(selected)
-    return json.dumps(context, ensure_ascii=False, separators=(",", ":"))
+    facts["opening_text"] = context["opening_text"]
+    return MetadataResearchInput(
+        user_content=json.dumps(context, ensure_ascii=False, separators=(",", ":")),
+        fingerprint=hashlib.sha256(
+            json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest(),
+    )
 
 
 def admitted_contributor_handles(user_content: str) -> frozenset[str]:

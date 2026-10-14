@@ -145,7 +145,7 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
     enabled:
       ready !== null &&
       ready.error === null &&
-      ready.data.active_count > 0 &&
+      ready.data.unfinished_work_count > 0 &&
       visible &&
       (paneOpen || windowOpen),
     pollIntervalMs: POLL_MS,

@@ -151,6 +151,21 @@ def latest_generations(
     return {call.owner_id: call for call in db.scalars(query)}
 
 
+def latest_job_generations(
+    db: Session, *, kind: OwnerKind, job_ids: Collection[UUID]
+) -> dict[UUID, LLMCall]:
+    """Each retained operation's newest generation, independent of its owner peers."""
+    if not job_ids:
+        return {}
+    calls = db.scalars(
+        select(LLMCall)
+        .where(LLMCall.owner_kind == kind, LLMCall.job_id.in_(list(job_ids)))
+        .order_by(LLMCall.job_id, LLMCall.generation_seq.desc())
+        .distinct(LLMCall.job_id)
+    )
+    return {call.job_id: call for call in calls if call.job_id is not None}
+
+
 def generation_history(db: Session, generation_id: UUID) -> dict[str, object] | None:
     """One closed row's audit facts for the operator CLI; an open row is refused."""
 

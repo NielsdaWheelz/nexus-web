@@ -52,7 +52,8 @@ import {
   repairSourceImport,
   retrySourceImport,
 } from "@/lib/imports/api";
-import { METADATA_RETRY_BLOCKED_COPY } from "@/lib/media/mediaMetadataOperations";
+import { METADATA_RETRY_BLOCKED_COPY } from "@/lib/media/mediaMetadataCopy";
+import { submitMetadataResultReview } from "@/lib/media/mediaMetadataOperations";
 import { deleteMedia } from "@/lib/media/mediaLibraries";
 import { deleteConversation } from "@/lib/chat/conversationIndex";
 import {
@@ -726,7 +727,8 @@ export function resourceActionDescriptors({
             window.location.assign(response.data.url);
           },
         );
-      case "Recovery": {
+      case "SourceRecovery":
+      case "SearchRecovery": {
         const offer = capability.offer;
         switch (offer.kind) {
           case "RetrySource":
@@ -803,6 +805,13 @@ export function resourceActionDescriptors({
           },
         );
       }
+      case "ReviewMetadataResult":
+        return make(
+          capability,
+          "ResourceOperation.Media.ReviewMetadataResult",
+          async () => submitMetadataResultReview(id(), capability.jobId),
+          { reconcile: subjectScope },
+        );
       case "EditAuthors":
         return make(
           capability,

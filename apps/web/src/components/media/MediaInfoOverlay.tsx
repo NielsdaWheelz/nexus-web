@@ -1,6 +1,6 @@
 "use client";
 
-// The read-only metadata overlay ("metadata…"): publication facts with linked,
+// The metadata overlay ("metadata…"): publication facts with linked,
 // role-grouped credits, the live metadata-research status, source, reading or
 // listening, activity and availability. It rereads the media whenever a new
 // successful enrichment stamp arrives; a failed reread keeps the old values.
@@ -17,6 +17,7 @@ import {
   groupContributorCredits,
   selectMediaAuthors,
 } from "@/lib/contributors/credits";
+import { formatDisplayDate } from "@/lib/display/format";
 import {
   mediaDetailFromResponse,
   type MediaDetail,
@@ -26,15 +27,21 @@ import {
   METADATA_FAILURE_COPY,
   METADATA_FIELD_LABELS,
   METADATA_RETRY_BLOCKED_COPY,
+  METADATA_REVIEW_HELP,
+  earlierMetadataRuns,
   metadataOperationSummary,
+} from "@/lib/media/mediaMetadataCopy";
+import {
   reconnectMetadataOperations,
   useMediaMetadataOperations,
   type MetadataEnrichmentView,
 } from "@/lib/media/mediaMetadataOperations";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import styles from "./MediaInfoOverlay.module.css";
+import MetadataResearchActions from "./MetadataResearchActions";
 
 const VISIT = definePaneVisitDataKey<Visit<MediaDetail>>("MediaInfo.Detail");
 
@@ -56,17 +63,6 @@ function group(title: string, facts: readonly ReactNode[]): ReactNode {
       <dl>{facts}</dl>
     </section>
   );
-}
-
-function instant(value: string | null): ReactNode {
-  return value ? (
-    <time dateTime={value}>
-      {new Intl.DateTimeFormat(undefined, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      }).format(new Date(value))}
-    </time>
-  ) : null;
 }
 
 function publicationDate(
@@ -95,6 +91,16 @@ function MediaInfo({
   readonly refreshError: boolean;
   readonly onReread: () => void;
 }) {
+  const display = useRenderEnvironment();
+  const instant = (value: string | null): ReactNode =>
+    value ? (
+      <time dateTime={value}>
+        {formatDisplayDate(value, display, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        })}
+      </time>
+    ) : null;
   const authors = selectMediaAuthors(media.contributors);
   const credits = groupContributorCredits(media.contributors);
   const publisherAlreadyCredited = credits.some(
@@ -122,6 +128,7 @@ function MediaInfo({
   const operation =
     metadata.operation.kind === "Present" ? metadata.operation.value : null;
   const outcome = operation?.status === "completed" ? operation.outcome : null;
+  const earlierRuns = earlierMetadataRuns(metadata);
   const originalUnresolved =
     operation?.status === "no_findings" ||
     outcome?.unresolved_fields.includes("original_published_date");
@@ -181,7 +188,7 @@ function MediaInfo({
           <span aria-live="polite" aria-atomic="true">
             {operation
               ? metadataOperationSummary(operation)
-              : "no current metadata operation"}
+              : "no recorded metadata research"}
           </span>,
         ),
         fact(
@@ -193,7 +200,7 @@ function MediaInfo({
             : null,
         ),
         fact(
-          "unresolved fields",
+          "not established by this run",
           outcome && outcome.unresolved_fields.length > 0
             ? outcome.unresolved_fields
                 .map((field) => METADATA_FIELD_LABELS[field])
@@ -211,10 +218,37 @@ function MediaInfo({
             : null,
         ),
         fact(
-          "re-enrichment",
+          "research availability",
           metadata.retry.status === "blocked"
             ? METADATA_RETRY_BLOCKED_COPY[metadata.retry.reason]
             : "available",
+        ),
+        fact(
+          "review",
+          operation?.status === "no_findings" &&
+            operation.reviewed_at.kind === "Absent"
+            ? METADATA_REVIEW_HELP
+            : null,
+        ),
+        fact(
+          "earlier work",
+          earlierRuns > 0
+            ? `${earlierRuns} earlier metadata ${earlierRuns === 1 ? "run remains" : "runs remain"} unfinished`
+            : null,
+        ),
+        fact(
+          "unfinished operation",
+          metadata.unfinished_operation.kind === "Present" &&
+            metadata.unfinished_operation.value.job_id !== operation?.job_id ? (
+            <>
+              {metadataOperationSummary(metadata.unfinished_operation.value)} ·{" "}
+              <code>{metadata.unfinished_operation.value.job_id}</code>
+            </>
+          ) : null,
+        ),
+        fact(
+          "actions",
+          <MetadataResearchActions mediaId={media.id} view={metadata} />,
         ),
         fact("requested", operation ? instant(operation.created_at) : null),
         fact(
@@ -231,6 +265,19 @@ function MediaInfo({
             : null,
         ),
         fact("operation id", operation?.job_id),
+        fact(
+          "generation id",
+          operation?.generation_id.kind === "Present"
+            ? operation.generation_id.value
+            : null,
+        ),
+        fact(
+          "reviewed",
+          operation?.status === "no_findings" &&
+            operation.reviewed_at.kind === "Present"
+            ? instant(operation.reviewed_at.value)
+            : null,
+        ),
         fact(
           "model",
           operation?.selection.kind === "Present"

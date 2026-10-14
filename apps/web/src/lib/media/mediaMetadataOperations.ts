@@ -6,9 +6,14 @@
 // media is observed: by an open view, or by the tab that admitted the run.
 
 import { useCallback, useSyncExternalStore } from "react";
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, isApiError } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import {
+  createMutationIntent,
+  type MutationIntent,
+} from "@/lib/actions/mutationIntent";
+import { publishImportsInvalidation } from "@/lib/imports/api";
 import { sseClientDirect } from "@/lib/api/sse-client";
 
 export type MetadataEnrichmentView = Schema<"MetadataEnrichmentView">;
@@ -33,6 +38,7 @@ export async function submitMetadataEnrichment(
   // The admitting tab follows its run to the end, so a summary change reaches
   // this tab's lists ("Metadata") with no metadata… overlay open. It stops when
   // the run settles, when a later job is latest, or when the stream ends.
+  publishImportsInvalidation();
   const jobId = response.data.job_id;
   admitted.add(jobId);
   const stop = observe(mediaId, () => {
@@ -185,57 +191,41 @@ export function subscribeMetadataOperationChanges(
   };
 }
 
-export const METADATA_FIELD_LABELS = {
-  title: "title",
-  contributors: "contributors",
-  original_published_date: "first publication",
-  edition_published_date: "edition publication",
-  edition_isbn: "isbn",
-  publisher: "publisher",
-  language: "language",
-  description: "description",
-} satisfies Record<Schema<"MetadataField">, string>;
+const reviewIntents = new Map<string, MutationIntent>();
 
-export const METADATA_FAILURE_COPY = {
-  model_unavailable: "the selected model is unavailable",
-  authentication_failed: "the provider needs authentication",
-  quota_unavailable: "the provider has no available quota",
-  research_timeout: "metadata research timed out",
-  invalid_output: "the research result was invalid and was not applied",
-  input_too_large: "the identifying metadata exceeds the research input limit",
-  output_limit: "the research result exceeded the output limit",
-  stale_input: "research result was not applied; the source or credits changed",
-  no_longer_eligible: "this item is no longer eligible for metadata research",
-  access_revoked: "access changed; the research result was not applied",
-  cancelled: "metadata research was cancelled",
-  policy_violation: "the research request could not be executed",
-  worker_interrupted: "metadata research was interrupted",
-  execution_failed: "metadata research could not be completed",
-} satisfies Record<Schema<"MetadataFailureCode">, string>;
-
-export const METADATA_RETRY_BLOCKED_COPY = {
-  not_creator: "only the creator can re-enrich metadata",
-  not_eligible: "this item is not eligible for metadata research",
-  active: "metadata research is already in progress",
-} satisfies Record<Schema<"MetadataRetryBlocked">["reason"], string>;
-
-export function metadataOperationSummary(operation: MetadataOperation): string {
-  switch (operation.status) {
-    case "queued":
-      return "queued";
-    case "running":
-      return "researching metadata";
-    case "recovering":
-      return "recovering metadata research";
-    case "waiting":
-      return "waiting to retry";
-    case "no_findings":
-      return "no metadata found";
-    case "failed":
-      return "metadata research failed";
-    case "completed":
-      return operation.outcome.changed_fields.length === 0
-        ? "no changes"
-        : `updated: ${operation.outcome.changed_fields.map((field) => METADATA_FIELD_LABELS[field]).join(", ")}`;
+/** One exact result; an uncertain response keeps the same mutation identity. */
+export async function submitMetadataResultReview(
+  mediaId: string,
+  jobId: string,
+): Promise<void> {
+  const key = `${mediaId}:${jobId}`;
+  let intent = reviewIntents.get(key);
+  if (intent === undefined) {
+    intent = createMutationIntent();
+    reviewIntents.set(key, intent);
+  }
+  try {
+    await apiFetch<
+      ApiJson<"/media/{media_id}/metadata-enrichment/{job_id}/review", "post">
+    >(
+      `/api/media/${encodeURIComponent(mediaId)}/metadata-enrichment/${encodeURIComponent(jobId)}/review`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          client_mutation_id: intent.clientMutationId(jobId),
+        }),
+      },
+    );
+    intent.discard();
+    reviewIntents.delete(key);
+    publishImportsInvalidation();
+    reconnectMetadataOperations(mediaId);
+    for (const listener of operationListeners) listener(mediaId);
+  } catch (error) {
+    if (isApiError(error) && error.status >= 400 && error.status < 500) {
+      intent.discard();
+      reviewIntents.delete(key);
+    }
+    throw error;
   }
 }

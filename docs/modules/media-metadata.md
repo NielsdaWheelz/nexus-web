@@ -3,7 +3,9 @@
 `services/metadata_enrichment.py` owns bibliographic meaning, bounded input and
 strict generated-output acceptance. `tasks/enrich_metadata.py` composes it with
 the contributor owner and generation service. `services/metadata_operations.py`
-projects the existing jobs; it stores no shadow activity state.
+projects existing jobs setwise for detail, streams, imports and history; it stores
+no shadow activity state. `services/metadata_reviews.py` owns personal review of
+an exact no-findings result and its removal with viewer/media state.
 
 ## bibliography
 
@@ -50,9 +52,9 @@ token-cap field, so no token budget is recorded for it.
 input includes current metadata, complete ordered credits/handles, source and
 provider identifiers, media reference and up to 1,000 normalized opening words.
 `metadata_enrichment_max_content_words` configures that allocation. raw reads are
-bounded to 64,000 characters total; source order remains plain text, ready indexed
-chunks, fragments, podcast notes, then description. all serialized content,
-including the admission facts, fits the utf-8 budget. descriptive hints are
+bounded to 64,000 characters total; source order is plain text, canonical
+fragments, podcast notes, then description. all serialized content fits the
+utf-8 budget. descriptive hints are
 clamped, then the excerpt shrinks to fit. identifiers, dates and credit rosters
 are never silently truncated. oversized fixed context fails before dispatch.
 
@@ -65,8 +67,7 @@ required search bindings need configured brave and embedding credentials;
 absent local configuration fails the operation `model_unavailable` before submission.
 see [llms.md](llms.md). metadata owns no provider adapter or
 second context builder. exact model/effort and successful search/read require a
-real live receipt before release; controlled responses qualify domain behavior
-only.
+real isolated live receipt; controlled responses qualify domain behavior only.
 
 ## operation and publication
 
@@ -75,10 +76,12 @@ generates once and publishes. the decode (`validate_structured_enrichment`)
 accepts the output or fails the generation `invalid_output`; the queue stores the
 settled outcome as the job's result.
 
-publication locks media before the exact job claim, rechecks authorization,
-eligibility and that the input it asked about is still the current one, then
-commits changed facts,
-collection invalidations, successful timestamp and outcome together. it performs
+publication starts from a fresh session, locks media before the exact job claim,
+and rechecks authorization, eligibility and the frozen source/bibliographic
+fingerprint. document publication generation and transcript content revision
+fence source replacement; index lifecycle never changes research identity.
+publication commits changed facts, collection invalidations, successful timestamp
+and the queue's terminal outcome/reactions together. it performs
 no network call or nested transaction. contributor identity validation precedes
 all writes. stale context, lost claim or revoked access cannot publish.
 
@@ -109,16 +112,41 @@ presentation remains owned by that ingress as described in the
   body `{client_mutation_id, expected_job_id: Presence<UUID>}`; 202 returns
   `{media_id, job_id}` in the existing data envelope.
 - `GET /media/{id}` includes `metadata_enrichment`: latest operation, precise
-  retry permission and `last_enriched_at`.
+  retry permission, `last_enriched_at`, unfinished count and oldest unfinished
+  operation. latest and oldest use `(created_at, id)`; a newer terminal result
+  does not hide older live work.
+- `POST /media/{media_id}/metadata-enrichment/{job_id}/review`: any current
+  reader may mark that exact no-findings result reviewed for themselves. body
+  `{client_mutation_id}`; 200 returns `{job_id, reviewed_at}`. review never changes
+  the immutable outcome or bibliography. an unknown/foreign job or inaccessible
+  media returns 404; another result returns `E_RESOURCE_CONFLICT`.
 - `/stream/media/{id}/metadata/events` emits the same typed view, authorizes each
   snapshot and stays open after terminal/absent activity to discover later jobs.
 
 replay follows authorization and precedes fresh-admission barriers. a fresh
 request must name the latest observed job; any pending/running/scheduled retry
 blocks it. a lost response resends the original intent.
-automatic source-triggered jobs retain their existing timing and use the same
-result contract; they are not coalesced with stale work. every enqueue locks the
-media and stamps a strictly ordered database creation time.
+successful source publication commits its automatic metadata obligation in the
+same transaction. jobs are not coalesced with stale work. every enqueue locks the
+media and stamps a strictly ordered database creation time. successful playable
+video ingestion requests research even without a provider snippet.
+
+review reauthorizes before replay, locks media, reauthorizes again and repeats
+the replay lookup before validating the exact job. review plus receipt commits
+atomically. the scope is `media_metadata_result_review:{media_id}` and the
+canonical request contains only `job_id`. duplicate intents and new mutation ids
+for an existing review return its original database timestamp. the same mutation
+id for a different job conflicts. removing media from one viewer clears only
+their reviews; physical teardown clears all reviews while retaining jobs.
+operator deletion of a user or retained job must remove dependent reviews first.
+
+imports exposes metadata independently of source/search. its latest failure or
+unreviewed no-findings result needs attention; any unfinished job keeps observation
+alive and blocks fresh research. completed, partial and unchanged findings are
+success. “mark reviewed” removes this result from needs attention for this viewer;
+it stays in history and does not dismiss a newer result. each retained job supplies
+one history entry, with its own latest generation, and review decorates that entry.
+no-findings carries no failure code. safe metadata reasons never expose raw errors.
 
 rss ingestion stores one nullable `rss_metadata_fingerprint` on its episode row.
 new/changed normalized bibliography enqueues fresh research, including supplied
@@ -131,7 +159,8 @@ their existing owners.
 
 detail/action snapshots batch the same projection. detail and each stream
 snapshot use repeatable read. existing `media_events` notifications announce
-semantic job changes; heartbeats do not. the successful timestamp independently
+semantic job changes and committed reviews; heartbeats do not. client admission
+and review receipts also invalidate imports so an idle workspace wakes. the successful timestamp independently
 invalidates facts when an older job publishes behind a newer latest job.
 
 one shared browser observer serves visible details and the `metadata…` overlay

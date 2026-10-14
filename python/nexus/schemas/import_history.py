@@ -19,15 +19,17 @@ from datetime import datetime
 from typing import Annotated, Final, Literal, cast, get_args
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter
 
+from nexus.schemas.metadata_enrichment import MetadataFailureCode, MetadataOperationOut
 from nexus.schemas.presence import Presence
 from nexus.schemas.upload_failures import (
     UploadTransportFailure,
     UploadVerificationFailureCode,
 )
 
-Stage = Literal["Upload", "Validate", "Extract", "Finalize", "Index", "SourceProcessing"]
+SourceStage = Literal["Upload", "Validate", "Extract", "Finalize", "SourceProcessing"]
+Stage = SourceStage | Literal["Index", "Metadata"]
 
 STAGE_RANK: dict[Stage, int] = {
     "Upload": 0,
@@ -36,6 +38,7 @@ STAGE_RANK: dict[Stage, int] = {
     "Finalize": 3,
     "SourceProcessing": 4,
     "Index": 5,
+    "Metadata": 6,
 }
 """Pipeline order, used to group and rank attention rows."""
 
@@ -112,10 +115,12 @@ owner is a type error here. It names every value of
 `media_upload_sessions.verification_error_code`, and every value of
 `media.last_error_code` at the moments history reads it: when a source failure
 copies it onto the attempt, and when a reused URL's attempt is born failed.
-`media.last_error_code` on readable media is wider (metadata enrichment writes
-its own codes there) and is never narrowed here. Raw provider text, signed URLs
-and source content never reach history.
+Metadata operation failures have their own vocabulary and never enter this
+persisted source-event codec. Raw provider text, signed URLs and source content
+never reach history.
 """
+
+type ImportFailureCode = SafeFailureCode | MetadataFailureCode
 
 SAFE_FAILURE_CODES: frozenset[str] = frozenset(
     (*get_args(UploadVerificationFailureCode), *get_args(_OWNER_FAILURE_CODES))
@@ -417,14 +422,33 @@ HistoryFacts = Annotated[
 ]
 
 
-class HistoryEntry(_HistoryModel):
-    """One recorded event as every reader sees it."""
+class MetadataOperationFacts(_HistoryModel):
+    """A retained operation projected into history; never a persisted event."""
 
-    id: UUID
+    kind: Literal["MetadataOperation"] = "MetadataOperation"
+    operation: MetadataOperationOut
+
+
+def _history_entry_id(value: str) -> str:
+    prefix, separator, raw_id = value.partition(":")
+    if separator != ":" or prefix not in {"upload", "processing", "metadata"}:
+        raise ValueError("history entry id must name an upload, processing or metadata record")
+    if str(UUID(raw_id)) != raw_id:
+        raise ValueError("history entry id must contain canonical UUID text")
+    return value
+
+
+HistoryEntryId = Annotated[str, AfterValidator(_history_entry_id)]
+
+
+class HistoryEntry(_HistoryModel):
+    """One recorded event or retained metadata operation as a viewer sees it."""
+
+    id: HistoryEntryId
     occurred_at: datetime
     stage: Presence[Stage]
-    failure_code: Presence[SafeFailureCode]
-    facts: HistoryFacts
+    failure_code: Presence[ImportFailureCode]
+    facts: Annotated[HistoryFacts | MetadataOperationFacts, Field(discriminator="kind")]
 
 
 class MediaHistoryOwner(_HistoryModel):
