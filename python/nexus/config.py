@@ -1,19 +1,8 @@
-"""Application settings loaded from environment variables.
+"""One validated settings snapshot per process, read from the environment and ./.env.
 
-Environment Configuration:
-    NEXUS_ENV: Deployment environment (local | test | staging | prod)
-    DATABASE_URL: PostgreSQL connection string (required)
-    DATABASE_URL must not point at Supabase Database in any environment
-    NEXUS_INTERNAL_SECRET: Internal API secret (required in staging/prod)
-
-Auth Configuration (required in all environments):
-    SUPABASE_JWKS_URL: Full URL to Supabase JWKS endpoint
-    SUPABASE_ISSUER: Expected JWT issuer (trailing slash stripped)
-    SUPABASE_AUDIENCES: Comma-separated list of allowed audiences
-
-Note: All environments use Supabase JWKS for JWT verification.
-Local/test environments use Supabase local, staging/prod use cloud.
-Supabase service-role keys are not application runtime settings.
+A field's env name is its upper-cased name: renaming a field renames its env key. Validation
+runs once, at the first ``get_settings()``: a running process has valid config, and bad config
+is a boot failure that names the keys, never a request failure.
 """
 
 import base64
@@ -22,559 +11,236 @@ import os
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, get_args
 from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
-# The one background-worker memory limit. It is deployment shape, not per-environment
-# configuration, so it is a constant here and `mem_limit: 448m` in
-# `deploy/hetzner/docker-compose.yml`; the cgroup readiness check proves at startup
-# that the deployed limit is exactly this value.
+# Deployment shape, not configuration: `mem_limit: 448m` in deploy/hetzner/docker-compose.yml,
+# which the background lane proves at start.
 BACKGROUND_WORKER_MEMORY_LIMIT_BYTES = 448 * 1024 * 1024
-
-
-def _database_url_looks_like_supabase(database_url: str) -> bool:
-    parsed = urlparse(database_url)
-    hostname = (parsed.hostname or "").lower()
-    try:
-        port = parsed.port
-    except ValueError:
-        port = None
-    return (
-        hostname == "supabase.co"
-        or hostname.endswith(".supabase.co")
-        or hostname == "supabase.com"
-        or hostname.endswith(".supabase.com")
-        or (
-            hostname in {"localhost", "127.0.0.1", "::1"}
-            and str(port or "") == os.environ.get("SUPABASE_DB_PORT", "54322")
-        )
-    )
+_MIB = 1024 * 1024
+_LOCAL_HANDLE_KEY = b"test-stream-token-signing-key-32bytes"
 
 
 class Environment(str, Enum):
-    """Valid deployment environments."""
-
     LOCAL = "local"
     TEST = "test"
     STAGING = "staging"
     PROD = "prod"
 
 
-type GenerationApiProvider = Literal[
-    "openai",
-    "anthropic",
-    "gemini",
-    "deepseek",
-    "xai",
-]
+type GenerationApiProvider = Literal["openai", "anthropic", "gemini", "deepseek", "xai"]
+_PROVIDERS: tuple[GenerationApiProvider, ...] = get_args(GenerationApiProvider.__value__)
+_CREDENTIALS = ("openai_api_key", "brave_search_api_key") + tuple(
+    f"{provider}_generation_api_key" for provider in _PROVIDERS
+)
+_Secret = Annotated[SecretStr | None, Field(repr=False)]
 
 
 class Settings(BaseSettings):
-    """Application configuration.
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    Settings are loaded from environment variables.
-    Validation rules:
-    - DATABASE_URL is always required
-    - DATABASE_URL must not point at Supabase Database in any environment
-    - SUPABASE_JWKS_URL, SUPABASE_ISSUER, SUPABASE_AUDIENCES are required in all environments
-    - NEXUS_INTERNAL_SECRET is required in staging and prod only
-    """
+    nexus_env: Environment = Environment.LOCAL
+    nexus_internal_secret: str | None = None
+    nexus_handle_key: _Secret = None  # the sealed-handle HMAC root: base64 of 32+ bytes
+    nexus_runtime_identity_file: Path | None = None  # local/test; deployed images bake theirs
+    app_public_url: str = "http://localhost:3000"
+    supabase_jwks_url: str | None = None
+    supabase_issuer: str | None = None
+    supabase_audiences: Annotated[tuple[str, ...], NoDecode] = ()
 
-    nexus_env: Environment = Field(default=Environment.LOCAL, alias="NEXUS_ENV")
-    node_ingest_script: Path = Field(
-        default=Path(__file__).resolve().parents[2] / "node/ingest/ingest.mjs",
-        alias="NODE_INGEST_SCRIPT",
-    )
-    database_url: Annotated[str, Field(alias="DATABASE_URL")]
-    database_pool_size: int = Field(default=10, alias="DATABASE_POOL_SIZE", ge=1)
-    database_max_overflow: int = Field(default=20, alias="DATABASE_MAX_OVERFLOW", ge=0)
-    database_pool_timeout_seconds: float = Field(
-        default=30.0, alias="DATABASE_POOL_TIMEOUT_SECONDS", gt=0
-    )
-    database_statement_timeout_ms: int = Field(
-        default=30000, alias="DATABASE_STATEMENT_TIMEOUT_MS", ge=0
-    )
-    database_lock_timeout_ms: int = Field(default=10000, alias="DATABASE_LOCK_TIMEOUT_MS", ge=0)
-    # 60s leaves legitimate long transactions room to finish while still
-    # reaping leaked transactions (the observed pool-exhaustion deadlock idled
-    # for 180s+).
-    database_idle_in_tx_timeout_ms: int = Field(
-        default=60000, alias="DATABASE_IDLE_IN_TX_TIMEOUT_MS", ge=0
-    )
-    nexus_internal_secret: str | None = Field(default=None, alias="NEXUS_INTERNAL_SECRET")
+    database_url: str
+    database_pool_size: int = Field(10, ge=1)
+    database_max_overflow: int = Field(20, ge=0)
+    database_pool_timeout_seconds: float = Field(30.0, gt=0)
+    database_statement_timeout_ms: int = Field(30_000, ge=0)
+    # Leaves long transactions room and reaps leaked ones (the pool deadlock idled 180 s+).
+    database_idle_in_tx_timeout_ms: int = Field(60_000, ge=0)
 
-    # Supabase auth settings (required in all environments)
-    supabase_jwks_url: str | None = Field(default=None, alias="SUPABASE_JWKS_URL")
-    supabase_issuer: str | None = Field(default=None, alias="SUPABASE_ISSUER")
-    supabase_audiences: str | None = Field(default=None, alias="SUPABASE_AUDIENCES")
+    r2_s3_api_origin: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: _Secret = None
+    r2_bucket: str | None = None
+    r2_region: str = "auto"  # minio (local, harness) wants us-east-1
+    signed_url_expiry_s: int = Field(300, gt=0, le=604_800)
+    max_pdf_bytes: int = Field(100 * _MIB, gt=0)
+    max_epub_bytes: int = Field(50 * _MIB, gt=0)
+    # The floor refuses only mistakes. A deployed value must outlast the longest store-then-commit
+    # window (the 900 s background wall) and a reading copy's url (SIGNED_URL_EXPIRY_S).
+    storage_orphan_sweep_min_age_seconds: int = Field(86_400, ge=30)
 
-    # Cloudflare R2 object storage settings.
-    r2_s3_api_origin: str | None = Field(default=None, alias="R2_S3_API_ORIGIN")
-    r2_access_key_id: str | None = Field(default=None, alias="R2_ACCESS_KEY_ID")
-    r2_secret_access_key: str | None = Field(default=None, alias="R2_SECRET_ACCESS_KEY")
-    r2_bucket: str | None = Field(default=None, alias="R2_BUCKET")
-    r2_region: str = Field(default="auto", alias="R2_REGION")
-    # Explicit botocore timeouts for the R2 S3-compatible client. Bounded low so a
-    # stalled object-store call fails fast instead of holding a worker/request open.
-    r2_connect_timeout_seconds: float = Field(
-        default=5.0, alias="R2_CONNECT_TIMEOUT_SECONDS", gt=0, le=10
-    )
-    r2_read_timeout_seconds: float = Field(
-        default=30.0, alias="R2_READ_TIMEOUT_SECONDS", gt=0, le=60
-    )
+    podcast_index_api_key: str | None = None  # without key and secret PodcastIndex calls 503
+    podcast_index_api_secret: str | None = None
+    podcast_index_base_url: str = "https://api.podcastindex.org/api/1.0"
+    youtube_data_api_key: str | None = None
+    youtube_data_base_url: str = "https://www.googleapis.com/youtube/v3"
+    youtube_transcript_timeout_seconds: float = Field(30.0, gt=0)
+    youtube_transcript_proxy_url: str | None = Field(None, exclude=True, repr=False)
+    youtube_transcript_proxy_retries_when_blocked: int = Field(0, ge=0)
+    x_api_bearer_token: str | None = None
+    x_api_base_url: str = "https://api.x.com/2"
+    x_api_timeout_seconds: float = Field(10.0, gt=0)
+    x_api_author_thread_max_posts: int = Field(1000, ge=1)
+    deepgram_api_key: str | None = None
+    deepgram_base_url: str = "https://api.deepgram.com"
+    deepgram_model: str = "nova-3"
+    podcast_transcription_timeout_seconds: float = Field(90.0, gt=0)
+    brave_search_api_key: str | None = None  # absent: web-search turns fail closed
+    brave_search_base_url: str = "https://api.search.brave.com/res/v1"
+    brave_search_timeout_seconds: float = Field(8.0, gt=0)
 
-    # Storage cleanup timing: the orphan sweep.
-    storage_orphan_sweep_interval_seconds: int = Field(
-        default=21600, alias="STORAGE_ORPHAN_SWEEP_INTERVAL_SECONDS", gt=0
-    )
-    storage_orphan_sweep_min_age_seconds: int = Field(
-        default=86400, alias="STORAGE_ORPHAN_SWEEP_MIN_AGE_SECONDS", ge=0
-    )
-
-    # Storage limits
-    max_pdf_bytes: int = Field(default=100 * 1024 * 1024, alias="MAX_PDF_BYTES")  # 100 MB
-    max_epub_bytes: int = Field(default=50 * 1024 * 1024, alias="MAX_EPUB_BYTES")  # 50 MB
-    signed_url_expiry_s: int = Field(default=300, alias="SIGNED_URL_EXPIRY_S")  # 5 minutes
-
-    # Podcast discovery and subscription ingestion; without both keys a call that needs
-    # PodcastIndex answers 503 E_PODCAST_PROVIDER_UNAVAILABLE.
-    podcast_index_api_key: str | None = Field(default=None, alias="PODCAST_INDEX_API_KEY")
-    podcast_index_api_secret: str | None = Field(default=None, alias="PODCAST_INDEX_API_SECRET")
-    podcast_index_base_url: str = Field(
-        default="https://api.podcastindex.org/api/1.0",
-        alias="PODCAST_INDEX_BASE_URL",
-    )
-    youtube_data_api_key: str | None = Field(default=None, alias="YOUTUBE_DATA_API_KEY")
-    youtube_data_base_url: str = Field(
-        default="https://www.googleapis.com/youtube/v3",
-        alias="YOUTUBE_DATA_BASE_URL",
-    )
-    x_api_bearer_token: str | None = Field(default=None, alias="X_API_BEARER_TOKEN")
-    x_api_base_url: str = Field(default="https://api.x.com/2", alias="X_API_BASE_URL")
-    x_api_timeout_seconds: float = Field(default=10.0, alias="X_API_TIMEOUT_SECONDS", gt=0)
-    x_api_author_thread_max_posts: int = Field(
-        default=1000,
-        alias="X_API_AUTHOR_THREAD_MAX_POSTS",
-        ge=1,
-    )
-    youtube_transcript_timeout_seconds: float = Field(
-        default=30.0,
-        alias="YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS",
-        gt=0,
-    )
-    youtube_transcript_proxy_url: str | None = Field(
-        default=None,
-        alias="YOUTUBE_TRANSCRIPT_PROXY_URL",
-        exclude=True,
-        repr=False,
-    )
-    youtube_transcript_proxy_retries_when_blocked: int = Field(
-        default=0,
-        alias="YOUTUBE_TRANSCRIPT_PROXY_RETRIES_WHEN_BLOCKED",
-        ge=0,
-    )
-    deepgram_api_key: str | None = Field(default=None, alias="DEEPGRAM_API_KEY")
-    deepgram_base_url: str = Field(default="https://api.deepgram.com", alias="DEEPGRAM_BASE_URL")
-    deepgram_model: str = Field(default="nova-3", alias="DEEPGRAM_MODEL")
-    podcast_transcription_timeout_seconds: float = Field(
-        default=90.0, alias="PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS", gt=0
-    )
-    podcast_refresh_due_schedule_seconds: int = Field(
-        default=900, alias="PODCAST_REFRESH_DUE_SCHEDULE_SECONDS", ge=1
-    )
-    podcast_refresh_due_limit: int = Field(default=100, alias="PODCAST_REFRESH_DUE_LIMIT", ge=1)
-
-    # Public web origin: share links.
-    app_public_url: str = Field(default="http://localhost:3000", alias="APP_PUBLIC_URL")
-
-    parser_temp_root: Path = Field(default=Path("/tmp/nexus-parser-tmp"), alias="PARSER_TEMP_ROOT")
-
-    # Worker runtime: one lane per worker process.
-    worker_lane: Literal["interactive", "background"] | None = Field(
-        default=None,
-        alias="WORKER_LANE",
-    )
-    background_process_cgroup_root: Path = Field(
-        default=Path("/sys/fs/cgroup"), alias="BACKGROUND_PROCESS_CGROUP_ROOT"
-    )
-    background_process_wall_timeout_seconds: float = Field(
-        default=900.0,
-        alias="BACKGROUND_PROCESS_WALL_TIMEOUT_SECONDS",
-        gt=0,
-        le=900,
-    )
-    background_process_term_grace_seconds: float = Field(
-        default=5.0,
-        alias="BACKGROUND_PROCESS_TERM_GRACE_SECONDS",
-        gt=0,
-        le=30,
-    )
-    background_process_result_max_bytes: int = Field(
-        default=1024 * 1024,
-        alias="BACKGROUND_PROCESS_RESULT_MAX_BYTES",
-        ge=1024,
-        le=4 * 1024 * 1024,
-    )
-    background_process_oom_score_adj: int = Field(
-        default=750,
-        alias="BACKGROUND_PROCESS_OOM_SCORE_ADJ",
-        ge=1,
-        le=1000,
-    )
-    background_job_prune_succeeded_after_days: int = Field(
-        default=7, alias="BACKGROUND_JOB_PRUNE_SUCCEEDED_AFTER_DAYS", ge=1
-    )
-    background_job_prune_dead_after_days: int = Field(
-        default=30, alias="BACKGROUND_JOB_PRUNE_DEAD_AFTER_DAYS", ge=1
-    )
-    background_job_prune_batch_size: int = Field(
-        default=100, alias="BACKGROUND_JOB_PRUNE_BATCH_SIZE", ge=1
-    )
-
-    # EPUB archive safety limits. Runtime values may be stricter, never weaker.
-    max_epub_archive_entries: int = Field(
-        default=10_000, alias="MAX_EPUB_ARCHIVE_ENTRIES", ge=1, le=10_000
-    )
-    max_epub_archive_total_uncompressed_bytes: int = Field(
-        default=536_870_912, alias="MAX_EPUB_ARCHIVE_TOTAL_UNCOMPRESSED_BYTES", ge=1, le=536_870_912
-    )  # 512 MB
-    max_epub_archive_single_entry_uncompressed_bytes: int = Field(
-        default=67_108_864,
-        alias="MAX_EPUB_ARCHIVE_SINGLE_ENTRY_UNCOMPRESSED_BYTES",
-        ge=1,
-        le=67_108_864,
-    )  # 64 MB
-    max_epub_archive_compression_ratio: int = Field(
-        default=100, alias="MAX_EPUB_ARCHIVE_COMPRESSION_RATIO", ge=1, le=100
-    )
-    max_epub_archive_parse_time_ms: int = Field(
-        default=30_000, alias="MAX_EPUB_ARCHIVE_PARSE_TIME_MS", ge=1, le=30_000
-    )
-
-    # OpenAI's unqualified key remains embedding-only. Generation credentials
-    # are route-specific so no provider secret can cross into the Codex host.
-    openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
-    generation_api_providers_raw: str = Field(default="", alias="GENERATION_API_PROVIDERS")
-    openai_generation_api_key: SecretStr | None = Field(
-        default=None,
-        alias="OPENAI_GENERATION_API_KEY",
-        repr=False,
-    )
-    anthropic_generation_api_key: SecretStr | None = Field(
-        default=None,
-        alias="ANTHROPIC_GENERATION_API_KEY",
-        repr=False,
-    )
-    gemini_generation_api_key: SecretStr | None = Field(
-        default=None,
-        alias="GEMINI_GENERATION_API_KEY",
-        repr=False,
-    )
-    deepseek_generation_api_key: SecretStr | None = Field(
-        default=None,
-        alias="DEEPSEEK_GENERATION_API_KEY",
-        repr=False,
-    )
-    xai_generation_api_key: SecretStr | None = Field(
-        default=None,
-        alias="XAI_GENERATION_API_KEY",
-        repr=False,
-    )
-    # Public web search provider settings.
-    # Brave is the first production web-search provider. If no API key is
-    # configured, required web-search turns fail closed with a typed tool error.
-    brave_search_api_key: str | None = Field(default=None, alias="BRAVE_SEARCH_API_KEY")
-    brave_search_base_url: str = Field(
-        default="https://api.search.brave.com/res/v1",
-        alias="BRAVE_SEARCH_BASE_URL",
-    )
-    brave_search_timeout_seconds: float = Field(
-        default=8.0,
-        alias="BRAVE_SEARCH_TIMEOUT_SECONDS",
-    )
-
-    # Transcript semantic embedding settings
-    transcript_embedding_model_openai: str = Field(
-        default="text-embedding-3-small",
-        alias="TRANSCRIPT_EMBEDDING_MODEL_OPENAI",
-    )
-    transcript_embedding_dimensions: int = Field(
-        default=256,
-        alias="TRANSCRIPT_EMBEDDING_DIMENSIONS",
-    )
-
-    # Metadata input bytes and raw source reads are bounded by the research owner.
-    # This setting only reduces the normalized opening passage's word allowance.
-    metadata_enrichment_max_content_words: int = Field(
-        default=1000, alias="METADATA_ENRICHMENT_MAX_CONTENT_WORDS", ge=1, le=1000
-    )
+    # The unqualified key is embeddings only; generation keys are per provider, so no
+    # provider secret reaches the codex host.
+    openai_api_key: str | None = None
+    transcript_embedding_model_openai: str = "text-embedding-3-small"
+    generation_api_providers: Annotated[tuple[GenerationApiProvider, ...], NoDecode] = ()
+    openai_generation_api_key: _Secret = None
+    anthropic_generation_api_key: _Secret = None
+    gemini_generation_api_key: _Secret = None
+    deepseek_generation_api_key: _Secret = None
+    xai_generation_api_key: _Secret = None
     codex_native_socket: Path = Field(
-        default=Path("/tmp/codex-daemon-10001/app-server.sock"),
-        alias="NEXUS_CODEX_NATIVE_SOCKET",
+        Path("/tmp/codex-daemon-10001/app-server.sock"), alias="NEXUS_CODEX_NATIVE_SOCKET"
     )
-    memory_client_config_path: Path | None = Field(default=None, alias="MEMORY_CLIENT_CONFIG_PATH")
+    memory_client_config_path: Path | None = None
+    metadata_enrichment_max_content_words: int = Field(1000, ge=1, le=1000)
+    connection_discovery_enabled: bool = True
+    atlas_project_schedule_seconds: int = Field(0, ge=0)  # 0: not periodic (prod: 86400)
 
-    # CONNECTION_DISCOVERY_ENABLED=false makes every connection scan trigger a no-op.
-    connection_discovery_enabled: bool = Field(default=True, alias="CONNECTION_DISCOVERY_ENABLED")
+    worker_lane: Literal["interactive", "background"] | None = None
+    parser_temp_root: Path = Path("/tmp/nexus-parser-tmp")
+    node_ingest_script: Path = Path(__file__).resolve().parents[2] / "node/ingest/ingest.mjs"
+    background_process_cgroup_root: Path = Path("/sys/fs/cgroup")
+    background_process_wall_timeout_seconds: float = Field(900.0, gt=0, le=900)
+    background_process_term_grace_seconds: float = Field(5.0, gt=0, le=30)
+    background_process_result_max_bytes: int = Field(_MIB, ge=1024, le=4 * _MIB)
+    background_process_oom_score_adj: int = Field(750, ge=1, le=1000)
+    background_job_prune_succeeded_after_days: int = Field(7, ge=1)
+    background_job_prune_dead_after_days: int = Field(30, ge=1)
+    background_job_prune_batch_size: int = Field(100, ge=1)
+    podcast_refresh_due_schedule_seconds: int = Field(900, ge=1)
+    podcast_refresh_due_limit: int = Field(100, ge=1)
 
-    # Grand atlas projection: the nightly PCA re-projection cadence. 0 (default)
-    # leaves atlas_project_job unregistered as periodic; the deploy env sets a
-    # positive cadence (prod: 86400). Nothing enqueues it on demand.
-    atlas_project_schedule_seconds: int = Field(
-        default=0, alias="ATLAS_PROJECT_SCHEDULE_SECONDS", ge=0
-    )
+    # Post Room: unless secret, slug, domain and owner are all set, /ingest/email answers 503.
+    email_ingest_hmac_secret: str | None = None
+    email_ingest_address_slug: str | None = None
+    email_ingest_domain: str | None = None
+    email_ingest_owner_user_id: str | None = None
+    email_ingest_max_bytes: int = Field(2 * _MIB, gt=0)
 
-    # Post Room: private email ingest address (Cloudflare Email Worker → HMAC-signed POST).
-    # Unless all four of secret, slug, domain and owner are set, /ingest/email answers 503.
-    email_ingest_hmac_secret: str | None = Field(default=None, alias="EMAIL_INGEST_HMAC_SECRET")
-    email_ingest_address_slug: str | None = Field(default=None, alias="EMAIL_INGEST_ADDRESS_SLUG")
-    email_ingest_domain: str | None = Field(default=None, alias="EMAIL_INGEST_DOMAIN")
-    email_ingest_owner_user_id: str | None = Field(default=None, alias="EMAIL_INGEST_OWNER_USER_ID")
-    email_ingest_max_bytes: int = Field(default=2_097_152, alias="EMAIL_INGEST_MAX_BYTES")
-
-    # The HMAC root of every sealed handle (share asset, device, entity handles): base64 of
-    # 32+ bytes. Required in staging/prod; local and test use a fixed key.
-    nexus_handle_key: SecretStr | None = Field(default=None, alias="NEXUS_HANDLE_KEY", repr=False)
-    model_config = {
-        "env_file": ".env",
-        "env_file_encoding": "utf-8",
-        "extra": "ignore",
-    }
-
-    @field_validator("openai_api_key", "brave_search_api_key")
+    @field_validator("supabase_audiences", "generation_api_providers", mode="before")
     @classmethod
-    def normalize_tool_credentials(cls, value: str | None) -> str | None:
-        """Blank credentials are unavailable, including explicit compose values."""
-        if value is None:
-            return None
-        return value.strip() or None
+    def _comma_list(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        return tuple(part.strip() for part in value.split(",") if part.strip())
+
+    @field_validator(*_CREDENTIALS, mode="before")
+    @classmethod
+    def _blank_is_absent(cls, value: object) -> object:
+        return (value.strip() or None) if isinstance(value, str) else value
+
+    @field_validator("supabase_issuer")
+    @classmethod
+    def _issuer(cls, value: str | None) -> str | None:
+        return value.rstrip("/") if value else value
 
     @model_validator(mode="after")
-    def validate_required_settings(self) -> "Settings":
-        """Ensure required settings are set for all environments."""
-        self._validate_supabase_auth()
-        self._validate_database_origin()
-        self._validate_deployed_storage()
-        self._validate_handle_key()
-        self._validate_transcript_embedding_dimensions()
-        self._validate_deployed_browse_provider()
-        self._validate_deployed_generation_runtime()
-        self._validate_ingest_runtime_and_paths()
-        self._validate_worker_lane()
-        self._validate_background_process_cgroup_root()
+    def _validate(self) -> "Settings":
+        auth = {
+            "SUPABASE_JWKS_URL": self.supabase_jwks_url,
+            "SUPABASE_ISSUER": self.supabase_issuer,
+            "SUPABASE_AUDIENCES": self.supabase_audiences,
+        }
+        if missing := [name for name, value in auth.items() if not value]:
+            raise ValueError(
+                f"Missing Supabase auth settings: {', '.join(missing)}. "
+                "Run 'make dev' before starting the app with make, or set them."
+            )
+        host = (urlparse(self.database_url).hostname or "").lower()
+        if any(host == d or host.endswith(f".{d}") for d in ("supabase.co", "supabase.com")):
+            raise ValueError("DATABASE_URL must be standalone Postgres, not Supabase Database.")
+        if self.nexus_handle_key is not None:
+            try:
+                key = base64.b64decode(self.nexus_handle_key.get_secret_value(), validate=True)
+            except binascii.Error as exc:
+                raise ValueError("NEXUS_HANDLE_KEY must be strict base64") from exc
+            if len(key) < 32:
+                raise ValueError("NEXUS_HANDLE_KEY must decode to at least 32 bytes")
+        configured = self.generation_api_providers
+        if len(set(configured)) != len(configured):
+            raise ValueError("GENERATION_API_PROVIDERS contains a duplicate provider")
+        if missing := [p for p in configured if self.generation_api_key(p) is None]:
+            keys = ", ".join(f"{p.upper()}_GENERATION_API_KEY" for p in missing)
+            raise ValueError(f"Configured generation providers lack keys: {keys}")
+        stale = [p for p in _PROVIDERS if p not in configured and self.generation_api_key(p)]
+        if stale:
+            keys = ", ".join(f"{p.upper()}_GENERATION_API_KEY" for p in stale)
+            raise ValueError(f"Generation keys set for unconfigured providers: {keys}")
+        paths = {
+            "NODE_INGEST_SCRIPT": self.node_ingest_script,
+            "PARSER_TEMP_ROOT": self.parser_temp_root,
+            "BACKGROUND_PROCESS_CGROUP_ROOT": self.background_process_cgroup_root,
+            "NEXUS_CODEX_NATIVE_SOCKET": self.codex_native_socket,
+            "NEXUS_RUNTIME_IDENTITY_FILE": self.nexus_runtime_identity_file,
+        }
+        for name, path in paths.items():
+            if path is not None and (
+                not path.is_absolute() or Path(os.path.normpath(path)) != path
+            ):
+                raise ValueError(f"{name} must be a normalized absolute path")
+        if not self.deployed:
+            return self
+        required = {
+            "NEXUS_INTERNAL_SECRET": self.nexus_internal_secret,
+            "NEXUS_HANDLE_KEY": self.nexus_handle_key,
+            "R2_S3_API_ORIGIN": self.r2_s3_api_origin,
+            "R2_ACCESS_KEY_ID": self.r2_access_key_id,
+            "R2_SECRET_ACCESS_KEY": self.r2_secret_access_key,
+            "R2_BUCKET": self.r2_bucket,
+            "YOUTUBE_DATA_API_KEY": self.youtube_data_api_key,
+            "GENERATION_API_PROVIDERS": configured,
+            "OPENAI_API_KEY": self.openai_api_key,
+        }
+        env = self.nexus_env.value
+        if missing := [name for name, value in required.items() if not value]:
+            raise ValueError(f"Required for NEXUS_ENV={env}: {', '.join(missing)}")
+        origin = urlparse(self.r2_s3_api_origin or "")
+        if (
+            origin.scheme != "https"
+            or origin.username
+            or origin.password
+            or origin.path not in ("", "/")
+            or origin.query
+            or origin.fragment
+            or not (origin.hostname or "").endswith(".r2.cloudflarestorage.com")
+        ):
+            raise ValueError(f"R2_S3_API_ORIGIN must be the Cloudflare R2 S3 API origin in {env}")
+        if self.nexus_runtime_identity_file is not None:
+            raise ValueError(f"NEXUS_RUNTIME_IDENTITY_FILE is not permitted in {env}")
+        if self.worker_lane is not None and self.database_statement_timeout_ms == 0:
+            raise ValueError("DATABASE_STATEMENT_TIMEOUT_MS must be bounded for deployed workers")
         return self
 
-    def _validate_supabase_auth(self) -> None:
-        missing_auth = []
-        if not self.supabase_jwks_url:
-            missing_auth.append("SUPABASE_JWKS_URL")
-        if not self.supabase_issuer:
-            missing_auth.append("SUPABASE_ISSUER")
-        if not self.supabase_audiences:
-            missing_auth.append("SUPABASE_AUDIENCES")
-
-        if missing_auth:
-            raise ValueError(
-                f"Missing required Supabase auth settings: {', '.join(missing_auth)}. "
-                "Run 'make dev' before starting the app with make, or set these environment variables."
-            )
-
-    def _validate_database_origin(self) -> None:
-        if _database_url_looks_like_supabase(self.database_url):
-            raise ValueError(
-                "DATABASE_URL must point at standalone Postgres, not Supabase Database."
-            )
-
-    def _validate_deployed_storage(self) -> None:
-        if self.nexus_env not in (Environment.STAGING, Environment.PROD):
-            return
-        if not self.nexus_internal_secret:
-            raise ValueError(
-                f"NEXUS_INTERNAL_SECRET is required for NEXUS_ENV={self.nexus_env.value}"
-            )
-        missing_r2 = []
-        if not self.r2_s3_api_origin:
-            missing_r2.append("R2_S3_API_ORIGIN")
-        if not self.r2_access_key_id:
-            missing_r2.append("R2_ACCESS_KEY_ID")
-        if not self.r2_secret_access_key:
-            missing_r2.append("R2_SECRET_ACCESS_KEY")
-        if not self.r2_bucket:
-            missing_r2.append("R2_BUCKET")
-        if missing_r2:
-            raise ValueError(
-                "Cloudflare R2 storage settings are required in staging/prod: "
-                f"{', '.join(missing_r2)}"
-            )
-        parsed_r2_origin = urlparse(self.r2_s3_api_origin or "")
-        r2_host = parsed_r2_origin.hostname or ""
-        if (
-            parsed_r2_origin.scheme != "https"
-            or parsed_r2_origin.username
-            or parsed_r2_origin.password
-            or parsed_r2_origin.path not in ("", "/")
-            or parsed_r2_origin.query
-            or parsed_r2_origin.fragment
-            or not r2_host.endswith(".r2.cloudflarestorage.com")
-        ):
-            raise ValueError(
-                "R2_S3_API_ORIGIN must be the Cloudflare R2 S3 API origin for staging/prod."
-            )
-
-    def _validate_handle_key(self) -> None:
-        if self.nexus_handle_key is None:
-            if self.nexus_env in (Environment.STAGING, Environment.PROD):
-                raise ValueError("NEXUS_HANDLE_KEY is required in staging/prod")
-            return
-        try:
-            key = base64.b64decode(self.nexus_handle_key.get_secret_value(), validate=True)
-        except binascii.Error as exc:
-            raise ValueError("NEXUS_HANDLE_KEY must be strict base64") from exc
-        if len(key) < 32:
-            raise ValueError("NEXUS_HANDLE_KEY must decode to at least 32 bytes")
-
-    def _validate_transcript_embedding_dimensions(self) -> None:
-        if self.transcript_embedding_dimensions != TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS:
-            raise ValueError(
-                "TRANSCRIPT_EMBEDDING_DIMENSIONS must equal "
-                f"{TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS} to match the pgvector schema."
-            )
-
-    def _validate_deployed_browse_provider(self) -> None:
-        if self.nexus_env not in (Environment.STAGING, Environment.PROD):
-            return
-        if not self.youtube_data_api_key:
-            raise ValueError(
-                "Browse providers are missing required credentials: YOUTUBE_DATA_API_KEY"
-            )
-
-    def _validate_deployed_generation_runtime(self) -> None:
-        configured = self.generation_api_provider_list
-        credential_by_provider: dict[GenerationApiProvider, tuple[str, SecretStr | None]] = {
-            "openai": ("OPENAI_GENERATION_API_KEY", self.openai_generation_api_key),
-            "anthropic": (
-                "ANTHROPIC_GENERATION_API_KEY",
-                self.anthropic_generation_api_key,
-            ),
-            "gemini": ("GEMINI_GENERATION_API_KEY", self.gemini_generation_api_key),
-            "deepseek": (
-                "DEEPSEEK_GENERATION_API_KEY",
-                self.deepseek_generation_api_key,
-            ),
-            "xai": ("XAI_GENERATION_API_KEY", self.xai_generation_api_key),
-        }
-        missing: list[str] = []
-        for provider in configured:
-            name, credential = credential_by_provider[provider]
-            if credential is None or not credential.get_secret_value().strip():
-                missing.append(name)
-        if missing:
-            raise ValueError(
-                "Configured generation providers are missing credentials: " + ", ".join(missing)
-            )
-        stale = [
-            name
-            for provider, (name, credential) in credential_by_provider.items()
-            if provider not in configured
-            and credential is not None
-            and credential.get_secret_value() != ""
-        ]
-        if stale:
-            raise ValueError(
-                "Generation credentials are forbidden for unconfigured provider "
-                + ", ".join(name.removesuffix("_GENERATION_API_KEY").lower() for name in stale)
-            )
-        if self.nexus_env not in (Environment.STAGING, Environment.PROD):
-            return
-        if not configured:
-            raise ValueError("GENERATION_API_PROVIDERS must be nonempty in staging/prod")
-        if not self.openai_api_key:
-            raise ValueError("OPENAI_API_KEY is required for transcript embeddings")
-
-    def _validate_ingest_runtime_and_paths(self) -> None:
-        if not self.node_ingest_script.is_absolute():
-            raise ValueError("NODE_INGEST_SCRIPT must be an absolute path")
-        if (
-            not self.codex_native_socket.is_absolute()
-            or Path(os.path.normpath(str(self.codex_native_socket))) != self.codex_native_socket
-        ):
-            raise ValueError("NEXUS_CODEX_NATIVE_SOCKET must be a normalized absolute path.")
-        if not self.parser_temp_root.is_absolute():
-            raise ValueError("PARSER_TEMP_ROOT must be an absolute path.")
-
-    def _validate_worker_lane(self) -> None:
-        if (
-            self.worker_lane is not None
-            and self.nexus_env in (Environment.STAGING, Environment.PROD)
-            and self.database_statement_timeout_ms == 0
-        ):
-            raise ValueError("DATABASE_STATEMENT_TIMEOUT_MS must be bounded for deployed workers.")
-
-    def _validate_background_process_cgroup_root(self) -> None:
-        if not self.background_process_cgroup_root.is_absolute():
-            raise ValueError("BACKGROUND_PROCESS_CGROUP_ROOT must be an absolute path.")
-
     @property
-    def requires_internal_header(self) -> bool:
-        """Whether requests must include the internal secret header."""
+    def deployed(self) -> bool:
+        """staging or prod: strict config, internal header, hidden docs, baked identity."""
         return self.nexus_env in (Environment.STAGING, Environment.PROD)
 
     @property
-    def audience_list(self) -> list[str]:
-        """Parse comma-separated audiences into a list."""
-        if self.supabase_audiences:
-            return [a.strip() for a in self.supabase_audiences.split(",") if a.strip()]
-        return []
-
-    @property
-    def normalized_issuer(self) -> str | None:
-        """Return issuer with trailing slash stripped."""
-        if self.supabase_issuer:
-            return self.supabase_issuer.rstrip("/")
-        return None
-
-    @property
     def handle_key(self) -> bytes:
-        """The sealed-handle HMAC root (validated at boot)."""
         if self.nexus_handle_key is None:
-            return b"test-stream-token-signing-key-32bytes"
+            return _LOCAL_HANDLE_KEY
         return base64.b64decode(self.nexus_handle_key.get_secret_value(), validate=True)
 
-    @property
-    def generation_api_provider_list(self) -> tuple[GenerationApiProvider, ...]:
-        """Parse the required deployment-owned provider list once at ingress."""
-
-        if self.generation_api_providers_raw == "":
-            return ()
-        providers: list[GenerationApiProvider] = []
-        for raw_provider in self.generation_api_providers_raw.split(","):
-            provider = raw_provider.strip()
-            match provider:
-                case "openai" | "anthropic" | "gemini" | "deepseek" | "xai":
-                    providers.append(provider)
-                case "":
-                    raise ValueError("GENERATION_API_PROVIDERS contains an empty provider")
-                case _:
-                    raise ValueError(
-                        f"GENERATION_API_PROVIDERS contains unknown provider {provider!r}"
-                    )
-        if len(set(providers)) != len(providers):
-            raise ValueError("GENERATION_API_PROVIDERS contains a duplicate provider")
-        return tuple(providers)
+    def generation_api_key(self, provider: GenerationApiProvider) -> SecretStr | None:
+        return getattr(self, f"{provider}_generation_api_key")
 
 
 @lru_cache
 def get_settings() -> Settings:
-    """Get cached application settings.
-
-    Returns:
-        Settings instance loaded from environment.
-
-    Raises:
-        ValidationError: If required settings are missing or invalid.
-    """
+    """The process's settings; the first call validates (ValidationError names the keys)."""
     return Settings()  # pyright: ignore[reportCallIssue] - BaseSettings reads env.

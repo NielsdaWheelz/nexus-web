@@ -1,69 +1,42 @@
-"""Runtime identity selection and bounded PostgreSQL readiness."""
+"""Which build is serving, and whether its database is the one it expects."""
 
-from __future__ import annotations
-
-import os
 import time
-from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 
 import psycopg
 
-from nexus.config import Environment, get_settings
+from nexus.config import get_settings
 from nexus.release_artifact import RuntimeIdentity, load_runtime_identity
 
-NONPRODUCTION_RUNTIME_IDENTITY_FILE_ENV = "NEXUS_RUNTIME_IDENTITY_FILE"
-PRODUCTION_RUNTIME_IDENTITY_FILE = Path("/app/runtime-identity.json")
-DATABASE_READINESS_TIMEOUT_SECONDS = 2.0
-
-
-def runtime_identity_path(*, environment: Environment, environ: Mapping[str, str]) -> Path:
-    """Select the sole identity file admitted by one deployment environment."""
-    configured = environ.get(NONPRODUCTION_RUNTIME_IDENTITY_FILE_ENV)
-    if environment in (Environment.STAGING, Environment.PROD):
-        if configured is not None:
-            raise RuntimeError(
-                f"{NONPRODUCTION_RUNTIME_IDENTITY_FILE_ENV} is not permitted in staging/prod"
-            )
-        return PRODUCTION_RUNTIME_IDENTITY_FILE
-
-    if configured is None or not configured.strip():
-        raise RuntimeError(f"{NONPRODUCTION_RUNTIME_IDENTITY_FILE_ENV} is required in local/test")
-    path = Path(configured)
-    if not path.is_absolute():
-        raise RuntimeError(f"{NONPRODUCTION_RUNTIME_IDENTITY_FILE_ENV} must be an absolute path")
-    return path
+_BAKED_IDENTITY = Path("/app/runtime-identity.json")
+_READINESS_SECONDS = 2.0
 
 
 @lru_cache(maxsize=1)
 def get_runtime_identity() -> RuntimeIdentity:
-    """Load the immutable identity selected for this process."""
+    """The image-baked identity when deployed, else NEXUS_RUNTIME_IDENTITY_FILE's."""
     settings = get_settings()
-    path = runtime_identity_path(environment=settings.nexus_env, environ=os.environ)
+    path = _BAKED_IDENTITY if settings.deployed else settings.nexus_runtime_identity_file
+    if path is None:
+        raise RuntimeError("NEXUS_RUNTIME_IDENTITY_FILE is required in local/test")
     return load_runtime_identity(path)
 
 
 def is_database_ready(*, database_url: str, expected_revision: str) -> bool:
-    """Probe bounded database reachability and the exact baked schema revision."""
-    timeout = DATABASE_READINESS_TIMEOUT_SECONDS
-    deadline = time.monotonic() + timeout
-    connect_timeout_seconds = int(timeout / 2)
-    statement_timeout_ms = int((timeout - connect_timeout_seconds) * 1000)
-    psycopg_url = database_url.replace("postgresql+psycopg://", "postgresql://", 1)
+    """The database answered within 2 s and its schema is exactly ``expected_revision``."""
+    deadline = time.monotonic() + _READINESS_SECONDS
     try:
         with psycopg.connect(
-            psycopg_url,
+            database_url.replace("postgresql+psycopg://", "postgresql://", 1),
             autocommit=True,
-            connect_timeout=connect_timeout_seconds,
-            options=f"-c statement_timeout={statement_timeout_ms}",
-            tcp_user_timeout=statement_timeout_ms,
+            connect_timeout=1,
+            options="-c statement_timeout=1000",
+            tcp_user_timeout=1000,
         ) as connection:
             if time.monotonic() >= deadline:
                 return False
-            rows = connection.execute(
-                "SELECT version_num FROM alembic_version ORDER BY version_num"
-            ).fetchall()
-            return tuple(str(row[0]) for row in rows) == (expected_revision,)
+            rows = connection.execute("SELECT version_num FROM alembic_version").fetchall()
+            return [str(row[0]) for row in rows] == [expected_revision]
     except psycopg.Error:
         return False

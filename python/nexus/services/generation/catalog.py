@@ -142,7 +142,7 @@ _CODEX: dict[Path, tuple[AgentModelCatalog | None, Readiness, float]] = {}
 class Catalog:
     def __init__(self, settings: Settings, tools: Toolbox) -> None:
         self._socket = settings.codex_native_socket
-        configured = settings.generation_api_provider_list
+        configured = settings.generation_api_providers
         self._providers: tuple[GenerationApiProvider, ...] = tuple(
             provider for provider in _PROVIDERS if provider in configured
         )

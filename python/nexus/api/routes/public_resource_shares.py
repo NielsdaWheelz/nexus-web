@@ -107,11 +107,8 @@ def get_public_resource_share_file(
             )
         start, end, status = byte_range.start, byte_range.end, 206
         headers["Content-Range"] = f"bytes {start}-{end}/{size}"
-    storage = get_storage_client()
-    chunks = (
-        storage.stream_object(path)
-        if status == 200
-        else storage.stream_object_range(path, start=start, end_inclusive=end)
+    chunks = get_storage_client().stream_object(
+        path, expected_size=size, byte_range=None if status == 200 else (start, end)
     )
     try:
         first = next(chunks)

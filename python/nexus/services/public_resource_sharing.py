@@ -45,7 +45,7 @@ from nexus.services.public_html import sanitize_public_html
 from nexus.services.public_source_urls import public_source_url
 from nexus.services.reader_document import build_reader_document
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.storage.client import StorageError, get_storage_client, read_object_checked
+from nexus.storage.client import StorageError, get_storage_client
 
 Readiness = Literal["ProjectionNotReady", "ProjectionUnsupported"]
 _UNSUPPORTED: Readiness = "ProjectionUnsupported"
@@ -266,8 +266,7 @@ def read_asset(db: Session, token: str, ordinal: str) -> tuple[bytes, str]:
         _gone()
     image = images[int(ordinal)]
     try:
-        storage = get_storage_client()
-        data = read_object_checked(storage, image.storage_path, expected_size=image.size_bytes)
+        data = get_storage_client().read_object(image.storage_path, expected_size=image.size_bytes)
     except StorageError:
         _gone()
     return data, image.content_type

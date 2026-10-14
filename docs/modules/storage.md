@@ -1,38 +1,70 @@
 # Storage
 
-Storage objects are owned by capability-specific DB rows. A storage key by itself
-does not authorize access and must not encode user identity.
+## Purpose
 
-## Owners
+Private bytes (sources, epub assets, reading copies, staged uploads) live in one R2
+bucket. A key authorizes nothing: a viewer reaches bytes only after the owning row's
+check, then through a short-lived signed url or a server stream.
 
-| Object family | DB owner | Key shape | Access lane |
-| --- | --- | --- | --- |
-| Original PDF/EPUB sources | `media_file` | `media/{media_id}/original.{pdf,epub}`, `media/{media_id}/candidates/{token}/original.{pdf,epub}` or, fetched from a url, `media/{media_id}/source/{attempt_id}.original-{pdf,epub}` | viewer-authenticated media/file services |
-| Browser article packets | `media_source_attempts.source_payload.storage_path` | `media/{media_id}/candidates/{token}/original.json` or `media/{media_id}/source/{attempt_id}.json` | private source lifecycle only; never a `media_file` row |
-| Upload staging | `media_upload_sessions` | `uploads/sessions/{session_id}/{generation}/original.{pdf,epub,json}` | private upload lifecycle only |
-| Post Room email bodies | `media_source_attempts.source_payload.storage_path` | `media/{media_id}/source/{attempt_id}.html` | private source lifecycle only |
-| Extracted EPUB resources | `epub_resources` | `media/{media_id}/assets/{asset_key}` | viewer-authenticated EPUB asset route |
+## Contract
 
-All storage path construction goes through `python/nexus/storage/paths.py`.
-Extension-taking builders accept only bare extensions: no leading dot, dot,
-slash, backslash, or empty value. Storage keys are owner IDs or stable source
-keys, not content hashes. Object reads enforce DB-owned byte-size metadata at
-read time.
+`python/nexus/storage/client.py`, `get_storage_client()` (the process singleton,
+closed at exit; unconfigured R2 raises `StorageError`):
 
-The Oracle public-domain corpus is ordinary media: its source files
-(EPUB/PDF/web-article) use the normal `media_file` / `epub_resources` lanes above.
-Oracle plates are not stored objects; they are static web assets
-(`apps/web/public/oracle-plates/<key>.jpg`).
+| call | answer |
+| --- | --- |
+| `sign_upload(path, *, content_type, size_bytes, expires_in)` | a PUT url that admits exactly that type and length |
+| `sign_download(path, *, expires_in)` | a GET url |
+| `head_object(path)` | `ObjectMetadata{content_type, size_bytes}`, or `None` when missing |
+| `stream_object(path, *, expected_size=None, byte_range=None)` | lazy chunks of at most 8 MiB; `byte_range` is inclusive |
+| `read_object(path, *, expected_size=None)` | the whole object |
+| `put_object(path, body, content_type)` | bytes, or a file at byte 0 |
+| `copy_object(source, destination)`, `delete_object(path)` | |
+| `list_objects(prefix, *, continuation_token=None)` | one page: `([(key, last_modified)], next_token)` |
 
-## Public vs Private Assets
+Failures raise `StorageError(message, code)`, which is not an `ApiError`: each caller
+maps it. `code` is `E_STORAGE_MISSING` for a missing object on read or copy (head
+answers `None`), else `E_STORAGE_ERROR`. Botocore retries a transient failure (a 5xx,
+throttling, a request timeout, a dropped connection) itself, three attempts in all,
+inside the lock, and resends a file body from byte 0; any other failure (a 403, say)
+is not retried.
 
-Private media assets require a viewer authorization check before metadata is
-resolved. They must not be added to Next Image `images.localPatterns`.
+Key shapes, all built in `python/nexus/storage/paths.py`:
 
-Static web assets (the Oracle plates under `/oracle-plates/**`) are the only
-Next Image local pattern; they are public files, not storage objects.
+| key | owner row |
+| --- | --- |
+| `media/{media_id}/source/{attempt_id}.{html,original-pdf,original-epub}` | the attempt's `source_payload.storage_path` (a Post Room body), or `media_file` (a file fetched from a url) |
+| `media/{media_id}/candidates/{candidate_id}/original.{pdf,epub,json}` | `media_file`, or for an article packet the attempt's `source_payload.storage_path` |
+| `media/{media_id}/source/{attempt_id}/assets/{asset_key}` | `epub_resources` |
+| `media/{media_id}/reading-copies/{copy_id}.zip` | none: built per request, handed back signed |
+| `uploads/sessions/{session_id}/{generation}/original.{pdf,epub,json}` | `media_upload_sessions` (staging) |
 
-## Media Teardown & Lifecycle
+## Invariants
+
+- Keys are built from owner ids and our own extensions, never a content hash or a user
+  identity; an epub asset key comes from the archive and is refused with a leading
+  `/` or an empty, `.` or `..` part.
+- Bytes come first, then the row that names them; nothing reserves a path. The
+  periodic `storage_orphan_sweep` (every six hours) deletes a `media/` object only when
+  it is older than `STORAGE_ORPHAN_SWEEP_MIN_AGE_SECONDS` (24 h) and no `media_file`,
+  `epub_resources` row or attempt payload names it. The min age must outlast the
+  longest store-then-commit window (the 900 s background wall) and a reading copy's
+  signed url (`SIGNED_URL_EXPIRY_S`). Config refuses only values below 30 s
+  (mistakes); a deployed environment must keep it above both.
+- `uploads/` is reclaimed only by the R2 one-day lifecycle rule
+  (`deploy/cloudflare/r2-lifecycle.example.json`, applied with
+  `deploy/cloudflare/apply-r2-lifecycle.sh`); confirmation copies staged bytes to a
+  candidate under `media/`.
+- Every SDK call that can open or use a connection, and every body read, holds one
+  process lock, never held while yielding to a caller: botocore reloads CA
+  certificates into the shared TLS context when it opens a connection (#576).
+  Presigning sends nothing and runs outside the lock.
+- A read given `expected_size` proves the stored size before its first byte (a
+  mismatch raises then, not mid-body); a body that ends short raises.
+- Oracle plates are static web assets (`apps/web/public/oracle-plates/`), not stored
+  objects, and the only Next Image local pattern; private media never is one.
+
+## Media teardown
 
 Full contract: `docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §3.1 at `ebd648197`.
 
@@ -58,28 +90,3 @@ After commit it deletes those objects best-effort; an object it fails to delete,
 written after the deletion, is unowned and the orphan sweep reclaims it. There is no
 grace and no checkpoint. A dead job voids its exact intent while the media lives
 (`jobs/dead_letters.media_teardown`), so the media is readable again.
-
-**`tasks/storage_orphan_sweep.py`** is the one reclaimer of objects no row names; nothing
-reserves a path before a write. Writers store bytes first and then commit the row that
-names them, so a failed commit, a late browser PUT's candidate, a superseded remote file,
-a reused capture's candidate, a write after a teardown or an object a teardown failed to
-delete is unowned. The sweep durably pages the `media/` prefix, ignores objects modified
-within `storage_orphan_sweep_min_age_seconds` (default 24h), and deletes every path that
-`media_file`, `epub_resources` and the attempts' stored artifacts
-(`source_types.stored_artifact_path`) do not name. Orphans therefore live up to ~30 h.
-Runs on the job registry's `periodic_interval_seconds` mechanism (default
-`storage_orphan_sweep_interval_seconds` = 21600s / six hours) rather than a self-chained
-successor — the registry's per-slot `enqueue_unique_job` dedupe already guarantees an
-at-most-one run per slot, and `never_prune_dead=True` keeps a failed run
-operator-discoverable via `requeue_dead_job`.
-
-The one-day R2 lifecycle rule on the `uploads/` direct-upload staging prefix is
-the only reclaimer of staged bytes: confirmation copies them to a candidate under
-`media/`, and nothing deletes a generation's staging object. The repository-owned
-rule is `deploy/cloudflare/r2-lifecycle.example.json`; operators apply that exact
-file with `deploy/cloudflare/apply-r2-lifecycle.sh`.
-
-## Deployment
-
-Object-storage preconditions that migrations depend on are established by deploy
-or operator code, not app startup.

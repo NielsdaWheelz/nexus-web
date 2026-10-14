@@ -347,4 +347,4 @@ def _read_stored(attempt: MediaSourceAttempt) -> bytes:
     """The attempt's stored artifact (a capture packet, an email body)."""
     path = st.stored_artifact_path(attempt.source_payload)
     assert path is not None  # admission stores the artifact before the attempt names it
-    return b"".join(get_storage_client().stream_object(path))
+    return get_storage_client().read_object(path)

@@ -168,7 +168,7 @@ def create_session(
     if not isinstance(answer, _Generation):
         return answer
     try:
-        signed = get_storage_client().sign_upload(
+        upload_url = get_storage_client().sign_upload(
             answer.staging_path,
             content_type=answer.content_type,
             size_bytes=answer.size_bytes,
@@ -180,7 +180,7 @@ def create_session(
         import_ref=format_import_ref(UploadImportRef(session_id=answer.session_id)),
         session_id=answer.session_id,
         generation=answer.generation,
-        upload_url=signed.upload_url,
+        upload_url=upload_url,
         content_type=answer.content_type,
         expires_at=answer.expires_at,
     )
