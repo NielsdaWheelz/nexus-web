@@ -2,7 +2,7 @@
 
 2026-10-14; isolated branch `codex/x-import-titles`. initial source base
 `b6768bee2469cbc3a43902302836a44d07a11ea7`, integrated with upstream
-`fa62a6901`; migration `0277→0278`.
+`fa62a6901`, then `f30a844a5`; migration `0277→0278`.
 temporary checks follow the approved red/green/refactor/deletion sequence;
 the permanent gate remains `./scripts/test`.
 
@@ -23,9 +23,11 @@ the permanent gate remains `./scripts/test`.
 | receipt recovery | escaping provider error, actual task cancellation, sigkill/dead-letter/next-attempt interruption, preserved terminal calls and late callback refusal passed |
 
 source, metadata and reader owners reviewed each other's publication boundaries.
-an independent session additionally reviews attribution, lock order, migration,
-capability parity and operator accounting. final review/static/deletion receipts
-are recorded with the final change.
+an independent session reviewed attribution, lock order, migration, capability
+parity and operator accounting. a second peer review confirmed each resolution.
+browser runtime checks passed again at `830c1eca` after the first rebase. the
+subsequent `f30a844a5` integration preserves both lectern placement receipts and
+pending source refresh receipts; its shared-action composition was peer-reviewed.
 
 the independent review's five concrete findings received targeted red/green checks:
 no repeated primary thread bodies; actual baseline photo/video canonical text and
@@ -54,11 +56,15 @@ the reader fixes do not claim those broader contracts.
 legitimate missing media-expansion behavior is an [unverified provider question](tickets/x-media-expansion-absence-unqualified.md),
 not an observed capture defect; strict incomplete-response failure remains visible.
 
-production migration and the production refresh census have not run. the existing
-release owner must use a clean merged main candidate and verified backup; see
+production migration and the production refresh census have not run. the owner approved completing the aligned release here. it still requires a
+clean merged main candidate and verified backup; see
 [the release item](tickets/x-title-production-cutover.md). no production data was
 changed during isolated qualification.
 
 sanitized receipts are retained outside the repository at
-`/private/tmp/nexus-x-titles-proof-20261014/`. temporary tests, provider/auth secrets
-and setup are removed after final green; no runtime test seam or harness remains.
+`/private/tmp/nexus-x-titles-proof-20261014/`. 87 sanitized receipt/review/screenshot files are retained. temporary tests, proof
+credentials, isolated containers, volumes and setup were deleted after final green;
+shared account state and standard development dependencies were preserved. no
+runtime test seam or harness remains. `./scripts/test` passed after deletion and
+`f30a844a5` integration (exit 0, canonical head `0278`); its receipt is
+`static-post-deletion.log` in that directory.

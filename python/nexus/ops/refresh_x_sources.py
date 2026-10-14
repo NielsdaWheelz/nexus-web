@@ -273,7 +273,7 @@ def apply_manifest(path: Path, *, session_factory: sessionmaker[Session]) -> Ref
         )
         save_manifest(path, manifest, new=False)
     # Jobs retain every inline child obligation even after later source replacement.
-    # Writers remain stopped during cutover; the census fixes the only admitted roots.
+    # Unrelated admissions stay paused while workers execute the frozen census.
     with session_factory() as db:
         rows = db.execute(
             text("""
