@@ -396,23 +396,23 @@ export async function removeUploadSession(
   publishImportsInvalidation();
 }
 
+/** `id` is the client-minted attempt id: resending it answers the same acceptance. */
 export async function addMediaFromUrl({
   url,
   libraryIds,
-  idempotencyKey = createRandomId("media-url"),
+  id,
   signal,
 }: {
   url: string;
   libraryIds: readonly string[];
-  idempotencyKey?: string;
+  id: string;
   signal?: AbortSignal;
 }): Promise<AcceptedIngest> {
   const { data } = await apiFetch<ApiJson<"/media/from-url", "post">>(
     "/api/media/from-url",
     {
       method: "POST",
-      headers: { "Idempotency-Key": idempotencyKey },
-      body: JSON.stringify({ url, library_ids: libraryIds }),
+      body: JSON.stringify({ id, url, library_ids: libraryIds }),
       signal,
     },
   );
@@ -424,7 +424,7 @@ export async function addMediaFromUrl({
     mediaId: data.media_id,
     importRef: data.import_ref,
     processing:
-      status === "failed" || data.source_attempt_status === "failed"
+      status === "failed"
         ? "failed"
         : status === "ready_for_reading"
           ? "ready"
@@ -439,23 +439,18 @@ export async function addMediaFromUrl({
 export async function captureSourceUrl({
   url,
   libraryIds,
-  idempotencyKey,
+  id,
   operation,
   signal,
 }: {
   url: string;
   libraryIds: readonly string[];
-  idempotencyKey?: string;
+  id: string;
   operation: CaptureOperation;
   signal?: AbortSignal;
 }): Promise<SourceUrlCaptureResult> {
   try {
-    const result = await addMediaFromUrl({
-      url,
-      libraryIds,
-      idempotencyKey,
-      signal,
-    });
+    const result = await addMediaFromUrl({ url, libraryIds, id, signal });
     return {
       label: url,
       ok: true,

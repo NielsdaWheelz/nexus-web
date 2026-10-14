@@ -80,8 +80,8 @@ from nexus.schemas.upload_failures import (
     UploadTransportTimeoutFailure,
     UploadVerificationFailureCode,
 )
-from nexus.services import libraries, library_entries, media_source_ingest
-from nexus.services import media_source_types as source_types
+from nexus.services import libraries, library_entries, source_types
+from nexus.services import source_attempts as sa
 from nexus.services.file_ingest_validation import (
     has_valid_file_signature,
     validate_file_ingest_request,
@@ -97,7 +97,6 @@ from nexus.services.resource_mutation_replay import (
     record_replay,
 )
 from nexus.services.sealed_handles import seal_upload_session, unseal_upload_session
-from nexus.services.source_publication import latest_source_attempt_id
 from nexus.services.url_normalize import normalize_url_for_display
 from nexus.storage.client import StorageClient, StorageError, get_storage_client
 from nexus.storage.paths import (
@@ -254,7 +253,7 @@ def create_upload_session(
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Idempotency-Key is too long.")
     created = False
     with transaction(db):
-        media_source_ingest.lock_identity(db, f"media_upload:{viewer_id}:{clean_key}")
+        sa.lock_identity(db, f"media_upload:{viewer_id}:{clean_key}")
         session = db.execute(
             select(MediaUploadSession)
             .where(
@@ -621,9 +620,7 @@ def confirm_upload_session(
             )
         media = None
         if capture is not None:
-            media_source_ingest.lock_identity(
-                db, f"browser_capture:{viewer_id}:{capability.kind}:{capture.sha256}"
-            )
+            sa.lock_identity(db, f"browser_capture:{viewer_id}:{capability.kind}:{capture.sha256}")
             media = _readable_browser_capture(
                 db, viewer_id=viewer_id, kind=capability.kind, sha256=capture.sha256
             )
@@ -662,33 +659,25 @@ def confirm_upload_session(
             db, viewer_id, media.id, destination_ids
         )
         if created:
-            attempt = media_source_ingest.create_attempt(
+            attempt = sa.create_attempt(
                 db,
+                id=new_uuid7(),
                 media=media,
-                viewer_id=viewer_id,
+                actor_id=viewer_id,
                 source_type=_SOURCE_TYPES[(capability.kind, capture is None)],
-                intent_key=f"upload_session:{session.id}",
                 requested_url=media.requested_url,
                 canonical_source_url=media.canonical_source_url,
                 provider=media.provider,
                 provider_target_ref=None,
-                source_payload=_source_payload(session, candidate, capture, destination_ids),
-                idempotency_key=None,
-                status="accepted",
+                payload=_source_payload(session, candidate, capture, destination_ids),
             )
             mark_extracting(db, media)
-            media_source_ingest.enqueue_accepted_source_attempt_in_transaction(
-                db,
-                media_id=media.id,
-                attempt_id=attempt.id,
-                actor_user_id=viewer_id,
-                request_id=request_id,
-            )
-            published_attempt_id = attempt.id
+            sa.enqueue_attempt(db, attempt, actor_id=viewer_id, request_id=request_id)
         else:
-            published_attempt_id = latest_source_attempt_id(db, media.id)
-            if published_attempt_id is None:
+            attempt = sa.latest_attempt(db, media.id, lock=False)
+            if attempt is None:
                 raise ApiError(ApiErrorCode.E_INTERNAL, "Reused capture has no source attempt.")
+        published_attempt_id = attempt.id
         published_media_id = media.id
         session.published_media_id = published_media_id
         session.published_source_attempt_id = published_attempt_id

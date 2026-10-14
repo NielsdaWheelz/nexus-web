@@ -56,32 +56,30 @@ there is no compatibility arm.
 - no browser capture in flight: a packet uploaded before the deploy holds Presence metadata
   and fails validation when confirmed after it.
 
-## stored article packets (with writers stopped, after 0279)
+## stored article packets (with writers stopped, before migrating)
 
-Every `browser_article_capture` packet already in storage holds `byline`, `excerpt`,
-`site_name` and `published_time` as Presence objects; the decoder now refuses them
-(`E_INVALID_FILE_TYPE`, terminal), so a refresh, retry or stale requeue of any captured article
-would fail it. `nexus convert-browser-article-captures` now ends with
-`unwrap_article_packet_presence`: each such packet is rewritten in the current form to a fresh
-object, its attempts move to it (`size_bytes`, `sha256`, `media.browser_capture_sha256`
-follow), and the old object stays under `retained_legacy_paths` for rollback. The release
-already runs that command twice after migrating with writers stopped and refuses any
-second-pass output (`deploy/hetzner/release.py` `convert_browser_captures`); the first pass
-prints one `unwrapped media ...` line per packet. A packet that is neither current nor exactly
-Presence-wrapped stops the run naming its media. Keep the command until this release ran
-(`docs/tickets/remove-browser-capture-conversion-command.md`).
+- the stack ships no packet conversion: the ingest slice deletes
+  `nexus convert-browser-article-captures` and `release.py`'s conversion step in this
+  release. every packet the pre-release code wrote holds `byline`, `excerpt`, `site_name`
+  and `published_time` as Presence objects, which the new decoder refuses.
+- census, which must read 0 (every `browser_article_capture` attempt created before the
+  deploy names such a packet):
+  `select count(*) from media_source_attempts where source_type = 'browser_article_capture';`
+- if it is not 0, those articles stay readable, but a refresh or retry of one fails
+  terminally (`E_INVALID_FILE_TYPE`). recapture them from the browser after the release.
+- the 665 backup read 0.
 
 ## rollback
 
 Restore the pre-release backup, re-run `deploy/hetzner/sync-env.sh` from the previous sha
 (its memory config file is a Presence document again; the previous image refuses the `null`
 file at startup, and `sync-env` never runs implicitly; the old content-addressed files are
-never pruned), then redeploy the previous sha, apk and extension together. The restored
-attempts name the retained pre-unwrap packets.
+never pruned), then redeploy the previous sha, apk and extension together. No stored packet is
+rewritten, so the restored attempts name packets the previous sha reads.
 
 ## resolved when
 
 The release carrying this commit ran with: `sync-env.sh` republished from the release sha,
-0279 applied, the packet unwrap run with a zero-work second pass, the new apk installed and smoked (playback position sync, natural end,
+the packet census at 0 (or its articles recaptured), 0279 applied, the new apk installed and smoked (playback position sync, natural end,
 listening activity in Stats, offline download), the new extension capturing, and no 422 in
 the api logs from old clients after the owner's devices updated.

@@ -1,7 +1,8 @@
-"""Freeze and refresh the existing X census through ordinary replayable source admission.
+"""Freeze and refresh the existing X census through ordinary source admission.
 
 python -m nexus.ops.refresh_x_sources plan|apply --manifest /path/to/receipts.json
 Run apply again to observe settlement; workers and exact-job repair remain ordinary owners.
+A resent refresh names the same expected attempt, so it answers the refresh that landed.
 """
 
 from __future__ import annotations
@@ -11,24 +12,24 @@ import json
 import os
 from collections import Counter
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, JsonValue
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.db.models import Media, MediaSourceAttempt, MediaSourceAttemptStatus
+from nexus.db.models import Media, MediaSourceAttempt
 from nexus.db.models import XSourceSnapshot as StoredXSourceSnapshot
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.jobs.queue import get_job, jobs_for_payload
-from nexus.schemas.media import SourceRefreshAdmission
+from nexus.schemas.media import SourceAdmission
 from nexus.schemas.metadata_enrichment import MetadataOperationOut, TitleMetadataJobPayload
 from nexus.services.media import get_media_for_viewer
-from nexus.services.media_source_ingest import refresh_source_for_viewer
-from nexus.services.media_source_types import X_POST
+from nexus.services.media_source_ingest import refresh_source
 from nexus.services.metadata_operations import metadata_operations_for_jobs
-from nexus.services.source_publication import latest_source_attempt_id
+from nexus.services.source_attempts import latest_attempt
+from nexus.services.source_types import FAILED, SUCCEEDED, X_POST
 from nexus.services.x_source import has_retained_x_publication
 
 
@@ -44,7 +45,7 @@ class Refusal(_Record):
 class SourceReceipt(_Record):
     source_attempt_id: UUID
     job_id: UUID | None
-    attempt_status: MediaSourceAttemptStatus
+    attempt_status: str
     job_status: str | None
     error_code: str | None
     result: dict[str, JsonValue] | None
@@ -61,9 +62,8 @@ class RefreshTarget(_Record):
     media_id: UUID
     creator_id: UUID | None
     expected_attempt_id: UUID | None
-    client_mutation_id: UUID
     preview_refusal: Refusal | None
-    admission: SourceRefreshAdmission | None
+    admission: SourceAdmission | None
     inline_parent_attempt_id: UUID | None
     refusal: Refusal | None
     source: SourceReceipt | None
@@ -89,7 +89,8 @@ def plan_manifest(*, session_factory: sessionmaker[Session]) -> RefreshManifest:
             .order_by(Media.id)
         ):
             creator = media.created_by_user_id
-            attempt = latest_source_attempt_id(db, media.id)
+            latest = latest_attempt(db, media.id, lock=False)
+            attempt = None if latest is None else latest.id
             refusal: Refusal | None = None
             if creator is None:
                 refusal = Refusal(code="missing_creator", message="media has no creator")
@@ -112,7 +113,6 @@ def plan_manifest(*, session_factory: sessionmaker[Session]) -> RefreshManifest:
                     media_id=media.id,
                     creator_id=creator,
                     expected_attempt_id=attempt,
-                    client_mutation_id=uuid4(),
                     preview_refusal=refusal,
                     admission=None,
                     inline_parent_attempt_id=None,
@@ -177,17 +177,15 @@ def apply_manifest(path: Path, *, session_factory: sessionmaker[Session]) -> Ref
                         .where(
                             MediaSourceAttempt.media_id == target.media_id,
                             MediaSourceAttempt.source_type == X_POST,
-                            MediaSourceAttempt.status == MediaSourceAttemptStatus.succeeded,
+                            MediaSourceAttempt.status == SUCCEEDED,
                             StoredXSourceSnapshot.published_at >= manifest.created_at,
                             MediaSourceAttempt.source_payload[
                                 "parent_source_attempt_id"
                             ].astext.in_(parent_attempt_ids.keys()),
                         )
                     )
-                    if (
-                        inline is not None
-                        and latest_source_attempt_id(db, target.media_id) == inline.id
-                    ):
+                    latest = latest_attempt(db, target.media_id, lock=False)
+                    if inline is not None and latest is not None and latest.id == inline.id:
                         parent_id = inline.source_payload["parent_source_attempt_id"]
                         # justify-defect: the query matched a recorded parent attempt's UUID text.
                         assert isinstance(parent_id, str)
@@ -204,11 +202,10 @@ def apply_manifest(path: Path, *, session_factory: sessionmaker[Session]) -> Ref
             else:
                 try:
                     with session_factory() as db:
-                        admission = refresh_source_for_viewer(
-                            db=db,
+                        admission = refresh_source(
+                            db,
                             viewer_id=target.creator_id,
                             media_id=target.media_id,
-                            client_mutation_id=str(target.client_mutation_id),
                             expected_attempt_id=target.expected_attempt_id,
                             request_id=None,
                         )
@@ -235,7 +232,7 @@ def apply_manifest(path: Path, *, session_factory: sessionmaker[Session]) -> Ref
                     source = SourceReceipt(
                         source_attempt_id=attempt.id,
                         job_id=attempt.job_id,
-                        attempt_status=MediaSourceAttemptStatus(attempt.status),
+                        attempt_status=attempt.status,
                         job_status=None if job is None else job.status,
                         error_code=attempt.error_code,
                         result=None if job is None else job.result,
@@ -244,7 +241,7 @@ def apply_manifest(path: Path, *, session_factory: sessionmaker[Session]) -> Ref
                     target = target.model_copy(update={"source": source})
                     if (
                         target.admission is not None or target.inline_parent_attempt_id is not None
-                    ) and source.attempt_status == MediaSourceAttemptStatus.succeeded:
+                    ) and source.attempt_status == SUCCEEDED:
                         assert target.creator_id is not None
                         title = _title_receipt(
                             db,
@@ -270,13 +267,17 @@ def apply_manifest(path: Path, *, session_factory: sessionmaker[Session]) -> Ref
             WHERE job.kind = 'enrich_metadata' AND job.payload->>'purpose' = 'title'
               AND job.created_at >= :created_at
               AND (source.media_id = ANY(:media_ids)
-                   OR source.source_payload->>'parent_media_id' = ANY(:parent_ids))
+                   OR source.source_payload->>'parent_source_attempt_id' = ANY(:parent_ids))
             ORDER BY source.media_id, source.id, job.created_at, job.id
         """),
             {
                 "created_at": manifest.created_at,
                 "media_ids": [item.media_id for item in targets],
-                "parent_ids": [str(item.media_id) for item in targets],
+                "parent_ids": [
+                    str(item.admission.source_attempt_id)
+                    for item in targets
+                    if item.admission is not None
+                ],
             },
         ).all()
         parent_jobs = {item.title.operation.job_id for item in targets if item.title is not None}
@@ -335,8 +336,7 @@ def report(manifest: RefreshManifest) -> dict[str, int | bool]:
     )
     for target in manifest.targets:
         if target.source is not None and (
-            target.source.attempt_status
-            not in {MediaSourceAttemptStatus.succeeded, MediaSourceAttemptStatus.failed}
+            target.source.attempt_status not in {SUCCEEDED, FAILED}
             or (
                 target.source.job_status is not None
                 and target.source.job_status not in {"succeeded", "dead"}
@@ -347,7 +347,7 @@ def report(manifest: RefreshManifest) -> dict[str, int | bool]:
             counts["blocked_or_failed" if target.refusal is not None else "unaccounted"] += 1
         elif target.source is None:
             counts["unaccounted"] += 1
-        elif target.source.attempt_status == MediaSourceAttemptStatus.failed:
+        elif target.source.attempt_status == FAILED:
             source = target.source
             unavailable = (
                 source.error_code == ApiErrorCode.E_X_POST_UNAVAILABLE.value

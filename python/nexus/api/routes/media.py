@@ -14,8 +14,6 @@ from nexus.schemas.contributors import MediaAuthorsOut, MediaAuthorsPutRequest
 from nexus.schemas.media import (
     MediaDeleteResult,
     MediaOut,
-    RefreshSourceRequest,
-    SourceRefreshAdmission,
 )
 from nexus.schemas.media_summary import (
     MediaSummaryResolutionOut,
@@ -31,7 +29,7 @@ from nexus.schemas.metadata_enrichment import (
 from nexus.services import contributors as contributors_service
 from nexus.services import media as media_service
 from nexus.services import media_deletion as media_deletion_service
-from nexus.services import media_source_ingest, metadata_dispatch, metadata_reviews
+from nexus.services import metadata_dispatch, metadata_reviews
 
 router = APIRouter(tags=["media"])
 
@@ -139,19 +137,3 @@ def remove_media(
             "Whole-resource media deletion does not accept query parameters",
         )
     return Data(data=media_deletion_service.remove_media_for_viewer(db, viewer.user_id, media_id))
-
-
-@router.post("/media/{media_id}/refresh", status_code=202)
-def refresh_media_source(
-    media_id: UUID, body: RefreshSourceRequest, viewer: ViewerDep, db: DbSession
-) -> Data[SourceRefreshAdmission]:
-    return Data(
-        data=media_source_ingest.refresh_source_for_viewer(
-            db=db,
-            viewer_id=viewer.user_id,
-            media_id=media_id,
-            request_id=get_request_id(),
-            client_mutation_id=body.client_mutation_id,
-            expected_attempt_id=body.expected_attempt_id,
-        )
-    )

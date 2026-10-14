@@ -424,8 +424,7 @@ production writes occurred.
 residual work: [shared prose extraction](tickets/add-link-paste-mutates-url-input.md),
 placement consolidation (since done: [saved placement](modules/add-content.md#saved-placement)),
 [backend replay outcome](tickets/source-replay-is-reported-as-content-duplicate.md),
-[joined replay](tickets/joined-url-admission-does-not-record-its-replay-key.md),
-[replay after access loss](tickets/url-replay-requires-current-destination-write-access.md),
-[canonical replay lifetime](tickets/canonical-source-teardown-deletes-admission-replay.md)
+joined replay and replay after access loss (since resolved by the ingest slice),
+canonical replay lifetime (now [redirected url adds](issues/redirected-url-add-answers-a-superseded-media.md))
 and the newly observed [workspace teardown body](tickets/workspace-session-unload-can-send-empty-body.md).
 these remain with their responsible owners; no in-scope acceptance was waived.

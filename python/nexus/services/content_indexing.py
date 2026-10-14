@@ -22,7 +22,7 @@ import json
 from array import array
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import Row, text
@@ -63,24 +63,13 @@ from nexus.services.parser_temp import parser_attempt_directory
 from nexus.services.reader_apparatus import read_note_regions
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_mutation_replay import (
-    canonical_json_bytes,
-    lookup_replay,
-    record_replay,
-)
 from nexus.services.web_article_structure import (
     add_heading_anchors,
     build_web_article_index_blocks,
 )
 
-if TYPE_CHECKING:
-    # a type only: ingest imports this module, so the actor's home cannot be imported here.
-    from nexus.services.media_source_ingest import ViewerRecovery
-
 JOB_KIND = "media_content_reindex_job"
-ReindexReason = Literal[
-    "source_success", "reconciliation", "oracle_corpus_seed", "operator_heading_normalization"
-]
+ReindexReason = Literal["source_success", "reconciliation", "oracle_corpus_seed"]
 _TRANSCRIPT_KINDS = ("podcast_episode", "video")
 
 
@@ -95,14 +84,6 @@ class ContentIndexResult:
     owner: IndexOwner
     status: str  # ready | no_text | ocr_required
     chunk_count: int
-
-
-@dataclass(frozen=True)
-class MediaContentReindexIntent:
-    revision: int
-    background_job_id: UUID
-    suspended: bool  # the current revision's job is dead; nothing was enqueued
-    enqueued: bool  # a new queue row was inserted (not a waiting one reset)
 
 
 # Materialization: one transaction replaces an owner's whole index.
@@ -315,8 +296,8 @@ def _media_blocks(db: Session, media_id: UUID, kind: str, plain_text: str) -> li
         else:
             html = html or ""
             if add_heading_anchors(html, fragment_idx=idx) != html:
-                # Publication owns heading normalization; this job dies so the
-                # operator's heading repair (ops.processing_recovery) can find it.
+                # Publication owns heading normalization: a fragment without
+                # anchors is a defect, and this job dies so the repair offer shows it.
                 raise AssertionError("web source fragment is missing Nexus heading anchors")
             for spec in build_web_article_index_blocks(
                 html_sanitized=html,
@@ -419,9 +400,7 @@ def _event(db: Session, media_id: UUID, facts: IndexFacts) -> None:
     append_processing_event(db, media_id=media_id, facts=facts, stage="Index", failure_code=None)
 
 
-def request_media_content_reindex(
-    db: Session, *, media_id: UUID, reason: ReindexReason
-) -> MediaContentReindexIntent:
+def request_media_content_reindex(db: Session, *, media_id: UUID, reason: ReindexReason) -> None:
     """Raise the revision and leave exactly one waiting job for it.
 
     A waiting (unclaimed) job of an older revision is reset to this one; a running job
@@ -447,24 +426,6 @@ def request_media_content_reindex(
         else queue.enqueue_job(db, kind=JOB_KIND, payload=payload)
     )
     _event(db, media_id, IndexAccepted(revision=revision, job_id=job.id))
-    return MediaContentReindexIntent(revision, job.id, suspended=False, enqueued=not waiting)
-
-
-def ensure_media_content_reindex_job(
-    db: Session, *, media_id: UUID, reason: ReindexReason
-) -> MediaContentReindexIntent:
-    """The reconciler's admission: keep a live job, report a dead one, else request anew.
-
-    A revision whose job finished without publishing is abandoned for a fresh one (a
-    revision never gets a second job). A dead job is never re-admitted here (that would
-    retry a deterministic failure every tick); its owner repairs it
-    (``repair_dead_media_reindex``).
-    """
-    state = _lock(db, media_id)
-    job = None if state is None else _current_job(db, media_id, state.revision)
-    if state is None or job is None or job.status == "succeeded":
-        return request_media_content_reindex(db, media_id=media_id, reason=reason)
-    return MediaContentReindexIntent(state.revision, job.id, job.status == "dead", enqueued=False)
 
 
 def request_stale_media_content_reindex(
@@ -626,41 +587,28 @@ def search_recovery(facts: SearchRecoveryFacts) -> SearchRecoveryAnswer:
 def repair_dead_media_reindex(
     db: Session,
     *,
-    actor: ViewerRecovery,
+    viewer_id: UUID,
     media_id: UUID,
     expected_revision: int,
     expected_job_id: UUID,
 ) -> SearchRepairAdmission:
-    """Requeue the exact dead job of the current revision; idempotent per mutation id.
+    """Requeue the exact dead job of the current revision.
 
+    Retry rule: the same revision and job, no longer dead, is the repair that landed.
     Never touches the source or the materialization: a ``ready`` index keeps serving
     search until the rerun marks it ``indexing``.
     """
-    scope = f"media_search_repair:{media_id}"
-    request_bytes = canonical_json_bytes(
-        {"expected_revision": expected_revision, "expected_job_id": str(expected_job_id)}
-    )
 
     def admit() -> SearchRepairAdmission:
-        if not can_read_media(db, actor.viewer_id, media_id):
+        if not can_read_media(db, viewer_id, media_id):
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
         creator = db.scalar(
             text("SELECT created_by_user_id FROM media WHERE id = :id"), {"id": media_id}
         )
         if creator is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        if creator != actor.viewer_id:
+        if creator != viewer_id:
             raise ForbiddenError(ApiErrorCode.E_OWNER_REQUIRED, "Media owner required")
-        replayed = lookup_replay(
-            db,
-            viewer_id=actor.viewer_id,
-            scope=scope,
-            client_mutation_id=actor.client_mutation_id,
-            request_bytes=request_bytes,
-        )
-        if replayed is not None:
-            db.rollback()
-            return SearchRepairAdmission.model_validate(replayed)
         state = _lock(db, media_id)
         if (
             db.scalar(
@@ -676,30 +624,19 @@ def repair_dead_media_reindex(
                 ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Media has no search index to repair."
             )
         job = _current_job(db, media_id, state.revision)
-        dead = job if job is not None and job.status == "dead" else None
-        if dead is None or (state.revision, dead.id) != (expected_revision, expected_job_id):
+        if job is None or (state.revision, job.id) != (expected_revision, expected_job_id):
             current: dict[str, object] = {"revision": state.revision}
-            if dead is not None:
-                current["job_id"] = str(dead.id)
+            if job is not None and job.status == "dead":
+                current["job_id"] = str(job.id)
             raise ConflictError(
                 ApiErrorCode.E_RESOURCE_CONFLICT,
                 "The inspected search index execution is no longer current.",
                 details={"current": current},
             )
-        queue.requeue_dead_job(db, job_id=dead.id)
-        _event(db, media_id, IndexRecoveryAccepted(revision=state.revision, job_id=dead.id))
-        admission = SearchRepairAdmission(
-            media_id=media_id, revision=state.revision, job_id=dead.id
-        )
-        record_replay(
-            db,
-            viewer_id=actor.viewer_id,
-            scope=scope,
-            client_mutation_id=actor.client_mutation_id,
-            request_bytes=request_bytes,
-            response_json=admission.model_dump(mode="json"),
-        )
+        if job.status == "dead":
+            queue.requeue_dead_job(db, job_id=job.id)
+            _event(db, media_id, IndexRecoveryAccepted(revision=state.revision, job_id=job.id))
         db.commit()
-        return admission
+        return SearchRepairAdmission(media_id=media_id, revision=state.revision, job_id=job.id)
 
     return admit_serializable(db, "repair_dead_media_reindex", admit)

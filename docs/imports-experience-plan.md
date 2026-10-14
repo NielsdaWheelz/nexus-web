@@ -266,7 +266,7 @@ and record objections/resolutions. missing runtime access is a blocker, never as
   and no longer advertise read/highlight/quote/search. no synthetic publication repair.
 - temporary-test deletion gives up future automatic regression protection. retained
   acceptance/evidence and the existing static gate remain; live repair stays the operating model.
-- [url source supersession](tickets/readded-url-returns-a-media-id-that-is-then-superseded.md)
+- [url source supersession](issues/redirected-url-add-answers-a-superseded-media.md)
   can later retire an issued media ref; its handoff then shows unavailable. durable source
   identity repair is separate. no redirect workaround. upload refs retain their lifetime identity.
 - native replay/deduplication semantics and other ingestion/history defects remain separately

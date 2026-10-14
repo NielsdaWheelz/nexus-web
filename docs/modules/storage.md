@@ -7,11 +7,10 @@ does not authorize access and must not encode user identity.
 
 | Object family | DB owner | Key shape | Access lane |
 | --- | --- | --- | --- |
-| Original PDF/EPUB sources | `media_file` | `media/{media_id}/original.{pdf,epub}` or `media/{media_id}/candidates/{token}/original.{pdf,epub}` | viewer-authenticated media/file services |
+| Original PDF/EPUB sources | `media_file` | `media/{media_id}/original.{pdf,epub}`, `media/{media_id}/candidates/{token}/original.{pdf,epub}` or, fetched from a url, `media/{media_id}/source/{attempt_id}.original-{pdf,epub}` | viewer-authenticated media/file services |
 | Browser article packets | `media_source_attempts.source_payload.storage_path` | `media/{media_id}/candidates/{token}/original.json` or `media/{media_id}/source/{attempt_id}.json` | private source lifecycle only; never a `media_file` row |
 | Upload staging | `media_upload_sessions` | `uploads/sessions/{session_id}/{generation}/original.{pdf,epub,json}` | private upload lifecycle only |
-| Media source artifacts | `media_source_attempts.source_payload` | `media/{media_id}/source/{attempt_id}.{html,tar}` | private source lifecycle only |
-| Pre-cutover browser-article blobs | `media_source_attempts.source_payload.retained_legacy_paths` (until the rollback window closes; `docs/tickets/remove-browser-capture-conversion-command.md`) | `media/{media_id}/source/{attempt_id}.{html,source-html}` | none; retained for rollback, swept once the key is dropped |
+| Post Room email bodies | `media_source_attempts.source_payload.storage_path` | `media/{media_id}/source/{attempt_id}.html` | private source lifecycle only |
 | Extracted EPUB resources | `epub_resources` | `media/{media_id}/assets/{asset_key}` | viewer-authenticated EPUB asset route |
 
 All storage path construction goes through `python/nexus/storage/paths.py`.

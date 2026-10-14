@@ -20,8 +20,8 @@ by provenance.
 - `media.py`: catalog/hydration and fragment listing only for web articles.
 - `web_article_structure.py`: sanitization, canonical text, and fragment block
   preparation.
-- `media_source_adapters.py`: detached acquisition and explicit per-family
-  prechecks, preparation and fenced publication.
+- `source_adapters.py`: detached acquisition and explicit per-family
+  prechecks, preparation and fenced publication ([ingest](ingest.md)).
 - `source_outcome.py`: native contributor targets, follow-up intent and pdf text
   availability; one public job-result projection excludes private observations.
 - `web_article.py`: fetched-article acquisition (egress, then the node filter)
@@ -55,7 +55,7 @@ A browser article capture is one immutable packet (`schemas/extension_capture.py
 `url`, `base_url`, `title`, readable `content_html`, bounded embed and note
 evidence in `source_html`, and nullable metadata), uploaded and verified through the
 upload-session lifecycle and referenced only by the attempt's
-`source_payload.storage_path`. `media_source_adapters.run_source_adapter`
+`source_payload.storage_path`. `source_adapters.acquire`
 decodes that packet with the same strict model, composes
 `prepare_web_article_fragment` with the packet's base url and evidence, and
 persists title, byline, excerpt, site name and published time from the packet at

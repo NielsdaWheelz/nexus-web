@@ -255,11 +255,11 @@ records `Publisher`, `Imported`, or `Generated` while the transcript is
 Ready/Partial.
 
 Failure raises to the source-attempt owner. A terminal code settles the attempt
-through `source_attempt_failures.py`, which publishes Media, job and transcript
+through `source_publication.py`, which publishes Media, job and transcript
 failure through `podcasts/transcription_failure.py` (`unavailable` for
 `E_TRANSCRIPT_UNAVAILABLE`, else `failed_provider`; it imports no provider: the
 supervisor path). A retryable failure (Deepgram 5xx, timeout) retries the job;
-when its retries run out, its `on_dead` hook (`source_attempt_failures.on_dead_letter`) settles a
+when its retries run out, its `on_dead` hook (`source_publication.on_dead_letter`) settles a
 still-running transcript attempt the same way, so a later request can admit a
 new one. Other source types keep their dead job for the source repair offer.
 

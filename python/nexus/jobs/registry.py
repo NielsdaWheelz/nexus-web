@@ -100,13 +100,13 @@ def registry() -> dict[str, JobDefinition]:
         # Background lane: one fresh, memory-bounded child per job.
         "ingest_media_source": JobDefinition(
             "background",
-            "nexus.services.media_source_ingest:run_job",
+            "nexus.services.source_runner:run_job",
             retry_delays=(60, 300),
             heavy=True,
             keep_dead=True,
             parser_temp_key="attempt_id",
-            on_failure="nexus.services.source_attempt_failures:on_failure",
-            on_dead="nexus.services.source_attempt_failures:on_dead_letter",
+            on_failure="nexus.services.source_publication:on_failure",
+            on_dead="nexus.services.source_publication:on_dead_letter",
             on_history="nexus.services.import_history:on_source_job_outcome",
         ),
         "media_content_reindex_job": JobDefinition(
@@ -155,14 +155,6 @@ def registry() -> dict[str, JobDefinition]:
             keep_dead=True,
         ),
         # Background upkeep, one job per slot.
-        "reconcile_stale_ingest_media_job": JobDefinition(
-            "background",
-            "nexus.tasks.reconcile_stale_ingest_media:run_job",
-            max_attempts=1,
-            retry_delays=(0,),
-            periodic_seconds=s.ingest_reconcile_schedule_seconds or None,
-            periodic_priority=-1000,  # recovery runs ahead of every other kind
-        ),
         "podcast_refresh_due_job": JobDefinition(
             "background",
             "nexus.services.podcasts.sync:run_due_job",

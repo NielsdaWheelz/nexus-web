@@ -27,13 +27,11 @@ from nexus.services import contributor_taxonomy as taxonomy
 from nexus.services import document_embeds as embeds
 from nexus.services import html_apparatus as apparatus
 from nexus.services.fragment_blocks import insert_fragment_blocks
-from nexus.services.media_source_ingest import (
-    enqueue_accepted_source_attempt_in_transaction,
-    reusable_embedded_source_media_ids,
-)
+from nexus.services.media_source_ingest import reusable_embedded_source_media_ids
 from nexus.services.net.safe_fetch import SafeFetchFailed, safe_stream, source_fetch_error
 from nexus.services.reader_apparatus import replace_media_apparatus
 from nexus.services.reader_publication import ReplaceSourceIssues, replace_reader_publication
+from nexus.services.source_attempts import enqueue_attempt
 from nexus.services.source_outcome import SourceRunOutcome, source_contributor_observations
 from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
 from nexus.services.url_normalize import normalize_url_for_display
@@ -191,14 +189,10 @@ def publish_article(
                 extraction_failed=prepared.document_embed_extraction_failed,
                 locked_existing_target_media_ids=frozenset(children),
             )
-            for child_media_id, child_attempt_id in queued:
-                enqueue_accepted_source_attempt_in_transaction(
-                    db,
-                    media_id=child_media_id,
-                    attempt_id=child_attempt_id,
-                    actor_user_id=owner,
-                    request_id=request_id,
-                )
+            for _child_media_id, child_attempt_id in queued:
+                child = db.get(MediaSourceAttempt, child_attempt_id)
+                assert child is not None  # accepted in this transaction
+                enqueue_attempt(db, child, actor_id=owner, request_id=request_id)
         if (metadata := article.metadata) is not None:
             title, excerpt = metadata.title.strip(), metadata.excerpt.strip()
             site_name = metadata.site_name.strip()

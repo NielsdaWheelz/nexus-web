@@ -24,7 +24,6 @@ from nexus.services.media_processing_state import mark_ready_for_reading
 from nexus.services.media_source_ingest import (
     accept_embedded_source,
     complete_x_post_snapshot_attempt,
-    lock_identity,
 )
 from nexus.services.metadata_dispatch import enqueue_metadata_enrichment
 from nexus.services.reader_publication import (
@@ -32,6 +31,7 @@ from nexus.services.reader_publication import (
     read_publication_generation,
     replace_reader_publication,
 )
+from nexus.services.source_attempts import lock_identity
 from nexus.services.source_outcome import SourceRunOutcome, source_contributor_observations
 from nexus.services.web_article import prepare_article, replace_article_fragments
 from nexus.services.web_article_structure import WebArticlePreparedFragment
@@ -185,8 +185,6 @@ def publish_prepared_x_source(
             db=db,
             viewer_id=viewer_id,
             url=canonical_x_post_url(quote_id),
-            parent_media_id=media_id,
-            document_embed_key=f"x-quote-post:{quote_id}",
             library_ids=library_ids,
         )
         quote_media_ids[quote_id] = accepted.media_id

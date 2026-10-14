@@ -223,7 +223,7 @@ def load_current_source_author_bylines(db: Session, *, media_id: UUID) -> list[s
                     AND cc.source = 'web_article_capture')
                 OR (source.source_type IN ('x_author_thread', 'x_post')
                     AND cc.source IN ('x_api_author_thread', 'x_api_post', 'x_api_quoted_post'))
-                OR (source.source_type IN ('youtube_video', 'video_transcript')
+                OR (source.source_type = 'youtube_video'
                     AND cc.source = 'youtube_metadata')
                 OR (source.source_type IN ('remote_pdf_url', 'uploaded_pdf_file',
                     'browser_pdf_capture') AND cc.source = 'pdf_metadata')

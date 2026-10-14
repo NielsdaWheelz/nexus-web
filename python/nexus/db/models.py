@@ -100,16 +100,6 @@ class TranscriptCoverage(str, PyEnum):
     full = "full"
 
 
-class MediaSourceAttemptStatus(str, PyEnum):
-    """Durable source-acquisition attempt state."""
-
-    accepted = "accepted"
-    queued = "queued"
-    running = "running"
-    succeeded = "succeeded"
-    failed = "failed"
-
-
 # =============================================================================
 # Models
 # =============================================================================
@@ -707,7 +697,7 @@ class Media(Base):
 
 
 class MediaSourceAttempt(Base):
-    """Durable record of one accepted source-ingest intent or retry."""
+    """One link of a media's source chain (``services/source_attempts.py``)."""
 
     __tablename__ = "media_source_attempts"
 
@@ -735,8 +725,6 @@ class MediaSourceAttempt(Base):
         TIMESTAMP(timezone=True), nullable=True
     )
     status: Mapped[str] = mapped_column(Text, nullable=False)
-    intent_key: Mapped[str] = mapped_column(Text, nullable=False)
-    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     requested_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     canonical_source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider: Mapped[str | None] = mapped_column(Text, nullable=True)

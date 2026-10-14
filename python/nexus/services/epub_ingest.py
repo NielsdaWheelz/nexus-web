@@ -31,7 +31,7 @@ from defusedxml.ElementTree import DefusedXMLParser
 from lxml.etree import LxmlError
 from lxml.html import HtmlElement
 from sqlalchemy import text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from nexus import web_paths
 from nexus.config import Settings, get_settings
@@ -107,7 +107,6 @@ from nexus.services.parser_temp import (
 from nexus.services.reader_apparatus import note_regions_from_publication, replace_media_apparatus
 from nexus.storage.client import StorageError
 from nexus.storage.paths import build_epub_attempt_asset_storage_path
-from nexus.tasks.storage_object_cleanup import reserve_storage_object_write
 from nexus.text import normalize_whitespace
 
 if TYPE_CHECKING:
@@ -334,7 +333,6 @@ def _resource_limit(message: str, *, dimension: ResourceFailureDimension) -> Epu
 
 def build_epub_extraction_plan(
     *,
-    session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt_id: UUID,
     storage_path: str,
@@ -379,7 +377,6 @@ def build_epub_extraction_plan(
             content, package = parsed
             asset_storage_paths = _write_epub_assets(
                 package,
-                session_factory=session_factory,
                 attempt_id=attempt_id,
                 storage_client=storage_client,
                 attempt_directory=attempt_directory,
@@ -815,24 +812,17 @@ def _chapter_source_ref(chapter: _ChapterSpec) -> dict[str, object]:
 def _write_epub_assets(
     package: _Package,
     *,
-    session_factory: sessionmaker[Session],
     attempt_id: UUID,
     storage_client: StorageClient,
     attempt_directory: Path,
 ) -> dict[str, str]:
-    """Reserve, then write, every referenced image; the caller finalizes after commit."""
+    """Write every referenced image before the plan names it; an image whose plan never
+    publishes is unowned, and the storage sweep reclaims it."""
     asset_storage_paths: dict[str, str] = {}
     for asset_index, asset in enumerate(package.asset_entries):
         storage_key = build_epub_attempt_asset_storage_path(
             package.media_id, attempt_id, asset.asset_key
         )
-        reservation_db = session_factory()
-        try:
-            reserve_storage_object_write(
-                reservation_db, media_id=package.media_id, storage_path=storage_key
-            )
-        finally:
-            reservation_db.close()
         try:
             with package.zf.open(asset.epub_path) as asset_stream:
                 if asset.content_type == _SVG_IMAGE_TYPE:

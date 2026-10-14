@@ -832,7 +832,7 @@ export interface paths {
         put?: never;
         /**
          * Post Email Ingest
-         * @description Configuration, size, signature, recipient, owner — all before any MIME parse.
+         * @description Configuration, size, signature, recipient and owner, all before any MIME parse.
          */
         post: operations["post_email_ingest_ingest_email_post"];
         delete?: never;
@@ -1410,7 +1410,7 @@ export interface paths {
         put?: never;
         /**
          * Create From Url
-         * @description Accept a URL source; the service classifies the kind. Clients then poll GET /media/{id}.
+         * @description Accept a url; the service classifies it. Clients then read GET /media/{id}.
          */
         post: operations["create_from_url_media_from_url_post"];
         delete?: never;
@@ -1933,8 +1933,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Refresh Media Source */
-        post: operations["refresh_media_source_media__media_id__refresh_post"];
+        /** Refresh Source */
+        post: operations["refresh_source_media__media_id__refresh_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1970,11 +1970,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Retry Ingest
-         * @description Admit one source retry; metadata has its own operation contract.
-         */
-        post: operations["retry_ingest_media__media_id__retry_post"];
+        /** Retry Source */
+        post: operations["retry_source_media__media_id__retry_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4617,9 +4614,9 @@ export interface components {
         Data_Finish_: {
             data: components["schemas"]["Finish"];
         };
-        /** Data[FromUrlResponse] */
-        Data_FromUrlResponse_: {
-            data: components["schemas"]["FromUrlResponse"];
+        /** Data[FromUrlOut] */
+        Data_FromUrlOut_: {
+            data: components["schemas"]["FromUrlOut"];
         };
         /** Data[GenerationCatalog] */
         Data_GenerationCatalog_: {
@@ -4817,13 +4814,9 @@ export interface components {
         Data_ResourceTargetSearchResponse_: {
             data: components["schemas"]["ResourceTargetSearchResponse"];
         };
-        /** Data[SourceRefreshAdmission] */
-        Data_SourceRefreshAdmission_: {
-            data: components["schemas"]["SourceRefreshAdmission"];
-        };
-        /** Data[SourceRetryAdmission] */
-        Data_SourceRetryAdmission_: {
-            data: components["schemas"]["SourceRetryAdmission"];
+        /** Data[SourceAdmission] */
+        Data_SourceAdmission_: {
+            data: components["schemas"]["SourceAdmission"];
         };
         /** Data[SuggestionsOut] */
         Data_SuggestionsOut_: {
@@ -5566,27 +5559,12 @@ export interface components {
             /** Start Offset */
             start_offset: number;
         };
-        /** FromUrlRequest */
-        FromUrlRequest: {
-            /** Library Ids */
-            library_ids?: string[];
-            /**
-             * Url
-             * @description The URL to ingest. Must be an absolute http/https URL, including PDF, EPUB, article, or video URLs.
-             */
-            url: string;
-        };
-        /** FromUrlResponse */
-        FromUrlResponse: {
-            /**
-             * Idempotency Outcome
-             * @enum {string}
-             */
-            idempotency_outcome: "created" | "reused" | "retrying" | "refreshed";
+        /** FromUrlOut */
+        FromUrlOut: {
+            /** Created */
+            created: boolean;
             /** Import Ref */
             import_ref: string;
-            /** Ingest Enqueued */
-            ingest_enqueued: boolean;
             /**
              * Media Id
              * Format: uuid
@@ -5598,13 +5576,27 @@ export interface components {
              * Format: uuid
              */
             source_attempt_id: string;
+        };
+        /**
+         * FromUrlRequest
+         * @description ``id`` is the client-minted attempt id: resending it answers the same acceptance.
+         *
+         *     Version 4 only: successor and system ids are version 5 (``uuid5``), so a client id
+         *     can never name an attempt the server derives (I10).
+         */
+        FromUrlRequest: {
             /**
-             * Source Attempt Status
-             * @enum {string}
+             * Id
+             * Format: uuid4
              */
-            source_attempt_status: "accepted" | "queued" | "running" | "succeeded" | "failed";
-            /** Source Type */
-            source_type: string;
+            id: string;
+            /** Library Ids */
+            library_ids?: string[];
+            /**
+             * Url
+             * @description The URL to ingest. Must be an absolute http/https URL, including PDF, EPUB, article, or video URLs.
+             */
+            url: string;
         };
         /** FullHistoryCoverage */
         FullHistoryCoverage: {
@@ -9785,8 +9777,6 @@ export interface components {
         };
         /** RefreshSourceRequest */
         RefreshSourceRequest: {
-            /** Client Mutation Id */
-            client_mutation_id: string;
             /**
              * Expected Attempt Id
              * Format: uuid
@@ -10159,18 +10149,11 @@ export interface components {
         };
         /** RetrySourceRequest */
         RetrySourceRequest: {
-            /** Client Mutation Id */
-            client_mutation_id: string;
             /**
              * Expected Attempt Id
              * Format: uuid
              */
             expected_attempt_id: string;
-            /**
-             * From Stage
-             * @constant
-             */
-            from_stage: "source";
         };
         /** RetryUploadOffer */
         RetryUploadOffer: {
@@ -10314,8 +10297,6 @@ export interface components {
          * @description Requeue the exact dead reindex job of one content-index revision.
          */
         SearchRepairRequest: {
-            /** Client Mutation Id */
-            client_mutation_id: string;
             /**
              * Expected Job Id
              * Format: uuid
@@ -11032,6 +11013,24 @@ export interface components {
              */
             source_attempt_id: string;
         };
+        /**
+         * SourceAdmission
+         * @description A retry's or refresh's attempt and its job (none for a successor born settled).
+         */
+        SourceAdmission: {
+            /** Job Id */
+            job_id: string | null;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
+        };
         /** SourceCountedProgress */
         SourceCountedProgress: {
             /** Completed */
@@ -11190,30 +11189,6 @@ export interface components {
              */
             source_attempt_id: string;
         };
-        /** SourceRefreshAdmission */
-        SourceRefreshAdmission: {
-            /**
-             * Job Id
-             * Format: uuid
-             */
-            job_id: string;
-            /**
-             * Kind
-             * @default SourceRefresh
-             * @constant
-             */
-            kind: "SourceRefresh";
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
-            /**
-             * Source Attempt Id
-             * Format: uuid
-             */
-            source_attempt_id: string;
-        };
         /** SourceRepairAdmission */
         SourceRepairAdmission: {
             /**
@@ -11242,8 +11217,6 @@ export interface components {
          * @description Requeue the exact dead job of one nonterminal source attempt.
          */
         SourceRepairRequest: {
-            /** Client Mutation Id */
-            client_mutation_id: string;
             /**
              * Expected Attempt Id
              * Format: uuid
@@ -11259,30 +11232,6 @@ export interface components {
              * @enum {string}
              */
             kind: "Source";
-        };
-        /** SourceRetryAdmission */
-        SourceRetryAdmission: {
-            /**
-             * Job Id
-             * Format: uuid
-             */
-            job_id: string;
-            /**
-             * Kind
-             * @default SourceRetry
-             * @constant
-             */
-            kind: "SourceRetry";
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
-            /**
-             * Source Attempt Id
-             * Format: uuid
-             */
-            source_attempt_id: string;
         };
         /** SourceRetryScheduled */
         SourceRetryScheduled: {
@@ -15362,7 +15311,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_FromUrlResponse_"];
+                    "application/json": components["schemas"]["Data_FromUrlOut_"];
                 };
             };
             /** @description Validation Error */
@@ -16358,7 +16307,7 @@ export interface operations {
             };
         };
     };
-    refresh_media_source_media__media_id__refresh_post: {
+    refresh_source_media__media_id__refresh_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -16379,7 +16328,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_SourceRefreshAdmission_"];
+                    "application/json": components["schemas"]["Data_SourceAdmission_"];
                 };
             };
             /** @description Validation Error */
@@ -16428,7 +16377,7 @@ export interface operations {
             };
         };
     };
-    retry_ingest_media__media_id__retry_post: {
+    retry_source_media__media_id__retry_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -16449,7 +16398,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_SourceRetryAdmission_"];
+                    "application/json": components["schemas"]["Data_SourceAdmission_"];
                 };
             };
             /** @description Validation Error */

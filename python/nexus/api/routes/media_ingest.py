@@ -1,13 +1,10 @@
-"""Media ingestion transport: URL and local-upload entry points and recovery.
+"""Local-upload transport: the upload-session entry points.
 
-Validate input, call one service, return the envelope. Every static
-``/media/<literal>`` path here is declared before this router's dynamic
-``/media/{media_id}/...`` paths, and this router is registered before the
-``media`` router so the literals are never parsed as UUIDs.
+Validate input, call one service, return the envelope. This router is registered
+before the ``media`` router so ``/media/uploads`` is never parsed as a UUID.
 """
 
-from typing import Annotated, assert_never
-from uuid import UUID
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response
 
@@ -19,49 +16,16 @@ from nexus.schemas.extension_capture import LocalFile
 from nexus.schemas.media import (
     ConfirmUploadSessionRequest,
     CreateUploadSessionRequest,
-    FromUrlRequest,
-    FromUrlResponse,
-    MediaRepairAdmission,
-    MediaRepairRequest,
     NeedsAttention,
     Published,
-    RetrySourceRequest,
     RetryUploadSessionRequest,
-    SearchRepairRequest,
-    SourceRepairRequest,
-    SourceRetryAdmission,
     UploadRequired,
     UploadSessionResponse,
     UploadTransportFailureRequest,
 )
-from nexus.services import (
-    content_indexing,
-    media_source_ingest,
-    media_upload_sessions,
-)
-from nexus.services.media_source_ingest import ViewerRecovery
+from nexus.services import media_upload_sessions
 
 router = APIRouter(tags=["media"])
-
-
-@router.post("/media/from-url", status_code=202)
-def create_from_url(
-    request_body: FromUrlRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-    request: Request,
-) -> Data[FromUrlResponse]:
-    """Accept a URL source; the service classifies the kind. Clients then poll GET /media/{id}."""
-    return Data(
-        data=media_source_ingest.accept_url_source(
-            db=db,
-            viewer_id=viewer.user_id,
-            url=request_body.url,
-            library_ids=request_body.library_ids,
-            request_id=get_request_id(),
-            idempotency_key=request.headers.get("Idempotency-Key"),
-        )
-    )
 
 
 @router.post("/media/uploads")
@@ -149,55 +113,3 @@ def delete_upload_session(
         db=db, viewer_id=viewer.user_id, origin_kind=None, session_handle=session_handle
     )
     return Response(status_code=204)
-
-
-@router.post("/media/{media_id}/retry", status_code=202)
-def retry_ingest(
-    media_id: UUID,
-    body: RetrySourceRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Data[SourceRetryAdmission]:
-    """Admit one source retry; metadata has its own operation contract."""
-    return Data(
-        data=media_source_ingest.retry_source_for_viewer(
-            db,
-            viewer_id=viewer.user_id,
-            media_id=media_id,
-            client_mutation_id=body.client_mutation_id,
-            expected_attempt_id=body.expected_attempt_id,
-            request_id=get_request_id(),
-        )
-    )
-
-
-@router.post("/media/{media_id}/repair", status_code=202)
-def repair_media(
-    media_id: UUID,
-    body: MediaRepairRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Data[MediaRepairAdmission]:
-    """Requeue the exact dead job the viewer inspected: source or search."""
-    actor = ViewerRecovery(viewer_id=viewer.user_id, client_mutation_id=body.client_mutation_id)
-    admission: MediaRepairAdmission
-    match body:
-        case SourceRepairRequest():
-            admission = media_source_ingest.repair_dead_source_execution(
-                db,
-                actor=actor,
-                media_id=media_id,
-                expected_attempt_id=body.expected_attempt_id,
-                expected_job_id=body.expected_job_id,
-            )
-        case SearchRepairRequest():
-            admission = content_indexing.repair_dead_media_reindex(
-                db,
-                actor=actor,
-                media_id=media_id,
-                expected_revision=body.expected_revision,
-                expected_job_id=body.expected_job_id,
-            )
-        case _:
-            assert_never(body)
-    return Data(data=admission)

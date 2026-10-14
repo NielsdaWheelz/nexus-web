@@ -32,7 +32,7 @@ from nexus.jobs.queue import (
     update_unclaimed_job,
 )
 from nexus.logging import get_logger
-from nexus.services.source_attempt_artifacts import source_attempt_storage_paths
+from nexus.services.source_types import stored_artifact_path
 from nexus.storage.client import StorageClient, get_storage_client
 
 logger = get_logger(__name__)
@@ -101,7 +101,7 @@ def path_has_live_db_owner(db: Session, storage_path: str) -> bool:
     if media_id is None:
         return False
     return any(
-        storage_path in source_attempt_storage_paths(source_payload)
+        storage_path == stored_artifact_path(source_payload)
         for (source_payload,) in db.execute(
             text("SELECT source_payload FROM media_source_attempts WHERE media_id = :m"),
             {"m": media_id},

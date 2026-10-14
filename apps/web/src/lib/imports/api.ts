@@ -147,30 +147,26 @@ export type MediaRecoveryOffer = Exclude<RecoveryOffer, { kind: "RetryUpload" }>
 /**
  * Admit the recovery `offer` authorizes, sent with the attempt, job or revision
  * the reader saw: a stale one conflicts (409) instead of acting on work the
- * reader never saw. The admission changes what Imports owes.
+ * reader never saw, and a resend after the first landed answers it again. The
+ * admission changes what Imports owes.
  */
 export async function recoverMedia(
   mediaId: string,
   offer: MediaRecoveryOffer,
 ): Promise<void> {
-  const client_mutation_id = crypto.randomUUID();
   const body =
     offer.kind === "RetrySource"
       ? ({
-          from_stage: "source",
-          client_mutation_id,
           expected_attempt_id: offer.expected_attempt_id,
         } satisfies Schema<"RetrySourceRequest">)
       : offer.kind === "RepairSource"
         ? ({
             kind: "Source",
-            client_mutation_id,
             expected_attempt_id: offer.expected_attempt_id,
             expected_job_id: offer.expected_job_id,
           } satisfies Schema<"SourceRepairRequest">)
         : ({
             kind: "Search",
-            client_mutation_id,
             expected_revision: offer.expected_revision,
             expected_job_id: offer.expected_job_id,
           } satisfies Schema<"SearchRepairRequest">);
@@ -182,16 +178,11 @@ export async function recoverMedia(
   publishImportsInvalidation();
 }
 
-// A refresh whose outcome is unknown keeps its client id, keyed by the attempt
-// the viewer saw, so "confirm request" replays it exactly; a settling answer
-// forgets it. An access reply (401/403/404) precedes the server's replay lookup,
-// so it settles nothing.
-const unconfirmedRefreshes = new Map<string, string>();
-
 /**
- * Re-fetch a media's source from the attempt the viewer saw (a typed,
- * replayable admission); the refreshed facts arrive through Imports. A refusal
- * throws; acceptance and an unknown outcome are huds.
+ * Re-fetch a media's source from the attempt the viewer saw; the refreshed facts
+ * arrive through Imports. A refusal throws; acceptance and an unknown outcome are
+ * huds. "confirm request" resends the same expectation, which answers the refresh
+ * that landed. An access reply (401/403/404) settles nothing.
  */
 export async function requestSourceRefresh(
   mediaId: string,
@@ -202,8 +193,6 @@ export async function requestSourceRefresh(
     // justify-defect: an available refresh carries the attempt it replaces.
     throw new TypeError("Source refresh lost its inspected expectation");
   }
-  const key = `${mediaId}|${expectedAttemptId}`;
-  const clientMutationId = unconfirmedRefreshes.get(key) ?? crypto.randomUUID();
   const hudKey = `source-refresh:${mediaId}`;
   const metadata = { label: "metadata…", onClick: hud.showMetadata };
   try {
@@ -212,20 +201,15 @@ export async function requestSourceRefresh(
       {
         method: "POST",
         body: JSON.stringify({
-          client_mutation_id: clientMutationId,
           expected_attempt_id: expectedAttemptId,
         } satisfies Schema<"RefreshSourceRequest">),
       },
     );
   } catch (error) {
     if (isApiError(error) && error.status >= 400 && error.status < 500) {
-      if (![401, 403, 404].includes(error.status)) {
-        unconfirmedRefreshes.delete(key);
-        hud.feedback.resolve(hudKey);
-      }
+      if (![401, 403, 404].includes(error.status)) hud.feedback.resolve(hudKey);
       throw error;
     }
-    unconfirmedRefreshes.set(key, clientMutationId);
     const confirm = () =>
       void requestSourceRefresh(mediaId, expectedAttemptId, hud).catch(
         (refused: unknown) => {
@@ -252,7 +236,6 @@ export async function requestSourceRefresh(
     });
     return;
   }
-  unconfirmedRefreshes.delete(key);
   publishImportsInvalidation();
   hud.feedback.publish({
     kind: "Hud",
