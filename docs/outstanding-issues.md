@@ -33,6 +33,8 @@ area · opened YYYY-MM-DD by <who> · P2
 - [deferred] imports / live metadata proof · 2026-10-14 · owner waived provider-dependent no-findings/review proof; available search settings reject research: [ticket](tickets/imports-live-metadata-proof-needs-working-search.md).
 - [open] metadata lifecycle / migration · 2026-10-14 imports qualification · deleted-media metadata jobs remain pending and block title cutover: [ticket](tickets/deleted-media-metadata-jobs-block-title-migration.md).
 
+- [open] operator / native browser credentials · 2026-10-14 x title qualification · unrelated foreground credential content appeared in a tool transcript: [ticket](tickets/native-browser-credential-output.md).
+
 - [open] nexus add / css · 2026-10-14 production build · alignment emits an autoprefixer warning and prevents module cache serialization: [ticket](tickets/add-panel-css-build-warning.md).
 
 - [open] shared collections / accessibility · 2026-10-14 live qualification · enlarged text clips reading facts at narrow widths: [ticket](tickets/collection-metadata-clips-with-enlarged-text.md).
