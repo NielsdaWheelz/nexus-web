@@ -76,3 +76,30 @@ review allocation budgets together with other services on the existing host.
 do not infer safety from a single no-oom interval or raise caps without combined
 host evidence. acceptance: representative sustained use with measured allocation
 explanation, usable responses and operating margin, without weakening limits.
+
+2026-10-14 release qualification: exact `1512ee109` removes the demonstrated
+graph/storage/import/reading-copy allocation defects. the combined cold
+semantic searches, largest reader/map, 25 assets, full offline copy and one
+warm reader revisit pass with identical results, preserved cursors, zero
+limit/oom/restart events and a clean shutdown. the final kernel peak is
+307.30 mib under 320, leaving only 12.70 mib. source fixes alone do not close
+this ticket. full evidence is recorded by the linked
+[release recurrence](api-keats-reader-search-memory-limit.md).
+
+the whole-host review rejects a cap-only increase on the current 2 gb host.
+independently measured parser/chat/reader/service maxima plus observed host
+charge and a 256 mib reserve require about 2657 mib; these are a conservative
+combination, not a reproduced simultaneous oom. seven retained observer
+windows instead show an actual all-services-running floor of 452.10 mib.
+that floor does not establish peak parser plus chat plus reader coexistence.
+
+the initial proposal was a 4 gib host, api 384 mib/no swap, other service bounds
+unchanged, and at least 3248 mib actual visible memory. the owner explicitly
+prohibited resizing on 2026-10-14. pr #581 is closed unmerged; no reboot or
+resize occurred. its sum of separate charge maxima, reclaimable host memory,
+and all hard caps is conservative planning evidence, not proof that the current
+host cannot work. reassess simultaneous nonreclaimable demand and qualify a
+bounded representative workload on the existing 2 gb envelope. no cap change
+is approved by that reassessment alone, and swap is not extra ram.
+private budget receipt: `release/api-capacity-384-20261014/recommended-host-budget.json`,
+sha256 `3685a9585728864f7086352711e5b1476fdbe847d02f83fe4985ff8be97c1149`.

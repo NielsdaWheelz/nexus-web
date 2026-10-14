@@ -53,3 +53,13 @@ verify the existing local bucket setup and basic s3 read/write behavior.
 2026-10-13 metadata qualification: the mc pin again returned `pull access denied`
 on mac. isolated setup used the cached server image’s bundled mc; no deployment
 pin changed. [receipt](../metadata-imports-verification.md); temporary setup deleted.
+
+2026-10-14 release preparation repeated the server-image refusal on a devbox
+without the cached image. the publisher's same-release `quay.io/minio/minio`
+reference also returned anonymous 401; no authenticated pull was attempted.
+private original logs and receipts are retained in
+`nexus-web-campaign-artifacts/2026-10-13/release/local-minio-distribution/manifest.json`
+(sha256 `2956303f90e229fb572f52173a312794a90d6ad53c4f7477703d21040ee007c4`).
+the approved isolated reader proof uses the matching cached arm64 publisher
+digest on the mac, a new private bucket and explicit loopback ssh forwarding.
+that alternate proof topology does not establish fresh local installation.
