@@ -759,7 +759,7 @@ def _exact_epub_span(snapshot: _Snapshot, item: dict[str, object]) -> tuple[UUID
 def _exact_epub_label_body_correction(
     snapshot: _Snapshot, installed: dict[str, object], proposed: dict[str, object]
 ) -> bool:
-    """Correct a numeric-only legacy body at its unchanged authored target."""
+    """Enrich a numeric-only body at its unchanged authored target."""
     old_span = _exact_epub_span(snapshot, installed)
     new_span = _exact_epub_span(snapshot, proposed)
     old_text = installed.get("body_text")
@@ -767,6 +767,7 @@ def _exact_epub_label_body_correction(
     old_html = installed.get("body_html_sanitized")
     new_html = proposed.get("body_html_sanitized")
     new_locator = proposed.get("locator")
+    # A missing rendition leaves the exact retained label as the old-body proof.
     if (
         installed.get("kind") not in {"footnote", "endnote", "bibliography_entry"}
         or old_span is None
@@ -779,10 +780,12 @@ def _exact_epub_label_body_correction(
         or not new_text.startswith(old_text)
         or len(new_text) <= len(old_text)
         or new_text[len(old_text)].isdecimal()
-        or not isinstance(old_html, str)
         or not isinstance(new_html, str)
         or not isinstance(new_locator, dict)
-        or generate_canonical_text(old_html) != old_text
+        or (
+            old_html is not None
+            and (not isinstance(old_html, str) or generate_canonical_text(old_html) != old_text)
+        )
         or generate_canonical_text(new_html) != new_text
     ):
         return False
@@ -933,30 +936,30 @@ def _exact_epub_body_enrichment(
         return False
     assert fragment is not None and type(start) is int and type(end) is int
     assert isinstance(quote, dict)
-    if installed.get("body_html_sanitized") is None:
+    old_html = installed.get("body_html_sanitized")
+    if old_html is None:
         old_source = installed.get("source_ref")
         new_source = proposed.get("source_ref")
-        return bool(
-            quote.get("exact") == text_value
-            or (
-                installed.get("body_text") == text_value
-                and installed.get("locator") == locator
-                and isinstance(old_source, dict)
-                and isinstance(new_source, dict)
-                and all(
-                    old_source.get(field) == new_source.get(field)
-                    for field in ("format", "package_href", "target_id")
-                )
+        if quote.get("exact") == text_value or (
+            installed.get("body_text") == text_value
+            and installed.get("locator") == locator
+            and isinstance(old_source, dict)
+            and isinstance(new_source, dict)
+            and all(
+                old_source.get(field) == new_source.get(field)
+                for field in ("format", "package_href", "target_id")
             )
-        )
-    old_html = installed.get("body_html_sanitized")
+        ):
+            return True
     old_text = installed.get("body_text")
     if (
-        not isinstance(old_html, str)
-        or not isinstance(old_text, str)
+        not isinstance(old_text, str)
         or not old_text.isdecimal()
         or not 1 <= len(old_text) <= 4
-        or generate_canonical_text(old_html) != old_text
+        or (
+            old_html is not None
+            and (not isinstance(old_html, str) or generate_canonical_text(old_html) != old_text)
+        )
         or quote.get("exact") != old_text
         or not text_value.startswith(old_text)
         or len(text_value) <= len(old_text)
