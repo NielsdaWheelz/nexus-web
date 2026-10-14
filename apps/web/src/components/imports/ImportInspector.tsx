@@ -1,17 +1,14 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import MetadataResearchActions, {
   MetadataReviewButton,
 } from "@/components/media/MetadataResearchActions";
-import Button from "@/components/ui/Button";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
-import PaneSection from "@/components/ui/PaneSection";
 import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { ApiError } from "@/lib/api/client";
-import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
 import { usePagePrefix } from "@/lib/api/pagePrefix";
@@ -37,7 +34,6 @@ import {
   recoveryLine,
   stageLabel,
   sourceFailureLine,
-  stateBadge,
 } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import {
@@ -50,34 +46,12 @@ import {
   metadataRetryBlockedCopy,
 } from "@/lib/media/mediaMetadataCopy";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import { canonicalResourceRef } from "@/lib/sharing/targets";
-import { ImportObligationActions } from "./ImportRow";
+import { ImportObligationActions, ImportOpenAction } from "./ImportActions";
 import styles from "./Imports.module.css";
 
 /** The server no longer has this import, or never had one by that ref. */
 const gone = (error: ApiError | null) =>
   error?.code === "E_IMPORT_NOT_FOUND" || error?.code === "E_INVALID_REQUEST";
-
-function OpenSavedCopy({ mediaId }: { readonly mediaId: string }) {
-  const subject = useMemo(
-    () => ({ ref: canonicalResourceRef({ scheme: "media", id: mediaId }) }),
-    [mediaId],
-  );
-  const model = useResourceActionMenuModel(subject);
-  const open = model.descriptors.find(
-    (action) => action.id === "ResourceAction.Open",
-  );
-  return open?.kind === "command" ? (
-    <Button
-      variant="secondary"
-      size="sm"
-      disabled={open.disabled}
-      onClick={() => open.onSelect({ triggerEl: null })}
-    >
-      open saved copy
-    </Button>
-  ) : null;
-}
 
 /**
  * The inspected import in the order a reader needs it: what it means for them,
@@ -99,6 +73,14 @@ export default function ImportInspector({
     stale: observation,
     load: (signal) => fetchImportDetail(importRef, signal),
   });
+  const matchedId = matched.kind === "Present" ? matched.value.id : null;
+  const expandedMatch = useRef(matchedId);
+  const [historyOpen, setHistoryOpen] = useState(matchedId !== null);
+  useEffect(() => {
+    if (matchedId === null || matchedId === expandedMatch.current) return;
+    expandedMatch.current = matchedId;
+    setHistoryOpen(true);
+  }, [matchedId]);
   if (detail.status === "loading") {
     return (
       <PaneLoadingState label="Loading this import" announcement="Polite" />
@@ -116,9 +98,8 @@ export default function ImportInspector({
       />
     );
   }
-  const { item, readiness, history_coverage: coverage } = detail.data;
+  const { item, history_coverage: coverage } = detail.data;
   const issues = detail.data.source_issues;
-  const badge = stateBadge(item);
   const metadata =
     item.obligations.metadata.kind === "Present"
       ? item.obligations.metadata.value
@@ -142,28 +123,52 @@ export default function ImportInspector({
   );
   return (
     <div className={styles.inspector}>
-      <PaneSection title={item.title}>
-        <p className={styles.inspectorState}>
-          <Pill tone={badge.tone} size="sm">
-            {badge.label}
-          </Pill>
-          <span>
-            {consequenceLine(item, readiness.can_read, readiness.can_play)}
-          </span>
+      {detail.error === null ? null : (
+        <FeedbackNotice
+          content={{
+            ...loadFailure(detail.error),
+            tone: "Warning",
+            title: "Couldn’t refresh this import",
+            message: "Showing the last update",
+          }}
+          announcement="Polite"
+          actions={[{ label: "Retry", onClick: detail.refetch }]}
+        />
+      )}
+      <header className={styles.inspectorHeading}>
+        <h2>{item.title}</h2>
+        <p className={styles.consequence}>
+          {consequenceLine(item, (at) => momentText(at, display))}
         </p>
+        <p className={styles.provenance}>
+          <span>{KIND_LABEL[item.media_kind]}</span>
+          {item.source_label.kind === "Present" ? (
+            <span>{item.source_label.value}</span>
+          ) : null}
+          {item.original_filename.kind === "Present" ? (
+            <span>original file: {item.original_filename.value}</span>
+          ) : null}
+        </p>
+        {mediaId !== null &&
+        (item.readiness.can_read || item.readiness.can_play) ? (
+          <div className={styles.inspectorActions}>
+            <ImportOpenAction item={item} />
+          </div>
+        ) : null}
         {matched.kind === "Present" ? (
           <p className={styles.rowMatched}>
             {matchLine(matched.value, display, new Date())}
           </p>
         ) : null}
-      </PaneSection>
+      </header>
       {issues.kind === "Present" && issues.value.issues.length > 0 ? (
-        <PaneSection title="Source quality">
+        <section className={styles.inspectorSection}>
+          <h3>Source quality</h3>
           <SourceIssuesNotice
             issues={issues.value.issues}
-            readable={readiness.can_read}
+            readable={item.readiness.can_read}
           />
-        </PaneSection>
+        </section>
       ) : null}
       {(["source", "search"] as const).map((key) => {
         const slot = item.obligations[key];
@@ -172,26 +177,40 @@ export default function ImportInspector({
         const state = slot.value.state;
         const retained = key === "source" ? sourceFailureLine(item) : null;
         return (
-          <PaneSection key={key} title={key === "source" ? "Source" : "Search"}>
-            <p>{retained ?? obligationStatusLine(state)}</p>
+          <section key={key} className={styles.inspectorSection}>
+            <h3>{key === "source" ? "Source" : "Search"}</h3>
+            <p>
+              {retained ??
+                obligationStatusLine(
+                  state,
+                  mediaId === null && key === "source",
+                  (at) => momentText(at, display),
+                )}
+            </p>
             {state.kind === "NeedsAttention" &&
             state.failure_code.kind === "Present" ? (
-              <p>{importFailureCopy(state.failure_code.value).reason}</p>
+              <p>
+                {importFailureCopy(state.failure_code.value).reason}.{" "}
+                {importFailureCopy(state.failure_code.value).explanation}
+              </p>
             ) : null}
             {recovery === null ? null : <p>{recovery}</p>}
+            {slot.value.recovery.kind === "Present" &&
+            slot.value.recovery.value.kind === "RetryUpload" &&
+            item.original_filename.kind === "Present" ? (
+              <p>choose the original file: {item.original_filename.value}</p>
+            ) : null}
             <div className={styles.inspectorActions}>
-              {retained !== null && mediaId !== null ? (
-                <OpenSavedCopy mediaId={mediaId} />
-              ) : null}
               <ImportObligationActions item={item} obligation={key} />
             </div>
-          </PaneSection>
+          </section>
         );
       })}
       {metadata === null || mediaId === null ? null : (
-        <PaneSection
-          title={metadataOperationName(operation?.purpose ?? metadata.retry.purpose)}
-        >
+        <section className={styles.inspectorSection}>
+          <h3>
+            {metadataOperationName(operation?.purpose ?? metadata.retry.purpose)}
+          </h3>
           <p>
             {operation === null
               ? `no recorded ${metadataOperationName(metadata.retry.purpose)}`
@@ -229,11 +248,12 @@ export default function ImportInspector({
                 metadata.unfinished_operation.value,
                 (at) => momentText(at, display),
               )}{" "}
-              · {moment(metadata.unfinished_operation.value.created_at)} ·{" "}
-              <code>{metadata.unfinished_operation.value.job_id}</code>
+              · {moment(metadata.unfinished_operation.value.created_at)}
             </p>
           ) : null}
-          {metadata.retry.status === "blocked" ? (
+          {metadata.retry.status === "blocked" &&
+          !(metadata.retry.reason === "active" &&
+            metadata.unfinished_operation.kind === "Present") ? (
             <p>{metadataRetryBlockedCopy(metadata.retry)}</p>
           ) : null}
           <div className={styles.inspectorActions}>
@@ -271,25 +291,23 @@ export default function ImportInspector({
               </dl>
             </details>
           )}
-        </PaneSection>
+        </section>
       )}
-      <PaneSection
-        title="Attempts"
-        description={
-          coverage.kind === "Partial"
-            ? coverageLine(coverage.recorded_since, display)
-            : undefined
-        }
+      <details
+        className={styles.history}
+        open={historyOpen}
+        onToggle={(event) => setHistoryOpen(event.currentTarget.open)}
       >
-        <Attempts
-          importRef={importRef}
-          mediaId={mediaId}
-          updatedAt={item.updated_at}
-          matchedId={matched.kind === "Present" ? matched.value.id : null}
-        />
-      </PaneSection>
+        <summary>History</summary>
+        {coverage.kind === "Partial" ? (
+          <p className={styles.historyCoverage}>
+            {coverageLine(coverage.recorded_since, display)}
+          </p>
+        ) : null}
+        <Attempts importRef={importRef} mediaId={mediaId} matched={matched} />
+      </details>
       <details className={styles.diagnostics}>
-        <summary>Details</summary>
+        <summary>Diagnostics</summary>
         <dl>
           {field("Import", <code>{item.ref}</code>)}
           {field("Kind", KIND_LABEL[item.media_kind])}
@@ -342,130 +360,162 @@ function attempts(entries: readonly HistoryEntry[]) {
   return [...groups];
 }
 
-/**
- * The attempt timeline: a second read that follows the import's `updated_at`,
- * so running work narrates itself. An import gone since its detail shows none.
- */
+/** Retain recorded events across failed reads; a match can lie beyond this prefix. */
 function Attempts({
   importRef,
   mediaId,
-  updatedAt,
-  matchedId,
+  matched,
 }: {
   readonly importRef: string;
   readonly mediaId: string | null;
-  readonly updatedAt: string;
-  readonly matchedId: string | null;
+  readonly matched: ImportItem["matched_event"];
 }) {
-  const display = useRenderEnvironment();
+  const { observation } = useImports();
   const {
     prefix: history,
     short,
     loadMore,
-  } = usePagePrefix(importRef, updatedAt, (cursor, signal) =>
+  } = usePagePrefix(importRef, observation, (cursor, signal) =>
     fetchImportHistory(importRef, cursor, signal),
   );
-  if (history.status === "loading") {
+  if (history.status === "loading")
+    return <PaneLoadingState label="Loading history" announcement="None" />;
+  if (gone(history.error)) return <p>{UNAVAILABLE_LINE}</p>;
+  if (history.status === "failed")
     return (
-      <PaneLoadingState label="Loading recorded attempts" announcement="None" />
-    );
-  }
-  if (history.status === "failed") {
-    return gone(history.error) ? null : (
       <FeedbackNotice
         content={loadFailure(history.error)}
         announcement="Polite"
         actions={[{ label: "Try again", onClick: history.refetch }]}
       />
     );
-  }
   const entries = history.data.pages.flatMap((page) => page.entries);
+  const matchedId = matched.kind === "Present" ? matched.value.id : null;
+  const outsidePrefix =
+    matched.kind === "Present" &&
+    !entries.some((entry) => entry.id === matched.value.id);
+  const moreFailed = short && history.error !== null;
   return (
     <>
+      {history.error === null ? null : (
+        <FeedbackNotice
+          content={{
+            ...loadFailure(history.error),
+            tone: "Warning",
+            title: moreFailed
+              ? "Earlier events couldn’t be loaded"
+              : "Couldn’t refresh history",
+            message: "Showing the events already loaded",
+          }}
+          announcement="Polite"
+          actions={[{ label: "Retry", onClick: history.refetch }]}
+        />
+      )}
+      {outsidePrefix ? (
+        <section className={styles.attempt}>
+          <h3 className={styles.attemptTitle}>Matched event</h3>
+          <ol className={styles.attemptEvents}>
+            <HistoryEvent
+              entry={matched.value}
+              mediaId={mediaId}
+              matchedId={matchedId}
+            />
+          </ol>
+        </section>
+      ) : null}
+      {entries.length === 0 && !outsidePrefix ? (
+        <p>No recorded events</p>
+      ) : null}
       {attempts(entries).map(([id, group]) => (
         <section key={id} className={styles.attempt}>
           <h3 className={styles.attemptTitle}>{group.label}</h3>
           <ol className={styles.attemptEvents}>
             {group.entries.map((entry) => (
-              <li
+              <HistoryEvent
                 key={entry.id}
-                aria-current={entry.id === matchedId ? "true" : undefined}
-              >
-                <span>{eventLine(entry)}</span>
-                {mediaId !== null &&
-                entry.facts.kind === "MetadataOperation" &&
-                entry.facts.operation.status === "no_findings" &&
-                entry.facts.operation.reviewed_at.kind === "Absent" ? (
-                  <MetadataReviewButton
-                    mediaId={mediaId}
-                    jobId={entry.facts.operation.job_id}
-                  />
-                ) : null}
-                {entry.id === matchedId ? (
-                  <Pill tone="info" size="sm">
-                    <span aria-hidden="true">{MATCHED_LABEL}</span>
-                    <span className="sr-only">{MATCHED_ANNOUNCEMENT}</span>
-                  </Pill>
-                ) : null}
-                <time dateTime={entry.occurred_at}>
-                  {momentText(entry.occurred_at, display)}
-                </time>
-                {entry.facts.kind === "MetadataOperation" ? (
-                  <details className={styles.diagnostics}>
-                    <summary>operation details</summary>
-                    <dl>
-                      <div>
-                        <dt>Job</dt>
-                        <dd>
-                          <code>{entry.facts.operation.job_id}</code>
-                        </dd>
-                      </div>
-                      {entry.facts.operation.generation_id.kind ===
-                      "Present" ? (
-                        <div>
-                          <dt>Generation</dt>
-                          <dd>
-                            <code>
-                              {entry.facts.operation.generation_id.value}
-                            </code>
-                          </dd>
-                        </div>
-                      ) : null}
-                      <div>
-                        <dt>Requested</dt>
-                        <dd>
-                          {momentText(
-                            entry.facts.operation.created_at,
-                            display,
-                          )}
-                        </dd>
-                      </div>
-                      {entry.facts.operation.status === "no_findings" &&
-                      entry.facts.operation.reviewed_at.kind === "Present" ? (
-                        <div>
-                          <dt>Reviewed</dt>
-                          <dd>
-                            {momentText(
-                              entry.facts.operation.reviewed_at.value,
-                              display,
-                            )}
-                          </dd>
-                        </div>
-                      ) : null}
-                    </dl>
-                  </details>
-                ) : null}
-              </li>
+                entry={entry}
+                mediaId={mediaId}
+                matchedId={matchedId}
+              />
             ))}
           </ol>
         </section>
       ))}
       <LoadMoreFooter
-        hasMore={history.data.more && !(short && history.error !== null)}
+        hasMore={history.data.more && !moreFailed}
         loading={short && history.error === null}
         onLoadMore={loadMore}
         label="Load earlier events"
       />
     </>
+  );
+}
+
+function HistoryEvent({
+  entry,
+  mediaId,
+  matchedId,
+}: {
+  readonly entry: HistoryEntry;
+  readonly mediaId: string | null;
+  readonly matchedId: string | null;
+}) {
+  const display = useRenderEnvironment();
+  return (
+    <li aria-current={entry.id === matchedId ? "true" : undefined}>
+      <span>{eventLine(entry)}</span>
+      {mediaId !== null &&
+      entry.facts.kind === "MetadataOperation" &&
+      entry.facts.operation.status === "no_findings" &&
+      entry.facts.operation.reviewed_at.kind === "Absent" ? (
+        <MetadataReviewButton
+          mediaId={mediaId}
+          jobId={entry.facts.operation.job_id}
+        />
+      ) : null}
+      {entry.id === matchedId ? (
+        <Pill tone="info" size="sm">
+          <span aria-hidden="true">{MATCHED_LABEL}</span>
+          <span className="sr-only">{MATCHED_ANNOUNCEMENT}</span>
+        </Pill>
+      ) : null}
+      <time dateTime={entry.occurred_at}>
+        {momentText(entry.occurred_at, display)}
+      </time>
+      {entry.facts.kind === "MetadataOperation" ? (
+        <details className={styles.diagnostics}>
+          <summary>operation details</summary>
+          <dl>
+            <div>
+              <dt>Job</dt>
+              <dd>
+                <code>{entry.facts.operation.job_id}</code>
+              </dd>
+            </div>
+            {entry.facts.operation.generation_id.kind === "Present" ? (
+              <div>
+                <dt>Generation</dt>
+                <dd>
+                  <code>{entry.facts.operation.generation_id.value}</code>
+                </dd>
+              </div>
+            ) : null}
+            <div>
+              <dt>Requested</dt>
+              <dd>{momentText(entry.facts.operation.created_at, display)}</dd>
+            </div>
+            {entry.facts.operation.status === "no_findings" &&
+            entry.facts.operation.reviewed_at.kind === "Present" ? (
+              <div>
+                <dt>Reviewed</dt>
+                <dd>
+                  {momentText(entry.facts.operation.reviewed_at.value, display)}
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        </details>
+      ) : null}
+    </li>
   );
 }

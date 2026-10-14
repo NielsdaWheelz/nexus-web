@@ -59,6 +59,7 @@ from nexus.schemas.import_history import (
     SourceSuperseded,
     assume_safe_failure_code,
 )
+from nexus.schemas.import_refs import MediaImportRef, format_import_ref
 from nexus.schemas.imports import RepairSourceOffer, RetrySourceOffer, SourceRecoveryInput
 from nexus.schemas.media import (
     FromUrlResponse,
@@ -524,6 +525,7 @@ def _from_url_response(
     ingest_enqueued: bool | None = None,
 ) -> FromUrlResponse:
     return FromUrlResponse(
+        import_ref=format_import_ref(MediaImportRef(media_id=media.id)),
         media_id=media.id,
         source_attempt_id=attempt.id,
         source_type=attempt.source_type,

@@ -1,0 +1,47 @@
+{
+  "database_revision": [
+    {
+      "version_num": "0277"
+    }
+  ],
+  "unsettled_metadata": [
+    {
+      "id": "6c1e22c4-0a94-4841-86f5-dba7a6cba7d6",
+      "status": "pending",
+      "created_at": "2026-10-14 22:24:58.830738+00:00",
+      "media_id": "01a13c84-bb37-7c35-a0dc-660e586f669d",
+      "media_exists": false
+    },
+    {
+      "id": "b53ba48e-6e14-430c-ae31-9baf14077957",
+      "status": "pending",
+      "created_at": "2026-10-14 22:27:32.579487+00:00",
+      "media_id": "01a13c87-1b12-7c49-af6b-df3909942a2a",
+      "media_exists": false
+    },
+    {
+      "id": "e8091abf-aff8-4736-91f3-f5cf15bb1b96",
+      "status": "pending",
+      "created_at": "2026-10-14 22:28:59.072866+00:00",
+      "media_id": "01a13c88-6abd-718f-b783-b9c6d478729e",
+      "media_exists": false
+    },
+    {
+      "id": "f113c462-75e3-42c0-9eac-65ef8286237d",
+      "status": "pending",
+      "created_at": "2026-10-14 22:37:24.764077+00:00",
+      "media_id": "01a13c8d-76b3-7bf8-9ca1-dd642717d3c4",
+      "media_exists": false
+    }
+  ],
+  "unsettled_llm_count": [
+    {
+      "count": 0
+    }
+  ],
+  "unsettled_x_count": [
+    {
+      "count": 0
+    }
+  ]
+}

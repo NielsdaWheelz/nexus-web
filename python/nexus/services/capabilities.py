@@ -14,6 +14,7 @@ from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySou
 from nexus.schemas.media import CapabilitiesOut
 from nexus.schemas.metadata_enrichment import MetadataRetry, MetadataRetryAllowed
 from nexus.services.pdf_readiness import pdf_quote_text_readiness_rows_sql
+from nexus.services.reader_publication import ready_publication_rows_sql
 
 SourceRecoveryRestriction = Literal["NotOwner", "SameSourceTerminal", "SourceNotReacquirable"]
 type SourceRecoveryAnswer = RetrySourceOffer | RepairSourceOffer | SourceRecoveryRestriction | None
@@ -83,17 +84,18 @@ def quotable_document_rows_sql() -> str:
     """Document ids/kinds whose current artifacts support ``can_quote``.
 
     This is the queryable document half of ``derive_capabilities``, including
-    original-file and complete PDF text checks. Visibility belongs to callers.
+    reader-publication, original-file and complete PDF text checks. Visibility
+    belongs to callers.
     """
     return f"""
         SELECT m.id AS media_id, m.kind AS media_kind
         FROM media m
+        JOIN ({ready_publication_rows_sql()}) publication ON publication.media_id = m.id
         LEFT JOIN ({pdf_quote_text_readiness_rows_sql()}) pdf ON pdf.media_id = m.id
-        WHERE m.processing_status = '{ProcessingStatus.ready_for_reading.value}'
-          AND (
-              m.kind IN ('web_article', 'epub')
-              OR (m.kind = 'pdf' AND {media_file_exists_sql("m.id")} AND pdf.quote_text_ready)
-          )
+        WHERE (
+            m.kind IN ('web_article', 'epub')
+            OR (m.kind = 'pdf' AND {media_file_exists_sql("m.id")} AND pdf.quote_text_ready)
+        )
     """
 
 
@@ -128,6 +130,7 @@ def derive_capabilities(
     last_error_code: str | None,
     *,
     media_file_exists: bool,
+    reader_publication_ready: bool,
     external_playback_url_exists: bool,
     pdf_quote_text_ready: bool = False,
     transcript_state: str | None = None,
@@ -159,11 +162,10 @@ def derive_capabilities(
     )
 
     if is_pdf:
-        can_read = media_file_exists and processing_status != ProcessingStatus.failed.value
-        can_highlight = media_file_exists and status_ready
+        can_read = can_highlight = media_file_exists and reader_publication_ready
         can_quote = can_highlight and pdf_quote_text_ready
     elif is_document:
-        can_read = can_highlight = can_quote = status_ready
+        can_read = can_highlight = can_quote = reader_publication_ready
     elif transcript_unavailable:
         can_read = can_highlight = can_quote = False
     else:

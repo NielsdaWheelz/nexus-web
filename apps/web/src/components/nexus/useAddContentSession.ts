@@ -89,18 +89,26 @@ export type AddItem =
       readonly showFeedback: boolean;
     }
   | { kind: "Queued"; id: string; intent: AcceptanceIntent }
-  | { kind: "Submitting"; id: string; intent: FileIntent; phase: UploadPhase }
+  | {
+      kind: "Submitting";
+      id: string;
+      intent: FileIntent;
+      phase: UploadPhase;
+      importRef: string | null;
+    }
   | {
       kind: "Submitting";
       id: string;
       intent: UrlIntent;
       phase: "Saving" | "Checking";
+      importRef: string | null;
     }
   | {
       kind: "Rejected";
       id: string;
       intent: AcceptanceIntent;
       feedback: FeedbackContent;
+      importRef: string | null;
     }
   | {
       kind: "AcceptanceUnresolved";
@@ -108,6 +116,7 @@ export type AddItem =
       intent: AcceptanceIntent;
       reason: "StatusUnknown" | "UploadIncomplete";
       feedback: FeedbackContent;
+      importRef: string | null;
     }
   | {
       kind: "Accepted";
@@ -397,17 +406,20 @@ export function useAddContentSession(): AddContentSessionController {
               kind: "Rejected",
               id: row.id,
               intent: row.intent,
+              importRef: row.importRef,
               feedback: {
                 tone: "Warning",
                 title: "Upload stopped",
-                message:
-                  "Use Imports to retry or remove any accepted upload, or restage this file as a new import.",
+                message: row.importRef === null
+                  ? "check imports for any accepted upload, or edit this item to start a new import."
+                  : "view this import for the available recovery, or edit this item to start a new import.",
               },
             }
           : {
               kind: "AcceptanceUnresolved",
               id: row.id,
               intent: row.intent,
+              importRef: row.importRef,
               reason: "StatusUnknown",
               feedback: {
                 tone: "Warning",
@@ -738,6 +750,7 @@ export function useAddContentSession(): AddContentSessionController {
   ) {
     if (!active(signal)) return;
     const { id, intent } = row;
+    let importRef = row.kind === "AcceptanceUnresolved" ? row.importRef : null;
     const libraryIds = intent.destinations.map((destination) => destination.id);
     const idempotencyKey = intent.idempotencyKey;
     try {
@@ -746,7 +759,7 @@ export function useAddContentSession(): AddContentSessionController {
       if (source.kind === "Url") {
         const phase =
           row.kind === "AcceptanceUnresolved" ? "Checking" : "Saving";
-        item({ kind: "Submitting", id, intent: { ...intent, source }, phase });
+        item({ kind: "Submitting", id, intent: { ...intent, source }, phase, importRef });
         result = await addMediaFromUrl({
           url: source.url,
           libraryIds,
@@ -757,7 +770,7 @@ export function useAddContentSession(): AddContentSessionController {
         const fileIntent: FileIntent = { ...intent, source };
         const onPhaseChange = (phase: UploadPhase) => {
           if (active(signal))
-            item({ kind: "Submitting", id, intent: fileIntent, phase });
+            item({ kind: "Submitting", id, intent: fileIntent, phase, importRef });
         };
         onPhaseChange("Preparing");
         result = await uploadIngestFile({
@@ -766,6 +779,12 @@ export function useAddContentSession(): AddContentSessionController {
           idempotencyKey,
           signal,
           onPhaseChange,
+          onImportRef: (ref) => {
+            if (!active(signal)) return;
+            importRef = ref;
+            // Keep identity before a later transfer or confirmation can fail.
+            onPhaseChange("Preparing");
+          },
         });
       }
       if (!active(signal)) return;
@@ -787,11 +806,12 @@ export function useAddContentSession(): AddContentSessionController {
       if (!active(signal)) return;
       const frozen: AddItem =
         row.kind === "AcceptanceUnresolved"
-          ? row
+          ? { ...row, importRef }
           : {
               kind: "AcceptanceUnresolved",
               id,
               intent,
+              importRef,
               reason: "StatusUnknown",
               feedback: UNCONFIRMED,
             };
@@ -812,7 +832,7 @@ export function useAddContentSession(): AddContentSessionController {
           items: snapshot.items.filter((next) => next.id !== id),
         }));
       } else {
-        item({ id, intent, ...failure });
+        item({ id, intent, importRef, ...failure });
       }
     }
   }

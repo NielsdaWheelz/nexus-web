@@ -14,6 +14,7 @@ import { apiTransportFeedback, isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import { getFileUploadKind } from "@/lib/imports/ingest";
+import { encodeImportsUrl } from "@/lib/imports/query";
 import { isLibraryDestinationDefect } from "@/lib/libraries/client";
 import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
 import {
@@ -131,13 +132,8 @@ function itemStatus(item: AddItem): string | null {
       return "not added";
     case "AcceptanceUnresolved":
       return item.reason === "StatusUnknown" ? "acceptance status unknown" : "upload did not complete";
-    case "Accepted": {
-      const prefix = item.result.duplicate ? "already in Nexus" : "saved";
-      const processing = item.result.processing;
-      return processing === null
-        ? prefix
-        : `${prefix} · ${processing === "failed" ? "processing failed" : processing}`;
-    }
+    case "Accepted":
+      return item.result.processing === "failed" ? "saved · processing failed" : "saved";
   }
 }
 
@@ -466,6 +462,8 @@ export default function AddPanel({
     const feedbackId = feedback || placementUncertain ? `${id}-${item.id}-feedback` : undefined;
     const split = item.kind === "Draft" && item.source.kind === "Url" ? findAmbiguousUrlSplit(item.source.text) : null;
     const mediaId = item.kind === "Accepted" ? item.result.mediaId : null;
+    const importRef = item.kind === "Accepted" ? item.result.importRef
+      : "importRef" in item ? item.importRef : null;
     const status = itemStatus(item);
     const removable = item.kind === "Draft" || item.kind === "Rejected" || item.kind === "AcceptanceUnresolved";
     const rowEditor = editor && "itemId" in editor && editor.itemId === item.id;
@@ -571,7 +569,7 @@ export default function AddPanel({
               split into {pluralize(split.length, "link")}
             </Button>
           ) : null}
-          {item.kind === "Rejected" || item.kind === "AcceptanceUnresolved" || mediaId ? (
+          {item.kind === "Rejected" || item.kind === "AcceptanceUnresolved" || mediaId || importRef !== null ? (
             <div className={styles.outcomeActions}>
               {item.kind === "AcceptanceUnresolved" ? (
                 <Button variant="secondary" size="sm" disabled={busy} onClick={() => {
@@ -592,6 +590,13 @@ export default function AddPanel({
                 }}>
                   {item.kind === "Rejected" ? "edit item" : "start a new attempt"}
                 </Button>
+              ) : null}
+              {importRef !== null ? (
+                <Button variant="ghost" size="sm" onClick={() => onOpen({
+                  kind: "InternalHref",
+                  href: `/imports?${encodeImportsUrl({ selected: importRef })}`,
+                  secondaryActivation: { surfaceId: "import-detail" },
+                })}>view import</Button>
               ) : null}
               {mediaId ? <Button variant="ghost" size="sm" disabled={busy} onClick={() => onOpen({ kind: "InternalHref", href: `/media/${mediaId}` })}>open</Button> : null}
             </div>

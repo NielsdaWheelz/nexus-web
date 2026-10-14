@@ -7,9 +7,8 @@ import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import RadioGroup from "@/components/ui/RadioGroup";
 import type { ImportsView } from "@/lib/imports/api";
 import {
-  importFailureCopy,
+  failureFilterLabel,
   KIND_LABEL,
-  ORDER_LABEL,
   IMPORT_FAILURE_CODES,
   STATE_KIND_LABEL,
   dateFilterLabel,
@@ -52,7 +51,7 @@ const REASON: Choice = {
   label: "Reason",
   any: "Any reason",
   options: IMPORT_FAILURE_CODES.map(
-    (code) => [code, importFailureCopy(code).reason] as const,
+    (code) => [code, failureFilterLabel(code)] as const,
   ).sort(([, left], [, right]) => left.localeCompare(right)),
 };
 const STATE: Choice = {
@@ -174,10 +173,9 @@ export default function ImportsToolbar({
         </>,
       }}
       chips={{ items: structuredChips, onRemove: (id) => set(id, "") }}
-      status={{ id: statusId, content: <>
-        <span className={styles.sortLabel}>Order: {ORDER_LABEL[view]}</span>
+      status={{ id: statusId, content:
         <span id={statusId} className={styles.resultStatus} role={announce ? "status" : undefined} aria-live={announce ? "polite" : undefined} aria-atomic={announce ? true : undefined}>{resultStatus}</span>
-      </> }}
+      }}
       actions={<Button variant="ghost" size="sm" onClick={onRefresh}>Refresh</Button>}
       onReset={resetAvailable || draft ? () => { setDraft(""); onReset(); } : undefined}
     />

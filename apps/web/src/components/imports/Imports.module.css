@@ -1,33 +1,32 @@
 .workspace {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
   min-width: 0;
 }
 
-.brief {
+.modes {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   gap: var(--space-1);
   min-width: 0;
 }
 
-.freshness {
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
+.modes button[aria-current="page"] {
+  color: var(--ink);
+  background: var(--surface-1);
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
-.sortLabel,
+.modeCount {
+  margin-inline-start: var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
 .resultStatus {
   font-size: var(--text-sm);
   color: var(--ink-muted);
 }
 
-.sortLabel {
-  white-space: normal;
-}
-
-/* The date pair is named by what the server bounds with it. */
 .dateGroup {
   display: inline-flex;
   align-items: center;
@@ -40,7 +39,6 @@
   color: var(--ink-muted);
 }
 
-/* Domain labels describe the interval; Input owns field appearance. */
 .dateField {
   display: inline-flex;
   align-items: center;
@@ -50,33 +48,48 @@
   color: var(--ink-muted);
 }
 
+.rowActions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
 
-.list {
+.consequence {
+  color: var(--ink);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.rowContext {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-1);
   min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
 }
 
-.rowActions {
-  display: contents;
-}
-
-.rowStatus {
+.provenance {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
+  align-items: baseline;
+  column-gap: var(--space-2);
+  row-gap: var(--space-1);
   min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
 }
 
-.rowStatusLine {
-  color: var(--ink);
+.provenance > * + *::before {
+  content: "·";
+  margin-inline-end: var(--space-2);
 }
 
-.rowReason,
-.rowMatched,
-.rowAge {
+.rowMatched {
   color: var(--ink-muted);
   font-size: var(--text-xs);
 }
@@ -98,21 +111,52 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  padding: var(--space-4);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--text-sm);
+}
+
+.inspectorHeading,
+.inspectorSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
   min-width: 0;
 }
 
-.inspectorState {
+.inspectorHeading h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+}
+
+.inspectorSection {
+  border-top: var(--stroke-hairline) solid var(--edge-subtle);
+  padding-top: var(--space-3);
+}
+
+.inspectorSection h3 {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.inspectorHeading p,
+.inspectorSection > p {
+  margin: 0;
+}
+
+.inspectorActions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
 }
 
-.inspectorActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
+.inspectorActions:empty {
+  display: none;
 }
 
 .inspectorEmpty {
@@ -120,23 +164,39 @@
   color: var(--ink-muted);
 }
 
+.history {
+  border-top: var(--stroke-hairline) solid var(--edge-subtle);
+  padding-top: var(--space-3);
+}
+
+.history > summary {
+  font-weight: var(--weight-semibold);
+}
+
+.historyCoverage {
+  margin-block: var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
 .attempt {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  margin-top: var(--space-2);
   padding-block: var(--space-2);
-  border-top: 1px solid var(--edge-subtle);
+  border-top: var(--stroke-hairline) solid var(--edge-subtle);
 }
 
 .attemptTitle {
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   color: var(--ink-muted);
 }
 
 .attemptEvents {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
   font-size: var(--text-sm);
 }
 
@@ -148,7 +208,7 @@
 }
 
 .attemptEvents time {
-  color: var(--ink-faint);
+  color: var(--ink-muted);
   font-size: var(--text-xs);
 }
 
@@ -166,12 +226,13 @@
 
 .diagnostics div {
   display: flex;
-  gap: var(--space-2);
+  flex-wrap: wrap;
+  column-gap: var(--space-2);
 }
 
 .diagnostics dt {
   min-width: var(--space-20);
-  color: var(--ink-faint);
+  color: var(--ink-muted);
 }
 
 .diagnostics dd {
@@ -186,13 +247,27 @@
   flex-basis: 100%;
 }
 
-/* Touch gives every command a full 44 px target, both axes, while desktop stays
-   compact. A switch and a labelled select paint their target on the label; the
-   inspector is published outside this subtree, so it sizes its own actions. */
+@container (max-width: 520px) {
+  .workspace [data-row-primary-control] {
+    grid-column: 1 / -1;
+    grid-row: 4;
+    max-width: none;
+    justify-content: flex-start;
+  }
+
+  .workspace [data-row-focusable] {
+    overflow-wrap: anywhere;
+  }
+
+  .rowActions {
+    justify-content: flex-start;
+  }
+}
+
 @media (pointer: coarse) {
-  .workspace :is(button, [role="button"], select, label),
-  .workspace input:not([type="checkbox"]),
-  .inspectorActions button {
+  .modes button,
+  .workspace button,
+  .inspector :is(button, summary) {
     min-width: var(--size-xl);
     min-height: var(--size-xl);
   }

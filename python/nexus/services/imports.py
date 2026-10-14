@@ -38,6 +38,12 @@ from nexus.schemas.import_history import (
     UploadHistoryOwner,
     assume_safe_failure_code,
 )
+from nexus.schemas.import_refs import (
+    MediaImportRef,
+    ParsedImportRef,
+    UploadImportRef,
+    format_import_ref,
+)
 from nexus.schemas.imports import (
     Capabilities,
     HistoryPage,
@@ -48,23 +54,18 @@ from nexus.schemas.imports import (
     ImportPage,
     ImportReadiness,
     ImportSourceIssues,
-    ImportStageGroup,
     ImportState,
     ImportStateActive,
     ImportStateComplete,
     ImportStateNeedsAttention,
     ImportSummary,
-    MediaImportRef,
-    ParsedImportRef,
     RepairSearchOffer,
     RepairSourceOffer,
     RetrySourceOffer,
     RetryUploadOffer,
     SearchImportObligation,
     SourceImportObligation,
-    UploadImportRef,
     WaitingReason,
-    format_import_ref,
 )
 from nexus.schemas.media import MediaOut
 from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
@@ -273,7 +274,9 @@ WITH visible_media AS (
         CASE WHEN r.ref_kind = 'media' THEN 'media:' || r.media_id::text
             ELSE 'upload:' || md5(r.session_id::text) END AS ref_key,
         r.derived_state, r.origin_kind, r.upload_generation,
-        COALESCE(r.filename, w.title) AS title, COALESCE(w.media_kind, r.upload_kind) AS media_kind,
+        CASE WHEN r.media_id IS NULL THEN r.filename ELSE w.title END AS title,
+        r.filename AS original_filename,
+        COALESCE(w.media_kind, r.upload_kind) AS media_kind,
         CASE WHEN r.ref_kind = 'media' THEN {_URL_HOST_SQL.format(url="w.requested_url")}
             WHEN r.origin_kind = 'BrowserCapture'
             THEN {_URL_HOST_SQL.format(url="r.capture_source_url")} END AS source_host,
@@ -379,7 +382,9 @@ def _filtered_cte(query: ImportListQuery, params: dict[str, object]) -> str:
     if query.q is not None:
         params["q_pattern"] = _like_pattern(query.q)
         conditions.append(
-            "(i.title ILIKE :q_pattern ESCAPE '\\' OR i.source_host ILIKE :q_pattern ESCAPE '\\')"
+            "(i.title ILIKE :q_pattern ESCAPE '\\' "
+            "OR i.original_filename ILIKE :q_pattern ESCAPE '\\' "
+            "OR i.source_host ILIKE :q_pattern ESCAPE '\\')"
         )
     if query.media_kind is not None:
         params["media_kind"] = query.media_kind
@@ -495,7 +500,7 @@ def read_import_summary(db: Session, *, viewer_id: UUID) -> ImportSummary:
 
 
 def read_import_page(db: Session, *, viewer_id: UUID, query: ImportListQuery) -> ImportPage:
-    """One page of the view's imports; counts and groups cover the whole
+    """One page of the view's imports; the count covers the whole
     filtered set, and the cursor is bound to this viewer, filter set, and order."""
     match query.view:
         case "NeedsAttention":
@@ -512,16 +517,8 @@ def read_import_page(db: Session, *, viewer_id: UUID, query: ImportListQuery) ->
                 f"""{_IMPORTS_CTE}, {filtered}
                 SELECT
                     now() AS observed_at,
-                    (SELECT count(*) FROM filtered)::integer AS matched_count,
-                    (
-                        SELECT COALESCE(jsonb_object_agg(view_stage, n), '{{}}'::jsonb)
-                        FROM (
-                            SELECT view_stage, count(*) AS n
-                            FROM filtered
-                            WHERE view_stage IS NOT NULL
-                            GROUP BY view_stage
-                        ) stage_counts
-                    ) AS stage_counts
+                    count(*)::integer AS matched_count
+                FROM filtered
                 """
             ),
             params,
@@ -566,15 +563,9 @@ def read_import_page(db: Session, *, viewer_id: UUID, query: ImportListQuery) ->
     matched = {
         entry.id: entry for entry in history_entries(db, viewer_id=viewer_id, rows=matched_rows)
     }
-    stage_counts = cast(dict[str, int], totals["stage_counts"])
     return ImportPage(
         observed_at=totals["observed_at"],
         matched_count=int(totals["matched_count"]),
-        groups=[
-            ImportStageGroup(stage=stage, count=int(stage_counts[stage]))
-            for stage in STAGE_RANK
-            if stage in stage_counts
-        ],
         items=[
             _item(
                 row,
@@ -619,21 +610,11 @@ def _history_owner(row: RowMapping) -> HistoryOwner:
 
 
 def read_import_detail(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) -> ImportDetail:
-    """One import's current row plus its readiness and history coverage."""
+    """One import's current row plus history coverage and source issues."""
     row = _import_row(db, viewer_id=viewer_id, ref=ref)
     media = _linked_media(row, _hydrate_media(db, viewer_id=viewer_id, rows=[row]))
-    readiness = (
-        ImportReadiness(can_read=False, can_search=False, can_play=False)
-        if media is None
-        else ImportReadiness(
-            can_read=media.capabilities.can_read,
-            can_search=media.capabilities.can_search,
-            can_play=media.capabilities.can_play,
-        )
-    )
     return ImportDetail(
         item=_item(row, media=media, matched_event=absent()),
-        readiness=readiness,
         history_coverage=history_coverage(db, owner=_history_owner(row)),
         source_issues=(
             absent()
@@ -730,9 +711,9 @@ def _work_state(
         raise AssertionError(f"unknown {obligation} classification {classification!r}")
     if media is None:
         return ImportStateActive(
-            status="Processing",
+            status="Queued",
             stage=stage,
-            waiting_reason=absent(),
+            waiting_reason=present("AwaitingUploadConfirmation"),
             progress=absent(),
             next_retry_at=absent(),
         )
@@ -883,16 +864,21 @@ def _item(
     host = row["source_host"]
     return ImportItem(
         ref=ref,
-        title=str(row["title"]),
+        title=row["title"],
+        original_filename=presence_from_nullable(row["original_filename"]),
         media_kind=MediaKind(row["media_kind"]),
         source_label=absent() if host is None else present(str(host)),
         media_ref=absent() if media is None else present(f"media:{media.id}"),
+        readiness=ImportReadiness(
+            can_read=media.capabilities.can_read if media is not None else False,
+            can_search=media.capabilities.can_search if media is not None else False,
+            can_play=media.capabilities.can_play if media is not None else False,
+        ),
         state=_state(row, media),
         accepted_at=row["accepted_at"],
         updated_at=row["updated_at"],
         matched_event=matched_event,
         capabilities=Capabilities(
-            can_open=media.capabilities.can_read if media is not None else False,
             can_remove=media.capabilities.can_delete if media is not None else True,
         ),
         obligations=ImportObligations(

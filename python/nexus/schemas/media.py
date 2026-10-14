@@ -13,6 +13,7 @@ from nexus.db.models import TranscriptState as MediaTranscriptState
 from nexus.schemas.client_mutation import ClientMutationUuidText
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributor_credit import ContributorCreditOut
+from nexus.schemas.import_refs import ImportRef
 from nexus.schemas.media_summary import MediaDurationOut, MediaProcessingStatus
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.presence import Presence, Present
@@ -385,6 +386,7 @@ class UploadRequiredHeaders(BaseModel):
 
 class UploadRequired(_Strict):
     kind: Literal["UploadRequired"] = "UploadRequired"
+    import_ref: ImportRef
     session_handle: UploadSessionHandle
     generation: int = Field(ge=1)
     method: Literal["PUT"] = "PUT"
@@ -396,6 +398,7 @@ class UploadRequired(_Strict):
 
 class Published(_Strict):
     kind: Literal["Published"] = "Published"
+    import_ref: ImportRef
     session_handle: UploadSessionHandle
     media_id: UUID
     source_attempt_id: UUID
@@ -431,6 +434,7 @@ class UploadSessionCapabilities(_Strict):
 
 class NeedsAttention(_Strict):
     kind: Literal["NeedsAttention"] = "NeedsAttention"
+    import_ref: ImportRef
     session_handle: UploadSessionHandle
     failure: UploadSessionFailure
     capabilities: UploadSessionCapabilities
@@ -535,6 +539,7 @@ class FromUrlRequest(BaseModel):
 
 
 class FromUrlResponse(BaseModel):
+    import_ref: ImportRef
     media_id: UUID
     source_attempt_id: UUID
     source_type: str

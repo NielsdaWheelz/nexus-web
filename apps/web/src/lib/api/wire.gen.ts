@@ -3417,8 +3417,6 @@ export interface components {
         };
         /** Capabilities */
         Capabilities: {
-            /** Can Open */
-            can_open: boolean;
             /** Can Remove */
             can_remove: boolean;
         };
@@ -5669,6 +5667,8 @@ export interface components {
              * @enum {string}
              */
             idempotency_outcome: "created" | "reused" | "retrying" | "refreshed";
+            /** Import Ref */
+            import_ref: string;
             /** Ingest Enqueued */
             ingest_enqueued: boolean;
             /**
@@ -5849,7 +5849,6 @@ export interface components {
             /** History Coverage */
             history_coverage: components["schemas"]["FullHistoryCoverage"] | components["schemas"]["PartialHistoryCoverage"];
             item: components["schemas"]["ImportItem"];
-            readiness: components["schemas"]["ImportReadiness"];
             source_issues: components["schemas"]["Presence_ImportSourceIssues_"];
         };
         ImportFailureCode: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_FORBIDDEN" | "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_UPLOAD_TRANSPORT_FAILED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | components["schemas"]["MetadataFailureCode"];
@@ -5865,6 +5864,8 @@ export interface components {
             media_kind: components["schemas"]["MediaKind"];
             media_ref: components["schemas"]["Presence_Annotated_str__AfterValidator__"];
             obligations: components["schemas"]["ImportObligations"];
+            original_filename: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____"];
+            readiness: components["schemas"]["ImportReadiness"];
             /** Ref */
             ref: string;
             /** Source Issue Count */
@@ -5888,8 +5889,6 @@ export interface components {
         };
         /** ImportPage */
         ImportPage: {
-            /** Groups */
-            groups: components["schemas"]["ImportStageGroup"][];
             /** Items */
             items: components["schemas"]["ImportItem"][];
             /** Matched Count */
@@ -5917,13 +5916,6 @@ export interface components {
             /** Issues */
             issues: (components["schemas"]["MissingImage"] | components["schemas"]["UnresolvedNavigationTarget"])[];
         };
-        /** ImportStageGroup */
-        ImportStageGroup: {
-            /** Count */
-            count: number;
-            /** Stage */
-            stage: ("Upload" | "Validate" | "Extract" | "Finalize" | "SourceProcessing") | ("Index" | "Metadata");
-        };
         /** ImportStateActive */
         ImportStateActive: {
             /**
@@ -5940,7 +5932,7 @@ export interface components {
              * @enum {string}
              */
             status: "Queued" | "Processing";
-            waiting_reason: components["schemas"]["Presence_Literal__Queue____Capacity____RetryBackoff___"];
+            waiting_reason: components["schemas"]["Presence_Literal__Queue____Capacity____RetryBackoff____AwaitingUploadConfirmation___"];
         };
         /** ImportStateComplete */
         ImportStateComplete: {
@@ -7700,6 +7692,8 @@ export interface components {
             capabilities: components["schemas"]["UploadSessionCapabilities"];
             /** Failure */
             failure: components["schemas"]["VerificationFailed"] | components["schemas"]["TransportFailed"] | components["schemas"]["CapabilityExpired"];
+            /** Import Ref */
+            import_ref: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -9018,7 +9012,7 @@ export interface components {
         "Presence_Literal__Off____Natural___-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_Literal__Off____Natural___-Input"];
         "Presence_Literal__Off____Natural___-Output": components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__Off____Natural___-Output"];
         Presence_Literal__Publisher____Imported____Generated___: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__Publisher____Imported____Generated___"];
-        Presence_Literal__Queue____Capacity____RetryBackoff___: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__Queue____Capacity____RetryBackoff___"];
+        Presence_Literal__Queue____Capacity____RetryBackoff____AwaitingUploadConfirmation___: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__Queue____Capacity____RetryBackoff____AwaitingUploadConfirmation___"];
         Presence_MediaAbstractOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MediaAbstractOut_"];
         Presence_MediaDurationOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MediaDurationOut_"];
         Presence_MediaProgressState_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MediaProgressState_"];
@@ -9481,8 +9475,8 @@ export interface components {
              */
             value: "Publisher" | "Imported" | "Generated";
         };
-        /** Present[Literal['Queue', 'Capacity', 'RetryBackoff']] */
-        Present_Literal__Queue____Capacity____RetryBackoff___: {
+        /** Present[Literal['Queue', 'Capacity', 'RetryBackoff', 'AwaitingUploadConfirmation']] */
+        Present_Literal__Queue____Capacity____RetryBackoff____AwaitingUploadConfirmation___: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -9492,7 +9486,7 @@ export interface components {
              * Value
              * @enum {string}
              */
-            value: "Queue" | "Capacity" | "RetryBackoff";
+            value: "Queue" | "Capacity" | "RetryBackoff" | "AwaitingUploadConfirmation";
         };
         /** Present[MediaAbstractOut] */
         Present_MediaAbstractOut_: {
@@ -9897,6 +9891,8 @@ export interface components {
              * @enum {string}
              */
             idempotency_outcome: "Created" | "Reused";
+            /** Import Ref */
+            import_ref: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -11646,7 +11642,7 @@ export interface components {
              * @enum {string}
              */
             status: "Queued" | "Processing";
-            waiting_reason: components["schemas"]["Presence_Literal__Queue____Capacity____RetryBackoff___"];
+            waiting_reason: components["schemas"]["Presence_Literal__Queue____Capacity____RetryBackoff____AwaitingUploadConfirmation___"];
         };
         /** SearchImportStateNeedsAttention */
         SearchImportStateNeedsAttention: {
@@ -12583,7 +12579,7 @@ export interface components {
              * @enum {string}
              */
             status: "Queued" | "Processing";
-            waiting_reason: components["schemas"]["Presence_Literal__Queue____Capacity____RetryBackoff___"];
+            waiting_reason: components["schemas"]["Presence_Literal__Queue____Capacity____RetryBackoff____AwaitingUploadConfirmation___"];
         };
         /** SourceImportStateNeedsAttention */
         SourceImportStateNeedsAttention: {
@@ -13530,6 +13526,8 @@ export interface components {
              * @enum {string}
              */
             idempotency_outcome: "Created" | "Reused";
+            /** Import Ref */
+            import_ref: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}

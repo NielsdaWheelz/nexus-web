@@ -3,6 +3,7 @@ import type { ComponentType } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { Schema } from "@/lib/api/wire";
 import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
+import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
@@ -36,7 +37,12 @@ export type MaterializedOpenDailyPageTarget = {
 
 /** Every navigation is an InternalHref; the rest open a tab, Today, the player, or a page. */
 export type NexusTarget =
-  | { readonly kind: "InternalHref"; readonly href: string; readonly labelHint?: string }
+  | {
+      readonly kind: "InternalHref";
+      readonly href: string;
+      readonly labelHint?: string;
+      readonly secondaryActivation?: WorkspaceSecondaryActivation;
+    }
   | { readonly kind: "PaneOpen"; readonly paneId: string }
   | {
       readonly kind: "OpenDailyPage";

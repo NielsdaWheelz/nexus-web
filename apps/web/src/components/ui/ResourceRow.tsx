@@ -16,7 +16,7 @@ export type ResourceRowPrimary =
     }
   | {
       kind: "button";
-      onActivate: () => void | Promise<void>;
+      onActivate: (triggerElement: HTMLButtonElement) => void | Promise<void>;
       disabled?: boolean;
       busy?: boolean;
       label: string;
@@ -97,7 +97,7 @@ export default function ResourceRow({
             aria-label={primary.label}
             onClick={(event) => {
               if (!isInteractiveTarget(event.target, event.currentTarget))
-                void primary.onActivate();
+                void primary.onActivate(event.currentTarget);
             }}
           >
             {label}

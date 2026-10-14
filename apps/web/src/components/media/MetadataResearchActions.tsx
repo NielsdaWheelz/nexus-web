@@ -162,7 +162,7 @@ export default function MetadataResearchActions({
           variant="secondary"
           size="sm"
           disabled={retry.disabled}
-          onClick={() => retry.onSelect({ triggerEl: null })}
+          onClick={(event) => retry.onSelect({ triggerEl: event.currentTarget })}
         >
           {model.metadataRequestPending
             ? retry.label
@@ -173,7 +173,9 @@ export default function MetadataResearchActions({
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => sourceRemedy.onSelect({ triggerEl: null })}
+          onClick={(event) =>
+            sourceRemedy.onSelect({ triggerEl: event.currentTarget })
+          }
         >
           {sourceRemedy.label}
         </Button>

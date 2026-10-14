@@ -1,0 +1,138 @@
+{
+  "run": "combined-1792018255687",
+  "phase": "combined",
+  "revision": "03d3649fa72d2538bc92c3d990225a6e573fc780",
+  "sourceStart": {
+    "apps/web/src/lib/actions/resourceActionRuntime.tsx": "05203fdfcee2453964dc08988167e858aa5cb59c2f7d1cf136ee6c893dc6ab99",
+    "apps/web/src/lib/actions/resourceActionSnapshotCache.ts": "6a74fe2ecbaebd41436bc2649a57a360db28702ec567390ab20fb44d87dc7adb",
+    "apps/web/src/lib/actions/resourceActionEnvironment.ts": "09eca29bdedb67b1b3efb0f9667ca6a62761972578072c11cbc86ded66fed95b",
+    "apps/web/src/lib/actions/resourceActionMenu.tsx": "785976fb2fd0e10452a2fa80fe72b59560ec7750ec74259a001beedebb7a4a4d",
+    "apps/web/src/lib/lectern/LecternProvider.tsx": "149c65cfdfacf325b3fa78d900bd03802989c1ecf4a1ea8f89ead69c62541253",
+    "apps/web/src/lib/workspace/paneDom.ts": "8f52efab4a72b7f39fb3f0b61bbfc2002f118d6df7c902077765cffd5f1392a7",
+    "apps/web/src/lib/shortcuts.ts": "0e1c1c28db0dbc1f4d7aaea248790fd38183f402e1e8bf576597460fcedc38fe",
+    "apps/web/src/components/imports/ImportActions.tsx": "0d4ce61715333e0eb2d0412b67b16ee7ed4a222092650ca52cb004e869a7c0d9",
+    "apps/web/src/components/imports/ImportsList.tsx": "d951317f77af678a860430c4121e950430c49c838d53495254a3bf88baa72db7",
+    "apps/web/src/components/feedback/Feedback.tsx": "6585429981fa5676ef650bf43c33b73624ac07d14e2810e4e96ada3f92be9085",
+    "apps/web/src/components/ui/Button.module.css": "da7250716d70cbd4494995e9017a4614c2378335662c786c12d4fb86e1fc130f",
+    "apps/web/src/components/workspace/PaneShell.tsx": "741a6787442a238d491009574bbb2903f412e39adb3373c24c859aad92ebdfc4",
+    "apps/web/src/components/imports/ImportInspector.tsx": "2307ea27fbbe1b3cddc6b091f3f0af48596abd9d83d34bade6f552f3226fa3e7",
+    "apps/web/src/lib/imports/copy.ts": "6f6b42344bc85c27b411b03e7df8166654f80254720db82809ae1c693625817e",
+    "apps/web/src/components/media/MetadataResearchActions.tsx": "ad18cd43dc7c02af583f5f2f78c22f79c3c102814999f767957dc47f875fc20f",
+    "apps/web/src/lib/imports/api.ts": "99b57edfe0ba9518976d48aafe851ac4e235dc3a68584cc6b1e16d01a4f17bd5",
+    "apps/web/src/lib/media/mediaMetadataCopy.ts": "43ce5a2941e3f39af3829710ce7dd313b85b44c3c8ac1d4322ff4bc554efcfac",
+    "python/nexus/services/capabilities.py": "393a5706fe071b712f7c51e39d502010440e885cf37abe0970dd62018adbe73e",
+    "python/nexus/services/media.py": "33605e292874edf8b9749b48725af27eb0b92ce3eba64e0f4947e000f792afb0",
+    "python/nexus/services/reader_publication.py": "c4578864b08be10886a0be157950de3a89ddb069845aa289767b4b066031c0c8",
+    "python/nexus/services/reader_document.py": "d4a795055e3566a64132fd50790ff93484ccae8c37f1d7523b0dd2f8bd141dbd"
+  },
+  "scope": "rebased imports/main action, lectern and pane-search integration",
+  "cases": [
+    {
+      "name": "canonical refresh fences inline activation until the real snapshot returns",
+      "result": "pass",
+      "evidence": {
+        "upstreamStatus": 200,
+        "responseUnmodified": true,
+        "recovery": "no genuine recovery offered on this fixture",
+        "screenshot": "combined-1792018255687/snapshot-held.png"
+      }
+    },
+    {
+      "name": "explicit open creates an adjacent reader and reuses it on the next open",
+      "result": "pass",
+      "evidence": {
+        "initialPanes": 1,
+        "finalPanes": 2,
+        "importsId": "pane-72f57b47-893c-4e16-89d9-342835e085be",
+        "readerId": "pane-a85b4d74-a794-4aca-9704-57d9e8786844",
+        "pdfTextRendered": true,
+        "sameReaderVisit": true,
+        "originAndReuseAcknowledged": true,
+        "screenshot": "combined-1792018255687/adjacent-reader.png"
+      }
+    },
+    {
+      "name": "imports overflow uses main's canonical lectern ensure and membership reconciliation",
+      "result": "pass",
+      "evidence": {
+        "command": "EnsureItem",
+        "receipt": "Ensured",
+        "membership": "present",
+        "screenshot": "combined-1792018255687/lectern-membership.png"
+      }
+    },
+    {
+      "name": "fixed pane search follows active imports and respects the menu interaction owner",
+      "result": "pass",
+      "evidence": {
+        "shortcut": "Meta+f",
+        "desktopCompanion": "nonmodal: query receives focus",
+        "actionMenu": "focus retained",
+        "metadataPurpose": "bibliography",
+        "metadataViewRendered": true,
+        "inspectorOpenCount": 1,
+        "inspectorScreenshot": "combined-1792018255687/metadata-inspector.png",
+        "screenshot": "combined-1792018255687/pane-search.png"
+      }
+    }
+  ],
+  "setup": "ready: normal sign-in, public upload, real storage, confirmation, normal extraction",
+  "cleanup": "task fixture removed through public commands",
+  "limitations": [
+    "not a replay of prior-base browser, extension or device qualification",
+    "no provider-dependent metadata or indexing success is claimed"
+  ],
+  "readerResponses": [
+    {
+      "status": 200
+    }
+  ],
+  "fixture": {
+    "ref": "[redacted: sealed task import reference]",
+    "handle": "[redacted: sealed task upload-session handle]",
+    "filename": "combined-1792018255687.pdf",
+    "mediaId": "01a13c9c-aae8-777d-b107-096ceded2225",
+    "title": "Combined imports integration combined-1792018255687",
+    "readiness": {
+      "can_read": true,
+      "can_search": false,
+      "can_play": false
+    },
+    "state": "Active",
+    "sourceState": "Complete"
+  },
+  "sourceEnd": {
+    "apps/web/src/lib/actions/resourceActionRuntime.tsx": "05203fdfcee2453964dc08988167e858aa5cb59c2f7d1cf136ee6c893dc6ab99",
+    "apps/web/src/lib/actions/resourceActionSnapshotCache.ts": "6a74fe2ecbaebd41436bc2649a57a360db28702ec567390ab20fb44d87dc7adb",
+    "apps/web/src/lib/actions/resourceActionEnvironment.ts": "09eca29bdedb67b1b3efb0f9667ca6a62761972578072c11cbc86ded66fed95b",
+    "apps/web/src/lib/actions/resourceActionMenu.tsx": "785976fb2fd0e10452a2fa80fe72b59560ec7750ec74259a001beedebb7a4a4d",
+    "apps/web/src/lib/lectern/LecternProvider.tsx": "149c65cfdfacf325b3fa78d900bd03802989c1ecf4a1ea8f89ead69c62541253",
+    "apps/web/src/lib/workspace/paneDom.ts": "8f52efab4a72b7f39fb3f0b61bbfc2002f118d6df7c902077765cffd5f1392a7",
+    "apps/web/src/lib/shortcuts.ts": "0e1c1c28db0dbc1f4d7aaea248790fd38183f402e1e8bf576597460fcedc38fe",
+    "apps/web/src/components/imports/ImportActions.tsx": "0d4ce61715333e0eb2d0412b67b16ee7ed4a222092650ca52cb004e869a7c0d9",
+    "apps/web/src/components/imports/ImportsList.tsx": "d951317f77af678a860430c4121e950430c49c838d53495254a3bf88baa72db7",
+    "apps/web/src/components/feedback/Feedback.tsx": "6585429981fa5676ef650bf43c33b73624ac07d14e2810e4e96ada3f92be9085",
+    "apps/web/src/components/ui/Button.module.css": "da7250716d70cbd4494995e9017a4614c2378335662c786c12d4fb86e1fc130f",
+    "apps/web/src/components/workspace/PaneShell.tsx": "741a6787442a238d491009574bbb2903f412e39adb3373c24c859aad92ebdfc4",
+    "apps/web/src/components/imports/ImportInspector.tsx": "2307ea27fbbe1b3cddc6b091f3f0af48596abd9d83d34bade6f552f3226fa3e7",
+    "apps/web/src/lib/imports/copy.ts": "6f6b42344bc85c27b411b03e7df8166654f80254720db82809ae1c693625817e",
+    "apps/web/src/components/media/MetadataResearchActions.tsx": "ad18cd43dc7c02af583f5f2f78c22f79c3c102814999f767957dc47f875fc20f",
+    "apps/web/src/lib/imports/api.ts": "99b57edfe0ba9518976d48aafe851ac4e235dc3a68584cc6b1e16d01a4f17bd5",
+    "apps/web/src/lib/media/mediaMetadataCopy.ts": "43ce5a2941e3f39af3829710ce7dd313b85b44c3c8ac1d4322ff4bc554efcfac",
+    "python/nexus/services/capabilities.py": "393a5706fe071b712f7c51e39d502010440e885cf37abe0970dd62018adbe73e",
+    "python/nexus/services/media.py": "33605e292874edf8b9749b48725af27eb0b92ce3eba64e0f4947e000f792afb0",
+    "python/nexus/services/reader_publication.py": "c4578864b08be10886a0be157950de3a89ddb069845aa289767b4b066031c0c8",
+    "python/nexus/services/reader_document.py": "d4a795055e3566a64132fd50790ff93484ccae8c37f1d7523b0dd2f8bd141dbd"
+  },
+  "sourceStable": true,
+  "curation": {
+    "source_identity": "final-proof-index.json",
+    "original_receipt_sha256": "1258d3f24a46c95bde20f45e119510a73626a85ca0ae46d712cea7c5260451b0",
+    "redacted_fields": [
+      "fixture.ref",
+      "fixture.handle"
+    ],
+    "screenshot_reference_map": "final-proof-index.json",
+    "preserved": "all original verdicts, setup and cleanup outcomes, revision, 21 source-start/end owner hashes, readiness/capability facts and reader responses"
+  }
+}

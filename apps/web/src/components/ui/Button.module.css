@@ -15,9 +15,13 @@
     color var(--duration-fast) var(--ease-glide);
 }
 
-.button:disabled {
+.button:disabled,
+.button[aria-disabled="true"] {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.button:disabled {
   pointer-events: none;
 }
 
@@ -61,11 +65,11 @@
   color: var(--ink-on-accent);
 }
 
-.primary:hover:not(:disabled) {
+.primary:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--accent-hover);
 }
 
-.primary:active:not(:disabled) {
+.primary:active:not(:disabled):not([aria-disabled="true"]) {
   background: var(--accent-active);
 }
 
@@ -76,8 +80,8 @@
   border-color: var(--edge);
 }
 
-.secondary:hover:not(:disabled),
-.pill:hover:not(:disabled) {
+.secondary:hover:not(:disabled):not([aria-disabled="true"]),
+.pill:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--surface-hover);
   border-color: var(--edge-strong);
 }
@@ -91,7 +95,7 @@
   color: var(--ink);
 }
 
-.ghost:hover:not(:disabled) {
+.ghost:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--surface-hover);
 }
 
@@ -100,7 +104,7 @@
   color: var(--ink-on-accent);
 }
 
-.danger:hover:not(:disabled) {
+.danger:hover:not(:disabled):not([aria-disabled="true"]) {
   filter: brightness(1.1);
 }
 

@@ -46,6 +46,7 @@ import { refreshMediaSource } from "@/lib/imports/api";
 import { useShareController } from "@/lib/sharing/controller";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import { useWorkspaceStore } from "@/lib/workspace/store";
+import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
@@ -122,6 +123,8 @@ const EMPTY_BUSY_KEYS: ReadonlySet<string> = new Set();
 
 export interface ResourceActionMenuModel {
   readonly status: "Loading" | "Refreshing" | "Ready" | "Error";
+  /** Only a ready snapshot can authorize an inline resource activation. */
+  readonly activation: ResourceActionSnapshot["activation"] | null;
   /** The exact owner facts used by these descriptors, for inspected inline actions. */
   readonly capabilities: ResourceActionSnapshot["capabilities"];
   /** An existing request is being confirmed; its frozen identity owns replay. */
@@ -206,7 +209,7 @@ export function ResourceActionRuntimeProvider({
     const paneId = detail.triggerEl?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId
       ?? workspaceRef.current.state.activePrimaryPaneId;
     const showMetadata = () => openMediaMetadata(mediaId, detail.triggerEl, () =>
-      document.querySelector<HTMLElement>(`[data-pane-chrome-for="${paneId}"]`));
+      findPaneChromeFocusTarget(paneId));
     try {
       await submitMetadataEnrichment(mediaId, {
         client_mutation_id: pending.intent.clientMutationId(JSON.stringify(pending.expectedJobId)),
@@ -272,7 +275,7 @@ export function ResourceActionRuntimeProvider({
     const paneId = detail.triggerEl?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId
       ?? workspaceRef.current.state.activePrimaryPaneId;
     const showMetadata = () => openMediaMetadata(mediaId, detail.triggerEl, () =>
-      document.querySelector<HTMLElement>(`[data-pane-chrome-for="${paneId}"]`));
+      findPaneChromeFocusTarget(paneId));
     try {
       await refreshMediaSource(mediaId, {
         client_mutation_id: pending.intent.clientMutationId(pending.expectedAttemptId),
@@ -597,7 +600,7 @@ export function useOptionalResourceActionMenuModel(
       throw new Error("ResourceActionRuntimeProvider is missing");
     const metadataRequestPending = environment.pendingMetadataRequests.has(target.ref);
     if (!entry || entry.status === "Loading")
-      return { status: "Loading", capabilities: [], metadataRequestPending, descriptors: [], triggerDisabled: true,
+      return { status: "Loading", activation: null, capabilities: [], metadataRequestPending, descriptors: [], triggerDisabled: true,
         triggerDisabledReason: "Actions are still loading.", refresh };
     const snapshot =
       entry.status === "Error" ? entry.lastGoodSnapshot : entry.snapshot;
@@ -616,7 +619,7 @@ export function useOptionalResourceActionMenuModel(
       },
     };
     if (!snapshot)
-      return { status: "Error", capabilities: [], metadataRequestPending, descriptors: [retry], triggerDisabled: false, refresh };
+      return { status: "Error", activation: null, capabilities: [], metadataRequestPending, descriptors: [retry], triggerDisabled: false, refresh };
     const busyIds = new Set<ResourceActionId>();
     for (const key of busyKeys) {
       const prefix = `${target.ref}|`;
@@ -638,6 +641,7 @@ export function useOptionalResourceActionMenuModel(
     if (entry.status === "Error")
       return {
         status: "Error",
+        activation: null,
         capabilities: snapshot.capabilities,
         metadataRequestPending,
         descriptors: [
@@ -649,6 +653,7 @@ export function useOptionalResourceActionMenuModel(
       };
     return {
       status: entry.status === "Reconciling" ? "Refreshing" : "Ready",
+      activation: entry.status === "Ready" ? snapshot.activation : null,
       capabilities: snapshot.capabilities,
       metadataRequestPending,
       descriptors,

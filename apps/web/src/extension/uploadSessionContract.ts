@@ -159,6 +159,7 @@ export function decodeUploadResponse(raw: unknown): UploadResponse {
       data,
       [
         "kind",
+        "import_ref",
         "session_handle",
         "generation",
         "method",
@@ -169,6 +170,7 @@ export function decodeUploadResponse(raw: unknown): UploadResponse {
       ],
       name,
     );
+    expectNonemptyString(capability.import_ref, `${name}.import_ref`);
     const generation = expectNonnegativeInteger(
       capability.generation,
       `${name}.generation`,
@@ -205,6 +207,7 @@ export function decodeUploadResponse(raw: unknown): UploadResponse {
       data,
       [
         "kind",
+        "import_ref",
         "session_handle",
         "media_id",
         "source_attempt_id",
@@ -212,6 +215,7 @@ export function decodeUploadResponse(raw: unknown): UploadResponse {
       ],
       name,
     );
+    expectNonemptyString(published.import_ref, `${name}.import_ref`);
     return {
       kind,
       sessionHandle: expectNonemptyString(
@@ -233,9 +237,10 @@ export function decodeUploadResponse(raw: unknown): UploadResponse {
   if (kind === "NeedsAttention") {
     const attention = expectExactRecord(
       data,
-      ["kind", "session_handle", "failure", "capabilities"],
+      ["kind", "import_ref", "session_handle", "failure", "capabilities"],
       name,
     );
+    expectNonemptyString(attention.import_ref, `${name}.import_ref`);
     const capabilities = expectExactRecord(
       attention.capabilities,
       ["can_retry_upload", "can_remove"],

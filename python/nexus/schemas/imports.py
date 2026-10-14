@@ -13,13 +13,11 @@ so the ORDER BY, the page predicate, and the cursor digest cannot disagree.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, model_validator
-from pydantic_core import core_schema
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, InvalidRequestError
@@ -31,12 +29,12 @@ from nexus.schemas.import_history import (
     SourceStage,
     Stage,
 )
+from nexus.schemas.import_refs import ImportRef
 from nexus.schemas.media import SourceProgress
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.presence import Presence, Present
 from nexus.schemas.source_issues import SourceIssue
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
-from nexus.services.sealed_handles import UploadSessionHandle
 
 NonemptyString = Annotated[str, Field(min_length=1)]
 
@@ -51,7 +49,7 @@ def _media_resource_ref(value: str) -> str:
 # The linked media named in the resource-action grammar (`media:<uuid>`), the
 # identity every media action speaks (contract D16).
 MediaResourceRef = Annotated[str, AfterValidator(_media_resource_ref)]
-WaitingReason = Literal["Queue", "Capacity", "RetryBackoff"]
+WaitingReason = Literal["Queue", "Capacity", "RetryBackoff", "AwaitingUploadConfirmation"]
 ImportView = Literal["NeedsAttention", "InProgress", "History"]
 ImportCurrentState = Literal["Active", "NeedsAttention", "Complete"]
 SourceRecoveryInput = Literal["StoredSource", "RefetchSource"]
@@ -61,84 +59,6 @@ ModeledRecoveryRestriction = Literal[
     "SourceNotReacquirable",
     "UploadRejected",
 ]
-
-_UPLOAD_REF_PREFIX = "upload:"
-_MEDIA_REF_PREFIX = "media:"
-_UPLOAD_SESSION_HANDLE = TypeAdapter(UploadSessionHandle)
-
-
-class InvalidImportRef(InvalidRequestError):
-    def __init__(self) -> None:
-        super().__init__(ApiErrorCode.E_INVALID_REQUEST, "Invalid import ref")
-
-
-@dataclass(frozen=True, slots=True)
-class UploadImportRef:
-    """One import whose identity is its upload session, published or not."""
-
-    session_handle: UploadSessionHandle
-
-
-@dataclass(frozen=True, slots=True)
-class MediaImportRef:
-    """One import whose identity is its media row; it has no upload session."""
-
-    media_id: UUID
-
-
-type ParsedImportRef = UploadImportRef | MediaImportRef
-
-
-def _split_import_ref(raw: str) -> ParsedImportRef:
-    if raw.startswith(_UPLOAD_REF_PREFIX):
-        return UploadImportRef(
-            session_handle=_UPLOAD_SESSION_HANDLE.validate_python(
-                raw.removeprefix(_UPLOAD_REF_PREFIX)
-            )
-        )
-    if raw.startswith(_MEDIA_REF_PREFIX):
-        raw_id = raw.removeprefix(_MEDIA_REF_PREFIX)
-        media_id = UUID(raw_id)
-        if str(media_id) != raw_id:
-            raise ValueError("media import ref must be canonical lowercase UUID text")
-        return MediaImportRef(media_id=media_id)
-    raise ValueError("import ref must name an upload session or a media row")
-
-
-class ImportRef(str):
-    """The wire identity of one import: validated text, never unsealed here."""
-
-    @classmethod
-    def _validate(cls, value: str) -> ImportRef:
-        _split_import_ref(value)
-        return cls(value)
-
-    @classmethod
-    def __get_pydantic_core_schema__(
-        cls,
-        _source_type: object,
-        _handler: object,
-    ) -> core_schema.CoreSchema:
-        return core_schema.no_info_after_validator_function(
-            cls._validate,
-            core_schema.str_schema(),
-        )
-
-
-def parse_import_ref(raw: str) -> ParsedImportRef:
-    """Untrusted ingress: narrow one URL-decoded ref into its owning identity."""
-    try:
-        return _split_import_ref(raw)
-    except ValueError as exc:
-        raise InvalidImportRef from exc
-
-
-def format_import_ref(ref: ParsedImportRef) -> ImportRef:
-    match ref:
-        case UploadImportRef():
-            return ImportRef(f"{_UPLOAD_REF_PREFIX}{ref.session_handle}")
-        case MediaImportRef():
-            return ImportRef(f"{_MEDIA_REF_PREFIX}{ref.media_id}")
 
 
 class _ImportStateActiveFields(BaseModel):
@@ -287,8 +207,15 @@ class ImportObligations(BaseModel):
 
 
 class Capabilities(BaseModel):
-    can_open: bool
     can_remove: bool
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ImportReadiness(BaseModel):
+    can_read: bool
+    can_search: bool
+    can_play: bool
 
     model_config = ConfigDict(extra="forbid")
 
@@ -296,9 +223,11 @@ class Capabilities(BaseModel):
 class ImportItem(BaseModel):
     ref: ImportRef
     title: NonemptyString
+    original_filename: Presence[NonemptyString]
     media_kind: MediaKind
     source_label: Presence[NonemptyString]
     media_ref: Presence[MediaResourceRef]
+    readiness: ImportReadiness
     state: ImportState
     accepted_at: datetime
     updated_at: datetime
@@ -310,17 +239,9 @@ class ImportItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ImportStageGroup(BaseModel):
-    stage: Stage
-    count: int = Field(ge=0)
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class ImportPage(BaseModel):
     observed_at: datetime
     matched_count: int = Field(ge=0)
-    groups: list[ImportStageGroup]
     items: list[ImportItem]
     next_cursor: Presence[str]
 
@@ -332,8 +253,6 @@ class ImportPage(BaseModel):
             raise ValueError("import page returned more items than it matched")
         if len({item.ref for item in self.items}) != len(self.items):
             raise ValueError("import page returned the same import twice")
-        if sum(group.count for group in self.groups) > self.matched_count:
-            raise ValueError("import page grouped more imports than it matched")
         if isinstance(self.next_cursor, Present) and not self.items:
             raise ValueError("import page continues a page that returned no items")
         return self
@@ -348,14 +267,6 @@ class ImportSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ImportReadiness(BaseModel):
-    can_read: bool
-    can_search: bool
-    can_play: bool
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class ImportSourceIssues(BaseModel):
     generation: int = Field(ge=1, strict=True)
     issues: list[SourceIssue]
@@ -365,7 +276,6 @@ class ImportSourceIssues(BaseModel):
 
 class ImportDetail(BaseModel):
     item: ImportItem
-    readiness: ImportReadiness
     history_coverage: HistoryCoverage
     source_issues: Presence[ImportSourceIssues]
 

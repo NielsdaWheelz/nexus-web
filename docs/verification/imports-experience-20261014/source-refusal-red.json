@@ -1,0 +1,177 @@
+{
+  "phase": "red",
+  "run": "red-1792014406866",
+  "method": "ordinary browser sign-in; public URL admission; real worker DNS safety refusal; public attempt race; actual 409 response held and released unchanged",
+  "source": {
+    "apps/web/src/components/imports/ImportsList.tsx": "d951317f77af678a860430c4121e950430c49c838d53495254a3bf88baa72db7",
+    "apps/web/src/components/imports/ImportActions.tsx": "451471bfefe1e1768f4a1b965aae86640c9ff2f9f988aab62b9b16caacf95de6",
+    "apps/web/src/components/ui/Button.module.css": "b2c30a60e0503c5512414c2105c82d93fb9199af6a2ecb4901b021b43670aaf9"
+  },
+  "fixtures": [
+    {
+      "url": "http://imports-proof.example.com/source-refusal-red-1792014406866-connected.pdf",
+      "filename": "source-refusal-red-1792014406866-connected.pdf",
+      "ref": "media:950efe77-6285-4b2a-8bd7-9f6a8372d0ae",
+      "mediaId": "950efe77-6285-4b2a-8bd7-9f6a8372d0ae",
+      "cleanup": {
+        "operation": "public media delete",
+        "status": 200,
+        "result": "Deleting"
+      },
+      "expectedAttemptId": "15226759-fae8-41f2-b3eb-f3431ee0616a",
+      "observed": {
+        "state": {
+          "kind": "NeedsAttention",
+          "stage": "Validate",
+          "failure_code": {
+            "kind": "Present",
+            "value": "E_SSRF_BLOCKED"
+          }
+        },
+        "recovery": {
+          "kind": "Present",
+          "value": {
+            "kind": "RetrySource",
+            "expected_attempt_id": "15226759-fae8-41f2-b3eb-f3431ee0616a",
+            "input": "RefetchSource"
+          }
+        },
+        "readiness": {
+          "can_read": false,
+          "can_search": false,
+          "can_play": false
+        }
+      },
+      "advancedAttemptId": "4b77f49b-35f4-44a4-9ef7-ef149919a186",
+      "browserRefusal": {
+        "status": 409,
+        "code": "E_RESOURCE_CONFLICT",
+        "expectedAttemptId": "15226759-fae8-41f2-b3eb-f3431ee0616a",
+        "currentAttemptId": "4b77f49b-35f4-44a4-9ef7-ef149919a186"
+      },
+      "pendingFocus": {
+        "nativeDisabled": true,
+        "ariaDisabled": null,
+        "active": "body"
+      },
+      "settledFocus": "body"
+    },
+    {
+      "url": "http://imports-proof.example.com/source-refusal-red-1792014406866-foreign-query.pdf",
+      "filename": "source-refusal-red-1792014406866-foreign-query.pdf",
+      "ref": "media:1bded54b-6ad3-4061-a3c3-417c8d4d4402",
+      "mediaId": "1bded54b-6ad3-4061-a3c3-417c8d4d4402",
+      "cleanup": {
+        "operation": "public media delete",
+        "status": 200,
+        "result": "Deleting"
+      },
+      "expectedAttemptId": "0f933c82-fb4a-41ab-af48-7e9027e555e4",
+      "observed": {
+        "state": {
+          "kind": "NeedsAttention",
+          "stage": "Validate",
+          "failure_code": {
+            "kind": "Present",
+            "value": "E_SSRF_BLOCKED"
+          }
+        },
+        "recovery": {
+          "kind": "Present",
+          "value": {
+            "kind": "RetrySource",
+            "expected_attempt_id": "0f933c82-fb4a-41ab-af48-7e9027e555e4",
+            "input": "RefetchSource"
+          }
+        },
+        "readiness": {
+          "can_read": false,
+          "can_search": false,
+          "can_play": false
+        }
+      },
+      "advancedAttemptId": "91c30022-4f08-45c0-9fef-854d4039a1a3",
+      "browserRefusal": {
+        "status": 409,
+        "code": "E_RESOURCE_CONFLICT",
+        "expectedAttemptId": "0f933c82-fb4a-41ab-af48-7e9027e555e4",
+        "currentAttemptId": "91c30022-4f08-45c0-9fef-854d4039a1a3"
+      },
+      "pendingFocus": {
+        "nativeDisabled": true,
+        "ariaDisabled": null,
+        "active": "body"
+      },
+      "settledFocus": "other"
+    }
+  ],
+  "requests": [
+    {
+      "transport": "public api",
+      "method": "POST",
+      "path": "/media/from_url",
+      "status": 202,
+      "code": null
+    },
+    {
+      "transport": "public api",
+      "method": "POST",
+      "path": "/media/950efe77-6285-4b2a-8bd7-9f6a8372d0ae/retry",
+      "status": 202,
+      "code": null
+    },
+    {
+      "transport": "real browser via bff",
+      "method": "POST",
+      "path": "/api/media/950efe77-6285-4b2a-8bd7-9f6a8372d0ae/retry",
+      "status": 409,
+      "code": "E_RESOURCE_CONFLICT"
+    },
+    {
+      "transport": "public api",
+      "method": "DELETE",
+      "path": "/media/950efe77-6285-4b2a-8bd7-9f6a8372d0ae",
+      "status": 200,
+      "code": null
+    },
+    {
+      "transport": "public api",
+      "method": "POST",
+      "path": "/media/from_url",
+      "status": 202,
+      "code": null
+    },
+    {
+      "transport": "public api",
+      "method": "POST",
+      "path": "/media/1bded54b-6ad3-4061-a3c3-417c8d4d4402/retry",
+      "status": 202,
+      "code": null
+    },
+    {
+      "transport": "real browser via bff",
+      "method": "POST",
+      "path": "/api/media/1bded54b-6ad3-4061-a3c3-417c8d4d4402/retry",
+      "status": 409,
+      "code": "E_RESOURCE_CONFLICT"
+    },
+    {
+      "transport": "public api",
+      "method": "DELETE",
+      "path": "/media/1bded54b-6ad3-4061-a3c3-417c8d4d4402",
+      "status": 200,
+      "code": null
+    }
+  ],
+  "results": [
+    {
+      "name": "real stale source refusal preserves the connected focused trigger",
+      "status": "fail",
+      "detail": "refused source command left its connected enabled trigger unfocused"
+    },
+    {
+      "name": "real stale source refusal preserves a deliberately focused query and draft",
+      "status": "pass"
+    }
+  ]
+}

@@ -39,8 +39,7 @@ export type UploadPhase = "Preparing" | "Uploading" | "Verifying";
 export interface AcceptedIngest {
   readonly kind: "Url" | "Upload";
   readonly mediaId: string;
-  /** The server reused an earlier acceptance of this intent or content. */
-  readonly duplicate: boolean;
+  readonly importRef: string;
   /** A link's processing as accepted; `failed` covers a failed attempt too. */
   readonly processing: "processing" | "ready" | "failed" | null;
 }
@@ -193,7 +192,7 @@ function published(response: Schema<"Published">): AcceptedIngest {
   return {
     kind: "Upload",
     mediaId: response.media_id,
-    duplicate: response.idempotency_outcome === "Reused",
+    importRef: response.import_ref,
     processing: null,
   };
 }
@@ -276,12 +275,14 @@ export async function uploadIngestFile({
   idempotencyKey = createRandomId("media-upload"),
   signal,
   onPhaseChange,
+  onImportRef,
 }: {
   file: File;
   libraryIds: readonly string[];
   idempotencyKey?: string;
   signal?: AbortSignal;
   onPhaseChange?: (phase: UploadPhase) => void;
+  onImportRef?: (ref: string) => void;
 }): Promise<AcceptedIngest> {
   const invalid = getFileUploadError(file);
   const kind = getFileUploadKind(file);
@@ -304,6 +305,7 @@ export async function uploadIngestFile({
           signal,
         },
       );
+      onImportRef?.(data.import_ref);
       return data;
     });
   let started = await create();
@@ -421,7 +423,7 @@ export async function addMediaFromUrl({
   return {
     kind: "Url",
     mediaId: data.media_id,
-    duplicate: data.idempotency_outcome === "reused",
+    importRef: data.import_ref,
     processing:
       status === "failed" || data.source_attempt_status === "failed"
         ? "failed"
