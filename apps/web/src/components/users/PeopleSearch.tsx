@@ -8,10 +8,10 @@
 // share stores. A controlled `selected` person shows in the field until the viewer
 // types again.
 
-import { useEffect, useId, useState, type KeyboardEvent } from "react";
+import { useId, useState, type KeyboardEvent } from "react";
 import Input from "@/components/ui/Input";
 import { apiFetch } from "@/lib/api/client";
-import { usePaneFreeServerValue } from "@/lib/api/serverState";
+import { usePaneFreeServerValue, useSettled } from "@/lib/api/serverState";
 import type { Schema } from "@/lib/api/wire";
 import { nextRovingIndexForKey } from "@/lib/ui/rovingIndex";
 import styles from "./PeopleSearch.module.css";
@@ -41,21 +41,17 @@ export default function PeopleSearch({
 }) {
   const id = useId();
   const [query, setQuery] = useState("");
-  const [asked, setAsked] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const q = query.trim();
-  useEffect(() => {
-    const timer = window.setTimeout(() => setAsked(q.length >= 3 ? q : null), 250);
-    return () => window.clearTimeout(timer);
-  }, [q]);
+  const settled = useSettled(q, 250);
   const search = usePaneFreeServerValue({
-    key: selected === null && asked === q ? asked : null,
+    key: selected === null && q.length >= 3 && settled === q ? q : null,
     stale: "",
     load: async (signal) =>
       (
         await apiFetch<{ data: Person[] }>(
-          `/api/users/search?${new URLSearchParams({ q: asked ?? "" })}`,
+          `/api/users/search?${new URLSearchParams({ q })}`,
           { signal },
         )
       ).data,

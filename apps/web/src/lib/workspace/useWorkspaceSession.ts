@@ -8,7 +8,7 @@
 import { useEffect, useState } from "react";
 import { useFeedback } from "@/components/feedback/Feedback";
 import {
-  apiCommand204,
+  apiFetch,
   apiTransportFeedback,
   isApiError,
   isStaleBuild,
@@ -46,7 +46,7 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
       }
       if (state === saved) return resolve(NOTICE);
       sending = state;
-      apiCommand204("/api/me/workspace-session", {
+      apiFetch<void>("/api/me/workspace-session", {
         method: "PUT",
         body: JSON.stringify(state),
         keepalive,

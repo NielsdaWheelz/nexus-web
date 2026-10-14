@@ -21,7 +21,6 @@ import {
 } from "react";
 import {
   apiFetch,
-  decodeApiPayload,
   isApiError,
   isSameSystemApiDefect,
   ApiError,
@@ -29,7 +28,6 @@ import {
 import { useFeedback } from "@/components/feedback/Feedback";
 import { createRandomId } from "@/lib/createRandomId";
 import { assertNever } from "@/lib/assertNever";
-import type { AsyncResource } from "@/lib/api/useResource";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { publishChange, useChangeStamp } from "@/lib/api/changes";
@@ -76,8 +74,17 @@ interface PendingEnsure {
   attempt: Promise<EnsureOutcome> | null;
 }
 
+/**
+ * The Lectern read: loading, the snapshot, or what failed with its retry (a
+ * defect too, which the Lectern pane throws).
+ */
+export type LecternRead =
+  | { status: "loading" }
+  | { status: "ready"; data: LecternSnapshot }
+  | { status: "error"; error: unknown; retry: () => void };
+
 export interface LecternCapability {
-  readonly resource: AsyncResource<LecternSnapshot>;
+  readonly resource: LecternRead;
   /** A command is in flight. */
   readonly busy: boolean;
   readonly ensureRequests: ReadonlyMap<MediaId, EnsureRequest>;
@@ -118,11 +125,7 @@ async function getLectern(cache?: RequestCache): Promise<LecternSnapshot> {
   const body = await apiFetch<ApiJson<"/lectern", "get">>("/api/lectern", {
     cache,
   });
-  return decodeApiPayload(
-    body,
-    (r) => lecternSnapshotFromWire(r.data),
-    "GET /api/lectern",
-  );
+  return lecternSnapshotFromWire(body.data);
 }
 
 async function postLectern(
@@ -130,7 +133,7 @@ async function postLectern(
     Schema<"RemoveItemCommand"> | Schema<"SetOrderCommand">,
   signal?: AbortSignal,
 ): Promise<LecternResult> {
-  const response = await apiFetch<ApiJson<"/lectern/commands", "post">>(
+  const { data } = await apiFetch<ApiJson<"/lectern/commands", "post">>(
     "/api/lectern/commands",
     {
       method: "POST",
@@ -138,28 +141,22 @@ async function postLectern(
       signal,
     },
   );
-  return decodeApiPayload(
-    response,
-    ({ data }): LecternResult => {
-      let outcome: LecternResult["outcome"];
-      switch (data.outcome.kind) {
-        case "Ensured":
-        case "Ordered":
-          outcome = data.outcome;
-          break;
-        case "Placed":
-          outcome = { kind: "Placed", itemIds: data.outcome.item_ids.map(parseLecternItemId) };
-          break;
-        case "Removed":
-          outcome = { kind: "Removed", itemId: parseLecternItemId(data.outcome.item_id) };
-          break;
-        default:
-          return assertNever(data.outcome, "Unsupported Lectern outcome");
-      }
-      return { outcome, lectern: lecternSnapshotFromWire(data.lectern) };
-    },
-    "POST /api/lectern/commands",
-  );
+  let outcome: LecternResult["outcome"];
+  switch (data.outcome.kind) {
+    case "Ensured":
+    case "Ordered":
+      outcome = data.outcome;
+      break;
+    case "Placed":
+      outcome = { kind: "Placed", itemIds: data.outcome.item_ids.map(parseLecternItemId) };
+      break;
+    case "Removed":
+      outcome = { kind: "Removed", itemId: parseLecternItemId(data.outcome.item_id) };
+      break;
+    default:
+      return assertNever(data.outcome, "Unsupported Lectern outcome");
+  }
+  return { outcome, lectern: lecternSnapshotFromWire(data.lectern) };
 }
 
 async function postConsumption(body: object): Promise<ConsumptionResult> {
@@ -170,15 +167,11 @@ async function postConsumption(body: object): Promise<ConsumptionResult> {
       body: JSON.stringify({ client_mutation_id: createRandomId(), ...body }),
     },
   );
-  return decodeApiPayload(
-    response,
-    ({ data }) => consumptionResultFromWire(data),
-    "POST /api/consumption/commands",
-  );
+  return consumptionResultFromWire(response.data);
 }
 
 export function LecternProvider({ children }: { children: ReactNode }) {
-  const [resource, setResource] = useState<AsyncResource<LecternSnapshot>>({
+  const [resource, setResource] = useState<LecternRead>({
     status: "loading",
   });
   const [inFlight, setInFlight] = useState(0);
@@ -415,10 +408,7 @@ export function LecternProvider({ children }: { children: ReactNode }) {
           if (mounted) install(loaded);
         } catch (error) {
           if (handleUnauthenticatedApiError(error) || !mounted) return;
-          const failure = isApiError(error)
-            ? error
-            : new ApiError(0, "E_NETWORK", "The Lectern could not be loaded");
-          setResource({ status: "error", error: failure, retry: load });
+          setResource({ status: "error", error, retry: load });
         }
       });
     };

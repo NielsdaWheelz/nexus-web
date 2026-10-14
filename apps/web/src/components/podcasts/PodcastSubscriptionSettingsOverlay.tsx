@@ -7,7 +7,6 @@ import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Select from "@/components/ui/Select";
 import type { ApiError } from "@/lib/api/client";
-import { useResource } from "@/lib/api/useResource";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import {
   getSubscription,
@@ -16,6 +15,7 @@ import {
 } from "@/lib/podcasts/api";
 import {
   modeledApiError,
+  usePaneFreeServerValue,
   useThrowLater,
 } from "@/lib/api/serverState";
 import {
@@ -32,22 +32,24 @@ interface Props {
 export default function PodcastSubscriptionSettingsOverlay(props: Props) {
   const { podcastId, onClose } = props;
   const feedback = useFeedback();
-  const source = useResource({
-    cacheKey: `podcast-subscription:${podcastId}`,
+  const source = usePaneFreeServerValue({
+    key: `podcast-subscription:${podcastId}`,
+    stale: "",
     load: (signal) => getSubscription(podcastId, signal),
   });
+  const failure = source.status === "failed" ? source.error : null;
   useEffect(() => {
-    if (source.status !== "error") return;
+    if (failure === null) return;
     feedback.publish({
       kind: "Hud",
       content: {
         tone: "Danger",
         title: "Subscription settings couldn’t be loaded",
-        requestId: source.error.requestId,
+        requestId: failure.requestId,
       },
     });
     onClose();
-  }, [feedback, onClose, source]);
+  }, [failure, feedback, onClose]);
   return source.status === "ready" ? (
     <SettingsForm {...props} source={source.data} />
   ) : null;

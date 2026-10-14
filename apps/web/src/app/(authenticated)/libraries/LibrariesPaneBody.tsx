@@ -15,13 +15,11 @@ import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useChangeStamp } from "@/lib/api/changes";
-import { useResourceSeed } from "@/lib/api/resourceCache";
 import { useThrowLater } from "@/lib/api/serverState";
 import {
   listRowStatus,
   pageQuery,
   useServerList,
-  type ListPage,
   type ListSnapshot,
 } from "@/lib/api/useServerList";
 import { libraryDisplayName, presentLibrary } from "@/lib/collections/presenters/library";
@@ -48,15 +46,13 @@ export default function LibrariesPaneBody() {
   const params = usePaneSearchParams();
   const sort = params.get("sort");
   const query = sort === null ? "" : new URLSearchParams({ sort }).toString();
-  const seed = useResourceSeed<ListPage<Library>>("libraries");
   const list = useServerList<Library>({
-    key: `libraries?${query}`,
+    key: `/libraries?${query}`,
     stale: useChangeStamp("Libraries"),
     pageSize: 100,
     drain: true,
     active: usePaneIsActive(),
     visit: VISIT,
-    seed: seed && { key: "libraries?", page: seed },
     id: (library) => library.id,
     fetchPage: (cursor, limit, signal) =>
       librariesPage(pageQuery(query, cursor, limit), signal),

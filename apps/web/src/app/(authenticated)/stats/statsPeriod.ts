@@ -1,4 +1,4 @@
-import type { PaneUrlStateCodec } from "@/lib/api/usePaneUrlState";
+import type { PaneUrlStateCodec } from "@/lib/panes/usePaneUrlState";
 import type { ActivityModality } from "@/lib/consumption/activityContract";
 import { isContributorHandle } from "@/lib/contributors/credits";
 import { formatLocalDateInTimeZone, isLocalDate, shiftLocalDate } from "@/lib/localDate";

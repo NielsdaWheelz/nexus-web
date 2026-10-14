@@ -22,7 +22,6 @@ import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { isInvalidViewError, type ApiError } from "@/lib/api/client";
-import { requestWithRetry } from "@/lib/api/retryPolicy";
 import { fetchBrowsePage, type BrowseCandidate } from "@/lib/browse/api";
 import {
   BROWSE_KIND_LABELS,
@@ -43,6 +42,7 @@ import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import {
   modeledApiError,
+  requestWithRetry,
   useThrowLater,
   useVisitSnapshot,
 } from "@/lib/api/serverState";

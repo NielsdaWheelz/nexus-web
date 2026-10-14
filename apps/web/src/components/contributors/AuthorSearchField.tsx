@@ -8,7 +8,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import Input from "@/components/ui/Input";
-import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
+import { usePaneFreeServerValue, useSettled } from "@/lib/api/serverState";
 import {
   searchContributors,
   type ContributorSearchItem,
@@ -62,17 +62,19 @@ export default function AuthorSearchField({
   const [query, setQuery] = useState(initialQuery);
   const [open, setOpen] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [attempt, setAttempt] = useState(0);
   const trimmed = query.trim();
   const overLength = [...trimmed].length > MAX_NAME_CODE_POINTS;
   const searchable = trimmed !== "" && !overLength;
-  const search = useDebouncedFetch(
-    searchable ? `${trimmed}#${attempt}` : null,
-    (signal) => searchContributors(trimmed, signal),
-    { debounceMs: 180, identity: searchable ? trimmed : null },
-  );
-  const page = search.dataIdentity === trimmed ? search.data : null;
-  const failed = search.error !== null && search.errorIdentity === trimmed;
+  // One read per query that held still for 180 ms; results show only for it.
+  const settled = useSettled(trimmed, 180);
+  const live = searchable && settled === trimmed;
+  const search = usePaneFreeServerValue({
+    key: live ? trimmed : null,
+    stale: "",
+    load: (signal) => searchContributors(trimmed, signal),
+  });
+  const page = live && search.status === "ready" ? search.data : null;
+  const failed = live && search.status === "failed";
   const items = page?.contributors ?? [];
 
   useEffect(() => {
@@ -156,7 +158,7 @@ export default function AuthorSearchField({
       if (options.length > 0) setActiveId(options[moves[event.key]!]!.id);
     } else if (event.key === "Enter") {
       event.preventDefault();
-      if (failed) setAttempt((n) => n + 1);
+      if (failed) search.refetch();
       else choose(active);
     }
   }
@@ -231,7 +233,7 @@ export default function AuthorSearchField({
                 className={styles.textButton}
                 tabIndex={-1}
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => setAttempt((n) => n + 1)}
+                onClick={search.refetch}
               >
                 Try again
               </button>

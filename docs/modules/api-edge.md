@@ -20,7 +20,7 @@ server components: callFastAPI ────────────────�
 - `client.ts`: `apiFetch(path: "/api/…", init)` answers the parsed json (an
   empty 2xx is `undefined`) or throws `ApiError {status, code, message,
   requestId?, details?}`; status 0 `E_NETWORK` is a transport failure. Every
-  call carries `X-Nexus-Wire`. `readResponse` is the one envelope reader (the
+  call carries `X-Nexus-Wire`; `keepalive: true` lets a write outlive the page. `readResponse` is the one envelope reader (the
   request id comes from the body, else the `x-request-id` header). A 426 reloads
   the tab once per (tab, build): a `sessionStorage` marker holds the bundle's
   own revision, the reload passes the page's `beforeunload` guard, and after it
@@ -29,6 +29,25 @@ server components: callFastAPI ────────────────�
   `apiTransportFeedback`; one that throws it (`isStaleBuild`) reaches the pane
   or workspace boundary, which shows it and reports no client defect. The
   workspace save keeps the workspace up.
+- `serverState.tsx`: the one owner of keyed async reads.
+  `useServerValue({key, stale, visit, load})` and `usePaneFreeServerValue` (no
+  pane visit) answer `loading | failed | ready {data, generation, error,
+  refreshing}` with `refetch()`. A new key loads (a null key waits); a moved
+  `stale` refetches over the shown data; refetches queue behind the read in
+  flight; `requestWithRetry` retries transport failures and non-defect 5xx
+  three times (I5); a modeled `ApiError` is a failure, a defect throws in
+  render (I4), a 401 goes to sign-in (outside the shell it is a failure, which
+  share capture shows). A pane return paints the visit's snapshot, then
+  refetches. `ServerSeedsProvider` holds the bootstrap's first-paint reads
+  (`lib/panes/paneResourceLoaders.ts`) for the entry's active pane (no other
+  pane is seeded), under the key of the hook that reads them, the api path. A hook in the pane body's first commit paints
+  its first key's seed without a fetch; that commit spends the pane's seeds
+  (`ServerSeedsSpent`, beside the body), so every later mount reads and a seed
+  no hook took is dropped unread. `useSettled(value, ms)` is a typed query
+  once it held still: a search reads by its settled text and shows results
+  only for that text.
+  `useServerList`/`usePaneFreeServerList` hold server-ordered lists the same
+  way (architecture §8.12); `usePagePrefix` is a value over page prefixes.
 - `stream.ts`: `openStream({path: "/api/stream/…", after?, decode, isTerminal,
   onEvent, onError, onComplete?, onReconnect?, signal?, maxReconnects = 8,
   maxBackoffMs = 30 s})` returns a stop function. Resume is `?after=<id>` only.

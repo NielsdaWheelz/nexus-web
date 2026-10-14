@@ -23,7 +23,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { apiFetch, decodeApiPayload } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import {
   playerDescriptorFromWire,
@@ -200,11 +200,7 @@ async function freshDescriptor(
       `/api/media/${mediaId}/player`,
       { signal: controller.signal, cache: "no-store" },
     );
-    return decodeApiPayload(
-      body,
-      ({ data }) => playerDescriptorFromWire(data),
-      "GET player",
-    );
+    return playerDescriptorFromWire(body.data);
   } catch {
     return null;
   } finally {

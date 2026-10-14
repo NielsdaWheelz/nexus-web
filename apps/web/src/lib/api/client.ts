@@ -103,28 +103,6 @@ export function apiTransportFeedback(
   }
 }
 
-/**
- * Translate a strict same-system payload decoder failure into the defect
- * taxonomy, never into a modeled failure.
- */
-export function decodeApiPayload<Input, Output>(
-  body: Input,
-  decode: (body: Input) => Output,
-  context: string,
-): Output {
-  try {
-    return decode(body);
-  } catch (error) {
-    if (isApiError(error)) throw error;
-    const reason = error instanceof Error ? error.message : "Invalid response";
-    throw new ApiError(
-      200,
-      "E_INVALID_RESPONSE",
-      `${context} returned an invalid response: ${reason}`,
-    );
-  }
-}
-
 /** Reload once per (tab, build); a beforeunload guard may keep the page. */
 function reloadForNewBuild(): void {
   try {
@@ -178,7 +156,10 @@ export async function readResponse<T>(response: Response): Promise<T> {
   throw failure;
 }
 
-/** One api call. A string body is json; status 0 E_NETWORK is a transport failure. */
+/**
+ * One api call. A string body is json; status 0 E_NETWORK is a transport
+ * failure. `keepalive: true` lets a write outlive the page (64 KB in flight).
+ */
 export async function apiFetch<T>(
   path: ApiPath,
   init: RequestInit = {},
@@ -196,22 +177,4 @@ export async function apiFetch<T>(
     throw new ApiError(0, "E_NETWORK", "Network request failed");
   }
   return readResponse<T>(response);
-}
-
-/** A command answered without a body. */
-export async function apiCommand204(
-  path: ApiPath,
-  init: RequestInit,
-): Promise<void> {
-  await apiFetch<void>(path, init);
-}
-
-/** A write that outlives the page (64 KB of keepalive bodies in flight). */
-export async function apiKeepaliveJson(
-  path: ApiPath,
-  body: unknown,
-  method: "PUT" | "POST" = "PUT",
-): Promise<void> {
-  const init = { method, keepalive: true, body: JSON.stringify(body) };
-  await apiFetch<void>(path, init);
 }

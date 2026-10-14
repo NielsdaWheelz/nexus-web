@@ -6,8 +6,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import { requestWithRetry } from "@/lib/api/retryPolicy";
-import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
+import {
+  requestWithRetry,
+  usePaneFreeServerValue,
+  useSettled,
+} from "@/lib/api/serverState";
 import {
   getContributor,
   searchContributors,
@@ -58,14 +61,17 @@ export default function ContributorFilter({
 }) {
   const [query, setQuery] = useState("");
   const q = query.trim();
-  const search = useDebouncedFetch(
-    q || null,
-    (signal) => searchContributors(q, signal),
-    { debounceMs: 180 },
-  );
+  // One read per query that held still for 180 ms; results show only for it.
+  const settled = useSettled(q, 180);
+  const live = q !== "" && settled === q;
+  const search = usePaneFreeServerValue({
+    key: live ? q : null,
+    stale: "",
+    load: (signal) => searchContributors(q, signal),
+  });
   const suggestions =
-    search.dataIdentity === q
-      ? (search.data?.contributors ?? []).filter(
+    live && search.status === "ready"
+      ? search.data.contributors.filter(
           (item) => !selectedHandles.includes(item.handle),
         )
       : [];
@@ -80,7 +86,7 @@ export default function ContributorFilter({
           onChange={(event) => setQuery(event.target.value)}
         />
       </label>
-      {search.error !== null && search.errorIdentity === q ? (
+      {live && search.status === "failed" ? (
         <p role="alert" className={styles.message}>
           Couldn’t load authors.
         </p>

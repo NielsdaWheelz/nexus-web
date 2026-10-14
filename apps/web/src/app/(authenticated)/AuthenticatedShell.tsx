@@ -17,10 +17,7 @@ import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import type { AuthenticatedAccount } from "@/lib/account/contract";
 import ResourceActionsProvider from "@/lib/actions/ResourceActionsProvider";
-import {
-  ResourceCacheProvider,
-  type DehydratedResources,
-} from "@/lib/api/resourceCache";
+import { ServerSeedsProvider } from "@/lib/api/serverState";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import ActivityCaptureLifecycle from "@/lib/consumption/ActivityCaptureLifecycle";
 import { readerSurfaceStyle } from "@/lib/documentReader/DocumentReader";
@@ -54,7 +51,7 @@ export default function AuthenticatedShell(props: {
   readerProfile: ReaderProfile;
   renderEnvironment: RenderEnvironment;
   initialState: WorkspaceState;
-  resources: DehydratedResources;
+  seeds: Record<string, Record<string, unknown>>;
   entryFailure: { requestId?: string } | null;
 }) {
   return (
@@ -62,7 +59,7 @@ export default function AuthenticatedShell(props: {
       <RenderEnvironmentProvider value={props.renderEnvironment}>
         <UnauthenticatedApiBoundary>
           <ActivityCaptureLifecycle />
-          <ResourceCacheProvider value={props.resources}>
+          <ServerSeedsProvider seeds={props.seeds}>
             <ReaderProvider initialProfile={props.readerProfile}>
               <Workspace
                 accountId={props.account.accountId}
@@ -70,7 +67,7 @@ export default function AuthenticatedShell(props: {
                 entryFailure={props.entryFailure}
               />
             </ReaderProvider>
-          </ResourceCacheProvider>
+          </ServerSeedsProvider>
         </UnauthenticatedApiBoundary>
       </RenderEnvironmentProvider>
     </AuthenticatedAccountProvider>

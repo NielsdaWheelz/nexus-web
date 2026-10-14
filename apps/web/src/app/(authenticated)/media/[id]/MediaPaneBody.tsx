@@ -18,10 +18,8 @@ import LecternNextPrompt from "@/components/LecternNextPrompt";
 import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { useCompletionUndo } from "@/lib/lectern/useCompletionUndo";
-import { apiFetch, isApiError } from "@/lib/api/client";
-import { mediaResource } from "@/lib/api/resource";
-import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
-import { useResource } from "@/lib/api/useResource";
+import { apiFetch } from "@/lib/api/client";
+import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import type { ReaderTarget } from "@/lib/documentReader/model";
 import { Contents, SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
@@ -39,7 +37,6 @@ import { mediaDetailFromResponse, type MediaDetail } from "@/lib/media/mediaDeta
 import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
 import { useMediaMetadataOperations } from "@/lib/media/mediaMetadataOperations";
 import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
-import { loadMediaPane } from "@/lib/panes/paneResourceLoaders";
 import {
   paneSourceKey,
   requirePaneRuntime,
@@ -94,15 +91,20 @@ function MediaPane({ id }: { readonly id: string }) {
   const root = useRef<HTMLDivElement>(null);
 
   // ---- the media record ----
-  const seed = useResource({
-    descriptor: mediaResource,
-    params: { id },
-    load: (params: { id: string }, signal: AbortSignal) => loadMediaPane(clientResourceFetcher(signal), params),
+  const record = usePaneFreeServerValue({
+    key: `/media/${id}`,
+    stale: "",
+    load: async (signal) =>
+      mediaDetailFromResponse(
+        await apiFetch<ApiJson<"/media/{media_id}", "get">>(`/api/media/${encodeURIComponent(id)}`, { signal }),
+        id,
+      ),
   });
+  const loaded = record.status === "ready" ? record.data : null;
   const [media, setMedia] = useState<MediaDetail | null>(null);
   useEffect(() => {
-    if (seed.status === "ready") setMedia(seed.data.media);
-  }, [seed]);
+    if (loaded) setMedia(loaded);
+  }, [loaded]);
   useSetPaneLabel(media ? media.title.trim() || "Media" : null);
   const { snapshot } = useMediaProcessingStatus(media?.id ?? null, media?.processing_status ?? "");
   useEffect(() => {
@@ -339,7 +341,7 @@ function MediaPane({ id }: { readonly id: string }) {
   const dismissTarget = useCallback(() => setShown(null), []);
   useReaderChrome({
     media,
-    failed: seed.status === "error",
+    failed: record.status === "failed",
     reader,
     find,
     readable,
@@ -354,10 +356,10 @@ function MediaPane({ id }: { readonly id: string }) {
   useReaderActivity(id, reader, root, paneActive, isMobile);
 
   // ---- render ----
-  if (seed.status === "loading" || (seed.status === "ready" && !media))
+  if (record.status === "loading" || (record.status === "ready" && !media))
     return <PaneLoadingState label="Loading item…" announcement="Polite" />;
-  if (seed.status === "error" || !media) {
-    const missing = seed.status === "error" && isApiError(seed.error) && seed.error.status === 404;
+  if (record.status === "failed" || !media) {
+    const missing = record.status === "failed" && record.error.status === 404;
     return (
       <div className={styles.state}>
         <FeedbackNotice

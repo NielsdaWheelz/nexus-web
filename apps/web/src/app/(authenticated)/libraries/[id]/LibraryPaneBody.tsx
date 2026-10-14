@@ -23,7 +23,6 @@ import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { useChangeStamp } from "@/lib/api/changes";
-import { useResourceSeed } from "@/lib/api/resourceCache";
 import { useServerValue, useThrowLater, type Visit } from "@/lib/api/serverState";
 import {
   listRowStatus,
@@ -63,7 +62,6 @@ import {
 import { requestNexusOpen } from "@/lib/nexus/events";
 import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import { matchesPaneFilterQuery, usePaneFilterRows } from "@/lib/panes/paneFilterRows";
-import type { LibraryPaneSeed } from "@/lib/panes/paneResourceLoaders";
 import {
   usePaneIsActive,
   usePaneParam,
@@ -113,7 +111,6 @@ function LibraryPane({ id }: { readonly id: string }) {
   const router = usePaneRouter();
   const params = usePaneSearchParams();
   const fail = useThrowLater();
-  const seed = useResourceSeed<LibraryPaneSeed>(id);
   const query = new URLSearchParams(
     VIEW_KEYS.flatMap((key) => {
       const value = params.get(key);
@@ -122,18 +119,14 @@ function LibraryPane({ id }: { readonly id: string }) {
   ).toString();
 
   const detail = useServerValue({
-    key: id,
+    key: `/libraries/${id}`,
     stale: useChangeStamp("Libraries"),
     visit: DETAIL,
     load: (signal) => getLibrary(id, signal),
   });
   // A 404 on the first read or a reread: the library is gone for the viewer.
   const missing = detail.status !== "loading" && detail.error?.status === 404;
-  const library = missing
-    ? null
-    : detail.status === "ready"
-      ? detail.data
-      : (seed?.library ?? null);
+  const library = !missing && detail.status === "ready" ? detail.data : null;
   const consumption = useChangeStamp("Consumption");
   // Views whose rows or order move with reading and listening reread with it.
   const followsConsumption =
@@ -141,7 +134,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     params.has("completion") ||
     (params.get("sort") ?? "").startsWith("remaining");
   const list = useServerList<LibraryEntry>({
-    key: `${id}?${query}`,
+    key: `/libraries/${id}/entries?${query}`,
     stale: [
       useChangeStamp("Entries"),
       followsConsumption ? consumption : "-",
@@ -151,7 +144,6 @@ function LibraryPane({ id }: { readonly id: string }) {
     drain: true,
     active,
     visit: ENTRIES,
-    seed: seed && { key: `${id}?`, page: seed.entries },
     id: libraryEntryId,
     fetchPage: (cursor, limit, signal) =>
       entriesPage(id, pageQuery(query, cursor, limit), signal),

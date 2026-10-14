@@ -6,11 +6,10 @@ import CollectionExhaustionNotice from "@/components/collections/CollectionExhau
 import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { useChangeStamp } from "@/lib/api/changes";
-import { conversationsInitialResource } from "@/lib/api/resource";
-import { useResourceSeed } from "@/lib/api/resourceCache";
-import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
+import { usePaneUrlState } from "@/lib/panes/usePaneUrlState";
 import {
   listRowStatus,
+  pageQuery,
   useServerList,
   type ListSnapshot,
 } from "@/lib/api/useServerList";
@@ -24,6 +23,7 @@ import {
   decodeUpdatedTitleIndexView,
   encodeUpdatedTitleIndexView,
   UPDATED_TITLE_SORT_OPTION_IDS,
+  updatedTitleIndexViewQuery,
   updatedTitleSortOptionLabel,
   updatedTitleSortOptionOf,
   updatedTitleViewForSortOption,
@@ -40,7 +40,6 @@ import {
   matchesPaneFilterQuery,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
-import type { ConversationsPaneSeed } from "@/lib/panes/paneResourceLoaders";
 import {
   requirePaneRuntime,
   usePaneIsActive,
@@ -78,8 +77,6 @@ const VIEW_CODEC = {
     ),
   replaceOptions: { viewTransition: { kind: "collection-reflow" as const } },
 };
-const keyOf = (view: UpdatedTitleIndexView) =>
-  conversationsInitialResource.cacheKey({ view });
 
 /** The Chats index in one sortable view: filter, load to the end, count. */
 export default function ConversationsPaneBody() {
@@ -88,23 +85,17 @@ export default function ConversationsPaneBody() {
   const { state: decoded, setState: setDecoded } = usePaneUrlState(VIEW_CODEC);
   const invalid = decoded.kind === "Invalid";
   const view = decoded.kind === "Valid" ? decoded.view : CANONICAL;
-  const seed = useResourceSeed<ConversationsPaneSeed>(keyOf(CANONICAL));
+  const viewQuery = updatedTitleIndexViewQuery(view).slice(1);
   const list = useServerList<ConversationListItem>({
-    key: invalid ? null : keyOf(view),
+    key: invalid ? null : `/conversations?${viewQuery}`,
     stale: useChangeStamp("Chats"),
     pageSize: 100,
     drain: true,
     active: usePaneIsActive(),
     visit: VISIT,
-    seed: seed && { key: keyOf(CANONICAL), page: seed },
     id: (item) => item.id,
     fetchPage: (cursor, limit, signal) =>
-      fetchConversationIndex({
-        view,
-        cursor: cursor ?? undefined,
-        limit,
-        signal,
-      }),
+      fetchConversationIndex(pageQuery(viewQuery, cursor, limit), signal),
   });
   usePaneReturnReady(list.status !== "loading" || invalid);
   const captureScroll = usePaneScrollRetention(list.items);

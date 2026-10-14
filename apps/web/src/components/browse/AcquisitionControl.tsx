@@ -14,7 +14,7 @@ import DestinationChooser from "@/components/libraries/DestinationChooser";
 import { useApiDestinations } from "@/components/libraries/DestinationField";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
-import { apiCommand204 } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 import { isAbortError } from "@/lib/errors";
 import {
   createLibrary,
@@ -147,7 +147,7 @@ export default function AcquisitionControl({
     position: NonNullable<FrozenCommand["previewPosition"]>,
   ) => {
     try {
-      await apiCommand204(`/api/media/${mediaId}/preview-position`, {
+      await apiFetch<void>(`/api/media/${mediaId}/preview-position`, {
         method: "POST",
         body: JSON.stringify(position),
       });

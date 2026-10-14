@@ -10,8 +10,7 @@ import MachineText from "@/components/ui/MachineText";
 import ResourceList from "@/components/ui/ResourceList";
 import ResourceRow from "@/components/ui/ResourceRow";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { useResource } from "@/lib/api/useResource";
-import { useCursorPagination, type CursorPage } from "@/lib/api/useCursorPagination";
+import { usePaneFreeServerList } from "@/lib/api/useServerList";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { captureErrorFeedback } from "@/lib/imports/copy";
 import { getFileUploadError, uploadIngestFile } from "@/lib/imports/ingest";
@@ -65,34 +64,35 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   const attachingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const linkButtonRef = useRef<HTMLButtonElement>(null);
-  const loadedBoundaryRef = useRef<{ ref: string; edgeId: string } | null>(null);
-  const retainedPageRef = useRef<{ ref: string; page: CursorPage<ConnectionOut> } | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const reload = useCallback(() => setRefreshTick((value) => value + 1), []);
   useEffect(() => subscribeLinkMutations(reload), [reload]);
-  const load = useCallback(async (cursor: string | null, signal: AbortSignal): Promise<CursorPage<ConnectionOut>> => {
-    const boundary = cursor === null && loadedBoundaryRef.current?.ref === selfRef
-      ? loadedBoundaryRef.current.edgeId : null;
-    const data: ConnectionOut[] = [];
-    let next = cursor;
-    do {
-      const page = await queryConnections({ refs: [selfRef], direction: "both", rollup: "owner", limit: 100, cursor: next }, signal);
-      data.push(...page.items);
-      next = page.next_cursor;
-      // Refresh through the previously visible last row, even when new rows
-      // push it onto a later page. If that row was removed, reach the new end.
-      if (boundary === null || page.items.some((row) => row.edge_id === boundary)) break;
-    } while (next !== null);
-    return { items: data, next_cursor: next };
-  }, [selfRef]);
-  const firstPage = useResource<CursorPage<ConnectionOut>>({ cacheKey: `${selfRef}:${refreshKey}:${refreshTick}`, load: (signal) => load(null, signal) });
-  if (firstPage.status === "ready") retainedPageRef.current = { ref: selfRef, page: firstPage.data };
-  const retained = retainedPageRef.current?.ref === selfRef ? retainedPageRef.current.page : null;
-  const pages = useCursorPagination({ firstPage: retained ? { status: "ready", data: retained } : firstPage, initialMoreError: null, loadMorePage: load, loadMoreEnabled: firstPage.status === "ready" });
-  const lastLoaded = pages.items.at(-1);
-  loadedBoundaryRef.current = lastLoaded ? { ref: selfRef, edgeId: lastLoaded.edge_id } : null;
-  const loading = firstPage.status === "loading";
-  const loadError = firstPage.status === "error" ? firstPage.error : pages.error;
+  // A refresh rereads while the rows stay shown, through the last row it showed
+  // even when new rows push it onto a later page; if that row is gone, to the end.
+  const shownLast = useRef<string | null>(null);
+  const list = usePaneFreeServerList<ConnectionOut>({
+    key: selfRef,
+    stale: `${refreshKey}:${refreshTick}`,
+    pageSize: 100,
+    drain: false,
+    active: true,
+    id: (connection) => connection.edge_id,
+    fetchPage: async (cursor, limit, signal) => {
+      const boundary = cursor === null ? shownLast.current : null;
+      const items: ConnectionOut[] = [];
+      let next = cursor;
+      do {
+        const page = await queryConnections({ refs: [selfRef], direction: "both", rollup: "owner", limit: Math.min(limit, 100), cursor: next }, signal);
+        items.push(...page.items);
+        next = page.next_cursor;
+        if (boundary === null || page.items.some((row) => row.edge_id === boundary)) break;
+      } while (next !== null);
+      return { items, next_cursor: next };
+    },
+  });
+  shownLast.current = list.current ? (list.items.at(-1)?.edge_id ?? null) : null;
+  const loading = list.running === "Load" || list.running === "Refetch";
+  const loadError = list.failure?.error ?? null;
   const scannable = (CONNECTION_DISCOVERY_SOURCE_SCHEMES as readonly string[]).includes(resourceRef.scheme);
   const scan = useDiscoveryScan({ selfRef, enabled: scannable, onSettled: reload });
   const scanning = scan.phase !== "idle";
@@ -145,17 +145,17 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       {scan.feedback ? <FeedbackNotice content={scan.feedback} announcement="Assertive" actions={[{ label: "Retry", onClick: () => void scan.retry() }]} /> : null}
       {scanning ? <p role="status" className={styles.voice}>Finding connections…</p> : null}
       {attaching ? <p role="status" className={styles.voice}>Uploading and linking… Closing this pane keeps the submitted upload running.</p> : null}
-      {loading ? <p role="status" className={styles.empty}>{retained ? "Refreshing connections…" : "Loading connections…"}</p> : null}
-      {loadError ? <FeedbackNotice content={connectionErrorMessage(loadError, "Load")} announcement="Assertive" actions={[{ label: "Retry", onClick: firstPage.status === "error" ? firstPage.retry : pages.retry }]} /> : null}
-      {firstPage.status === "ready" && pages.items.length === 0 ? <p className={styles.empty}>No connections yet. Link an item to connect it here.</p> : null}
+      {loading ? <p role="status" className={styles.empty}>{list.status === "ready" ? "Refreshing connections…" : "Loading connections…"}</p> : null}
+      {loadError ? <FeedbackNotice content={connectionErrorMessage(loadError, "Load")} announcement="Assertive" actions={[{ label: "Retry", onClick: list.retry }]} /> : null}
+      {list.status === "ready" && !loading && list.items.length === 0 ? <p className={styles.empty}>No connections yet. Link an item to connect it here.</p> : null}
       <ResourceList ariaLabel="Connections">
-        {pages.items.map((connection) => <ConnectionRow key={connection.edge_id} connection={connection} onChanged={() => {
+        {list.items.map((connection) => <ConnectionRow key={connection.edge_id} connection={connection} onChanged={() => {
           const focusedRow = document.activeElement?.closest<HTMLElement>("[data-connection-id]");
           if (focusedRow?.dataset.connectionId === connection.edge_id) linkButtonRef.current?.focus();
           reload();
         }} />)}
       </ResourceList>
-      {pages.hasMore ? <Button type="button" variant="ghost" size="sm" disabled={firstPage.status !== "ready"} loading={pages.loadingMore} onClick={pages.loadMore}>Load more</Button> : null}
+      {list.status === "ready" && !list.complete ? <Button type="button" variant="ghost" size="sm" disabled={loading} loading={list.running === "More"} onClick={list.more}>Load more</Button> : null}
     </section>
   );
 }

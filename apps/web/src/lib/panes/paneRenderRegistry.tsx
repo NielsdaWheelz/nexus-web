@@ -2,6 +2,7 @@
 
 import { lazy, Suspense, type ComponentType, type ReactNode } from "react";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { ServerSeedsSpent } from "@/lib/api/serverState";
 import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
 
 type Module = { default: ComponentType };
@@ -84,6 +85,7 @@ export function renderPane(id: PaneRouteId): ReactNode {
       fallback={<PaneLoadingState label="Loading pane…" announcement="None" />}
     >
       <Body />
+      <ServerSeedsSpent />
     </Suspense>
   );
 }

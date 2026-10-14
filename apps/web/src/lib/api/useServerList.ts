@@ -13,17 +13,21 @@
 // - Rows are always kept. A continuation that fails in transport or with a 5xx
 //   is a failure, never a defect.
 // - A pane return paints this visit's snapshot and rereads it only if `stale`
-//   moved since it was read; a server seed paints the first visit the same way.
+//   moved since it was read; a server seed for the first key paints the first
+//   visit without a read. usePaneFreeServerList is the same list for a dialog
+//   no pane visit owns.
 // - Defects throw in render; aborts and 401s are not failures.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isApiError, type ApiError } from "@/lib/api/client";
-import { requestWithRetry } from "@/lib/api/retryPolicy";
 import {
   modeledApiError,
+  requestWithRetry,
+  useServerSeed,
   useThrowLater,
   useVisitSnapshot,
 } from "@/lib/api/serverState";
+import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { PaneFilterRowsStatus } from "@/lib/panes/paneFilterRows";
 import type { PaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 
@@ -63,8 +67,6 @@ interface Waiter {
 const NONE: readonly never[] = [];
 const isVisible = () =>
   typeof document === "undefined" || document.visibilityState !== "hidden";
-const nextOf = (page: ListPage<unknown>) =>
-  page.next_cursor;
 const aborted = () => new DOMException("The list view changed", "AbortError");
 
 function unique<T>(items: readonly T[], id: (item: T) => string): T[] {
@@ -77,36 +79,51 @@ function unique<T>(items: readonly T[], id: (item: T) => string): T[] {
   });
 }
 
-export function useServerList<T>(input: {
+interface ListInput<T> {
   readonly key: string | null;
   readonly stale: string;
   readonly pageSize: number;
   readonly drain: boolean;
   readonly active: boolean;
-  readonly visit: PaneVisitDataKey<ListSnapshot<T>>;
-  readonly seed?: { readonly key: string; readonly page: ListPage<T> } | null;
   readonly id: (item: T) => string;
   readonly fetchPage: (
     cursor: string | null,
     limit: number,
     signal: AbortSignal,
   ) => Promise<ListPage<T>>;
-}): ServerList<T> {
-  const { key, stale } = input;
-  const fail = useThrowLater();
-  const latest = useRef(input);
-  latest.current = input;
+}
+
+export function useServerList<T>(
+  input: ListInput<T> & { readonly visit: PaneVisitDataKey<ListSnapshot<T>> },
+): ServerList<T> {
   const shownRef = useRef<ListSnapshot<T> | null>(null);
   const restored = useVisitSnapshot(
     input.visit,
-    key,
+    input.key,
     useCallback(() => shownRef.current, []),
   );
+  return useList(input, restored, shownRef);
+}
+
+export function usePaneFreeServerList<T>(input: ListInput<T>): ServerList<T> {
+  return useList(input, null, useRef<ListSnapshot<T> | null>(null));
+}
+
+function useList<T>(
+  input: ListInput<T>,
+  restored: ListSnapshot<T> | null,
+  shownRef: { current: ListSnapshot<T> | null },
+): ServerList<T> {
+  const { key, stale } = input;
+  const fail = useThrowLater();
+  const signIn = useUnauthenticatedApiHandler();
+  const latest = useRef(input);
+  latest.current = input;
+  const seed = useServerSeed<ListPage<T>>(key);
   const [shown, setShown] = useState<ListSnapshot<T> | null>(() => {
-    if (restored !== null) return restored;
-    const seed = input.seed;
-    if (seed == null || seed.key !== key) return null;
-    return { key, stale, items: seed.page.items, cursor: nextOf(seed.page) };
+    if (restored !== null || seed === null) return restored;
+    const { items, next_cursor } = seed.data;
+    return { key: seed.key, stale, items, cursor: next_cursor };
   });
   shownRef.current = shown;
   const [running, setRunning] = useState<Op | null>(null);
@@ -133,7 +150,7 @@ export function useServerList<T>(input: {
           const page = await fetchPage(base.cursor, pageSize, signal);
           return {
             items: [...base.items, ...page.items],
-            cursor: nextOf(page),
+            cursor: page.next_cursor,
           };
         }
         const want = Math.max(pageSize, base?.items.length ?? 0);
@@ -144,7 +161,7 @@ export function useServerList<T>(input: {
           const limit = toEnd ? 200 : Math.min(200, want - items.length);
           const page = await fetchPage(cursor, limit, signal);
           items.push(...page.items);
-          cursor = nextOf(page);
+          cursor = page.next_cursor;
         } while (cursor !== null && (toEnd || items.length < want));
         return { items, cursor };
       };
@@ -165,7 +182,7 @@ export function useServerList<T>(input: {
               isApiError(error) &&
               (error.status === 0 || error.status >= 500)
                 ? error
-                : modeledApiError(error, fail);
+                : modeledApiError(error, fail, signIn);
             if (modeled !== null) setFailure({ op, error: modeled });
             for (const waiter of settle) waiter.reject(error);
           },
@@ -180,7 +197,7 @@ export function useServerList<T>(input: {
           if (waiters.current.length > 0) run("Refetch");
         });
     },
-    [fail],
+    [fail, shownRef, signIn],
   );
 
   const refetch = useCallback((): Promise<void> => {
@@ -204,7 +221,7 @@ export function useServerList<T>(input: {
       setRunning(null);
       setFailure(null);
     };
-  }, [key, run]);
+  }, [key, run, shownRef]);
 
   const seen = useRef({ key, stale });
   useEffect(() => {

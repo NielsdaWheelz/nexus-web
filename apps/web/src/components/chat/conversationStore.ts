@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { apiCommand204, apiFetch, type ApiPath } from "@/lib/api/client";
-import { requestWithRetry } from "@/lib/api/retryPolicy";
+import { apiFetch, type ApiPath } from "@/lib/api/client";
+import { requestWithRetry } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { publishChange } from "@/lib/api/changes";
 import {
@@ -250,7 +250,7 @@ export function createChatStore(conversationId: string | null) {
       set({ leafId, error: null });
       const path = `/api/conversations/${conversationId}/active-path` as const;
       const body = JSON.stringify({ active_leaf_message_id: leafId });
-      const post = () => apiCommand204(path, { method: "POST", body });
+      const post = () => apiFetch<void>(path, { method: "POST", body });
       // no snapshot to restore on failure: the server tree is the truth
       if (!(await attempt("This fork couldn’t be opened.", post)))
         await store.load();
@@ -380,7 +380,7 @@ export function createChatStore(conversationId: string | null) {
     /** True once saved; a failure is reported and leaves the title as it was. */
     renameFork: (userMessageId: string, title: string | null) =>
       attempt("This fork couldn’t be renamed.", async () => {
-        await apiCommand204(`/api/messages/${userMessageId}/fork-title`, {
+        await apiFetch<void>(`/api/messages/${userMessageId}/fork-title`, {
           method: "PATCH",
           body: JSON.stringify({ title }),
         });

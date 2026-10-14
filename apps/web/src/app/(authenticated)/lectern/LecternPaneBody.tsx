@@ -25,7 +25,7 @@ import {
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
-import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
+import { usePaneUrlState } from "@/lib/panes/usePaneUrlState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   playbackVerb,

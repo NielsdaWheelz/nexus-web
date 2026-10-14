@@ -9,7 +9,7 @@ import MediaImage from "@/components/ui/MediaImage";
 import ReaderCitation from "@/components/ui/ReaderCitation";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { apiFetch } from "@/lib/api/client";
-import { useResource } from "@/lib/api/useResource";
+import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -135,8 +135,9 @@ export default function OracleReadingPaneBody() {
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<FeedbackContent | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const detail = useResource<OracleReading>({
-    cacheKey: `${readingId}:${loads}`,
+  const detail = usePaneFreeServerValue<OracleReading>({
+    key: `${readingId}:${loads}`,
+    stale: "",
     load: async (signal) =>
       (
         await apiFetch<ApiJson<"/oracle/readings/{reading_id}", "get">>(
@@ -169,16 +170,18 @@ export default function OracleReadingPaneBody() {
     };
   }, [unfinishedId]);
 
-  const concordance = useResource<
-    ApiJson<"/oracle/readings/{reading_id}/concordance", "get">
-  >({
-    cacheKey:
-      reading?.status === "complete" ? `concordance:${reading.id}` : null,
-    path: () => `/api/oracle/readings/${readingId}/concordance`,
+  const concordance = usePaneFreeServerValue({
+    key: reading?.status === "complete" ? `concordance:${reading.id}` : null,
+    stale: "",
+    load: (signal) =>
+      apiFetch<ApiJson<"/oracle/readings/{reading_id}/concordance", "get">>(
+        `/api/oracle/readings/${readingId}/concordance`,
+        { signal },
+      ),
   });
 
   const loadError: FeedbackContent | null =
-    detail.status === "error"
+    detail.status === "failed"
       ? failureCopy(detail.error, "The reading was interrupted")
       : lost
         ? {

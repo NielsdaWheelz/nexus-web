@@ -13,12 +13,11 @@ import Input from "@/components/ui/Input";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useChangeStamp } from "@/lib/api/changes";
 import { apiTransportFeedback } from "@/lib/api/client";
-import { notePagesResource } from "@/lib/api/resource";
-import { useResourceSeed } from "@/lib/api/resourceCache";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
-import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
+import { usePaneUrlState } from "@/lib/panes/usePaneUrlState";
 import {
   listRowStatus,
+  pageQuery,
   useServerList,
   type ListSnapshot,
 } from "@/lib/api/useServerList";
@@ -28,6 +27,7 @@ import {
   decodeUpdatedTitleIndexView,
   encodeUpdatedTitleIndexView,
   UPDATED_TITLE_SORT_OPTION_IDS,
+  updatedTitleIndexViewQuery,
   updatedTitleSortOptionLabel,
   updatedTitleSortOptionOf,
   updatedTitleViewForSortOption,
@@ -50,7 +50,6 @@ import {
   matchesPaneFilterQuery,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
-import type { NotesPaneSeed } from "@/lib/panes/paneResourceLoaders";
 import {
   requirePaneRuntime,
   usePaneIsActive,
@@ -80,8 +79,6 @@ const VIEW_CODEC = {
     ),
   replaceOptions: { viewTransition: { kind: "collection-reflow" as const } },
 };
-const keyOf = (view: UpdatedTitleIndexView) =>
-  notePagesResource.cacheKey({ view });
 
 /** A create the user can retry: the same id, so a landed retry finds its page. */
 interface Create {
@@ -101,18 +98,17 @@ export default function NotesPaneBody() {
   const { state: decoded, setState: setDecoded } = usePaneUrlState(VIEW_CODEC);
   const invalid = decoded.kind === "Invalid";
   const view = decoded.kind === "Valid" ? decoded.view : CANONICAL;
-  const seed = useResourceSeed<NotesPaneSeed>(keyOf(CANONICAL));
+  const viewQuery = updatedTitleIndexViewQuery(view).slice(1);
   const list = useServerList<NotePageSummary>({
-    key: invalid ? null : keyOf(view),
+    key: invalid ? null : `/notes/pages?${viewQuery}`,
     stale: useChangeStamp("Notes"),
     pageSize: 100,
     drain: true,
     active: usePaneIsActive(),
     visit: VISIT,
-    seed: seed && { key: keyOf(CANONICAL), page: seed },
     id: (item) => item.id,
     fetchPage: (cursor, limit, signal) =>
-      fetchNotePages({ view, cursor: cursor ?? undefined, limit, signal }),
+      fetchNotePages(pageQuery(viewQuery, cursor, limit), signal),
   });
   useSetPaneLabel("Notes");
   usePaneReturnReady(list.status !== "loading" || invalid);
