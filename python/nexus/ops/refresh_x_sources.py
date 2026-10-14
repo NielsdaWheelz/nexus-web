@@ -23,7 +23,7 @@ from nexus.db.models import XSourceSnapshot as StoredXSourceSnapshot
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.jobs.queue import get_job, jobs_for_payload
-from nexus.schemas.media import SourceAdmission
+from nexus.schemas.media_sources import SourceAdmission
 from nexus.schemas.metadata_enrichment import MetadataOperationOut, TitleMetadataJobPayload
 from nexus.services.media import get_media_for_viewer
 from nexus.services.media_source_ingest import refresh_source

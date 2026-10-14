@@ -8,8 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from nexus.schemas.document_embeds import DocumentEmbedOut
 from nexus.schemas.highlights import HIGHLIGHT_COLORS
-from nexus.schemas.media import DocumentEmbedOut
 from nexus.schemas.reader_apparatus import (
     ReaderApparatusConfidence,
     ReaderApparatusItemKind,

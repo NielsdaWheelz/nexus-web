@@ -15,7 +15,7 @@ from nexus.db.session import DbSession
 from nexus.logging import get_request_id
 from nexus.responses import Data
 from nexus.schemas.extension_capture import LocalFile
-from nexus.schemas.media import (
+from nexus.schemas.media_sources import (
     ConfirmUploadRequest,
     CreateUploadRequest,
     Published,

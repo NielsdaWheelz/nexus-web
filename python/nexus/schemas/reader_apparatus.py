@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
-from nexus.schemas.media import NavigationTextPointOut, NavigationTextRangeOut
+from nexus.schemas.reader import NavigationTextPointOut, NavigationTextRangeOut
 from nexus.schemas.retrieval import RetrievalLocator
 
 ReaderApparatusStatus = Literal["ready", "empty", "partial", "unsupported", "failed"]

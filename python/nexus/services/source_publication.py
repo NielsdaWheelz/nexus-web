@@ -32,7 +32,11 @@ from nexus.schemas.import_history import (
     assume_safe_failure_code,
     queue_failure_code,
 )
-from nexus.schemas.media import SourceCountedProgress, SourceProgress, SourceStageProgress
+from nexus.schemas.media_sources import (
+    SourceCountedProgress,
+    SourceProgress,
+    SourceStageProgress,
+)
 from nexus.services import source_types as st
 from nexus.services.import_history import append_processing_event
 from nexus.services.media_processing_state import (

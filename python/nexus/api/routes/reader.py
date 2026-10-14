@@ -13,9 +13,9 @@ from nexus.config import get_settings
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
-from nexus.schemas.media import MediaFileOut
 from nexus.schemas.reader import (
     CursorWrite,
+    MediaFileOut,
     ReaderCursorSnapshot,
     ReaderTargetKind,
     ReaderTargetOut,

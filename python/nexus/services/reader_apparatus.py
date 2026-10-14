@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.schemas.media import NavigationTextPointOut, NavigationTextRangeOut
+from nexus.schemas.reader import NavigationTextPointOut, NavigationTextRangeOut
 from nexus.schemas.reader_apparatus import (
     NoteBodyRegion,
     NoteGroupRegion,
