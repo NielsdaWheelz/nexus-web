@@ -2115,7 +2115,7 @@
           "status": "pass"
         },
         {
-          "name": "i11 delayed ref and query changes never display another import’s matched evidence",
+          "name": "i11 delayed ref and query changes never display another import\u2019s matched evidence",
           "status": "pass"
         },
         {
@@ -2490,12 +2490,12 @@
         "recovery": "Starts a new attempt from the stored file. Extraction and search indexing run again."
       },
       "readable_while_indexing": {
-        "consequence": "ready to read · indexing for search",
+        "consequence": "ready to read \u00b7 indexing for search",
         "reason": null,
         "concurrent": null
       },
       "playable_without_readable_transcript": {
-        "consequence": "ready to play · no transcript available",
+        "consequence": "ready to play \u00b7 no transcript available",
         "reason": null,
         "concurrent": null
       },
@@ -2505,14 +2505,14 @@
         "concurrent": "also in progress: source processing"
       },
       "unreviewed_no_findings": {
-        "consequence": "ready to read · no metadata found",
+        "consequence": "ready to read \u00b7 no metadata found",
         "reason": null,
         "concurrent": null,
         "action": "mark reviewed",
         "actionSource": "MetadataResearchActions passes the displayed operation.job_id to MetadataReviewButton"
       },
       "automatic_retry_deadline": {
-        "consequence": "waiting to retry · oct 14, 2026, 10:30 am",
+        "consequence": "waiting to retry \u00b7 oct 14, 2026, 10:30 am",
         "reason": null,
         "concurrent": null
       },
@@ -2524,7 +2524,7 @@
       "partial_history": "Detailed execution history was recorded from Oct 1, 2026.",
       "stale_detail": {
         "source": "ImportInspector.tsx ready data with detail.error",
-        "title": "Couldn’t refresh this import",
+        "title": "Couldn\u2019t refresh this import",
         "message": "Showing the last update",
         "action": "Retry"
       },
@@ -2546,7 +2546,7 @@
       "unknown_acceptance": {
         "feedback": {
           "tone": "Warning",
-          "title": "Couldn’t confirm",
+          "title": "Couldn\u2019t confirm",
           "message": "Nexus could not confirm whether this was saved. Check status to find out."
         },
         "action": "check status"
@@ -2556,7 +2556,7 @@
         "consequence": "ready to read",
         "reason": null,
         "concurrent": null,
-        "history": "Matched: upload failed · Oct 14"
+        "history": "Matched: upload failed \u00b7 Oct 14"
       }
     }
   },
@@ -2715,5 +2715,42 @@
     ],
     "test_dependencies_retained": false,
     "final_static_gate_repeated": true
+  },
+  "main_integration_followup": {
+    "base_sha": "5dac2889e971a5c24139da6390a63bd04ba5e280",
+    "initial_integrated_source_sha": "03d3649fa72d2538bc92c3d990225a6e573fc780",
+    "application_bytes_sha256": "29e1b9fb5994b92eb6a899eee0617aa8d7345f89ecfe67f834ef9543b2e362c6",
+    "path_count": 1175,
+    "scope": "six focused checks on latest main; does not replay the initial broad browser/device/extension qualification",
+    "earlier_owner_red_green_index": "integration-proof-index.json",
+    "final_integration_index": "final-proof-index.json",
+    "setup": "final-integration-setup.json",
+    "database_reset": "final-integration-database-reset.json",
+    "migration_limit": "empty disposable application database to0278 only; four unsettled deleted-media jobs blocked0277 upgrade and remain ticketed",
+    "cleanup_and_static_gate": {
+      "cleanup": "integration-cleanup.json",
+      "external_test_root_absent": true,
+      "static_gate": {
+        "command": "./scripts/test",
+        "after_temporary_proof_deletion": true,
+        "exit_code": 0,
+        "migration_head": "0278",
+        "application_bytes_sha256": "e9460a0b79816d1c3d7a476e6033461041c0a34a5a332024bd1c8f4712927638",
+        "receipt": "integration-static-check.txt",
+        "receipt_sha256": "6b518f284fd47ff939289df14cda8fa3ec0196813d608c8ecc935e353ff94703"
+      },
+      "ci": "pull request check record",
+      "remaining_cleanup": "original-checkout document reconciliation and task branch/worktree removal after merge"
+    },
+    "final_presentation": {
+      "application_bytes_sha256": "e9460a0b79816d1c3d7a476e6033461041c0a34a5a332024bd1c8f4712927638",
+      "only_changed_application_file": "apps/web/src/components/imports/ImportInspector.tsx",
+      "evidence": "final-metadata-copy.json",
+      "verdicts": {
+        "red": 1,
+        "green": 1
+      },
+      "scope": "same queued import/job; remove duplicate active explanation, preserve visible operation and other reasons"
+    }
   }
 }

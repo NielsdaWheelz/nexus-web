@@ -14,6 +14,8 @@ population includes existing upload/source imports and visible media with retain
 
 each item carries readiness hydrated from current media capabilities, independently of obligation completion. before publication all readiness is false. published upload titles use the current media title; their immutable `original_filename` remains present and searchable. media-only rows have absent filenames. an active unpublished upload says `AwaitingUploadConfirmation`, with no measured transfer progress; recorded failure and expiry take precedence.
 
+document readability requires the reader-publication owner's shared eligible-kind, persisted-ready and existing-publication predicate; pdf also requires its original file. media hydration and the quote projection share that predicate. an uploaded original alone remains downloadable, without a read promise. retained x publications remain readable while source recovery proceeds independently.
+
 classify before filtering. attention considers only attention obligations; progress only active obligations. stage and failure code must match the same obligation. primary matching work is ordered by stage rank, failure/acceptance time, then obligation key. each row appears once; source, search, and metadata remain separately inspectable and actionable. source/search recovery uses separate resource capabilities and existing exact attempt/job/revision commands.
 
 ## reads

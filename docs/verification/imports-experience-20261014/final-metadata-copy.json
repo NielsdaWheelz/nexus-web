@@ -1,0 +1,152 @@
+{
+  "scope": "final inspector presentation correction after the six focused checks; one real failure followed by one same-fixture success",
+  "change": "omit blocked-active retry explanation only when unfinished_operation is Present and its activity is already rendered; other blocked reasons and active without a visible operation remain",
+  "source_identity": {
+    "parent_commit": "03d3649fa72d2538bc92c3d990225a6e573fc780",
+    "before_application_bytes_sha256": "29e1b9fb5994b92eb6a899eee0617aa8d7345f89ecfe67f834ef9543b2e362c6",
+    "after_application_bytes_sha256": "e9460a0b79816d1c3d7a476e6033461041c0a34a5a332024bd1c8f4712927638",
+    "path_selector": [
+      "apps",
+      "python",
+      "node",
+      "scripts",
+      "docker",
+      "bun.lock",
+      "package.json"
+    ],
+    "selected_path_count": 1175,
+    "dirty_source_paths": [
+      "apps/web/src/components/imports/ImportInspector.tsx"
+    ],
+    "original_source_record_sha256": "d24e285ecabf7f05728c1a67d7d2c5ff1a62224eecebca3f4d8b878eaf6ae04a",
+    "meaning": "red ran on clean29e1; green ran on the single-file e946 presentation cut, with the same parent commit; neither rewrites final-proof-index.json evidence"
+  },
+  "source_owner_brackets": {
+    "changed_owner": "apps/web/src/components/imports/ImportInspector.tsx",
+    "red_start": "2307ea27fbbe1b3cddc6b091f3f0af48596abd9d83d34bade6f552f3226fa3e7",
+    "red_end": "2307ea27fbbe1b3cddc6b091f3f0af48596abd9d83d34bade6f552f3226fa3e7",
+    "green_start": "dc246067fc52db7edc80ff092e15db540da3a76513300b02566fd1ecd724d3d9",
+    "green_end": "dc246067fc52db7edc80ff092e15db540da3a76513300b02566fd1ecd724d3d9",
+    "other_twenty_owners_identical_at_all_four_boundaries": {
+      "apps/web/src/lib/actions/resourceActionRuntime.tsx": "05203fdfcee2453964dc08988167e858aa5cb59c2f7d1cf136ee6c893dc6ab99",
+      "apps/web/src/lib/actions/resourceActionSnapshotCache.ts": "6a74fe2ecbaebd41436bc2649a57a360db28702ec567390ab20fb44d87dc7adb",
+      "apps/web/src/lib/actions/resourceActionEnvironment.ts": "09eca29bdedb67b1b3efb0f9667ca6a62761972578072c11cbc86ded66fed95b",
+      "apps/web/src/lib/actions/resourceActionMenu.tsx": "785976fb2fd0e10452a2fa80fe72b59560ec7750ec74259a001beedebb7a4a4d",
+      "apps/web/src/lib/lectern/LecternProvider.tsx": "149c65cfdfacf325b3fa78d900bd03802989c1ecf4a1ea8f89ead69c62541253",
+      "apps/web/src/lib/workspace/paneDom.ts": "8f52efab4a72b7f39fb3f0b61bbfc2002f118d6df7c902077765cffd5f1392a7",
+      "apps/web/src/lib/shortcuts.ts": "0e1c1c28db0dbc1f4d7aaea248790fd38183f402e1e8bf576597460fcedc38fe",
+      "apps/web/src/components/imports/ImportActions.tsx": "0d4ce61715333e0eb2d0412b67b16ee7ed4a222092650ca52cb004e869a7c0d9",
+      "apps/web/src/components/imports/ImportsList.tsx": "d951317f77af678a860430c4121e950430c49c838d53495254a3bf88baa72db7",
+      "apps/web/src/components/feedback/Feedback.tsx": "6585429981fa5676ef650bf43c33b73624ac07d14e2810e4e96ada3f92be9085",
+      "apps/web/src/components/ui/Button.module.css": "da7250716d70cbd4494995e9017a4614c2378335662c786c12d4fb86e1fc130f",
+      "apps/web/src/components/workspace/PaneShell.tsx": "741a6787442a238d491009574bbb2903f412e39adb3373c24c859aad92ebdfc4",
+      "apps/web/src/lib/imports/copy.ts": "6f6b42344bc85c27b411b03e7df8166654f80254720db82809ae1c693625817e",
+      "apps/web/src/components/media/MetadataResearchActions.tsx": "ad18cd43dc7c02af583f5f2f78c22f79c3c102814999f767957dc47f875fc20f",
+      "apps/web/src/lib/imports/api.ts": "99b57edfe0ba9518976d48aafe851ac4e235dc3a68584cc6b1e16d01a4f17bd5",
+      "apps/web/src/lib/media/mediaMetadataCopy.ts": "43ce5a2941e3f39af3829710ce7dd313b85b44c3c8ac1d4322ff4bc554efcfac",
+      "python/nexus/services/capabilities.py": "393a5706fe071b712f7c51e39d502010440e885cf37abe0970dd62018adbe73e",
+      "python/nexus/services/media.py": "33605e292874edf8b9749b48725af27eb0b92ce3eba64e0f4947e000f792afb0",
+      "python/nexus/services/reader_publication.py": "c4578864b08be10886a0be157950de3a89ddb069845aa289767b4b066031c0c8",
+      "python/nexus/services/reader_document.py": "d4a795055e3566a64132fd50790ff93484ccae8c37f1d7523b0dd2f8bd141dbd"
+    }
+  },
+  "setup": {
+    "observed": "ordinary UI sign-in; real public PDF admission, storage PUT and confirmation; normal source completion; actual queued bibliography job, blocked-active retry and Present unfinished operation",
+    "same_fixture_and_operation": true,
+    "worker": "normal task background remained running; no job records or successful responses fabricated"
+  },
+  "rounds": [
+    {
+      "run": "metadata-red-1792018538815",
+      "original_receipt_sha256": "f86038a8de52c23d583ebfe68f7b781cc0a858c90c3d04b5e18360841851a038",
+      "revision_field": "03d3649fa72d2538bc92c3d990225a6e573fc780",
+      "setup": "ready: normal sign-in, real public PDF upload, normal source completion and actual queued metadata operation",
+      "verdict": {
+        "name": "queued metadata does not repeat its visible activity as a blocked retry explanation",
+        "result": "fail",
+        "error": "visible queued summary repeated by 1 active retry explanation",
+        "screenshot": "metadata-red-1792018538815/failure-1.png"
+      },
+      "observation": {
+        "purpose": "bibliography",
+        "operationStatus": "queued",
+        "retryStatus": "blocked",
+        "retryReason": "active",
+        "unfinishedOperation": "Present",
+        "queuedSummaryVisible": true,
+        "duplicateActiveExplanationCount": 1,
+        "sameOperation": false,
+        "screenshot": "metadata-red-1792018538815/queued-metadata.png"
+      },
+      "source_stable_during_run": true,
+      "cleanup_at_run_end": "fixture deliberately retained for same-upload metadata-copy check; normal worker remains running"
+    },
+    {
+      "run": "metadata-green-1792018662344",
+      "original_receipt_sha256": "3eb5768faa0b9eea0659c5445ef24adf9711cace891ce2302c12c38feaa7bd7c",
+      "revision_field": "03d3649fa72d2538bc92c3d990225a6e573fc780",
+      "setup": "ready: normal sign-in, real public PDF upload, normal source completion and actual queued metadata operation",
+      "verdict": {
+        "name": "queued metadata does not repeat its visible activity as a blocked retry explanation",
+        "result": "pass",
+        "evidence": {
+          "purpose": "bibliography",
+          "operationStatus": "queued",
+          "retryStatus": "blocked",
+          "retryReason": "active",
+          "unfinishedOperation": "Present",
+          "queuedSummaryVisible": true,
+          "duplicateActiveExplanationCount": 0,
+          "sameOperation": true,
+          "screenshot": "metadata-green-1792018662344/queued-metadata.png"
+        }
+      },
+      "observation": {
+        "purpose": "bibliography",
+        "operationStatus": "queued",
+        "retryStatus": "blocked",
+        "retryReason": "active",
+        "unfinishedOperation": "Present",
+        "queuedSummaryVisible": true,
+        "duplicateActiveExplanationCount": 0,
+        "sameOperation": true,
+        "screenshot": "metadata-green-1792018662344/queued-metadata.png"
+      },
+      "source_stable_during_run": true,
+      "cleanup_at_run_end": "task fixture removed through public commands"
+    }
+  ],
+  "counts": {
+    "red": {
+      "fail": 1,
+      "blocked": 0
+    },
+    "green": {
+      "pass": 1,
+      "fail": 0,
+      "blocked": 0
+    }
+  },
+  "excluded_setup_attempt": {
+    "run": "metadata-red-1792018499480",
+    "original_receipt_sha256": "092fd081bd037c0120fe4cc86ed6a2987c76c000196534f52ab5fe1bc7c005dc",
+    "classification": "setup blocked before any behavior assertion",
+    "reason": "broad text locator matched both current metadata paragraph and collapsed history event; rerun scoped the actual metadata section and reused the retained fixture"
+  },
+  "cleanup": "task fixture removed through public commands",
+  "limits": [
+    "no provider-dependent findings, title generation, review or metadata success claimed",
+    "other blocked reasons and active-without-operation preservation reviewed in source; no additional live fixtures fabricated",
+    "the prior six focused checks remain their own29e1 cut; unaffected browser/device/extension flows were not replayed",
+    "the corrected e946 screenshot is retained; final-metadata-inspector.png remains the explicitly earlier29e1 capture"
+  ],
+  "curation": "compact projection of original receipts preserves exact verdicts and observations, all21 owner hashes across both runs, and full application identities; sealed fixture references, upload handles, local paths and credentials omitted",
+  "screenshot": {
+    "file": "final-metadata-copy.png",
+    "sha256": "4ee35ad39d92231996ef7d6d98bb8552d89bd1915dd58aecd075d595ddbdd9eb",
+    "bytes": 326946,
+    "original_reference": "metadata-green-1792018662344/queued-metadata.png",
+    "pixels_modified": false,
+    "review": "actual loaded metadata section shows queued work once; visually inspected, no credentials/private paths/signed URLs visible, no text or exif metadata"
+  }
+}

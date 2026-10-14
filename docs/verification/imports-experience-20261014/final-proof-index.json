@@ -1,0 +1,180 @@
+{
+  "scope": "six focused real-browser checks on the final clean application commit after rebasing onto main5dac2889",
+  "source_identity": {
+    "source_sha": "03d3649fa72d2538bc92c3d990225a6e573fc780",
+    "application_bytes_sha256": "29e1b9fb5994b92eb6a899eee0617aa8d7345f89ecfe67f834ef9543b2e362c6",
+    "path_selector": [
+      "apps",
+      "python",
+      "node",
+      "scripts",
+      "docker",
+      "bun.lock",
+      "package.json"
+    ],
+    "selected_path_count": 1175,
+    "dirty_source_paths": [],
+    "runtime_identity": {
+      "expected_database_revision": "0278",
+      "source_sha": "03d3649fa72d2538bc92c3d990225a6e573fc780"
+    },
+    "dependency_lock_sha256": {
+      "python/uv.lock": "e10d174b9e46c9a54857f4f5adf8b87672bc850a5341bcfe0824aff3f483e91f",
+      "node/ingest/bun.lock": "03ba1efe228fe1dadaf5d46e66b883802906d52a45b6ec94029c2018205457c4"
+    },
+    "source_record": "final-integration-setup.json",
+    "original_source_record_sha256": "1bb749666cd59217c4108628275d0270337caaba00563049532a104a0d5826b8",
+    "manifest_policy": "clean application commit is reproducible; no duplicate full path manifest retained",
+    "run_brackets": "both receipts retain hashes of the same 21 relevant frontend and Python owners before and after the run",
+    "original_source_record": "latest-main-setup.json"
+  },
+  "environment": {
+    "browser": "chromium",
+    "playwright": "1.59.1",
+    "viewport": {
+      "width": 1600,
+      "height": 1000
+    },
+    "authentication": "ordinary email/password UI sign-in and imports route entry",
+    "data": "public upload admission, real storage PUT, public confirmation, ordinary background processing and public cleanup",
+    "response_control": "actual canonical snapshot response held then delivered unchanged; no fabricated successful bodies or application state injection",
+    "database": "fresh disposable application database migrated normally to0278 after old task residue blocked the historical upgrade",
+    "not_claimed": "settled-history0277-to0278 upgrade verification"
+  },
+  "receipts": [
+    {
+      "file": "final-combined.json",
+      "sha256": "a3d0a29a1c191bb13131a7c00268ab13023508dc2ac30b31f22a0851dfff9feb",
+      "bytes": 8365,
+      "run": "combined-1792018255687",
+      "original_receipt_sha256": "1258d3f24a46c95bde20f45e119510a73626a85ca0ae46d712cea7c5260451b0",
+      "verdicts": {
+        "pass": 4,
+        "fail": 0,
+        "blocked": 0
+      },
+      "source_stable_during_run": true,
+      "cleanup": "task fixture removed through public commands"
+    },
+    {
+      "file": "final-publication.json",
+      "sha256": "7ed1ef1bc0ebf593c4700d0538c9155a35c42a234a1944bfb8e3401c979325d9",
+      "bytes": 9647,
+      "run": "publication-1792018275317",
+      "original_receipt_sha256": "a6b1723c084d6dabcda94f85ad21668e1b065c3448fab76da315929fac2562e3",
+      "verdicts": {
+        "pass": 2,
+        "fail": 0,
+        "blocked": 0
+      },
+      "source_stable_during_run": true,
+      "cleanup": "task fixture removed through public commands"
+    }
+  ],
+  "total": {
+    "pass": 6,
+    "fail": 0,
+    "blocked": 0
+  },
+  "screenshots": [
+    {
+      "original_reference": "combined-1792018255687/metadata-inspector.png",
+      "file": "final-metadata-inspector.png",
+      "sha256": "c0e081b6b9ad192217e0b3bd124d1c0afcb5fdeafa9bf410eb96fcb9d15d4efd",
+      "bytes": 154951,
+      "scope": "actual loaded bibliography metadata section, one shared ready-gated open, collapsed history and operation details beside the imports row and reader",
+      "pixels_modified": false
+    }
+  ],
+  "omitted_screenshot_references": [
+    "combined-1792018255687/adjacent-reader.png",
+    "combined-1792018255687/lectern-membership.png",
+    "combined-1792018255687/pane-search.png",
+    "combined-1792018255687/snapshot-held.png",
+    "publication-1792018275317/pending-publication.png",
+    "publication-1792018275317/published-readable.png"
+  ],
+  "worker_boundary_records": [
+    {
+      "original_reference": "publication-1792018275317/worker-pause-request.json",
+      "original_sha256": "401cacf8c3d3dc0c2091fc05f60deae3c4b72fef338b9069407b6c2e32d0e7d1",
+      "record": {
+        "run": "publication-1792018275317",
+        "putStatus": 200,
+        "beforeConfirm": true
+      }
+    },
+    {
+      "original_reference": "publication-1792018275317/worker-stopped.json",
+      "original_sha256": "8b792cb921a84100a25625499f6dbdd7d0501162c11a7099b21d0a7fecdb9800",
+      "record": {
+        "stopped": true,
+        "container": "nexus-imports-integration-background",
+        "image": "sha256:5882fb7087b97947f5b0eed50c76c7961868aef1468ccaed0453d17d90fe5173",
+        "runtime_identity": {
+          "expected_database_revision": "0278",
+          "source_sha": "03d3649fa72d2538bc92c3d990225a6e573fc780"
+        },
+        "finishedAt": "2026-10-14T22:51:50.199832841Z",
+        "at": "2026-10-14T22:51:50.358429+00:00",
+        "afterPutStatus": 200,
+        "beforeConfirm": true
+      }
+    },
+    {
+      "original_reference": "publication-1792018275317/worker-resume-request.json",
+      "original_sha256": "321fe34b3440f18de2273664edd4008460b3994b518069bdfd439a63035cbab9",
+      "record": {
+        "run": "publication-1792018275317",
+        "pendingGatePassed": true
+      }
+    },
+    {
+      "original_reference": "publication-1792018275317/worker-running.json",
+      "original_sha256": "77feef0a242b8a3e52b2ad90ed46dafad7c7351f15ebed9ca96aaffd1dbb20d0",
+      "record": {
+        "running": true,
+        "container": "nexus-imports-integration-background",
+        "image": "sha256:5882fb7087b97947f5b0eed50c76c7961868aef1468ccaed0453d17d90fe5173",
+        "runtime_identity": {
+          "expected_database_revision": "0278",
+          "source_sha": "03d3649fa72d2538bc92c3d990225a6e573fc780"
+        },
+        "startedAt": "2026-10-14T22:52:18.150524506Z",
+        "at": "2026-10-14T22:52:18.290772+00:00",
+        "pendingGatePassed": true,
+        "lane": "background"
+      }
+    }
+  ],
+  "evidence_scope": [
+    "snapshot reconciliation keeps direct open visible and disabled until the real response settles; source extraction completed before initial readable fixture assertions",
+    "desktop direct open creates an adjacent reader and reuses the same reader visit; actual workspace acknowledgements and rendered PDF text observed",
+    "imports overflow submits canonical EnsureItem, receives Ensured and reconciles checked Remove from Lectern membership",
+    "actual inspector data renders the bibliography-specific metadata section and exactly one shared open; true Meta+f targets the active imports query and respects an open action menu",
+    "a fresh valid PDF PUT precedes verified normal-worker stop; public confirmation then yields reader409 E_MEDIA_NOT_READY, all four document capabilities false and no imports direct open",
+    "the same normal worker restarts and publishes the same upload; source completes, read/highlight/quote become true, reader200 and actual PDF text render after direct open",
+    "both task fixtures were removed through public commands"
+  ],
+  "limits": [
+    "the earlier genuine pending-publication red remains historical evidence in integration-pending-red.json; no artificial red was attempted on this fixed code",
+    "no provider-dependent metadata success, title generation, no-findings review or indexing success is claimed; ready can_search remained false",
+    "the final PDF fixture had no genuine recovery offer, so the optional recovery-control assertion was not exercised",
+    "no replay of prior browser, extension or physical-device qualification; earlier screenshots and receipts remain explicitly historical source cuts",
+    "final-metadata-inspector.png records the29e1 cut; its repeated active-state explanation was corrected in the later e946 presentation cut, shown in final-metadata-copy.png",
+    "temporary drivers, private configuration, credentials and storage capabilities are deliberately not retained"
+  ],
+  "curation": {
+    "receipts": "only sealed fixture handles/references and the absolute private fixture-file path redacted; all original result and source facts preserved; curation metadata added",
+    "image": "visually inspected; no credentials, signed URLs or private machine paths visible; original PNG bytes retained with no textual/exif metadata",
+    "integrity": "sha256 values identify retained bytes and original receipts before redaction; this index does not hash itself",
+    "historical_artifacts": "all eight existing integration-* artifacts retained byte-for-byte"
+  },
+  "presentation_followup": {
+    "receipt": "final-metadata-copy.json",
+    "receipt_sha256": "3a77d1c29ae43f3e7b44ebd58cbdfc6dba289d9e4a0156584bcee9b1f9eb2c16",
+    "screenshot": "final-metadata-copy.png",
+    "application_bytes_sha256": "e9460a0b79816d1c3d7a476e6033461041c0a34a5a332024bd1c8f4712927638",
+    "scope": "one Inspector-only repetition correction, one genuine red on29e1 and one same-fixture green on e946; the six checks in this index remain29e1 evidence"
+  }
+}

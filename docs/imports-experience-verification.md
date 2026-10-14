@@ -120,8 +120,46 @@ the repaired application digest is
 `4f78aaf7f1fdafbaa793acc398b343ae97b2c1050e867bbb6ec365432dbd1294`.
 the combined four and publication two belong to distinct recorded source cuts.
 
-main subsequently advanced to `5dac2889e`; its metadata/action/session integration,
-the final static gate and ci remain pending.
+main subsequently advanced to `5dac2889e971a5c24139da6390a63bd04ba5e280`.
+the final integrated application at `03d3649fa72d2538bc92c3d990225a6e573fc780`
+has digest `29e1b9fb5994b92eb6a899eee0617aa8d7345f89ecfe67f834ef9543b2e362c6`
+over 1175 application paths. all six focused checks passed with unchanged hashes
+across 21 owners: the four combined cases, plus pending/published readability on
+a fresh upload. the loaded inspector also showed the bibliography-purpose heading
+and exactly one shared open action. new title-purpose contracts and retained-x
+readability were source-reviewed; provider-backed title generation is not claimed.
+[final proof index](verification/imports-experience-20261014/final-proof-index.json)
+records these checks separately from the earlier source cuts.
+
+normal migration `0278` refused four pending metadata jobs for publicly deleted task
+media; the database remained at `0277`. the read-only census and settlement concern
+are [ticketed](tickets/deleted-media-metadata-jobs-block-title-migration.md).
+only the disposable application database was recreated; auth/storage/evidence remained.
+the unmodified migration chain then reached `0278` from empty, with normal authenticated
+user bootstrap and the unchanged locked worker image. this does not qualify a
+settled-history `0277` → `0278` upgrade. [setup](verification/imports-experience-20261014/final-integration-setup.json)
+and [reset](verification/imports-experience-20261014/final-integration-database-reset.json)
+retain that distinction.
+
+the final visual check found redundant queued-operation admission wording. one genuine
+red and one green on the same import/job proved the inspector keeps its queued summary
+and removes only the duplicate active explanation when an unfinished operation is visible.
+other blocked reasons remain visible. the only changed application file is
+`ImportInspector.tsx`; final digest:
+`e9460a0b79816d1c3d7a476e6033461041c0a34a5a332024bd1c8f4712927638`.
+[receipt](verification/imports-experience-20261014/final-metadata-copy.json) and
+[final inspector](verification/imports-experience-20261014/final-metadata-copy.png)
+identify this separate presentation cut; the six broader checks retain their `29e1` identity.
+
+integration services and the external test root are deleted. root independently checked
+all seven ports, seven containers, three volumes and two networks; the shared worker image
+and unrelated stacks/caches remain. [cleanup](verification/imports-experience-20261014/integration-cleanup.json)
+records ownership and temporary test/dependency/credential/log deletion. only scoped
+document backups remain temporarily for preserving the original dirty checkout during merge.
+the final `./scripts/test` passed after deletion (exit 0; migration head `0278`).
+[static receipt](verification/imports-experience-20261014/integration-static-check.txt)
+qualifies the final `e946` application bytes. ci and merge results are attached to the
+pull request; deployment remains outside this qualification.
 
 ## retained evidence and deletion
 

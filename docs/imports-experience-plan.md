@@ -9,7 +9,8 @@ base: [pane-controls pr #578](https://github.com/NielsdaWheelz/nexus-web/pull/57
 use that implementation's shared controls. pr #578 merged as `fa62a6901` on 2026-10-14;
 its final head `5460cc041` has identical web source to this approved baseline.
 the initial proof qualifies that baseline. the merge follow-up integrates main
-`f30a844a5`; combined qualification is recorded separately in verification.
+`5dac2889e`, including lectern, fixed shortcuts, x titles and session entry;
+combined qualification is recorded separately in verification.
 
 ## goal and invariants
 
@@ -184,7 +185,7 @@ freeze contracts/copy ownership first; parallel lanes never edit each other's fi
 
 | lane | exclusive files and responsibility |
 |---|---|
-| a: contracts | `python/nexus/schemas/{imports,import_refs,media}.py`; `python/nexus/services/{imports,media_source_ingest,media_upload_sessions}.py`; affected python ref imports; `lib/imports/api.ts`; `extension/uploadSessionContract.ts`. projection, producer-owned refs, schema cutover; existing routes/admission stay intact. |
+| a: contracts | `python/nexus/schemas/{imports,import_refs,media}.py`; `python/nexus/services/{imports,media_source_ingest,media_upload_sessions,capabilities,media,reader_publication}.py`; affected python ref imports; `lib/imports/api.ts`; `extension/uploadSessionContract.ts`. projection, producer-owned refs, schema cutover and shared publication eligibility; existing routes/admission stay intact. |
 | b: imports | `app/(authenticated)/imports/ImportsPaneBody.tsx`; `components/imports/` list/toolbar/row/inspector/styles and shared `ImportActions.tsx`; `lib/imports/{copy,query}.ts`; `components/ui/{PaneSurface,ResourceRow}.tsx` and `Button.module.css`; `lib/actions/resourceActionRuntime.tsx`. sole imports-copy writer. |
 | c: handoff | `lib/imports/ingest.ts`; `components/nexus/{useAddContentSession.ts,AddPanel.tsx,useNexusController.ts,AddPanel.module.css}`; `lib/nexus/model.ts`. known-ref lifecycle and guarded navigation. |
 | d: proof | task-owned temporary harness/fixtures outside the checkout; sanitized verification receipt. independent browser, contract, content and cleanup review; no application edits. |
@@ -205,7 +206,7 @@ remains the unchanged, static-only `./scripts/test`; no maintained test suite is
 |---|---|
 | i1 | one count per purpose, clear consequence/action, independent obligations visible; shared query draft/submit/clear/reset and all filters work in two panes without cross-talk. |
 | i2 | healthy view has no invisible notice gap; real loading, empty, failed and stale states have correct layout and recovery. |
-| i3 | usable content opens directly; desktop reuses a matching reader or creates adjacent, repeated open does not duplicate; pane cap refuses cleanly. mobile follow/back preserves navigation. recovery and title-selection remain independent of polling. |
+| i3 | usable content opens directly; an original file without a readable publication offers download but no direct read. normal publication enables reading. desktop reuses a matching reader or creates adjacent, repeated open does not duplicate; pane cap refuses cleanly. mobile follow/back preserves navigation. recovery and title-selection remain independent of polling. |
 | i4 | a signed upload with no put says awaiting confirmation. real browser transfer phases and known backoff deadlines remain truthful. no success inferred from absent obligations. |
 | i5 | renamed media title and immutable filename find the same stable import. original filename with whitespace retries successfully; mismatched name/type/size is refused before put. |
 | i6 | url receipt names its admitted media; upload create/attention/publication/replay retains its exact ref, including distinct captures sharing media. known-ref lost-confirmation offers guarded view and exact-intent check; unknown acceptance preserves its key. cancel preserves add state; confirm follows discard. installed rebuilt extension completes a real upload and handles real `NeedsAttention` without decoder failure. |
@@ -274,4 +275,5 @@ and record objections/resolutions. missing runtime access is a blocker, never as
 all unwaived acceptance is verified. the owner explicitly skipped provider-dependent
 live no-findings/exact-job review after search configuration failed; it remains
 [unverified](tickets/imports-live-metadata-proof-needs-working-search.md).
-merge qualification and task cleanup are owned by the pr follow-up; deployment is excluded.
+merge qualification and proof cleanup passed; the pr follow-up owns ci, merge and
+branch/worktree cleanup. deployment is excluded.

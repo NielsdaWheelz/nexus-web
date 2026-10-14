@@ -1,0 +1,88 @@
+{
+  "status": "complete",
+  "at": "2026-10-14T22:59:36.896758+00:00",
+  "ownership_checked_against": "integration-cleanup-preflight.json",
+  "manifest_sha256": "01373553444f50fd727193a5b3ce350c5394784f18be41c4f02f2f0fbe6bdf5e",
+  "process_groups_exited": [
+    50260,
+    50262
+  ],
+  "processes_observed_and_exited": [
+    50260,
+    50262,
+    50266,
+    50376
+  ],
+  "containers_absent": [
+    "nexus-imports-integration-background",
+    "nexus-imports-integration-20261014-postgres-1",
+    "nexus-imports-integration-20261014-minio-1",
+    "supabase_auth_nexus-imports-integration-20261014",
+    "supabase_kong_nexus-imports-integration-20261014",
+    "supabase_db_nexus-imports-integration-20261014",
+    "supabase_inbucket_nexus-imports-integration-20261014"
+  ],
+  "volumes_absent": [
+    "nexus-imports-integration-20261014_postgres-data",
+    "nexus-imports-integration-20261014_minio-data",
+    "supabase_db_nexus-imports-integration-20261014"
+  ],
+  "networks_absent": [
+    "nexus-imports-integration-20261014_default",
+    "supabase_network_nexus-imports-integration-20261014"
+  ],
+  "ports": {
+    "8198": {
+      "no_tcp_listener": true,
+      "ipv4_loopback_bind_succeeded": true
+    },
+    "3198": {
+      "no_tcp_listener": true,
+      "ipv4_loopback_bind_succeeded": true
+    },
+    "29110": {
+      "no_tcp_listener": true,
+      "ipv4_loopback_bind_succeeded": true
+    },
+    "29111": {
+      "no_tcp_listener": true,
+      "ipv4_loopback_bind_succeeded": true
+    },
+    "29121": {
+      "no_tcp_listener": true,
+      "ipv4_loopback_bind_succeeded": true
+    },
+    "29122": {
+      "no_tcp_listener": true,
+      "ipv4_loopback_bind_succeeded": true
+    },
+    "29124": {
+      "no_tcp_listener": true,
+      "ipv4_loopback_bind_succeeded": true
+    }
+  },
+  "preserved": {
+    "image_id": "sha256:5882fb7087b97947f5b0eed50c76c7961868aef1468ccaed0453d17d90fe5173",
+    "image_tag": "c3sw-host-worker:dev",
+    "image_and_tag_verified_present": true,
+    "source_worktree_and_local_dependencies": true,
+    "task_root_and_private_files": true,
+    "browser_caches": "not touched",
+    "unrelated_stacks": "no mutations issued"
+  },
+  "filesystem_cleanup": "task root retained for root to copy receipt and remove later",
+  "original_receipt_sha256": "aa4680542cf3fd9564a6a1b44b0bb6698b25f4c45693dad0c8adda01cbc0e26a",
+  "root_verified_resources_absent": true,
+  "temporary_files_removed": {
+    "root": "/private/tmp/nexus-imports-integration-20261014",
+    "includes": [
+      "external browser drivers",
+      "test-only dependencies",
+      "fixtures and profiles",
+      "private configuration and credentials",
+      "raw logs"
+    ],
+    "absent": true,
+    "document_cleanup_backups": "scoped authorized document backups retained separately until original checkout preservation is verified"
+  }
+}

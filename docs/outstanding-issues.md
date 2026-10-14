@@ -31,6 +31,7 @@ area · opened YYYY-MM-DD by <who> · P2
 ## Open
 - [open] web / android release · 2026-10-14 session-entry implementation · exact signed-apk qualification, coordinated cutover and production smoke remain: [ticket](tickets/session-entry-release-qualification.md).
 - [deferred] imports / live metadata proof · 2026-10-14 · owner waived provider-dependent no-findings/review proof; available search settings reject research: [ticket](tickets/imports-live-metadata-proof-needs-working-search.md).
+- [open] metadata lifecycle / migration · 2026-10-14 imports qualification · deleted-media metadata jobs remain pending and block title cutover: [ticket](tickets/deleted-media-metadata-jobs-block-title-migration.md).
 
 - [open] nexus add / css · 2026-10-14 production build · alignment emits an autoprefixer warning and prevents module cache serialization: [ticket](tickets/add-panel-css-build-warning.md).
 

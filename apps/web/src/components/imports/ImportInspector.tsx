@@ -251,7 +251,9 @@ export default function ImportInspector({
               · {moment(metadata.unfinished_operation.value.created_at)}
             </p>
           ) : null}
-          {metadata.retry.status === "blocked" ? (
+          {metadata.retry.status === "blocked" &&
+          !(metadata.retry.reason === "active" &&
+            metadata.unfinished_operation.kind === "Present") ? (
             <p>{metadataRetryBlockedCopy(metadata.retry)}</p>
           ) : null}
           <div className={styles.inspectorActions}>
