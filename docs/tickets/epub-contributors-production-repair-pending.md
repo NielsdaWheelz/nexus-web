@@ -1,6 +1,6 @@
 # saved epub contributor preview is a guarded owner-scope no-op
 
-status: owner-deferred remaining repairs; owner preview complete, no changes
+status: bounded audit planned; historical owner preview complete, no changes
 origin: 2026-10-04 pr #482 closure; 2026-10-14 release r4 disposition
 area: epub source contributors
 
@@ -27,11 +27,16 @@ through `python/nexus/services/epub_contributor_repair.py` and
 `python/scripts/repair_epub_contributors.py --viewer-id <uuid> [--media-id <uuid>]`.
 no new implementation or broadened source guard is justified by the no-op.
 
-next: separately review any remaining viewer/media scope and verified original
-source. inspect actual changed credit rows before authorizing an apply; use a
-bounded maintenance process and verified restored-copy rehearsal with source,
-credit, generation and identity fences. do not file another viewer's media into
-the release owner's library or guess a person identity to create eligibility.
+2026-10-14 decision: audit the original 244 ids and only the other-viewer
+frankenstein under the [book-repair plan](../book-repair-plan.md). the owner
+accepts source-proved unchanged or evidenced unresolved dispositions; proving
+every displayed credit correct is outside scope. no new apply has run.
+
+next: verify original sources and actual credit rows; reconcile all requested
+ids even when the cli omits invisible/missing items. if a correction exists,
+first implement the [reviewed-preview fence](epub-contributor-apply-does-not-bind-preview.md).
+rehearse it on a restored copy. do not file another viewer's media into the
+owner's library or guess a person identity to create eligibility.
 
 acceptance: a source-proved disposition for the explicitly selected scope.
 correct only uniquely matched historical `epub_opf` observations; skip ambiguity,

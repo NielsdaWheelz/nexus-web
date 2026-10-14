@@ -170,9 +170,9 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] epub / historical repair · 2026-09-27 corpus census · 17 source/retained text or href mismatches need full retained-coordinate replay: [ticket](tickets/reader-epub-source-correspondence-drift.md).
 - [open] epub / target identity · 2026-09-27 corpus census · seven source-only anchors need relevance classification before repair: [ticket](tickets/reader-epub-source-only-anchors.md).
 - [open] epub / apparatus · 2026-09-27 corpus census · one old note body cannot be proved for preservation: [ticket](tickets/reader-epub-old-apparatus-body-unproved.md).
-- [deferred] epub / apparatus · 2026-09-27 pr #398 review · row 232's second false backlink awaits a deletion-scope decision: [ticket](tickets/reader-epub-row232-backlink-classification.md).
+- [open] epub / apparatus · 2026-10-14 repair plan · row 232's misleading backlink remains unresolved; the new campaign permits no identity deletion and may refuse this item: [ticket](tickets/reader-epub-row232-backlink-classification.md).
 - [open] epub / parser bound · 2026-09-27 corpus census · two backlink indexes exceed the bounded extractor: [ticket](tickets/reader-epub-backlink-index-exhaustion.md).
-- [open] api / operations · 2026-09-27 release preflight · a read-only live source-hash probe exited 137 and restarted the api once: [ticket](tickets/live-api-source-hash-probe-restarted-container.md).
+- [open] api / operations · 2026-10-14 kernel evidence confirms an api cgroup oom with a second python process; keep bulk operator probes off-host: [ticket](tickets/live-api-source-hash-probe-restarted-container.md).
 - [open] epub ingest · 2026-09-26 fragment-only nav fix review · unsafe authored nav hrefs lack source issues: [ticket](tickets/epub-unsafe-nav-targets-have-no-source-issue.md).
 - [open] worker / indexing · 2026-09-24 reader-inspector-controls · a missing indexing credential is classified as a handler failure (`E_WORKER_HANDLER_FAILED`) and retried to dead: [ticket](tickets/indexing-without-credential-is-a-child-defect.md).
 - [open] local development · 2026-09-24 reader-inspector-controls · p3 · the local worker overlay hardcodes its minio cors origins and ports (its memory bound was fixed): [ticket](tickets/local-worker-overlay-memory-bound-fails-lane-check.md).
@@ -314,7 +314,7 @@ unexpected timeouts. See
 - [open] 2026-09-25 local qualification · credential values appeared in an internal tool transcript; rotate outside the transcript's trust boundary: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
 
 - [open] 2026-09-26 processing review · 24 diagnosed imports still need individual owned recovery: [ticket](tickets/processing-backlog-needs-owned-recovery.md).
-- [deferred] epub / recovery · 2026-10-14 disposition · the ancestor-prefix fix already shipped; exact portrait recovery/publication remains unproved: [ticket](tickets/epub-apparatus-prefix-scans-exhaust-parse-budget.md).
+- [planned] epub / recovery · 2026-10-14 plan · portrait uses existing fenced recovery and normal import limits; readability/indexing and metadata get separate outcomes: [ticket](tickets/epub-apparatus-prefix-scans-exhaust-parse-budget.md).
 - [open] 2026-09-26 processing review · historical terminal codes prevent recovery after parser corrections: [ticket](tickets/processing-terminal-policy-blocks-corrected-parser-recovery.md).
 - [open] 2026-09-26 processing review · missing images currently abort four epub imports: [ticket](tickets/epub-missing-images-abort-readable-books.md).
 - [open] 2026-09-26 processing review · two stored keats publications need heading normalization before reindex: [ticket](tickets/old-web-publications-lack-index-heading-normalization.md).
@@ -363,8 +363,8 @@ unexpected timeouts. See
 - [open] local docker / inventory · 2026-10-03 selection-concurrency allocation · full enumeration failed again, then passed at cleanup; intermittent recurrence remains open, cause and initial stopped-state comparison unproved: [ticket](tickets/local-docker-stopped-container-snapshot-missing.md).
 
 - [open] metadata bibliography · 2026-10-01 council · local book/collection/essay dates are qualified; targeted saved-production correction remains behind the historical release gate: [ticket](tickets/metadata-book-date-counts-serialization.md) · [github #485](https://github.com/NielsdaWheelz/nexus-web/issues/485).
-- [deferred] epub contributors / saved repair · 2026-10-14 r4 · owner preview: five unchanged, 239 guarded skips, zero proposals across 244 epubs; remaining viewer-scope repairs deferred: [ticket](tickets/epub-contributors-production-repair-pending.md) · [github #486](https://github.com/NielsdaWheelz/nexus-web/issues/486).
-- [deferred] contributors · 2026-10-14 release r4 · ce72 belongs to another viewer's visible library; credit incorrectness unproved and verified source preview owner-deferred: [ticket](tickets/legacy-epub-credit-outside-owner-scope.md).
+- [planned] epub contributors / saved repair · 2026-10-14 plan · audit the original 244 ids; historical preview had five unchanged, 239 guarded skips and zero proposals; allow evidenced unresolved dispositions: [ticket](tickets/epub-contributors-production-repair-pending.md) · [github #486](https://github.com/NielsdaWheelz/nexus-web/issues/486).
+- [planned] contributors · 2026-10-14 plan · include only the other-viewer frankenstein source audit; preserve ownership/library, credit incorrectness still unproved: [ticket](tickets/legacy-epub-credit-outside-owner-scope.md).
 - [open] metadata production admission · 2026-10-01 investigation · catalog cause and three reviewed retry dispositions await runtime repair; an unavailable catalog is now a terminal `model_unavailable`: [ticket](tickets/metadata-production-catalog-refresh-fails.md).
 - [open] atlas / production migration · 2026-10-04 current-main composition · bcb86e actual0241→0257 retains all atlas identities/non-timestamp fields; 502 timestamp losses still need approval and final backup/restore: [ticket](tickets/atlas-0254-production-timestamp-loss.md).
 - [deferred] resource activation / native output · 2026-10-04 chat read review · shared output validates href relation but not canonical resource_ref, and no browser path checks it: [ticket](tickets/resource-activation-output-canonical-ref-contract.md).
@@ -416,9 +416,13 @@ unexpected timeouts. See
 
 # post-release handoff
 
-- [deferred] reader apparatus · 2026-10-14 owner disposition · draft #584 has offline source proof only; correspondence refusal and unrepaired production bodies remain, no merge/apply: [ticket](tickets/reader-repair-existing-apparatus-correspondence.md).
+- [open] reader maintenance · 2026-10-14 plan review · the one-off apparatus deletion exception conflicts with the new preservation contract; removing its backlink exception can make row 232 refuse: [ticket](tickets/reader-repair-has-apparatus-deletion-exception.md).
+- [open] contributor maintenance · 2026-10-14 plan review · apply does not bind the externally reviewed preview or its resolved person identities; fix before any proposed correction: [ticket](tickets/epub-contributor-apply-does-not-bind-preview.md).
+- [open] reader maintenance · 2026-10-14 plan review · inspection exposes changed apparatus keys but lacks full diffs and separate projection hashes for review and uncertain-commit reconciliation: [ticket](tickets/reader-repair-inspection-lacks-complete-projection-evidence.md).
 
-- [deferred] reader repair · 2026-10-14 owner disposition · four real parse-time refusals; the 30-second import ceiling's maintenance applicability is unestablished and combined source qualification remains incomplete: [ticket](tickets/reader-repair-epub-parse-budget.md).
+- [planned] reader apparatus · 2026-10-14 repair plan · re-scope draft #584 for strict enrichment, no identity deletion and complete proposal evidence; no merge/apply: [plan](book-repair-plan.md) · [ticket](tickets/reader-repair-existing-apparatus-correspondence.md).
+
+- [planned] reader repair · 2026-10-14 plan · qualify a separate bounded off-host maintenance budget; four real refusals remain unresolved and normal import policy stays unchanged: [ticket](tickets/reader-repair-epub-parse-budget.md).
 
 
 - [deferred] migration baseline and cutover retirement after release acceptance; scope includes the final deployed head and verified backup retention: [ticket](tickets/post-release-migration-baseline.md).

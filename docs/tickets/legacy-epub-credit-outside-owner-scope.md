@@ -1,6 +1,6 @@
 # legacy epub source credit belongs to another viewer's saved scope
 
-status: owner-deferred source preview; read-only visibility diagnosis complete
+status: exact-item audit planned; read-only visibility diagnosis complete
 origin: 2026-10-14 release r4 scope follow-up
 area: contributors
 
@@ -24,9 +24,10 @@ sha256 `2ce17a11ed5ab13353f569d65938731ca8e27b3792e61bb506af1da3b9692676`.
 the single read-only production query established viewer scope only; it does
 not extend the guarded owner no-op into global saved-credit repair closure.
 
-the owner explicitly deferred the other-viewer source preview from the usable
-release. next: separately authorize that viewer/media scope, verify the original
-source and obtain the shipped planner's actual credit-row preview. preserve
+the owner deferred this preview from the usable release, then included this
+exact item in the 2026-10-14 [book-repair plan](../book-repair-plan.md).
+next: reverify its viewer/media scope and original source, then obtain the
+planner's actual credit-row preview. preserve
 current ownership and manual/unrelated credits. do not auto-file the media,
 guess a person identity, broaden source guards or change unrelated metadata.
 
