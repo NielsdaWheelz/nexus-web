@@ -173,9 +173,10 @@ export default function PodcastEpisodeList({
           presentMedia(episode.media_summary, {
             id: episode.id,
             primary: { kind: "link", href: `/media/${episode.id}` },
-            actionSubject: {
-              ref: canonicalResourceRef({ scheme: "media", id: episode.id }),
-            },
+            resourceRef: canonicalResourceRef({
+              scheme: "media",
+              id: episode.id,
+            }),
             selected: false,
           }),
         )}

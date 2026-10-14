@@ -27,9 +27,7 @@ export function presentConversation(
     context: { kind: "Text", text: presentation.metadata },
     activity: null,
     exceptionalStatus: null,
-    actionSubject: {
-      ref: canonicalResourceRef({ scheme: "conversation", id: item.id }),
-    },
+    resourceRef: canonicalResourceRef({ scheme: "conversation", id: item.id }),
     selected: false,
   };
 }

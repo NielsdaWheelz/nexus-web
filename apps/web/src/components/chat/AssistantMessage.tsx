@@ -324,9 +324,7 @@ export default function AssistantMessage({
             />
           ) : null}
           <ResourceActionMenu
-            actionSubject={{
-              ref: canonicalResourceRef({ scheme: "message", id }),
-            }}
+            resourceRef={canonicalResourceRef({ scheme: "message", id })}
             label="Actions for this answer"
             align="start"
           />

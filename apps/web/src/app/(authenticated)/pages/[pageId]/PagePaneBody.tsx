@@ -80,10 +80,7 @@ export default function PagePaneBody() {
   }, [claim, delivery, feedback, id, outline, source]);
 
   const materialized = id !== null && !outline.latent && outline.status === "ready";
-  const actionSubject = useMemo(
-    () => (materialized ? { ref: canonicalResourceRef({ scheme: "page", id }) } : undefined),
-    [id, materialized],
-  );
+  const resourceRef = materialized ? canonicalResourceRef({ scheme: "page", id }) : undefined;
   const { activateTarget } = runtime;
   const menuActions = useMemo<ActionDescriptor[]>(
     () =>
@@ -101,7 +98,7 @@ export default function PagePaneBody() {
         : [],
     [activateTarget, dailyDate],
   );
-  usePaneChrome(useMemo(() => ({ query: queryControls, actionSubject, menuActions }), [actionSubject, menuActions, queryControls]));
+  usePaneChrome(useMemo(() => ({ query: queryControls, resourceRef, menuActions }), [resourceRef, menuActions, queryControls]));
 
   if (outline.status === "failed")
     return (

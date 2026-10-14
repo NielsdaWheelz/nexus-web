@@ -93,7 +93,7 @@ takes each query key once (a repeated key is 400 `E_INVALID_REQUEST`, as an unkn
 
 `SearchResponse` is `{results, page: {has_more, next_cursor}}`, a union discriminated by
 `type`; every field is always sent (context `evidence_span_ids` too) and required in
-openapi. rows carry score/snippet, occurrence, owner and action-subject refs,
+openapi. rows carry score/snippet, occurrence, owner and action refs,
 activation, citation target and context ref; passage types act on their owner.
 `<b>`/`</b>` is the only snippet markup. `project.py` builds refs, context and activation
 together and refuses an unactivatable row, so the web trusts them: `searchViewModel.ts`

@@ -248,7 +248,7 @@ function openableRows(query: string, items: readonly ResourceItem[], panes: read
         type: item.scheme,
         detail: item.summary || undefined,
         action: { kind: "Available", target: { kind: "InternalHref", href, labelHint: item.label } },
-        menu: { kind: "Resource", subject: { ref: assumeCanonicalResourceRef(item.ref) } },
+        menu: { kind: "Resource", resourceRef: assumeCanonicalResourceRef(item.ref) },
         source: "Oracle",
         rank: {
           tier: textTier(query, item.label, { metadata: [item.summary] }) ?? "MetadataOrFullText",
@@ -292,7 +292,7 @@ function searchRows(query: string, results: readonly SearchResultRowViewModel[],
         snippet: result.snippetSegments,
         parent,
         action: { kind: "Available", target: { kind: "InternalHref", href, labelHint: label } },
-        menu: { kind: "Resource", subject: result.actionSubject },
+        menu: { kind: "Resource", resourceRef: result.actionRef },
         source: "Search",
         rank: {
           tier: textTier(query, label, { metadata: detail ? [detail] : [] }) ?? "MetadataOrFullText",

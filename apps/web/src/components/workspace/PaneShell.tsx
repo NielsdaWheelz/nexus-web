@@ -286,7 +286,7 @@ function PaneView({
   }
   if (refresh.command) paneActions.push(refresh.command);
   const share = resolvePaneRouteShareIdentity(route, label);
-  if (share && !body?.actionSubject) {
+  if (share && !body?.resourceRef) {
     paneActions.push({
       kind: "command",
       id: "RouteAction.Share",
@@ -324,7 +324,7 @@ function PaneView({
           companionAction: inspector,
           paneActions,
           menuActions: body?.menuActions ?? [],
-          actionSubject: body?.actionSubject,
+          resourceRef: body?.resourceRef,
           onDefect,
         }
       : null,
@@ -444,7 +444,7 @@ function PaneView({
               companionAction={inspector}
               paneActions={paneActions}
               menuActions={body?.menuActions}
-              actionSubject={body?.actionSubject}
+              resourceRef={body?.resourceRef}
               navigation={historyNavigation}
               onMouseDown={onChromeMouseDown}
             />
@@ -526,7 +526,7 @@ function PaneView({
         controller={controller}
         secondary={pane.secondary}
         find={find}
-        actionSubject={body?.actionSubject}
+        resourceRef={body?.resourceRef}
       />
     </section>
   );

@@ -67,18 +67,18 @@ function renderExceptionalStatus(status: ExceptionalStatus): ReactNode {
 
 function RowContextualMenu({
   sections,
-  actionSubject,
+  resourceRef,
   label,
   reorder,
   reorderHintId,
 }: {
   readonly sections: readonly ContextActionSection[];
-  readonly actionSubject: CollectionRowView["actionSubject"];
+  readonly resourceRef: CollectionRowView["resourceRef"];
   readonly label: string;
   readonly reorder?: SortableActivatorProps;
   readonly reorderHintId: string;
 }) {
-  if (!actionSubject && sections.every((section) => section.actions.length === 0)) {
+  if (!resourceRef && sections.every((section) => section.actions.length === 0)) {
     return null;
   }
   return (
@@ -91,7 +91,7 @@ function RowContextualMenu({
       ) : null}
       <ContextualActionMenu
         sections={sections}
-        actionSubject={actionSubject ?? undefined}
+        resourceRef={resourceRef ?? undefined}
         label={label}
         triggerRef={reorder?.setActivatorNodeRef}
         renderTrigger={
@@ -301,13 +301,13 @@ export default function CollectionRow({
     {
       id: "View",
       actions:
-        rowActionsAvailable && !row.actionSubject ? (row.flatActions ?? []) : [],
+        rowActionsAvailable && !row.resourceRef ? (row.flatActions ?? []) : [],
     },
   ];
   const actions = rowActionsAvailable ? (
     <RowContextualMenu
       sections={sections}
-      actionSubject={row.actionSubject}
+      resourceRef={row.resourceRef}
       label={menuLabel}
       reorder={reorder}
       reorderHintId={reorderHintId}

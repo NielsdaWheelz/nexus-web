@@ -4056,7 +4056,8 @@ export interface components {
         };
         /** ContributorDetailOut */
         ContributorDetailOut: {
-            action_subject: components["schemas"]["ResourceActionSubjectOut"];
+            /** Action Ref */
+            action_ref: string;
             /** Display Name */
             display_name: string;
             /** Handle */
@@ -4112,8 +4113,8 @@ export interface components {
          * @description A Conversation Dossier claim; the revision ref keeps the exact cited text.
          */
         ConversationArtifactSearchOut: {
-            /** Action Subject Ref */
-            action_subject_ref: string;
+            /** Action Ref */
+            action_ref: string;
             activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Target */
             citation_target: string | null;
@@ -5444,7 +5445,7 @@ export interface components {
         };
         /**
          * ExternalContributorWorkItemOut
-         * @description A catalogue ebook: not a Nexus resource, so it has no action subject.
+         * @description A catalogue ebook: not a Nexus resource, so it has no action ref.
          */
         ExternalContributorWorkItemOut: {
             /** Content Kind */
@@ -5873,8 +5874,8 @@ export interface components {
         };
         /** InNexusMediaResolution */
         InNexusMediaResolution: {
-            /** Action Subject Ref */
-            action_subject_ref: string;
+            /** Action Ref */
+            action_ref: string;
             /** Href */
             href: string;
             /**
@@ -5886,8 +5887,8 @@ export interface components {
         };
         /** InNexusPodcastResolution */
         InNexusPodcastResolution: {
-            /** Action Subject Ref */
-            action_subject_ref: string;
+            /** Action Ref */
+            action_ref: string;
             /** Href */
             href: string;
             /**
@@ -6706,7 +6707,8 @@ export interface components {
         };
         /** MediaContributorWorkItemOut */
         MediaContributorWorkItemOut: {
-            action_subject: components["schemas"]["ResourceActionSubjectOut"];
+            /** Action Ref */
+            action_ref: string;
             /** Href */
             href: string;
             /**
@@ -8272,7 +8274,8 @@ export interface components {
         };
         /** PodcastContributorWorkItemOut */
         PodcastContributorWorkItemOut: {
-            action_subject: components["schemas"]["ResourceActionSubjectOut"];
+            /** Action Ref */
+            action_ref: string;
             /** Content Kind */
             content_kind: string;
             /** Href */
@@ -10025,11 +10028,6 @@ export interface components {
             /** Items */
             items: components["schemas"]["MediaSummaryResolutionOut"][];
         };
-        /** ResourceActionSubjectOut */
-        ResourceActionSubjectOut: {
-            /** Ref */
-            ref: string;
-        };
         /**
          * ResourceActionsOut
          * @description One ref's verbs now. Inapplicable verbs are omitted; forbidden ones carry ``blocked``.
@@ -10416,8 +10414,8 @@ export interface components {
         };
         /** SearchResultContentChunkOut */
         SearchResultContentChunkOut: {
-            /** Action Subject Ref */
-            action_subject_ref: string;
+            /** Action Ref */
+            action_ref: string;
             activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Label */
             citation_label: string;
@@ -10480,8 +10478,8 @@ export interface components {
          * @description A contributor identity hit; its id is the handle.
          */
         SearchResultContributorOut: {
-            /** Action Subject Ref */
-            action_subject_ref: string;
+            /** Action Ref */
+            action_ref: string;
             activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Target */
             citation_target: string | null;
@@ -10515,8 +10513,8 @@ export interface components {
         };
         /** SearchResultConversationOut */
         SearchResultConversationOut: {
-            /** Action Subject Ref */
-            action_subject_ref: string;
+            /** Action Ref */
+            action_ref: string;
             activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Target */
             citation_target: string | null;
@@ -10553,8 +10551,8 @@ export interface components {
          * @description One durable evidence span, produced only by citation reopen.
          */
         SearchResultEvidenceSpanOut: {
-            /** Action Subject Ref */
-            action_subject_ref: string;
+            /** Action Ref */
+            action_ref: string;
             activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Label */
             citation_label: string;
@@ -10598,8 +10596,8 @@ export interface components {
         };
         /** SearchResultFragmentOut */
         SearchResultFragmentOut: {
-            /** Action Subject Ref */
-            action_subject_ref: string;
+            /** Action Ref */
+            action_ref: string;
             activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Label */
             citation_label: string | null;
@@ -10638,8 +10636,8 @@ export interface components {
         };
         /** SearchResultHighlightOut */
         SearchResultHighlightOut: {
-            /** Action Subject Ref */
-            action_subject_ref: string;
+            /** Action Ref */
+            action_ref: string;
             activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Label */
             citation_label: string | null;
@@ -10685,8 +10683,8 @@ export interface components {
          * @description A media hit; the discriminant names the document's format family.
          */
         SearchResultMediaOut: {
-            /** Action Subject Ref */
-            action_subject_ref: string;
+            /** Action Ref */
+            action_ref: string;
             activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Target */
             citation_target: string | null;
@@ -10713,8 +10711,8 @@ export interface components {
         };
         /** SearchResultMessageOut */
         SearchResultMessageOut: {
-            /** Action Subject Ref */
-            action_subject_ref: string;
+            /** Action Ref */
+            action_ref: string;
             activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Target */
             citation_target: string | null;
@@ -10757,8 +10755,8 @@ export interface components {
         };
         /** SearchResultNoteBlockOut */
         SearchResultNoteBlockOut: {
-            /** Action Subject Ref */
-            action_subject_ref: string;
+            /** Action Ref */
+            action_ref: string;
             activation: components["schemas"]["ResourceActivationOut"];
             /** Body Text */
             body_text: string;
@@ -10803,8 +10801,8 @@ export interface components {
         };
         /** SearchResultPageOut */
         SearchResultPageOut: {
-            /** Action Subject Ref */
-            action_subject_ref: string;
+            /** Action Ref */
+            action_ref: string;
             activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Target */
             citation_target: string | null;
@@ -10838,8 +10836,8 @@ export interface components {
         };
         /** SearchResultPodcastOut */
         SearchResultPodcastOut: {
-            /** Action Subject Ref */
-            action_subject_ref: string;
+            /** Action Ref */
+            action_ref: string;
             activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Target */
             citation_target: string | null;
@@ -10875,8 +10873,8 @@ export interface components {
         };
         /** SearchResultReaderApparatusItemOut */
         SearchResultReaderApparatusItemOut: {
-            /** Action Subject Ref */
-            action_subject_ref: string;
+            /** Action Ref */
+            action_ref: string;
             activation: components["schemas"]["ResourceActivationOut"];
             /** Apparatus Kind */
             apparatus_kind: string;
@@ -10934,8 +10932,8 @@ export interface components {
          * @description A persisted public-web result, one per external snapshot (``id`` is the snapshot).
          */
         SearchResultWebOut: {
-            /** Action Subject Ref */
-            action_subject_ref: string;
+            /** Action Ref */
+            action_ref: string;
             activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Target */
             citation_target: string | null;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useRef } from "react";
 import { useFeedback } from "@/components/feedback/Feedback";
 import MetadataResearchActions from "@/components/media/MetadataResearchActions";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
@@ -142,10 +142,6 @@ function MediaActions({
   readonly item: ImportItem;
   readonly mediaRef: string;
 }) {
-  const subject = useMemo(
-    () => ({ ref: assumeCanonicalResourceRef(mediaRef) }),
-    [mediaRef],
-  );
   const mediaId = mediaRef.slice("media:".length);
   const key =
     item.state.kind !== "Complete" && item.state.stage === "Index"
@@ -164,7 +160,7 @@ function MediaActions({
       ) : null}
       <ImportOpenAction item={item} />
       <ResourceActionMenu
-        actionSubject={subject}
+        resourceRef={assumeCanonicalResourceRef(mediaRef)}
         label={`More actions for ${item.title}`}
       />
     </>

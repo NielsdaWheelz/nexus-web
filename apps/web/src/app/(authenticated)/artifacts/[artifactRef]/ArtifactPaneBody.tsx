@@ -98,7 +98,7 @@ export default function ArtifactPaneBody() {
       : dossier.head.kind === "Loading"
         ? { kind: "Find", find: null }
         : undefined,
-    actionSubject: { ref: canonicalResourceRef(ref) },
+    resourceRef: canonicalResourceRef(ref),
   });
 
   return (

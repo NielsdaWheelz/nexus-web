@@ -826,7 +826,7 @@ identity or highlight-note origin from result type or URL.
 
 `schemas/search_types.py` owns the result discriminants; `schemas/search.py`
 owns the response union. `project.py` maps each hydrated row to its exact
-occurrence ref, owner ref, action subject and activation, drops rows whose locator no
+occurrence ref, owner ref, action ref and activation, drops rows whose locator no
 longer places, and emits the corresponding response model. A result without usable
 activation is a defect. The browser projects that generated wire union once into
 its row contract. Durable resource reopening and visibility belong to

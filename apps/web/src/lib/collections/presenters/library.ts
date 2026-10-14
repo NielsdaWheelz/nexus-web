@@ -29,9 +29,7 @@ export function presentLibrary(library: Library): CollectionRowView {
     },
     activity: null,
     exceptionalStatus: null,
-    actionSubject: {
-      ref: canonicalResourceRef({ scheme: "library", id: library.id }),
-    },
+    resourceRef: canonicalResourceRef({ scheme: "library", id: library.id }),
     selected: false,
   };
 }
@@ -56,7 +54,7 @@ export function presentLibraryEntry(
     return presentMedia(entry.media_summary, {
       id,
       primary: { kind: "link", href: `/media/${id}` },
-      actionSubject: { ref: canonicalResourceRef({ scheme: "media", id }) },
+      resourceRef: canonicalResourceRef({ scheme: "media", id }),
       selected: false,
     });
   }

@@ -33,7 +33,7 @@ import {
   SECONDARY_SURFACES,
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
-import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { WorkspaceSecondaryPane } from "@/lib/workspace/model";
 import {
   findPaneChromeFocusTarget,
@@ -250,7 +250,7 @@ export default function Companion(props: {
   readonly controller: CompanionController;
   readonly secondary: WorkspaceSecondaryPane | null;
   readonly find: FindController | null;
-  readonly actionSubject: ResourceActionSubject | undefined;
+  readonly resourceRef: CanonicalResourceRef | undefined;
 }): ReactNode {
   const { paneId, isMobile, chrome, controller, secondary, find } = props;
   const { companion, results } = usePaneChromeState(chrome);
@@ -373,11 +373,8 @@ export default function Companion(props: {
       ) : (
         <span className={styles.soloTitle}>{title(activeId)}</span>
       )}
-      {isMobile && props.actionSubject ? (
-        <ResourceActionMenu
-          actionSubject={props.actionSubject}
-          label="Actions"
-        />
+      {isMobile && props.resourceRef ? (
+        <ResourceActionMenu resourceRef={props.resourceRef} label="Actions" />
       ) : null}
       <Button
         variant="ghost"

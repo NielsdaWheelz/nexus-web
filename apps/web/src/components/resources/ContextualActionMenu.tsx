@@ -7,7 +7,7 @@ import {
   useResourceActionMenu,
 } from "@/lib/actions/useResourceActionMenu";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
-import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
 type ActionMenuProps = ComponentProps<typeof ActionMenu>;
@@ -20,7 +20,7 @@ export interface ContextActionSection {
 /** Pane, occurrence or view commands, then the resource's verbs after a separator. */
 export default function ContextualActionMenu({
   sections,
-  actionSubject,
+  resourceRef,
   onDefect,
   ...props
 }: Pick<
@@ -33,12 +33,12 @@ export default function ContextualActionMenu({
   | "triggerRef"
 > & {
   readonly sections: readonly ContextActionSection[];
-  readonly actionSubject?: ResourceActionSubject;
+  readonly resourceRef?: CanonicalResourceRef;
   /** Where a defect while loading goes when the menu renders outside its pane. */
   readonly onDefect?: (defect: { readonly error: unknown }) => void;
 }) {
   const { options: resource, onOpenChange } = useResourceActionMenu(
-    actionSubject?.ref ?? null,
+    resourceRef ?? null,
     onDefect,
   );
   const [open, setOpen] = useState(false);
@@ -52,7 +52,7 @@ export default function ContextualActionMenu({
   );
   const local = sections.map((section) => section.actions);
   // A resource-only menu with no verbs still says so.
-  const alone = actionSubject && !local.some((actions) => actions.length > 0);
+  const alone = resourceRef && !local.some((actions) => actions.length > 0);
   const verbs = alone && resource.length === 0 ? [NO_ACTIONS] : resource;
   const options = [...local, verbs]
     .filter((actions) => actions.length > 0)

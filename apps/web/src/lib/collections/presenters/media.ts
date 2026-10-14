@@ -2,14 +2,14 @@ import type { ResourceRowPrimary } from "@/components/ui/ResourceRow";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { selectMediaAuthors } from "@/lib/contributors/credits";
 import type { MediaSummary } from "@/lib/media/mediaSummary";
-import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 
 export interface MediaOccurrence {
   readonly id: string;
   readonly primary: Extract<ResourceRowPrimary, { kind: "link" }>;
-  readonly actionSubject: ResourceActionSubject;
+  readonly resourceRef: CanonicalResourceRef;
   readonly selected: boolean;
   readonly searchEvidence?: readonly EmphasisSegment[];
 }
@@ -20,10 +20,10 @@ export function presentMedia(
   occurrence: MediaOccurrence,
 ): CollectionRowView {
   if (
-    occurrence.actionSubject.ref !==
+    occurrence.resourceRef !==
     canonicalResourceRef({ scheme: "media", id: summary.media_id })
   ) {
-    throw new Error("Media occurrence action subject differs from media summary");
+    throw new Error("Media occurrence resource ref differs from media summary");
   }
   return {
     id: occurrence.id,
@@ -49,7 +49,7 @@ export function presentMedia(
     exceptionalStatus: summary.processing_status === "failed"
       ? { kind: "MediaProcessing", status: "failed" }
       : null,
-    actionSubject: occurrence.actionSubject,
+    resourceRef: occurrence.resourceRef,
     selected: occurrence.selected,
   };
 }

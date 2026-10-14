@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
-from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import delete, select, text
@@ -43,7 +42,6 @@ from nexus.schemas.contributors import (
     MediaAuthorsPutRequest,
     MediaContributorWorkItemOut,
     PodcastContributorWorkItemOut,
-    ResourceActionSubjectOut,
 )
 from nexus.services.capabilities import can_edit_media_authors
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
@@ -226,9 +224,7 @@ def get_contributor_detail(
         href=f"/authors/{contributor.handle}",
         display_name=contributor.display_name,
         other_names=list(other_names),
-        action_subject=ResourceActionSubjectOut(
-            ref=ResourceRef(scheme="contributor", id=contributor.id).uri
-        ),
+        action_ref=ResourceRef(scheme="contributor", id=contributor.id).uri,
     )
 
 
@@ -340,7 +336,7 @@ def list_contributor_works(
                     media_summary=summaries[row["media_id"]],
                     href=row["href"],
                     role_facts=facts,
-                    action_subject=_subject("media", row["media_id"]),
+                    action_ref=ResourceRef(scheme="media", id=row["media_id"]).uri,
                 )
             )
         elif row["podcast_id"] is not None:
@@ -350,7 +346,7 @@ def list_contributor_works(
                     href=row["href"],
                     content_kind=row["content_kind"],
                     role_facts=facts,
-                    action_subject=_subject("podcast", row["podcast_id"]),
+                    action_ref=ResourceRef(scheme="podcast", id=row["podcast_id"]).uri,
                 )
             )
         else:
@@ -364,10 +360,6 @@ def list_contributor_works(
                 )
             )
     return CollectionPage[ContributorWorkItemOut](items=items, next_cursor=next_cursor)
-
-
-def _subject(scheme: Literal["media", "podcast"], target_id: UUID) -> ResourceActionSubjectOut:
-    return ResourceActionSubjectOut(ref=ResourceRef(scheme=scheme, id=target_id).uri)
 
 
 def resolve_contributor_ids_by_handles(db: Session, handles: Sequence[str]) -> dict[str, UUID]:

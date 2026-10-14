@@ -29,7 +29,7 @@ export function presentSettingsRow(
     activity: null,
     exceptionalStatus: null,
     // not a resource: an explicit flat menu, no action snapshot
-    actionSubject: null,
+    resourceRef: null,
     flatActions: item.actions,
     selected: false,
   };

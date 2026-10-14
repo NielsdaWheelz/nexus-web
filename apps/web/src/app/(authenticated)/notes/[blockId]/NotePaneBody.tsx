@@ -89,11 +89,8 @@ export default function NotePaneBody() {
     [blockId],
   );
   useResourceInspector({ scheme: "note_block", handle: blockId, bodies: { linkedItems: connections } });
-  const actionSubject = useMemo(
-    () => ({ ref: canonicalResourceRef({ scheme: "note_block", id: blockId }) }),
-    [blockId],
-  );
-  usePaneChrome(useMemo(() => ({ query: queryControls, actionSubject }), [actionSubject, queryControls]));
+  const resourceRef = canonicalResourceRef({ scheme: "note_block", id: blockId });
+  usePaneChrome(useMemo(() => ({ query: queryControls, resourceRef }), [resourceRef, queryControls]));
 
   if (outline.status === "failed")
     return (

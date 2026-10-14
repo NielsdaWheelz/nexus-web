@@ -132,7 +132,7 @@ export function useReaderChrome(input: {
           : !input.failed && !documentFailed && (media === null || readable)
             ? { kind: "Find" as const, find: null }
             : undefined,
-        actionSubject: { ref: canonicalResourceRef({ scheme: "media", id }) },
+        resourceRef: canonicalResourceRef({ scheme: "media", id }),
         menuActions,
       }),
       [authors, documentFailed, find, id, input.failed, navigation, media, menuActions, readable],

@@ -211,7 +211,7 @@ def project(
             "snippet": snippet(row["text"] or "", terms, row["headline"]),
             "resource_ref": ref.uri,
             "owner_resource_ref": owner.uri,
-            "action_subject_ref": (owner if t in _PASSAGES else ref).uri,
+            "action_ref": (owner if t in _PASSAGES else ref).uri,
             "activation": activation,
             "citation_target": ref.uri if capability(ref.scheme).citable_result_type else None,
             "context_ref": SearchResultContextRefOut(

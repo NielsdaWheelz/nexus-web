@@ -336,9 +336,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
         : head.status === "loading"
           ? { kind: "Resolving" }
           : undefined,
-    actionSubject: {
-      ref: canonicalResourceRef({ scheme: "podcast", id: podcastId }),
-    },
+    resourceRef: canonicalResourceRef({ scheme: "podcast", id: podcastId }),
     header: {
       kind: "Section",
       meta: complete

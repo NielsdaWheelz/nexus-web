@@ -17,7 +17,7 @@ export function presentSearchResult(
     return presentMedia(row.mediaSummary, {
       id: row.key,
       primary: { kind: "link", href },
-      actionSubject: row.actionSubject,
+      resourceRef: row.actionRef,
       selected: false,
       searchEvidence: evidence ? row.snippetSegments : undefined,
     });
@@ -38,7 +38,7 @@ export function presentSearchResult(
           },
     activity: null,
     exceptionalStatus: null,
-    actionSubject: row.actionSubject,
+    resourceRef: row.actionRef,
     selected: false,
   };
 }

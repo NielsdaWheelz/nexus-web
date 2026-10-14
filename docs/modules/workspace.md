@@ -195,7 +195,7 @@ them.
 
 A body contributes to its shell by rendering, into a store that `PaneShell`
 creates for that mounted body (`lib/panes/paneChrome.tsx`), through three hooks:
-`usePaneChrome` (`{ header, navigation, query, menuActions, actionSubject,
+`usePaneChrome` (`{ header, navigation, query, menuActions, resourceRef,
 refresh }` with independent navigation and query capabilities),
 `usePaneCompanion` (the Companion's tabs and default) and `usePaneLayout` (a
 reader's intrinsic width and rail). Each writes its slot in a layout effect and
@@ -266,10 +266,12 @@ retires only its disclosure/results; ordinary clear preserves find preferences
 and a held return origin. publication replacement retains text/preferences,
 retires old geometry, then recaptures after restore. `FindBar` adapts the shared
 query toolbar; companion results remain transient. current capability and
-keyboard details are specified in [the pane controls plan](../pane-controls-plan.md).
+keyboard details are specified in [the pane controls plan](../pane-controls-plan.md);
+its chrome sketch's `actionSubject?: ResourceActionSubject` is now
+`resourceRef?: CanonicalResourceRef`.
 
-A resource pane publishes only its canonical `actionSubject`
-(`ResourceActionSubject`). `PaneShell` composes its pane commands and the body's
+A resource pane publishes only its canonical `resourceRef`
+(`CanonicalResourceRef`). `PaneShell` composes its pane commands and the body's
 `menuActions` through `ContextualActionMenu`; the unchanged canonical resource
 descriptors are one ordered contiguous suffix
 ([resource-action owner](resource-actions.md)). Membership, current verb,
@@ -379,7 +381,7 @@ focuses the pane's More trigger, else its landmark; it returns nothing and
 cannot reject. Desktop chrome is unaffected.
 
 `MobilePaneChrome` (the active pane's header, navigation, companion, actions and
-resource subject) is an external store slot: the mounted `PaneShell` publishes
+resource ref) is an external store slot: the mounted `PaneShell` publishes
 with `usePublishMobilePaneChrome`, and `MobilePaneBar` reads it with
 `useMobilePaneChrome`. Publication does not touch motion.
 
