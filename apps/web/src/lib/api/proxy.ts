@@ -91,12 +91,25 @@ async function forward({
       body,
       signal: controller.signal,
     });
-    const responseHeaders = pickHeaders(upstream.headers, responseHeaderNames, true);
     const upstreamId = upstream.headers.get("x-request-id");
-    responseHeaders.set(
-      "x-request-id",
-      upstreamId && /^[A-Za-z0-9._:-]{1,128}$/.test(upstreamId) ? upstreamId : id,
-    );
+    const responseId = upstreamId && /^[A-Za-z0-9._:-]{1,128}$/.test(upstreamId)
+      ? upstreamId : id;
+    const contentType = upstream.headers.get("content-type")
+      ?.split(";")[0].trim().toLowerCase();
+    // Intermediaries can answer without the API's JSON envelope. Claimed JSON
+    // stays untouched: an invalid same-system payload is still a defect.
+    if ([502, 503, 504].includes(upstream.status) && contentType !== "application/json") {
+      // Release the exchange even when its body has already errored.
+      controller.abort();
+      const response = upstream.status === 504
+        ? proxyError(responseId, 504, "E_UPSTREAM_TIMEOUT", "Backend service timed out")
+        : proxyError(responseId, upstream.status, "E_UPSTREAM", "Backend service unavailable");
+      return method === "HEAD"
+        ? new NextResponse(null, { status: response.status, headers: response.headers })
+        : response;
+    }
+    const responseHeaders = pickHeaders(upstream.headers, responseHeaderNames, true);
+    responseHeaders.set("x-request-id", responseId);
     return new NextResponse(
       method === "HEAD" || [204, 205, 304].includes(upstream.status) ? null : upstream.body,
       { status: upstream.status, statusText: upstream.statusText, headers: responseHeaders },
