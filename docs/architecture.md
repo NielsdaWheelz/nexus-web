@@ -1646,24 +1646,22 @@ stored author credits without invented viewer facts. the contract is in
 completion facts, and exact-session exclusions that never rewrite observation
 history. Observed spans are the sole positive-duration facts; no user command
 creates time. The browser's tab-local recorder is fed by the reader,
-the owned global audio element, and the visible embedded-video pane. Every
-closed span commits first to an account-scoped IndexedDB outbox; native Android
-listening uses the equivalent service-owned SQLite outbox. Stable capture keys
-make regrouped delivery idempotent. Storage failure or capacity exhaustion
-blocks capture visibly; there is no memory-only fallback. The BFF remains the
-only raw `nx_device` reader.
+the owned global audio element, and the visible embedded-video pane; it holds
+closed spans in memory and delivers them in batches (a tab closed offline loses
+what it held). Native Android listening uses its service-owned durable outbox.
+Stable capture keys make regrouped delivery idempotent. The BFF stamps the
+device from the httpOnly `nx_device` cookie; no client names it, and Stats shows
+the viewer their own raw device ids.
 
 `/stats` renders URL-owned factual time buckets, current visibility-scoped
-breakdowns, derived observed sessions, active exclusions, capture/sync health,
-and a deterministic Year in Reading view. Exact session Exclude/Restore is the
-only correction lifecycle. Accepted writes publish the
-Consumption change topic (§8.12); focus, activation, visibility, pageshow,
-and online transitions revalidate cross-process state without polling. The
-committed Stats response owns its session-continuation state: each committed
-result starts a manual `useServerList` (`drain: false`) whose first page is the
-result's own and whose continuations reuse the committed query, so a cursor's
-snapshot and scope always match. a `null` cursor ends the list; no empty-string
-cursor stands in for it. stats' full contract is
+breakdowns, derived observed sessions, active exclusions, and a deterministic
+Year in Reading view. Exact session Exclude/Restore is the only correction
+lifecycle. Accepted writes publish the Consumption change topic (§8.12); the
+pane rereads on it only while active, on activation, and when the page returns
+to the screen, without polling. Its figures are one `useServerValue` and its
+sessions one `useServerList` (Load more) over the keyset sessions read. a
+`null` cursor ends the list; no empty-string cursor stands in for it. stats'
+full contract is
 [`modules/consumption-activity.md`](modules/consumption-activity.md).
 
 ### 8.10 Search, Browse, desktop Nexus, and mobile Nexus

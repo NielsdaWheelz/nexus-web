@@ -19,7 +19,7 @@ import type { AuthenticatedAccount } from "@/lib/account/contract";
 import ResourceActionsProvider from "@/lib/actions/ResourceActionsProvider";
 import { ServerSeedsProvider } from "@/lib/api/serverState";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
-import ActivityCaptureLifecycle from "@/lib/consumption/ActivityCaptureLifecycle";
+import { ActivityCapture } from "@/lib/consumption/capture";
 import { readerSurfaceStyle } from "@/lib/documentReader/DocumentReader";
 import { ImportsProvider } from "@/lib/imports/ImportsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
@@ -58,7 +58,7 @@ export default function AuthenticatedShell(props: {
     <AuthenticatedAccountProvider account={props.account}>
       <RenderEnvironmentProvider value={props.renderEnvironment}>
         <UnauthenticatedApiBoundary>
-          <ActivityCaptureLifecycle />
+          <ActivityCapture />
           <ServerSeedsProvider seeds={props.seeds}>
             <ReaderProvider initialProfile={props.readerProfile}>
               <Workspace

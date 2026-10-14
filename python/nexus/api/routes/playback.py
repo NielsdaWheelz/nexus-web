@@ -1,7 +1,6 @@
-"""Player routes: the fresh descriptor, listening writes, the preview hand-off and activity
-capture. Transport only; the consumption service owns sessions and fences. This router owns
-static ``/media/{id}/<literal>`` paths, so it registers before the ``media`` router. Activity
-lands on the device the bff names (``X-Nexus-Device``), never one the body names.
+"""Player routes: the fresh descriptor, listening writes and the preview hand-off. Transport
+only; the consumption service owns fences. This router owns static ``/media/{id}/<literal>``
+paths, so it registers before the ``media`` router.
 """
 
 from typing import Annotated
@@ -9,21 +8,16 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response
 
-from nexus.api.deps import DeviceId
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import RepeatableReadDbSession
-from nexus.errors import InvalidRequestError
 from nexus.responses import Data
 from nexus.schemas.consumption import (
-    ActivityRecordIn,
     ListeningIn,
     ListeningPositionOut,
     PlayerDescriptor,
     PreviewPositionIn,
 )
-from nexus.services.consumption import activity
 from nexus.services.consumption import service as consumption_service
-from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 
 router = APIRouter(tags=["media"])
 
@@ -47,21 +41,4 @@ def install_preview_position(
     media_id: UUID, body: PreviewPositionIn, viewer: Annotated[Viewer, Depends(get_viewer)]
 ) -> Response:
     consumption_service.install_preview_position(viewer.user_id, media_id, body)
-    return Response(status_code=204)
-
-
-@router.post("/consumption/activity", status_code=204, tags=["consumption"])
-def post_activity(
-    body: ActivityRecordIn, device_id: DeviceId, viewer: Annotated[Viewer, Depends(get_viewer)]
-) -> Response:
-    ref = parse_resource_ref(body.media_ref)
-    if isinstance(ref, ResourceRefParseFailure) or ref.scheme != "media":
-        raise InvalidRequestError(message="Invalid media_ref")
-    activity.record_batch(
-        viewer.user_id,
-        media_id=ref.id,
-        device_id=device_id,
-        device_class=body.device_class,
-        batch=body.batch,
-    )
     return Response(status_code=204)

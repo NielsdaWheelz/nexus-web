@@ -13,8 +13,7 @@ import LecternAddControl from "@/components/collections/LecternAddControl";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { activityRecorder } from "@/lib/consumption/activityRecorder";
-import { parseMediaRef } from "@/lib/consumption/activityContract";
+import { registerActivityObserver } from "@/lib/consumption/capture";
 import { clock } from "@/lib/documentReader/model";
 import { parseMediaId } from "@/lib/lectern/contract";
 import { useLectern } from "@/lib/lectern/LecternProvider";
@@ -184,19 +183,14 @@ export function TranscriptChrome({
   useEffect(() => {
     const iframe = frame.current;
     if (!iframe || !embed) return;
-    const key = `video:${media.id}`;
     const observation = (eligible: boolean) => ({
-      mediaRef: parseMediaRef(`media:${media.id}`),
-      modality: "Viewing" as const,
       deviceClass: window.matchMedia("(max-width: 768px)").matches ? ("Mobile" as const) : ("Desktop" as const),
       eligible,
     });
-    const recorder = activityRecorder();
-    const unregister = recorder.registerObserver(key, observation(false));
+    const activity = registerActivityObserver(media.id, "Viewing", observation(false));
     let visible = false;
     const update = () =>
-      recorder.observe(
-        key,
+      activity.observe(
         observation(visible && paneActive && !videoFailed && document.visibilityState === "visible" && (document.hasFocus() || document.activeElement === iframe)),
       );
     const observer = new IntersectionObserver(([entry]) => {
@@ -210,7 +204,7 @@ export function TranscriptChrome({
       observer.disconnect();
       for (const [target, name] of [[document, "visibilitychange"], [window, "focus"], [window, "blur"]] as const)
         target.removeEventListener(name, update);
-      unregister();
+      activity.close();
     };
   }, [embed, media.id, paneActive, videoFailed]);
 

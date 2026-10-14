@@ -1,27 +1,20 @@
-"""Consumption wire: the closed base, activity capture, the Lectern, the player descriptor,
-listening writes and the consumption commands. Absence is null.
-
-The capture body is posted by the web and the Android app; the device is the header the bff
-stamps, never a body field.
+"""Consumption wire: the closed base, the Lectern, the player descriptor, listening writes and
+the consumption commands. Absence is null. Activity capture lives in ``consumption_activity``.
 """
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.reader import ReaderCursorSnapshot
 
-ActivityModality = Literal["Reading", "Listening", "Viewing"]
-ActivityDeviceClass = Literal["Desktop", "Mobile"]
 PauseShorteningMode = Literal["Off", "Natural"]
 PlaybackRate = Annotated[float, Field(strict=True, ge=0.5, le=3)]
 _Int32 = Annotated[int, Field(ge=0, le=2_147_483_647)]
-_Position = Annotated[int, Field(ge=0, le=9_223_372_036_854_775_807)]
-_Progress = Annotated[float, Field(ge=0, le=1)]
 
 
 class Closed(BaseModel):
@@ -38,76 +31,6 @@ class CommandIn(Closed):
     """A write that replays by its ``client_mutation_id``."""
 
     client_mutation_id: UUID
-
-
-# ---- activity capture ----
-
-
-class _SpanIn(Closed):
-    capture_key: UUID
-    occurred_at: AwareDatetime
-    duration_ms: int = Field(gt=0, le=30_000)
-
-    @model_validator(mode="after")
-    def _paired(self) -> Self:
-        """Each ``*_start`` measurement is present exactly when its ``*_end`` is."""
-        for start in (name for name in type(self).model_fields if "_start" in name):
-            end = start.replace("_start", "_end")
-            if (getattr(self, start) is None) != (getattr(self, end) is None):
-                raise ValueError(f"{start} and {end} must have the same presence")
-        return self
-
-
-class ViewingActivitySpanIn(_SpanIn):
-    pass
-
-
-class ReadingActivitySpanIn(_SpanIn):
-    progress_start: _Progress | None
-    progress_end: _Progress | None
-    word_start: _Position | None
-    word_end: _Position | None
-
-
-class ListeningActivitySpanIn(_SpanIn):
-    progress_start: _Progress | None
-    progress_end: _Progress | None
-    media_position_start_ms: _Position | None
-    media_position_end_ms: _Position | None
-
-
-class ReadingActivityBatchIn(Closed):
-    modality: Literal["Reading"]
-    spans: list[ReadingActivitySpanIn] = Field(min_length=1, max_length=120)
-
-
-class ListeningActivityBatchIn(Closed):
-    modality: Literal["Listening"]
-    spans: list[ListeningActivitySpanIn] = Field(min_length=1, max_length=120)
-
-
-class ViewingActivityBatchIn(Closed):
-    modality: Literal["Viewing"]
-    spans: list[ViewingActivitySpanIn] = Field(min_length=1, max_length=120)
-
-
-ActivityBatchIn = Annotated[
-    ReadingActivityBatchIn | ListeningActivityBatchIn | ViewingActivityBatchIn,
-    Field(discriminator="modality"),
-]
-
-
-class ActivityRecordIn(Closed):
-    media_ref: str = Field(min_length=1, max_length=100)
-    device_class: ActivityDeviceClass
-    batch: ActivityBatchIn
-
-    @model_validator(mode="after")
-    def _distinct_capture_keys(self) -> Self:
-        keys = [span.capture_key for span in self.batch.spans]
-        if len(keys) != len(set(keys)):
-            raise ValueError("capture_key must be unique within one activity batch")
-        return self
 
 
 # ---- the player descriptor and the Lectern ----
