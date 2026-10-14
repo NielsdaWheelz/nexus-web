@@ -32,7 +32,9 @@ x-codex-egress-conf: &codex-egress-conf |
 services:
   postgres:
     image: ${POSTGRES_IMAGE:?set an immutable production digest}
-    command: ["postgres", "-c", "shared_buffers=64MB"]
+    # reader queries compile hundreds of functions in each warm connection.
+    # disable jit to preserve this fixed 512 mib database's memory headroom.
+    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "jit=off"]
     restart: unless-stopped
     mem_reservation: 256m
     mem_limit: 512m
