@@ -304,12 +304,9 @@ def list_library_entries(
             view, is_default=library.is_default, keyset=keyset, order=order
         ),
     )
-    summaries = {
-        media.id: media.summary
-        for media in media_service.list_collection_media_for_viewer_by_ids(
-            db, viewer_id=viewer_id, media_ids=[row["media_id"] for row in rows if row["media_id"]]
-        )
-    }
+    summaries = media_service.media_summaries(
+        db, viewer_id=viewer_id, media_ids=[row["media_id"] for row in rows if row["media_id"]]
+    )
     podcast_ids = [row["podcast_id"] for row in rows if row["podcast_id"]]
     shows = _shows(db, viewer_id, podcast_ids)
     credits = load_contributor_credits_for_podcasts(db, podcast_ids)

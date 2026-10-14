@@ -57,19 +57,6 @@ class ProcessingStatus(str, PyEnum):
     failed = "failed"
 
 
-class FailureStage(str, PyEnum):
-    """Stage at which processing failed.
-
-    Metadata research has its own background operation outcomes.
-    """
-
-    upload = "upload"
-    extract = "extract"
-    transcribe = "transcribe"
-    embed = "embed"
-    other = "other"
-
-
 class MediaKind(str, PyEnum):
     """Types of media that can be ingested."""
 
@@ -604,20 +591,8 @@ class Media(Base):
         server_default="pending",
         nullable=False,
     )
-    failure_stage: Mapped[FailureStage | None] = mapped_column(
-        Enum(
-            FailureStage,
-            name="failure_stage_enum",
-            create_type=False,  # Type created in migration
-        ),
-        nullable=True,
-    )
     last_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    processing_started_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    failed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     # URL and file identity fields
     requested_url: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -25,7 +25,7 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.jobs.queue import get_job, jobs_for_payload
 from nexus.schemas.media_sources import SourceAdmission
 from nexus.schemas.metadata_enrichment import MetadataOperationOut, TitleMetadataJobPayload
-from nexus.services.media import get_media_for_viewer
+from nexus.services.media import media_facts
 from nexus.services.media_source_ingest import refresh_source
 from nexus.services.metadata_operations import metadata_operations_for_jobs
 from nexus.services.source_attempts import latest_attempt
@@ -97,17 +97,16 @@ def plan_manifest(*, session_factory: sessionmaker[Session]) -> RefreshManifest:
             elif attempt is None:
                 refusal = Refusal(code="missing_attempt", message="media has no source attempt")
             else:
-                try:
-                    detail = get_media_for_viewer(db, creator, media.id)
-                    if not detail.capabilities.can_refresh_source:
-                        refusal = Refusal(
-                            code="refresh_unavailable",
-                            message="ordinary source refresh is unavailable",
-                        )
-                except ApiError as exc:
-                    if exc.code == ApiErrorCode.E_INTERNAL:
-                        raise
-                    refusal = Refusal(code=exc.code.value, message=exc.message)
+                facts = media_facts(db, viewer_id=creator, media_ids=[media.id]).get(media.id)
+                if facts is None:
+                    refusal = Refusal(
+                        code=ApiErrorCode.E_MEDIA_NOT_FOUND.value, message="Media not found"
+                    )
+                elif not facts.refreshable:
+                    refusal = Refusal(
+                        code="refresh_unavailable",
+                        message="ordinary source refresh is unavailable",
+                    )
             targets.append(
                 RefreshTarget(
                     media_id=media.id,

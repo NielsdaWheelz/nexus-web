@@ -290,7 +290,7 @@ def list_contributor_works(
     and the cursor read identical expressions. A cursor is bound to this viewer, author
     and view.
     """
-    from nexus.services.media import list_collection_media_for_viewer_by_ids
+    from nexus.services.media import media_summaries
 
     contributor = _visible_contributor(db, contributor_handle, viewer_id)
     page, next_cursor = keyset_page(
@@ -313,12 +313,9 @@ def list_contributor_works(
             LIMIT :limit
         """,
     )
-    summaries = {
-        item.id: item.summary
-        for item in list_collection_media_for_viewer_by_ids(
-            db, viewer_id=viewer_id, media_ids=[r["media_id"] for r in page if r["media_id"]]
-        )
-    }
+    summaries = media_summaries(
+        db, viewer_id=viewer_id, media_ids=[r["media_id"] for r in page if r["media_id"]]
+    )
     catalogue = load_contributor_credits_for_catalogue(
         db,
         [

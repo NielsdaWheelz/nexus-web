@@ -127,10 +127,7 @@ class Settings(BaseSettings):
         default=30.0, alias="R2_READ_TIMEOUT_SECONDS", gt=0, le=60
     )
 
-    # Storage cleanup timing: the media teardown's grace and the orphan sweep.
-    media_teardown_cleanup_grace_seconds: int = Field(
-        default=60, alias="MEDIA_TEARDOWN_CLEANUP_GRACE_SECONDS", ge=0
-    )
+    # Storage cleanup timing: the orphan sweep.
     storage_orphan_sweep_interval_seconds: int = Field(
         default=21600, alias="STORAGE_ORPHAN_SWEEP_INTERVAL_SECONDS", gt=0
     )

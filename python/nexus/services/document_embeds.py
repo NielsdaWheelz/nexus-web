@@ -37,7 +37,6 @@ from nexus.schemas.document_embeds import (
     DocumentEmbedTextOut,
     DocumentEmbedUrlOut,
 )
-from nexus.schemas.media import DocumentEmbedAggregateStatus, DocumentEmbedSummaryOut
 from nexus.services import library_entries
 from nexus.services.playback_source import derive_playback_source
 from nexus.services.resource_graph.edges import EdgeCreate, replace_edges_for_origin
@@ -335,28 +334,6 @@ def resolved_document_embed_target_media_ids(db: Session, *, media_id: UUID) -> 
         )
         if target_media_id is not None
     ]
-
-
-def document_embed_summaries_for_media(
-    db: Session, media_ids: Sequence[UUID]
-) -> dict[UUID, DocumentEmbedSummaryOut]:
-    if not media_ids:
-        return {}
-    rows = db.scalars(
-        select(DocumentEmbedArtifactState).where(
-            DocumentEmbedArtifactState.media_id.in_(list(media_ids))
-        )
-    ).all()
-    return {
-        row.media_id: DocumentEmbedSummaryOut(
-            status=cast(DocumentEmbedAggregateStatus, row.status),
-            total_count=row.total_count,
-            resolved_count=row.resolved_count,
-            unsupported_count=row.unsupported_count,
-            failed_count=row.failed_count,
-        )
-        for row in rows
-    }
 
 
 def list_document_embeds_for_media(

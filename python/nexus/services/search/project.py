@@ -23,7 +23,7 @@ from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
 )
 from nexus.services.locator_resolver import evidence_resolution, locator_from_resolution
-from nexus.services.media import list_collection_media_for_viewer_by_ids
+from nexus.services.media import media_summaries
 from nexus.services.resource_graph.highlight_notes import highlight_excerpts_for_note_blocks
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items.capabilities import capability
@@ -149,12 +149,7 @@ def project(
     sourced = [row["media_id"] for row in rows.values() if "media_title" in row]
     credits = load_contributor_credits_for_media(db, sourced)
     credits |= load_contributor_credits_for_podcasts(db, ids.get("podcast", []))
-    summaries = {
-        item.id: item.summary
-        for item in list_collection_media_for_viewer_by_ids(
-            db, viewer_id=viewer_id, media_ids=ids.get("media", [])
-        )
-    }
+    summaries = media_summaries(db, viewer_id=viewer_id, media_ids=ids.get("media", []))
     excerpts = highlight_excerpts_for_note_blocks(db, viewer_id, ids.get("note_block", []))
     placed = []
     for hit in hits:

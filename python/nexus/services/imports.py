@@ -17,6 +17,7 @@ per-row defect (OI-035).
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, cast
 from uuid import UUID
@@ -67,7 +68,7 @@ from nexus.schemas.imports import (
     SourceImportObligation,
     WaitingReason,
 )
-from nexus.schemas.media import MediaOut
+from nexus.schemas.media_sources import SourceProgress
 from nexus.schemas.source_issues import SOURCE_ISSUES
 from nexus.services.collection_keyset import (
     KeysetValueKind,
@@ -83,7 +84,7 @@ from nexus.services.import_history import (
     history_entries,
     read_history_page,
 )
-from nexus.services.media import list_media_for_viewer_by_ids
+from nexus.services.media import MediaFacts, media_facts
 from nexus.services.media_upload_sessions import (
     UPLOAD_SESSION_ATTENTION_STATES,
     UPLOAD_SESSION_DERIVED_STATE_SQL,
@@ -94,6 +95,7 @@ from nexus.services.source_attempts import (
     source_recovery,
     source_repairable_sql,
 )
+from nexus.services.source_publication import load_source_progress
 from nexus.services.source_types import COUNTED_PROGRESS_SOURCE_TYPES
 
 _ATTENTION_PLAN = [
@@ -650,20 +652,29 @@ def _media_id(row: RowMapping) -> UUID | None:
     return None if row["media_id"] is None else UUID(str(row["media_id"]))
 
 
-def _linked_media(row: RowMapping, media: dict[UUID, MediaOut]) -> MediaOut | None:
+@dataclass(frozen=True, slots=True)
+class _Media:
+    """An import's media: what the menu decides on, and its in-flight source progress."""
+
+    facts: MediaFacts
+    progress: SourceProgress | None
+
+
+def _linked_media(row: RowMapping, media: dict[UUID, _Media]) -> _Media | None:
     media_id = _media_id(row)
     return None if media_id is None else media[media_id]
 
 
 def _hydrate_media(
     db: Session, *, viewer_id: UUID, rows: Sequence[RowMapping]
-) -> dict[UUID, MediaOut]:
+) -> dict[UUID, _Media]:
     media_ids = [media_id for row in rows if (media_id := _media_id(row)) is not None]
-    media = {item.id: item for item in list_media_for_viewer_by_ids(db, viewer_id, media_ids)}
-    if any(media_id not in media for media_id in media_ids):
+    facts = media_facts(db, viewer_id=viewer_id, media_ids=media_ids)
+    if any(media_id not in facts for media_id in media_ids):
         # justify-defect: every media id came from the visible-media CTE above.
         raise AssertionError("Imports media hydration lost viewer-visible rows")
-    return media
+    progress = load_source_progress(db, tuple(facts))
+    return {media_id: _Media(item, progress.get(media_id)) for media_id, item in facts.items()}
 
 
 def _stage(raw: str) -> Stage:
@@ -687,7 +698,7 @@ def _waiting_reason(
 
 
 def _work_state(
-    row: RowMapping, media: MediaOut | None, *, obligation: Literal["source", "search"]
+    row: RowMapping, media: _Media | None, *, obligation: Literal["source", "search"]
 ) -> ImportState:
     classification = row[f"{obligation}_classification"]
     stage = _stage(row["source_stage"]) if obligation == "source" else "Index"
@@ -715,12 +726,12 @@ def _work_state(
         status="Processing" if row[f"{prefix}_status"] == "running" else "Queued",
         stage=stage,
         waiting_reason=waiting,
-        progress=media.source_progress if obligation == "source" else None,
+        progress=media.progress if obligation == "source" else None,
         next_retry_at=row[f"{prefix}_available_at"] if waiting == "RetryBackoff" else None,
     )
 
 
-def _state(row: RowMapping, media: MediaOut | None) -> ImportState:
+def _state(row: RowMapping, media: _Media | None) -> ImportState:
     if row["classification"] == "Complete":
         return ImportStateComplete()
     key = row.get("view_key", row["primary_key"])
@@ -728,7 +739,7 @@ def _state(row: RowMapping, media: MediaOut | None) -> ImportState:
         return _work_state(row, media, obligation=cast(Literal["source", "search"], key))
     if key != "metadata" or media is None:
         raise AssertionError("current import has no matching obligation")
-    metadata = media.metadata_enrichment
+    metadata = media.facts.metadata
     if row["classification"] == "NeedsAttention":
         operation = metadata.operation
         if operation is None:
@@ -754,7 +765,7 @@ def _state(row: RowMapping, media: MediaOut | None) -> ImportState:
     )
 
 
-def _source_obligation(row: RowMapping, media: MediaOut | None) -> SourceImportObligation | None:
+def _source_obligation(row: RowMapping, media: _Media | None) -> SourceImportObligation | None:
     if row["source_classification"] is None:
         return None
     state = _work_state(row, media, obligation="source")
@@ -791,7 +802,7 @@ def _source_obligation(row: RowMapping, media: MediaOut | None) -> SourceImportO
     )
 
 
-def _search_obligation(row: RowMapping, media: MediaOut | None) -> SearchImportObligation | None:
+def _search_obligation(row: RowMapping, media: _Media | None) -> SearchImportObligation | None:
     if row["search_classification"] is None:
         return None
     answer = search_recovery(
@@ -814,7 +825,7 @@ def _search_obligation(row: RowMapping, media: MediaOut | None) -> SearchImportO
 def _item(
     row: RowMapping,
     *,
-    media: MediaOut | None,
+    media: _Media | None,
     matched_event: HistoryEntry | None,
 ) -> ImportItem:
     if row["source_job_id"] is not None and (
@@ -839,23 +850,23 @@ def _item(
         original_filename=row["original_filename"],
         media_kind=MediaKind(row["media_kind"]),
         source_label=None if host is None else str(host),
-        media_ref=None if media is None else f"media:{media.id}",
+        media_ref=None if media is None else f"media:{media.facts.summary.media_id}",
         readiness=ImportReadiness(
-            can_read=media.capabilities.can_read if media is not None else False,
-            can_search=media.capabilities.can_search if media is not None else False,
-            can_play=media.capabilities.can_play if media is not None else False,
+            can_read=media.facts.can_read if media is not None else False,
+            can_search=media.facts.can_search if media is not None else False,
+            can_play=media.facts.can_play if media is not None else False,
         ),
         state=_state(row, media),
         accepted_at=row["accepted_at"],
         updated_at=row["updated_at"],
         matched_event=matched_event,
         capabilities=Capabilities(
-            can_remove=media.capabilities.can_delete if media is not None else True,
+            can_remove=media.facts.can_delete if media is not None else True,
         ),
         obligations=ImportObligations(
             source=_source_obligation(row, media),
             search=_search_obligation(row, media),
-            metadata=media.metadata_enrichment if media is not None else None,
+            metadata=media.facts.metadata if media is not None else None,
         ),
         source_issue_count=int(row["source_issue_count"]),
     )

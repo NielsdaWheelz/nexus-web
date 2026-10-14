@@ -39,7 +39,7 @@ from nexus.services import highlights, libraries
 from nexus.services.chat import conversations
 from nexus.services.consumption import lectern, projection
 from nexus.services.dossier import engine as dossier_engine
-from nexus.services.media import list_collection_media_for_viewer_by_ids
+from nexus.services.media import media_facts
 from nexus.services.podcasts.subscriptions_query import podcast_states
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.resolve import resolve_refs
@@ -124,11 +124,9 @@ def _scheme_actions(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> list[R
 
 
 def _media(db: Session, viewer_id: UUID, media_id: UUID) -> list[ResourceActionOut]:
-    found = list_collection_media_for_viewer_by_ids(db, viewer_id=viewer_id, media_ids=[media_id])
-    if not found:
+    media = media_facts(db, viewer_id=viewer_id, media_ids=[media_id]).get(media_id)
+    if media is None:
         return []
-    media = found[0]
-    ops = media.capabilities
     kind = media.summary.media_kind.value
     actions: list[ResourceActionOut] = [_simple("MediaMetadata")]
     if media.canonical_source_url:
@@ -137,41 +135,43 @@ def _media(db: Session, viewer_id: UUID, media_id: UUID) -> list[ResourceActionO
     if media_id in descriptors:
         actions.append(PlaybackAction(blocked=None, player_descriptor=descriptors[media_id]))
         actions.append(_simple("PlayNext"))
-    if media.has_original_file:
+    if media.has_file:
         actions.append(_simple("DownloadOriginal"))
     # Each obligation's own offer is actionable; a creator's stays discoverable but blocked.
     for own, applicable in (
-        (media.source_recovery, media.applicable_source_recovery),
-        (media.search_recovery, media.applicable_search_recovery),
+        (media.source_offer, media.creator_source_offer),
+        (media.search_offer, media.creator_search_offer),
     ):
         if own is not None:
             actions.append(RecoveryAction(blocked=None, offer=own))
         elif applicable is not None:
             actions.append(RecoveryAction(blocked="PermissionDenied", offer=applicable))
-    if ops.refresh_source_applicable:
+    # Applicable while a source exists, so a lost refresh's "confirm request" stays reachable
+    # during its run; only current availability admits a fresh one.
+    if media.source_attempt_id is not None:
         actions.append(
             RefreshSourceAction(
                 blocked="PermissionDenied"
-                if not media.refresh_source_authorized
+                if not media.is_creator
                 else None
-                if ops.can_refresh_source
+                if media.refreshable
                 else "TemporarilyUnavailable",
-                expected_attempt_id=media.refresh_source_attempt_id,
+                expected_attempt_id=media.source_attempt_id if media.refreshable else None,
             )
         )
-    if ops.retry_metadata_applicable:
-        retry = media.metadata_retry
-        blocked = (
-            None if isinstance(retry, MetadataRetryAllowed) else _METADATA_BLOCKED[retry.reason]
-        )
-        actions.append(RetryMetadataAction(blocked=blocked, retry=retry))
-    if media.reviewable_metadata_job_id is not None:
-        actions.append(
-            ReviewMetadataResultAction(blocked=None, job_id=media.reviewable_metadata_job_id)
-        )
-    if ops.edit_authors_applicable:
-        actions.append(_simple("EditAuthors", _owner(ops.can_edit_authors)))
-    actions.append(_simple("RemoveMedia", _owner(ops.can_delete)))
+    retry = media.metadata.retry
+    blocked = None if isinstance(retry, MetadataRetryAllowed) else _METADATA_BLOCKED[retry.reason]
+    actions.append(RetryMetadataAction(blocked=blocked, retry=retry))
+    operation = media.metadata.operation
+    if (
+        operation is not None
+        and operation.status == "no_findings"
+        and operation.reviewed_at is None
+    ):
+        actions.append(ReviewMetadataResultAction(blocked=None, job_id=operation.job_id))
+    # Authors are the creator's to edit, whatever the processing (I4).
+    actions.append(_simple("EditAuthors", _owner(media.is_creator)))
+    actions.append(_simple("RemoveMedia", _owner(media.can_delete)))
     if media.progress_resettable:
         actions.append(_simple("ResetProgress"))
     actions.append(

@@ -6,8 +6,8 @@ area: media processing state and import history
 
 `mark_stage_warning` in `python/nexus/services/media_processing_state.py` writes
 `E_PDF_TEXT_UNAVAILABLE` to `media.last_error_code` on successful publication
-of a readable pdf with no extractable text. `failure_stage` and `failed_at` are
-also set, although `processing_status` stays `ready_for_reading`.
+of a readable pdf with no extractable text, although `processing_status` stays
+`ready_for_reading` (0285 dropped `failure_stage` and `failed_at`, which it also set).
 `SafeFailureCode` in `python/nexus/schemas/import_history.py` includes this
 warning, and source-attempt publication can copy `media.last_error_code`.
 

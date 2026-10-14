@@ -33,6 +33,7 @@ every read is a pane-free `usePaneFreeServerValue` (`lib/api/serverState.tsx`): 
 - polling: every 5 s while the newest summary read succeeded, `unfinished_work_count > 0`, the document is visible, and the pane is open or a wake happened within the last 15 minutes. this count covers distinct unfinished source/index/metadata jobs across attempts and revisions, plus active uploads or applicable obligations without such a job. attention precedence and inapplicable older work cannot stop observation. a failed summary read stops polling until the next wake or Refresh.
 - invalidation is in-tab only: other tabs catch up on their next wake or poll.
 - metadata admission (answered or lost) and personal review invalidate imports, so an idle summary wakes. both restart the media's metadata stream without a bibliography change event.
+- a transcript request (a media menu, a podcast's batch) invalidates imports: it queues source work.
 - upload commands (`dispatchUpload`) are pending per `session id|command`, so the row and the inspector both show "Starting…"; a duplicate in flight is ignored and a refusal is the caller's to report.
 
 ## lists

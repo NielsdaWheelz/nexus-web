@@ -1,30 +1,23 @@
-"""Media catalog routes. Transport only: validate, call one service, envelope."""
+"""Media routes. Transport only: validate, call one service, envelope."""
 
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
-from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.logging import get_request_id
-from nexus.responses import Data, ok
+from nexus.responses import Data
 from nexus.schemas.contributors import MediaAuthorsOut, MediaAuthorsPutRequest
-from nexus.schemas.media import (
-    MediaDeleteResult,
-    MediaOut,
-)
+from nexus.schemas.media import MediaOut
 from nexus.schemas.media_summary import (
     MediaSummaryResolutionOut,
     ResolvedMediaSummariesOut,
     ResolveMediaSummariesIn,
 )
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentAccepted, MetadataEnrichmentRequest
-from nexus.services import contributors as contributors_service
-from nexus.services import media as media_service
-from nexus.services import media_deletion as media_deletion_service
-from nexus.services import metadata_operations
+from nexus.services import contributors, media, media_deletion, metadata_operations
 
 router = APIRouter(tags=["media"])
 
@@ -35,47 +28,19 @@ ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 def resolve_media_summaries(
     body: ResolveMediaSummariesIn, viewer: ViewerDep, db: RepeatableReadDbSession
 ) -> Data[ResolvedMediaSummariesOut]:
-    summaries = {
-        media.id: media.summary
-        for media in media_service.list_collection_media_for_viewer_by_ids(
-            db, viewer_id=viewer.user_id, media_ids=body.media_ids
-        )
-    }
-    return Data(
-        data=ResolvedMediaSummariesOut(
-            items=[
-                MediaSummaryResolutionOut(
-                    media_id=media_id,
-                    summary=summaries[media_id] if media_id in summaries else None,
-                )
-                for media_id in body.media_ids
-            ]
-        )
-    )
-
-
-@router.get("/media")
-def list_media(
-    viewer: ViewerDep,
-    db: DbSession,
-    kind: str | None = Query(
-        default=None,
-        description="Comma-separated media kind filter (web_article, epub, pdf, video, podcast_episode)",
-    ),
-    search: str | None = Query(default=None, description="Optional title substring filter"),
-    cursor: str | None = Query(default=None, description="Pagination cursor"),
-    limit: int = Query(default=50, ge=1, le=200, description="Maximum results per page"),
-) -> dict:
-    media_list, next_cursor = media_service.list_visible_media(
-        db=db, viewer_id=viewer.user_id, kind=kind, search=search, cursor=cursor, limit=limit
-    )
-    return {**ok(media_list), "page": {"next_cursor": next_cursor}}
+    """Input order; an id the viewer cannot read resolves to null."""
+    found = media.media_summaries(db, viewer_id=viewer.user_id, media_ids=body.media_ids)
+    items = [
+        MediaSummaryResolutionOut(media_id=media_id, summary=found.get(media_id))
+        for media_id in body.media_ids
+    ]
+    return Data(data=ResolvedMediaSummariesOut(items=items))
 
 
 @router.get("/media/{media_id}")
 def get_media(media_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession) -> Data[MediaOut]:
-    """404 if the media does not exist or the viewer cannot read it."""
-    return Data(data=media_service.get_media_for_viewer(db, viewer.user_id, media_id))
+    """404 when the media does not exist or the viewer cannot read it."""
+    return Data(data=media.get_media_for_viewer(db, viewer.user_id, media_id))
 
 
 @router.post("/media/{media_id}/metadata-enrichment", status_code=202)
@@ -110,19 +75,14 @@ def put_media_authors(
     media_id: UUID, request: MediaAuthorsPutRequest, viewer: ViewerDep
 ) -> Data[MediaAuthorsOut]:
     """The contributors facade owns its own session, re-check, replay and mutation."""
-    result = contributors_service.put_media_authors(
-        viewer=viewer, media_id=media_id, request=request
+    return Data(
+        data=contributors.put_media_authors(viewer=viewer, media_id=media_id, request=request)
     )
-    return Data(data=result)
 
 
-@router.delete("/media/{media_id}")
-def remove_media(
-    media_id: UUID, request: Request, viewer: ViewerDep, db: DbSession
-) -> Data[MediaDeleteResult]:
-    if request.query_params:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Whole-resource media deletion does not accept query parameters",
-        )
-    return Data(data=media_deletion_service.remove_media_for_viewer(db, viewer.user_id, media_id))
+@router.delete("/media/{media_id}", status_code=204)
+def remove_media(media_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
+    """Idempotent: a media the viewer cannot read is already removed (204); one reachable
+    only through a system library is 403."""
+    media_deletion.remove_media_for_viewer(db, viewer.user_id, media_id)
+    return Response(status_code=204)

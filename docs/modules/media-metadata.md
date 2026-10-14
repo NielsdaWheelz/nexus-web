@@ -140,13 +140,24 @@ review. history reports that run's disposition, never current-title provenance.
 
 ## api and observation
 
-`GET /media/{id}` owns the generated `Data[MediaOut]` contract, including required
-nullable fields and nested player aliases. it keeps the existing default
-response serialization. the pane loader and metadata overlay share one
-media-detail ingress: typed wire facts retain their values, and media identity/date/player identity
-receive local brands. requested-media identity stays checked. chapter
-presentation remains owned by that ingress as described in the
-[reader module](reader-implementation.md).
+`GET /media/{id}` owns the generated `Data[MediaOut]` contract: the keys the web reads,
+the viewer's `consumption {state, progress}` and four capabilities (`can_read`,
+`can_highlight`, `can_quote`, `can_retry`). the pane loader and metadata overlay share
+one media-detail ingress (`mediaDetailFromResponse`): wire facts keep their values, the
+player descriptor is renamed and chapter presentation is owned there as described in the
+[reader module](reader-implementation.md); requested-media identity stays checked until
+the pane drops it ([leftovers](../issues/media-pane-contract-leftovers.md)).
+
+- `/stream/media/{id}/events` emits the processing frame (status, failure code,
+  retrieval status and reason, capabilities, transcript state and coverage) and ends
+  (`done`) once nothing it shows is in flight: source work (an unsettled latest attempt
+  that is not repairable, also while a refresh keeps an x article readable), a requested
+  transcript, or a readable media's index whose job is not dead. an episode or video waiting on a
+  transcript nobody requested answers one frame. the pane opens it when it first shows
+  the media processing and again on each in-tab Imports invalidation: an Imports action,
+  an add or upload, a transcript request (menus, a podcast's batch). so a transcript
+  requested away from the pane still reaches it. each invalidation costs every mounted
+  media pane one short processing read and, when that ends, one metadata read.
 
 - `POST /media/{id}/metadata-enrichment`: creator-only admission; body
   `{expected_job_id: UUID | null}` (any other key is 400); 202 returns

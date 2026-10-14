@@ -4,11 +4,7 @@
 // module derives display text only.
 
 import type { ApiJson } from "@/lib/api/wire";
-import {
-  decodeOptionalPublicationDate,
-  decodePublicationDateOnly,
-  type PublicationDate,
-} from "@/lib/dates/publicationDate";
+import { decodeWebPublicationDate } from "@/lib/dates/publicationDate";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { SearchResultRowViewModel } from "./types";
@@ -115,18 +111,10 @@ function described(result: TextResult, plain: string): Described {
   }
 }
 
-function publicationDate(result: TextResult): PublicationDate | null {
+function publicationDate(result: TextResult): string | null {
   if (result.type === "web_result")
-    return decodeOptionalPublicationDate(
-      result.published_at,
-      "search published_at",
-    );
-  if (!("source" in result) || result.source.original_published_date === null)
-    return null;
-  return decodePublicationDateOnly(
-    result.source.original_published_date,
-    "search source.original_published_date",
-  );
+    return decodeWebPublicationDate(result.published_at);
+  return "source" in result ? result.source.original_published_date : null;
 }
 
 /** The row for one result; none for a result that opens nowhere. */

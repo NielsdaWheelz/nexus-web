@@ -204,14 +204,16 @@ async def stream_artifact_build_events(
 async def stream_media_events(
     request: Request, media_id: UUID, viewer: ViewerDep
 ) -> StreamingResponse:
-    """Processing state until terminal; media the viewer cannot read is E_MEDIA_NOT_FOUND."""
+    """Processing state until nothing it shows is in flight (source work, a requested
+    transcript, a readable media's index); media the viewer cannot read is E_MEDIA_NOT_FOUND.
+    The client reopens it on the actions that can restart work."""
 
     def read() -> Snapshot:
         with _snapshot() as db:
-            snapshot = media_service.read_event_snapshot(
+            frame, terminal = media_service.read_processing_snapshot(
                 db, viewer_id=viewer.user_id, media_id=media_id
             )
-        return snapshot.payload.model_dump(mode="json"), snapshot.terminal
+        return frame.model_dump(mode="json"), terminal
 
     return await _snapshot_stream(request, "media_events", media_id, read)
 

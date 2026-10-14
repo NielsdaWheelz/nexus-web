@@ -116,7 +116,8 @@ def list_episodes(
     columns = """, pe.published_at, COALESCE(pe.duration_seconds, 0) AS duration_sort,
         (pe.published_at IS NULL)::int AS published_missing,
         (pe.duration_seconds IS NULL)::int AS duration_missing,
-        NULLIF(BTRIM(pe.description_text), '') IS NOT NULL AS has_show_notes"""
+        NULLIF(BTRIM(pe.description_text), '') IS NOT NULL AS has_show_notes,
+        mts.transcript_state"""
     rows, next_cursor = keyset_page(
         db,
         binding={
@@ -137,18 +138,18 @@ def list_episodes(
         """,
     )
     page = {row["media_id"]: row for row in rows}
-    media = media_service.list_collection_media_for_viewer_by_ids(
-        db, viewer_id=viewer_id, media_ids=list(page)
-    )
+    summaries = media_service.media_summaries(db, viewer_id=viewer_id, media_ids=list(page))
     return CollectionPage(
         items=[
             wire.PodcastEpisodeListItemOut(
-                id=episode.id,
-                media_summary=episode.summary,
-                transcript_state=TranscriptState(episode.transcript_state or "not_requested"),
-                has_show_notes=page[episode.id]["has_show_notes"],
+                id=media_id,
+                media_summary=summary,
+                transcript_state=TranscriptState(
+                    page[media_id]["transcript_state"] or "not_requested"
+                ),
+                has_show_notes=page[media_id]["has_show_notes"],
             )
-            for episode in media
+            for media_id, summary in summaries.items()
         ],
         next_cursor=next_cursor,
     )

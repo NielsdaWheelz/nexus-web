@@ -1,108 +1,79 @@
-"""Owner of `Media` processing-status transitions.
+"""The media processing-status transitions.
 
-The failure-field tuple (status, stage, error code/message, timestamps) always moves
-together, so lifecycles call these instead of touching the columns.
+The failure pair (code, message) moves with the status (I3), so lifecycles call these and
+never write the columns. Metadata research writes none of them.
 """
 
 from datetime import datetime
-from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import FailureStage, Media, ProcessingStatus
+from nexus.db.models import Media, ProcessingStatus
 from nexus.services.x_source import has_retained_x_publication
 
-type MediaFailureStage = Literal["upload", "extract", "transcribe", "embed", "other"]
+_SET_BY_ID = """
+    UPDATE media SET processing_status = :status, last_error_code = :code,
+        last_error_message = :message, updated_at = :now
+    WHERE id = :media_id
+"""
 
 
 def mark_media_failed_by_id(
-    db: Session,
-    *,
-    media_id: UUID,
-    stage: MediaFailureStage,
-    error_code: str,
-    error_message: str,
-    now: datetime,
+    db: Session, *, media_id: UUID, error_code: str, error_message: str, now: datetime
 ) -> None:
-    """Transition one locked Media row to terminal failure."""
+    """Terminal failure of one media row the caller locked."""
     db.execute(
-        text("""
-            UPDATE media
-            SET processing_status = 'failed',
-                failure_stage = :failure_stage,
-                last_error_code = :error_code,
-                last_error_message = :error_message,
-                failed_at = :now,
-                updated_at = :now
-            WHERE id = :media_id
-        """),
+        text(_SET_BY_ID),
         {
             "media_id": media_id,
-            "failure_stage": stage,
-            "error_code": error_code,
-            "error_message": error_message,
+            "status": ProcessingStatus.failed.value,
+            "code": error_code,
+            "message": error_message,
             "now": now,
         },
     )
 
 
-def _clear_failure(media: Media) -> None:
-    media.failure_stage = None
-    media.last_error_code = None
-    media.last_error_message = None
-    media.failed_at = None
+def mark_ready_for_reading_by_id(db: Session, *, media_id: UUID, now: datetime) -> None:
+    """Readable, failure cleared; the caller owns the transaction."""
+    db.execute(
+        text(_SET_BY_ID),
+        {
+            "media_id": media_id,
+            "status": ProcessingStatus.ready_for_reading.value,
+            "code": None,
+            "message": None,
+            "now": now,
+        },
+    )
+
+
+def _record(
+    db: Session, media: Media, status: ProcessingStatus, code: str | None, message: str | None
+) -> None:
+    media.processing_status = status
+    media.last_error_code = code
+    media.last_error_message = message
     media.updated_at = func.now()
+    db.flush()
 
 
 def mark_extracting(db: Session, media: Media) -> None:
-    """Move queued or starting source work to extracting, failure cleared."""
+    """Queued or starting source work is extracting; any failure clears. An x article's
+    retained readable publication keeps it readable through a refresh."""
     if media.provider == "x" and has_retained_x_publication(db, media_id=media.id):
         if media.processing_status != ProcessingStatus.ready_for_reading:
             mark_ready_for_reading(db, media)
         return
-    media.processing_status = ProcessingStatus.extracting
-    media.processing_started_at = func.now()
-    _clear_failure(media)
-    db.flush()
+    _record(db, media, ProcessingStatus.extracting, None, None)
 
 
 def mark_ready_for_reading(db: Session, media: Media) -> None:
-    """Mark readable extraction complete."""
-    media.processing_status = ProcessingStatus.ready_for_reading
-    _clear_failure(media)
-    db.flush()
+    _record(db, media, ProcessingStatus.ready_for_reading, None, None)
 
 
-def mark_ready_for_reading_by_id(db: Session, *, media_id: UUID, now: datetime) -> None:
-    """Mark readable extraction complete by id; callers own the transaction."""
-    db.execute(
-        text("""
-            UPDATE media
-            SET processing_status = :processing_status,
-                failure_stage = NULL,
-                last_error_code = NULL,
-                last_error_message = NULL,
-                failed_at = NULL,
-                updated_at = :now
-            WHERE id = :media_id
-        """),
-        {
-            "media_id": media_id,
-            "processing_status": ProcessingStatus.ready_for_reading.value,
-            "now": now,
-        },
-    )
-
-
-def mark_stage_warning(
-    db: Session, media: Media, *, stage: str, error_code: str, error_message: str
-) -> None:
-    """Record non-terminal failure metadata without changing readability."""
-    media.failure_stage = FailureStage(stage)
-    media.last_error_code = error_code
-    media.last_error_message = error_message
-    media.failed_at = func.now()
-    media.updated_at = func.now()
-    db.flush()
+def mark_stage_warning(db: Session, media: Media, *, error_code: str, error_message: str) -> None:
+    """A problem that leaves readability as it is: recorded, the status unchanged."""
+    _record(db, media, media.processing_status, error_code, error_message)
