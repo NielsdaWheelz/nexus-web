@@ -1,7 +1,7 @@
 import "server-only";
 
 import { cookies, headers } from "next/headers";
-import type { AuthenticatedAccount } from "@/lib/account/contract";
+import { isApiError, type ApiError } from "@/lib/api/client";
 import type { DehydratedResources } from "@/lib/api/resourceCache";
 import { serverResourceFetcher } from "@/lib/api/resourceTransport.server";
 import { callFastAPI } from "@/lib/api/server";
@@ -11,8 +11,8 @@ import { REQUEST_PATH_HEADER } from "@/lib/auth/urls";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
-import type { ReaderProfile } from "@/lib/reader/ReaderContext";
-import { enterWorkspace, type WorkspaceState } from "@/lib/workspace/model";
+import type { WorkspaceBootstrap } from "@/lib/workspace/bootstrap";
+import { enterWorkspace } from "@/lib/workspace/model";
 import {
   MAX_WORKSPACE_HREF_LENGTH,
   parseWorkspaceHref,
@@ -20,16 +20,11 @@ import {
 
 /**
  * The authenticated shell's one server data root. Account, reader profile and
- * saved sessions are required: a failure is the workspace error region, never
- * a fabricated default that could autosave over an unread session. Pane seeds
- * are best effort; a pane whose seed fails fetches on the client.
+ * saved sessions are required: failure never mounts a fabricated default that
+ * could autosave over an unread session. Only the active pane is seeded; named
+ * prefetch misses use its normal client read, while defects stop entry.
  */
-export async function loadWorkspaceBootstrap(): Promise<{
-  account: AuthenticatedAccount;
-  readerProfile: ReaderProfile;
-  initialState: WorkspaceState;
-  resources: DehydratedResources;
-}> {
+export async function loadWorkspaceBootstrap(): Promise<WorkspaceBootstrap> {
   const requestPath = (await headers()).get(REQUEST_PATH_HEADER);
   const deviceId = readDeviceId(await cookies());
   if (requestPath === null || !deviceId) {
@@ -60,29 +55,42 @@ export async function loadWorkspaceBootstrap(): Promise<{
   const { own, most_recent_elsewhere } = sessions.data;
   const initialState = enterWorkspace(own, most_recent_elsewhere, href);
 
-  // One seed per cache key over the visible panes.
-  const loads = new Map<string, () => Promise<unknown>>();
-  for (const pane of initialState.panes) {
-    const route = resolvePaneRouteModel(pane.currentVisit.href);
-    const loader = route.id === "unsupported" ? null : paneResourceLoaders[route.id];
-    if (!loader || pane.visibility !== "visible") continue;
-    const load = () => loader.load(serverResourceFetcher, route.params);
-    loads.set(loader.cacheKey(route.params), load);
-  }
   const resources: DehydratedResources = {};
-  await Promise.all(
-    [...loads].map(async ([key, load]) => {
-      try {
-        resources[key] = await load();
-      } catch {
-        // justify-ignore-error: a seed is a prefetch; the pane fetches on mount.
-      }
-    }),
-  );
+  // justify-type-assertion: the API validates the active visible pane on every
+  // stored read, and enterWorkspace preserves it or creates one with its pane.
+  const pane = initialState.panes.find(
+    (pane) => pane.id === initialState.activePrimaryPaneId,
+  )!;
+  const route = resolvePaneRouteModel(pane.currentVisit.href);
+  const loader = route.id === "unsupported" ? undefined : paneResourceLoaders[route.id];
+  if (loader) {
+    try {
+      resources[loader.cacheKey(route.params)] = await loader.load(
+        serverResourceFetcher,
+        route.params,
+      );
+    } catch (error) {
+      const resourceMiss = isApiError(error) && (
+        (route.id === "media" && error.code === "E_MEDIA_NOT_FOUND") ||
+        (route.id === "library" && error.code === "E_LIBRARY_NOT_FOUND") ||
+        ((route.id === "media" || route.id === "library") && error.code === "E_INVALID_REQUEST")
+      );
+      if (!isWorkspaceTransportError(error) && !resourceMiss) throw error;
+      // justify-ignore-error: these named prefetch misses leave the pane's
+      // ordinary client read in charge; unknown failures never become misses.
+    }
+  }
   return {
     account: { accountId: me.data.user_id, calendarTimeZone: zone },
     readerProfile: profile.data,
     initialState,
     resources,
   };
+}
+
+/** Required reads explicitly model these dependency failures before first mount. */
+export function isWorkspaceTransportError(error: unknown): error is ApiError {
+  return isApiError(error) && [
+    "E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT", "E_AUTH_UNAVAILABLE",
+  ].includes(error.code);
 }

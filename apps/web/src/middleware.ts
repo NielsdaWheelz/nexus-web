@@ -1,15 +1,22 @@
-// per request: the content policy and its nonce, the network-free session gate
-// for protected page GETs, the device cookie, and the headers a path class
-// needs beyond the static suite (lib/security/headers.ts via next.config). it
-// imports the edge-safe cookie classifier only: never lib/supabase/auth or
-// lib/auth/session, which would pull the sdk into the edge bundle.
+// per request: content policy, routing metadata and silent navigation renewal.
+// node middleware owns entry cookie effects; bff/routes/actions own theirs.
 import { NextResponse, type NextRequest } from "next/server";
+import { assertNever } from "@/lib/assertNever";
 import { DEVICE_COOKIE_NAME, readDeviceId } from "@/lib/auth/deviceCookie";
+import {
+  applyRequestEffect,
+  ended,
+  finish,
+  redirectTo,
+  resolveEntry,
+  type Effect,
+} from "@/lib/auth/session";
 import {
   loginPath,
   parseReturnTarget,
-  recoverPath,
+  REQUEST_METHOD_HEADER,
   REQUEST_PATH_HEADER,
+  unavailablePath,
 } from "@/lib/auth/urls";
 import { isDevBuild } from "@/lib/build-mode";
 import { createRandomId } from "@/lib/createRandomId";
@@ -20,10 +27,10 @@ import {
   PUBLIC_API_CSP,
   publicReaderCsp,
 } from "@/lib/security/csp";
-import { readSession } from "@/lib/supabase/cookie";
+import { AuthUnavailable } from "@/lib/supabase/auth";
 
-// no session gate: public pages, every auth surface, and every route handler
-// under /api (the bff resolves its own session).
+// public paths bypass the protected gate. login handles its own continuation
+// below; auth routes and the bff resolve their own sessions.
 const PUBLIC_PATHS = new Set([
   "/robots.txt",
   "/manifest.webmanifest",
@@ -40,12 +47,13 @@ const PUBLIC_PATHS = new Set([
   "/share",
   "/s",
   "/api",
+  "/auth",
 ]);
 const PUBLIC_PREFIXES = ["/api/", "/auth/", "/pdfjs/", "/_next"];
 
 const DEVICE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365 * 10;
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname, search, host, protocol } = request.nextUrl;
   const isShareApi =
     pathname === "/api/public/resource-share" ||
@@ -80,37 +88,58 @@ export function middleware(request: NextRequest) {
           media: getEnv().mediaOrigins,
         });
 
-  // next reads the script nonce from the request-side policy and stamps it on
-  // its own scripts; without it 'strict-dynamic' blocks every next script.
-  const forwarded = new Headers(request.headers);
-  forwarded.set("content-security-policy", csp);
-  let response: NextResponse | null = null;
-  if (isProtected) {
-    // server components cannot see the url: the session gate and the
-    // workspace bootstrap read it here.
-    forwarded.set(REQUEST_PATH_HEADER, `${pathname}${search}`);
-    // non-GETs (server actions) pass: their response owners resolve the
-    // session.
-    const session =
-      request.method === "GET" ? readSession(request.cookies.getAll()) : null;
-    const target = parseReturnTarget(`${pathname}${search}`);
-    if (session?.state === "anonymous") {
-      response = NextResponse.redirect(new URL(loginPath(target), request.url));
-    } else if (session?.state === "ended") {
-      response = NextResponse.redirect(
-        new URL(recoverPath(target), request.url),
-      );
-    } else if (session?.state === "active" && !readDeviceId(request.cookies)) {
-      // minted on the request too, so this request's server code sees it.
-      const device = createRandomId();
-      const cookie = request.headers.get("cookie");
-      forwarded.set(
-        "cookie",
-        cookie
-          ? `${cookie}; ${DEVICE_COOKIE_NAME}=${device}`
-          : `${DEVICE_COOKIE_NAME}=${device}`,
-      );
-      response = NextResponse.next({ request: { headers: forwarded } });
+  const isNavigation = request.method === "GET" || request.method === "HEAD";
+  const isLogin = pathname === "/login";
+  const requestPath = parseReturnTarget(`${pathname}${search}`);
+  const target = isLogin
+    ? parseReturnTarget(request.nextUrl.searchParams.get("next"))
+    : requestPath;
+  let effect: Effect = { kind: "Preserve" };
+  let destination: string | null = null;
+  if (isNavigation && (isProtected || isLogin)) {
+    try {
+      const live = await resolveEntry(request.cookies.getAll());
+      switch (live.kind) {
+        case "Live":
+          effect = { kind: "Write", writes: live.writes };
+          if (isLogin) destination = target;
+          break;
+        case "Ended":
+          effect = ended(live.cookieNames);
+          if (isProtected) destination = loginPath(target);
+          break;
+        case "Anonymous":
+          if (isProtected) destination = loginPath(target);
+          break;
+        default:
+          assertNever(live);
+      }
+    } catch (error) {
+      if (!(error instanceof AuthUnavailable)) throw error;
+      destination = unavailablePath(target);
+    }
+  }
+
+  let response: NextResponse;
+  if (destination !== null) {
+    response = redirectTo(destination, 303);
+  } else {
+    applyRequestEffect(request.cookies, effect);
+    let device: string | null = null;
+    if (isProtected && isNavigation && !readDeviceId(request.cookies)) {
+      device = createRandomId();
+      request.cookies.set(DEVICE_COOKIE_NAME, device);
+    }
+    // next reads this policy to stamp its scripts with the request nonce.
+    // copy headers after applying effects so server rendering sees the successor.
+    const forwarded = new Headers(request.headers);
+    forwarded.set("content-security-policy", csp);
+    if (isProtected) {
+      forwarded.set(REQUEST_PATH_HEADER, requestPath);
+      forwarded.set(REQUEST_METHOD_HEADER, request.method);
+    }
+    response = NextResponse.next({ request: { headers: forwarded } });
+    if (device !== null) {
       response.cookies.set(DEVICE_COOKIE_NAME, device, {
         httpOnly: true,
         sameSite: "lax",
@@ -120,14 +149,11 @@ export function middleware(request: NextRequest) {
       });
     }
   }
-  response ??= NextResponse.next({ request: { headers: forwarded } });
+
+  if (isProtected || isAuthSurface) finish(response, effect);
 
   const headers = response.headers;
   headers.set("Content-Security-Policy", csp);
-  if (isProtected || isAuthSurface) {
-    headers.set("Cache-Control", "private, no-store");
-    headers.set("Vary", "Cookie");
-  }
   if (isAuthSurface) headers.set("X-Robots-Tag", "noindex, nofollow");
   // a token_hash in the url must never leave through Referer.
   if (pathname === "/auth/invite" || pathname === "/auth/recovery") {
@@ -142,6 +168,7 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
+  runtime: "nodejs",
   // everything except static build output, the favicon and public images.
   matcher: [
     "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",

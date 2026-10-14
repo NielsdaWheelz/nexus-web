@@ -1,18 +1,20 @@
 // the session protocol at the response edge, provider-neutral: what a server
 // component may know (verification), what a response owner may do (refresh
 // inline, publish cookie effects), and the private headers every auth
-// response carries. only finish() (route handlers) and withActionSession()
-// (server actions) publish auth cookies.
+// response carries. middleware, route handlers and server actions publish
+// through the same cookie effects.
 import "server-only";
 
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
+import { assertNever } from "@/lib/assertNever";
 import {
   loginPath,
   parseReturnTarget,
-  recoverPath,
+  REQUEST_METHOD_HEADER,
   REQUEST_PATH_HEADER,
+  unavailablePath,
 } from "@/lib/auth/urls";
 import { getEnv } from "@/lib/env";
 import {
@@ -24,12 +26,13 @@ import {
 } from "@/lib/supabase/auth";
 import {
   authCookieNames,
+  readBearer,
   readSession,
   type CookieValue,
 } from "@/lib/supabase/cookie";
 
-// set by an ending Clear for one minute; /login renders "Your session ended."
-// from it. any later cookie effect (a sign-in, a sign-out) removes it.
+// set by an ending Clear for one minute; /login uses it for its heading.
+// any later cookie effect (a sign-in, a sign-out) removes it.
 export const ENDED_FEEDBACK_COOKIE = "nexus.auth-ended.v1";
 
 export type Effect =
@@ -63,22 +66,33 @@ export const abandoned = (
 });
 
 function applyEffect(
-  jar: Pick<NextResponse["cookies"], "set" | "delete">,
+  jar: {
+    set(cookie: CookieValue & CookieWrite["options"]): void;
+    delete(cookie: { name: string } & CookieWrite["options"]): void;
+  },
   effect: Effect,
 ): void {
-  if (effect.kind === "Preserve") return;
-  if (effect.kind === "Write") {
-    if (effect.writes.length === 0) return;
-    for (const { name, value, options } of effect.writes) {
-      if (options?.maxAge === 0) jar.delete({ name, ...options });
-      else jar.set(name, value, options);
-    }
-  } else {
-    // native deletion: its past expiry survives next's mutable-cookie merge.
-    for (const name of effect.cookieNames) jar.delete({ name, path: "/" });
+  switch (effect.kind) {
+    case "Preserve":
+      return;
+    case "Write":
+      if (effect.writes.length === 0) return;
+      for (const { name, value, options } of effect.writes) {
+        if (options?.maxAge === 0) jar.delete({ name, ...options });
+        else jar.set({ name, value, ...options });
+      }
+      break;
+    case "Clear":
+      // native deletion: its past expiry survives next's mutable-cookie merge.
+      for (const name of effect.cookieNames) jar.delete({ name, path: "/" });
+      break;
+    default:
+      return assertNever(effect);
   }
   if (effect.kind === "Clear" && effect.feedback) {
-    jar.set(ENDED_FEEDBACK_COOKIE, "1", {
+    jar.set({
+      name: ENDED_FEEDBACK_COOKIE,
+      value: "1",
       httpOnly: true,
       maxAge: 60,
       path: "/",
@@ -87,6 +101,25 @@ function applyEffect(
   } else {
     jar.delete({ name: ENDED_FEEDBACK_COOKIE, path: "/" });
   }
+}
+
+// request cookies remove names; response cookies publish expiry attributes.
+// adapt that difference without giving deletions a value on the forwarded jar.
+export function applyRequestEffect(
+  jar: NextRequest["cookies"],
+  effect: Effect,
+): void {
+  applyEffect(
+    {
+      set: ({ name, value }) => {
+        jar.set(name, value);
+      },
+      delete: ({ name }) => {
+        jar.delete(name);
+      },
+    },
+    effect,
+  );
 }
 
 // every auth response is private: an intermediary must never replay a session
@@ -121,52 +154,66 @@ export type Verification =
       readonly viewer: Viewer;
       readonly accessToken: string;
     }
-  | { readonly kind: "RefreshRequired" }
-  | { readonly kind: "SessionEnded"; readonly cookieNames: readonly string[] }
-  | { readonly kind: "Anonymous" };
+  | { readonly kind: "MissingBearer" }
+  | { readonly kind: "Rejected" };
 
-export async function getVerification(): Promise<Verification> {
-  const session = readSession((await cookies()).getAll());
-  switch (session.state) {
-    case "anonymous":
-      return { kind: "Anonymous" };
-    case "refreshable":
-      return { kind: "RefreshRequired" };
-    case "ended":
-      return { kind: "SessionEnded", cookieNames: session.cookieNames };
-    case "active": {
-      const viewer = await verify(session.accessToken);
-      if (viewer !== "Rejected") {
-        return { kind: "Verified", viewer, accessToken: session.accessToken };
-      }
-      return session.canRefresh
-        ? { kind: "RefreshRequired" }
-        : { kind: "SessionEnded", cookieNames: session.cookieNames };
-    }
-  }
+export async function getVerification(
+  presented: readonly CookieValue[],
+): Promise<Verification> {
+  const accessToken = readBearer(presented);
+  if (accessToken === null) return { kind: "MissingBearer" };
+  const viewer = await verify(accessToken);
+  return viewer === "Rejected"
+    ? { kind: "Rejected" }
+    : { kind: "Verified", viewer, accessToken };
 }
 
-// the gate of protected server components: the viewer, or a redirect carrying
-// the requested path (stamped by middleware) to /login or to the resolver.
+// navigation has already been prepared by middleware. an action can instead
+// rerender after clearing credentials; it returns to the login response owner.
 export async function verifySession(): Promise<Viewer> {
-  const target = parseReturnTarget((await headers()).get(REQUEST_PATH_HEADER));
+  const context = await headers();
+  const path = context.get(REQUEST_PATH_HEADER);
+  const method = context.get(REQUEST_METHOD_HEADER);
+  if (
+    path === null ||
+    (method !== "GET" && method !== "HEAD" && method !== "POST")
+  ) {
+    // justify-defect: middleware owns routing metadata on every protected request.
+    throw new Error("Protected request routing metadata missing or invalid");
+  }
+  const target = parseReturnTarget(path);
   let verification: Verification;
   try {
-    verification = await getVerification();
+    verification = await getVerification((await cookies()).getAll());
   } catch (error) {
     if (!(error instanceof AuthUnavailable)) throw error;
-    redirect(recoverPath(target));
+    redirect(new URL(unavailablePath(target), getEnv().appPublicOrigin).href);
   }
-  if (verification.kind === "Verified") return verification.viewer;
-  redirect(
-    verification.kind === "Anonymous" ? loginPath(target) : recoverPath(target),
-  );
+  switch (verification.kind) {
+    case "Verified":
+      return verification.viewer;
+    case "MissingBearer":
+      if (method === "POST") {
+        redirect(new URL(loginPath(target), getEnv().appPublicOrigin).href);
+      }
+      // justify-defect: a prepared navigation must carry its successor bearer.
+      throw new Error("Prepared session has no readable bearer");
+    case "Rejected":
+      // the provider can end a session between preparation and verification.
+      // navigation rejection waits for intent instead of looping through login.
+      redirect(
+        new URL(
+          method === "POST" ? loginPath(target) : unavailablePath(target),
+          getEnv().appPublicOrigin,
+        ).href,
+      );
+    default:
+      return assertNever(verification);
+  }
 }
 
-// liveness: for a response owner that needs a bearer now. refreshes inline
-// through the one refresh owner; the caller publishes `writes` (Live) or
-// ended(cookieNames) (Ended). a Live session is active with margin, so the
-// sdk will not refresh it again. throws AuthUnavailable.
+// a response owner's bearer and cookie effects: publish writes for Live and
+// ended(cookieNames) for Ended. neither decoded cookies nor this type authorize.
 export type LiveSession =
   | {
       readonly kind: "Live";
@@ -179,6 +226,67 @@ export type LiveSession =
   | { readonly kind: "Ended"; readonly cookieNames: readonly string[] }
   | { readonly kind: "Anonymous" };
 
+async function refreshLive(
+  presented: readonly CookieValue[],
+): Promise<LiveSession> {
+  const cookieNames = authCookieNames(presented);
+  const refreshed = await refresh(presented);
+  switch (refreshed.kind) {
+    case "Ended":
+      return { kind: "Ended", cookieNames };
+    case "Refreshed":
+      return {
+        ...refreshed,
+        kind: "Live",
+        cookieNames: [...cookieNames, ...refreshed.writes.map((write) => write.name)],
+      };
+    default:
+      return assertNever(refreshed);
+  }
+}
+
+// entry response owners verify an active bearer and renew only when necessary.
+// after rotation, publish its writes before any later rendering or operation.
+export async function resolveEntry(
+  presented: readonly CookieValue[],
+): Promise<LiveSession> {
+  const session = readSession(presented);
+  switch (session.state) {
+    case "anonymous":
+      return { kind: "Anonymous" };
+    case "ended":
+      return { kind: "Ended", cookieNames: session.cookieNames };
+    case "refreshable":
+      return refreshLive(presented);
+    case "active": {
+      const verification = await getVerification(presented);
+      switch (verification.kind) {
+        case "Verified":
+          return {
+            kind: "Live",
+            accessToken: verification.accessToken,
+            cookies: presented,
+            writes: [],
+            cookieNames: session.cookieNames,
+          };
+        case "Rejected":
+          return session.canRefresh
+            ? refreshLive(presented)
+            : { kind: "Ended", cookieNames: session.cookieNames };
+        case "MissingBearer":
+          // justify-defect: both readers just decoded the same active cookie jar.
+          throw new Error("Active session has no readable bearer");
+        default:
+          return assertNever(verification);
+      }
+    }
+    default:
+      return assertNever(session);
+  }
+}
+
+// bff/actions prepare with the proactive margin so a following sdk operation
+// cannot refresh implicitly. entry verification is deliberately separate.
 export async function liveSession(): Promise<LiveSession> {
   const presented = (await cookies()).getAll();
   const session = readSession(presented);
@@ -195,20 +303,10 @@ export async function liveSession(): Promise<LiveSession> {
         writes: [],
         cookieNames: session.cookieNames,
       };
-    case "refreshable": {
-      const refreshed = await refresh(presented);
-      if (refreshed.kind === "Ended") {
-        return { kind: "Ended", cookieNames: session.cookieNames };
-      }
-      return {
-        ...refreshed,
-        kind: "Live",
-        cookieNames: [
-          ...session.cookieNames,
-          ...refreshed.writes.map((w) => w.name),
-        ],
-      };
-    }
+    case "refreshable":
+      return refreshLive(presented);
+    default:
+      return assertNever(session);
   }
 }
 

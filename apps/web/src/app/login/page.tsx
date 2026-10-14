@@ -1,10 +1,8 @@
 import type { Metadata } from "next";
 import { cookies, headers } from "next/headers";
-import { redirect } from "next/navigation";
 import { isAndroidShellUserAgent } from "@/lib/androidShell";
-import { ENDED_FEEDBACK_COOKIE, getVerification } from "@/lib/auth/session";
-import { firstParam, parseReturnTarget, recoverPath } from "@/lib/auth/urls";
-import { AuthUnavailable } from "@/lib/supabase/auth";
+import { ENDED_FEEDBACK_COOKIE } from "@/lib/auth/session";
+import { firstParam, parseReturnTarget } from "@/lib/auth/urls";
 import LoginPageClient from "./LoginPageClient";
 
 export const metadata: Metadata = {
@@ -22,18 +20,6 @@ export default async function LoginPage({
 }) {
   const params = await searchParams;
   const nextPath = parseReturnTarget(firstParam(params.next));
-  // a viewer with a session never sees the form: verified goes on, anything
-  // unresolved goes through the resolver (which clears an ended session).
-  let kind;
-  try {
-    kind = (await getVerification()).kind;
-  } catch (error) {
-    if (!(error instanceof AuthUnavailable)) throw error;
-    kind = "RefreshRequired";
-  }
-  if (kind === "Verified") redirect(nextPath);
-  if (kind !== "Anonymous") redirect(recoverPath(nextPath));
-
   const error = firstParam(params.error);
   const ended = (await cookies()).get(ENDED_FEEDBACK_COOKIE)?.value === "1";
   return (

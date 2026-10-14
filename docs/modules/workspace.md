@@ -36,9 +36,9 @@ python owns the shape and validates every save and every stored read
 bounds (1..12 panes, back + forward ≤ 12 per pane, ≤ 48 history in all, ids ≤ 64,
 hrefs `^/` and not `//`, ≤ 4096), unique pane and visit ids, an active pane that
 is visible, and an inspector surface inside its group. the web has no decoder:
-its state type is the generated `Schema<"WorkspaceState-Output">`. a stored row
-the model cannot read reads as absent (one `workspace_session_unreadable`
-warning), so drift loads the default workspace instead of the error boundary.
+its state type is the generated `Schema<"WorkspaceState-Output">`. only a missing
+row is absent. invalid present state raises `500 E_INTERNAL` and remains intact;
+entry cannot install a default store over it.
 which inspector group a route offers is the web's rule, applied on every write.
 
 `GET /me/workspace-session?device_id=` returns
@@ -59,10 +59,27 @@ picks own-if-nontrivial, else elsewhere-if-nontrivial, else one Lectern pane, an
 merges a deep link: `/` and non-canonical request paths resume; bare `/daily` is
 today in the account zone; any other path reuses the pane on its routeKey or
 resource (keeping its visit id, width and inspector) or is appended, keeping the
-newest 11 at the cap. visible panes are then seeded best effort, one load per
-cache key. the authenticated group has one optional catch-all page
-(`[[...path]]/page.tsx`), so an unknown path renders the unsupported pane inside
-the restored workspace. the workspace error region's Retry reloads the document.
+newest 11 at the cap. entry awaits only the guaranteed visible active pane's
+registered loader, with the existing 500 ms per-request deadline and zero/one seed
+in the consume-once cache. named transport failures and route-specific missing
+resources use normal client reads; other seed errors terminate. inactive panes
+load through their existing owners. the authenticated group has one optional
+catch-all page (`[[...path]]/page.tsx`), so unknown paths render unsupported panes.
+
+required-data transport failures (`E_NETWORK`, `E_UPSTREAM`,
+`E_UPSTREAM_TIMEOUT`, `E_AUTH_UNAVAILABLE`) are classified before react serializes
+errors. cold failures mount no store and offer document reload. other failures,
+including malformed json, unknown codes and bootstrap 401, are logged terminal
+containment without retry. only a missing stored row is null; invalid state returns
+`500 E_INTERNAL` without modifying its row or timestamp.
+
+`WorkspaceEntry` captures the first successful initializer for one verified viewer.
+a modeled later data reread failure retains the exact shell/store/reader/cache and
+publishes "workspace update wasn’t confirmed" with one guarded `router.refresh()`
+action. success clears the notice without replacing live state; its focused action
+hands focus to the current pane before removal. viewer change discards the subtree.
+identity-gate failure still uses manual session recovery. local room selection
+writes its browser cookie without an authenticated request or refresh.
 
 [`useWorkspaceSession.ts`](../../apps/web/src/lib/workspace/useWorkspaceSession.ts)
 saves 1 s after the state last changed identity; the initial state counts as

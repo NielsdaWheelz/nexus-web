@@ -1,11 +1,9 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import { useFeedback } from "@/components/feedback/Feedback";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
-import { parseRoom, ROOM_CHROME, type AppTheme } from "@/lib/theme/room";
-import { setAppearanceAction } from "@/lib/theme/setAppearanceAction";
+import { parseRoom, ROOM_CHROME, THEME_COOKIE, type AppTheme } from "@/lib/theme/room";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 // Imported directly by the one surface that draws it: the inscription registry
 // is data-heavy and must never enter a shared barrel (blueprint §3). This pane
@@ -34,7 +32,6 @@ const DOORWAYS: { value: AppTheme; name: string; hint: string }[] = [
 const INSCRIPTION = elvishInscriptions.elenSila;
 
 export default function SettingsAppearancePaneBody() {
-  const feedback = useFeedback();
   const [selection, setSelection] = useState<AppTheme | null>(null);
 
   useEffect(() => {
@@ -42,25 +39,14 @@ export default function SettingsAppearancePaneBody() {
   }, []);
   usePaneReturnReady(selection !== null);
 
-  // The room repaints at once, browser chrome included; the cookie follows. A
-  // save that lands retires an earlier failure's hud, whose Retry would undo it.
-  async function handleChange(next: AppTheme) {
+  // Appearance belongs to this browser; its cookie supplies the next first paint.
+  function handleChange(next: AppTheme) {
     setSelection(next);
     document.documentElement.dataset.theme = next;
     document
       .querySelector('meta[name="theme-color"]')
       ?.setAttribute("content", ROOM_CHROME[next]);
-    try {
-      await setAppearanceAction(next);
-      feedback.resolve("appearance-save");
-    } catch {
-      feedback.publish({
-        kind: "Hud",
-        key: "appearance-save",
-        content: { tone: "Danger", title: "Theme wasn’t saved" },
-        actions: [{ label: "Retry", onClick: () => void handleChange(next) }],
-      });
-    }
+    document.cookie = `${THEME_COOKIE}=${next}; path=/; max-age=31536000; samesite=lax${window.location.protocol === "https:" ? "; secure" : ""}`;
   }
 
   if (selection === null) return null;

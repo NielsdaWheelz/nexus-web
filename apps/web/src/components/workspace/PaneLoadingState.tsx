@@ -1,27 +1,40 @@
+"use client";
+
+import { usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import styles from "./PaneLoadingState.module.css";
 
 /**
  * The one pane placeholder. The caller decides whether this first load is
- * announced; a refresh belongs to the shell and never reuses it.
+ * announced; inactive panes stay silent. A refresh belongs to the shell.
  */
 export function PaneLoadingState(props: {
   readonly label: string;
   readonly announcement: "None" | "Polite";
 }) {
-  const announces = props.announcement === "Polite";
+  const runtime = usePaneRuntime();
+  if (runtime !== null && props.announcement === "Polite") {
+    return <ActivePaneLoading label={props.label} />;
+  }
+  return <Placeholder label={props.label} announces={props.announcement === "Polite"} />;
+}
+
+function ActivePaneLoading({ label }: { label: string }) {
+  const active = usePaneIsActive();
+  return <Placeholder label={label} announces={active} />;
+}
+
+function Placeholder({ label, announces }: { label: string; announces: boolean }) {
   return (
     <div
       className={styles.root}
       role={announces ? "status" : undefined}
       aria-live={announces ? "polite" : undefined}
       aria-atomic={announces ? "true" : undefined}
-      aria-busy="true"
-      aria-label={announces ? undefined : props.label}
     >
       <span className={styles.bar} aria-hidden />
       <span className={styles.bar} aria-hidden />
       <span className={styles.bar} aria-hidden />
-      <span className="sr-only">{props.label}</span>
+      <span className="sr-only">{label}</span>
     </div>
   );
 }

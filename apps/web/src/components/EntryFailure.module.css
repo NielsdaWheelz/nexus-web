@@ -1,0 +1,41 @@
+.surface {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  width: 100%;
+  max-width: 24rem;
+  min-height: 100%;
+  margin-inline: auto;
+  gap: var(--space-6);
+}
+
+.mark {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.title,
+.description {
+  margin: 0;
+}
+
+.title {
+  color: var(--ink);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
+}
+
+.description {
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+}

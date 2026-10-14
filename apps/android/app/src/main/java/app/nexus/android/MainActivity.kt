@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Message
 import android.util.Base64
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -55,105 +56,15 @@ import app.nexus.android.playback.PlayerBridge
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
-import java.net.URI
-import java.net.URISyntaxException
-import java.net.URLDecoder
-import java.net.URLEncoder
 import java.security.MessageDigest
 import java.security.SecureRandom
-import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ExecutionException
 
-internal sealed interface RedirectLoopAction {
-    data class Recover(val url: String) : RedirectLoopAction
-    data object Terminal : RedirectLoopAction
-}
-
-internal class RedirectLoopCircuit {
-    private var recoveryEntered = false
-    private var recoverySurfaceLoaded = false
-    private var failedUrl: String? = null
-
-    fun onRedirectLoop(failedUrl: String?, baseUrl: String): RedirectLoopAction {
-        if (recoveryEntered) {
-            return RedirectLoopAction.Terminal
-        }
-        recoveryEntered = true
-        this.failedUrl = failedUrl
-        recoverySurfaceLoaded = false
-        val failed = failedUrl?.let(::parseUri)
-        val requestedNext = if (failed?.path?.startsWith("/auth/") == true) {
-            failed.queryParameter("next")
-        } else {
-            failed?.rawPath?.let { path ->
-                path + (failed.rawQuery?.let { "?$it" } ?: "")
-            }
-        }
-        val next = requestedNext?.takeIf {
-            it.startsWith("/") && !it.startsWith("//") && !it.startsWith("/auth/")
-        } ?: DEFAULT_AUTH_RETURN_TARGET
-        val recoveryUrl = URI(baseUrl).resolve("/auth/session/recover")
-        return RedirectLoopAction.Recover(
-            "$recoveryUrl?next=${URLEncoder.encode(next, StandardCharsets.UTF_8.name())}",
-        )
-    }
-
-    fun onSuccessfulNavigation(url: String?) {
-        val parsed = url?.let(::parseUri) ?: return
-        if (parsed.path == "/auth/session/recover") {
-            recoverySurfaceLoaded = true
-            return
-        }
-        if (parsed.path?.startsWith("/auth/") == true) {
-            return
-        }
-        if (!recoverySurfaceLoaded && url == failedUrl) {
-            return
-        }
-        recoveryEntered = false
-        recoverySurfaceLoaded = false
-        failedUrl = null
-    }
-
-    fun reset() {
-        recoveryEntered = false
-        recoverySurfaceLoaded = false
-        failedUrl = null
-    }
-
-    private fun parseUri(value: String): URI? =
-        try {
-            URI(value)
-        } catch (_: URISyntaxException) {
-            // justify-ignore-error: a URL the platform will not parse cannot
-            // name a recovery target; the caller falls back to the default one.
-            null
-        }
-
-    private fun URI.queryParameter(name: String): String? =
-        rawQuery
-            ?.split('&')
-            ?.asSequence()
-            ?.mapNotNull { part ->
-                val separator = part.indexOf('=')
-                val key = if (separator >= 0) part.substring(0, separator) else part
-                if (decode(key) != name) {
-                    return@mapNotNull null
-                }
-                decode(if (separator >= 0) part.substring(separator + 1) else "")
-            }
-            ?.firstOrNull()
-
-    private fun decode(value: String): String? =
-        try {
-            URLDecoder.decode(value, StandardCharsets.UTF_8.name())
-        } catch (_: IllegalArgumentException) {
-            // justify-ignore-error: a malformed percent escape carries no
-            // return target; the caller falls back to the default one.
-            null
-        }
+private enum class HostedLoadFailure {
+    Connection,
+    RedirectLoop,
 }
 
 @OptIn(UnstableApi::class)
@@ -170,11 +81,8 @@ class MainActivity : AppCompatActivity() {
     private var shelfRouter: ShelfRouter? = null
     // the shelf is the main document: set at each main-frame request and at its commit
     @Volatile private var shelfActive = false
-    private val redirectLoopCircuit = RedirectLoopCircuit()
-    private var redirectLoopTerminal: View? = null
     private var hostedLoadTerminal: View? = null
     private var failedMainFrameUrl: String? = null
-    private var redirectLoopRetryUrl: String? = null
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {
@@ -284,7 +192,6 @@ class MainActivity : AppCompatActivity() {
                     hostedLoadTerminal = null
                 }
                 CookieManager.getInstance().flush()
-                redirectLoopCircuit.onSuccessfulNavigation(url)
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -309,30 +216,21 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?,
                 error: WebResourceError?,
             ) {
-                if (request?.isForMainFrame != true) {
+                if (request?.isForMainFrame != true || !isOwnedUrl(request.url)) {
                     return
                 }
                 if (error?.errorCode != WebViewClient.ERROR_REDIRECT_LOOP) {
-                    if (Build.VERSION.SDK_INT >= 34 && isOwnedUrl(request.url)) {
+                    if (Build.VERSION.SDK_INT >= 34) {
                         failedMainFrameUrl = request.url.toString()
-                        showHostedLoadTerminal()
+                        showHostedLoadTerminal(HostedLoadFailure.Connection)
                     }
                     return
                 }
+                failedMainFrameUrl = request.url.toString()
                 view?.stopLoading()
-                when (
-                    val action = redirectLoopCircuit.onRedirectLoop(
-                        request.url?.toString() ?: view?.url,
-                        BuildConfig.NEXUS_BASE_URL,
-                    )
-                ) {
-                    is RedirectLoopAction.Recover -> {
-                        redirectLoopRetryUrl = action.url
-                        removeRedirectLoopTerminal()
-                        webView.loadUrl(action.url)
-                    }
-                    RedirectLoopAction.Terminal -> showRedirectLoopTerminal()
-                }
+                // justify-defect: an owned redirect loop is a routing defect, not a connection failure.
+                Log.e("Nexus", "Hosted navigation ended in a redirect loop")
+                showHostedLoadTerminal(HostedLoadFailure.RedirectLoop)
             }
         }
 
@@ -594,69 +492,50 @@ class MainActivity : AppCompatActivity() {
         webView.resumeTimers()
     }
 
-    private fun showRedirectLoopTerminal() {
-        if (redirectLoopTerminal != null) {
-            return
-        }
+    /** Expected connection failures can reload; redirect defects cannot. */
+    private fun showHostedLoadTerminal(reason: HostedLoadFailure) {
+        if (hostedLoadTerminal != null && reason == HostedLoadFailure.Connection) return
+        hostedLoadTerminal?.let(root::removeView)
         val terminal = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(48, 48, 48, 48)
             setBackgroundColor(Color.BLACK)
             addView(TextView(this@MainActivity).apply {
-                text = "Nexus could not restore this session."
+                text = when (reason) {
+                    HostedLoadFailure.Connection -> "Nexus could not connect."
+                    HostedLoadFailure.RedirectLoop -> "something went wrong."
+                }
                 setTextColor(Color.WHITE)
                 textSize = 18f
             })
-            addView(Button(this@MainActivity).apply {
-                text = "Retry"
-                setOnClickListener {
-                    val retryUrl = redirectLoopRetryUrl ?: return@setOnClickListener
-                    redirectLoopCircuit.reset()
-                    removeRedirectLoopTerminal()
-                    webView.loadUrl(retryUrl)
-                }
-            })
-        }
-        redirectLoopTerminal = terminal
-        root.addView(
-            terminal,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            ),
-        )
-    }
-
-    /** "Nexus could not connect." over a failed hosted main frame, with the shelf as a door. */
-    private fun showHostedLoadTerminal() {
-        if (hostedLoadTerminal != null) return
-        val terminal = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(48, 48, 48, 48)
-            setBackgroundColor(Color.BLACK)
-            addView(TextView(this@MainActivity).apply {
-                text = "Nexus could not connect."
-                setTextColor(Color.WHITE)
-                textSize = 18f
-            })
-            addView(Button(this@MainActivity).apply {
-                text = "Open downloaded copies"
-                setOnClickListener {
-                    hostedLoadTerminal?.let(root::removeView)
-                    hostedLoadTerminal = null
-                    webView.loadUrl(SHELF_URL)
-                }
-            })
-            addView(Button(this@MainActivity).apply {
-                text = "Retry"
-                setOnClickListener {
-                    hostedLoadTerminal?.let(root::removeView)
-                    hostedLoadTerminal = null
-                    webView.reload()
-                }
-            })
+            if (reason == HostedLoadFailure.RedirectLoop) {
+                addView(TextView(this@MainActivity).apply {
+                    text = "nexus couldn’t open this page."
+                    setTextColor(Color.WHITE)
+                    textSize = 16f
+                })
+            }
+            if (shelfRouter != null) {
+                addView(Button(this@MainActivity).apply {
+                    text = "Open downloaded copies"
+                    setOnClickListener {
+                        hostedLoadTerminal?.let(root::removeView)
+                        hostedLoadTerminal = null
+                        webView.loadUrl(SHELF_URL)
+                    }
+                })
+            }
+            if (reason == HostedLoadFailure.Connection) {
+                addView(Button(this@MainActivity).apply {
+                    text = "Retry"
+                    setOnClickListener {
+                        hostedLoadTerminal?.let(root::removeView)
+                        hostedLoadTerminal = null
+                        webView.reload()
+                    }
+                })
+            }
         }
         hostedLoadTerminal = terminal
         root.addView(
@@ -666,11 +545,6 @@ class MainActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
             ),
         )
-    }
-
-    private fun removeRedirectLoopTerminal() {
-        redirectLoopTerminal?.let(root::removeView)
-        redirectLoopTerminal = null
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

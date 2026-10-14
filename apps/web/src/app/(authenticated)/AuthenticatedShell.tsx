@@ -1,7 +1,16 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import AppNav from "@/components/appnav/AppNav";
+import { useFeedback } from "@/components/feedback/Feedback";
 import Nexus from "@/components/nexus/Nexus";
 import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
@@ -36,8 +45,12 @@ import {
 } from "@/lib/resources/resourceOverlaysController";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import type { WorkspaceState } from "@/lib/workspace/model";
+import {
+  findPaneChromeFocusTarget,
+  findPaneLandmarkFocusTarget,
+} from "@/lib/workspace/paneDom";
 import { estimatePrimaryWidthPx } from "@/lib/workspace/paneSizing";
-import { WorkspaceStoreProvider } from "@/lib/workspace/store";
+import { useWorkspaceStore, WorkspaceStoreProvider } from "@/lib/workspace/store";
 import styles from "./layout.module.css";
 
 export default function AuthenticatedShell(props: {
@@ -46,6 +59,7 @@ export default function AuthenticatedShell(props: {
   renderEnvironment: RenderEnvironment;
   initialState: WorkspaceState;
   resources: DehydratedResources;
+  entryFailure: { requestId?: string } | null;
 }) {
   return (
     <AuthenticatedAccountProvider account={props.account}>
@@ -57,6 +71,7 @@ export default function AuthenticatedShell(props: {
               <Workspace
                 accountId={props.account.accountId}
                 initialState={props.initialState}
+                entryFailure={props.entryFailure}
               />
             </ReaderProvider>
           </ResourceCacheProvider>
@@ -66,10 +81,14 @@ export default function AuthenticatedShell(props: {
   );
 }
 
-function Workspace(props: { accountId: string; initialState: WorkspaceState }) {
+function Workspace(props: {
+  accountId: string;
+  initialState: WorkspaceState;
+  entryFailure: { requestId?: string } | null;
+}) {
   const { accountId } = props;
   const { profile } = useReaderContext();
-  // The reader column is every pane's minimum and default width: the server
+  // The reader column is every pane's preferred and default width: the server
   // estimates it from the profile, and this hidden probe measures it.
   const probe = useRef<HTMLDivElement>(null);
   const [columnWidthPx, setColumnWidthPx] = useState(() =>
@@ -88,9 +107,6 @@ function Workspace(props: { accountId: string; initialState: WorkspaceState }) {
   }, [profile]);
   // Binds Android's offline store to this account.
   useEffect(() => connectOffline(accountId), [accountId]);
-  // Harnesses wait for data-hydrated: input before hydration lands on dead markup.
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => setHydrated(true), []);
   return (
     <>
       <div
@@ -103,6 +119,7 @@ function Workspace(props: { accountId: string; initialState: WorkspaceState }) {
         initialState={props.initialState}
         columnWidthPx={columnWidthPx}
       >
+        <WorkspaceEntryNotice failure={props.entryFailure} />
         <MobileViewportProvider>
           <MobileChromeProvider>
             {/* One Lectern owner wraps the workspace leaves and the player
@@ -118,10 +135,7 @@ function Workspace(props: { accountId: string; initialState: WorkspaceState }) {
                           <ImportsProvider>
                             <Nexus />
                             <ResourceActionOverlays />
-                            <div
-                              className={styles.layout}
-                              data-hydrated={hydrated || undefined}
-                            >
+                            <div className={styles.layout}>
                               <AppNav />
                               <main className={styles.main}>
                                 <WorkspaceHost />
@@ -141,4 +155,54 @@ function Workspace(props: { accountId: string; initialState: WorkspaceState }) {
       </WorkspaceStoreProvider>
     </>
   );
+}
+
+const ENTRY_NOTICE = "workspace-entry-read";
+
+function WorkspaceEntryNotice({ failure }: { failure: { requestId?: string } | null }) {
+  const router = useRouter();
+  const { publish, resolve } = useFeedback();
+  const { state } = useWorkspaceStore();
+  const [pending, startTransition] = useTransition();
+  const inFlight = useRef(false);
+  const activePaneId = useRef(state.activePrimaryPaneId);
+  const retry = useCallback(() => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    startTransition(() => router.refresh());
+  }, [router]);
+
+  useEffect(() => {
+    if (!pending) inFlight.current = false;
+  }, [pending]);
+
+  useEffect(() => {
+    if (failure === null) return;
+    publish({
+      kind: "Persistent",
+      key: ENTRY_NOTICE,
+      content: {
+        tone: "Warning",
+        title: "workspace update wasn’t confirmed",
+        message: "your open workspace is still available.",
+        requestId: failure.requestId,
+      },
+      announcement: "Polite",
+      actions: [{ label: "try again", busy: pending, onClick: retry }],
+      // Both entry defect boundaries expose this terminal focus destination.
+      returnFocus: () => document.getElementById("entry-failure")
+        ?? findPaneLandmarkFocusTarget(activePaneId.current)
+        ?? findPaneChromeFocusTarget(activePaneId.current),
+    });
+  }, [failure, pending, publish, retry]);
+
+  useLayoutEffect(() => {
+    // Keep the removal target current without republishing a dismissed notice.
+    activePaneId.current = state.activePrimaryPaneId;
+    if (failure === null) resolve(ENTRY_NOTICE);
+  }, [failure, resolve, state.activePrimaryPaneId]);
+
+  // A keyed update keeps the existing notice and button. Only unmount cleans it up.
+  useEffect(() => () => resolve(ENTRY_NOTICE), [resolve]);
+  return null;
 }

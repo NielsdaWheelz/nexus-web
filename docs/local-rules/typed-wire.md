@@ -61,9 +61,9 @@ its wire types are generated from FastAPI's OpenAPI schema, so tsc catches drift
   the browser extension, persisted browser storage (sessionStorage,
   localStorage), and cross-origin postMessage.
 - a server-stored client blob is validated by the api, not by a web decoder:
-  the workspace session is a pydantic model on its GET/PUT, a stored row the
-  model cannot read reads as null, and the web's state type is the generated
-  schema.
+  the workspace session is a pydantic model on its GET/PUT. only a missing row
+  is null; a present invalid row raises `E_INTERNAL` without being modified. the
+  web's state type is the generated schema.
 
 ## migration
 

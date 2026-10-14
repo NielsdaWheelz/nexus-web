@@ -197,7 +197,7 @@ orientation summary.
 
 **Layering & ownership** ([`rules/layers.md`](rules/layers.md),
 [`rules/codebase.md`](rules/codebase.md), [`rules/cleanliness.md`](rules/cleanliness.md)).
-Top to bottom: Next middleware (network-free session classification + CSP) →
+Top to bottom: node Next middleware (silent entry resolution + CSP) →
 the session protocol (`apps/web/src/lib/auth/session.ts`, the _only_
 verified-session authorization boundary, over the one Supabase boundary
 `apps/web/src/lib/supabase/`) → Next `/api/*` routes (dumb proxy, no business logic) →
@@ -261,12 +261,14 @@ deviation from a rule is explicit, see [`rules/overrides.md`](rules/overrides.md
 1. A client component calls `apiFetch<T>("/api/...")` (`lib/api/client.ts`). All
    product reads/writes go to **same-origin** `/api/*`; GETs are de-duplicated
    in-flight; a `401 E_UNAUTHENTICATED` hard-redirects to `/login`.
-2. **Next middleware** (`middleware.ts`, with `lib/supabase/cookie.ts`) attaches a
-   per-request CSP nonce and classifies the Supabase session cookie _without any
-   network I/O_ into `active | refreshable | ended | anonymous`. `/api/*` is
-   passed straight through — the proxy owns its own auth. Protected page and
-   mutation responses are private and uncacheable; middleware never performs a
-   refresh or redirects a non-GET request.
+2. **Next middleware** (`middleware.ts`, node runtime) attaches a per-request
+   csp nonce. protected GET/HEAD and login, including rsc/prefetch, resolve entry:
+   verify an active bearer or refresh once when required, forward successor cookies
+   and device identity, and publish the same effect on the response. success renders
+   the requested url directly; ended/anonymous go to login and dependency failures
+   go to the manual unavailable surface. `/api/*`, `/auth/*`, extension start and
+   other methods keep their own response owners. protected/auth responses are
+   private and uncacheable; middleware never resolves a non-GET/HEAD request.
 3. The `/api/*` **route handler** is a one-liner: `return proxyToFastAPI(req, "<path>")`.
 4. **`proxyToFastAPI`** (`lib/api/proxy.ts`) does the real work: enforces a CSRF
    Origin check on mutations; resolves a refreshable session before consuming a
@@ -734,7 +736,7 @@ only while another supported OAuth identity remains, so unlink safety never
 depends on inferred password presence.
 
 web auth has one supabase boundary, `apps/web/src/lib/supabase/`: `cookie.ts`
-(edge-safe) owns the session cookie grammar and its network-free
+owns the session cookie grammar, decoded bearer and network-free renewal
 classification; `auth.ts` builds one sdk client per operation over an in-memory
 jar seeded from the caller's cookies, collects the cookie writes the caller
 publishes, and bounds the whole operation (requests, bodies, sdk retry/backoff)
@@ -750,7 +752,18 @@ responses and `withActionSession()` for server actions, both with native
 deletion so expiry survives next's mutable-cookie merge, clear precedence and
 private, no-store headers. a session the provider reports ended, at refresh or
 under an operation (signed out or revoked elsewhere, a rejected token), is
-cleared with the one-minute "Your session ended." feedback.
+cleared with one-minute feedback that selects the login heading "sign in to
+continue". decoded bearers authorize nothing: read-only page and api verification
+ignore the proactive renewal margin. node middleware owns silent GET/HEAD entry;
+`verifySession()` verifies again without refresh. POST action rerenders can clear
+credentials and return to login without a target loop. return-target ingress waits
+for the browser hash and uses the same validated target for every sign-in action.
+
+`/auth/session/unavailable` does no work on mount. its stable button alone posts to
+`/auth/session/resolve`: 204 continues, 401 signs in, 503 preserves credentials.
+a 12 s browser deadline means unconfirmed delivery; it cannot undo rotation.
+unknown responses reach logged terminal containment. the old recovery namespace
+is deleted and unknown auth paths return 404; unsupported methods on exact routes retain 405.
 
 native handoff delivery owns local session failure cleanup: the user agent that
 minted a handoff code (the custom tab, the native http client) keeps no
@@ -2000,26 +2013,24 @@ open over Resume and never become panes.
   Pinning is intentionally absent; personalized retrieval lives in the Lectern
   quick reads, suggestions and Nexus ranking. See
   [`modules/app-navigation.md`](modules/app-navigation.md).
-- **First paint: stream, don't gate.** The `(authenticated)` layout runs only
-  **local** work (`verifySession`, header-derived `loadRenderEnvironment`) above a
-  `Suspense` whose fallback is the chrome skeleton, itself wrapped in
-  `AuthenticatedWorkspaceErrorBoundary` (a client class boundary — a same-segment
-  `error.tsx` cannot catch its own layout); the layout's async `Workspace` awaits
-  the data root inside the boundary and streams the shell in. The first HTTP
-  flush is the chrome skeleton (nav-rail placeholder + pane region in
-  `PaneLoadingState`) — **data never gates TTFB**. The data root
-  (`loadWorkspaceBootstrap`) reads the account, the reader profile and the saved
-  sessions concurrently — all **required** on the normal 30 s server-request
-  deadline, so a failed read rejects the whole bootstrap rather than fabricating
-  a default — then seeds the visible panes in one best-effort wave, returning
-  `{ account, readerProfile, initialState, resources }`. `resources` is a
-  hydration cache keyed exactly as each pane's `useResource` reads it; a
-  timed-out seed degrades to the normal client fetch. A rejected bootstrap
-  surfaces as the error boundary's accessible Retry, which reloads the document.
+- **Entry and first usable content.** silent middleware resolution and read-only
+  page verification precede the response. the verified layout places required data
+  under a streaming suspense skeleton and workspace error boundary. auth can gate
+  ttfb; data and the active seed gate first shell mount. `loadWorkspaceBootstrap`
+  concurrently loads required account, reader profile and saved sessions on the
+  30 s server deadline, then awaits only the active pane's registered loader with
+  the existing 500 ms per-request budget. zero/one successful seed uses the existing
+  consume-once cache. named transport/resource misses leave normal pane reads in
+  charge; internal defects, malformed json, unknown codes and bootstrap 401 terminate.
+  only `E_NETWORK`, `E_UPSTREAM`, `E_UPSTREAM_TIMEOUT`, `E_AUTH_UNAVAILABLE` produce
+  cold retry; a cold failure mounts no store. `WorkspaceEntry` retains the first
+  successful initializer for its verified viewer. later modeled data reread failure
+  preserves that exact shell/store/cache and publishes one refresh notice; later
+  success clears it without replacing live work. viewer identity keys the subtree.
 - **Server-side restore (no round-trip, no flash).** Device identity is a server-owned
   httpOnly `nx_device` cookie minted in middleware (`lib/auth/deviceCookie.ts`) —
   request-forwarded so this SSR sees it, response-set for future requests. The data root
-  reads it, fetches the saved sessions (an unreadable row is null), and classifies `/`
+  reads it, fetches the saved sessions (only a missing row is null; corruption is `E_INTERNAL`), and classifies `/`
   as Resume or every other protected href as Navigate; `enterWorkspace`
   (`lib/workspace/model.ts`, isomorphic) picks the session and merges the deep link. The
   store is created from that `initialState`, so the first render already shows the
@@ -2095,9 +2106,11 @@ UA token for presentation adaptation only. Each exact capability handshake,
 never the UA, is capability truth and the UA never authorizes browser-player
 fallback. Native BFF requests install every `Set-Cookie` value with an
 acknowledged `CookieManager.setCookie` callback and flush only after all
-acknowledgements. A main-frame redirect loop enters
-`/auth/session/recover` once; a second loop shows one native Retry surface and
-never clears WebView data or cookies. `onResume()` is lifecycle-only.
+acknowledgements. an owned main-frame redirect loop stops loading, logs the
+routing defect and shows the existing hosted terminal without retry. ordinary
+connection failure keeps reload; downloaded copies are offered only when the shelf
+router exists. neither outcome clears webview data or cookies. `onResume()` is
+lifecycle-only.
 
 **Browser extension** (`apps/extension`, Firefox manifest v2, built by
 `bun run build:extension` from `apps/web/src/extension/`): a persistent background

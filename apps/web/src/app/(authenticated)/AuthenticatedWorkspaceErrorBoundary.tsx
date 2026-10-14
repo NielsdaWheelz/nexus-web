@@ -1,13 +1,12 @@
 "use client";
 
 import { Component, type ReactNode } from "react";
-import Button from "@/components/ui/Button";
 import styles from "./layout.module.css";
 
 /**
  * The whole authenticated workspace's boundary: bootstrap and live workspace
- * defects. Retry reloads the document, so every client cache and the server
- * data root start over.
+ * defects. Expected bootstrap transport failures are handled before this boundary.
+ * #entry-failure is the notice return-focus target, shared with root containment.
  */
 export class AuthenticatedWorkspaceErrorBoundary extends Component<
   { children: ReactNode },
@@ -23,20 +22,26 @@ export class AuthenticatedWorkspaceErrorBoundary extends Component<
     console.error("Authenticated workspace failed:", error);
   }
 
+  private focusDisplaced = (element: HTMLElement | null) => {
+    if (element && (document.activeElement === null || document.activeElement === document.body)) {
+      element.focus({ preventScroll: true });
+    }
+  };
+
   render() {
     if (!this.state.failed) return this.props.children;
     return (
-      <div
-        ref={(element) => element?.focus()}
+      <main
+        id="entry-failure"
+        ref={this.focusDisplaced}
         role="alert"
         aria-labelledby="workspace-error-heading"
         tabIndex={-1}
         className={styles.error}
       >
-        <h2 id="workspace-error-heading">Something went wrong in your workspace</h2>
-        <p>Retry to reopen your saved workspace. Unsaved changes may be lost.</p>
-        <Button onClick={() => window.location.reload()}>Retry</Button>
-      </div>
+        <h1 id="workspace-error-heading">something went wrong in the workspace</h1>
+        <p>nexus needs a fix before this can continue.</p>
+      </main>
     );
   }
 }

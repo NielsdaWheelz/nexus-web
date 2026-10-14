@@ -81,7 +81,7 @@ export function renderPane(id: PaneRouteId): ReactNode {
   }
   return (
     <Suspense
-      fallback={<PaneLoadingState label="Loading pane…" announcement="Polite" />}
+      fallback={<PaneLoadingState label="Loading pane…" announcement="None" />}
     >
       <Body />
     </Suspense>
