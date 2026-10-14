@@ -87,6 +87,14 @@ historical peaks does not establish that workload's demand; a passing preflight
 does not establish its capacity. swap does not count toward physical memory or
 the available-memory floor.
 
+postgres has a 512 MiB ceiling with container swap disabled. its startup command
+sets `shared_buffers=64MB`, budgeting 64 MiB of shared database cache within that
+ceiling alongside backend processes, shared-memory bookkeeping and file cache.
+shared buffers become resident as queries fill them and cannot be reclaimed
+without swap. the smaller cache can increase database i/o; qualification must
+verify concurrent requests complete within their existing deadlines on the
+2 GiB host.
+
 ## Immutable artifact lineage
 
 On every push to `main`, `.github/workflows/backend-images.yml` builds the API

@@ -32,6 +32,7 @@ x-codex-egress-conf: &codex-egress-conf |
 services:
   postgres:
     image: ${POSTGRES_IMAGE:?set an immutable production digest}
+    command: ["postgres", "-c", "shared_buffers=64MB"]
     restart: unless-stopped
     mem_reservation: 256m
     mem_limit: 512m
