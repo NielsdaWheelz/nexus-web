@@ -73,10 +73,19 @@ host without that bind source, so preflight refuses to proceed. See
 
 The host contract is cgroup v2 with the memory controller, Docker Engine 28 or
 newer (the Codex private bridge needs `gateway_mode_ipv4=isolated`), at least
-1 GiB of swap, at least 128 MiB of available memory and 2 GiB free under `/`.
+1900 MiB of physical memory, 1 GiB of swap, 256 MiB of available memory and
+2 GiB free under `/`.
 Preflight measures each of these. Vercel custom-domain auto-assignment must stay
 disabled and Vercel Authentication must protect previews only, so the staged
 production-target deployment is publicly probeable before promotion.
+
+the api has a 384 MiB memory ceiling with container swap disabled. the seven
+service ceilings total 2224 MiB; these are independent limits, not reserved
+host ram. the 2 GiB host must be qualified against the actual concurrent working
+set, cache reclaim, memory pressure and request completion. summing separate
+historical peaks does not establish that workload's demand; a passing preflight
+does not establish its capacity. swap does not count toward physical memory or
+the available-memory floor.
 
 ## Immutable artifact lineage
 
