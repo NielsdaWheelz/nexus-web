@@ -59,8 +59,8 @@ export interface LibrarySuggestionsResourceParams extends SuggestionsResourcePar
   id: string;
 }
 
-// The Notes index is exhaustive: it carries the view alone, with no page keys.
-export interface NotePagesResourceParams {
+// The Notes index pages by 100, like the chats index.
+export interface NotePagesResourceParams extends CollectionPageParams {
   // The current Notes index view. Canonical emits no sort/direction keys.
   view?: UpdatedTitleIndexView;
 }
@@ -163,14 +163,24 @@ export const librarySuggestionsResource: ResourceDescriptor<LibrarySuggestionsRe
     clientPath: ({ id }) => `/api/libraries/${encoded(id)}/suggestions`,
   };
 
-function notePagesQuery(params: NotePagesResourceParams): string {
+function notePagesViewQuery(params: NotePagesResourceParams): string {
   return params.view ? updatedTitleIndexViewQuery(params.view) : "";
 }
 
+const NOTE_PAGES_LIMIT = 100;
+
+function notePagesPageQuery(params: NotePagesResourceParams): string {
+  return collectionPageQuery(
+    { ...params, limit: params.limit ?? NOTE_PAGES_LIMIT },
+    notePagesViewQuery(params),
+  );
+}
+
 export const notePagesResource: ResourceDescriptor<NotePagesResourceParams> = {
-  cacheKey: (params) => `notes:pages${notePagesQuery(params)}`,
-  serverPath: (params) => `/notes/pages${notePagesQuery(params)}`,
-  clientPath: (params) => `/api/notes/pages${notePagesQuery(params)}`,
+  // Cursor-free: every page of one view shares an entry.
+  cacheKey: (params) => `notes:pages${notePagesViewQuery(params)}`,
+  serverPath: (params) => `/notes/pages${notePagesPageQuery(params)}`,
+  clientPath: (params) => `/api/notes/pages${notePagesPageQuery(params)}`,
 };
 
 export const conversationsInitialResource: ResourceDescriptor<ConversationIndexResourceParams> =

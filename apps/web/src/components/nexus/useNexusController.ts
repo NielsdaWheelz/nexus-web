@@ -26,7 +26,7 @@ import {
 import { NEXUS_COMMANDS, parseNexusQuery } from "@/lib/nexus/query";
 import { candidateRows, choiceRows, EMPTY_LIST, mergeResults, nexusGroups, playbackRow } from "@/lib/nexus/rows";
 import { TRANSPORT_CODES, useNexusFind } from "@/lib/nexus/useNexusFind";
-import { createNotePage } from "@/lib/notes/api";
+import { createPage as createNotePage } from "@/lib/notes/api";
 import { DailyDraftStorageError, readDailyDraft, subscribeDailyDraft } from "@/lib/notes/dailyDraftStore";
 import { resolveDailyLocalDate, useOpenDailyPage } from "@/lib/notes/openDailyPage";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
@@ -278,7 +278,7 @@ export function useNexusController() {
   function createPage(pageId: string, titleDraft: string, activation: NexusTargetActivation) {
     const title = titleDraft.trim() || "Untitled";
     setPage({ kind: "CreatePage", pageId, title, activation, submit: { kind: "Running" } });
-    createNotePage({ pageId, title }).then(
+    createNotePage(pageId, title).then(
       (created) => {
         setPendingNoteFocus(created.id, "title");
         run({ kind: "InternalHref", href: `/pages/${created.id}`, labelHint: created.title }, activation, null, undefined, "Page");

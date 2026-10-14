@@ -1,28 +1,41 @@
 import { apiFetch, decodeApiPayload } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
+import { notePagesResource } from "@/lib/api/resource";
+import type { ListPage } from "@/lib/api/useServerList";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import type { UpdatedTitleIndexView } from "@/lib/collections/updatedTitleIndexView";
 import { withNotePageActionSubject, type NotePage } from "@/lib/notes/pageContract";
 import { isLocalDate } from "@/lib/localDate";
 import { projectResourceSurface, type ResourceSurface } from "@/lib/resources/resourceItems";
 
-export async function createNotePage(input: {
-  pageId: string;
-  title: string;
-}): Promise<NotePage> {
-  const response = await apiFetch<ApiJson<"/notes/pages", "post">>(
+export type NotePageSummary = Schema<"NotePageSummaryOut">;
+
+/** Creates a page by its client id (a retry returns it). Publishes "Notes". */
+export async function createPage(
+  id: string,
+  title: string,
+): Promise<NotePageSummary> {
+  const { data } = await apiFetch<ApiJson<"/notes/pages", "post">>(
     "/api/notes/pages",
-    {
-      method: "POST",
-      body: JSON.stringify({ page_id: input.pageId, title: input.title }),
-    },
+    { method: "POST", body: JSON.stringify({ id, title }) },
   );
-  const page = withNotePageActionSubject(response.data);
-  if (page.id !== input.pageId) {
-    throw new Error(
-      `Notes API create response id ${page.id} does not match requested page ${input.pageId}`,
-    );
-  }
-  return page;
+  publishChange("Notes");
+  return data;
+}
+
+/** One keyset page of the viewer's pages in `view`. */
+export async function fetchNotePages(input: {
+  view: UpdatedTitleIndexView;
+  cursor?: string;
+  limit?: number;
+  signal?: AbortSignal;
+}): Promise<ListPage<NotePageSummary>> {
+  const { signal, ...params } = input;
+  const { data } = await apiFetch<ApiJson<"/notes/pages", "get">>(
+    notePagesResource.clientPath(params),
+    { cache: "no-store", signal },
+  );
+  return data;
 }
 
 export type DailyPageDescriptor =

@@ -33,12 +33,6 @@ class NotePageSummaryOut(BaseModel):
     model_config = _CLOSED
 
 
-class NotePagesOut(BaseModel):
-    pages: list[NotePageSummaryOut]
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class DailyPageSummaryOut(BaseModel):
     local_date: date
 
@@ -80,7 +74,7 @@ DailyPageDescriptor = Annotated[
 
 
 class CreatePageRequest(BaseModel):
-    page_id: UUID
+    id: UUID
     title: str = Field(min_length=1, max_length=200)
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")

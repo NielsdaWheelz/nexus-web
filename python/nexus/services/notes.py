@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, Literal, cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, func, select, text
@@ -15,6 +15,7 @@ from nexus.db.models import DailyPageBinding, NoteBlock, Page, ResourceEdge
 from nexus.db.retries import retry_read_committed, retry_serializable
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
+from nexus.schemas.collection_page import CollectionPage, parse_collection_query
 from nexus.schemas.notes import (
     CreatePageRequest,
     DailyCaptureRequest,
@@ -30,6 +31,7 @@ from nexus.schemas.notes import (
 )
 from nexus.schemas.resource_items import ExpectedNoteBody
 from nexus.services import note_bodies, passage_anchors
+from nexus.services.collection_keyset import UPDATED_TITLE_PLANS, keyset_page
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.highlights import get_highlight_for_visible_read_or_404
 from nexus.services.note_indexing import enqueue_note_reindex
@@ -47,15 +49,6 @@ from nexus.services.resource_mutation_replay import (
     lookup_replay,
     record_replay,
 )
-
-NotesIndexView = Literal["updated_desc", "updated_asc", "title_asc", "title_desc"]
-
-_INDEX_VIEWS: dict[tuple[str | None, str | None], NotesIndexView] = {
-    (None, None): "updated_desc",
-    ("updated", "asc"): "updated_asc",
-    ("title", "asc"): "title_asc",
-    ("title", "desc"): "title_desc",
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,33 +132,42 @@ def recent_note_anchor_facts(
     )
 
 
-def parse_notes_index_query(items: Sequence[tuple[str, str]]) -> NotesIndexView:
-    """The Pages index has no cursor or revision, so ``sort``/``direction`` are the
-    only keys it accepts, each at most once, and every view has exactly one URL."""
-    parameters: dict[str, str] = {}
-    for key, value in items:
-        if key not in {"sort", "direction"} or key in parameters:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST, "Unsupported notes index view"
-            )
-        parameters[key] = value
-    view = _INDEX_VIEWS.get((parameters.get("sort"), parameters.get("direction")))
-    if view is None:
+def list_pages(
+    db: Session, viewer_id: UUID, items: Sequence[tuple[str, str]]
+) -> CollectionPage[NotePageSummaryOut]:
+    """One keyset page of the viewer's pages in an updated/title view."""
+    query = parse_collection_query(items, domain_keys={"sort", "direction"})
+    plan = UPDATED_TITLE_PLANS.get(
+        (query.parameters.get("sort"), query.parameters.get("direction"))
+    )
+    if plan is None:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported notes index view")
-    return view
-
-
-def list_pages(db: Session, viewer_id: UUID, *, view: NotesIndexView) -> list[NotePageSummaryOut]:
-    """Every owned page in one total order; equal titles read newest-first."""
-    folded = func.lower(func.btrim(Page.title))
-    order = {
-        "updated_desc": (Page.updated_at.desc(), Page.title.asc(), Page.id.asc()),
-        "updated_asc": (Page.updated_at.asc(), Page.title.asc(), Page.id.asc()),
-        "title_asc": (folded.asc(), Page.title.asc(), Page.updated_at.desc(), Page.id.asc()),
-        "title_desc": (folded.desc(), Page.title.desc(), Page.updated_at.desc(), Page.id.asc()),
-    }[view]
-    pages = db.scalars(select(Page).where(Page.user_id == viewer_id).order_by(*order)).all()
-    return [NotePageSummaryOut.model_validate(page, from_attributes=True) for page in pages]
+    rows, cursor = keyset_page(
+        db,
+        binding={"list": "Pages", "viewer": viewer_id},
+        plan=plan,
+        cursor=query.cursor,
+        limit=query.limit,
+        params={"viewer": viewer_id},
+        sql=lambda keyset, order: f"""
+            WITH facts AS (
+                SELECT p.id, p.title, p.updated_at, p.title AS presented_title,
+                    lower(p.title) AS title_key
+                FROM pages p
+                WHERE p.user_id = :viewer
+            )
+            SELECT * FROM facts WHERE true {keyset}
+            ORDER BY {order}
+            LIMIT :limit
+        """,
+    )
+    return CollectionPage[NotePageSummaryOut](
+        items=[
+            NotePageSummaryOut(id=row["id"], title=row["title"], updated_at=row["updated_at"])
+            for row in rows
+        ],
+        next_cursor=cursor,
+    )
 
 
 def get_page_for_owner_or_404(db: Session, viewer_id: UUID, page_id: UUID) -> Page:
@@ -175,26 +177,24 @@ def get_page_for_owner_or_404(db: Session, viewer_id: UUID, page_id: UUID) -> Pa
     return page
 
 
-def create_page(db: Session, viewer_id: UUID, request: CreatePageRequest) -> NotePageOut:
-    """Idempotent by the client-chosen page id; a different owner or title conflicts."""
+def create_page(db: Session, viewer_id: UUID, request: CreatePageRequest) -> NotePageSummaryOut:
+    """Create by the client's page id: a retry finds the viewer's page and returns it
+    unchanged; another owner's id is 409."""
 
-    def op() -> UUID:
+    def op() -> Page:
         with transaction(db):
-            page = db.get(Page, request.page_id)
+            page = db.get(Page, request.id)
             if page is None:
-                page = Page(id=request.page_id, user_id=viewer_id, title=request.title)
+                page = Page(id=request.id, user_id=viewer_id, title=request.title)
                 db.add(page)
                 db.flush()
-            elif page.user_id != viewer_id or page.title != request.title:
-                raise ConflictError(
-                    ApiErrorCode.E_RESOURCE_CONFLICT,
-                    "Page create id is already bound to a different resource",
-                )
-            _ensure_page_versions(db, viewer_id, page.id)
-            return page.id
+                _ensure_page_versions(db, viewer_id, page.id)
+            elif page.user_id != viewer_id:
+                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Page id is taken")
+            return page
 
-    page_id = retry_serializable(db, "create_page", op)
-    return _page_out(db, viewer_id, get_page_for_owner_or_404(db, viewer_id, page_id))
+    page = retry_serializable(db, "create_page", op)
+    return NotePageSummaryOut(id=page.id, title=page.title, updated_at=page.updated_at)
 
 
 def get_page(db: Session, viewer_id: UUID, page_id: UUID) -> NotePageOut:
@@ -215,10 +215,14 @@ def update_page(
 
 
 def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
+    """Idempotent: the page, its links, binding and dossier state go; its notes stay.
+    A missing page (or another owner's) is already gone."""
     from nexus.services.dossier import engine as dossier_engine
 
     def attempt() -> None:
-        page = get_page_for_owner_or_404(db, viewer_id, page_id)
+        page = db.get(Page, page_id)
+        if page is None or page.user_id != viewer_id:
+            return
         ref = _page_ref(page.id)
         dossier_engine.on_subject_deleted(db, ref)
         delete_edges_for_deleted_resource(db, ref=ref)

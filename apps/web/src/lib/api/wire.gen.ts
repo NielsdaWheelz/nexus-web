@@ -2114,10 +2114,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Pages */
+        /**
+         * List Pages
+         * @description Keyset pages of the viewer's pages in the shared updated/title views.
+         */
         get: operations["list_pages_notes_pages_get"];
         put?: never;
-        /** Create Page */
+        /**
+         * Create Page
+         * @description Create by the client's id; a retry returns the page, another owner's id is 409.
+         */
         post: operations["create_page_notes_pages_post"];
         delete?: never;
         options?: never;
@@ -2136,7 +2142,10 @@ export interface paths {
         get: operations["get_page_notes_pages__page_id__get"];
         put?: never;
         post?: never;
-        /** Delete Page */
+        /**
+         * Delete Page
+         * @description Idempotent: a missing page is 204; the page's notes stay.
+         */
         delete: operations["delete_page_notes_pages__page_id__delete"];
         options?: never;
         head?: never;
@@ -3787,6 +3796,13 @@ export interface components {
             /** Next Cursor */
             next_cursor: string | null;
         };
+        /** CollectionPage[NotePageSummaryOut] */
+        CollectionPage_NotePageSummaryOut_: {
+            /** Items */
+            items: components["schemas"]["NotePageSummaryOut"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
         /** CollectionPage[PodcastEpisodeListItemOut] */
         CollectionPage_PodcastEpisodeListItemOut_: {
             /** Items */
@@ -4304,10 +4320,10 @@ export interface components {
         /** CreatePageRequest */
         CreatePageRequest: {
             /**
-             * Page Id
+             * Id
              * Format: uuid
              */
-            page_id: string;
+            id: string;
             /** Title */
             title: string;
         };
@@ -4519,6 +4535,10 @@ export interface components {
         Data_CollectionPage_LibraryOut__: {
             data: components["schemas"]["CollectionPage_LibraryOut_"];
         };
+        /** Data[CollectionPage[NotePageSummaryOut]] */
+        Data_CollectionPage_NotePageSummaryOut__: {
+            data: components["schemas"]["CollectionPage_NotePageSummaryOut_"];
+        };
         /** Data[CollectionPage[PodcastEpisodeListItemOut]] */
         Data_CollectionPage_PodcastEpisodeListItemOut__: {
             data: components["schemas"]["CollectionPage_PodcastEpisodeListItemOut_"];
@@ -4679,9 +4699,9 @@ export interface components {
         Data_NotePageOut_: {
             data: components["schemas"]["NotePageOut"];
         };
-        /** Data[NotePagesOut] */
-        Data_NotePagesOut_: {
-            data: components["schemas"]["NotePagesOut"];
+        /** Data[NotePageSummaryOut] */
+        Data_NotePageSummaryOut_: {
+            data: components["schemas"]["NotePageSummaryOut"];
         };
         /** Data[OracleReadingCreatedOut] */
         Data_OracleReadingCreatedOut_: {
@@ -7848,11 +7868,6 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
-        };
-        /** NotePagesOut */
-        NotePagesOut: {
-            /** Pages */
-            pages: components["schemas"]["NotePageSummaryOut"][];
         };
         /** NotePassageTarget */
         NotePassageTarget: {
@@ -17319,7 +17334,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_NotePagesOut_"];
+                    "application/json": components["schemas"]["Data_CollectionPage_NotePageSummaryOut__"];
                 };
             };
         };
@@ -17343,7 +17358,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_NotePageOut_"];
+                    "application/json": components["schemas"]["Data_NotePageSummaryOut_"];
                 };
             };
             /** @description Validation Error */

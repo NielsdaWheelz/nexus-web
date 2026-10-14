@@ -1,566 +1,336 @@
 "use client";
 
-import { useCallback, useId, useEffect, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
-import Button from "@/components/ui/Button";
-import Input from "@/components/ui/Input";
+import { useCallback, useId, useMemo, useState } from "react";
+import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import CollectionView from "@/components/collections/CollectionView";
 import {
   FeedbackNotice,
-  type FeedbackActions,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import CollectionView from "@/components/collections/CollectionView";
-import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
-import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
-import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
-import { usePaneChrome } from "@/lib/panes/paneChrome";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { useChangeStamp } from "@/lib/api/changes";
+import { apiTransportFeedback } from "@/lib/api/client";
 import { notePagesResource } from "@/lib/api/resource";
-import {
-  isApiError,
-  isInvalidViewError,
-  isSameSystemApiDefect,
-} from "@/lib/api/client";
-import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
+import { useResourceSeed } from "@/lib/api/resourceCache";
+import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
-  requirePaneRuntime,
-  usePaneRuntime,
-  useSetPaneLabel,
-} from "@/lib/panes/paneRuntime";
+  listRowStatus,
+  useServerList,
+  type ListSnapshot,
+} from "@/lib/api/useServerList";
+import { presentNote } from "@/lib/collections/presenters/note";
 import {
-  usePaneReturnReady,
-  usePaneScrollRetention,
-} from "@/lib/workspace/paneReturnMemento";
-import { createNotePage } from "@/lib/notes/api";
-import { useOpenDailyPage } from "@/lib/notes/openDailyPage";
-import {
-  CANONICAL_UPDATED_TITLE_INDEX_VIEW,
-  UPDATED_TITLE_SORT_OPTION_IDS,
+  CANONICAL_UPDATED_TITLE_INDEX_VIEW as CANONICAL,
   decodeUpdatedTitleIndexView,
   encodeUpdatedTitleIndexView,
-  type DecodedUpdatedTitleIndexView,
-  type UpdatedTitleIndexView,
-  type UpdatedTitleSortOptionId,
+  UPDATED_TITLE_SORT_OPTION_IDS,
   updatedTitleSortOptionLabel,
   updatedTitleSortOptionOf,
   updatedTitleViewForSortOption,
+  type DecodedUpdatedTitleIndexView,
+  type UpdatedTitleIndexView,
+  type UpdatedTitleSortOptionId,
 } from "@/lib/collections/updatedTitleIndexView";
-import { PROGRAMMATIC_NEXUS_TARGET_ACTIVATION } from "@/lib/nexus/model";
+import { isAbortError } from "@/lib/errors";
+import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
+import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
+import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import {
-  loadNotePages,
+  createPage,
+  fetchNotePages,
   type NotePageSummary,
-} from "@/lib/notes/pageContract";
+} from "@/lib/notes/api";
+import { resolveDailyLocalDate } from "@/lib/notes/openDailyPage";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
-import { useChangeStamp } from "@/lib/api/changes";
-import { useResource } from "@/lib/api/useResource";
+import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import {
   matchesPaneFilterQuery,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
-import { presentNote } from "@/lib/collections/presenters/note";
+import type { NotesPaneSeed } from "@/lib/panes/paneResourceLoaders";
+import {
+  requirePaneRuntime,
+  usePaneIsActive,
+  usePaneRuntime,
+  useSetPaneLabel,
+} from "@/lib/panes/paneRuntime";
 import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
+import {
+  definePaneVisitDataKey,
+  usePaneReturnReady,
+  usePaneScrollRetention,
+} from "@/lib/workspace/paneReturnMemento";
 import styles from "./notes.module.css";
 
-const EMPTY_NOTE_PAGES: readonly NotePageSummary[] = [];
+const VISIT = definePaneVisitDataKey<ListSnapshot<NotePageSummary>>(
+  "Notes.Index",
+);
+const UNIT = { singular: "page", plural: "pages" };
+// The pane URL owns the sort (`?sort=&direction=`); canonical has no keys.
+const VIEW_CODEC = {
+  basePath: "/notes",
+  decode: decodeUpdatedTitleIndexView,
+  encode: (decoded: DecodedUpdatedTitleIndexView, current: URLSearchParams) =>
+    encodeUpdatedTitleIndexView(
+      decoded.kind === "Valid" ? decoded.view : CANONICAL,
+      current,
+    ),
+  replaceOptions: { viewTransition: { kind: "collection-reflow" as const } },
+};
+const keyOf = (view: UpdatedTitleIndexView) =>
+  notePagesResource.cacheKey({ view });
 
-/** The index committed as one exact view. The endpoint is exhaustive. */
-interface CommittedPagesView {
-  readonly view: UpdatedTitleIndexView;
-  readonly pages: readonly NotePageSummary[];
-  readonly notesStamp: string;
+/** A create the user can retry: the same id, so a landed retry finds its page. */
+interface Create {
+  readonly id: string;
+  readonly title: string;
+  readonly titled: boolean;
 }
 
-type NotesOperation = "Load" | "CreatePage" | "OpenToday";
-
-interface CreatePageIntent {
-  readonly replay: { readonly pageId: string; readonly title: string };
-  readonly focusTarget: "body" | "title";
-}
-
-function notesOperationTitle(operation: NotesOperation): string {
-  switch (operation) {
-    case "Load":
-      return "Notes couldn’t be loaded";
-    case "CreatePage":
-      return "Page couldn’t be created";
-    case "OpenToday":
-      return "Today couldn’t be opened";
-  }
-}
-
-/** Finite Notes-domain copy adapter; contract and unknown failures defect. */
-function notesErrorMessage(
-  error: unknown,
-  operation: NotesOperation,
-): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-
-  const title = notesOperationTitle(operation);
-  const requestId = error.requestId;
-  switch (error.code) {
-    case "E_NETWORK":
-      if (operation === "OpenToday") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "Check your connection and retry.",
-        requestId,
-      };
-    case "E_UPSTREAM":
-    case "E_UPSTREAM_TIMEOUT":
-      if (operation === "OpenToday") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "Nexus couldn’t complete the request. Wait a moment, then retry.",
-        requestId,
-      };
-    case "E_RATE_LIMITED":
-      if (operation === "OpenToday") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "Wait a moment, then retry.",
-        requestId,
-      };
-    case "E_INVALID_REQUEST":
-      if (operation !== "CreatePage") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "Change the page title, then submit it again.",
-        requestId,
-      };
-    case "E_RESOURCE_CONFLICT":
-      if (operation !== "CreatePage") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message:
-          "The saved create request conflicts with another page. Change the title, then submit it again.",
-        requestId,
-      };
-    default:
-      throw error;
-  }
-}
-
+/**
+ * The Notes index: the chats index's sortable view over the viewer's pages
+ * (filter, load to the end, count), a box that creates a page, and Today.
+ */
 export default function NotesPaneBody() {
-  const openDailyPage = useOpenDailyPage();
-  const activateTarget = requirePaneRuntime(
-    usePaneRuntime(),
-    "NotesPaneBody",
-  ).activateTarget;
-  const {
-    value: title,
-    setValue: setTitle,
-    inputProps: titleInputProps,
-  } = useHydrationPreservedInput();
-  const [operationFeedback, setOperationFeedback] = useState<{
-    content: FeedbackContent;
-    retry: "CreatePage" | "OpenToday" | null;
-  } | null>(null);
-  const [failedCreateIntent, setFailedCreateIntent] =
-    useState<CreatePageIntent | null>(null);
-  const [defectState, setDefectState] = useState<{ error: unknown } | null>(null);
-  const pageCreateReplayRef = useRef<{
-    pageId: string;
-    title: string;
-  } | null>(null);
-
-  // The pane URL owns the index view through a strict, total codec; `view` is
-  // null only for an Invalid URL, a terminal, user-recoverable state.
-  const pagesViewCodec = useMemo(
-    () => ({
-      basePath: "/notes",
-      decode: decodeUpdatedTitleIndexView,
-      encode: (
-        decoded: DecodedUpdatedTitleIndexView,
-        current: URLSearchParams,
-      ): URLSearchParams =>
-        encodeUpdatedTitleIndexView(
-          decoded.kind === "Valid"
-            ? decoded.view
-            : CANONICAL_UPDATED_TITLE_INDEX_VIEW,
-          current,
-        ),
-      replaceOptions: {
-        viewTransition: { kind: "collection-reflow" as const },
-      },
-    }),
-    [],
-  );
-  const { state: decodedView, setState: setDecodedView } =
-    usePaneUrlState(pagesViewCodec);
-  const view = decodedView.kind === "Valid" ? decodedView.view : null;
-  // Set when the backend rejects the requested view; cleared whenever another
-  // view is requested.
-  const [viewInvalid, setViewInvalid] = useState(false);
-  const invalidView = decodedView.kind === "Invalid" || viewInvalid;
-  const [committed, setCommitted] = useState<CommittedPagesView | null>(null);
-  const capturePaneScroll = usePaneScrollRetention(committed);
-  // A view replacement only writes the URL: the committed rows stay rendered
-  // until the requested/committed mismatch it creates is answered.
+  const runtime = requirePaneRuntime(usePaneRuntime(), "NotesPaneBody");
+  const { calendarTimeZone } = useAuthenticatedAccount();
+  const fail = useThrowLater();
+  const { state: decoded, setState: setDecoded } = usePaneUrlState(VIEW_CODEC);
+  const invalid = decoded.kind === "Invalid";
+  const view = decoded.kind === "Valid" ? decoded.view : CANONICAL;
+  const seed = useResourceSeed<NotesPaneSeed>(keyOf(CANONICAL));
+  const list = useServerList<NotePageSummary>({
+    key: invalid ? null : keyOf(view),
+    stale: useChangeStamp("Notes"),
+    pageSize: 100,
+    drain: true,
+    active: usePaneIsActive(),
+    visit: VISIT,
+    seed: seed && { key: keyOf(CANONICAL), page: seed },
+    id: (item) => item.id,
+    fetchPage: (cursor, limit, signal) =>
+      fetchNotePages({ view, cursor: cursor ?? undefined, limit, signal }),
+  });
+  useSetPaneLabel("Notes");
+  usePaneReturnReady(list.status !== "loading" || invalid);
+  const captureScroll = usePaneScrollRetention(list.items);
   const setView = useCallback(
     (next: UpdatedTitleIndexView) => {
-      capturePaneScroll();
-      setDecodedView({ kind: "Valid", view: next });
+      captureScroll();
+      setDecoded({ kind: "Valid", view: next });
     },
-    [capturePaneScroll, setDecodedView],
+    [captureScroll, setDecoded],
   );
 
-  const requestedViewKey =
-    view === null ? null : notePagesResource.cacheKey({ view });
-  const committedViewKey =
-    committed === null
-      ? null
-      : notePagesResource.cacheKey({ view: committed.view });
-  // The canonical view is the route's server seed (whose resource key this one
-  // matches); every other exact view owns its own request. An invalid view
-  // requests nothing at all.
-  // A page deleted elsewhere ("Notes") refetches the view.
-  const notesStamp = useChangeStamp("Notes");
-  const requestsFirstPage =
-    view === null ||
-    committed === null ||
-    requestedViewKey !== committedViewKey ||
-    committed.notesStamp !== notesStamp;
-  const pagesResource = useResource<readonly NotePageSummary[]>({
-    cacheKey: requestsFirstPage && !invalidView ? requestedViewKey : null,
-    load: async (signal) => {
-      if (view === null) {
-        // justify-defect: a non-null request key is built from this exact view.
-        throw new Error("Notes index request lost its view identity");
-      }
-      return loadNotePages(clientResourceFetcher(signal), { view });
-    },
-  });
-  // Latest-wins atomic commit: the resource reports a result only under the
-  // current request identity, so a superseded view can never install its rows.
-  useEffect(() => {
-    if (pagesResource.status === "ready" && view !== null) {
-      setCommitted({ view, pages: pagesResource.data, notesStamp });
-      return;
-    }
-    if (
-      pagesResource.status === "error" &&
-      isInvalidViewError(pagesResource.error)
-    ) {
-      setViewInvalid(true);
-    }
-  }, [notesStamp, pagesResource, view]);
-  // A newly requested view retires the previous view's rejection.
-  useEffect(() => setViewInvalid(false), [requestedViewKey]);
-  usePaneReturnReady(
-    committed !== null || pagesResource.status === "error" || invalidView,
-  );
-  const pages = committed?.pages ?? EMPTY_NOTE_PAGES;
-  const loading = committed === null && pagesResource.status !== "error";
-  const getFilterStatus = useCallback(
-    (query: string) => {
-      const visibleCount = pages.filter((page) =>
-        matchesPaneFilterQuery(query, [page.title]),
-      ).length;
-      const unit = { singular: "page", plural: "pages" };
-      if (committed !== null && requestsFirstPage) {
-        return {
-          kind: "Retained" as const,
-          visibleCount,
-          loadedCount: pages.length,
-          unit,
-          cause: pagesResource.status === "error" ? "Failed" as const : "Updating" as const,
-        };
-      }
-      if (committed === null && pagesResource.status === "error") {
-        return { kind: "Failed" as const, visibleCount, loadedCount: pages.length, unit };
-      }
-      return committed !== null
-        ? {
-            kind: "Complete" as const,
-            visibleCount,
-            totalCount: pages.length,
-            unit,
-          }
-        : {
-            kind: "Partial" as const,
-            visibleCount,
-            loadedCount: pages.length,
-            unit,
-          };
-    },
-    [committed, pages, pagesResource.status, requestsFirstPage],
-  );
-  const {
-    query: filterQuery,
-    onQueryChange,
-    clearQuery,
-    rowStatus,
-  } = usePaneFilterRows({
+  const rows = useMemo(() => list.items.map(presentNote), [list.items]);
+  const filterRows = usePaneFilterRows({
     sourceKey: "Notes.Pages",
-    getRowStatus: getFilterStatus,
+    getRowStatus: (text) =>
+      listRowStatus(
+        list,
+        rows.length,
+        rows.filter((row) => matchesPaneFilterQuery(text, [row.title.text]))
+          .length,
+        UNIT,
+      ),
   });
+  const { query, clearQuery } = filterRows;
   const { inputRef, focusInput } = usePaneQueryInput();
   const queryStatusId = useId();
-  const resetView = useCallback(() => {
+  const reset = useCallback(() => {
     clearQuery();
-    setView(CANONICAL_UPDATED_TITLE_INDEX_VIEW);
-  }, [clearQuery, setView]);
-  const queryControls = invalidView || view === null ? undefined : {
-    kind: "Controls" as const,
-    label: "Filter pages",
-    focusInput,
-    content: (
-      <PaneQueryToolbar
-        inputRef={inputRef}
-        input={{ label: "Filter pages", placeholder: "Filter pages", value: filterQuery, appliedValue: filterQuery, onChange: onQueryChange, onClear: clearQuery }}
-        sort={{
-          label: "Sort",
-          value: updatedTitleSortOptionOf(view),
-          choices: UPDATED_TITLE_SORT_OPTION_IDS.map((value) => ({ value, label: updatedTitleSortOptionLabel(value) })),
-          onChange: (value) => setView(updatedTitleViewForSortOption(
-            // justify-type-assertion: the select offers exactly these ids.
-            value as UpdatedTitleSortOptionId,
-          )),
-        }}
-        status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={rowStatus} query={filterQuery} /> }}
-        onReset={view.kind !== "Canonical" || filterQuery ? resetView : undefined}
-      />
-    ),
-  };
-  const filteredPages = useMemo(
-    () =>
-      pages.filter((page) => matchesPaneFilterQuery(filterQuery, [page.title])),
-    [filterQuery, pages],
-  );
-
-  useSetPaneLabel("Notes");
+    // Leaving an invalid view mounts the list: nothing to reflow, and a view
+    // transition would mount it after the focus below.
+    if (invalid) runtime.router.replace("/notes");
+    else setView(CANONICAL);
+    requestAnimationFrame(() =>
+      inputRef.current?.focus({ preventScroll: true }),
+    );
+  }, [clearQuery, inputRef, invalid, runtime.router, setView]);
+  const { refetch } = list;
+  const execute = useCallback<PaneRefreshExecute>(async () => {
+    try {
+      await refetch();
+      return { kind: "Complete", announcement: "Notes refreshed" };
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      return { kind: "Failed", announcement: "Notes failed to refresh" };
+    }
+  }, [refetch]);
   usePaneChrome({
-    query: queryControls,
+    query: invalid ? undefined : {
+      kind: "Controls",
+      label: "Filter pages",
+      focusInput,
+      content: (
+        <PaneQueryToolbar
+          inputRef={inputRef}
+          input={{ label: "Filter pages", placeholder: "Filter pages", value: query, appliedValue: query, onChange: filterRows.onQueryChange, onClear: clearQuery }}
+          sort={{
+            label: "Sort",
+            value: updatedTitleSortOptionOf(view),
+            choices: UPDATED_TITLE_SORT_OPTION_IDS.map((value) => ({ value, label: updatedTitleSortOptionLabel(value) })),
+            onChange: (value) => setView(updatedTitleViewForSortOption(
+              // justify-type-assertion: the select offers exactly these ids.
+              value as UpdatedTitleSortOptionId,
+            )),
+          }}
+          status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={query} /> }}
+          onReset={view.kind !== "Canonical" || query ? reset : undefined}
+        />
+      ),
+    },
+    refresh: { kind: "Refreshable", sourceKey: "Notes.Pages", execute },
     header: {
       kind: "Section",
-      // The metadata describes the exhaustive committed view, never the subset.
-      meta:
-        pagesResource.status === "loading"
-          ? { kind: "Pending" }
-          : committed !== null && !invalidView
-            ? { kind: "Count", value: pages.length, unit: "page" }
-            : { kind: "None" },
+      meta: invalid
+        ? { kind: "None" }
+        : list.complete
+          ? { kind: "Count", value: list.items.length, unit: "page" }
+          : { kind: "Pending" },
     },
   });
 
-  const captureFailure = useCallback(
-    (error: unknown, operation: NotesOperation): FeedbackContent | null => {
-      if (handleUnauthenticatedApiError(error)) return null;
-      try {
-        return notesErrorMessage(error, operation);
-      } catch (caughtDefect: unknown) {
-        setDefectState({ error: caughtDefect });
-        return null;
-      }
-    },
-    [],
-  );
-
-  const viewToday = useCallback(() => {
-    setOperationFeedback(null);
-    try {
-      openDailyPage(
-        {
-          kind: "OpenDailyPage",
-          date: { kind: "Today" },
-          entry: { kind: "View" },
-        },
-        PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
-      );
-    } catch (error: unknown) {
-      const content = captureFailure(error, "OpenToday");
-      if (content) {
-        setOperationFeedback({ content, retry: "OpenToday" });
-      }
-    }
-  }, [captureFailure, openDailyPage]);
-
-  const attemptCreatePage = useCallback(async (intent: CreatePageIntent) => {
-    setOperationFeedback(null);
-    try {
-      const page = await createNotePage(intent.replay);
-      pageCreateReplayRef.current = null;
-      setFailedCreateIntent(null);
-      setCommitted((current) =>
-        current === null
-          ? current
-          : { ...current, pages: [page, ...current.pages] },
-      );
-      setTitle("");
-      setPendingNoteFocus(page.id, intent.focusTarget);
-      activateTarget({
-        target: { href: `/pages/${page.id}`, labelHint: page.title },
-        disposition: { kind: "Follow" },
-      });
-    } catch (error: unknown) {
-      const content = captureFailure(error, "CreatePage");
-      if (content) {
-        const replayable =
-          isApiError(error) &&
-          (error.code === "E_NETWORK" ||
-            error.code === "E_UPSTREAM" ||
-            error.code === "E_UPSTREAM_TIMEOUT" ||
-            error.code === "E_RATE_LIMITED");
-        setFailedCreateIntent(replayable ? intent : null);
-        if (!replayable) pageCreateReplayRef.current = null;
-        setOperationFeedback({
-          content,
-          retry: replayable ? "CreatePage" : null,
+  const title = useHydrationPreservedInput();
+  const [retry, setRetry] = useState<Create | null>(null);
+  const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  const submit = (create: Create) => {
+    setFailure(null);
+    createPage(create.id, create.title).then(
+      (page) => {
+        setRetry(null);
+        title.setValue("");
+        setPendingNoteFocus(page.id, create.titled ? "body" : "title");
+        runtime.activateTarget({
+          target: { href: `/pages/${page.id}`, labelHint: page.title },
+          disposition: { kind: "Follow" },
         });
-      }
-    }
-  }, [activateTarget, captureFailure, setTitle]);
-
-  const createPage = useCallback(() => {
-    const trimmedTitle = title.trim();
-    const nextTitle = trimmedTitle || "Untitled";
-    const replay =
-      pageCreateReplayRef.current?.title === nextTitle
-        ? pageCreateReplayRef.current
-        : { pageId: crypto.randomUUID(), title: nextTitle };
-    pageCreateReplayRef.current = replay;
-    void attemptCreatePage({
-      replay,
-      focusTarget: trimmedTitle ? "body" : "title",
+      },
+      (error: unknown) => {
+        const modeled = modeledApiError(error, fail);
+        if (!modeled) return;
+        const heading = "Page couldn’t be created";
+        setRetry(create);
+        setFailure(
+          apiTransportFeedback(modeled, heading) ?? {
+            tone: "Danger",
+            title: heading,
+            message: "Change the title, then create it again.",
+            requestId: modeled.requestId,
+          },
+        );
+      },
+    );
+  };
+  const openToday = () =>
+    runtime.activateTarget({
+      target: {
+        href: `/daily/${resolveDailyLocalDate({ kind: "Today" }, calendarTimeZone)}`,
+      },
+      disposition: { kind: "Adopt" },
     });
-  }, [attemptCreatePage, title]);
 
-  const retryFailedCreate = useCallback(() => {
-    if (failedCreateIntent) void attemptCreatePage(failedCreateIntent);
-  }, [attemptCreatePage, failedCreateIntent]);
-
-  if (defectState !== null) throw defectState.error;
-
-  if (invalidView) {
+  if (invalid) {
     return (
       <FeedbackNotice
         content={{ tone: "Danger", title: "Invalid pages view" }}
         announcement="Assertive"
-        actions={[
-          {
-            label: "Reset view",
-            onClick: () => {
-              clearQuery();
-              setDecodedView({
-                kind: "Valid",
-                view: CANONICAL_UPDATED_TITLE_INDEX_VIEW,
-              });
-              requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
-            },
-          },
-        ]}
+        actions={[{ label: "Reset view", onClick: reset }]}
       />
     );
   }
-
-  // A rejected view is the terminal state above, not a load failure: the copy
-  // adapter models neither, so it is never asked about one.
-  const loadFeedback =
-    pagesResource.status === "error" &&
-    !isInvalidViewError(pagesResource.error)
-      ? {
-          content: notesErrorMessage(pagesResource.error, "Load"),
-          actions: [
-            { label: "Retry", onClick: pagesResource.retry },
-          ] as FeedbackActions,
-        }
-      : null;
-  const operationActions: FeedbackActions | undefined = operationFeedback
-    ? operationFeedback.retry === "CreatePage"
-      ? [{ label: "Retry", onClick: retryFailedCreate }]
-      : operationFeedback.retry === "OpenToday"
-        ? [{ label: "Retry", onClick: viewToday }]
-        : undefined
-    : undefined;
-  const visibleFeedback = loadFeedback ??
-    (operationFeedback
-      ? { content: operationFeedback.content, actions: operationActions }
-      : null);
-
+  const failed = list.failure?.op === "More" ? null : list.failure?.error;
+  const loadFailure = failed ? (
+    <FeedbackNotice
+      content={{
+        tone: "Danger",
+        title: "Notes couldn’t be loaded.",
+        requestId: failed.requestId,
+      }}
+      announcement="Assertive"
+      actions={[{ label: "Retry", onClick: list.retry }]}
+    />
+  ) : undefined;
+  const filtering = query.trim() !== "";
   return (
     <div>
-    <CollectionView
-      returnScope="Notes.Pages"
-      rows={filteredPages.map((page) => presentNote(page))}
-      status={loading ? "loading" : "ready"}
-      ariaLabel="Notes"
-      rowChangePresentation={{
-        kind: "ImmediateOnKeyChange",
-        key: filterQuery.trim(),
-      }}
-      notice={
-        visibleFeedback ? (
-          <FeedbackNotice
-            content={visibleFeedback.content}
-            announcement="Assertive"
-            actions={visibleFeedback.actions}
-          />
-        ) : filterQuery.trim() &&
-          committed === null &&
-          filteredPages.length === 0 ? (
+      <CollectionView
+        returnScope="Notes.Pages"
+        rows={rows.filter((row) =>
+          matchesPaneFilterQuery(query, [row.title.text]),
+        )}
+        status={list.status === "failed" ? "error" : list.status}
+        ariaLabel="Notes"
+        rowChangePresentation={{
+          kind: "ImmediateOnKeyChange",
+          key: query.trim(),
+        }}
+        collectionBusy={list.running !== null || !list.current}
+        notice={
+          failure ? (
+            <FeedbackNotice
+              content={failure}
+              announcement="Assertive"
+              actions={
+                retry
+                  ? [{ label: "Retry", onClick: () => submit(retry) }]
+                  : undefined
+              }
+            />
+          ) : list.status === "ready" ? (
+            loadFailure
+          ) : undefined
+        }
+        error={list.status === "ready" ? undefined : loadFailure}
+        empty={
           <FeedbackNotice
             content={{
               tone: "Neutral",
-              title: "No matching page found so far.",
-            }}
-            announcement="None"
-          />
-        ) : undefined
-      }
-      empty={
-        visibleFeedback ? undefined : filterQuery.trim() ? (
-          <FeedbackNotice
-            content={{
-              tone: "Neutral",
-              title:
-                committed !== null
+              title: !filtering
+                ? "No pages yet."
+                : list.complete
                   ? "No pages match this filter."
                   : "No matching page found so far.",
             }}
             announcement="None"
           />
-        ) : (
-          <FeedbackNotice
-            content={{ tone: "Neutral", title: "No pages yet." }}
-            announcement="None"
-          />
-        )
-      }
-      toolbar={
-        <>
-          <form
-            className={styles.toolbar}
-            onSubmit={(event) => {
-              event.preventDefault();
-              void createPage();
-            }}
-          >
-            <Input
-              {...titleInputProps}
-              placeholder="New page"
-              aria-label="New page title"
-              style={{ flex: 1 }}
-            />
-            <Button iconOnly type="submit" aria-label="Create page">
-              <Plus size={16} aria-hidden="true" />
+        }
+        footer={<CollectionExhaustionNotice list={list} />}
+        toolbar={
+          <>
+            <form
+              className={styles.toolbar}
+              onSubmit={(event) => {
+                event.preventDefault();
+                const typed = title.value.trim();
+                const next = typed || "Untitled";
+                submit(
+                  retry?.title === next
+                    ? retry
+                    : { id: crypto.randomUUID(), title: next, titled: !!typed },
+                );
+              }}
+            >
+              <Input
+                {...title.inputProps}
+                placeholder="New page"
+                aria-label="New page title"
+                style={{ flex: 1 }}
+              />
+              <Button iconOnly type="submit" aria-label="Create page">
+                <Plus size={16} aria-hidden="true" />
+              </Button>
+            </form>
+            <Button variant="secondary" size="sm" onClick={openToday}>
+              Today
             </Button>
-          </form>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={viewToday}
-          >
-            Today
-          </Button>
-        </>
-      }
-    />
+          </>
+        }
+      />
     </div>
   );
 }
