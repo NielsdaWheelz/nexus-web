@@ -6,6 +6,7 @@ import styles from "./layout.module.css";
 /**
  * The whole authenticated workspace's boundary: bootstrap and live workspace
  * defects. Expected bootstrap transport failures are handled before this boundary.
+ * #entry-failure is the notice return-focus target, shared with root containment.
  */
 export class AuthenticatedWorkspaceErrorBoundary extends Component<
   { children: ReactNode },
@@ -31,6 +32,7 @@ export class AuthenticatedWorkspaceErrorBoundary extends Component<
     if (!this.state.failed) return this.props.children;
     return (
       <main
+        id="entry-failure"
         ref={this.focusDisplaced}
         role="alert"
         aria-labelledby="workspace-error-heading"

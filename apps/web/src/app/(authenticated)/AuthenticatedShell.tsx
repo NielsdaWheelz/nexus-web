@@ -8,7 +8,6 @@ import {
   useRef,
   useState,
   useTransition,
-  type MouseEvent,
 } from "react";
 import AppNav from "@/components/appnav/AppNav";
 import { useFeedback } from "@/components/feedback/Feedback";
@@ -89,7 +88,7 @@ function Workspace(props: {
 }) {
   const { accountId } = props;
   const { profile } = useReaderContext();
-  // The reader column is every pane's minimum and default width: the server
+  // The reader column is every pane's preferred and default width: the server
   // estimates it from the profile, and this hidden probe measures it.
   const probe = useRef<HTMLDivElement>(null);
   const [columnWidthPx, setColumnWidthPx] = useState(() =>
@@ -166,13 +165,10 @@ function WorkspaceEntryNotice({ failure }: { failure: { requestId?: string } | n
   const { state } = useWorkspaceStore();
   const [pending, startTransition] = useTransition();
   const inFlight = useRef(false);
-  const focusedAction = useRef<HTMLButtonElement | null>(null);
-  const retry = useCallback((event: MouseEvent<HTMLButtonElement>) => {
+  const activePaneId = useRef(state.activePrimaryPaneId);
+  const retry = useCallback(() => {
     if (inFlight.current) return;
     inFlight.current = true;
-    focusedAction.current = document.activeElement === event.currentTarget
-      ? event.currentTarget
-      : null;
     startTransition(() => router.refresh());
   }, [router]);
 
@@ -192,19 +188,18 @@ function WorkspaceEntryNotice({ failure }: { failure: { requestId?: string } | n
         requestId: failure.requestId,
       },
       announcement: "Polite",
-      actions: [{ label: "try again", pending, onClick: retry }],
+      actions: [{ label: "try again", busy: pending, onClick: retry }],
+      // Both entry defect boundaries expose this terminal focus destination.
+      returnFocus: () => document.getElementById("entry-failure")
+        ?? findPaneLandmarkFocusTarget(activePaneId.current)
+        ?? findPaneChromeFocusTarget(activePaneId.current),
     });
   }, [failure, pending, publish, retry]);
 
-  useEffect(() => {
-    if (failure !== null) return;
-    if (focusedAction.current !== null && document.activeElement === focusedAction.current) {
-      const target = findPaneLandmarkFocusTarget(state.activePrimaryPaneId)
-        ?? findPaneChromeFocusTarget(state.activePrimaryPaneId);
-      target?.focus({ preventScroll: true });
-    }
-    focusedAction.current = null;
-    resolve(ENTRY_NOTICE);
+  useLayoutEffect(() => {
+    // Keep the removal target current without republishing a dismissed notice.
+    activePaneId.current = state.activePrimaryPaneId;
+    if (failure === null) resolve(ENTRY_NOTICE);
   }, [failure, resolve, state.activePrimaryPaneId]);
 
   // A keyed update keeps the existing notice and button. Only unmount cleans it up.

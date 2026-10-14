@@ -221,13 +221,16 @@ the notice without replacing content. clean up the notice on unmount.
 
 pass `entryFailure: {requestId?: string} | null` to `AuthenticatedShell`. a small
 private notice controller under its existing `WorkspaceStoreProvider` owns the
-notice/retry. extend existing `FeedbackAction` with optional `pending` and its button mouse
-event; `queue.act` passes that event synchronously to the action. forward
-`aria-disabled`/`aria-busy` without native disabling or changing the label. claim a
-synchronous guard, capture the focused action, then `startTransition(() =>
-router.refresh())` (it returns void). release only when that transition settles.
-before removing the notice, move focus to the current pane landmark/chrome only if
-it remains on that action, using existing `paneDom` helpers. do not steal moved focus.
+notice/retry. reuse `FeedbackAction.busy` for `aria-disabled`/`aria-busy` without
+native disabling or changing the label. claim a synchronous guard, then
+`startTransition(() => router.refresh())` (it returns void); release only when that
+transition settles. the existing `Signal` owns removal focus and calls the notice's
+`returnFocus` only while focus remains inside that notice. return the terminal
+`entry-failure` element when present, otherwise the current pane landmark/chrome
+through existing `paneDom` helpers. root/workspace defect boundaries expose this
+same mutually exclusive DOM address. a ref updated after each committed pane
+change keeps the destination current without republishing dismissed notices.
+no event plumbing or second removal-focus owner; never steal moved focus.
 
 viewer-key change discards the prior initializer/subtree before any failure can
 display it. confirmed auth termination keeps the existing sign-in handoff. this
