@@ -42,7 +42,7 @@ from nexus.db.models import (
     EpubTocNode,
     Fragment,
 )
-from nexus.errors import ApiErrorCode, ResourceFailureDimension
+from nexus.errors import ApiError, ApiErrorCode, ResourceFailureDimension, ResourceLimitError
 from nexus.ids import new_uuid7
 from nexus.schemas.isbn import Isbn13, normalize_source_isbn
 from nexus.schemas.publication_dates import PublicationDate, normalize_source_publication_date
@@ -119,6 +119,7 @@ EPUB_APPARATUS_MAX_BACKLINKS = 10_000
 EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES = 8 * 1024 * 1024
 EPUB_APPARATUS_MAX_CANDIDATE_INDEX_PAGES = 16_384
 
+_NAVIGATION_REPAIR_PARSE_BUDGET_MS = 120_000
 _XHTML_DECODED_BYTES_MESSAGE = "EPUB XHTML decoded bytes exceed the 16 MiB per-entry limit"
 
 # XHTML 1.x content documents and NCX navigation files reference the HTML named
@@ -371,6 +372,7 @@ def build_epub_extraction_plan(
                 record_progress=record_progress,
                 attempt_directory=attempt_directory,
                 now=now or datetime.now(UTC),
+                parse_budget_ms=get_settings().max_epub_archive_parse_time_ms,
             )
             if isinstance(parsed, EpubExtractionError):
                 return parsed
@@ -417,18 +419,33 @@ def prepare_epub_navigation_repair(
     ):
         raise ValueError("Retained EPUB fragment indexes are not contiguous")
     with parser_attempt_directory(new_uuid7()) as attempt_directory:
-        with zipfile.ZipFile(epub_path) as zf:
-            parsed = _build_plan(
-                zf,
-                media_id=media_id,
-                storage_path=storage_path,
-                record_progress=lambda _done, _total, _unit: None,
-                attempt_directory=attempt_directory,
-                now=datetime.now(UTC),
-                retained_fragments=retained_fragments,
-            )
+        try:
+            with zipfile.ZipFile(epub_path) as zf:
+                parsed = _build_plan(
+                    zf,
+                    media_id=media_id,
+                    storage_path=storage_path,
+                    record_progress=lambda _done, _total, _unit: None,
+                    attempt_directory=attempt_directory,
+                    now=datetime.now(UTC),
+                    parse_budget_ms=_NAVIGATION_REPAIR_PARSE_BUDGET_MS,
+                    retained_fragments=retained_fragments,
+                )
+        except zipfile.BadZipFile as exc:
+            raise ApiError(ApiErrorCode.E_INVALID_FILE_TYPE, f"Invalid ZIP: {exc}") from exc
+        except _EpubResourceLimitExceeded as exc:
+            raise ResourceLimitError(str(exc), dimension=exc.dimension) from exc
+        except _EpubExtractionFailure as exc:
+            raise ApiError(ApiErrorCode.E_INVALID_FILE_TYPE, f"Extraction failed: {exc}") from exc
         if isinstance(parsed, EpubExtractionError):
-            raise ValueError(parsed.error_message)
+            if parsed.error_code == ApiErrorCode.E_RESOURCE_LIMIT.value:
+                # justify-defect: every parser resource refusal must carry its dimension.
+                if parsed.resource_limit_dimension is None:
+                    raise RuntimeError("EPUB resource refusal has no dimension")
+                raise ResourceLimitError(
+                    parsed.error_message, dimension=parsed.resource_limit_dimension
+                )
+            raise ApiError(ApiErrorCode(parsed.error_code), parsed.error_message)
         content, _package = parsed
         return EpubNavigationRepairPlan(
             toc_nodes=content.toc_nodes,
@@ -480,6 +497,7 @@ def _build_plan(
     record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
     attempt_directory: Path,
     now: datetime,
+    parse_budget_ms: int,
     retained_fragments: tuple[RetainedEpubFragment, ...] | None = None,
 ) -> tuple[_ParsedEpub, _Package] | EpubExtractionError:
     """Parse one opened archive and stage its attempt-owned assets."""
@@ -764,9 +782,9 @@ def _build_plan(
         return _resource_limit("EPUB output exceeds the 64 MiB limit", dimension="Output")
 
     elapsed_ms = int((time.monotonic() - started) * 1000)
-    if elapsed_ms > settings.max_epub_archive_parse_time_ms:
+    if elapsed_ms > parse_budget_ms:
         return _resource_limit(
-            f"Parse time {elapsed_ms}ms exceeded limit {settings.max_epub_archive_parse_time_ms}ms",
+            f"Parse time {elapsed_ms}ms exceeded limit {parse_budget_ms}ms",
             dimension="Time",
         )
 
