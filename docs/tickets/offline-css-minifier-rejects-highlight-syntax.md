@@ -17,3 +17,6 @@ do not replace the browser api syntax or suppress unexplained warnings.
 acceptance: the shelf production build preserves custom highlight and
 forced-colors selectors without warnings; find highlighting still renders in
 the supported chromium/webview runtime.
+
+2026-10-13 metadata final static gate: shelf and extension builds succeeded;
+the same custom-highlight warnings recurred. [receipt](../metadata-imports-verification.md).
