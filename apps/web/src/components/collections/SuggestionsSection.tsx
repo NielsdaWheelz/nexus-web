@@ -22,18 +22,20 @@ import {
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useMobileChrome } from "@/lib/mobileShell/chrome";
 import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
+import { parseMediaId } from "@/lib/lectern/contract";
+import { useLectern } from "@/lib/lectern/LecternProvider";
 import { usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./SuggestionsSection.module.css";
+import addStyles from "./LecternAddControl.module.css";
 
 export type SuggestionsDestination =
   { kind: "Lectern" } | { kind: "Library"; id: string; name: string };
 
 /**
- * Files the target into the destination. Resolves once it is there; rejects
- * with the reason it is not. A destination that owns its own unknown-outcome
- * recovery (the Lectern) keeps the promise pending until that settles.
+ * Accepted removes the suggestion; Retained leaves it to later query facts.
+ * The destination owns unresolved-command recovery independently of this row.
  */
-export type SuggestionAccept = (target: SuggestionTarget) => Promise<void>;
+export type SuggestionAccept = (target: SuggestionTarget) => Promise<"Accepted" | "Retained">;
 
 /**
  * Next-read suggestions for one destination. Key it by destination: state
@@ -56,6 +58,8 @@ export default function SuggestionsSection({
   returnScope: string;
 }) {
   const lectern = destination.kind === "Lectern";
+  const { ensureRequests, resource: lecternResource } = useLectern();
+  const atCapacity = lectern && lecternResource.status === "ready" && lecternResource.data.atCapacity;
   const load = (signal?: AbortSignal) =>
     getSuggestions(
       lectern
@@ -144,7 +148,10 @@ export default function SuggestionsSection({
     setAdding(item.target.ref);
     setNotice(null);
     try {
-      await accept(item.target);
+      if (await accept(item.target) === "Retained") {
+        setAdding(null);
+        return;
+      }
     } catch (error) {
       setAdding(null);
       // An aborted command (its owner went away) and a sign-out end quietly.
@@ -152,7 +159,7 @@ export default function SuggestionsSection({
       if (!isApiError(error) || isSameSystemApiDefect(error))
         return setDefect({ error });
       return setNotice({
-        text: error.message || "Couldn’t add this item.",
+        text: lectern ? `couldn’t add to lectern. ${error.message}` : error.message || "Couldn’t add this item.",
         alert: true,
       });
     }
@@ -192,6 +199,7 @@ export default function SuggestionsSection({
     <div ref={rootRef} style={{ display: "contents" }}>
       {hidden ? null : (
         <PaneSection
+          className={lectern ? addStyles.collection : undefined}
           id={sectionId}
           aria-label={ariaLabel}
           tabIndex={-1}
@@ -222,25 +230,42 @@ export default function SuggestionsSection({
               ) : null}</>
             }
             rowControls={Object.fromEntries(
-              currentRows.map((item) => [
-                item.target.ref,
-                <Button
-                  key={item.target.ref}
-                  variant="secondary"
-                  size="sm"
-                  aria-label={`Add ${item.target.kind === "Media" ? item.target.mediaSummary.title : item.target.title} to ${lectern ? "Lectern" : destination.name}`}
-                  disabled={adding !== null}
-                  loading={adding === item.target.ref}
-                  onClick={(event) => {
-                    const row = event.currentTarget.closest<HTMLElement>(
-                      "[data-collection-row-id]",
-                    );
-                    if (row) void add(item, row);
-                  }}
-                >
-                  {lectern ? "Add to Lectern" : "Add"}
-                </Button>,
-              ]),
+              currentRows.map((item) => {
+                const title = item.target.kind === "Media" ? item.target.mediaSummary.title : item.target.title;
+                const request = lectern && item.target.kind === "Media"
+                  ? ensureRequests.get(parseMediaId(item.target.mediaSummary.mediaId)) : undefined;
+                const busy = request ? request.kind !== "Unconfirmed" : adding !== null;
+                const capacityBlocked = atCapacity && request === undefined;
+                const checking = request !== undefined && request.kind !== "Sending";
+                return [
+                  item.target.ref,
+                  <Button
+                    key={item.target.ref}
+                    variant="secondary"
+                    size="sm"
+                    className={lectern ? addStyles.button : undefined}
+                    aria-label={checking ? `check add for ${title}` : `add ${title} to ${lectern ? "lectern" : destination.name}`}
+                    disabled={!lectern && busy}
+                    loading={!lectern && adding === item.target.ref}
+                    aria-disabled={(lectern && (busy || capacityBlocked)) || undefined}
+                    aria-busy={(lectern && busy) || undefined}
+                    title={capacityBlocked ? "lectern is full; remove an item to add another." : undefined}
+                    onClick={(event) => {
+                      if (busy || capacityBlocked) return;
+                      if (request?.kind === "Unconfirmed") return request.check();
+                      const row = event.currentTarget.closest<HTMLElement>(
+                        "[data-collection-row-id]",
+                      );
+                      if (row) void add(item, row);
+                    }}
+                  >
+                    {lectern ? <span className={addStyles.label}>
+                      <span className={addStyles.sizer} aria-hidden>{checking ? "check add" : "add to lectern"}</span>
+                      <span>{checking ? "check add" : request?.kind === "Sending" ? "adding…" : "add to lectern"}</span>
+                    </span> : "Add"}
+                  </Button>,
+                ];
+              }),
             )}
           />
         </PaneSection>

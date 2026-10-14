@@ -9,7 +9,7 @@ one, a natural end the next audio row; a media off the Lectern names none.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, assert_never
 from uuid import UUID
 
 from pydantic import TypeAdapter
@@ -140,7 +140,12 @@ def put_reader_cursor_in_txn(
 def run_lectern_command(viewer_id: UUID, command: wire.LecternCommand) -> wire.LecternResult:
     def apply(db: Session) -> dict[str, Any]:
         outcome: wire.LecternOutcome
-        if isinstance(command, wire.PlaceItemsCommand):
+        if isinstance(command, wire.EnsureItemCommand):
+            if not can_read_media(db, viewer_id, command.media_id, include_tearing_down=True):
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Media not found")
+            lectern.ensure_missing_in_txn(db, viewer_id=viewer_id, media_ids=[command.media_id])
+            outcome = wire.EnsuredOutcome()
+        elif isinstance(command, wire.PlaceItemsCommand):
             media_ids = lectern.dedupe(command.media_ids)
             # Tearing-down targets stay readable here so they answer E_MEDIA_DELETING.
             for media_id in media_ids:
@@ -155,9 +160,11 @@ def run_lectern_command(viewer_id: UUID, command: wire.LecternCommand) -> wire.L
             if not lectern.remove(db, viewer_id=viewer_id, item_id=command.item_id):
                 raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Lectern item not found")
             outcome = wire.RemovedOutcome(item_id=command.item_id)
-        else:
+        elif isinstance(command, wire.SetOrderCommand):
             lectern.set_order(db, viewer_id=viewer_id, item_ids=command.item_ids)
             outcome = wire.OrderedOutcome()
+        else:
+            assert_never(command)
         return {"outcome": outcome.model_dump(mode="json", by_alias=True)}
 
     def answer(db: Session, memo: Mapping[str, Any]) -> wire.LecternResult:

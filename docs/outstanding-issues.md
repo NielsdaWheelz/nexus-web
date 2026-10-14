@@ -29,6 +29,13 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+
+- [open] nexus add / css · 2026-10-14 production build · alignment emits an autoprefixer warning and prevents module cache serialization: [ticket](tickets/add-panel-css-build-warning.md).
+
+- [open] shared collections / accessibility · 2026-10-14 live qualification · enlarged text clips reading facts at narrow widths: [ticket](tickets/collection-metadata-clips-with-enlarged-text.md).
+
+- [open] suggestions / interaction · 2026-10-14 source review · mutation-triggered refetch can replace retained survivors after refill: [ticket](tickets/suggestion-add-refetch-replaces-stable-survivors.md).
+- [open] suggestions / focus · 2026-10-14 source review · async add completion can reclaim focus the user moved: [ticket](tickets/suggestion-add-can-reclaim-moved-focus.md).
 - [open] release / provider credentials · 2026-10-14 release · local and production openai/brave exposure confirmed; owner explicitly deferred rotation: [ticket](tickets/metadata-qualification-provider-key-output.md).
 - [open] storage / cleanup · 2026-10-13 specification review · p2 · superseded-object deletion logs failures without durable retry: [ticket](tickets/superseded-storage-deletion-is-best-effort.md).
 - [open] web / workspace persistence · 2026-10-13 add/import live verification · p2 · context teardown can reach workspace save without its body: [ticket](tickets/workspace-session-unload-can-send-empty-body.md).
@@ -350,7 +357,7 @@ unexpected timeouts. See
 - [open] transcripts / wire · 2026-10-10 content index reauthor · `TranscriptRequestReason` is declared twice (the wire's lacks `rss_feed`): [ticket](tickets/transcript-request-reason-vocabulary-duplicated.md).
 - [open] url acquisition · 2026-10-10 content index reauthor harness · re-adding an ingested url answers `created` with a new media id that is superseded and then 404s: [ticket](tickets/readding-a-url-answers-created-for-a-media-that-is-deleted.md).
 - [open] web media pane · 2026-10-10 content index reauthor harness · an open media pane keeps showing a suspended index after its search repair publishes, until reopened: [ticket](tickets/media-pane-retrieval-status-stale-after-search-repair.md).
-- [deferred] synapse / resonance · 2026-10-04 synapse reauthor · owner decisions: trigger policy, manual scan for media and highlights, the Similar work vector, quick reads and Lectern members: [ticket](tickets/synapse-owner-questions.md).
+- [deferred] synapse / resonance · 2026-10-04 synapse reauthor · owner decisions: trigger policy, manual scan for media and highlights, the Similar work vector, and source-side relation grain: [ticket](tickets/synapse-owner-questions.md).
 - [open] resource graph / connections · 2026-10-10 graph reauthor · p2 · owner rollup re-enumerates every owned child on every connections page: [ticket](tickets/connections-owner-rollup-enumerates-children.md).
 - [open] resource graph / notes, capabilities · 2026-10-10 graph reauthor · p3 · adjacency and page note-block sql still spell the five-part user-link predicate: [ticket](tickets/user-link-predicate-spelled-outside-graph.md).
 - [open] connections / media upload · 2026-10-10 graph slice harness · p2 · a failed or stalled Connections upload shows no notice for minutes: [ticket](tickets/connections-upload-failure-is-silent.md).

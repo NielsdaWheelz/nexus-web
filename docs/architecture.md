@@ -1600,7 +1600,7 @@ and working at full capacity. readiness and raw duration filter the candidates
 before every acquisition cap. it reuses existing qualification/ranking without
 a fallback family, accepts no query parameters and performs no model calls.
 Two bounded aggregate command ports — `POST /lectern/commands`
-(`PlaceItems`/`RemoveItem`/`SetOrder`) and `POST /consumption/commands`
+(`EnsureItem`/`PlaceItems`/`RemoveItem`/`SetOrder`) and `POST /consumption/commands`
 (`EnsureMediaFinished`/`Done`/`SetUnread`/`ResetProgress`/`UndoFinish`/
 `SettleNaturalEnd`) — each share one `retry_serializable` transaction, one
 canonical response, and `clientMutationId` replay through
@@ -1640,13 +1640,19 @@ consumption owner may install the observed Preview position once, only when
 owned progress is still empty. The shared
 `SuggestionsSection` consumes an optional Lectern first-paint seed and
 otherwise queries only while its pane is active. It delegates Add to the
-existing Lectern or library mutation owner and owns deterministic stable
-refill, not destination state. the lectern section order is queue, quick reads,
+existing Lectern or library mutation owner and owns local removal/refill, not
+destination state. its known focus/refill defects remain tracked in the
+[connections module](modules/connections.md). the lectern section order is queue, quick reads,
 then suggestions. `QuickReadsSection` uses an independent client `useResource` read,
 refreshing on active mount, reactivation and the Consumption and Entries
 change topics (§8.12).
-it has no selection controls or dedicated add button; opening navigates without
-enqueueing. shared collection rows retain standard menus, factual dates and
+its shared `LecternAddControl` offers add/check/on-lectern; opening navigates
+without enqueueing and addition retains the row. all user-facing adds use
+`EnsureItem`, which appends absent media without moving existing members.
+`Ensured` acknowledges the operation; a fresh action capability describes current
+membership. `atCapacity` counts hidden rows too. unresolved attempts retain their
+id/body and remain recoverable above pane lifetime; other edits remain available.
+shared collection rows retain standard menus, factual dates and
 reading estimates without relation explanations or inline expansion. known
 stored media share title, author credits, original publication year,
 unread/current percentage/finished, and plain remaining time at canonical 1×.

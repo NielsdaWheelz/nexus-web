@@ -30,7 +30,7 @@ import { useLectern } from "@/lib/lectern/LecternProvider";
 export interface CompletionUndoInput {
   mediaId: MediaId;
   /** The Lectern before the finish. */
-  before: LecternSnapshot;
+  before: Pick<LecternSnapshot, "items">;
   /** The finish's `finishId`; without one there is nothing to undo. */
   finishId: Presence<FinishId>;
   /** The finish was a done, which removed the row. */

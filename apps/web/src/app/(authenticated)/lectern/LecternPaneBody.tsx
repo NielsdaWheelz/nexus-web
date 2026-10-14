@@ -104,7 +104,7 @@ const VIEW_CODEC = {
 };
 
 export default function LecternPaneBody() {
-  const { resource, busy, placeItems, setOrder } = useLectern();
+  const { resource, busy, ensureItem, getCanonicalSnapshot, setOrder } = useLectern();
   const { playAudio } = usePlayerCommands();
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
@@ -201,12 +201,15 @@ export default function LecternPaneBody() {
 
   const acceptSuggestionTarget = useCallback<SuggestionAccept>(
     async (target) => {
-      await placeItems({
-        mediaIds: [assumeMediaId(suggestionTargetId(target))],
-        placement: { kind: "Last" },
+      const mediaId = assumeMediaId(suggestionTargetId(target));
+      const receipt = await ensureItem({
+        mediaId,
+        title: target.kind === "Media" ? target.mediaSummary.title : target.title,
       });
+      return receipt === "Acknowledged" && getCanonicalSnapshot()?.items.some((item) => item.mediaSummary.mediaId === mediaId)
+        ? "Accepted" : "Retained";
     },
-    [placeItems],
+    [ensureItem, getCanonicalSnapshot],
   );
 
   const visible = ordered.filter((item) =>

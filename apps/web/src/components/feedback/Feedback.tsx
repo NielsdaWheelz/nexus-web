@@ -12,6 +12,8 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   type FocusEvent,
@@ -35,6 +37,7 @@ export interface FeedbackContent {
 export interface FeedbackAction {
   label: string;
   onClick: () => void;
+  busy?: boolean;
 }
 
 export type FeedbackActions =
@@ -53,6 +56,7 @@ export type DetachedFeedback =
       content: FeedbackContent;
       announcement: "Polite" | "Assertive";
       actions?: FeedbackActions;
+      returnFocus?: () => HTMLElement | null;
     };
 
 export interface FeedbackContextValue {
@@ -170,6 +174,7 @@ function createSignals() {
       const entry = signals.find((candidate) => candidate.id === id);
       if (!entry) return;
       const action = entry.signal.actions?.[index];
+      if (action?.busy) return;
       if (entry.signal.kind === "Persistent") {
         action?.onClick();
         return;
@@ -266,6 +271,7 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
                   }
                   onAction={(index) => queue.act(id, index)}
                   onDismiss={() => queue.dismiss(id)}
+                  returnFocus={signal.returnFocus}
                 />
               ) : null,
             )}
@@ -341,6 +347,7 @@ function Signal({
   children,
   onAction,
   onDismiss,
+  returnFocus,
   ...hold
 }: {
   content: FeedbackContent;
@@ -350,14 +357,25 @@ function Signal({
   children?: ReactNode;
   onAction(index: number): void;
   onDismiss?: () => void;
+  returnFocus?: () => HTMLElement | null;
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
   onFocus?: (event: FocusEvent<HTMLElement>) => void;
   onBlur?: (event: FocusEvent<HTMLElement>) => void;
 }) {
+  const rootRef = useRef<HTMLElement | null>(null);
+  const returnFocusRef = useRef(returnFocus);
+  returnFocusRef.current = returnFocus;
+  useLayoutEffect(() => () => {
+    if (!rootRef.current?.contains(document.activeElement)) return;
+    const target = returnFocusRef.current?.();
+    if (target?.isConnected && !target.closest("[inert]"))
+      target.focus({ preventScroll: true });
+  }, []);
   const Icon = ICONS[content.tone];
   return (
     <article
+      ref={rootRef}
       className={`${styles.signal} ${styles[content.tone]} ${className}`}
       role={role}
       {...hold}
@@ -382,7 +400,9 @@ function Signal({
                 key={`${index}-${action.label}`}
                 variant="secondary"
                 size="sm"
-                onClick={() => onAction(index)}
+                aria-busy={action.busy || undefined}
+                aria-disabled={action.busy || undefined}
+                onClick={() => { if (!action.busy) onAction(index); }}
               >
                 {action.label}
               </Button>

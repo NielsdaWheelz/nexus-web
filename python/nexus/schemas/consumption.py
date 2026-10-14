@@ -172,6 +172,7 @@ class LecternItemOut(CamelOut):
 
 class LecternSnapshot(CamelOut):
     items: list[LecternItemOut] = Field(max_length=2000)
+    at_capacity: bool
 
 
 # ---- Lectern commands ----
@@ -186,11 +187,12 @@ class AfterPlacement(CamelIn):
     item_id: UUID
 
 
-class LastPlacement(CamelIn):
-    kind: Literal["Last"]
+Placement = Annotated[FirstPlacement | AfterPlacement, Field(discriminator="kind")]
 
 
-Placement = Annotated[FirstPlacement | AfterPlacement | LastPlacement, Field(discriminator="kind")]
+class EnsureItemCommand(CommandIn):
+    kind: Literal["EnsureItem"]
+    media_id: UUID
 
 
 class PlaceItemsCommand(CommandIn):
@@ -210,8 +212,13 @@ class SetOrderCommand(CommandIn):
 
 
 LecternCommand = Annotated[
-    PlaceItemsCommand | RemoveItemCommand | SetOrderCommand, Field(discriminator="kind")
+    EnsureItemCommand | PlaceItemsCommand | RemoveItemCommand | SetOrderCommand,
+    Field(discriminator="kind"),
 ]
+
+
+class EnsuredOutcome(_Tagged):
+    kind: Literal["Ensured"] = "Ensured"
 
 
 class PlacedOutcome(_Tagged):
@@ -229,7 +236,7 @@ class OrderedOutcome(_Tagged):
 
 
 LecternOutcome = Annotated[
-    PlacedOutcome | RemovedOutcome | OrderedOutcome, Field(discriminator="kind")
+    EnsuredOutcome | PlacedOutcome | RemovedOutcome | OrderedOutcome, Field(discriminator="kind")
 ]
 
 

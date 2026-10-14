@@ -23,6 +23,16 @@ export function findPaneLandmarkFocusTarget(
   return paneId ? inPane(paneId, "[data-pane-focus-landmark='true']") : null;
 }
 
+/** A collection row's title, including quick reads retained in the active pane. */
+export function findPaneCollectionRowFocusTarget(
+  paneId: string | null | undefined,
+  rowId: string,
+): HTMLElement | null {
+  return paneId
+    ? inPane(paneId, `[data-collection-row-id="${CSS.escape(rowId)}"] [data-row-focusable]`)
+    : null;
+}
+
 /** Mobile: the top bar's More trigger; desktop: the pane's chrome. */
 export function findPaneChromeFocusTarget(
   paneId: string | null | undefined,

@@ -617,7 +617,11 @@ def _extend_media(
             )
         )
     else:
-        capabilities.append(LecternMembershipAbsentOut(availability=_available(), state="Absent"))
+        capabilities.append(
+            LecternMembershipAbsentOut(
+                availability=_available(), state="Absent", title=media.summary.title
+            )
+        )
 
     if capability.library_placement == "ManageEntries":
         capabilities.append(_simple("LibraryPlacement"))

@@ -1,5 +1,6 @@
 import type { OfflineItem } from "@/lib/offline/bridge";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
+import type { LecternCapability } from "@/lib/lectern/LecternProvider";
 
 export type ResourceActionLecternState =
   | { readonly kind: "Loading" }
@@ -36,6 +37,7 @@ export interface ResourceActionEnvironment {
   readonly connectivity: "Online" | "Offline";
   readonly offline: ResourceActionOfflineState;
   readonly lectern: ResourceActionLecternState;
+  readonly ensureRequests: LecternCapability["ensureRequests"];
   readonly playbackByRef: ReadonlyMap<
     CanonicalResourceRef,
     ResourceActionPlaybackState

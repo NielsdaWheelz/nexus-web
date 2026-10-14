@@ -290,7 +290,7 @@ def lectern_snapshot(
     rows: list[lectern.Row],
     summaries: dict[UUID, MediaSummaryOut],
 ) -> wire.LecternSnapshot:
-    """The viewer's visible rows, with summaries, read states and descriptors built once."""
+    """Visible rows with summaries/descriptors, and capacity over complete membership."""
     visible = [row for row in rows if row.visible]
     descriptors = player_descriptors(
         db,
@@ -311,7 +311,8 @@ def lectern_snapshot(
                 else wire.OpenPaneActivation(),
             )
             for row in visible
-        ]
+        ],
+        at_capacity=len(rows) >= lectern.LECTERN_MAX_ITEMS,
     )
 
 

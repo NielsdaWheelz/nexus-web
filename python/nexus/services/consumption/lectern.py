@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import assert_never
 from uuid import UUID
 
 from sqlalchemy import text
@@ -81,7 +82,7 @@ def place(
     elif isinstance(placement, AfterPlacement):
         at = next(i for i, row in enumerate(rest) if row.item_id == placement.item_id) + 1
     else:
-        at = visible[-1] + 1 if visible else len(rest)
+        assert_never(placement)
     ids = [row.item_id for row in rest]
     _write_order(db, viewer_id, ids[:at] + block + ids[at:])
     return block

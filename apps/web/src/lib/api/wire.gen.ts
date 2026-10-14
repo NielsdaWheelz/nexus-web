@@ -5271,6 +5271,24 @@ export interface components {
              */
             kind: "Empty";
         };
+        /** EnsureItemCommand */
+        EnsureItemCommand: {
+            /**
+             * Clientmutationid
+             * Format: uuid
+             */
+            clientMutationId: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "EnsureItem";
+            /**
+             * Mediaid
+             * Format: uuid
+             */
+            mediaId: string;
+        };
         /** EnsureMediaFinishedCommand */
         EnsureMediaFinishedCommand: {
             /**
@@ -5288,6 +5306,14 @@ export interface components {
              * Format: uuid
              */
             mediaId: string;
+        };
+        /** EnsuredOutcome */
+        EnsuredOutcome: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Ensured";
         };
         /** EpisodeConsumptionResourceActionCapabilityOut */
         EpisodeConsumptionResourceActionCapabilityOut: {
@@ -6232,14 +6258,6 @@ export interface components {
              */
             type: "join_notes";
         };
-        /** LastPlacement */
-        LastPlacement: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Last";
-        };
         /** LatentDailyPageDescriptor */
         LatentDailyPageDescriptor: {
             /** Defaulttitle */
@@ -6315,6 +6333,8 @@ export interface components {
              * @enum {string}
              */
             state: "Absent";
+            /** Title */
+            title: string;
         };
         /** LecternMembershipPresentOut */
         LecternMembershipPresentOut: {
@@ -6342,10 +6362,12 @@ export interface components {
         LecternResult: {
             lectern: components["schemas"]["LecternSnapshot"];
             /** Outcome */
-            outcome: components["schemas"]["PlacedOutcome"] | components["schemas"]["RemovedOutcome"] | components["schemas"]["OrderedOutcome"];
+            outcome: components["schemas"]["EnsuredOutcome"] | components["schemas"]["PlacedOutcome"] | components["schemas"]["RemovedOutcome"] | components["schemas"]["OrderedOutcome"];
         };
         /** LecternSnapshot */
         LecternSnapshot: {
+            /** Atcapacity */
+            atCapacity: boolean;
             /** Items */
             items: components["schemas"]["LecternItemOut"][];
         };
@@ -8292,7 +8314,7 @@ export interface components {
             /** Mediaids */
             mediaIds: string[];
             /** Placement */
-            placement: components["schemas"]["FirstPlacement"] | components["schemas"]["AfterPlacement"] | components["schemas"]["LastPlacement"];
+            placement: components["schemas"]["FirstPlacement"] | components["schemas"]["AfterPlacement"];
         };
         /** PlacedOutcome */
         PlacedOutcome: {
@@ -15654,7 +15676,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PlaceItemsCommand"] | components["schemas"]["RemoveItemCommand"] | components["schemas"]["SetOrderCommand"];
+                "application/json": components["schemas"]["EnsureItemCommand"] | components["schemas"]["PlaceItemsCommand"] | components["schemas"]["RemoveItemCommand"] | components["schemas"]["SetOrderCommand"];
             };
         };
         responses: {
