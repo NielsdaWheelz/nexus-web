@@ -28,7 +28,7 @@ import kotlin.coroutines.resumeWithException
 internal const val NEXUS_ORIGIN_CALL_DEADLINE_MS = 20_000L
 // the server builds a reading copy before it answers
 private const val READING_COPY_DEADLINE_MINUTES = 5L
-// a settle answer carries the whole lectern (at most 2,000 rows)
+// a lectern answer carries at most 2,000 rows
 private const val MAX_ORIGIN_RESPONSE_BYTES = 4 * 1024 * 1024L
 
 private class NexusOriginResponse(
@@ -158,9 +158,15 @@ internal class NexusOriginClient(
         call(Request.Builder().url(api("consumption", "activity")).post(body.toString().toRequestBody(JSON)))
     }
 
-    /** A consumption command (the player sends only `SettleNaturalEnd`); the result. */
-    suspend fun consumptionCommand(body: JSONObject): JSONObject =
-        data(Request.Builder().url(api("consumption", "commands")).post(body.toString().toRequestBody(JSON)))
+    /** The current ordered lectern, read before a natural end removes its row. */
+    suspend fun lectern(): JSONObject =
+        data(Request.Builder().url(api("lectern")).get())
+
+    /** The terminal listening sample and override fence; 204, with no next-row result. */
+    suspend fun settleNaturalEnd(mediaId: UUID, body: JSONObject) {
+        call(Request.Builder().url(api("media", mediaId.toString(), "natural-end"))
+            .post(body.toString().toRequestBody(JSON)))
+    }
 
     private fun api(vararg segments: String): HttpUrl =
         base.newBuilder().addPathSegment("api").apply { segments.forEach { addPathSegment(it) } }.build()

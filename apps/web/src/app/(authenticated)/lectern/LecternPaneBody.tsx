@@ -40,8 +40,10 @@ import {
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
 import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
+import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import {
   matchesPaneFilterQuery,
+  paneFilterRowsStatusVisible,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import {
@@ -187,6 +189,11 @@ export default function LecternPaneBody() {
   );
   const { inputRef, focusInput } = usePaneQueryInput();
   const queryStatusId = useId();
+  const canReset = sort.length > 0 || filterRows.query.length > 0;
+  // The count is the whole Lectern, never the filtered subset.
+  const headerMeta: PaneHeaderMeta = lectern.status === "loading"
+    ? { kind: "Pending" }
+    : { kind: "Count", value: items.length, unit: "item" };
   usePaneChrome({
     refresh: suggestions.state === null ? { kind: "Resolving" } : {
       kind: "Refreshable", sourceKey: "lectern:suggestions", execute: refreshSuggestions,
@@ -215,6 +222,11 @@ export default function LecternPaneBody() {
               }}
               status={{
                 id: queryStatusId,
+                visible: paneFilterRowsStatusVisible({
+                  status: filterRows.rowStatus,
+                  identityCount: headerMeta.kind === "Count" ? headerMeta.value : null,
+                  atDefaultView: !canReset,
+                }),
                 content: (
                   <PaneFilterRowsStatus
                     id={queryStatusId}
@@ -224,7 +236,7 @@ export default function LecternPaneBody() {
                 ),
               }}
               onReset={
-                sort || filterRows.query.trim()
+                canReset
                   ? () => {
                       filterRows.clearQuery();
                       change({ sort: null });
@@ -235,14 +247,7 @@ export default function LecternPaneBody() {
           ),
         }
       : undefined,
-    // The count is the whole Lectern, never the filtered subset.
-    header: {
-      kind: "Section",
-      meta:
-        lectern.status === "loading"
-          ? { kind: "Pending" }
-          : { kind: "Count", value: items.length, unit: "item" },
-    },
+    header: { kind: "Section", meta: headerMeta },
   });
 
   const query = filterRows.query.trim();

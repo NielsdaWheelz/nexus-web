@@ -35,8 +35,8 @@ shared helpers flush; the named transaction owner records the change last.
 | discovery evidence | connection_discovery.py `_publish`, `dismiss_connection_discovery_edge`: after edge replacement and queue/ledger effects, before commit |
 | active media embeddings and owner-resolving chunks/evidence | content_indexing.py prepare/publication callbacks: after state/block/embedding work; existing phase owner then commits. preparation removes active evidence and therefore counts |
 | note chunk/evidence cleanup | note_indexing.py: final successful index publication/deletion boundary; no provider call inside transaction |
-| authors and publication dates | contributors.py `_publish_chunk`, `_put_media_authors`; tasks/enrich_metadata.py `_publish.finish`: after changed credits/publication facts and queue settlement; free changed facts suppress no-ops |
-| source media admission, retry and refresh | media_source_ingest.py public admission/retry/refresh: after media, placement, attempt, event and response facts; already-landed identity/successor returns stay clean |
+| authors and publication dates | contributors.py `_publish_chunk`, `_put_media_authors`; tasks/enrich_metadata.py `_publish.finish`: after changed credits/publication facts and queue settlement. `python/scripts/repair_epub_contributors.py`: changed apply records after credit/identity/alias writes; previews, refusals and unchanged reports stay clean |
+| source media admission, retry, refresh and operator reprocessing | media_source_ingest.py public admission/retry/refresh and `reprocess_failed_stored_epub`: after media, placement, attempt, event and response facts; already-landed identity/successor returns stay clean |
 | source publication, fragments, embeds and dedupe | source_runner.py publication callbacks, web_article.py reader publication, youtube.py playable publication: after all source writes and settlement; existing publication phase then commits. no generic phase callback machinery |
 | source failure publication | source_runner.py `_fail`: after failure publication and embed-target synchronization. terminal queue failure records in import_history.py `on_source_job_outcome` after the preceding source `on_dead` hook and its domain work |
 | acquired/uploaded media placement | media_upload_sessions.py publication: after library placement, session receipt, event and response facts. already-published identity return stays clean |
@@ -133,3 +133,13 @@ then uses `mark_unread` and accepted progress to reopen the item. no product cha
 that harness correction. all fixture source/index/teardown work reached terminal states; three
 owned index jobs were retired through normal claims and fenced failure without provider calls.
 this targeted integration proof does not claim to rerun every historical source writer.
+
+## release composition review
+
+composition with main `01db6ad58ca2` adds final invalidation at two operator
+commit owners: fresh stored-epub reprocessing and changed contributor-repair
+apply. response construction and all domain writes precede the counter; settled
+successors, previews, refusals and unchanged reports remain quiet. reader
+navigation repair already records after its final validation. independent source
+review and the unchanged static gate cover these additions; prior live receipts
+do not claim to exercise them. the coordinator owns canonical runtime replay.

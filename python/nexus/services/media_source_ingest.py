@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import (
     Media,
+    MediaFile,
     MediaKind,
     MediaSourceAttempt,
     MediaTeardownIntent,
@@ -46,6 +47,7 @@ from nexus.ids import new_uuid7
 from nexus.jobs.queue import jobs_for_payload, requeue_dead_job, supersede_unclaimed_job
 from nexus.schemas.import_history import (
     RepairSourceRecovery,
+    ReprocessSourceRecovery,
     RetrySourceRecovery,
     SourceRecoveryAccepted,
     SourceSucceeded,
@@ -674,6 +676,68 @@ def retry_source(
         return result
 
     return admit_serializable(db, "retry_source", admit)
+
+
+def reprocess_failed_stored_epub(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    expected_attempt_id: UUID,
+    expected_source_sha256: str,
+    request_id: str | None,
+) -> SourceAdmission:
+    """Operator-only admission after diagnosed processing conditions have changed.
+
+    Ordinary retry eligibility stays unchanged. The inspected failed attempt and
+    stored source are fenced; its deterministic successor makes replay read-only.
+    The normal worker still verifies the bytes and all archive/publication limits.
+    """
+
+    def admit() -> SourceAdmission:
+        media = _owned_media(db, viewer_id, media_id)
+        latest = sa.latest_attempt(db, media.id, lock=True)
+        expected = db.get(MediaSourceAttempt, expected_attempt_id, with_for_update=True)
+        if expected is None or expected.media_id != media.id:
+            raise _stale(latest, "The inspected source attempt does not belong to this media.")
+        if (
+            media.kind != MediaKind.epub.value
+            or expected.status != st.FAILED
+            or expected.source_type not in (st.UPLOADED_EPUB_FILE, st.BROWSER_EPUB_CAPTURE)
+        ):
+            raise ConflictError(
+                ApiErrorCode.E_REPAIR_NOT_ALLOWED, "A failed stored EPUB source is required."
+            )
+        original = db.get(MediaFile, media.id, with_for_update=True)
+        if original is None or original.source_sha256 != expected_source_sha256:
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT, "The inspected stored source has changed."
+            )
+        landed = db.get(MediaSourceAttempt, sa.successor_id(expected.id))
+        if landed is not None and landed.media_id == media.id:
+            db.commit()
+            return _admission(landed)
+        if latest is None or latest.id != expected.id:
+            raise _stale(latest, "The inspected source attempt is no longer current.")
+        if media.processing_status != ProcessingStatus.failed:
+            raise ConflictError(
+                ApiErrorCode.E_REPAIR_NOT_ALLOWED, "The inspected media is no longer failed."
+            )
+        successor = _admit_successor(db, media, latest, actor_id=viewer_id, request_id=request_id)
+        sa.record_event(
+            db,
+            latest,
+            SourceRecoveryAccepted(
+                source_attempt_id=latest.id,
+                recovery=ReprocessSourceRecovery(new_source_attempt_id=successor.id),
+            ),
+        )
+        result = _admission(successor)
+        record_input_change(db)
+        db.commit()
+        return result
+
+    return admit_serializable(db, "reprocess_failed_stored_epub", admit)
 
 
 def refresh_source(

@@ -1,0 +1,88 @@
+{
+  "date_utc": "2026-10-15T17:35:02.023716+00:00",
+  "scope": "final source composition for coordinator-owned merge; no new runtime or deployment actions",
+  "merge_parents": {
+    "prior_feature": "1e26f273ea7a9fc33fc8a12f8b93a35dcc9d2cbb",
+    "incoming_main": "01db6ad58ca2e40ecc6b2035185bb9f0c0487d8c"
+  },
+  "prior_live_application": "01297cb151db0e6fe05688f5e4c1d3013e345187",
+  "checked_application_file_sha256": {
+    "python/nexus/services/media_source_ingest.py": "aff00fa5ef425ef73a48fcb73de8bef61e783d89a6f2f3dcc5ae43782f26d75a",
+    "python/scripts/repair_epub_contributors.py": "79a24de2d1b31d4fb8aac947c690d9f284ec890b3e028dd5dd55b948ed0fd5e6",
+    "apps/web/src/app/(authenticated)/lectern/LecternPaneBody.tsx": "3f5109fa68297e5120fd8a7a370182ffbc6db9cd9f14f4edca5499e9272bb5f8",
+    "apps/web/src/app/(authenticated)/libraries/[id]/LibraryPaneBody.tsx": "55a20696db553053575437070c99de0782318e3eeed5279763148c98eb9f07eb",
+    "python/nexus/services/suggestion_changes.py": "aa97beb30ede4628b9f4b3618fd5060628f6b0e19d4b6e61b59a2033c39bf1b2",
+    "python/nexus/api/edge.py": "fc77a97ace400bed0d9f566c68dfcde760c37d57991aa5b2a8cf938bf5025cd2",
+    "apps/web/src/lib/api/wire.gen.ts": "c0855526ebe2dd4d54fe943046a11a8fc98193a20f6e213199c3188bf96a8a2f",
+    "migrations/alembic/versions/0287_suggestion_publications.py": "514f128497d7401875d8274063399ee508794d80e2d57531a94455bcd16890b1"
+  },
+  "changes": [
+    "lectern conflict retains both suggestion refresh and toolbar metadata imports; automatic library toolbar composition reviewed",
+    "fresh stored-epub reprocess records input change after admission, history and response construction, immediately before commit",
+    "changed contributor-repair apply records after identity, credit and alias writes, immediately before commit",
+    "duplicate shared docker storage tickets consolidated without closing the unresolved capacity issue"
+  ],
+  "source_review": {
+    "frontend": "suggestions/quick reads remain independent of entry pagination; main count/reset/status contracts preserved",
+    "backend": "new source owners invalidate once; settled successors, previews, refusals and unchanged repairs stay quiet",
+    "independent_adversarial_review": "passes; no later domain work or nested duplicate commit/record; rollback covers domain writes, revision and notification",
+    "runtime_requalification": "not performed in this merge step; coordinator owns the exact combined canonical replay"
+  },
+  "static": {
+    "command": "./scripts/test",
+    "exit_code": 0,
+    "migration_head": "0287",
+    "log_sha256": "6267a3721dc755911b952e474a039dc6a6330294ec8e569df039f7f29b503e7e",
+    "log_retained": false,
+    "later_changes": "documentation only"
+  },
+  "migration_0287": {
+    "parent": "0286",
+    "unchanged_from_prior_live_application": true,
+    "new_tables": [
+      "suggestion_inputs",
+      "suggestion_feeds",
+      "suggestion_shortlists"
+    ],
+    "initial_state": "one seeded global revision row; no feed, publication or ranking backfill",
+    "existing_domain_data_rewrite": false,
+    "uniqueness": "one lectern feed per user, one library feed per user/library, one latest shortlist per feed",
+    "job_ownership": "feed pointer references existing background job; dead job retains pointer until diagnosed same-job repair",
+    "cleanup": "delete shortlists and feeds explicitly before their library; no implicit cascade",
+    "downgrade": "refused; recovery requires normal verified release backup"
+  },
+  "rehearsal": {
+    "receipt": "integration-backend.json",
+    "qualified_source": "531dd909a7c49913c5f5998f5b03549fd6b26727",
+    "from": "0277",
+    "to": "0287",
+    "elapsed_seconds": 125.46879574516788,
+    "exit_code": 0,
+    "media": 766,
+    "embeddings": 717006,
+    "source": "read-only retained disposable canonical 0277 clone; no production connection",
+    "target_system_identifier": "7696786006199500844",
+    "database": "nexus_suggestions_merge_20261015",
+    "database_preserved_stopped": true,
+    "limit": "prior unreleased suggestions 0279 databases have different ancestry; never stamp or upgrade them into canonical main"
+  },
+  "cutover": {
+    "wire_revision": 2,
+    "release_owner": "book release coordinator",
+    "deployment_requirements": "matching api/worker/web plus rebuilt native/extension clients, normal migration controller and verified backup",
+    "native_wire_source": "gradle derives NEXUS_WIRE from generated web wire revision; old native builds require replacement",
+    "feature_exclusions": [
+      "selection composer",
+      "library chooser"
+    ],
+    "protection_changes": false,
+    "runtime_operations": false,
+    "deployment_operations": false,
+    "production_operations": false
+  },
+  "cleanup": {
+    "prior_temporary_tests_and_services": "deleted/stopped per integration cleanup receipts",
+    "all_four_task_volumes_preserved": true,
+    "current_temporary_files": "static log and coordination/pr body files removed after handoff; worktree/branch removed after confirmed coordinator merge"
+  }
+}

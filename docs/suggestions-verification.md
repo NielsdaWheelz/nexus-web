@@ -1,16 +1,15 @@
 # suggestions publication verification
 
-status: implemented and qualified, 2026-10-15; pr #626 remains open under the
-release coordinator's freeze. no main merge, protection change or production
-operation is part of this change's completion.
+status: implemented and qualified, 2026-10-15; final branch composition is handed
+to the release coordinator for its merge window and canonical replay. this merge handoff
+does not change main protection or perform runtime/deployment operations.
 
 ## artifact and migration
 
 branch: `codex/suggestions-publication`; original baseline: `367da80e0c1b`.
-final application: `01297cb151db0e6fe05688f5e4c1d3013e345187`;
+live-qualified application: `01297cb151db0e6fe05688f5e4c1d3013e345187`;
 ordinary next build: `vYUR516yeRL9ZO1A1N9gu` (15.223 seconds).
-this composition includes main through `cd0e43042038`; it does not qualify the
-coordinator's later release head or authorize its rollout.
+that live composition includes main through `cd0e43042038`.
 
 the integration qualification began at `531dd909a7c4`, incorporating main
 `7bc7c8a13d7f`. backend, migrations and transport are unchanged through the final
@@ -18,13 +17,22 @@ application; 430 archived backend files were hash-checked before the remote
 runtime identity was aligned. affected browser interaction, layout and corpus
 paints ran on the final build. receipts retain their actual source identities.
 
+the later [release composition receipt](verification/suggestions/release-composition.json)
+records integration with main `01db6ad58ca2`: preserve both toolbar and suggestions
+imports and add final invalidation at fresh stored-epub reprocessing and changed
+contributor-repair commit owners. independent source review and `./scripts/test`
+cover that delta; no new runtime proof is claimed. the coordinator will qualify
+the exact combined release, including pending book-reader changes.
+
 the cutover uses snake_case/null wire revision 2 and migration `0287` after
 canonical `0286`. the small local database migrated from empty; the remote copy
 migrated normally from genuine canonical `0277` to `0287` in 125.5 seconds.
 the earlier unreleased suggestions databases stamped `0279` are preserved,
 unchanged. their ancestry differs from main's `0279`: never stamp or upgrade them
 into that chain. deployment still requires matching api/worker/web and the normal
-migration controller with a verified release backup.
+migration controller with a verified release backup. native and extension builds
+must also carry wire revision 2; native gradle derives it from generated web
+wire types. old native builds need replacement, not just a webview reload.
 
 ## current integration proof
 

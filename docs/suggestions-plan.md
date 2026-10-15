@@ -1,6 +1,6 @@
 # suggestions publication plan
 
-status: implemented and qualified; pr #626 stays open during the release freeze.
+status: implemented and qualified; release coordinator owns the final merge window.
 product decisions confirmed 2026-10-14.
 [verification](suggestions-verification.md) records the live red/green/refactor
 campaign, final artifact, limits and cleanup. deployment is separate.
@@ -334,9 +334,11 @@ static gate. surviving evidence is documentation, not a hidden test suite.
 
 ## cutover and explicit costs
 
-deploy matching api/worker/web with the normal migration controller; reload old
-clients. wire revision 2 rejects older clients because the suggestions envelope
-changed. migration `0287` follows the canonical `0286` head and requires the
+deploy matching api/worker/web with the normal migration controller. rebuild
+native and extension clients from the same wire revision; replace old builds
+and reload old web clients. native gradle derives its revision from generated
+web wire types. wire revision 2 rejects older clients because the suggestions
+envelope changed. migration `0287` follows the canonical `0286` head and requires the
 normal verified release backup; its downgrade is deliberately refused. start
 with no fake publication; the first normal refresh creates it.
 verify both surfaces and quick reads on the exact deployed revision. remove

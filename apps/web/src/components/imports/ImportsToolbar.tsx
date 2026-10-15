@@ -173,7 +173,7 @@ export default function ImportsToolbar({
         </>,
       }}
       chips={{ items: structuredChips, onRemove: (id) => set(id, "") }}
-      status={{ id: statusId, content:
+      status={{ id: statusId, visible: true, content:
         <span id={statusId} className={styles.resultStatus} role={announce ? "status" : undefined} aria-live={announce ? "polite" : undefined} aria-atomic={announce ? true : undefined}>{resultStatus}</span>
       }}
       actions={<Button variant="ghost" size="sm" onClick={onRefresh}>Refresh</Button>}
