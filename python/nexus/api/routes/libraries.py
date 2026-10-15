@@ -8,7 +8,7 @@ canonical resource ref, `media:<uuid>` or `podcast:<uuid>`.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
@@ -55,18 +55,14 @@ def list_libraries(
 
 @router.get("/libraries/destinations")
 def list_destinations(
-    viewer: ViewerDep,
-    db: DbSession,
-    q: Annotated[str, Query(max_length=100)] = "",
-    cursor: Annotated[str | None, Query(min_length=1)] = None,
-    limit: Annotated[int, Query(ge=1, le=50)] = 25,
-) -> Data[CollectionPage[LibraryDestinationOut]]:
-    """The named libraries the viewer may file into, best match first."""
-    return Data(
-        data=libraries.list_writable_library_destinations(
-            db, viewer.user_id, q=q, cursor=cursor, limit=limit
+    request: Request, viewer: ViewerDep, db: DbSession
+) -> Data[list[LibraryDestinationOut]]:
+    """The complete named libraries the viewer may file into."""
+    if request.query_params:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Library destinations do not accept query parameters"
         )
-    )
+    return Data(data=libraries.list_writable_library_destinations(db, viewer.user_id))
 
 
 @router.get("/libraries/placements/{ref}")

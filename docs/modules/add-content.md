@@ -25,25 +25,25 @@ recognized drops prevent native navigation even while intake is unavailable.
 `useAddContentSession` owns the immutable snapshot and its synchronous ref. the
 panel renders its commands; it never calls acquisition or allocates request ids.
 row destinations, the new-item seed and the bulk header have separate scopes.
-header deltas add/remove one library on populated drafts and seed, preserving
-other selections. mixed coverage is derived; sent/saved rows are excluded.
+header deltas add/remove one library on counted current populated drafts,
+preserving other selections; the separate new-item control changes the seed.
+mixed coverage is derived; sent/saved rows are excluded.
 `All` membership is implicit.
 
-`DestinationChooser` (`components/libraries`) owns shared search/create, with item
-selection or, given the libraries only some drafts are in, native all/some/none
-checkboxes whose toggle adds or removes one library. a new query aborts the read in
-flight and a page belongs to the query it answered, so load more never continues
-another query; closing unmounts the chooser and ends its read. `LibraryChooser`
-keeps keyboard-active options inside its own scrollport. busy search is read-only,
-preserving focus.
+`DestinationChooser` adapts item/bulk deltas to `LibraryChooser`, the shared action
+combobox. the complete writable catalog uses the existing keyed read owner;
+matching is local. every query starts inactive until arrow navigation. accepted
+actions clear it and keep input focus. typing remains available during writes.
+`useDestinationCreation` belongs to the form: a create freezes scope and adds only
+to surviving original drafts, preserving newer selections and queries.
 
 one active picker belongs to a row or header. desktop uses the anchored
 `ChooserSurface`; add on mobile uses its inline region in the scrolling body. header
 chooser content sits at the body's top. escape/back closes the picker first. inline
 regions omit outside-pointerdown dismissal so the intended click can complete.
 retarget resets search; removal/submission/session replacement cannot revive an
-old target or restore focus to its removed anchor. creation locks picker dismissal
-while task close retains the stop guard. other picker consumers remain responsive.
+old target or restore focus to its removed anchor. creation allows picker dismissal
+and editing; final submission waits for it. task close retains its loss guard.
 
 ## acceptance and leaving
 
@@ -76,11 +76,10 @@ the saved-items header's libraries for all… for every accepted media
 (deduplicated). with several items a library is chosen when it holds all of them;
 choosing files those that lack it, unchoosing unfiles them all, and a partial
 library reads "In n of m"; an item deleted since it was added is left out. reads
-are the overlay's own; submitted destinations never substitute for inventory.
-every placement write is idempotent (keyed by library and item), so the overlay's
-Retry resends a write a transport failure left unknown; refusals show their copy
-and every committed filing rereads it. admission/check closes saved-item pickers.
-the session owns no placement state.
+are the shared placement controller's; submitted destinations never substitute
+for inventory. accepted explicit edits are queued per target within that mounted
+owner. every outcome rereads; retry retries a failed read, never an unknown write.
+admission/check closes saved-item pickers. the add session owns no placement state.
 
 ## acquisition boundary
 

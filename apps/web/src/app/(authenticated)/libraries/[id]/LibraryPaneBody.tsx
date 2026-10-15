@@ -38,7 +38,6 @@ import {
 import { viewHref, type ViewChanges } from "@/lib/collections/view";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import {
-  addPlacement,
   entriesPage,
   getLibrary,
   leaveLibrary,
@@ -47,6 +46,7 @@ import {
   type LibraryEntry,
 } from "@/lib/libraries/api";
 import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
+import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import {
   ENTRY_TYPES,
   EmptyEntries,
@@ -106,6 +106,7 @@ export default function LibraryPaneBody() {
 }
 
 function LibraryPane({ id }: { readonly id: string }) {
+  const { addToLibrary } = useLibraryPlacementController();
   const runtime = usePaneRuntime();
   const active = usePaneIsActive();
   const router = usePaneRouter();
@@ -500,8 +501,8 @@ function LibraryPane({ id }: { readonly id: string }) {
           library={{ id, name }}
           isActive={active}
           accept={async (target) => {
-            await addPlacement({ kind: target.kind, id: suggestionTargetId(target) }, id);
-            return "Accepted";
+            const accepted = await addToLibrary({ kind: target.kind, id: suggestionTargetId(target) }, id);
+            return accepted ? "Accepted" : "Retained";
           }}
         />
       ) : null}

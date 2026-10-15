@@ -87,6 +87,12 @@ wraps inside the top modal's panel (a handler that prevented Tab keeps it;
 else its first focusable, else the panel, one frame after it becomes topmost,
 once per open and `focusKey`.
 
+chooser transients opt into `tabContinuation` through the existing key dispatcher:
+tab past their last control closes and continues after the opener; shift-tab from
+the first closes to the opener. that close does not run normal return-focus again.
+mobile chooser sheets retain the modal tab cycle. keyboard invocation focuses
+search; touch invocation may focus the sheet instead.
+
 **return focus.** at open an interactive layer records its trigger:
 `returnFocusTo()`, else the focused element, else (safari never focuses a clicked
 button) the focusable element the last press landed on. at close, focus goes to the live

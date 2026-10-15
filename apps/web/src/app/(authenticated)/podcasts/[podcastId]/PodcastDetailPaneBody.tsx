@@ -378,6 +378,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
         </Link>
         {ready ? (
           <AcquisitionControl
+            key={podcastId}
             kind="Subscribe"
             subscribed={subscription !== null}
             commit={async (acquisition) => {

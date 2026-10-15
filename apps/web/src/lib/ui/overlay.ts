@@ -27,7 +27,7 @@ import {
 } from "react";
 
 export type DismissDecision = "accepted" | "blocked";
-export type DismissReason = "escape" | "back" | "outside";
+export type DismissReason = "escape" | "back" | "outside" | "tab";
 export type ReturnFocusTarget = () =>
   | HTMLElement
   | { readonly element: HTMLElement; readonly preventScroll: true }
@@ -51,6 +51,8 @@ export type OverlayOptions = {
       readonly returnFocusFallback?: ReturnFocusTarget;
       /** Read at close: true when the close already put focus elsewhere. */
       readonly skipReturnFocus?: () => boolean;
+      /** Opt-in transient Tab exit. Its controls precede the next control after its opener. */
+      readonly tabContinuation?: () => HTMLElement | null;
     }
   | {
       readonly kind: "tooltip";
@@ -62,6 +64,7 @@ export type OverlayOptions = {
       readonly returnFocusTo?: never;
       readonly returnFocusFallback?: never;
       readonly skipReturnFocus?: never;
+      readonly tabContinuation?: never;
     }
 );
 
@@ -132,12 +135,20 @@ export function focusableElements(root: Element): HTMLElement[] {
 // focused names as its trigger the focusable element the last press landed on
 // (a key press clears it: a key-opened layer's trigger is the focused element).
 let pressed: Element | null = null;
+let touchInvocation = false;
 if (typeof document !== "undefined") {
   const press = (event: Event) => {
     pressed = event.type === "keydown" ? null : (event.target as Element);
+    touchInvocation = event.type === "pointerdown"
+      && (event as PointerEvent).pointerType !== "mouse";
   };
   document.addEventListener("pointerdown", press, true);
   document.addEventListener("keydown", press, true);
+}
+
+/** Initial-focus policy reads the same input origin that identifies the opener. */
+export function wasOverlayInvokedByTouch(): boolean {
+  return touchInvocation;
 }
 
 function trigger(): HTMLElement | null {
@@ -255,13 +266,39 @@ function onKeyDown(event: KeyboardEvent): void {
     dispatch(layer, "escape");
     return;
   }
-  const panel = topModal()?.element;
-  if (event.key !== "Tab" || !panel) return;
+  if (event.key !== "Tab") return;
+  const modal = topModal();
+  const layer = owner();
+  const boundary = layer?.options.current.tabContinuation?.();
+  const active = document.activeElement as HTMLElement;
+  if (layer && boundary?.contains(active)) {
+    const controls = focusableElements(boundary);
+    if (controls.length === 0 || active === (event.shiftKey ? controls[0] : controls.at(-1))) {
+      const anchor = [
+        layer.options.current.returnFocusTo?.(), layer.opener,
+        layer.options.current.returnFocusFallback?.(), modal?.element,
+      ].map((target) => target instanceof HTMLElement ? target : target?.element)
+        .find((element) => element?.isConnected && element.getClientRects().length > 0
+          && !element.closest("[hidden], [inert]") && !element.matches(":disabled"));
+      const outside = focusableElements(modal?.element ?? document.body)
+        .filter((element) => !boundary.contains(element));
+      const index = anchor ? outside.indexOf(anchor) : -1;
+      const next = event.shiftKey ? anchor
+        : index >= 0 ? outside[index + 1] ?? (modal ? outside[0] : null) : anchor;
+      dispatch(layer, "tab");
+      if (next?.isConnected) {
+        event.preventDefault();
+        focus(next);
+      }
+      return;
+    }
+  }
+  const panel = modal?.element;
+  if (!panel) return;
   // The Tab trap: focus wraps inside the top modal's panel.
   const items = focusableElements(panel);
   const first = items[0];
   const last = items.at(-1);
-  const active = document.activeElement as HTMLElement;
   if (!first || !last) {
     event.preventDefault();
     panel.focus();
@@ -390,7 +427,7 @@ export function useOverlay(
       const modal = current.kind === "modal";
       const exposed = topmost(layer);
       const wanted =
-        modal || (current.returnFocus === true && layer.reason !== "outside");
+        modal || (current.returnFocus === true && layer.reason !== "outside" && layer.reason !== "tab");
       layers.splice(layers.indexOf(layer), 1);
       if (exposed && wanted && !current.skipReturnFocus?.()) {
         restoreFocus(layer);

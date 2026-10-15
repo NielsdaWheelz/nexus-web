@@ -8,7 +8,7 @@
 // leaving, revoking and answering are absolute, so resending one that already
 // landed changes nothing.
 
-import { apiFetch } from "@/lib/api/client";
+import { ApiError, apiFetch } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import { pageQuery, type ListPage } from "@/lib/api/useServerList";
 import type { Schema } from "@/lib/api/wire";
@@ -69,10 +69,7 @@ export async function createLibrary(
     signal,
   });
   if (response.data.id !== input.id) {
-    // justify-defect: this acknowledgement must name the command's library.
-    throw new Error(
-      `Create library response id ${JSON.stringify(response.data.id)} does not match requested library ${JSON.stringify(input.id)}`,
-    );
+    throw new ApiError(200, "E_INVALID_RESPONSE", "Created library id did not match its request");
   }
   publishChange("Libraries");
   return response.data;
@@ -133,10 +130,12 @@ export async function addPlacement(
   target: LibraryPlacementTarget,
   libraryId: string,
   replaceEpisodes = false,
+  signal?: AbortSignal,
 ): Promise<void> {
   await apiFetch(itemPath(target, libraryId), {
     method: "PUT",
     body: JSON.stringify({ replace_episodes: replaceEpisodes }),
+    signal,
   });
   publishChange("Entries");
 }
@@ -144,22 +143,14 @@ export async function addPlacement(
 export async function removePlacement(
   target: LibraryPlacementTarget,
   libraryId: string,
+  signal?: AbortSignal,
 ): Promise<void> {
-  await apiFetch(itemPath(target, libraryId), { method: "DELETE" });
+  await apiFetch(itemPath(target, libraryId), { method: "DELETE", signal });
   publishChange("Entries");
 }
 
-export function destinationsPage(
-  q: string,
-  cursor: string | null,
-  signal?: AbortSignal,
-) {
-  const query = new URLSearchParams({ q, limit: "25" });
-  if (cursor !== null) query.set("cursor", cursor);
-  return data<ListPage<LibraryDestination>>(
-    `/api/libraries/destinations?${query}`,
-    signal,
-  );
+export function libraryDestinations(signal?: AbortSignal): Promise<LibraryDestination[]> {
+  return data<LibraryDestination[]>("/api/libraries/destinations", signal);
 }
 
 function page<T>(path: string, cursor: string | null, limit: number, signal: AbortSignal) {
