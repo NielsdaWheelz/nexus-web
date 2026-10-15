@@ -12,6 +12,17 @@ exact cause is unknown. subsequent container health was `healthy`, postgres
 and both workers were healthy, and public api/web `/version` returned 200.
 there was no database write. the probe was not repeated.
 
+2026-10-14, 22:25:02 utc: the kernel confirms a second occurrence in api
+container `e95f6b2df152` (384 mib, no swap). python pid 2838233 triggered
+allocation pressure alongside uvicorn pid 2693065; the cgroup reached its
+393,216 kib limit and killed uvicorn. the submitting command/session is
+unidentified. docker again reported `OOMKilled=false`, with restart count one;
+the restarted cgroup's zero counters do not contradict the kernel receipt.
+private evidence:
+`nexus-web-campaign-artifacts/2026-10-14/book-repair/coordinator/api-oom-2225.kernel.private.log`.
+the repair campaign had issued no python execution inside the api. its parser,
+storage and backup work runs off-host in separately bounded containers.
+
 prerequisite: keep bulk object reads out of the live api container. use an
 off-host bounded reader or an isolated restored rehearsal for exact-byte
 correspondence; inspect the container limit and exit evidence before reusing

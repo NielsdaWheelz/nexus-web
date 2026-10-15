@@ -1,6 +1,6 @@
 # offline reader repair inherits the import parse ceiling
 
-status: owner-deferred postrelease; maintenance budget unestablished
+status: planned postrelease; maintenance budget not yet qualified
 origin: 2026-10-14 release r3 inspection and owner disposition
 area: epub parser / maintenance
 
@@ -23,6 +23,8 @@ remaining corpus repairs were explicitly deferred from the usable release.
 reuses it; its suitability for offline repair is UNESTABLISHED. neither a
 larger maintenance budget nor a requirement to finish every repair in 30
 seconds has been qualified. archive, source and identity checks remain required.
+at planning base `75b17c030`, `epub_ingest.py:770–775` checks elapsed time
+after parsing; this acceptance budget does not terminate an overlong process.
 
 profiles found repeated exact text/classification and structure work. preserved
 local source work includes canonical commits `87e552c574ab9b4783e3f0e33fafcadd6d35c3d4`,
@@ -44,10 +46,12 @@ evidence: `release/attempts/58c7ecae6/r3-full-inspection-v2/`, manifest
 local canonical proofs remain in `release/canonical-nfc-buckets-20261014/`,
 `release/canonical-nfc-identity-20261014/` and `release/canonical-literal-text-20261014/`.
 
-next: review a maintenance-specific budget and bounded process separately from
-import policy. qualify its time, memory, disk and cleanup bounds against the
-exact sources; rehearse on a verified restored copy. retain explicit scope,
-publication-generation, source-hash, saved-coordinate and identity fences.
+next: implement and qualify the [book-repair plan](../book-repair-plan.md).
+it proposes a separate 120-second maintenance parse budget and a 180-second
+invocation deadline plus five-second kill grace, off-host with bounded memory
+and private temporary storage. these are candidates, not qualified limits.
+normal import policy stays unchanged. retain explicit scope, source, generation,
+saved-coordinate and identity fences; record any remaining refusal as unresolved.
 
 acceptance: reviewed maintenance applicability and bounds; genuine source/output
 proof; complete valid inspection, separately reviewed fenced apply and unchanged

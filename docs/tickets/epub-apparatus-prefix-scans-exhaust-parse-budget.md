@@ -1,6 +1,6 @@
 # portrait recovery still needs current publication proof after the prefix fix
 
-status: owner-deferred; prefix fix already implemented, publication proof open
+status: recovery planned; prefix fix already implemented, publication proof open
 origin: 2026-09-26 exact-source profiling; 2026-10-14 disposition correction
 area: html apparatus / epub recovery
 
@@ -25,6 +25,12 @@ this implementation is still missing or that it causes the current
 remaining book repairs are owner-deferred from the usable release. no new
 portrait source replay, recovery or publication is proved by the local
 performance candidates. retain the exact source and historical evidence.
+
+2026-10-14 decision: use the existing fenced `reprocess-source` capability
+under the [book-repair plan](../book-repair-plan.md), through the actual normal
+worker and unchanged import limits. the owner accepts separate metadata
+failure while brave remains unavailable; prove readable publication and
+indexing independently. no new recovery or production publication has run.
 
 acceptance: qualify current exact-source recovery and production publication,
 with unchanged apparatus/canonical output and protected reader identities.
