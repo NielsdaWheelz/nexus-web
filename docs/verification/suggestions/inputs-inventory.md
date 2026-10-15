@@ -1,6 +1,6 @@
 # suggestions input integration inventory
 
-status: source hooks integrated against `origin/main` `7bc7c8a13d7f0c866bef49ad1fc218b603393594`, 2026-10-15. the merged candidate requires its own qualification. prior receipts identify the earlier implementation explicitly; they do not qualify the reauthored source owners below.
+status: source hooks integrated against `origin/main` `7bc7c8a13d7f0c866bef49ad1fc218b603393594` and qualified on merged candidate `531dd909a7c49913c5f5998f5b03549fd6b26727`, schema `0287`, 2026-10-15. [merged source receipt](integration-inputs.json). prior receipts identify their earlier implementation explicitly.
 
 ## contract
 
@@ -110,3 +110,26 @@ rejected the obsolete generation before a generation-2 save succeeded.
 the upstream reauthoring changed committing owners and removed replay storage. merged-source
 verification must exercise the new owners and identity/absolute-command contracts; historical
 exact-memo-replay results must not be attributed to this integration.
+
+## merged owner proof
+
+on `531dd909`, 23 focused checks passed through the current source, consumption,
+contributor, grant and media-deletion owners. 17 committed revision transactions had no domain
+statement after the counter update. changed-position same-anchor heartbeats and identical
+contributor observations stayed clean. source admission identity repeats stayed clean; current
+absolute-command semantics were preserved. actual grant revocation immediately removed a target
+from current eligibility and real grant creation restored it.
+
+a fenced reader replacement waited at the final counter while a cursor waited on its publication
+row; database blocking identities confirmed both edges. other sessions saw the prior generation
+and revision until the common commit. publication installed generation 2, and the cursor's normal
+serializable retry rejected generation 1 with `E_READER_CONTENT_CHANGED`. the normal timeouts
+were unchanged. queue resource failure published its source failure before the final revision;
+the reauthored teardown owner physically deleted that fixture and advanced the revision last.
+
+two discarded probe attempts expected progress to clear explicit `Finished`. current upstream
+semantics intentionally retain that override; the successful proof checks this negative case,
+then uses `mark_unread` and accepted progress to reopen the item. no product change followed from
+that harness correction. all fixture source/index/teardown work reached terminal states; three
+owned index jobs were retired through normal claims and fenced failure without provider calls.
+this targeted integration proof does not claim to rerun every historical source writer.

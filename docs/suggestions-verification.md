@@ -108,7 +108,7 @@ take 203–260 ms on the copy; five unchanged-anchor heartbeats preserve the rev
   [ordinary-read deadline issue](tickets/browser-read-deadline-does-not-cover-response-body.md)
   remains open.
 - built next post cancellation also logs an inherited reset on the unchanged
-  stream-token control. [the separate ticket](tickets/next-built-post-disconnect-logs-uncaught-reset.md)
+  stream-token control. [the existing abort ticket](tickets/node-middleware-aborted-body-rejection.md)
   records the discriminator; no global exception suppression was added.
 - deleting the requested temporary campaign removes future automated regression
   detection. the permanent gate remains the unchanged `./scripts/test`.

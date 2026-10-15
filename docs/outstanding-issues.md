@@ -383,4 +383,3 @@ unexpected timeouts. See
 - [open] web / read transport · 2026-10-14 latency diagnosis · ordinary browser reads have no total deadline through body consumption and retries: [ticket](tickets/browser-read-deadline-does-not-cover-response-body.md).
 - [open] local development / storage · 2026-10-15 suggestions qualification · shared docker storage lacks headroom; large corpus checks moved to an owned dev-server clone: [ticket](tickets/local-docker-storage-headroom.md).
 - [open] web / api transport · 2026-10-15 suggestions review · proxy incoming post-body acquisition can outlive its upstream deadline: [ticket](tickets/proxy-incoming-body-is-outside-cancellation.md).
-- [open] web / next transport · 2026-10-15 suggestions qualification · built native and selected post disconnects log an uncaught incoming-request reset: [ticket](tickets/next-built-post-disconnect-logs-uncaught-reset.md).
