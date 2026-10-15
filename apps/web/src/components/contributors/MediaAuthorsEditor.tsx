@@ -3,9 +3,10 @@
 // Edit authors (media creator only). Loads the media's author slice, edits an
 // ordered list of credited names each bound to an existing visible author or a
 // new one, and saves it as a pinned manual list; "Reset to automatic authors"
-// releases the pin. A saved PUT is the commit point: a retry of an unchanged
-// draft reuses its client mutation id, and a failure after the PUT succeeded
-// never re-sends it.
+// releases the pin. A saved PUT is the commit point: the PUT is absolute, so a
+// retry re-applies the same list, and a new author carries the id minted when it
+// was added, so a resend that landed binds the person it created instead of
+// creating another. A failure after the PUT succeeded never re-sends it.
 
 import { useEffect, useId, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Plus } from "lucide-react";
@@ -54,10 +55,8 @@ type Row =
       readonly revert: Bound | null;
     };
 
-/** A PUT body before its client mutation id is chosen. */
 type Draft =
-  | Omit<Schema<"ManualMediaAuthorsRequest">, "client_mutation_id">
-  | Omit<Schema<"AutomaticMediaAuthorsRequest">, "client_mutation_id">;
+  Schema<"ManualMediaAuthorsRequest"> | Schema<"AutomaticMediaAuthorsRequest">;
 
 const bound = (row: Bound): Row => ({ kind: "Bound", ...row });
 const identity = (binding: AuthorBinding) =>
@@ -88,10 +87,6 @@ const ERRORS: Readonly<Record<string, readonly [string, string?]>> = {
   E_AUTHOR_NOT_SELECTABLE: [
     "That author can’t be selected",
     "Choose another author and retry.",
-  ],
-  E_IDEMPOTENCY_KEY_REPLAY_MISMATCH: [
-    "The authors weren’t updated",
-    "Retry the saved draft.",
   ],
 };
 
@@ -166,10 +161,6 @@ function Editor({
   const [saving, setSaving] = useState(false);
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
   const [announcement, setAnnouncement] = useState("");
-  const mutationId = useRef<{
-    readonly payload: string;
-    readonly id: string;
-  } | null>(null);
   const focusTarget = useRef<string | null>(null);
   const lastFocus = useRef<HTMLElement | null>(null);
   const addRef = useRef<HTMLButtonElement>(null);
@@ -254,17 +245,10 @@ function Editor({
 
   async function submit(body: Draft) {
     if (saving) return;
-    const payload = JSON.stringify(body);
-    if (mutationId.current?.payload !== payload) {
-      mutationId.current = { payload, id: createRandomId("media-authors") };
-    }
     setSaving(true);
     setNotice(null);
     try {
-      await putMediaAuthors(mediaId, {
-        ...body,
-        client_mutation_id: mutationId.current.id,
-      });
+      await putMediaAuthors(mediaId, body);
     } catch (error) {
       setSaving(false);
       if (handleUnauthenticatedApiError(error)) return;
@@ -274,9 +258,6 @@ function Editor({
           : undefined;
       if (copy === undefined || !isApiError(error))
         return throwLater({ error });
-      // The key now names another request server-side: the next Save mints one.
-      if (error.code === "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH")
-        mutationId.current = null;
       setNotice({
         tone: "Danger",
         title: copy[0],
@@ -325,7 +306,11 @@ function Editor({
             onCreateNew={(name) =>
               bind(row.id, row.revert, {
                 id: row.id,
-                binding: { kind: "new", display_name: name },
+                binding: {
+                  kind: "new",
+                  id: createRandomId(),
+                  display_name: name,
+                },
                 creditedName: name,
                 canonical: name,
               })

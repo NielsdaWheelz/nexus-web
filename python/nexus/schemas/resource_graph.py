@@ -174,7 +174,9 @@ LinkEndpoint = Annotated[LinkResourceEndpoint | LinkPassageEndpoint, Field(discr
 
 
 class CreateLinkRequest(Model):
-    client_mutation_id: str = Field(..., min_length=1, max_length=120)
+    """``link_id`` names the link this intent creates; a resend that landed answers it."""
+
+    link_id: UUID
     source: Annotated[
         LinkResourceEndpoint
         | LinkPassageEndpoint

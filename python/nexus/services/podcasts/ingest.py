@@ -12,6 +12,7 @@ converges on the same rows.
 """
 
 import hashlib
+import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -31,7 +32,6 @@ from nexus.services.contributor_taxonomy import RawCreditEntry, build_observatio
 from nexus.services.contributor_writes import MediaTarget
 from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
 from nexus.services.metadata_operations import enqueue_metadata_enrichment
-from nexus.services.resource_mutation_replay import canonical_json_bytes
 from nexus.services.transcripts.state import ensure_media_transcript_state_row
 from nexus.services.url_normalize import normalize_url_for_display
 
@@ -256,7 +256,8 @@ def _row(episode: EpisodeFacts, feed_url: str, show_authors: list[str]) -> dict[
 
 def _fingerprint(row: dict[str, Any]) -> str:
     observed = {name: row[name] for name in _FINGERPRINTED}
-    return hashlib.sha256(canonical_json_bytes(observed)).hexdigest()
+    encoded = json.dumps(observed, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _insert(

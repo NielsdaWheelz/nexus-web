@@ -275,14 +275,16 @@ send; a failed first send leaves no conversation. The request carries no
 top-level `conversation_id`, no `chat_subject`, and no client
 `exact`/`prefix`/`suffix` (`extra="forbid"`).
 
-`POST /chat-runs` is a receipt boundary. Under the viewer/key advisory lock it
-first replays the immutable `ResourceMutation(scope="chat:admission")` decision
-or validates a new admission. Accepted chat (when New), messages, run, attached
-evidence, job and the receipt commit atomically,
-and admission sets the conversation's active leaf to the new assistant. A modeled rejection rolls provisional writes back to a savepoint and
-commits only its closed reason. The response is
-`{data:{idempotency_key,outcome:Accepted|Rejected}}`; it contains no run
-projection. A send refused with 426 `E_WIRE_MISMATCH` was never admitted: it is
+`POST /chat-runs` names its run: the `Idempotency-Key` must be a uuid (else 400
+`E_INVALID_REQUEST`) and becomes `chat_runs.id`. Under an advisory lock on
+`chat_admission:{key}` (apart from the generation ledger's `chat_run:{id}`), the
+viewer's run with that id answers the send whatever the body; another
+user's run with it is 409 `E_RESOURCE_CONFLICT`; otherwise the admission is
+validated and the chat (when New), messages, run, attached evidence and job commit
+atomically, and admission sets the conversation's active leaf to the new
+assistant. A modeled rejection rolls everything back and is not stored: a resend
+decides again. The response is `{data:{idempotency_key,outcome:Accepted|Rejected}}`;
+it contains no run projection. A send refused with 426 `E_WIRE_MISMATCH` was never admitted: it is
 a definite failure, so the draft stays a plain unsent draft across the tab's
 reload.
 
@@ -302,8 +304,9 @@ view in the tab.
   refreshes its preview; `E_CONVERSATION_NO_LONGER_EMPTY` rereads the tree.
 - A definite failure clears `pending`. An ambiguous failure (network, upstream,
   5xx) keeps it: the composer locks the text and selection and shows "Send
-  status unknown"; **Retry send** replays the same key and bytes, and the
-  server answers with the original receipt. The lock survives reload.
+  status unknown"; **Retry send** resends the same key and bytes, and the
+  server answers with the run that key named if it landed. The lock survives
+  reload.
 
 The `new` draft is one per account per tab, so a reload of
 `/conversations/new` restores it; two new-chat panes in one tab share it. The
@@ -340,9 +343,9 @@ hide both actions.
 Without an explicit choice the store reuses the source run's selection only
 while the current catalog still offers it; otherwise it says "The original model
 is unavailable" and the user picks one through **Rerun / Regenerate with a
-different model**. Each command is idempotent under `Idempotency-Key`; the
-store keeps the key per source and operation across an ambiguous failure, so an
-identical retry replays it, and mints a new key otherwise. Rerun (failed turn),
+different model**. Each command's uuid `Idempotency-Key` is its run's id, as for
+a send; the store keeps the key per source and operation across an ambiguous
+failure, so a retry that landed answers that run, and mints a new key otherwise. Rerun (failed turn),
 Regenerate (completed answer), Reconnect (lost stream), suspended (operator
 recovery) and Fork stay distinct.
 
@@ -552,7 +555,7 @@ the live Highlight.
 
 | module | owns |
 |---|---|
-| `admit` | send, rerun/regenerate, cancel: the receipt envelope (advisory key lock, replay, one savepoint, memo), destination, anchor, quote, message pair, run freeze, job |
+| `admit` | send, rerun/regenerate, cancel: the run-id envelope (advisory key lock, the run that id names), destination, anchor, quote, message pair, run freeze, job |
 | `context` | the system prompt, the turn's context blocks, two-budget history, the frozen intent |
 | `quotes` | the reader-quote snapshot: build (locked highlight), encode/decode, revision, projection, preview, the XML quote renderer |
 | `citations` | candidate numbering, attached evidence (retrievals with no call), publication |

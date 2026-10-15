@@ -251,7 +251,8 @@ class RejectedChatAdmission(Wire):
 
 
 class ChatAdmissionReceipt(Wire):
-    """One committed decision per (viewer, key), replayed verbatim from its memo."""
+    """The decision for one run id: an acceptance answers every resend; a rejection is
+    not stored (a resend decides again)."""
 
     idempotency_key: str = Field(min_length=1, max_length=128)
     outcome: Annotated[AcceptedChatAdmission | RejectedChatAdmission, Field(discriminator="kind")]

@@ -52,7 +52,7 @@ save running, failure placement, undo), `components/resources/LinkTargetDialog.t
 | route | success | errors |
 |---|---|---|
 | `POST /resource-graph/connections/query` | 200 `ConnectionPageOut`; unknown or private refs → empty | 400 bad ref or cursor, schema |
-| `POST /resource-graph/links` | 201 `CreateLinkOut{created, created_source_ref, connection}` | 404 invisible; 422 `E_LINK_SELF`, `E_LINK_CAPABILITY`; 409 `E_LINK_TARGET_STALE`, replay mismatch |
+| `POST /resource-graph/links {link_id, source, target}` | 201 `CreateLinkOut{created, created_source_ref, connection}` | 404 invisible; 422 `E_LINK_SELF`, `E_LINK_CAPABILITY`; 409 `E_LINK_TARGET_STALE`, `E_RESOURCE_CONFLICT` (link id taken) |
 | `DELETE /resource-graph/links/{id}` | 204, also when absent | 403 non-user edge |
 | `PUT /resource-graph/links/{id}/note` | 200 `LinkNoteOut` | 404 not a link; 409 `E_NOTE_CONFLICT` |
 | `DELETE /resource-graph/links/{id}/note` | 204, replayable | 404; 409 |
@@ -61,9 +61,12 @@ save running, failure placement, undo), `components/resources/LinkTargetDialog.t
 `ConnectionOut{edge_id, direction, kind, origin, snapshot: CitationSnapshot|null,
 source_order_key, ordinal, source, target, other, link_note{note_block_id, preview},
 creation, mutation, created_at}`; endpoints are `{ref, label, description, activation,
-missing}`. newest first; cursor `"<iso created_at>|<edge id>"`. the three replayed
-commands (create link, put and detach link note) run SERIALIZABLE and look their memo
-up before anything else, so a replay outlives the link it answered.
+missing}`. newest first; cursor `"<iso created_at>|<edge id>"`. the link commands run
+SERIALIZABLE with retry. create is named by the client's `link_id`: a resend that
+landed answers that link with `created: true` (a minted highlight converges by its
+id, a passage anchor is reused); a resend after the link was deleted creates it
+again; the id held by any other link is 409. the note commands are idempotent by the
+note id.
 
 ## behaviour changes in the 2026-10-10 reauthor
 

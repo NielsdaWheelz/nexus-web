@@ -14,10 +14,9 @@ by path or by name:
   so it can only be fixed in the generator.
 - `python/nexus/schemas/presence.py:1` (python twin of `apps/web/src/lib/presence.ts`,
   whose citation was already removed).
-- `python/nexus/db/models.py:784,1373,1412,1743`.
-- `python/nexus/db/retries.py:21-24`.
+- `python/nexus/db/models.py:715,1304,1343,1539`.
+- `python/nexus/db/retries.py:21-23`.
 - `python/nexus/services/passage_anchors.py:4`.
-- `python/nexus/services/resource_mutation_replay.py:2`.
 
 impact: a reader following the comment finds nothing; the rule it points to
 lives only in the code.

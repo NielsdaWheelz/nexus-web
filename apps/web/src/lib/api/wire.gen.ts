@@ -1553,7 +1553,7 @@ export interface paths {
         get?: never;
         /**
          * Put Media Authors
-         * @description The contributors facade owns its own session, re-check, replay and mutation.
+         * @description The contributors facade owns its own session, re-check and mutation.
          */
         put: operations["put_media_authors_media__media_id__authors_put"];
         post?: never;
@@ -3255,8 +3255,6 @@ export interface components {
         };
         /** AutomaticMediaAuthorsRequest */
         AutomaticMediaAuthorsRequest: {
-            /** Client Mutation Id */
-            client_mutation_id: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -3346,7 +3344,8 @@ export interface components {
         };
         /**
          * ChatAdmissionReceipt
-         * @description One committed decision per (viewer, key), replayed verbatim from its memo.
+         * @description The decision for one run id: an acceptance answers every resend; a rejection is
+         *     not stored (a resend decides again).
          */
         ChatAdmissionReceipt: {
             /** Idempotency Key */
@@ -4224,10 +4223,16 @@ export interface components {
             /** Created Source Ref */
             created_source_ref: string | null;
         };
-        /** CreateLinkRequest */
+        /**
+         * CreateLinkRequest
+         * @description ``link_id`` names the link this intent creates; a resend that landed answers it.
+         */
         CreateLinkRequest: {
-            /** Client Mutation Id */
-            client_mutation_id: string;
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
             /** Source */
             source: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"] | components["schemas"]["LinkFragmentSelectionSource"] | components["schemas"]["LinkPdfSelectionSource"];
             /** Target */
@@ -6555,8 +6560,6 @@ export interface components {
         ManualMediaAuthorsRequest: {
             /** Authors */
             authors: components["schemas"]["ManualAuthorRowIn"][];
-            /** Client Mutation Id */
-            client_mutation_id: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -7297,10 +7300,18 @@ export interface components {
             expected_override_revision: number | null;
             terminal_listening: components["schemas"]["ListeningIn"];
         };
-        /** NewAuthorBinding */
+        /**
+         * NewAuthorBinding
+         * @description A person the save creates under the client's ``id``; a resend binds that person.
+         */
         NewAuthorBinding: {
             /** Display Name */
             display_name: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -7359,8 +7370,6 @@ export interface components {
          * @description One accepted internal Nexus selection. The stored label is cut to 120 characters.
          */
         NexusSelectionRecordRequest: {
-            /** Client Mutation Id */
-            client_mutation_id: string;
             /** Label Snapshot */
             label_snapshot: string;
             /** Query */

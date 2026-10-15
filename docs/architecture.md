@@ -456,8 +456,7 @@ there is no self-FK, no merge/split/tombstone, and no status column),
 
 **Notes** — `pages` (title only), `daily_page_bindings` (one sparse
 user/date role assignment to an ordinary Page), `note_blocks` (ProseMirror JSON
-plus generated text only), `resource_versions`, `resource_mutations`, and
-`resource_view_states`. `users.calendar_time_zone` is the sole account-local
+plus generated text only), `resource_versions` and `resource_view_states`. `users.calendar_time_zone` is the sole account-local
 Today clock.
 the account profile's single transport owner is native `UserProfileOut`, returned
 by GET and PATCH `/me` as `Data[UserProfileOut]`. all six keys are required,
@@ -1222,11 +1221,11 @@ tool_calls, events, worker, reads, conversations) behind `api/routes/chat.py`.
   **branch**. `conversations.active_leaf_message_id` stores the owner's
   selected leaf (admission moves it to the new answer); history assembly only includes messages on the current path, so sibling branches
   never leak into context.
-- **One send = one immutable admission decision.** HTTP never calls the provider.
-  `POST /chat-runs` serializes by viewer and normalized `Idempotency-Key`, then
-  replays or commits one `ResourceMutation(scope="chat:admission")` receipt.
-  Accepted chat/messages/run/job and receipt are atomic; a modeled rejection
-  commits only the receipt. The small Accepted receipt names conversation, run,
+- **One send = one client-named run.** HTTP never calls the provider.
+  `POST /chat-runs` serializes by its uuid `Idempotency-Key`, which becomes the
+  run's id: the run that key names answers a resend, else the admission commits.
+  Accepted chat/messages/run/job are atomic; a modeled rejection commits nothing
+  (a resend decides again). The small Accepted receipt names conversation, run,
   and assistant IDs; the browser keeps the exact command in its draft until a
   receipt or a definite rejection, then reads `GET /chat-runs/{id}`. The **worker** executes accepted work: assemble
   context → run the exact frozen Codex/API selection and

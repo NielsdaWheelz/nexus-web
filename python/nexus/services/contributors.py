@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from functools import partial
 from uuid import UUID
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer
@@ -17,13 +17,7 @@ from nexus.auth.permissions import (
     visible_content_credit_rows_sql,
     visible_contributor_ids_cte_sql,
 )
-from nexus.db.models import (
-    Contributor,
-    ContributorAlias,
-    ContributorCredit,
-    Media,
-    ResourceMutation,
-)
+from nexus.db.models import Contributor, ContributorAlias, ContributorCredit, Media
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
@@ -35,12 +29,12 @@ from nexus.schemas.contributors import (
     ContributorSearchPageOut,
     ContributorWorkExampleOut,
     ContributorWorkItemOut,
-    ExistingAuthorBinding,
     ExternalContributorWorkItemOut,
     ManualMediaAuthorsRequest,
     MediaAuthorsOut,
     MediaAuthorsPutRequest,
     MediaContributorWorkItemOut,
+    NewAuthorBinding,
     PodcastContributorWorkItemOut,
 )
 from nexus.services.capabilities import can_edit_media_authors
@@ -69,11 +63,6 @@ from nexus.services.contributor_writes import (
     replace_role_slices,
 )
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_mutation_replay import (
-    canonical_json_bytes,
-    lookup_replay,
-    record_replay,
-)
 from nexus.services.search.query import decode_cursor, encode_cursor
 from nexus.text import escape_like
 
@@ -544,7 +533,7 @@ def _write(db: Session, prepared: PreparedContributorPublication) -> bool:
 
 
 def cleanup_credits_for_deleted_target(db: Session, *, target: CreditTarget) -> None:
-    """Drop a deleted target's credits and author-edit memos, on the caller's transaction."""
+    """Drop a deleted target's credits, on the caller's transaction."""
     replace_role_slices(
         db,
         target=target,
@@ -552,15 +541,13 @@ def cleanup_credits_for_deleted_target(db: Session, *, target: CreditTarget) -> 
         resolved=(),
         source="cleanup",
     )
-    if isinstance(target, MediaTarget):
-        scope = f"media:{target.media_id}:authors"
-        db.execute(delete(ResourceMutation).where(ResourceMutation.mutation_scope == scope))
 
 
 def put_media_authors(
     *, viewer: Viewer, media_id: UUID, request: MediaAuthorsPutRequest
 ) -> MediaAuthorsOut:
-    """Pin a manual author list, or release the pin; replayable, in one fresh transaction."""
+    """Pin a manual author list, or release the pin, in one fresh transaction. Absolute:
+    a resend applies the same list again (last writer wins)."""
     db = get_session_factory()()
     try:
         op = partial(_put_media_authors, db, viewer.user_id, media_id, request)
@@ -577,40 +564,18 @@ def _put_media_authors(
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Media not found")
     if not can_edit_media_authors(can_read=True, is_creator=media.created_by_user_id == viewer_id):
         raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Only the media creator can edit authors")
-    scope = f"media:{media_id}:authors"
-    mutation_id = request.client_mutation_id
-    request_bytes = canonical_json_bytes(request.model_dump(mode="json"))
-    stored = lookup_replay(
-        db,
-        viewer_id=viewer_id,
-        scope=scope,
-        client_mutation_id=mutation_id,
-        request_bytes=request_bytes,
-    )
-    if stored is not None:
-        return MediaAuthorsOut.model_validate({"author_mode": stored["author_mode"]})
-    target = MediaTarget(media_id)
     if isinstance(request, ManualMediaAuthorsRequest):
         replace_role_slices(
             db,
-            target=target,
+            target=MediaTarget(media_id),
             managed_roles=frozenset({"author"}),
             resolved=_bind_manual_authors(db, viewer_id, request),
             source="user",
         )
     # Releasing the pin leaves the rows; the next observed author slice replaces them.
     media.authors_manually_managed = request.mode == "manual"
-    response = MediaAuthorsOut(author_mode=request.mode)
-    record_replay(
-        db,
-        viewer_id=viewer_id,
-        scope=scope,
-        client_mutation_id=mutation_id,
-        request_bytes=request_bytes,
-        response_json=response.model_dump(mode="json"),
-    )
     db.commit()
-    return response
+    return MediaAuthorsOut(author_mode=request.mode)
 
 
 def _bind_manual_authors(
@@ -618,18 +583,26 @@ def _bind_manual_authors(
 ) -> list[tuple[UUID, ContributorObservation]]:
     rows: list[tuple[UUID, ContributorObservation]] = []
     for row in request.authors:
-        if isinstance(row.binding, ExistingAuthorBinding):
-            handle = row.binding.contributor_handle
-            found = db.scalar(select(Contributor.id).where(Contributor.handle == handle))
+        binding = row.binding
+        if isinstance(binding, NewAuthorBinding) and db.get(Contributor, binding.id) is None:
+            display = clean_contributor_display(binding.display_name)
+            created = create_contributor(db, display_name=display, contributor_id=binding.id)
+            contributor_id = created.contributor_id
+        else:
+            # A chosen person, or the new one a resend that landed already created.
+            found = (
+                binding.id
+                if isinstance(binding, NewAuthorBinding)
+                else db.scalar(
+                    select(Contributor.id).where(Contributor.handle == binding.contributor_handle)
+                )
+            )
             if found is None or not _visible(db, found, viewer_id):
                 # One answer for unknown and invisible: selection never reveals a person.
                 raise ApiError(
                     ApiErrorCode.E_AUTHOR_NOT_SELECTABLE, "That author can't be selected."
                 )
             contributor_id = found
-        else:
-            display = clean_contributor_display(row.binding.display_name)
-            contributor_id = create_contributor(db, display_name=display).contributor_id
         if any(contributor_id == listed for listed, _ in rows):
             raise ApiError(
                 ApiErrorCode.E_AUTHOR_ALREADY_LISTED, "That author is already listed for this role."

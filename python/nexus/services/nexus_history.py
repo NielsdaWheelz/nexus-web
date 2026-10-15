@@ -1,4 +1,4 @@
-"""Nexus usage history: recent targets, query-aware frecency, idempotent selection records.
+"""Nexus usage history: recent targets, query-aware frecency, selection records.
 
 Score = use_count × mean age points of the last ten visits; under a query the target-only
 aggregate (query "") counts 0.35. Hrefs are canonicalized structurally; the web owns routes.
@@ -11,7 +11,6 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.retries import retry_read_committed
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.nexus_history import (
     NexusHistoryOut,
@@ -19,13 +18,7 @@ from nexus.schemas.nexus_history import (
     NexusSelectionRecordOut,
     NexusSelectionRecordRequest,
 )
-from nexus.services.resource_mutation_replay import (
-    canonical_json_bytes,
-    lookup_replay,
-    record_replay,
-)
 
-SELECTION_SCOPE = "Nexus.SelectionRecord"
 # Points for a visit no older than (hours, points); older visits score nothing.
 AGE_POINTS = ((4, 100), (24, 80), (72, 60), (168, 40), (720, 20), (2160, 10))
 
@@ -74,7 +67,7 @@ def get_history_for_viewer(db: Session, viewer_id: UUID, query: str | None) -> N
 def record_selection_for_viewer(
     db: Session, viewer_id: UUID, *, request: NexusSelectionRecordRequest
 ) -> NexusSelectionRecordOut:
-    request_bytes = canonical_json_bytes(request.model_dump(mode="json"))
+    """One upsert: a plain increment, so a resend counts again (frecency only)."""
     params = {
         "viewer_id": viewer_id,
         "query": _normalize_query(request.query),
@@ -84,48 +77,26 @@ def record_selection_for_viewer(
     }
     if not params["label"]:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Missing Nexus target label")
-
-    def op() -> NexusSelectionRecordOut:
-        replay = lookup_replay(
-            db,
-            viewer_id=viewer_id,
-            scope=SELECTION_SCOPE,
-            client_mutation_id=request.client_mutation_id,
-            request_bytes=request_bytes,
-        )
-        if replay is not None:
-            return NexusSelectionRecordOut.model_validate(replay)
-        use_count, last_used_at = db.execute(
-            text("""
-                INSERT INTO nexus_usages
-                    (user_id, query_normalized, target_href, label_snapshot, source, use_count, visit_timestamps)
-                VALUES (:viewer_id, :query, :href, :label, :source, 1, jsonb_build_array(now()))
-                ON CONFLICT (user_id, query_normalized, target_href) DO UPDATE SET
-                    label_snapshot = EXCLUDED.label_snapshot,
-                    source = EXCLUDED.source,
-                    use_count = nexus_usages.use_count + 1,
-                    visit_timestamps = jsonb_path_query_array(
-                        EXCLUDED.visit_timestamps || nexus_usages.visit_timestamps, '$[0 to 9]'
-                    ),
-                    last_used_at = now(),
-                    updated_at = now()
-                RETURNING use_count, last_used_at
-            """),
-            params,
-        ).one()
-        response = NexusSelectionRecordOut(use_count=use_count, last_used_at=last_used_at)
-        record_replay(
-            db,
-            viewer_id=viewer_id,
-            scope=SELECTION_SCOPE,
-            client_mutation_id=request.client_mutation_id,
-            request_bytes=request_bytes,
-            response_json=response.model_dump(mode="json"),
-        )
-        db.commit()
-        return response
-
-    return retry_read_committed(db, "record_nexus_selection", op)
+    use_count, last_used_at = db.execute(
+        text("""
+            INSERT INTO nexus_usages
+                (user_id, query_normalized, target_href, label_snapshot, source, use_count, visit_timestamps)
+            VALUES (:viewer_id, :query, :href, :label, :source, 1, jsonb_build_array(now()))
+            ON CONFLICT (user_id, query_normalized, target_href) DO UPDATE SET
+                label_snapshot = EXCLUDED.label_snapshot,
+                source = EXCLUDED.source,
+                use_count = nexus_usages.use_count + 1,
+                visit_timestamps = jsonb_path_query_array(
+                    EXCLUDED.visit_timestamps || nexus_usages.visit_timestamps, '$[0 to 9]'
+                ),
+                last_used_at = now(),
+                updated_at = now()
+            RETURNING use_count, last_used_at
+        """),
+        params,
+    ).one()
+    db.commit()
+    return NexusSelectionRecordOut(use_count=use_count, last_used_at=last_used_at)
 
 
 def _age_points(age: timedelta) -> int:
