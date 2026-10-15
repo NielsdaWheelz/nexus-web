@@ -379,8 +379,11 @@ items / show finished.
 - A matching commit atomically swaps view, rows, and cursor, resets the
   collection region, and lets `CollectionView` own the single row transition;
   reduced motion performs the same commit without animation.
-- the route bootstrap seeds `Canonical + All items (all)`; a first visit to
-  that view paints the seed and reads no first page.
+- the route bootstrap independently seeds library metadata, the
+  `Canonical + All items (all)` first page, and published suggestions under
+  their resource keys. a first visit to the canonical view paints its entry
+  seed and reads no first page; other views read their own query. an entry
+  prefetch miss does not discard the metadata or suggestions seeds.
 - podcast settings saves reach the pane through its own facts and visits;
   there is no settings install publisher or confirmed library-entry floor.
 - modeled recovery notices remain; unexpected request rejection reaches the

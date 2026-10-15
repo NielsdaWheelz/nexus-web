@@ -62,8 +62,8 @@ export async function loadWorkspaceBootstrap(): Promise<WorkspaceBootstrap> {
     (pane) => pane.id === initialState.activePrimaryPaneId,
   )!;
   const route = resolvePaneRouteModel(pane.currentVisit.href);
-  const loader = route.id === "unsupported" ? undefined : paneResourceLoaders[route.id];
-  if (loader) {
+  const loaders = route.id === "unsupported" ? [] : paneResourceLoaders[route.id] ?? [];
+  await Promise.all(loaders.map(async (loader) => {
     try {
       resources[loader.cacheKey(route.params)] = await loader.load(
         serverResourceFetcher,
@@ -79,7 +79,7 @@ export async function loadWorkspaceBootstrap(): Promise<WorkspaceBootstrap> {
       // justify-ignore-error: these named prefetch misses leave the pane's
       // ordinary client read in charge; unknown failures never become misses.
     }
-  }
+  }));
   return {
     account: { accountId: me.data.user_id, calendarTimeZone: zone },
     readerProfile: profile.data,

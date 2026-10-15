@@ -794,7 +794,7 @@ function LibraryPane({ id }: { readonly id: string }) {
             accept={async (target) => {
               await addLibraryPlacement({
                 target: { kind: target.kind, id: suggestionTargetId(target) },
-                destination: {
+                destination: currentLibrary.isDefault ? { kind: "SavedInNexus" } : {
                   kind: "Library",
                   library: { id: currentLibrary.id, name: currentLibrary.name },
                 },

@@ -59,10 +59,11 @@ picks own-if-nontrivial, else elsewhere-if-nontrivial, else one Lectern pane, an
 merges a deep link: `/` and non-canonical request paths resume; bare `/daily` is
 today in the account zone; any other path reuses the pane on its routeKey or
 resource (keeping its visit id, width and inspector) or is appended, keeping the
-newest 11 at the cap. entry awaits only the guaranteed visible active pane's
-registered loader, with the existing 500 ms per-request deadline and zero/one seed
-in the consume-once cache. named transport failures and route-specific missing
-resources use normal client reads; other seed errors terminate. inactive panes
+newest 11 at the cap. entry concurrently reads only the guaranteed visible active
+pane's registered resources, each with the existing 500 ms deadline and its own
+consume-once cache key. named transport failures and route-specific missing
+resources leave that resource's normal client read in charge without discarding
+successful sibling seeds; other seed errors terminate. inactive panes
 load through their existing owners. the authenticated group has one optional
 catch-all page (`[[...path]]/page.tsx`), so unknown paths render unsupported panes.
 

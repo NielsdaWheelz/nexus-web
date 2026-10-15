@@ -1,13 +1,13 @@
-// One loader per pane whose first-paint data is fetched by route params alone:
-// the server bootstrap seeds it and the pane's client mount loads it, through
-// the same code with a different transport (`ResourceFetcher`). Panes keyed by
-// mutable ui state (filters, search, editor scope) or streamed are absent.
+// Independent first-paint resources keyed by route params. The server seeds
+// each existing cache key separately; one prefetch miss does not discard its
+// siblings. Client owners consume those same keys on their first mount.
 import type { ApiJson } from "@/lib/api/wire";
 import {
   conversationsInitialResource,
   librariesResource,
   libraryEntriesResource,
   libraryResource,
+  librarySuggestionsResource,
   lecternSuggestionsResource,
   mediaResource,
   notePagesResource,
@@ -17,7 +17,7 @@ import {
 import type { ResourceFetcher } from "@/lib/api/resourceTransport";
 import type { ListPage } from "@/lib/api/useServerList";
 import type { ConversationListItem } from "@/lib/chat/conversationIndex";
-import { libraryOutForId, type LibraryOut } from "@/lib/libraries/contract";
+import { libraryOutForId } from "@/lib/libraries/contract";
 import {
   libraryEntryPageFromWire,
   type LibraryEntryListItem,
@@ -34,10 +34,6 @@ export interface PaneResourceLoader {
 }
 
 export type ConversationsPaneSeed = ListPage<ConversationListItem>;
-export interface LibraryPaneSeed {
-  readonly library: LibraryOut;
-  readonly entries: ListPage<LibraryEntryListItem>;
-}
 export interface MediaPaneSeed {
   readonly media: MediaDetail;
 }
@@ -54,9 +50,9 @@ export async function loadMediaPane(
 }
 
 export const paneResourceLoaders: Partial<
-  Record<PaneRouteId, PaneResourceLoader>
+  Record<PaneRouteId, readonly PaneResourceLoader[]>
 > = {
-  lectern: {
+  lectern: [{
     cacheKey: () => lecternSuggestionsResource.cacheKey({}),
     load: async (request) => {
       const response = await request<
@@ -65,8 +61,8 @@ export const paneResourceLoaders: Partial<
       >(lecternSuggestionsResource, {});
       return response.data;
     },
-  },
-  libraries: {
+  }],
+  libraries: [{
     cacheKey: () => librariesResource.cacheKey({}),
     load: async (request) => {
       const response = await request<
@@ -75,35 +71,48 @@ export const paneResourceLoaders: Partial<
       >(librariesResource, { limit: 100 });
       return response.data;
     },
-  },
-  library: {
-    cacheKey: ({ id }) => libraryResource.cacheKey({ id }),
-    load: async (request, { id }): Promise<LibraryPaneSeed> => {
-      const [library, entries] = await Promise.all([
-        request<{ id: string }, ApiJson<"/libraries/{library_id}", "get">>(
+  }],
+  library: [
+    {
+      cacheKey: ({ id }) => libraryResource.cacheKey({ id }),
+      load: async (request, { id }) => {
+        const response = await request<{ id: string }, ApiJson<"/libraries/{library_id}", "get">>(
           libraryResource,
           { id },
-        ),
-        request<
+        );
+        return libraryOutForId(response.data, id, "Library pane response.data");
+      },
+    },
+    {
+      cacheKey: ({ id }) => libraryEntriesResource.cacheKey({ id }),
+      load: async (request, { id }): Promise<ListPage<LibraryEntryListItem>> => {
+        const response = await request<
           { id: string },
           ApiJson<"/libraries/{library_id}/entries", "get">
-        >(libraryEntriesResource, { id }),
-      ]);
-      return {
-        library: libraryOutForId(library.data, id, "Library pane response.data"),
-        entries: libraryEntryPageFromWire(entries.data),
-      };
+        >(libraryEntriesResource, { id });
+        return libraryEntryPageFromWire(response.data);
+      },
     },
-  },
-  media: {
+    {
+      cacheKey: ({ id }) => librarySuggestionsResource.cacheKey({ id }),
+      load: async (request, { id }) => {
+        const response = await request<
+          { id: string },
+          ApiJson<"/libraries/{library_id}/suggestions", "get">
+        >(librarySuggestionsResource, { id });
+        return response.data;
+      },
+    },
+  ],
+  media: [{
     cacheKey: ({ id }) => mediaResource.cacheKey({ id }),
     load: (request, { id }) => loadMediaPane(request, { id }),
-  },
-  notes: {
+  }],
+  notes: [{
     cacheKey: () => notePagesResource.cacheKey({}),
     load: (request) => loadNotePages(request, {}),
-  },
-  conversations: {
+  }],
+  conversations: [{
     cacheKey: () => conversationsInitialResource.cacheKey({}),
     load: async (request): Promise<ConversationsPaneSeed> => {
       const response = await request<
@@ -112,9 +121,9 @@ export const paneResourceLoaders: Partial<
       >(conversationsInitialResource, {});
       return response.data;
     },
-  },
-  settingsAccount: {
+  }],
+  settingsAccount: [{
     cacheKey: () => settingsAccountResource.cacheKey({}),
     load: (request) => request(settingsAccountResource, {}),
-  },
+  }],
 };

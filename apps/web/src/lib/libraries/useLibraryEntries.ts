@@ -13,6 +13,7 @@ import { useServerValue, type Visit } from "@/lib/api/serverState";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import {
   useServerList,
+  type ListPage,
   type ListSnapshot,
   type ServerList,
 } from "@/lib/api/useServerList";
@@ -20,7 +21,6 @@ import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { usePaneRouter } from "@/lib/panes/paneRuntime";
-import type { LibraryPaneSeed } from "@/lib/panes/paneResourceLoaders";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
@@ -110,8 +110,11 @@ export function useLibraryEntries({
     [id],
   );
   const { state: url, setState: setUrl } = usePaneUrlState(codec);
-  const seed = useResourceSeed<LibraryPaneSeed>(
+  const librarySeed = useResourceSeed<LibraryOut>(
     libraryResource.cacheKey({ id }),
+  );
+  const entriesSeed = useResourceSeed<ListPage<Entry>>(
+    libraryEntriesResource.cacheKey({ id }),
   );
 
   const detail = useServerValue({
@@ -131,7 +134,7 @@ export function useLibraryEntries({
   const library =
     adopted !== null && adopted.base === read
       ? adopted.library
-      : (read ?? seed?.library ?? null);
+      : (read ?? librarySeed ?? null);
   const unavailable =
     adopted !== null && adopted.base === read && adopted.library === null;
   const libraryFailure = detail.status === "failed" ? detail.error : null;
@@ -156,7 +159,7 @@ export function useLibraryEntries({
     drain: true,
     active,
     visit: ENTRIES,
-    seed: seed && { key: id, page: seed.entries },
+    seed: entriesSeed && { key: id, page: entriesSeed },
     id: libraryEntryTargetId,
     fetchPage: async (cursor, limit, signal) => {
       const path = libraryEntriesResource.clientPath({
