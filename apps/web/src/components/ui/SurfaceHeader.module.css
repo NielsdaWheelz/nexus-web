@@ -69,12 +69,14 @@
 
 .statusMarker {
   position: absolute;
-  inset-block-start: 4px;
-  inset-inline-end: 4px;
+  /* The bordered button replaces the borderless menu wrapper as its anchor. */
+  inset-block-start: calc(4px - 1px);
+  inset-inline-end: calc(4px - 1px);
   inline-size: 5px;
   block-size: 5px;
   border-radius: var(--radius-full);
   background: var(--accent);
+  pointer-events: none;
 }
 
 /* This header owns both axes through Button's existing density contract. */
@@ -191,6 +193,11 @@
 }
 
 @media (forced-colors: active) {
+  .statusMarker {
+    background: currentColor;
+    forced-color-adjust: none;
+  }
+
   .header,
   :global([data-theme="elvish"] [data-pane-shell]:focus-within) .header {
     border-block-end-color: CanvasText;

@@ -12,6 +12,7 @@ import {
 } from "@/lib/ui/actionDescriptor";
 import { cx } from "@/lib/ui/cx";
 import Button from "./Button";
+import OverflowMenuButton from "./OverflowMenuButton";
 import PaneHeaderIdentity from "./PaneHeaderIdentity";
 import Tooltip from "./Tooltip";
 import styles from "./SurfaceHeader.module.css";
@@ -91,14 +92,13 @@ export default function SurfaceHeader({
             ]}
             resourceRef={resourceRef}
             renderTrigger={(props) => (
-              <button {...props}>
-                &hellip;
+              <OverflowMenuButton {...props}>
                 {actions.some(
                   (action) => action.indicator?.kind === "Status",
                 ) ? (
                   <span className={styles.statusMarker} aria-hidden="true" />
                 ) : null}
-              </button>
+              </OverflowMenuButton>
             )}
           />
         ) : null}

@@ -3,6 +3,7 @@
 import { useRef } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
+import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import PaneHeaderIdentity from "@/components/ui/PaneHeaderIdentity";
 import Tooltip from "@/components/ui/Tooltip";
 import { useMobileChromeSurface, useMobilePaneChrome } from "@/lib/mobileShell/chrome";
@@ -72,10 +73,9 @@ export default function MobilePaneBar() {
             onDefect={chrome.onDefect}
             triggerAttributes={{ "data-pane-menu-trigger": chrome.paneId }}
             renderTrigger={(props) => (
-              <button {...props} className={cx(props.className, styles.topBarButton)}>
-                &hellip;
+              <OverflowMenuButton {...props} className={styles.overflowButton}>
                 {hiddenStatus ? <span className={styles.statusMarker} aria-hidden="true" /> : null}
-              </button>
+              </OverflowMenuButton>
             )}
           />
         ) : null}

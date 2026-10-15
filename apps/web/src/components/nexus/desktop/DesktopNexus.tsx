@@ -2,10 +2,10 @@
 
 // The desktop palette: a modal combobox whose popup is a two-column grid (row, ⋯ menu).
 // DOM focus stays in the input; the active cell is virtual (aria-activedescendant).
-import { MoreHorizontal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import Input from "@/components/ui/Input";
 import ModalFrame from "@/components/ui/ModalFrame";
+import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import type { NexusRow } from "@/lib/nexus/model";
 import { rowFacts } from "@/lib/nexus/rows";
 import { NexusRowBody, NexusRowMenu, NexusSourceFailures, useNexusRowMenus } from "../NexusRow";
@@ -198,9 +198,8 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                         triggerRef: registerMenu(row.key),
                         onOpenChange: (open) => menuOpenChange(row.key, open),
                         renderTrigger: (trigger) => (
-                          <button
+                          <OverflowMenuButton
                             {...trigger}
-                            type="button"
                             className={styles.actionsButton}
                             onPointerMove={() => select(row, "Actions")}
                             onKeyDown={(event) => {
@@ -213,8 +212,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                             }}
                           >
                             <kbd aria-hidden="true">{controller.openShortcut}</kbd>
-                            <MoreHorizontal size={16} aria-hidden="true" />
-                          </button>
+                          </OverflowMenuButton>
                         ),
                       }}
                     />

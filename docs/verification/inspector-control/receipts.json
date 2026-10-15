@@ -2432,5 +2432,21 @@
     },
     "live_qualification": "historical at recorded candidates; not replayed or relabeled for integration",
     "production_smoke": "pending normal release"
-  }
+  },
+  "merge_integration_followups": [
+    {
+      "main_sha": "42113bf1ad488679e4e0d169ae20181e5db0c1d0",
+      "upstream_pr": 627,
+      "review": "independent actual-index pass; OverflowMenuButton/native ref/handlers/spacing preserved; tooltip source unchanged",
+      "conflict_resolution": "issue register only; retained all entries, moved inspector entries beside existing inspector issue",
+      "web_source_sha256": "8d21b6703007dde36768813a7348bbac18c9e146803f7f033ec2799deaa99990",
+      "web_source_paths": 731,
+      "static_gate": {
+        "command": "./scripts/test",
+        "exit_code": 0,
+        "migration_head": "0286"
+      },
+      "live_qualification": "historical; no new screenshot/live claim"
+    }
+  ]
 }

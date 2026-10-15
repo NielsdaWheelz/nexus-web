@@ -26,6 +26,13 @@ issue register conflicted, and all entries were retained. the integrated
 over 728 paths. this is static integration proof; earlier live runs retain their
 original source identities. production smoke remains pending.
 
+subsequent integration: main `42113bf1ad488679e4e0d169ae20181e5db0c1d0`
+added pr #627's overflow button. independent review preserved that primitive,
+native refs/handlers and header spacing beside the inspector. the repeated
+register conflict retained all entries; inspector entries now sit beside the
+existing inspector issue. `./scripts/test` passed again at head `0286`. original
+screenshots remain historical, including the earlier more-button appearance.
+
 disposable playwright 1.59.1 drove browser → next/bff `:3198` → api `:8198`
 → isolated auth, database and storage. one article used ordinary extension
 capture/upload/confirmation and normal linux ingestion; one ordinary library

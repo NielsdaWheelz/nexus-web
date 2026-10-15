@@ -24,6 +24,7 @@ import {
   useOverlayContainer,
 } from "@/lib/ui/overlay";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
+import OverflowMenuButton from "./OverflowMenuButton";
 import styles from "./ActionMenu.module.css";
 
 /** Extra attributes for composite widgets that keep their trigger programmatic. */
@@ -37,7 +38,6 @@ type TriggerAttributes = Pick<
 interface ActionMenuTriggerProps extends TriggerAttributes {
   ref: Ref<HTMLButtonElement>;
   type: "button";
-  className: string;
   id: string;
   "aria-label": string;
   "aria-describedby": string | undefined;
@@ -333,7 +333,6 @@ export default function ActionMenu({
       triggerRef?.(node);
     },
     type: "button",
-    className: styles.trigger,
     id: triggerId,
     "aria-label": label,
     "aria-describedby":
@@ -372,7 +371,7 @@ export default function ActionMenu({
       {direct ? null : renderTrigger ? (
         renderTrigger(triggerProps)
       ) : (
-        <button {...triggerProps}>&hellip;</button>
+        <OverflowMenuButton {...triggerProps} />
       )}
       {!direct && triggerDisabled && triggerDisabledReason ? (
         <span id={reasonId} className="sr-only">
