@@ -1,6 +1,6 @@
 # libraries creation verification
 
-status: browser qualification passed on `447ecd11c`; disposable stack/tests removed; physical keyboard proof deferred by owner. final composition is recorded separately below. 2026-10-15.
+status: browser qualification passed on `447ecd11c`; final composition passed static checks and source review; disposable stack/tests removed; physical keyboard proof deferred by owner. 2026-10-15.
 pr: [629](https://github.com/NielsdaWheelz/nexus-web/pull/629).
 
 ## source and method
@@ -36,4 +36,4 @@ all case-created libraries were deleted successfully. [cleanup](assets/libraries
 
 inspector617 (`cd0e4304203816687f0afd443b36c5eb9552646a`) and toolbar628 (`4d5abbf4c0792e97fd75b15c6305dbcfb2cbb8f4`) are composed before merging629. libraries retains its visit-owned filter/task while supplying mandatory `status.visible` from shared `headerMeta` and `canReset`. primary → more → tooltip inspector order, native triggers and independent primary32/inspector32-or44 sizing are preserved.
 
-independent source review found no contract break. toolbar density variables stay on the control row; its focus effect only touches focused refinements. neither reaches the body-portaled creation dialog. the dialog, delivery logic, acknowledgement client and visit writer remain unchanged from the live-qualified source. final static evidence follows this composition; the retained browser/native receipts do not claim to observe its final rendering.
+independent source review found no contract break. toolbar density variables stay on the control row; its focus effect only touches focused refinements. neither reaches the body-portaled creation dialog. the dialog, delivery logic, acknowledgement client and visit writer remain unchanged from the live-qualified source. [composition source hashes](assets/libraries-creation/composition.json) pin `99529b7dc`; unchanged `./scripts/test` [passed](assets/libraries-creation/final-static.log), canonical migration head `0286`. twenty of the 24 live-qualified paths are byte-identical; the other four contain the caller/header composition described above. the retained browser/native receipts do not claim to observe its final rendering.
