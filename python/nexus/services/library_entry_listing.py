@@ -28,7 +28,6 @@ from nexus.schemas.library import (
     LibraryMediaListItemOut,
     LibraryPodcastListItemOut,
 )
-from nexus.schemas.presence import Presence, absent, presence_from_nullable, present
 from nexus.services import library_governance as governance
 from nexus.services.collection_keyset import Direction, KeysetValueKind, SortKey, keyset_page
 from nexus.services.consumption import projection
@@ -225,13 +224,11 @@ def _podcast_rows(db: Session, *, viewer_id: UUID, podcast_ids: list[UUID]) -> d
     return {UUID(str(row["podcast_id"])): row for row in rows}
 
 
-def _placement(row: Any) -> Presence[LibraryEntryPlacementOut]:
+def _placement(row: Any) -> LibraryEntryPlacementOut | None:
     if row["is_virtual"]:
-        return absent()
-    return present(
-        LibraryEntryPlacementOut(
-            library_entry_id=UUID(str(row["id"])), position=int(row["position"])
-        )
+        return None
+    return LibraryEntryPlacementOut(
+        library_entry_id=UUID(str(row["id"])), position=int(row["position"])
     )
 
 
@@ -307,20 +304,14 @@ def _hydrate_entry_rows(
         podcast_row = podcast_rows.get(podcast_id)
         if podcast_row is None:
             raise AssertionError(f"library podcast disappeared: {podcast_id}")
-        subscription: Presence[LibraryEntryPodcastSubscriptionOut] = absent()
+        subscription: LibraryEntryPodcastSubscriptionOut | None = None
         if podcast_row["sub_id"] is not None:
             speed = podcast_row["sub_default_playback_speed"]
-            subscription = present(
-                LibraryEntryPodcastSubscriptionOut(
-                    default_playback_speed=presence_from_nullable(
-                        None if speed is None else float(speed)
-                    ),
-                    pause_shortening_mode=presence_from_nullable(
-                        podcast_row["sub_pause_shortening_mode"]
-                    ),
-                    auto_queue=bool(podcast_row["sub_auto_queue"]),
-                    sync_status=podcast_row["sub_sync_status"],
-                )
+            subscription = LibraryEntryPodcastSubscriptionOut(
+                default_playback_speed=None if speed is None else float(speed),
+                pause_shortening_mode=podcast_row["sub_pause_shortening_mode"],
+                auto_queue=bool(podcast_row["sub_auto_queue"]),
+                sync_status=podcast_row["sub_sync_status"],
             )
         hydrated.append(
             LibraryPodcastListItemOut(
@@ -332,12 +323,10 @@ def _hydrate_entry_rows(
                     title=podcast_row["title"],
                     contributors=contributors.get(podcast_id, []),
                     unplayed_count=int(podcast_row["unplayed_count"] or 0),
-                    published_date=presence_from_nullable(
-                        podcast_row["latest_episode_published_at"]
-                    ),
+                    published_date=podcast_row["latest_episode_published_at"],
                 ),
                 subscription=subscription,
-                reading_time_estimate=absent(),
+                reading_time_estimate=None,
             )
         )
     return hydrated
@@ -599,5 +588,5 @@ def list_library_entries(
     )
     return CollectionPage[LibraryEntryListItemOut](
         items=_hydrate_entry_rows(db, viewer_id=viewer_id, rows=rows),
-        nextCursor=presence_from_nullable(next_cursor),
+        next_cursor=next_cursor,
     )

@@ -1,7 +1,6 @@
 // The dossier transport: typed head, build, learn and cancel calls through the
 // BFF proxy, and the build-status snapshot stream.
 import { apiCommand204, apiFetch, type ApiPath } from "@/lib/api/client";
-import { absent, present } from "@/lib/api/presence";
 import { sseClientDirect } from "@/lib/api/sse-client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 
@@ -52,7 +51,7 @@ export async function createDossierBuild(
     method: "POST",
     headers: { "Idempotency-Key": idempotencyKey },
     body: JSON.stringify({
-      instruction: instruction ? present(instruction) : absent<string>(),
+      instruction: instruction ? instruction : null,
     }),
   };
   const path: ApiPath = `${headPath(target)}/builds`;

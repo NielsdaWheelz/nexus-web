@@ -1,6 +1,5 @@
 /** Pure semantic projection for one settings row. */
 
-import { absent, present } from "@/lib/api/presence";
 import type { CollectionRowView } from "@/lib/collections/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
@@ -26,13 +25,13 @@ export function presentSettingsRow(item: SettingsPresenterItem): CollectionRowVi
       : { kind: "static" },
     title: { text: item.title },
     contributors: [],
-    publicationDate: absent(),
+    publicationDate: null,
     context:
       context.length > 0
-        ? present({ kind: "Text", text: context.join(" · ") })
-        : absent(),
-    activity: absent(),
-    exceptionalStatus: absent(),
+        ? { kind: "Text", text: context.join(" · ") }
+        : null,
+    activity: null,
+    exceptionalStatus: null,
     // Settings rows are not resources: they carry an explicit, non-resource flat
     // menu (no snapshot, no canonical resource dropdown).
     actionSubject: null,

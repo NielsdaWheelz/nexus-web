@@ -15,7 +15,6 @@ from nexus.errors import (
     ResourceLimitError,
 )
 from nexus.logging import get_logger
-from nexus.schemas.presence import Present, present
 from nexus.services.epub_ingest import (
     EpubExtractionError,
     EpubExtractionPlan,
@@ -130,7 +129,7 @@ def publish_epub_source(
             observations=source_contributor_observations(
                 media_id=media_id, observation=result.contributor_observation, source="epub_opf"
             ),
-            metadata_enrichment=present(True),
+            metadata_enrichment=True,
         ), old_storage_paths
 
     outcome, old_storage_paths = replace_reader_publication(
@@ -154,7 +153,7 @@ def _persist_epub_metadata(media: Media, result: EpubExtractionResult) -> None:
         media.language = result.language[:32]
     if result.description and not media.description:
         media.description = result.description[:2000]
-    if isinstance(result.edition_published_date, Present):
-        media.edition_published_date = result.edition_published_date.value
-    if isinstance(result.edition_isbn, Present):
-        media.edition_isbn = result.edition_isbn.value
+    if result.edition_published_date is not None:
+        media.edition_published_date = result.edition_published_date
+    if result.edition_isbn is not None:
+        media.edition_isbn = result.edition_isbn

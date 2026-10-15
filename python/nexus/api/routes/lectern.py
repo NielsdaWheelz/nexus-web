@@ -1,6 +1,6 @@
 """Lectern + consumption command ports (spec §5).
 
-Transport-only: decode the strict camelCase command, call the consumption
+Transport-only: decode the strict command, call the consumption
 service facade (which owns the fresh session, replay, and transaction), and
 return the typed data envelope. GET uses the request-scoped read boundary.
 """

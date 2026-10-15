@@ -40,7 +40,6 @@ from nexus.schemas.dossier import (
     LearnDossierOpenedOut,
     MediaAbstractOut,
 )
-from nexus.schemas.presence import absent, presence_from_nullable, present
 from nexus.services.dossier import research, subjects
 from nexus.services.dossier.inputs import Coverage, InputTooLarge
 from nexus.services.dossier.synthesis import Published
@@ -380,13 +379,13 @@ def _head_out(
     if scheme == "idea":
         title_sql = "SELECT display_title FROM artifact_idea_subjects WHERE id = :id"
         title = _sql(db, title_sql, id=subject_id).scalar_one()
-        activation = absent()
+        activation = None
     else:
         ref = ResourceRef(cast(ResourceScheme, scheme), subject_id)
         resolved = resolve_ref(db, viewer_id=viewer_id, ref=ref)
         title = resolved.label
-        activation = present(
-            resource_activation_for_ref(db, viewer_id=viewer_id, ref=ref, missing=resolved.missing)
+        activation = resource_activation_for_ref(
+            db, viewer_id=viewer_id, ref=ref, missing=resolved.missing
         )
     builds = (
         []
@@ -400,23 +399,23 @@ def _head_out(
     )
     active = next((build for build in builds if build.status == "active"), None)
     failure = next((build for build in builds if build.status != "active"), None)
-    abstract = absent()
+    abstract = None
     if scheme == "media":
         projection = read_single(db, media_id=subject_id, requester_user_id=viewer_id)
         if projection.status != "not_available":
             status = "Failed" if projection.status == "suspended" else projection.status.title()
-            summary = presence_from_nullable(projection.summary_md)
-            abstract = present(MediaAbstractOut(status=cast(Any, status), summary_md=summary))
+            summary = projection.summary_md
+            abstract = MediaAbstractOut(status=cast(Any, status), summary_md=summary)
     revision = (
         None if head is None or head.revision_id is None else _revision_out(db, head, viewer_id)
     )
     return DossierHeadOut(
-        artifact_ref=absent() if head is None else present(f"artifact:{head.id}"),
+        artifact_ref=None if head is None else f"artifact:{head.id}",
         title=title,
         subject_activation=activation,
-        revision=absent() if revision is None else present(revision),
-        active_build=absent() if active is None else present(_build_out(db, active)),
-        last_failure=absent() if failure is None else present(_build_out(db, failure)),
+        revision=revision,
+        active_build=None if active is None else _build_out(db, active),
+        last_failure=None if failure is None else _build_out(db, failure),
         media_abstract=abstract,
     )
 
@@ -443,23 +442,23 @@ def _revision_out(db: Session, head: Any, viewer_id: UUID) -> DossierRevisionOut
         citations=citations[source.uri],
         coverage=DossierCoverageOut(**coverage.model_dump(include={"unit", "included", "omitted"})),
         stale=live != coverage.fingerprint,
-        instruction=presence_from_nullable(head.instruction),
+        instruction=head.instruction,
         by_viewer=head.creator_user_id == viewer_id,
-        model=presence_from_nullable(head.model_name),
-        total_tokens=presence_from_nullable(head.total_tokens),
+        model=head.model_name,
+        total_tokens=head.total_tokens,
         generated_at=head.generated_at,
     )
 
 
 def _build_out(db: Session, build: Any) -> DossierBuildOut:
-    phase = absent()
+    phase = None
     if build.status == "active":
         job = _sql(
             db,
             "SELECT status, attempts, error_code FROM background_jobs WHERE dedupe_key = :key",
             key=_job_key(build.id),
         ).first()
-        phase = present(
+        phase = (
             DurableExecutionPhase.Queued
             if job is None
             else project_execution_phase(
@@ -471,8 +470,8 @@ def _build_out(db: Session, build: Any) -> DossierBuildOut:
         handle=str(build.id),
         status=cast(Any, build.status.capitalize()),
         phase=phase,
-        failure_code=presence_from_nullable(code),
-        instruction=presence_from_nullable(build.instruction),
+        failure_code=code,
+        instruction=build.instruction,
     )
 
 

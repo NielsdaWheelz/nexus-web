@@ -53,7 +53,7 @@ timeout, and post-unavailable failures surface as their mapped API error and a
 
 A browser article capture is one immutable packet (`schemas/extension_capture.py`:
 `url`, `base_url`, `title`, readable `content_html`, bounded embed and note
-evidence in `source_html`, and `Presence` metadata), uploaded and verified through the
+evidence in `source_html`, and nullable metadata), uploaded and verified through the
 upload-session lifecycle and referenced only by the attempt's
 `source_payload.storage_path`. `media_source_adapters.run_source_adapter`
 decodes that packet with the same strict model, composes

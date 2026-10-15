@@ -1,7 +1,7 @@
 """Player routes: the fresh descriptor, listening writes, the preview hand-off and activity
 capture. Transport only; the consumption service owns sessions and fences. This router owns
 static ``/media/{id}/<literal>`` paths, so it registers before the ``media`` router. The BFF
-injects ``deviceId`` into the capture body from the device cookie.
+injects ``device_id`` into the capture body from the device cookie.
 """
 
 from typing import Annotated
@@ -55,7 +55,7 @@ def post_activity(
 ) -> Response:
     ref = parse_resource_ref(body.media_ref)
     if isinstance(ref, ResourceRefParseFailure) or ref.scheme != "media":
-        raise InvalidRequestError(message="Invalid mediaRef")
+        raise InvalidRequestError(message="Invalid media_ref")
     activity.record_batch(
         viewer.user_id,
         media_id=ref.id,

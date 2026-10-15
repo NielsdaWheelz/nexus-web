@@ -68,7 +68,6 @@ from nexus.schemas.media import (
     SourceRepairAdmission,
     SourceRetryAdmission,
 )
-from nexus.schemas.presence import Presence, Present, absent, present
 from nexus.services import library_entries, library_governance
 from nexus.services import media_source_types as source_types
 from nexus.services.capabilities import (
@@ -580,15 +579,15 @@ def create_attempt(
         media_id=media.id,
         attempt=attempt,
         facts=SourceAccepted(source_attempt_id=attempt.id, attempt_no=attempt.attempt_no),
-        failure_code=absent(),
+        failure_code=None,
     )
     if status == SUCCEEDED:
         _record_event(
             db,
             media_id=media.id,
             attempt=attempt,
-            facts=SourceSucceeded(source_attempt_id=attempt.id, execution_id=absent()),
-            failure_code=absent(),
+            facts=SourceSucceeded(source_attempt_id=attempt.id, execution_id=None),
+            failure_code=None,
         )
     elif status == FAILED:
         _record_event(
@@ -597,12 +596,12 @@ def create_attempt(
             attempt=attempt,
             facts=SourceFailed(
                 source_attempt_id=attempt.id,
-                execution_id=absent(),
+                execution_id=None,
                 origin="Domain",
                 terminal=True,
-                progress=absent(),
+                progress=None,
             ),
-            failure_code=present(_failed_media_code(media)),
+            failure_code=_failed_media_code(media),
         )
     return attempt
 
@@ -668,16 +667,14 @@ def _record_event(
     media_id: UUID,
     attempt: MediaSourceAttempt,
     facts: SourceFacts,
-    failure_code: Presence[SafeFailureCode],
+    failure_code: SafeFailureCode | None,
 ) -> None:
     append_processing_event(
         db,
         media_id=media_id,
         facts=facts,
-        stage=present(
-            source_history_stage(
-                source_type=attempt.source_type, processing_stage=attempt.processing_stage
-            )
+        stage=source_history_stage(
+            source_type=attempt.source_type, processing_stage=attempt.processing_stage
         ),
         failure_code=failure_code,
     )
@@ -1066,8 +1063,8 @@ def complete_x_post_snapshot_attempt(
             db,
             media_id=media.id,
             attempt=attempt,
-            facts=SourceSucceeded(source_attempt_id=attempt.id, execution_id=absent()),
-            failure_code=absent(),
+            facts=SourceSucceeded(source_attempt_id=attempt.id, execution_id=None),
+            failure_code=None,
         )
     attempt.finished_at = now
     attempt.updated_at = now
@@ -1406,7 +1403,7 @@ def _admit_source_repeat[T: SourceRetryAdmission | SourceRefreshAdmission](
                     source_attempt_id=attempt.id,
                     recovery=RetrySourceRecovery(new_source_attempt_id=repeated.id),
                 ),
-                failure_code=absent(),
+                failure_code=None,
             )
         admission = admission_type(media_id=media.id, source_attempt_id=repeated.id, job_id=job_id)
         record_replay(
@@ -1528,7 +1525,7 @@ def reprocess_retained_epub(
                 source_attempt_id=attempt.id,
                 recovery=ReprocessSourceRecovery(new_source_attempt_id=new_attempt.id),
             ),
-            failure_code=absent(),
+            failure_code=None,
         )
         receipt = SourceRetryAdmission(
             media_id=media_id,
@@ -1648,7 +1645,7 @@ def correct_source_type(
                     new_source_attempt_id=new_attempt.id, source_type=spec.source_type
                 ),
             ),
-            failure_code=absent(),
+            failure_code=None,
         )
         receipt = SourceRetryAdmission(
             media_id=media_id,
@@ -1749,7 +1746,7 @@ def repair_dead_source_execution(
                 source_attempt_id=attempt.id,
                 recovery=RepairSourceRecovery(job_id=offer.expected_job_id),
             ),
-            failure_code=absent(),
+            failure_code=None,
         )
         admission = SourceRepairAdmission(
             media_id=media.id, source_attempt_id=attempt.id, job_id=offer.expected_job_id
@@ -1998,7 +1995,7 @@ def _run_fenced_attempt(
             facts=SourceExecutionStarted(
                 source_attempt_id=attempt.id, execution_id=fence.execution_id
             ),
-            failure_code=absent(),
+            failure_code=None,
         )
 
     run_source_publication_phase(
@@ -2032,11 +2029,7 @@ def _run_fenced_attempt(
         )
         if isinstance(acquired, SourceRunOutcome):
             outcome = acquired
-            terminal_media_id = (
-                outcome.superseded_by_media_id.value
-                if isinstance(outcome.superseded_by_media_id, Present)
-                else media_id
-            )
+            terminal_media_id = outcome.superseded_by_media_id or media_id
             # Keep the queue payload and attempt anchored to the accepted media.
             # Every winner effect commits with admission of the loser's teardown.
             base_media_ids = {
@@ -2091,11 +2084,7 @@ def _run_fenced_attempt(
                     request_id=request_id,
                     prepared=acquired,
                 )
-                terminal_media_id = (
-                    outcome.superseded_by_media_id.value
-                    if isinstance(outcome.superseded_by_media_id, Present)
-                    else media_id
-                )
+                terminal_media_id = outcome.superseded_by_media_id or media_id
                 if terminal_media_id != media_id:
                     _supersede_source_media(
                         db,
@@ -2228,7 +2217,7 @@ def _publish_terminal_attempt(
             attempt=attempt,
             facts=SourceFailed(
                 source_attempt_id=attempt.id,
-                execution_id=present(execution_id),
+                execution_id=execution_id,
                 origin="Domain",
                 terminal=True,
                 progress=source_failure_progress(
@@ -2238,7 +2227,7 @@ def _publish_terminal_attempt(
                     progress_unit=attempt.progress_unit,
                 ),
             ),
-            failure_code=present(_failed_media_code(media)),
+            failure_code=_failed_media_code(media),
         )
     else:
         if media.processing_status == ProcessingStatus.extracting:
@@ -2250,10 +2239,10 @@ def _publish_terminal_attempt(
             db,
             media_id=attempt.media_id,
             attempt=attempt,
-            facts=SourceSucceeded(source_attempt_id=attempt.id, execution_id=present(execution_id)),
-            failure_code=absent(),
+            facts=SourceSucceeded(source_attempt_id=attempt.id, execution_id=execution_id),
+            failure_code=None,
         )
-        if isinstance(outcome.pdf_has_text, Present) and not outcome.pdf_has_text.value:
+        if outcome.pdf_has_text is not None and not outcome.pdf_has_text:
             mark_stage_warning(
                 db,
                 media,
@@ -2261,22 +2250,22 @@ def _publish_terminal_attempt(
                 error_code="E_PDF_TEXT_UNAVAILABLE",
                 error_message="PDF text is unavailable; OCR is required.",
             )
-        if media.kind in {
-            MediaKind.web_article.value,
-            MediaKind.epub.value,
-            MediaKind.pdf.value,
-        } or isinstance(outcome.transcript_request_reason, Present):
+        if (
+            media.kind
+            in {
+                MediaKind.web_article.value,
+                MediaKind.epub.value,
+                MediaKind.pdf.value,
+            }
+            or outcome.transcript_request_reason is not None
+        ):
             from nexus.services.content_indexing import request_media_content_reindex
 
             for reindex_media_id in (terminal_media_id, *outcome.additional_reindex_media_ids):
                 request_media_content_reindex(
                     db, media_id=reindex_media_id, reason="source_success"
                 )
-        if (
-            attempt.created_by_user_id is not None
-            and isinstance(outcome.metadata_enrichment, Present)
-            and outcome.metadata_enrichment.value
-        ):
+        if attempt.created_by_user_id is not None and outcome.metadata_enrichment:
             enqueue_metadata_enrichment(
                 db,
                 media_id=terminal_media_id,
@@ -2325,7 +2314,7 @@ def _publish_terminal_failure(
                 attempt=attempt,
                 facts=SourceFailed(
                     source_attempt_id=attempt.id,
-                    execution_id=present(fence.execution_id),
+                    execution_id=fence.execution_id,
                     origin="Domain",
                     terminal=True,
                     progress=source_failure_progress(
@@ -2335,7 +2324,7 @@ def _publish_terminal_failure(
                         progress_unit=attempt.progress_unit,
                     ),
                 ),
-                failure_code=present(assume_safe_failure_code(error_code)),
+                failure_code=assume_safe_failure_code(error_code),
             )
             mark_ready_for_reading(db, media)
             return
@@ -2345,7 +2334,7 @@ def _publish_terminal_failure(
             attempt_id=attempt_id,
             exc=exc,
             stage=source_attempt_failure_stage(attempt.source_type),
-            execution_id=present(fence.execution_id),
+            execution_id=fence.execution_id,
         )
         _sync_document_embed_targets(db, media_id)
 
@@ -2386,7 +2375,7 @@ def _supersede_source_media(
         media_id=loser_media_id,
         attempt=attempt,
         facts=SourceSuperseded(source_attempt_id=attempt.id, winner_media_id=winner_media_id),
-        failure_code=absent(),
+        failure_code=None,
     )
     # Ascending-id order is the deadlock discipline two concurrent thread
     # ingests that discover each other depend on.
@@ -2434,7 +2423,7 @@ def _fail_source_attempt(
     attempt_id: UUID,
     exc: Exception,
     stage: str,
-    execution_id: Presence[UUID],
+    execution_id: UUID | None,
 ) -> None:
     error_code, error_message = _source_error_fields(exc)
     # The failure record otherwise lives only in the attempt row: without this

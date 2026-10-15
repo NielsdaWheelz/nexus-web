@@ -2,7 +2,6 @@ import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { ContributorCredit } from "@/lib/contributors/credits";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
-import type { Presence } from "@/lib/api/presence";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type { MediaSummary } from "@/lib/media/mediaSummary";
 import type { ApiJson } from "@/lib/api/wire";
@@ -30,7 +29,7 @@ export type SearchResultRowViewModel = SearchResultRowBase & (
       typeLabel: string;
       primaryText: string;
       sourceMeta: string | null;
-      publicationDate: Presence<PublicationDate>;
+      publicationDate: PublicationDate | null;
       contributorCredits: ContributorCredit[];
     }
 );

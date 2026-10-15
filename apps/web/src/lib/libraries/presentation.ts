@@ -7,11 +7,11 @@ export interface LibraryPresentation {
 }
 
 export function libraryPresentation(library: {
-  isDefault: boolean;
+  is_default: boolean;
   name: string;
   role: string;
 }): LibraryPresentation {
-  return library.isDefault
+  return library.is_default
     ? { name: "All", context: "Across your libraries" }
     : { name: library.name, context: library.role };
 }

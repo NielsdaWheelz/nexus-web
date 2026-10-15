@@ -8,7 +8,7 @@ daily pages and note-block reads. web paths are relative to `apps/web/src/`.
 the seven json routes (`GET`/`POST /notes/pages`, `GET`/`PATCH
 /notes/pages/{id}`, `GET /notes/daily/{date}`, `POST
 /notes/daily/{date}/captures`, `GET /notes/blocks/{id}`) return their owned
-models through `Data`, by camel alias; page deletion is a bodyless 204. pages
+models through `Data`; page deletion is a bodyless 204. pages
 are viewer-owned. list query validation, ordering and tie-breaks, title bounds,
 timestamps and daily metadata presence are the server contract. create is
 idempotent by the caller-chosen page id; a different owner or title conflicts.

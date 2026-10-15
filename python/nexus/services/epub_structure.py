@@ -14,7 +14,6 @@ from typing import Literal
 from urllib.parse import unquote
 from uuid import UUID, uuid5
 
-from nexus.schemas.presence import Presence, Present, absent, present
 from nexus.schemas.reader_apparatus import NoteGroupRegion, NoteRegion
 from nexus.services.canonicalize import HEADING_TAGS, STRUCTURAL_TAGS, CanonicalStructure
 from nexus.services.reader_structure import (
@@ -61,10 +60,10 @@ class EpubStructureSection:
     label: str
     fragment_idx: int
     href_path: str
-    href_fragment: Presence[str]
+    href_fragment: str | None
     start_offset: int
-    parent_section_id: Presence[str]
-    end: Presence[DocumentPoint]
+    parent_section_id: str | None
+    end: DocumentPoint | None
     source: SectionSource
 
 
@@ -79,12 +78,12 @@ class _Section:
     location_id: str
     label: str
     fragment: EpubStructureFragment
-    href_fragment: Presence[str]
-    element_index: Presence[int]
+    href_fragment: str | None
+    element_index: int | None
     target: DocumentPoint
-    heading_rank: Presence[int]
-    parent: Presence[str]
-    container_end: Presence[DocumentPoint]
+    heading_rank: int | None
+    parent: str | None
+    container_end: DocumentPoint | None
     source: SectionSource
     owns_container: bool = False
 
@@ -136,7 +135,7 @@ def build_epub_structure(
         href_fragment = (
             unquote(node.href.split("#", 1)[1]) if node.href and "#" in node.href else ""
         )
-        element_index: Presence[int] = absent()
+        element_index: int | None = None
         if href_fragment:
             index = fragment.canonical.anchors.get(href_fragment)
             if index is None:
@@ -144,14 +143,14 @@ def build_epub_structure(
                 continue
             node.target_offset = fragment.canonical.elements[index].start_offset
             ancestor = fragment.canonical.elements[index].parent_element
-            while isinstance(ancestor, Present):
-                element = fragment.canonical.elements[ancestor.value]
+            while ancestor is not None:
+                element = fragment.canonical.elements[ancestor]
                 if element.tag in HEADING_TAGS:
                     if element.start_offset == node.target_offset:
-                        index = ancestor.value
+                        index = ancestor
                     break
                 ancestor = element.parent_element
-            element_index = present(index)
+            element_index = index
         else:
             node.target_offset = 0
         node.resolution = "SourceTarget"
@@ -159,7 +158,7 @@ def build_epub_structure(
             continue
         match = _matching_heading(fragment, node.target_offset, node.label)
         if match is not None:
-            element_index = present(match[0])
+            element_index = match[0]
             node.target_offset = fragment.canonical.elements[match[0]].start_offset
             node.resolution = "BoundaryMatch"
             claimed_headings.update((fragment.fragment_idx, index) for index in match)
@@ -188,7 +187,7 @@ def build_epub_structure(
                     fragment = repaired_fragment
                     node.fragment_idx = fragment.fragment_idx
                     node.target_offset = repaired_element.start_offset
-                    element_index = present(repaired_index)
+                    element_index = repaired_index
                     repaired_anchors = [
                         anchor
                         for anchor, anchor_index in fragment.canonical.anchors.items()
@@ -197,12 +196,12 @@ def build_epub_structure(
                     href_fragment = repaired_anchors[0] if len(repaired_anchors) == 1 else ""
                     node.resolution = "ExactHeadingRepair"
                     claimed_headings.add((fragment.fragment_idx, repaired_index))
-            elif isinstance(element_index, Present):
-                current = fragment.canonical.elements[element_index.value]
+            elif element_index is not None:
+                current = fragment.canonical.elements[element_index]
                 if current.tag in HEADING_TAGS and _match_label(
                     fragment.canonical.text[current.start_offset : current.end_offset]
                 ) == _match_label(node.label):
-                    claimed_headings.add((fragment.fragment_idx, element_index.value))
+                    claimed_headings.add((fragment.fragment_idx, element_index))
         if not note_index.is_routine(DocumentPoint(fragment.fragment_idx, node.target_offset)):
             continue
         boundary = (
@@ -227,20 +226,20 @@ def build_epub_structure(
             location_id=location_id,
             label=node.label,
             fragment=fragment,
-            href_fragment=present(href_fragment) if href_fragment else absent(),
+            href_fragment=href_fragment if href_fragment else None,
             element_index=element_index,
             target=DocumentPoint(fragment.fragment_idx, node.target_offset),
-            heading_rank=absent(),
-            parent=absent(),
-            container_end=absent(),
+            heading_rank=None,
+            parent=None,
+            container_end=None,
             source="Publisher",
         )
         sections.append(section)
         publisher_boundaries[boundary] = section
         node.section_id = section.location_id
         by_source_node[node.node_id] = section
-        if isinstance(element_index, Present):
-            by_element.setdefault((fragment.fragment_idx, element_index.value), []).append(section)
+        if element_index is not None:
+            by_element.setdefault((fragment.fragment_idx, element_index), []).append(section)
 
     parented_sections: set[str] = set()
     for node in toc_nodes:
@@ -258,7 +257,7 @@ def build_epub_structure(
             visited.add(parent_id)
             parent = by_source_node.get(parent_id)
             if parent is not None:
-                section.parent = present(parent.location_id)
+                section.parent = parent.location_id
                 break
             parent_id = by_toc[parent_id].parent_node_id
 
@@ -279,7 +278,7 @@ def build_epub_structure(
             matched = by_element.get((fragment.fragment_idx, index))
             if matched:
                 for section in matched:
-                    section.heading_rank = present(rank)
+                    section.heading_rank = rank
                     section.source = "Both"
                 continue
             if (fragment.fragment_idx, index) in claimed_headings:
@@ -301,12 +300,12 @@ def build_epub_structure(
                 location_id=location_id,
                 label=label[:512],
                 fragment=fragment,
-                href_fragment=present(anchors[0]) if len(anchors) == 1 else absent(),
-                element_index=present(index),
+                href_fragment=anchors[0] if len(anchors) == 1 else None,
+                element_index=index,
                 target=DocumentPoint(fragment.fragment_idx, element.start_offset),
-                heading_rank=present(rank),
-                parent=absent(),
-                container_end=absent(),
+                heading_rank=rank,
+                parent=None,
+                container_end=None,
                 source="Heading",
             )
             sections.append(section)
@@ -541,9 +540,9 @@ def _supplemental_toc_nodes(
 
     group_nodes: dict[tuple[UUID, int], EpubStructureTocNode] = {}
     for group in groups:
-        if not isinstance(group.heading, Present):
+        if group.heading is None:
             continue
-        heading = group.heading.value
+        heading = group.heading
         fragment = by_fragment_id[heading.fragment_id]
         point = DocumentPoint(fragment.fragment_idx, heading.offset)
         existing = next(
@@ -584,8 +583,8 @@ def _supplemental_toc_nodes(
                 for group in groups
                 if group.range.start.fragment_id == fragment.fragment_id
                 and group.range.start.offset <= point.offset < group.range.end.offset
-                and isinstance(group.heading, Present)
-                and group.heading.value.offset != point.offset
+                and group.heading is not None
+                and group.heading.offset != point.offset
             ]
             parent = None
             if containing:
@@ -593,8 +592,8 @@ def _supplemental_toc_nodes(
                     containing,
                     key=lambda item: item.range.end.offset - item.range.start.offset,
                 )
-                assert isinstance(group.heading, Present)
-                parent = group_nodes.get((fragment.fragment_id, group.heading.value.offset))
+                assert group.heading is not None
+                parent = group_nodes.get((fragment.fragment_id, group.heading.offset))
             label = _match_label(fragment.canonical.text[element.start_offset : element.end_offset])
             if any(
                 node.nav_type == "toc"
@@ -622,8 +621,8 @@ def _add_inferred_numbered_entries(
         children: dict[int, list[int]] = {}
         names_by_element: dict[int, list[str]] = {}
         for index, element in enumerate(elements):
-            if isinstance(element.parent_element, Present):
-                children.setdefault(element.parent_element.value, []).append(index)
+            if element.parent_element is not None:
+                children.setdefault(element.parent_element, []).append(index)
         for name, index in fragment.canonical.anchors.items():
             names_by_element.setdefault(index, []).append(name)
         for index, element in enumerate(elements):
@@ -677,7 +676,7 @@ def _add_inferred_numbered_entries(
         )
         if explicit:
             for section in explicit:
-                section.heading_rank = present(7)
+                section.heading_rank = 7
             continue
         element = fragment.canonical.elements[index]
         section = _Section(
@@ -685,12 +684,12 @@ def _add_inferred_numbered_entries(
             + str(uuid5(media_id, f"{fragment.fragment_id}:{element.start_offset}:{number}")),
             label=label[:512],
             fragment=fragment,
-            href_fragment=present(anchor),
-            element_index=present(index),
+            href_fragment=anchor,
+            element_index=index,
             target=DocumentPoint(fragment.fragment_idx, element.start_offset),
-            heading_rank=present(7),
-            parent=absent(),
-            container_end=absent(),
+            heading_rank=7,
+            parent=None,
+            container_end=None,
             source="InferredNumberedEntry",
         )
         sections.append(section)
@@ -716,14 +715,13 @@ def _bind_containers(
                     if label in fragment.canonical.anchors
                 }
                 candidates = {
-                    section.element_index.value
+                    section.element_index
                     for section in sections
                     if section.fragment is fragment
-                    and isinstance(section.element_index, Present)
-                    and fragment.canonical.elements[section.element_index.value].parent_container
-                    == present(index)
+                    and section.element_index is not None
+                    and fragment.canonical.elements[section.element_index].parent_container == index
                     and (
-                        section.element_index.value in labelled
+                        section.element_index in labelled
                         if labelled
                         else section.target.offset == container.start_offset
                     )
@@ -735,21 +733,19 @@ def _bind_containers(
                 by_container[(fragment.fragment_idx, index)] = owners[0]
                 for owner in owners:
                     owner.owns_container = True
-                    owner.container_end = present(
-                        DocumentPoint(fragment.fragment_idx, container.end_offset)
-                    )
+                    owner.container_end = DocumentPoint(fragment.fragment_idx, container.end_offset)
 
     for section in sections:
-        if not isinstance(section.element_index, Present):
+        if section.element_index is None:
             continue
-        element = section.fragment.canonical.elements[section.element_index.value]
+        element = section.fragment.canonical.elements[section.element_index]
         container = (
             section.element_index if element.tag in STRUCTURAL_TAGS else element.parent_container
         )
-        if isinstance(container, Present) and not section.owns_container:
-            source_container = section.fragment.canonical.elements[container.value]
-            section.container_end = present(
-                DocumentPoint(section.fragment.fragment_idx, source_container.end_offset)
+        if container is not None and not section.owns_container:
+            source_container = section.fragment.canonical.elements[container]
+            section.container_end = DocumentPoint(
+                section.fragment.fragment_idx, source_container.end_offset
             )
     return by_container
 
@@ -765,87 +761,75 @@ def _assign_parents(
     # Publisher grouping can span a title page and independently declared chapters.
     # Its presentation parent cannot override a chapter's exact source container.
     for section in sections:
-        if not section.owns_container or not isinstance(section.parent, Present):
+        if not section.owns_container or section.parent is None:
             continue
-        parent = by_id[section.parent.value]
-        if isinstance(parent.container_end, Present) and (
+        parent = by_id[section.parent]
+        if parent.container_end is not None and (
             section.target < parent.target
-            or (
-                isinstance(section.container_end, Present)
-                and section.container_end.value > parent.container_end.value
-            )
+            or (section.container_end is not None and section.container_end > parent.container_end)
         ):
-            section.parent = absent()
+            section.parent = None
 
     # A source container precedes its first heading at coincident text offsets.
     sections.sort(
         key=lambda section: (
             section.target,
-            section.element_index.value if isinstance(section.element_index, Present) else -1,
+            section.element_index if section.element_index is not None else -1,
         )
     )
     stack: list[_Section] = []
     processed_elements: set[tuple[int, int]] = set()
     for section in sections:
         element_key = (
-            (section.fragment.fragment_idx, section.element_index.value)
-            if isinstance(section.element_index, Present)
+            (section.fragment.fragment_idx, section.element_index)
+            if section.element_index is not None
             else None
         )
         if element_key is not None and element_key in processed_elements:
             first = by_element[element_key][0]
-            if not isinstance(section.parent, Present):
+            if section.parent is None:
                 section.parent = first.parent
             continue
         if element_key is not None:
             processed_elements.add(element_key)
         while stack and (
-            (
-                isinstance(stack[-1].container_end, Present)
-                and stack[-1].container_end.value <= section.target
-            )
+            (stack[-1].container_end is not None and stack[-1].container_end <= section.target)
             or (
-                isinstance(section.heading_rank, Present)
-                and isinstance(stack[-1].heading_rank, Present)
-                and stack[-1].heading_rank.value >= section.heading_rank.value
+                section.heading_rank is not None
+                and stack[-1].heading_rank is not None
+                and stack[-1].heading_rank >= section.heading_rank
             )
         ):
             stack.pop()
-        if not isinstance(section.parent, Present) and isinstance(section.element_index, Present):
-            container = section.fragment.canonical.elements[
-                section.element_index.value
-            ].parent_container
-            while isinstance(container, Present):
-                owner = by_container.get((section.fragment.fragment_idx, container.value))
+        if section.parent is None and section.element_index is not None:
+            container = section.fragment.canonical.elements[section.element_index].parent_container
+            while container is not None:
+                owner = by_container.get((section.fragment.fragment_idx, container))
                 if owner is not None and owner.location_id != section.location_id:
-                    section.parent = present(
+                    section.parent = (
                         stack[-1].location_id
-                        if isinstance(section.heading_rank, Present)
+                        if section.heading_rank is not None
                         and stack
                         and any(ancestor.location_id == owner.location_id for ancestor in stack)
                         else owner.location_id
                     )
                     break
-                container = section.fragment.canonical.elements[container.value].parent_container
-        if (
-            not isinstance(section.parent, Present)
-            and isinstance(section.heading_rank, Present)
-            and stack
-        ):
-            section.parent = present(stack[-1].location_id)
+                container = section.fragment.canonical.elements[container].parent_container
+        if section.parent is None and section.heading_rank is not None and stack:
+            section.parent = stack[-1].location_id
         # Publisher boundaries reset context; only headings and containers can parent it.
         chain: list[_Section] = []
-        parent_presence = section.parent
+        ancestor_id = section.parent
         visited = {section.location_id}
-        while isinstance(parent_presence, Present):
-            if parent_presence.value in visited:
+        while ancestor_id is not None:
+            if ancestor_id in visited:
                 raise ValueError("EPUB semantic ancestry contains a cycle")
-            visited.add(parent_presence.value)
-            ancestor = by_id[parent_presence.value]
+            visited.add(ancestor_id)
+            ancestor = by_id[ancestor_id]
             chain.append(ancestor)
-            parent_presence = ancestor.parent
+            ancestor_id = ancestor.parent
         stack = [
             ancestor
             for ancestor in [*reversed(chain), section]
-            if isinstance(ancestor.heading_rank, Present) or ancestor.owns_container
+            if ancestor.heading_rank is not None or ancestor.owns_container
         ]

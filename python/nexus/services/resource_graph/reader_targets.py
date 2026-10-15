@@ -126,7 +126,7 @@ def reader_target_for_media(
             passage_anchor_id=target_id,
             owner=ResourceRef("media", media_id),
         )
-        match passage.value if passage.kind == "Present" else None:
+        match passage:
             case FragmentPassageTarget() as found:
                 return ReaderTargetTextOut(
                     unit_id=str(found.fragment_id),

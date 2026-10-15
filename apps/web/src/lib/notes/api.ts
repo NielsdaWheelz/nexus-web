@@ -56,7 +56,7 @@ export type DailyCaptureResult = Omit<Schema<"DailyCaptureResult">, "surface"> &
 
 export function acceptDailyCaptureResult(result: Schema<"DailyCaptureResult">): DailyCaptureResult {
   const surface = projectResourceSurface(result.surface);
-  if (surface.source.item.ref !== `page:${result.pageId}`) {
+  if (surface.source.item.ref !== `page:${result.page_id}`) {
     throw new TypeError("daily capture result.surface source must match pageId");
   }
   return { ...result, surface };
@@ -73,11 +73,7 @@ export async function captureDailyPageNote(
     `/api/notes/daily/${localDate}/captures`,
     {
       method: "POST",
-      body: JSON.stringify({
-        clientMutationId: input.clientMutationId,
-        noteId: input.noteId,
-        bodyPmJson: input.bodyPmJson,
-      }),
+      body: JSON.stringify(input),
     },
   );
   const result = decodeApiPayload(
@@ -86,8 +82,8 @@ export async function captureDailyPageNote(
     "Capture daily page note",
   );
   if (
-    result.clientMutationId !== input.clientMutationId ||
-    result.localDate !== localDate
+    result.client_mutation_id !== input.client_mutation_id ||
+    result.local_date !== localDate
   ) {
     throw new TypeError("daily capture response identity does not match request");
   }

@@ -1,8 +1,4 @@
-"""Media catalog routes. Transport only: validate, call one service, envelope.
-
-``MediaOut.player_descriptor`` is the sole aliased field on this wire, so every
-route that serializes one dumps ``by_alias=True``.
-"""
+"""Media catalog routes. Transport only: validate, call one service, envelope."""
 
 from typing import Annotated
 from uuid import UUID
@@ -33,7 +29,6 @@ from nexus.schemas.metadata_enrichment import (
     MetadataResultReviewed,
     MetadataResultReviewRequest,
 )
-from nexus.schemas.presence import absent, present
 from nexus.services import contributors as contributors_service
 from nexus.services import library_entries, media_source_ingest, metadata_dispatch, metadata_reviews
 from nexus.services import media as media_service
@@ -59,7 +54,7 @@ def resolve_media_summaries(
             items=[
                 MediaSummaryResolutionOut(
                     media_id=media_id,
-                    summary=present(summaries[media_id]) if media_id in summaries else absent(),
+                    summary=summaries[media_id] if media_id in summaries else None,
                 )
                 for media_id in body.media_ids
             ]
@@ -82,7 +77,7 @@ def list_media(
     media_list, next_cursor = media_service.list_visible_media(
         db=db, viewer_id=viewer.user_id, kind=kind, search=search, cursor=cursor, limit=limit
     )
-    return {**ok(media_list, by_alias=True), "page": {"next_cursor": next_cursor}}
+    return {**ok(media_list), "page": {"next_cursor": next_cursor}}
 
 
 @router.get("/media/{media_id}")

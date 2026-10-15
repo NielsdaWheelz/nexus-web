@@ -21,9 +21,9 @@ export interface StatsUrlState {
 const BUCKET = { day: "Hour", week: "Day", month: "Day", year: "Month", all: "Year" } as const;
 const FILTER_PARAM = {
   modality: "modality",
-  media: "mediaRef",
-  contributor: "contributorHandle",
-  device: "deviceHandle",
+  media: "media_ref",
+  contributor: "contributor_handle",
+  device: "device_handle",
 } as const;
 const FILTER_KEYS = Object.keys(FILTER_PARAM) as FilterKey[];
 
@@ -92,7 +92,7 @@ export function shiftAnchor(anchor: string, period: StatsPeriod, amount: number)
 /** The Stats query of a view: its range in `timeZone`, bucket grain and filters. */
 export function statsQuery(state: StatsUrlState, timeZone: string): URLSearchParams {
   const period = state.view === "year" ? "year" : state.period;
-  const query = new URLSearchParams({ timeZone, bucket: BUCKET[period] });
+  const query = new URLSearchParams({ time_zone: timeZone, bucket: BUCKET[period] });
   if (period === "all") {
     const tomorrow = shiftLocalDate(formatLocalDateInTimeZone(new Date(), timeZone), 1);
     query.set("end", tomorrow);

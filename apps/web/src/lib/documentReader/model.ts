@@ -272,7 +272,7 @@ export function locatorAt(
       target: {
         fragment_id: at.unit,
         href_path: unit?.hrefPath ?? "",
-        anchor_id: { kind: "Absent" },
+        anchor_id: null,
       },
       locations,
       text,
@@ -308,12 +308,12 @@ export function targetOfLocator(
   if (
     offset === null &&
     locator.kind === "epub" &&
-    locator.target.anchor_id.kind === "Present"
+    locator.target.anchor_id !== null
   ) {
     return {
       kind: "anchor",
       unit: unit.id,
-      id: locator.target.anchor_id.value,
+      id: locator.target.anchor_id,
     };
   }
   return {

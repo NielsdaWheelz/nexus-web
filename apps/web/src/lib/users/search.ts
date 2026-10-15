@@ -1,22 +1,17 @@
 "use client";
 
 import { apiFetch } from "@/lib/api/client";
-import { decodePresence, type Presence } from "@/lib/api/presence";
 import { expectUserHandle } from "@/lib/sharing/wireValidation";
 import {
   expectArray,
   expectExactRecord,
-  expectString,
+  expectNullableString,
 } from "@/lib/validation";
 
 export interface UserSearchResult {
-  userHandle: string;
-  email: Presence<string>;
-  displayName: Presence<string>;
-}
-
-function presenceText(raw: unknown, name: string): Presence<string> {
-  return decodePresence(raw, (value) => expectString(value, `${name}.value`));
+  user_handle: string;
+  email: string | null;
+  display_name: string | null;
 }
 
 export function expectUserSearchResults(raw: unknown): UserSearchResult[] {
@@ -27,13 +22,13 @@ export function expectUserSearchResults(raw: unknown): UserSearchResult[] {
       const name = `UserSearchResponse.data[${index}]`;
       const row = expectExactRecord(
         value,
-        ["userHandle", "email", "displayName"],
+        ["user_handle", "email", "display_name"],
         name,
       );
       return {
-        userHandle: expectUserHandle(row.userHandle, `${name}.userHandle`),
-        email: presenceText(row.email, `${name}.email`),
-        displayName: presenceText(row.displayName, `${name}.displayName`),
+        user_handle: expectUserHandle(row.user_handle, `${name}.user_handle`),
+        email: expectNullableString(row.email, `${name}.email`),
+        display_name: expectNullableString(row.display_name, `${name}.display_name`),
       };
     },
     "UserSearchResponse.data",

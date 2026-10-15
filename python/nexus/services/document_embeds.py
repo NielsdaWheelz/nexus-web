@@ -484,7 +484,7 @@ def _set_state_counts(state: DocumentEmbedArtifactState, rows: Sequence[Document
 
 
 # ---------------------------------------------------------------------------
-# Wire projection: the presence wrappers `schemas/media.py` declares
+# Wire projection: the nullable shapes `schemas/media.py` declares
 # ---------------------------------------------------------------------------
 
 

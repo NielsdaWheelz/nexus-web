@@ -1,4 +1,4 @@
-"""Notes routes. camelCase envelopes; the index parses its own query keys."""
+"""Notes routes. The index parses its own query keys."""
 
 from datetime import date
 from typing import Annotated

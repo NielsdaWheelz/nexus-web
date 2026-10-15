@@ -9,7 +9,6 @@ import Button from "@/components/ui/Button";
 import MachineText from "@/components/ui/MachineText";
 import ResourceList from "@/components/ui/ResourceList";
 import ResourceRow from "@/components/ui/ResourceRow";
-import { absent, present } from "@/lib/api/presence";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import { useCursorPagination, type CursorPage } from "@/lib/api/useCursorPagination";
@@ -84,7 +83,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       // push it onto a later page. If that row was removed, reach the new end.
       if (boundary === null || page.items.some((row) => row.edge_id === boundary)) break;
     } while (next !== null);
-    return { items: data, nextCursor: next === null ? absent() : present(next) };
+    return { items: data, next_cursor: next };
   }, [selfRef]);
   const firstPage = useResource<CursorPage<ConnectionOut>>({ cacheKey: `${selfRef}:${refreshKey}:${refreshTick}`, load: (signal) => load(null, signal) });
   if (firstPage.status === "ready") retainedPageRef.current = { ref: selfRef, page: firstPage.data };

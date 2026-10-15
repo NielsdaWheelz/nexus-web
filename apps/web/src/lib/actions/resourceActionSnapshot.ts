@@ -7,7 +7,7 @@ type WireCapability = Schema<"ResourceActionSnapshotOut">["capabilities"][number
 
 export type ResourceActionCapability =
   | Exclude<WireCapability, { kind: "Playback" }>
-  | (Omit<Extract<WireCapability, { kind: "Playback" }>, "playerDescriptor"> & {
+  | (Omit<Extract<WireCapability, { kind: "Playback" }>, "player_descriptor"> & {
       readonly playerDescriptor: PlayerDescriptor;
     });
 
@@ -30,8 +30,8 @@ export function adaptResourceActionSnapshotResolveResponse(
         ? {
             ...capability,
             playerDescriptor: {
-              ...capability.playerDescriptor,
-              mediaId: parseMediaId(capability.playerDescriptor.mediaId),
+              ...capability.player_descriptor,
+              media_id: parseMediaId(capability.player_descriptor.media_id),
             },
           }
         : capability,

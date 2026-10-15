@@ -17,7 +17,6 @@ from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
 from nexus.schemas import podcast as wire
-from nexus.schemas.presence import Present, nullable_from_presence, presence_from_nullable
 from nexus.services.browse.targets import ResolvedPodcast
 from nexus.services.library_entries import (
     place_podcast_in_named_libraries_in_current_transaction,
@@ -82,8 +81,8 @@ def _status(row: RowMapping) -> wire.PodcastSubscriptionStatusOut:
     return wire.PodcastSubscriptionStatusOut(
         user_id=row["user_id"],
         podcast_id=row["podcast_id"],
-        default_playback_speed=presence_from_nullable(row["default_playback_speed"]),
-        pause_shortening_mode=presence_from_nullable(row["pause_shortening_mode"]),
+        default_playback_speed=row["default_playback_speed"],
+        pause_shortening_mode=row["pause_shortening_mode"],
         auto_queue=row["auto_queue"],
         sync_status=row["sync_status"],
         sync_error_code=row["sync_error_code"],
@@ -142,9 +141,7 @@ def subscribe(
             )
         show = resolved
     confirmation = body.replacement_confirmation
-    fingerprint = (
-        confirmation.value.conflict_fingerprint if isinstance(confirmation, Present) else None
-    )
+    fingerprint = confirmation.conflict_fingerprint if confirmation is not None else None
 
     def attempt() -> wire.PodcastSubscribeOut:
         with transaction(db):
@@ -264,7 +261,7 @@ def patch_settings(
     """Set the given fields. Turning auto-queue on starts its watermark now, so only
     episodes published from here on are queued."""
     values = {
-        name: nullable_from_presence(getattr(body, name))
+        name: getattr(body, name)
         for name in ("default_playback_speed", "pause_shortening_mode")
         if name in body.model_fields_set
     }

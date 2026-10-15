@@ -48,7 +48,7 @@ export default function ArtifactPaneBody() {
 
   const articleRef = useRef<HTMLElement | null>(null);
   const revisionRef =
-    head?.revision.kind === "Present" ? head.revision.value.revision_ref : null;
+    head?.revision != null ? head.revision.revision_ref : null;
   const source = useMemo<FindSource<readonly StaticRange[]> | null>(
     () =>
       revisionRef === null
@@ -115,8 +115,8 @@ export default function ArtifactPaneBody() {
           });
         }}
         onViewMediaEvidence={() => {
-          if (head?.subject_activation.kind === "Present")
-            activateResource(head.subject_activation.value, {
+          if (head?.subject_activation != null)
+            activateResource(head.subject_activation, {
               labelHint: head.title,
               activateTarget,
               disposition: { kind: "Follow" },

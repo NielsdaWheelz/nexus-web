@@ -13,7 +13,7 @@ from nexus.services.tools.contract import PROJECTION_REVISION
 
 TOOL_PROJECTION_HEADER = "X-Nexus-Tool-Projection"
 CHAT_CONTRACT_HEADER = "X-Nexus-Chat-Contract"
-CHAT_CONTRACT_REVISION = "5"
+CHAT_CONTRACT_REVISION = "6"
 
 
 def require_chat_contract_revision(

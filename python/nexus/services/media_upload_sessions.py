@@ -73,7 +73,6 @@ from nexus.schemas.media import (
     UploadTransportFailureRequest,
     VerificationFailed,
 )
-from nexus.schemas.presence import Presence, absent, present
 from nexus.schemas.upload_failures import (
     UploadTransportAbortedFailure,
     UploadTransportHttpRejectedFailure,
@@ -409,10 +408,10 @@ def record_transport_failure(
             session.id,
             UploadFailed(
                 generation=session.upload_generation,
-                transport=present(_transport_failure(session).reason),
+                transport=_transport_failure(session).reason,
             ),
             stage="Upload",
-            failure_code=present("E_UPLOAD_TRANSPORT_FAILED"),
+            failure_code="E_UPLOAD_TRANSPORT_FAILED",
         )
 
 
@@ -895,9 +894,9 @@ def _record_terminal_verification_failure(
         _record_event(
             db,
             session.id,
-            UploadFailed(generation=generation, transport=absent()),
+            UploadFailed(generation=generation, transport=None),
             stage="Validate",
-            failure_code=present(error_code.value),
+            failure_code=error_code.value,
         )
         session.verification_error_code = error_code.value
         session.verification_failed_at = now
@@ -1160,14 +1159,14 @@ def _record_event(
     facts: UploadFacts,
     *,
     stage: Literal["Upload", "Validate"],
-    failure_code: Presence[SafeFailureCode] | None = None,
+    failure_code: SafeFailureCode | None = None,
 ) -> None:
     append_upload_event(
         db,
         session_id=session_id,
         facts=facts,
-        stage=present(stage),
-        failure_code=absent() if failure_code is None else failure_code,
+        stage=stage,
+        failure_code=failure_code,
     )
 
 

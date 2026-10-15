@@ -6,7 +6,6 @@
 import { useEffect, useState } from "react";
 import { useFeedback } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { absent } from "@/lib/api/presence";
 import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import { useResource } from "@/lib/api/useResource";
@@ -51,7 +50,7 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   const openablesId = open && text ? text : null;
   const openables = useDebouncedFetch(
     openablesId === null ? null : `${openablesId}\0${openablesRetry}`,
-    (signal) => searchOpenableResources({ q: text, schemes: absent(), signal }),
+    (signal) => searchOpenableResources({ q: text, schemes: null, signal }),
     { debounceMs: text.length === 1 ? 0 : 80, identity: openablesId },
   );
   const openablesSettled =

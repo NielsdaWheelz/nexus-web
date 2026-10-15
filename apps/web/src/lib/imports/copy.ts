@@ -423,7 +423,7 @@ export const MATCHED_ANNOUNCEMENT = "Matched by your filter";
  * published. Its Validate stage verifies the bytes this reader sent.
  */
 function isUploadObligation(item: ImportItem): boolean {
-  return item.ref.startsWith("upload:") && item.media_ref.kind === "Absent";
+  return item.ref.startsWith("upload:") && item.media_ref === null;
 }
 
 const WAITING = {
@@ -444,26 +444,25 @@ function statusLine(
   const source = item.obligations.source;
   if (
     state.kind === "NeedsAttention" &&
-    source.kind === "Present" &&
-    source.value.state.kind === "NeedsAttention" &&
-    state.stage === source.value.state.stage
+    source !== null &&
+    source.state.kind === "NeedsAttention" &&
+    state.stage === source.state.stage
   ) {
     const retained = sourceFailureLine(item);
     if (retained !== null) return retained;
   }
   if (state.kind !== "Complete" && state.stage === "Metadata") {
     const metadata = item.obligations.metadata;
-    if (metadata.kind === "Present") {
+    if (metadata !== null) {
       const operation =
         state.kind === "Active"
-          ? metadata.value.unfinished_operation
-          : metadata.value.operation;
-      if (operation.kind === "Present") {
-        const latest = metadata.value.operation;
-        return latest.kind === "Present" &&
-          latest.value.job_id !== operation.value.job_id
-          ? `${metadataOperationSummary(latest.value, formatTime)} · ${metadataOperationSummary(operation.value, formatTime)}`
-          : metadataOperationSummary(operation.value, formatTime);
+          ? metadata.unfinished_operation
+          : metadata.operation;
+      if (operation !== null) {
+        const latest = metadata.operation;
+        return latest !== null && latest.job_id !== operation.job_id
+          ? `${metadataOperationSummary(latest, formatTime)} · ${metadataOperationSummary(operation, formatTime)}`
+          : metadataOperationSummary(operation, formatTime);
       }
     }
   }
@@ -478,18 +477,14 @@ export function sourceFailureLine(item: ImportItem): string | null {
   const source = item.obligations.source;
   if (
     !item.readiness.can_read ||
-    source.kind === "Absent" ||
-    source.value.state.kind !== "NeedsAttention"
+    source === null ||
+    source.state.kind !== "NeedsAttention"
   )
     return null;
-  const failure = source.value.state.failure_code;
-  if (
-    failure.kind === "Present" &&
-    failure.value === "E_SOURCE_POSITION_UNMAPPABLE"
-  )
+  if (source.state.failure_code === "E_SOURCE_POSITION_UNMAPPABLE")
     return FAILURE_COPY.E_SOURCE_POSITION_UNMAPPABLE.title;
   const metadata = item.obligations.metadata;
-  return metadata.kind === "Present" && metadata.value.retry.purpose === "title"
+  return metadata !== null && metadata.retry.purpose === "title"
     ? "couldn't refresh from x · saved copy kept"
     : "couldn't refresh source · saved copy kept";
 }
@@ -505,33 +500,31 @@ export function obligationStatusLine(
       if (state.status === "Queued") {
         // An unrecorded reason names the stage it waits for, never the queue.
         const waiting =
-          state.waiting_reason.kind === "Present"
-            ? WAITING[state.waiting_reason.value]
+          state.waiting_reason !== null
+            ? WAITING[state.waiting_reason]
             : `${stageLabel(state.stage).toLowerCase()} queued`;
-        return state.next_retry_at.kind === "Present" && formatTime
-          ? `${waiting} · ${formatTime(state.next_retry_at.value)}`
+        return state.next_retry_at !== null && formatTime
+          ? `${waiting} · ${formatTime(state.next_retry_at)}`
           : waiting;
       }
-      if (state.progress.kind === "Absent") {
+      if (state.progress === null) {
         return STAGE_COPY[state.stage].working;
       }
-      const progress = state.progress.value;
+      const progress = state.progress;
       return progress.kind === "Stage"
         ? STAGE_COPY[progress.stage].working
         : `extracting ${COUNTED_UNIT[progress.unit]} ${progress.completed} of ${progress.total}`;
     }
     case "NeedsAttention":
       if (
-        state.failure_code.kind === "Present" &&
-        (state.failure_code.value === "E_TRANSCRIPTION_FAILED" ||
-          state.failure_code.value === "E_TRANSCRIPTION_TIMEOUT" ||
-          state.failure_code.value === "E_TRANSCRIPT_UNAVAILABLE")
+        state.failure_code === "E_TRANSCRIPTION_FAILED" ||
+        state.failure_code === "E_TRANSCRIPTION_TIMEOUT" ||
+        state.failure_code === "E_TRANSCRIPT_UNAVAILABLE"
       )
-        return FAILURE_COPY[state.failure_code.value].reason;
+        return FAILURE_COPY[state.failure_code].reason;
       if (!upload) return stageFailed(state.stage);
       if (state.stage !== "Upload") return UPLOAD_REJECTED_LABEL;
-      return state.failure_code.kind === "Present" &&
-        state.failure_code.value === "E_UPLOAD_CAPABILITY_EXPIRED"
+      return state.failure_code === "E_UPLOAD_CAPABILITY_EXPIRED"
         ? FAILURE_COPY.E_UPLOAD_CAPABILITY_EXPIRED.reason
         : stageFailed("Upload");
     case "Complete":
@@ -544,9 +537,9 @@ export function obligationStatusLine(
 /** Only causes that add information beyond the primary consequence. */
 export function reasonLine(item: ImportItem): string | null {
   const state = item.state;
-  if (state.kind !== "NeedsAttention" || state.failure_code.kind === "Absent")
+  if (state.kind !== "NeedsAttention" || state.failure_code === null)
     return null;
-  const code = state.failure_code.value;
+  const code = state.failure_code;
   switch (code) {
     // These generic failures add no cause to the stage's failed status.
     case "E_INGEST_FAILED":
@@ -631,9 +624,8 @@ export function recoveryLine(
   obligation: SourceImportObligation | SearchImportObligation,
 ): string | null {
   const { recovery, unavailable_reason: restriction } = obligation;
-  if (recovery.kind === "Present") return offerLine(recovery.value);
-  if (restriction.kind === "Present")
-    return RESTRICTION_LINE[restriction.value];
+  if (recovery !== null) return offerLine(recovery);
+  if (restriction !== null) return RESTRICTION_LINE[restriction];
   return obligation.state.kind === "NeedsAttention"
     ? "No recovery is offered for this work."
     : null;
@@ -648,29 +640,26 @@ export function concurrentWorkLine(item: ImportItem): string | null {
     ["search", "search indexing"],
   ] as const) {
     const slot = item.obligations[key];
-    if (slot.kind === "Absent") continue;
-    if (slot.value.state.kind === "Active") active.push(label);
+    if (slot === null) continue;
+    if (slot.state.kind === "Active") active.push(label);
     if (
-      slot.value.state.kind === "NeedsAttention" &&
-      slot.value.state.stage !== item.state.stage
+      slot.state.kind === "NeedsAttention" &&
+      slot.state.stage !== item.state.stage
     )
       attention.push(label);
   }
-  if (item.obligations.metadata.kind === "Present") {
-    const metadata = item.obligations.metadata.value;
-    if (metadata.unfinished_operation.kind === "Present")
-      active.push(
-        metadataOperationName(metadata.unfinished_operation.value.purpose),
-      );
+  if (item.obligations.metadata !== null) {
+    const metadata = item.obligations.metadata;
+    if (metadata.unfinished_operation !== null)
+      active.push(metadataOperationName(metadata.unfinished_operation.purpose));
     const latest = metadata.operation;
     if (
       item.state.stage !== "Metadata" &&
-      latest.kind === "Present" &&
-      (latest.value.status === "failed" ||
-        (latest.value.status === "no_findings" &&
-          latest.value.reviewed_at.kind === "Absent"))
+      latest !== null &&
+      (latest.status === "failed" ||
+        (latest.status === "no_findings" && latest.reviewed_at === null))
     )
-      attention.push(metadataOperationName(latest.value.purpose));
+      attention.push(metadataOperationName(latest.purpose));
   }
   const parts = [];
   if (attention.length)
@@ -680,10 +669,9 @@ export function concurrentWorkLine(item: ImportItem): string | null {
 }
 
 type Facts = HistoryEntry["facts"];
-type TransportFailure = Extract<
-  Extract<Facts, { kind: "UploadFailed" }>["transport"],
-  { kind: "Present" }
->["value"];
+type TransportFailure = NonNullable<
+  Extract<Facts, { kind: "UploadFailed" }>["transport"]
+>;
 
 function transportLine(failure: TransportFailure): string {
   switch (failure.kind) {
@@ -714,7 +702,7 @@ const SOURCE_RECOVERY_LABEL = {
  */
 function eventLabel(entry: HistoryEntry): string {
   const facts = entry.facts;
-  const stage = entry.stage.kind === "Present" ? entry.stage.value : null;
+  const stage = entry.stage;
   switch (facts.kind) {
     case "MetadataOperation":
       return metadataOperationSummary(facts.operation);
@@ -729,7 +717,7 @@ function eventLabel(entry: HistoryEntry): string {
     case "SourceHistoryBaseline":
       return "Detailed execution history was not recorded";
     case "UploadFailed":
-      return facts.transport.kind === "Present"
+      return facts.transport !== null
         ? stageFailed("Upload")
         : UPLOAD_REJECTED_LABEL;
     case "UploadPublished":
@@ -774,14 +762,14 @@ function eventLabel(entry: HistoryEntry): string {
 function failureProgress(
   progress: Extract<Facts, { kind: "SourceFailed" }>["progress"],
 ): string {
-  if (progress.kind === "Absent") return "";
-  const { completed, total, unit } = progress.value;
+  if (progress === null) return "";
+  const { completed, total, unit } = progress;
   const counted =
-    total.kind === "Present"
-      ? `${completed} of ${total.value}`
+    total !== null
+      ? `${completed} of ${total}`
       : `${completed}`;
-  return unit.kind === "Present"
-    ? ` Stopped at ${unit.value.toLowerCase()} ${counted}.`
+  return unit !== null
+    ? ` Stopped at ${unit.toLowerCase()} ${counted}.`
     : ` Stopped at ${counted}.`;
 }
 
@@ -794,8 +782,8 @@ export function eventLine(entry: HistoryEntry): string {
   const label = eventLabel(entry);
   const facts = entry.facts;
   const reason =
-    entry.failure_code.kind === "Present"
-      ? ` ${importFailureCopy(entry.failure_code.value).reason}.`
+    entry.failure_code !== null
+      ? ` ${importFailureCopy(entry.failure_code).reason}.`
       : "";
   switch (facts.kind) {
     case "MetadataOperation":
@@ -803,8 +791,8 @@ export function eventLine(entry: HistoryEntry): string {
     case "UploadFailed":
       // A transport failure records what the transport did; a rejection only
       // its verification code. Either way the reason is said once.
-      return facts.transport.kind === "Present"
-        ? `${label}. ${transportLine(facts.transport.value)}.`
+      return facts.transport !== null
+        ? `${label}. ${transportLine(facts.transport)}.`
         : `${label}.${reason}`;
     case "SourceHistoryBaseline":
       // A pre-cut attempt keeps the outcome it had; that is all its evidence.

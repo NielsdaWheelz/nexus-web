@@ -16,14 +16,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Contributor, ContributorCredit, Media
-from nexus.schemas.presence import (
-    Presence,
-    Present,
-    absent,
-    nullable_from_presence,
-    presence_from_nullable,
-    present,
-)
 from nexus.services.contributor_taxonomy import ContributorHandle, ContributorObservation
 from nexus.services.contributor_writes import (
     NewContributor,
@@ -52,7 +44,7 @@ class SourceCreditSnapshot:
     handle: str
     credited_name: str
     role: str
-    raw_role: Presence[str]
+    raw_role: str | None
     ordinal: int
     source: str
     created_at: datetime
@@ -91,7 +83,7 @@ def _source_credit_snapshot(db: Session, media_id: UUID) -> tuple[SourceCreditSn
             handle,
             row.credited_name,
             row.role,
-            presence_from_nullable(row.raw_role),
+            row.raw_role,
             row.ordinal,
             row.source,
             row.created_at,
@@ -116,9 +108,7 @@ def prepare_epub_contributor_repair(
     legacy = [
         row
         for row in current
-        if row.source == "epub_opf"
-        and row.role == "author"
-        and not isinstance(row.raw_role, Present)
+        if row.source == "epub_opf" and row.role == "author" and row.raw_role is None
     ]
     creators = [entity for entity in metadata.contributor_entities if entity.kind == "creator"]
     if legacy and any(";" in entity.credited_name for entity in creators):
@@ -164,7 +154,7 @@ def prepare_epub_contributor_repair(
                 (
                     row.id,
                     tuple(
-                        replace(credit, contributor_handle=present(ContributorHandle(row.handle)))
+                        replace(credit, contributor_handle=ContributorHandle(row.handle))
                         for credit in entity.credits
                     ),
                 )
@@ -176,7 +166,7 @@ def prepare_epub_contributor_repair(
 
 @dataclass(frozen=True, slots=True)
 class _RepairCredit:
-    row_id: Presence[UUID]
+    row_id: UUID | None
     identity: UUID | NewContributor
     observation: ContributorObservation
     source: str
@@ -193,11 +183,9 @@ def _plan_repair_rows(
         if row.id not in replacements or plan.expected_manual_authors:
             rows.append(
                 _RepairCredit(
-                    present(row.id),
+                    row.id,
                     row.contributor_id,
-                    ContributorObservation(
-                        row.credited_name, row.role, nullable_from_presence(row.raw_role), None
-                    ),
+                    ContributorObservation(row.credited_name, row.role, row.raw_role, None),
                     row.source,
                 )
             )
@@ -206,15 +194,15 @@ def _plan_repair_rows(
     added: list[str] = []
     retained = plan.expected_manual_authors and any(
         [(credit.role, credit.credited_name, credit.raw_role) for credit in credits]
-        != [(row.role, row.credited_name, nullable_from_presence(row.raw_role))]
+        != [(row.role, row.credited_name, row.raw_role)]
         for row_id, credits in plan.replacements
         for row in plan.expected_credits
         if row.id == row_id
     )
-    proposed: list[tuple[Presence[UUID], ContributorObservation]] = [
-        (present(row_id), credit) for row_id, credits in plan.replacements for credit in credits
+    proposed: list[tuple[UUID | None, ContributorObservation]] = [
+        (row_id, credit) for row_id, credits in plan.replacements for credit in credits
     ]
-    proposed.extend((absent(), credit) for credit in plan.additions)
+    proposed.extend((None, credit) for credit in plan.additions)
     used_rows: set[UUID] = set()
     for (row_id, credit), identity in zip(proposed, identities, strict=True):
         if plan.expected_manual_authors and credit.role == "author":
@@ -222,34 +210,30 @@ def _plan_repair_rows(
                 row.contributor_id == identity
                 and row.role == "author"
                 and row.credited_name == credit.credited_name
-                and nullable_from_presence(row.raw_role) == credit.raw_role
+                and row.raw_role == credit.raw_role
                 for row in plan.expected_credits
             )
             continue
         if (identity, credit.role) in occupied:
             continue
         occupied.add((identity, credit.role))
-        reuse = (
-            isinstance(row_id, Present)
-            and not plan.expected_manual_authors
-            and row_id.value not in used_rows
-        )
-        if isinstance(row_id, Present) and reuse:
-            used_rows.add(row_id.value)
-            original = next(row for row in plan.expected_credits if row.id == row_id.value)
+        reuse = row_id is not None and not plan.expected_manual_authors and row_id not in used_rows
+        if row_id is not None and reuse:
+            used_rows.add(row_id)
+            original = next(row for row in plan.expected_credits if row.id == row_id)
             if (
                 original.role,
                 original.credited_name,
-                nullable_from_presence(original.raw_role),
+                original.raw_role,
             ) != (credit.role, credit.credited_name, credit.raw_role):
                 moved.append(f"{credit.credited_name}: author → {credit.role}")
         else:
             added.append(f"{credit.credited_name}: {credit.role}")
-        rows.append(_RepairCredit(row_id if reuse else absent(), identity, credit, "epub_opf"))
+        rows.append(_RepairCredit(row_id if reuse else None, identity, credit, "epub_opf"))
     original_order = {row.id: row.ordinal for row in plan.expected_credits}
     rows.sort(
-        key=lambda row: original_order.get(row.row_id.value, len(original_order))
-        if isinstance(row.row_id, Present)
+        key=lambda row: original_order.get(row.row_id, len(original_order))
+        if row.row_id is not None
         else len(original_order)
     )
     after_counts: dict[str, int] = {}
@@ -263,14 +247,14 @@ def _plan_repair_rows(
             row.contributor_id,
             row.credited_name,
             row.role,
-            nullable_from_presence(row.raw_role),
+            row.raw_role,
             row.source,
         )
         for row in plan.expected_credits
     ]
     after = [
         (
-            row.row_id.value if isinstance(row.row_id, Present) else None,
+            row.row_id,
             row.identity,
             row.observation.credited_name,
             row.observation.role,
@@ -342,7 +326,7 @@ def apply_epub_contributor_repair_in_current_transaction(
     for row in current.values():
         row.ordinal = -row.ordinal - 1
     db.flush()
-    kept_ids = {row.row_id.value for row in rows if isinstance(row.row_id, Present)}
+    kept_ids = {row.row_id for row in rows if row.row_id is not None}
     for identity, row in current.items():
         if identity not in kept_ids:
             db.delete(row)
@@ -351,8 +335,8 @@ def apply_epub_contributor_repair_in_current_transaction(
         if not isinstance(planned_row.identity, UUID):
             raise AssertionError("Applied EPUB repair has an unresolved contributor")
         row = (
-            current[planned_row.row_id.value]
-            if isinstance(planned_row.row_id, Present)
+            current[planned_row.row_id]
+            if planned_row.row_id is not None
             else ContributorCredit(media_id=media.id)
         )
         row.contributor_id = planned_row.identity
@@ -364,7 +348,7 @@ def apply_epub_contributor_repair_in_current_transaction(
         db.add(row)
     db.flush()
     for credit, observation in zip(resolved, effective, strict=True):
-        if not isinstance(observation.contributor_handle, Present):
+        if observation.contributor_handle is None:
             ensure_alias(
                 db,
                 contributor_id=credit.contributor_id,

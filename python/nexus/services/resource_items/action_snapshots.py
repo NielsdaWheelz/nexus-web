@@ -32,7 +32,6 @@ from sqlalchemy.orm import Session
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.imports import RetrySourceOffer
 from nexus.schemas.metadata_enrichment import MetadataRetryAllowed
-from nexus.schemas.presence import Present
 from nexus.schemas.resource_action_snapshots import (
     ConsumptionResourceActionCapabilityOut,
     DownloadResourceActionCapabilityOut,
@@ -516,16 +515,15 @@ def _extend_media(
     if media.has_original_file:
         capabilities.append(_simple("DownloadOriginal"))
     ops = media.capabilities
-    source = (
+    offer = (
         media.source_recovery
-        if isinstance(media.source_recovery, Present)
+        if media.source_recovery is not None
         else media.applicable_source_recovery
     )
-    if isinstance(source, Present):
-        offer = source.value
+    if offer is not None:
         capabilities.append(
             SourceRecoveryResourceActionCapabilityOut(
-                availability=_authorized(isinstance(media.source_recovery, Present)),
+                availability=_authorized(media.source_recovery is not None),
                 offer=(
                     RetrySourceOfferOut.model_validate(offer.model_dump())
                     if isinstance(offer, RetrySourceOffer)
@@ -535,14 +533,14 @@ def _extend_media(
         )
     search = (
         media.search_recovery
-        if isinstance(media.search_recovery, Present)
+        if media.search_recovery is not None
         else media.applicable_search_recovery
     )
-    if isinstance(search, Present):
+    if search is not None:
         capabilities.append(
             SearchRecoveryResourceActionCapabilityOut(
-                availability=_authorized(isinstance(media.search_recovery, Present)),
-                offer=RepairSearchOfferOut.model_validate(search.value.model_dump()),
+                availability=_authorized(media.search_recovery is not None),
+                offer=RepairSearchOfferOut.model_validate(search.model_dump()),
             )
         )
     if ops.refresh_source_applicable:
@@ -578,10 +576,10 @@ def _extend_media(
         capabilities.append(
             RetryMetadataResourceActionCapabilityOut(availability=availability, retry=retry)
         )
-    if isinstance(media.reviewable_metadata_job_id, Present):
+    if media.reviewable_metadata_job_id is not None:
         capabilities.append(
             ReviewMetadataResultResourceActionCapabilityOut(
-                availability=_available(), job_id=media.reviewable_metadata_job_id.value
+                availability=_available(), job_id=media.reviewable_metadata_job_id
             )
         )
     if ops.edit_authors_applicable:

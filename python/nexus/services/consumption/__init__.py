@@ -2,7 +2,7 @@
 
 Every write runs in its own serializable transaction that first locks the viewer row: tabs and
 the Android app write one account at once, and every fence in the package assumes serialized
-writers. A command replays by ``clientMutationId``: an exact replay answers from current state
+writers. A command replays by ``client_mutation_id``: an exact replay answers from current state
 and its stored memo, then rolls back.
 """
 
@@ -27,7 +27,7 @@ from nexus.services.resource_mutation_replay import (
 class Command(Protocol):
     client_mutation_id: UUID
 
-    def model_dump(self, *, mode: str, by_alias: bool) -> dict[str, Any]: ...
+    def model_dump(self, *, mode: str) -> dict[str, Any]: ...
 
 
 def fresh_session() -> Session:
@@ -58,7 +58,7 @@ def replayed_command[T](
     apply: Callable[[Session], dict[str, Any]],
     answer: Callable[[Session, Mapping[str, Any]], T],
 ) -> T:
-    """Apply ``command`` once per ``clientMutationId``: ``apply`` writes and returns the stored
+    """Apply ``command`` once per ``client_mutation_id``: ``apply`` writes and returns the stored
     memo; ``answer`` builds the response from current state and the memo, fresh or replayed."""
 
     def run(db: Session) -> T:
@@ -66,7 +66,7 @@ def replayed_command[T](
             "viewer_id": viewer_id,
             "scope": scope,
             "client_mutation_id": str(command.client_mutation_id),
-            "request_bytes": canonical_json_bytes(command.model_dump(mode="json", by_alias=True)),
+            "request_bytes": canonical_json_bytes(command.model_dump(mode="json")),
         }
         stored = lookup_replay(db, **key)
         if stored is not None:

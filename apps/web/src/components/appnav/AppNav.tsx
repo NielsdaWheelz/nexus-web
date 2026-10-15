@@ -55,8 +55,8 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
   const { platform } = useRenderEnvironment();
   const shortcut = SHORTCUTS["Nexus.Open"];
   const hint = formatShortcut(shortcut, platform);
-  const activeHref = state.panes.find((pane) => pane.id === state.activePrimaryPaneId)
-    ?.currentVisit.href;
+  const activeHref = state.panes.find((pane) => pane.id === state.active_primary_pane_id)
+    ?.current_visit.href;
   const section = activeHref ? sectionDestinationIdForHref(activeHref) : null;
   const accountActive = isAccountDestinationId(section);
 
@@ -79,7 +79,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       runtime: {
         activateTarget: ({ target, disposition }) => {
           result = activateWorkspaceTarget({
-            originPaneId: state.activePrimaryPaneId,
+            originPaneId: state.active_primary_pane_id,
             target,
             disposition,
           });

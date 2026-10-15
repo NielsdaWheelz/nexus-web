@@ -5,13 +5,11 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from pydantic.alias_generators import to_camel
 
 from nexus.schemas.consumption import PauseShorteningMode, PlaybackRate
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.podcast import PodcastSyncStatus
-from nexus.schemas.presence import Presence
 from nexus.schemas.reading_time import ReadingTimeEstimateOut
 from nexus.services.sealed_handles import LibraryInvitationHandle, UserHandle
 
@@ -21,37 +19,23 @@ LibraryGovernanceCursor = Annotated[str, Field(min_length=1)]
 LibraryEntryKind = Literal["media", "podcast"]
 
 
-class _Camel(BaseModel):
-    """camelCase output model with every serialized field declared."""
+class _Out(BaseModel):
+    """Output model with every serialized field declared."""
 
     model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
         extra="forbid",
         json_schema_serialization_defaults_required=True,
     )
 
 
-class _CamelRow(_Camel):
-    """camelCase wire model built straight from a DB row or context object."""
+class _Row(_Out):
+    """Output model built straight from a DB row or context object."""
 
-    model_config = ConfigDict(
-        from_attributes=True, alias_generator=to_camel, populate_by_name=True, extra="forbid"
-    )
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
 
-class _CamelIn(BaseModel):
-    """camelCase request model: aliases only, never the python field name."""
-
-    model_config = ConfigDict(
-        alias_generator=to_camel, validate_by_alias=True, validate_by_name=False, extra="forbid"
-    )
-
-
-class _Snake(BaseModel):
-    """snake_case wire model nested inside a camelCase envelope."""
-
-    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
+class _In(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
 class CreateLibraryRequest(BaseModel):
@@ -71,7 +55,7 @@ class UpdateLibraryMemberRequest(BaseModel):
     role: LibraryRole = Field(..., description="New role for the member ('admin' or 'member')")
 
 
-class TransferLibraryOwnershipRequest(_CamelIn):
+class TransferLibraryOwnershipRequest(_In):
     new_owner_user_handle: UserHandle
 
 
@@ -87,7 +71,7 @@ class LibraryEntryOrderRequest(BaseModel):
         return self
 
 
-class UserLibraryInvitee(_CamelIn):
+class UserLibraryInvitee(_In):
     kind: Literal["User"]
     user_handle: UserHandle
 
@@ -101,7 +85,7 @@ class CreateLibraryInviteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class LibraryOut(_CamelRow):
+class LibraryOut(_Row):
     id: UUID
     name: str
     owner_user_handle: UserHandle
@@ -117,24 +101,24 @@ class LibraryOut(_CamelRow):
     updated_at: datetime
 
 
-class PodcastPlacementRemovalOut(_Camel):
+class PodcastPlacementRemovalOut(_Out):
     outcome: Literal["Removed", "AlreadyAbsent"]
 
 
-class PodcastPlacementAdditionOut(_Camel):
+class PodcastPlacementAdditionOut(_Out):
     outcome: Literal["Added", "AlreadyPresent"]
 
 
-class LibraryIdentityOut(_Camel):
+class LibraryIdentityOut(_Out):
     id: UUID
     name: str
 
 
-class SavedInNexusLibraryPlacementDestinationOut(_Camel):
+class SavedInNexusLibraryPlacementDestinationOut(_Out):
     kind: Literal["SavedInNexus"] = "SavedInNexus"
 
 
-class LibraryLibraryPlacementDestinationOut(_Camel):
+class LibraryLibraryPlacementDestinationOut(_Out):
     kind: Literal["Library"] = "Library"
     library: LibraryIdentityOut
 
@@ -145,15 +129,15 @@ LibraryPlacementDestinationOut = Annotated[
 ]
 
 
-class AbsentLibraryPlacementRelationOut(_Camel):
+class AbsentLibraryPlacementRelationOut(_Out):
     kind: Literal["Absent"] = "Absent"
 
 
-class DirectLibraryPlacementRelationOut(_Camel):
+class DirectLibraryPlacementRelationOut(_Out):
     kind: Literal["Direct"] = "Direct"
 
 
-class InheritedLibraryPlacementRelationOut(_Camel):
+class InheritedLibraryPlacementRelationOut(_Out):
     kind: Literal["Inherited"] = "Inherited"
     provenance: list[LibraryIdentityOut] = Field(min_length=1)
 
@@ -166,11 +150,11 @@ LibraryPlacementRelationOut = Annotated[
 ]
 
 
-class AvailableLibraryPlacementAvailabilityOut(_Camel):
+class AvailableLibraryPlacementAvailabilityOut(_Out):
     kind: Literal["Available"] = "Available"
 
 
-class BlockedLibraryPlacementAvailabilityOut(_Camel):
+class BlockedLibraryPlacementAvailabilityOut(_Out):
     kind: Literal["Blocked"] = "Blocked"
     reason: Literal["RequiresAdmin", "RequiresSubscription", "SystemManaged", "Inherited"]
 
@@ -181,7 +165,7 @@ LibraryPlacementAvailabilityOut = Annotated[
 ]
 
 
-class LibraryPlacementOptionOut(_Camel):
+class LibraryPlacementOptionOut(_Out):
     destination: LibraryPlacementDestinationOut
     relation: LibraryPlacementRelationOut
     availability: LibraryPlacementAvailabilityOut
@@ -196,8 +180,8 @@ class LibraryPageInfo(BaseModel):
     model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
-class LibraryGovernancePageInfo(_Camel):
-    next_cursor: Presence[LibraryGovernanceCursor]
+class LibraryGovernancePageInfo(_Out):
+    next_cursor: LibraryGovernanceCursor | None
 
 
 class LibraryDestinationOut(BaseModel):
@@ -209,22 +193,22 @@ class LibraryDestinationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class LibraryEntryPodcastOut(_Camel):
+class LibraryEntryPodcastOut(_Out):
     id: UUID
     title: str
     contributors: list[ContributorCreditOut]
     unplayed_count: int = Field(ge=0, default=0)
-    published_date: Presence[datetime]
+    published_date: datetime | None
 
 
-class LibraryEntryPodcastSubscriptionOut(_Camel):
-    default_playback_speed: Presence[PlaybackRate]
-    pause_shortening_mode: Presence[PauseShorteningMode]
+class LibraryEntryPodcastSubscriptionOut(_Out):
+    default_playback_speed: PlaybackRate | None
+    pause_shortening_mode: PauseShorteningMode | None
     auto_queue: bool = False
     sync_status: PodcastSyncStatus
 
 
-class LibraryEntryMediaCapabilitiesOut(_Snake):
+class LibraryEntryMediaCapabilitiesOut(_Out):
     can_quote: bool
     can_retry: bool
     can_refresh_source: bool
@@ -233,7 +217,7 @@ class LibraryEntryMediaCapabilitiesOut(_Snake):
     can_delete: bool
 
 
-class LibraryEntryMediaOut(_Snake):
+class LibraryEntryMediaOut(_Out):
     id: UUID
     created_at: datetime
     author_mode: Literal["automatic", "manual"]
@@ -242,26 +226,26 @@ class LibraryEntryMediaOut(_Snake):
     capabilities: LibraryEntryMediaCapabilitiesOut
 
 
-class LibraryEntryPlacementOut(_Camel):
+class LibraryEntryPlacementOut(_Out):
     library_entry_id: UUID
     position: int = Field(ge=0)
 
 
-class LibraryMediaListItemOut(_Camel):
+class LibraryMediaListItemOut(_Out):
     kind: Literal["media"]
     media_summary: MediaSummaryOut
-    placement: Presence[LibraryEntryPlacementOut]
+    placement: LibraryEntryPlacementOut | None
     added_at: datetime
     media: LibraryEntryMediaOut
 
 
-class LibraryPodcastListItemOut(_Camel):
+class LibraryPodcastListItemOut(_Out):
     kind: Literal["podcast"]
-    placement: Presence[LibraryEntryPlacementOut]
+    placement: LibraryEntryPlacementOut | None
     added_at: datetime
     podcast: LibraryEntryPodcastOut
-    subscription: Presence[LibraryEntryPodcastSubscriptionOut]
-    reading_time_estimate: Presence[ReadingTimeEstimateOut]
+    subscription: LibraryEntryPodcastSubscriptionOut | None
+    reading_time_estimate: ReadingTimeEstimateOut | None
 
 
 LibraryEntryListItemOut = Annotated[
@@ -270,44 +254,44 @@ LibraryEntryListItemOut = Annotated[
 ]
 
 
-class LibraryMemberOut(_CamelRow):
+class LibraryMemberOut(_Row):
     user_handle: UserHandle
     role: LibraryRole
     is_owner: bool
-    email: Presence[str]
-    display_name: Presence[str]
+    email: str | None
+    display_name: str | None
     created_at: datetime
 
 
-class LibraryInvitationOut(_CamelRow):
+class LibraryInvitationOut(_Row):
     invitation_handle: LibraryInvitationHandle
     library_id: UUID
     inviter_user_handle: UserHandle
     invitee_user_handle: UserHandle
     role: LibraryRole
     status: LibraryInvitationStatusValue
-    invitee_email: Presence[str]
-    invitee_display_name: Presence[str]
+    invitee_email: str | None
+    invitee_display_name: str | None
     created_at: datetime
-    responded_at: Presence[datetime]
+    responded_at: datetime | None
 
 
 class ViewerLibraryInvitationOut(LibraryInvitationOut):
     library_name: str
 
 
-class InviteAcceptMembershipOut(_CamelRow):
+class InviteAcceptMembershipOut(_Row):
     library_id: UUID
     user_handle: UserHandle
     role: LibraryRole
 
 
-class AcceptLibraryInviteResponse(_CamelRow):
+class AcceptLibraryInviteResponse(_Row):
     invite: LibraryInvitationOut
     membership: InviteAcceptMembershipOut
     idempotent: bool
 
 
-class DeclineLibraryInviteResponse(_CamelRow):
+class DeclineLibraryInviteResponse(_Row):
     invite: LibraryInvitationOut
     idempotent: bool

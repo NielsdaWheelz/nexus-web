@@ -1,5 +1,4 @@
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
-import { absent, present, type Presence } from "@/lib/api/presence";
 import type { ApiJson } from "@/lib/api/wire";
 import {
   decodeOptionalPublicationDate,
@@ -11,7 +10,7 @@ import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type { SearchResultRowViewModel, SearchType } from "./types";
 
 type SearchResult = ApiJson<"/search", "get">["results"][number];
-type NonMediaSearchResult = Exclude<SearchResult, { mediaSummary: unknown }>;
+type NonMediaSearchResult = Exclude<SearchResult, { media_summary: unknown }>;
 
 function sanitizeSnippet(snippet: string): string {
   return snippet.replace(/<\/?b>/gi, "");
@@ -113,20 +112,18 @@ function buildSourceMeta(result: NonMediaSearchResult): string | null {
 
 function publicationDateFor(
   result: NonMediaSearchResult,
-): Presence<PublicationDate> {
+): PublicationDate | null {
   if (result.type === "web_result") {
     return decodeOptionalPublicationDate(
       result.published_at,
       "search web_result published_at",
     );
   }
-  if (!("source" in result)) return absent();
+  if (!("source" in result)) return null;
   const date = result.source.original_published_date;
-  return date.kind === "Absent"
+  return date === null
     ? date
-    : present(
-        decodePublicationDateOnly(date.value, "Search source.original_published_date"),
-      );
+    : decodePublicationDateOnly(date, "Search source.original_published_date");
 }
 
 function buildPrimaryText(result: NonMediaSearchResult): string {
@@ -191,7 +188,7 @@ function adaptSearchResultRow(result: SearchResult): SearchResultRowViewModel {
   }
   const context = result.context_ref;
   if (
-    ("mediaSummary" in result && context.type !== "media") ||
+    ("media_summary" in result && context.type !== "media") ||
     ([
       "contributor", "content_chunk", "fragment", "evidence_span",
       "reader_apparatus_item", "conversation", "artifact", "web_result",
@@ -225,15 +222,15 @@ function adaptSearchResultRow(result: SearchResult): SearchResultRowViewModel {
     resourceRef: result.resource_ref,
     ownerResourceRef: result.owner_resource_ref,
     activation,
-    actionSubject: { ref: assumeCanonicalResourceRef(result.actionSubjectRef) },
+    actionSubject: { ref: assumeCanonicalResourceRef(result.action_subject_ref) },
     snippetSegments: parseSnippetSegments(result.snippet),
   };
-  if ("mediaSummary" in result) {
-    const summary = result.mediaSummary;
+  if ("media_summary" in result) {
+    const summary = result.media_summary;
     if (
-      summary.mediaId !== result.id ||
-      ((result.type === "episode") !== (summary.mediaKind === "podcast_episode")) ||
-      ((result.type === "video") !== (summary.mediaKind === "video"))
+      summary.media_id !== result.id ||
+      ((result.type === "episode") !== (summary.media_kind === "podcast_episode")) ||
+      ((result.type === "video") !== (summary.media_kind === "video"))
     ) {
       // justify-defect: the summary and result tag must name the same media and kind.
       throw new Error("Search media identity is inconsistent");

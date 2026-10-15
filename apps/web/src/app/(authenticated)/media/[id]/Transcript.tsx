@@ -173,11 +173,11 @@ export function TranscriptChrome({
   const frame = useRef<HTMLIFrameElement>(null);
   const source = media.playback_source;
   const embed = source?.kind === "external_video" && source.embed_url && isAllowedYoutubeEmbedUrl(source.embed_url) ? source.embed_url : null;
-  const descriptor = media.playerDescriptor.kind === "Present" ? media.playerDescriptor.value : null;
+  const descriptor = media.playerDescriptor;
   const ready = resource.status === "ready";
   // "Play next" goes after the playing episode's lectern row, else first.
-  const playing = playingEpisode(state)?.mediaId ?? null;
-  const playingRow = ready ? resource.data.items.find((item) => item.mediaSummary.mediaId === playing) : undefined;
+  const playing = playingEpisode(state)?.media_id ?? null;
+  const playingRow = ready ? resource.data.items.find((item) => item.mediaSummary.media_id === playing) : undefined;
   const active = media.chapters.findLast((chapter) => chapter.t_start_ms <= (positionMs ?? -1));
 
   // A visible, loaded video in the active pane is watching time.

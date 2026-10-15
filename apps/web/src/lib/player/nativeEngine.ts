@@ -116,7 +116,7 @@ export function createNativeEngine(
     return source === null
       ? null
       : source.kind === "Episode"
-        ? source.descriptor.mediaId
+        ? source.descriptor.media_id
         : source.descriptor.target;
   };
   const keyed = (op: string, args: Record<string, unknown> = {}) => {

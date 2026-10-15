@@ -46,8 +46,8 @@ export async function submitMetadataEnrichment(
     const latest = snapshot.view?.operation;
     if (stream === null) {
       stop();
-    } else if (!snapshot.disconnected && latest?.kind === "Present") {
-      const { job_id, status } = latest.value;
+    } else if (!snapshot.disconnected && latest != null) {
+      const { job_id, status } = latest;
       if (job_id !== jobId || SETTLED.has(status)) stop();
     }
   });
@@ -100,15 +100,11 @@ function connect(mediaId: string, entry: Entry): void {
     onEvent: (view) => {
       const previous = entry.snapshot.view;
       const previousStamp =
-        previous?.last_enriched_at.kind === "Present"
-          ? previous.last_enriched_at.value
+        previous?.last_enriched_at != null
+          ? previous.last_enriched_at
           : null;
-      const stamp =
-        view.last_enriched_at.kind === "Present"
-          ? view.last_enriched_at.value
-          : null;
-      const operation =
-        view.operation.kind === "Present" ? view.operation.value : null;
+      const stamp = view.last_enriched_at;
+      const operation = view.operation;
       // The first frame is this tab's baseline, unless it shows a run this tab
       // admitted already completed (it settled before the stream opened).
       const baseline =

@@ -71,10 +71,10 @@ function group(title: string, facts: readonly ReactNode[]): ReactNode {
 function publicationDate(
   value: MediaDetail["original_published_date"],
 ): ReactNode {
-  if (value.kind === "Absent") return "unknown";
+  if (value === null) return "unknown";
   return (
-    <time dateTime={value.value}>
-      {formatCollectionPublicationDate(value.value)}
+    <time dateTime={value}>
+      {formatCollectionPublicationDate(value)}
     </time>
   );
 }
@@ -122,14 +122,10 @@ function MediaInfo({
     kind: "Retrieval",
     retrievalStatus: media.retrieval_status,
   });
-  const duration =
-    media.duration.kind === "Present" ? media.duration.value : null;
-  const requestedUrl =
-    media.requested_url.kind === "Present" ? media.requested_url.value : null;
-  const canonicalUrl =
-    media.canonical_url.kind === "Present" ? media.canonical_url.value : null;
-  const operation =
-    metadata.operation.kind === "Present" ? metadata.operation.value : null;
+  const duration = media.duration;
+  const requestedUrl = media.requested_url;
+  const canonicalUrl = media.canonical_url;
+  const operation = metadata.operation;
   const outcome = operation?.status === "completed" ? operation.outcome : null;
   const earlierRuns = earlierMetadataRuns(metadata);
   const originalUnresolved =
@@ -179,9 +175,7 @@ function MediaInfo({
         fact("this edition", publicationDate(media.edition_published_date)),
         fact(
           "isbn",
-          media.edition_isbn.kind === "Present"
-            ? media.edition_isbn.value
-            : null,
+          media.edition_isbn,
         ),
         fact("language", media.language),
         fact("description", media.description),
@@ -198,9 +192,9 @@ function MediaInfo({
         fact(
           "first publication",
           originalUnresolved
-            ? media.original_published_date.kind === "Absent"
+            ? media.original_published_date === null
               ? "first publication remains unknown"
-              : `first publication unverified; kept ${formatCollectionPublicationDate(media.original_published_date.value)}`
+              : `first publication unverified; kept ${formatCollectionPublicationDate(media.original_published_date)}`
             : null,
         ),
         fact(
@@ -235,8 +229,7 @@ function MediaInfo({
         ),
         fact(
           "review",
-          operation?.status === "no_findings" &&
-            operation.reviewed_at.kind === "Absent"
+          operation?.status === "no_findings" && operation.reviewed_at === null
             ? METADATA_REVIEW_HELP
             : null,
         ),
@@ -248,11 +241,11 @@ function MediaInfo({
         ),
         fact(
           "unfinished operation",
-          metadata.unfinished_operation.kind === "Present" &&
-            metadata.unfinished_operation.value.job_id !== operation?.job_id ? (
+          metadata.unfinished_operation !== null &&
+            metadata.unfinished_operation.job_id !== operation?.job_id ? (
             <>
-              {metadataOperationSummary(metadata.unfinished_operation.value)} ·{" "}
-              <code>{metadata.unfinished_operation.value.job_id}</code>
+              {metadataOperationSummary(metadata.unfinished_operation)} ·{" "}
+              <code>{metadata.unfinished_operation.job_id}</code>
             </>
           ) : null,
         ),
@@ -263,35 +256,32 @@ function MediaInfo({
         fact("requested", operation ? instant(operation.created_at) : null),
         fact(
           "started",
-          operation?.started_at.kind === "Present"
-            ? instant(operation.started_at.value)
+          operation?.started_at != null
+            ? instant(operation.started_at)
             : null,
         ),
         fact("finished", instant(completedAt)),
         fact(
           "next retry",
-          operation?.status === "waiting" && operation.until.kind === "Present"
-            ? instant(operation.until.value)
+          operation?.status === "waiting" && operation.until !== null
+            ? instant(operation.until)
             : null,
         ),
         fact("operation id", operation?.job_id),
         fact(
           "generation id",
-          operation?.generation_id.kind === "Present"
-            ? operation.generation_id.value
-            : null,
+          operation?.generation_id,
         ),
         fact(
           "reviewed",
-          operation?.status === "no_findings" &&
-            operation.reviewed_at.kind === "Present"
-            ? instant(operation.reviewed_at.value)
+          operation?.status === "no_findings" && operation.reviewed_at !== null
+            ? instant(operation.reviewed_at)
             : null,
         ),
         fact(
           "model",
-          operation?.selection.kind === "Present"
-            ? `${operation.selection.value.provider} / ${operation.selection.value.model} / ${operation.selection.value.reasoning}`
+          operation?.selection != null
+            ? `${operation.selection.provider} / ${operation.selection.model} / ${operation.selection.reasoning}`
             : null,
         ),
         fact(
@@ -313,24 +303,24 @@ function MediaInfo({
         fact("media type", media.kind.replaceAll("_", " ")),
         fact(
           "provider",
-          media.provider.kind === "Present"
-            ? media.provider.value
+          media.provider !== null
+            ? media.provider
             : "not recorded",
         ),
         fact(
           "provider id",
-          media.provider_id.kind === "Present" ? media.provider_id.value : null,
+          media.provider_id,
         ),
         fact(
           "captured context",
-          media.x_source_context.kind === "Present"
-            ? xSourceCoverage(media.x_source_context.value)
+          media.x_source_context !== null
+            ? xSourceCoverage(media.x_source_context)
             : null,
         ),
         fact(
           "captured",
-          media.x_source_context.kind === "Present"
-            ? instant(media.x_source_context.value.published_at)
+          media.x_source_context !== null
+            ? instant(media.x_source_context.published_at)
             : null,
         ),
         fact(
@@ -380,13 +370,13 @@ function MediaInfo({
         fact(
           "total duration",
           duration
-            ? `${duration.estimate.totalMinutes} min to ${duration.modality === "Read" ? "read" : "listen"}`
+            ? `${duration.estimate.total_minutes} min to ${duration.modality === "Read" ? "read" : "listen"}`
             : null,
         ),
         fact(
           "remaining duration",
-          duration?.estimate.remainingMinutes.kind === "Present"
-            ? `${duration.estimate.remainingMinutes.value} min left to ${duration.modality === "Read" ? "read" : "listen"}`
+          duration?.estimate.remaining_minutes != null
+            ? `${duration.estimate.remaining_minutes} min left to ${duration.modality === "Read" ? "read" : "listen"}`
             : null,
         ),
       ])}
@@ -401,9 +391,7 @@ function MediaInfo({
         fact("transcript state", media.transcript_state?.replaceAll("_", " ")),
         fact(
           "transcript origin",
-          media.transcript_origin.kind === "Present"
-            ? media.transcript_origin.value
-            : null,
+          media.transcript_origin,
         ),
         fact("transcript coverage", media.transcript_coverage),
         fact("retrieval availability", media.retrieval_status),
@@ -438,13 +426,11 @@ export default function MediaInfoOverlay({
   const stamp = observation.view?.last_enriched_at;
   const operation = observation.view?.operation;
   const titleJob =
-    operation?.kind === "Present" && operation.value.purpose === "title"
-      ? operation.value.job_id
-      : "";
+    operation?.purpose === "title" ? operation.job_id : "";
   const media = useServerValue({
     key: open ? mediaId : null,
     // New source publication admits a title job before naming can succeed or fail.
-    stale: `${stamp?.kind === "Present" ? stamp.value : ""}:${titleJob}`,
+    stale: `${stamp ?? ""}:${titleJob}`,
     visit: VISIT,
     load: async (signal) =>
       mediaDetailFromResponse(

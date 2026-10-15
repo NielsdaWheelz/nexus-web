@@ -18,7 +18,6 @@ from nexus.schemas.media import (
     ReaderNavigationSectionOut,
     ReaderNavigationTocNodeOut,
 )
-from nexus.schemas.presence import Presence, Present, absent, presence_from_nullable, present
 from nexus.services.capabilities import is_document_status_ready
 from nexus.services.epub_read import read_epub_navigation
 from nexus.services.reader_publication import (
@@ -90,7 +89,7 @@ def read_media_navigation(
     inputs: list[SectionRangeInput] = []
     labels: dict[str, str] = {}
     anchors: dict[str, str | None] = {}
-    toc_specs: list[tuple[str, str, Presence[str], NavigationTextPointOut, str | None]] = []
+    toc_specs: list[tuple[str, str, str | None, NavigationTextPointOut, str | None]] = []
     for fragment in fragment_rows:
         headings = build_web_article_index_blocks(
             html_sanitized=fragment["html_sanitized"],
@@ -121,9 +120,9 @@ def read_media_navigation(
                     section_id=heading.section_id,
                     target=DocumentPoint(fragment["idx"], heading.start_offset),
                     parent_section_id=heading.parent_section_id,
-                    container_end=present(DocumentPoint(fragment["idx"], container_end.value))
-                    if container_end.kind == "Present"
-                    else absent(),
+                    container_end=DocumentPoint(fragment["idx"], container_end)
+                    if container_end is not None
+                    else None,
                     owns_container=heading.owns_container,
                 )
             )
@@ -147,19 +146,17 @@ def read_media_navigation(
                     label=labels[section.section_id],
                     parent_section_id=section.parent_section_id,
                     target=target,
-                    anchor_id=presence_from_nullable(anchors[section.section_id]),
+                    anchor_id=anchors[section.section_id],
                     source="Heading",
-                    extent=present(
-                        NavigationTextRangeOut(
-                            start=target,
-                            end=NavigationTextPointOut(
-                                fragment_id=fragment_ids[end.value.fragment_idx],
-                                offset=end.value.offset,
-                            ),
-                        )
+                    extent=NavigationTextRangeOut(
+                        start=target,
+                        end=NavigationTextPointOut(
+                            fragment_id=fragment_ids[end.fragment_idx],
+                            offset=end.offset,
+                        ),
                     )
-                    if end.kind == "Present"
-                    else absent(),
+                    if end is not None
+                    else None,
                 )
             )
     section_targets = {section.section_id: section.target for section in sections}
@@ -169,13 +166,13 @@ def read_media_navigation(
         nodes[heading_id] = ReaderNavigationTocNodeOut(
             id=heading_id,
             label=label,
-            target=present(target),
-            section_id=presence_from_nullable(section_id),
+            target=target,
+            section_id=section_id,
             children=[],
         )
     for heading_id, _label, parent_id, _target, _section_id in toc_specs:
-        if isinstance(parent_id, Present) and parent_id.value in nodes:
-            nodes[parent_id.value].children.append(nodes[heading_id])
+        if parent_id is not None and parent_id in nodes:
+            nodes[parent_id].children.append(nodes[heading_id])
         else:
             roots.append(nodes[heading_id])
     return MediaNavigationOut(

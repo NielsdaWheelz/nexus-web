@@ -372,7 +372,7 @@ export function createChatStore(conversationId: string | null) {
           method: "DELETE",
         });
         publishChange("Chats");
-        if (!data.conversationDeleted) await store.load();
+        if (!data.conversation_deleted) await store.load();
         return data;
       } catch (error) {
         report(chatFailure(error, "This message couldn’t be deleted."));

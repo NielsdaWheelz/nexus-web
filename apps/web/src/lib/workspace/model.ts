@@ -27,8 +27,8 @@ export function newVisit(href: string): PaneVisit {
 export function newPane(href: string): WorkspacePane {
   return {
     id: createRandomId("pane"),
-    currentVisit: newVisit(href),
-    primaryWidthPx: null,
+    current_visit: newVisit(href),
+    primary_width_px: null,
     visibility: "visible",
     history: { back: [], forward: [] },
     secondary: null,
@@ -43,15 +43,15 @@ export function newPane(href: string): WorkspacePane {
 export function moveTo(
   pane: WorkspacePane,
   visit: PaneVisit,
-  keepLayout = sameLayout(pane.currentVisit.href, visit.href),
+  keepLayout = sameLayout(pane.current_visit.href, visit.href),
 ): WorkspacePane {
   const secondary = keepLayout ? pane.secondary : null;
   const groups = resolvePaneRouteModel(visit.href).groups;
   return {
     ...pane,
-    currentVisit: visit,
-    primaryWidthPx: keepLayout ? pane.primaryWidthPx : null,
-    secondary: secondary && groups.includes(secondary.groupId) ? secondary : null,
+    current_visit: visit,
+    primary_width_px: keepLayout ? pane.primary_width_px : null,
+    secondary: secondary && groups.includes(secondary.group_id) ? secondary : null,
   };
 }
 
@@ -66,7 +66,7 @@ function isNonTrivial({ panes }: WorkspaceState): boolean {
   const [pane] = panes;
   return (
     panes.length > 1 ||
-    pane!.currentVisit.href !== WORKSPACE_DEFAULT_FALLBACK_HREF ||
+    pane!.current_visit.href !== WORKSPACE_DEFAULT_FALLBACK_HREF ||
     pane!.secondary !== null ||
     pane!.history.back.length + pane!.history.forward.length > 0
   );
@@ -85,12 +85,12 @@ export function enterWorkspace(
   const restored = [own, elsewhere].find((s) => s !== null && isNonTrivial(s));
   if (!restored) {
     const pane = newPane(href ?? WORKSPACE_DEFAULT_FALLBACK_HREF);
-    return { activePrimaryPaneId: pane.id, panes: [pane] };
+    return { active_primary_pane_id: pane.id, panes: [pane] };
   }
   if (href === null) return restored;
   const target = resolvePaneRouteModel(href);
   const existing = restored.panes.find((pane) => {
-    const route = resolvePaneRouteModel(pane.currentVisit.href);
+    const route = resolvePaneRouteModel(pane.current_visit.href);
     return (
       route.routeKey === target.routeKey ||
       (route.resourceKey !== null && route.resourceKey === target.resourceKey)
@@ -99,11 +99,11 @@ export function enterWorkspace(
   if (!existing) {
     const pane = newPane(href);
     const kept = restored.panes.slice(1 - MAX_PANES);
-    return { activePrimaryPaneId: pane.id, panes: [...kept, pane] };
+    return { active_primary_pane_id: pane.id, panes: [...kept, pane] };
   }
-  const visit = { id: existing.currentVisit.id, href };
+  const visit = { id: existing.current_visit.id, href };
   return {
-    activePrimaryPaneId: existing.id,
+    active_primary_pane_id: existing.id,
     panes: restored.panes.map((pane) =>
       pane === existing
         ? { ...moveTo(pane, visit, true), visibility: "visible" }

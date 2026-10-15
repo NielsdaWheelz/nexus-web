@@ -126,9 +126,9 @@ export default function ShareCapture({
           plainTextAttempt.current = frozen;
         }
         await captureDailyPageNote(frozen.localDate, {
-          noteId: frozen.noteId,
-          clientMutationId: frozen.clientMutationId,
-          bodyPmJson: {
+          note_id: frozen.noteId,
+          client_mutation_id: frozen.clientMutationId,
+          body_pm_json: {
             type: "paragraph",
             content: [{ type: "text", text: trimmed }],
           },

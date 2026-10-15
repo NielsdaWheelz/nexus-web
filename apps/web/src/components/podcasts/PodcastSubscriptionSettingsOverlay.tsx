@@ -8,7 +8,6 @@ import Dialog from "@/components/ui/Dialog";
 import Select from "@/components/ui/Select";
 import type { ResourceActionMutationBoundary } from "@/lib/actions/resourceActionMutation";
 import type { ApiError } from "@/lib/api/client";
-import { absent, presenceValueOr, present } from "@/lib/api/presence";
 import { useResource } from "@/lib/api/useResource";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import {
@@ -107,22 +106,22 @@ function SettingsForm({
         </p>
         <div className={styles.field}>
           <PlaybackRateEditor
-            value={presenceValueOr(speed, 1)}
-            onChange={(rate) => setSpeed(present(rate))}
+            value={speed ?? 1}
+            onChange={(rate) => setSpeed(rate)}
             label="Default playback speed"
           />
           <Button
             variant="secondary"
             size="lg"
-            aria-pressed={speed.kind === "Absent"}
-            onClick={() => setSpeed(absent())}
+            aria-pressed={speed === null}
+            onClick={() => setSpeed(null)}
           >
             Use app default (1x)
           </Button>
           <span className={styles.note}>
-            {speed.kind === "Absent"
+            {speed === null
               ? "New episodes use the app default, 1x."
-              : `New episodes start at ${formatPlaybackRate(speed.value)}.`}
+              : `New episodes start at ${formatPlaybackRate(speed)}.`}
           </span>
         </div>
         <label className={styles.field}>
@@ -130,11 +129,11 @@ function SettingsForm({
           <Select
             size="lg"
             aria-label="Shorten pauses"
-            value={pauses.kind === "Present" ? pauses.value : "Device"}
+            value={pauses !== null ? pauses : "Device"}
             onChange={(event) => {
               const mode = event.currentTarget.value;
               setPauses(
-                mode === "Off" || mode === "Natural" ? present(mode) : absent(),
+                mode === "Off" || mode === "Natural" ? mode : null,
               );
             }}
           >

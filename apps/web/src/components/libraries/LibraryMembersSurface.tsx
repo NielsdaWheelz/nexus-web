@@ -28,35 +28,31 @@ import type {
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import styles from "./LibraryMembersSurface.module.css";
 
-function presentValue(value: { kind: "Absent" } | { kind: "Present"; value: string }) {
-  return value.kind === "Present" ? value.value : null;
-}
-
 function memberLabel(member: LibraryMember): string {
   return (
-    presentValue(member.displayName) ??
-    presentValue(member.email) ??
-    member.userHandle
+    member.display_name ??
+    member.email ??
+    member.user_handle
   );
 }
 
 function memberSecondary(member: LibraryMember): string | null {
-  return member.displayName.kind === "Present"
-    ? presentValue(member.email)
+  return member.display_name !== null
+    ? member.email
     : null;
 }
 
 function invitationLabel(invitation: LibraryInvitation): string {
   return (
-    presentValue(invitation.inviteeDisplayName) ??
-    presentValue(invitation.inviteeEmail) ??
-    invitation.inviteeUserHandle
+    invitation.invitee_display_name ??
+    invitation.invitee_email ??
+    invitation.invitee_user_handle
   );
 }
 
 function invitationSecondary(invitation: LibraryInvitation): string | null {
-  return invitation.inviteeDisplayName.kind === "Present"
-    ? presentValue(invitation.inviteeEmail)
+  return invitation.invitee_display_name !== null
+    ? invitation.invitee_email
     : null;
 }
 
@@ -332,11 +328,11 @@ export default function LibraryMembersSurface({
         <div className={styles.rows}>
           {members.rows.map((member) => (
             <MemberRow
-              key={member.userHandle}
+              key={member.user_handle}
               member={member}
               canTransferOwnership={
-                controller.library.canTransferOwnership &&
-                !member.isOwner
+                controller.library.can_transfer_ownership &&
+                !member.is_owner
               }
               disabled={controller.mutationsDisabled}
               confirmation={controller.draft.confirmation}
@@ -347,15 +343,15 @@ export default function LibraryMembersSurface({
               onCancelConfirmation={cancelConfirmation}
               onUpdateRole={(role) =>
                 void controller.updateRole(
-                  member.userHandle,
+                  member.user_handle,
                   role,
                 )
               }
               onRemove={() =>
-                void controller.removeMember(member.userHandle)
+                void controller.removeMember(member.user_handle)
               }
               onTransfer={() =>
-                void controller.transferOwnership(member.userHandle)
+                void controller.transferOwnership(member.user_handle)
               }
               command={controller.command}
             />
@@ -376,7 +372,7 @@ export default function LibraryMembersSurface({
           </div>
         ) : (
           <LoadMoreFooter
-            hasMore={members.nextCursor.kind === "Present"}
+            hasMore={members.nextCursor !== null}
             loading={members.pageLoad.kind === "Loading"}
             disabled={reconciliation.kind !== "Confirmed"}
             onLoadMore={() => void controller.loadMoreMembers()}
@@ -395,12 +391,12 @@ export default function LibraryMembersSurface({
               const confirmed =
                 controller.draft.confirmation?.kind === "Revoke" &&
                 controller.draft.confirmation.invitationHandle ===
-                  invitation.invitationHandle;
+                  invitation.invitation_handle;
               return (
                 <div
-                  key={invitation.invitationHandle}
+                  key={invitation.invitation_handle}
                   className={styles.row}
-                  data-confirmation-subject={invitation.invitationHandle}
+                  data-confirmation-subject={invitation.invitation_handle}
                 >
                   <div className={styles.identity}>
                     <strong>{invitationLabel(invitation)}</strong>
@@ -424,7 +420,7 @@ export default function LibraryMembersSurface({
                       }
                       onConfirm={() =>
                         void controller.revokeInvite(
-                          invitation.invitationHandle,
+                          invitation.invitation_handle,
                         )
                       }
                       onCancel={cancelConfirmation}
@@ -439,7 +435,7 @@ export default function LibraryMembersSurface({
                         captureConfirmationFocus(event.currentTarget);
                         controller.setConfirmation({
                           kind: "Revoke",
-                          invitationHandle: invitation.invitationHandle,
+                          invitationHandle: invitation.invitation_handle,
                           label: invitationLabel(invitation),
                           returnFocusTarget: event.currentTarget,
                         });
@@ -467,7 +463,7 @@ export default function LibraryMembersSurface({
           </div>
         ) : (
           <LoadMoreFooter
-            hasMore={pendingInvites.nextCursor.kind === "Present"}
+            hasMore={pendingInvites.nextCursor !== null}
             loading={pendingInvites.pageLoad.kind === "Loading"}
             disabled={reconciliation.kind !== "Confirmed"}
             onLoadMore={() => void controller.loadMoreInvites()}
@@ -522,16 +518,16 @@ function MemberRow({
   const secondary = memberSecondary(member);
   const removeConfirmed =
     confirmation?.kind === "Remove" &&
-    confirmation.userHandle === member.userHandle;
+    confirmation.userHandle === member.user_handle;
   const transferConfirmed =
     confirmation?.kind === "Transfer" &&
-    confirmation.userHandle === member.userHandle;
+    confirmation.userHandle === member.user_handle;
   const options = useMemo<ActionDescriptor[]>(() => {
-    if (member.isOwner) return [];
+    if (member.is_owner) return [];
     const actions: ActionDescriptor[] = [
       {
         kind: "command",
-        id: `LibraryMember.Remove.${member.userHandle}`,
+        id: `LibraryMember.Remove.${member.user_handle}`,
         label: "Remove member…",
         tone: "danger",
         disabled,
@@ -540,7 +536,7 @@ function MemberRow({
           onOpenConfirmation(
             {
               kind: "Remove",
-              userHandle: member.userHandle,
+              userHandle: member.user_handle,
               label,
               returnFocusTarget: triggerEl,
             },
@@ -551,7 +547,7 @@ function MemberRow({
     if (canTransferOwnership) {
       actions.push({
         kind: "command",
-        id: `LibraryMember.Transfer.${member.userHandle}`,
+        id: `LibraryMember.Transfer.${member.user_handle}`,
         label: "Transfer ownership…",
         tone: "danger",
         disabled,
@@ -560,7 +556,7 @@ function MemberRow({
           onOpenConfirmation(
             {
               kind: "Transfer",
-              userHandle: member.userHandle,
+              userHandle: member.user_handle,
               label,
               returnFocusTarget: triggerEl,
             },
@@ -573,20 +569,20 @@ function MemberRow({
     canTransferOwnership,
     disabled,
     label,
-    member.isOwner,
-    member.userHandle,
+    member.is_owner,
+    member.user_handle,
     onOpenConfirmation,
   ]);
 
   return (
     <div
       className={styles.row}
-      data-confirmation-subject={member.userHandle}
+      data-confirmation-subject={member.user_handle}
     >
       <div className={styles.identity}>
         <strong>{label}</strong>
         {secondary ? <span>{secondary}</span> : null}
-        {member.isOwner ? (
+        {member.is_owner ? (
           <>
             <span className={styles.fact}>Owner</span>
             <span className={styles.fact}>Role: Admin</span>
@@ -621,7 +617,7 @@ function MemberRow({
           onConfirm={onTransfer}
           onCancel={onCancelConfirmation}
         />
-      ) : member.isOwner ? null : (
+      ) : member.is_owner ? null : (
         <div className={styles.memberActions}>
           <Select
             size="sm"

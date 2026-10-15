@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import Media
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.schemas.presence import present
 from nexus.schemas.x_source import XSourceAuthor, XSourceSnapshot
 from nexus.services import contributor_taxonomy as taxonomy
 from nexus.services import document_embeds as embeds
@@ -169,8 +168,8 @@ def publish_prepared_x_source(
                 "ingest_enqueued": False,
                 "idempotency_outcome": "reused",
             },
-            superseded_by_media_id=present(holder.id),
-            metadata_enrichment=present(False),
+            superseded_by_media_id=holder.id,
+            metadata_enrichment=False,
         )
     quote_media_ids: dict[str, UUID] = {}
     completed_quotes: list[UUID] = []
@@ -241,7 +240,7 @@ def publish_prepared_x_source(
         },
         observations=observations,
         additional_reindex_media_ids=tuple(completed_quotes),
-        metadata_enrichment=present(True),
+        metadata_enrichment=True,
     )
 
 

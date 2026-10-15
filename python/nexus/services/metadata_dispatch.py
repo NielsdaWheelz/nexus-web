@@ -17,7 +17,6 @@ from nexus.schemas.metadata_enrichment import (
     MetadataRetryAllowed,
     TitleMetadataJobPayload,
 )
-from nexus.schemas.presence import presence_from_nullable
 from nexus.services.metadata_operations import metadata_purpose, metadata_retry
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
@@ -87,7 +86,11 @@ def admit_metadata_enrichment(
     """One media lock owns replay, expected activity, barriers, insert and receipt."""
     scope = f"media_metadata_enrichment:{media_id}"
     request_bytes = canonical_json_bytes(
-        {"expected_job_id": request.expected_job_id.model_dump(mode="json")}
+        {
+            "expected_job_id": None
+            if request.expected_job_id is None
+            else str(request.expected_job_id)
+        }
     )
 
     def authorize(*, lock: bool) -> Media:
@@ -134,7 +137,7 @@ def admit_metadata_enrichment(
             db.rollback()
             return existing
         latest = max(jobs, key=lambda job: (job.created_at, job.id), default=None)
-        expected = presence_from_nullable(latest.id if latest else None)
+        expected = latest.id if latest else None
         if request.expected_job_id != expected:
             raise ConflictError(
                 ApiErrorCode.E_RESOURCE_CONFLICT, "metadata activity changed; refresh and try again"

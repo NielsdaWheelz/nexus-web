@@ -67,8 +67,8 @@ function filterFields(item: LecternItem): string[] {
     item.activation.kind === "FooterAudio"
       ? item.activation.descriptor.subtitle
       : null;
-  return subtitle?.kind === "Present"
-    ? [...mediaListFilterFields(item.mediaSummary), subtitle.value]
+  return subtitle != null
+    ? [...mediaListFilterFields(item.mediaSummary), subtitle]
     : [...mediaListFilterFields(item.mediaSummary)];
 }
 
@@ -117,7 +117,7 @@ export default function LecternPaneBody() {
   const summaries = useMediaSummaries(loadedItems.map((item) => item.mediaSummary));
   const items = useMemo(() => loadedItems.flatMap((item) => {
     const mediaSummary = summaries.resolve(item.mediaSummary);
-    return mediaSummary.kind === "Absent" ? [] : [{ ...item, mediaSummary: mediaSummary.value }];
+    return mediaSummary === null ? [] : [{ ...item, mediaSummary: mediaSummary }];
   }), [loadedItems, summaries]);
   const status =
     resource.status === "ready" || resource.status === "error"
@@ -204,9 +204,9 @@ export default function LecternPaneBody() {
       const mediaId = assumeMediaId(suggestionTargetId(target));
       const receipt = await ensureItem({
         mediaId,
-        title: target.kind === "Media" ? target.mediaSummary.title : target.title,
+        title: target.kind === "Media" ? target.media_summary.title : target.title,
       });
-      return receipt === "Acknowledged" && getCanonicalSnapshot()?.items.some((item) => item.mediaSummary.mediaId === mediaId)
+      return receipt === "Acknowledged" && getCanonicalSnapshot()?.items.some((item) => item.mediaSummary.media_id === mediaId)
         ? "Accepted" : "Retained";
     },
     [ensureItem, getCanonicalSnapshot],

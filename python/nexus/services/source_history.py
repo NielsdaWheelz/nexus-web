@@ -8,7 +8,6 @@ transition, so this owner reaches neither the ORM nor the queue.
 from __future__ import annotations
 
 from nexus.schemas.import_history import SourceFailureProgress, Stage
-from nexus.schemas.presence import Presence, absent, present
 from nexus.services import media_source_types as source_types
 
 COUNTED_PROGRESS_SOURCE_TYPES: frozenset[str] = (
@@ -36,14 +35,12 @@ def source_failure_progress(
     progress_completed: int,
     progress_total: int | None,
     progress_unit: str | None,
-) -> Presence[SourceFailureProgress]:
+) -> SourceFailureProgress | None:
     """The counted progress a failure happened at, present only during Extract."""
     if processing_stage != "Extract" or progress_total is None:
-        return absent()
-    return present(
-        SourceFailureProgress(
-            completed=progress_completed,
-            total=present(progress_total),
-            unit=absent() if progress_unit is None else present(progress_unit),
-        )
+        return None
+    return SourceFailureProgress(
+        completed=progress_completed,
+        total=progress_total,
+        unit=progress_unit,
     )

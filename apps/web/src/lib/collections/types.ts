@@ -5,7 +5,6 @@
 
 import type { ResourceRowPrimary } from "@/components/ui/ResourceRow";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
-import type { Presence } from "@/lib/api/presence";
 import type { ContributorCredit } from "@/lib/contributors/credits";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
@@ -57,10 +56,10 @@ interface CollectionRowBase {
     readonly segments?: readonly EmphasisSegment[];
   };
   readonly contributors: readonly ContributorCredit[];
-  readonly publicationDate: Presence<string>;
-  readonly context: Presence<CollectionContext>;
-  readonly activity: Presence<CollectionActivity>;
-  readonly exceptionalStatus: Presence<ExceptionalStatus>;
+  readonly publicationDate: string | null;
+  readonly context: CollectionContext | null;
+  readonly activity: CollectionActivity | null;
+  readonly exceptionalStatus: ExceptionalStatus | null;
   /**
    * The canonical resource suffix for this row's one contextual More menu.
    * `null` means a non-resource row, which may contribute only `flatActions`.

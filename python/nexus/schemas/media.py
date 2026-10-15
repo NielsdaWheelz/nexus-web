@@ -5,7 +5,6 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from pydantic.alias_generators import to_camel
 
 from nexus.db.models import MediaKind, ProcessingStatus
 from nexus.db.models import TranscriptCoverage as MediaTranscriptCoverage
@@ -16,7 +15,6 @@ from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.import_refs import ImportRef
 from nexus.schemas.media_summary import MediaDurationOut, MediaProcessingStatus
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
-from nexus.schemas.presence import Presence, Present
 from nexus.schemas.publication_dates import PublicationDate
 from nexus.schemas.source_issues import SourceIssue
 from nexus.schemas.upload_failures import UploadTransportFailure, UploadVerificationFailureCode
@@ -29,7 +27,7 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-_CAMEL_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+_CLOSED = ConfigDict(extra="forbid")
 
 MediaSourceAttemptStatus = Literal["accepted", "queued", "running", "succeeded", "failed"]
 MediaReadState = Literal["unread", "in_progress", "finished"]
@@ -229,27 +227,27 @@ class XSourceContext(_Strict):
 
 
 class MediaOut(BaseModel):
-    """The media detail wire: snake_case throughout except ``playerDescriptor``.
+    """The media detail wire.
 
     ``read_state`` / ``progress_fraction`` / ``progress_resettable`` and
     ``last_engaged_at`` are the viewer's derived consumption facts;
-    ``player_descriptor`` is Present only for a podcast episode with playable
-    audio. Routes serializing this model must dump ``by_alias=True``.
+    ``player_descriptor`` is set only for a podcast episode with playable
+    audio.
     """
 
     id: UUID
     kind: MediaKind
     title: str
     canonical_source_url: str | None
-    provider: Presence[str]
-    provider_id: Presence[str]
-    requested_url: Presence[str]
-    canonical_url: Presence[str]
+    provider: str | None
+    provider_id: str | None
+    requested_url: str | None
+    canonical_url: str | None
     processing_status: MediaProcessingStatus
-    source_progress: Presence[SourceProgress]
+    source_progress: SourceProgress | None
     transcript_state: MediaTranscriptState | None
     transcript_coverage: MediaTranscriptCoverage | None
-    transcript_origin: Presence[Literal["Publisher", "Imported", "Generated"]]
+    transcript_origin: Literal["Publisher", "Imported", "Generated"] | None
     retrieval_status: str | None
     retrieval_status_reason: str | None
     failure_stage: str | None
@@ -261,10 +259,10 @@ class MediaOut(BaseModel):
     document_embed_summary: DocumentEmbedSummaryOut | None
     contributors: list[ContributorCreditOut]
     author_mode: Literal["automatic", "manual"] = "automatic"
-    original_published_date: Presence[PublicationDate]
-    edition_published_date: Presence[PublicationDate]
-    edition_isbn: Presence[str]
-    duration: Presence[MediaDurationOut]
+    original_published_date: PublicationDate | None
+    edition_published_date: PublicationDate | None
+    edition_isbn: str | None
+    duration: MediaDurationOut | None
     publisher: str | None
     language: str | None
     description: str | None
@@ -272,23 +270,23 @@ class MediaOut(BaseModel):
     description_text: str | None
     metadata_enriched_at: datetime | None
     metadata_enrichment: MetadataEnrichmentView
-    x_source_context: Presence[XSourceContext]
+    x_source_context: XSourceContext | None
     read_state: MediaReadState | None
     progress_fraction: float | None = Field(ge=0.0, le=1.0)
     progress_resettable: bool
     last_engaged_at: datetime | None
-    player_descriptor: Presence[PlayerDescriptor] = Field(alias="playerDescriptor")
+    player_descriptor: PlayerDescriptor | None
     created_at: datetime
     updated_at: datetime
 
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MediaProcessingSnapshotOut(BaseModel):
     """The complete data frame for media processing state and done events."""
 
     processing_status: MediaProcessingStatus
-    source_progress: Presence[SourceProgress]
+    source_progress: SourceProgress | None
     last_error_code: str | None
     failure_stage: str | None
     retrieval_status: str | None
@@ -300,7 +298,7 @@ class MediaProcessingSnapshotOut(BaseModel):
 
 
 class MediaRemovedResult(BaseModel):
-    model_config = _CAMEL_CONFIG
+    model_config = _CLOSED
 
     kind: Literal["Removed"] = "Removed"
     removed_from_library_ids: list[UUID]
@@ -308,7 +306,7 @@ class MediaRemovedResult(BaseModel):
 
 
 class MediaHiddenResult(BaseModel):
-    model_config = _CAMEL_CONFIG
+    model_config = _CLOSED
 
     kind: Literal["Hidden"] = "Hidden"
     removed_from_library_ids: list[UUID]
@@ -316,7 +314,7 @@ class MediaHiddenResult(BaseModel):
 
 
 class MediaDeletingResult(BaseModel):
-    model_config = _CAMEL_CONFIG
+    model_config = _CLOSED
 
     kind: Literal["Deleting"] = "Deleting"
 
@@ -379,9 +377,11 @@ UploadTransportFailureRequest = Annotated[
 
 
 class UploadRequiredHeaders(BaseModel):
+    """The headers the storage PUT must carry, keyed by their HTTP names."""
+
     content_type: str = Field(alias="Content-Type")
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    model_config = ConfigDict(extra="forbid", serialize_by_alias=True)
 
 
 class UploadRequired(_Strict):
@@ -585,10 +585,10 @@ class NavigationTextRangeOut(_Strict):
 class ReaderNavigationSectionOut(_Strict):
     section_id: str
     label: str
-    parent_section_id: Presence[str]
+    parent_section_id: str | None
     target: NavigationTextPointOut
-    anchor_id: Presence[str]
-    extent: Presence[NavigationTextRangeOut]
+    anchor_id: str | None
+    extent: NavigationTextRangeOut | None
     source: Literal["Publisher", "Heading", "Both", "InferredNumberedEntry"]
 
 
@@ -597,8 +597,8 @@ class ReaderNavigationTocNodeOut(_Strict):
 
     id: str
     label: str
-    target: Presence[NavigationTextPointOut]
-    section_id: Presence[str]
+    target: NavigationTextPointOut | None
+    section_id: str | None
     children: list["ReaderNavigationTocNodeOut"]
 
 
@@ -607,7 +607,7 @@ class ReaderNavigationLocationOut(_Strict):
 
     id: str
     label: str
-    target: Presence[NavigationTextPointOut]
+    target: NavigationTextPointOut | None
 
 
 class MediaNavigationOut(_Strict):
@@ -645,11 +645,10 @@ class MediaNavigationOut(_Strict):
         while pending:
             node = pending.pop()
             pending.extend(node.children)
-            if isinstance(node.target, Present) and not valid_point(node.target.value):
+            if node.target is not None and not valid_point(node.target):
                 raise ValueError("Reader contents target is outside published fragments")
-            if isinstance(node.section_id, Present) and (
-                not isinstance(node.target, Present)
-                or sections.get(node.section_id.value) != node.target.value
+            if node.section_id is not None and (
+                node.target is None or sections.get(node.section_id) != node.target
             ):
                 raise ValueError("Reader contents section linkage disagrees with its target")
         return self

@@ -29,7 +29,7 @@ function take(): ActivityRequest | null {
   const spans = queue
     .filter(lane)
     .sort(
-      (a, b) => Date.parse(a.span.occurredAt) - Date.parse(b.span.occurredAt),
+      (a, b) => Date.parse(a.span.occurred_at) - Date.parse(b.span.occurred_at),
     )
     .slice(0, MAX_SPANS);
   while (spans.length > 1 && JSON.stringify(spans).length > MAX_BYTES)
@@ -37,11 +37,11 @@ function take(): ActivityRequest | null {
   queue = queue.filter((span) => !spans.includes(span));
   const body = {
     modality: first.modality,
-    spans: spans.map((s) => ({ captureKey: s.captureKey, ...s.span })),
+    spans: spans.map((s) => ({ capture_key: s.captureKey, ...s.span })),
   };
   return {
-    mediaRef: first.mediaRef,
-    deviceClass: first.deviceClass,
+    media_ref: first.mediaRef,
+    device_class: first.deviceClass,
     batch: body as ActivityRequest["batch"],
   };
 }
@@ -77,10 +77,10 @@ async function send(): Promise<void> {
 }
 
 function unpack(request: ActivityRequest): ClosedActivitySpan[] {
-  return request.batch.spans.map(({ captureKey, ...span }) => ({
-    captureKey,
-    mediaRef: request.mediaRef,
-    deviceClass: request.deviceClass,
+  return request.batch.spans.map(({ capture_key, ...span }) => ({
+    captureKey: capture_key,
+    mediaRef: request.media_ref,
+    deviceClass: request.device_class,
     modality: request.batch.modality,
     span,
   })) as ClosedActivitySpan[];

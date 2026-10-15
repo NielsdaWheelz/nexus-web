@@ -1,7 +1,7 @@
 """Dossier wire models and the closed failure-code set.
 
 A head is read whole: its subject, its one revision, its active build and its last
-failed or cancelled build. Absence is ``Presence``, never null.
+failed or cancelled build. Absence is null.
 """
 
 from datetime import datetime
@@ -12,7 +12,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from nexus.jobs.queue import DurableExecutionPhase
 from nexus.schemas.citation import CitationOut
-from nexus.schemas.presence import Presence
 from nexus.schemas.resource_items import ResourceActivationOut
 
 
@@ -41,7 +40,7 @@ class _Model(BaseModel):
 
 
 class DossierGenerateRequest(_Model):
-    instruction: Presence[str]
+    instruction: str | None
 
 
 class LearnDossierRequest(_Model):
@@ -71,13 +70,13 @@ LearnDossierOut = Annotated[
 
 
 class DossierBuildOut(_Model):
-    """One build; also the SSE snapshot. ``phase`` is Present only while Active."""
+    """One build; also the SSE snapshot. ``phase`` is set only while Active."""
 
     handle: str
     status: Literal["Active", "Succeeded", "Failed", "Cancelled"]
-    phase: Presence[DurableExecutionPhase]
-    failure_code: Presence[DossierFailureCode]
-    instruction: Presence[str]
+    phase: DurableExecutionPhase | None
+    failure_code: DossierFailureCode | None
+    instruction: str | None
 
 
 class DossierCoverageOut(_Model):
@@ -92,25 +91,25 @@ class DossierRevisionOut(_Model):
     citations: list[CitationOut]
     coverage: DossierCoverageOut
     stale: bool
-    instruction: Presence[str]
+    instruction: str | None
     by_viewer: bool
-    model: Presence[str]
-    total_tokens: Presence[int]
+    model: str | None
+    total_tokens: int | None
     generated_at: datetime
 
 
 class MediaAbstractOut(_Model):
     status: Literal["Building", "Ready", "Stale", "Failed"]
-    summary_md: Presence[str]
+    summary_md: str | None
 
 
 class DossierHeadOut(_Model):
-    """``artifact_ref`` Absent: never generated (a head read never inserts a head)."""
+    """``artifact_ref`` null: never generated (a head read never inserts a head)."""
 
-    artifact_ref: Presence[str]
+    artifact_ref: str | None
     title: str
-    subject_activation: Presence[ResourceActivationOut]
-    revision: Presence[DossierRevisionOut]
-    active_build: Presence[DossierBuildOut]
-    last_failure: Presence[DossierBuildOut]
-    media_abstract: Presence[MediaAbstractOut]
+    subject_activation: ResourceActivationOut | None
+    revision: DossierRevisionOut | None
+    active_build: DossierBuildOut | None
+    last_failure: DossierBuildOut | None
+    media_abstract: MediaAbstractOut | None

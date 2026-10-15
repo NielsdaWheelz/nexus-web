@@ -160,7 +160,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
           onRename={store.renameFork}
           onDelete={async (userId) => {
             const receipt = await store.deleteMessage(userId);
-            if (receipt.conversationDeleted) router.replace("/conversations");
+            if (receipt.conversation_deleted) router.replace("/conversations");
           }}
         />
       ),

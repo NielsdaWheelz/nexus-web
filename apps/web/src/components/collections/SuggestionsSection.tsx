@@ -94,12 +94,12 @@ export default function SuggestionsSection({
     setRows(resource.data.items);
   }
   const summaries = useMediaSummaries(rows?.flatMap((item) =>
-    item.target.kind === "Media" ? [item.target.mediaSummary] : []) ?? []);
+    item.target.kind === "Media" ? [item.target.media_summary] : []) ?? []);
   const currentRows = rows?.flatMap<SuggestionItem>((item) => {
     if (item.target.kind !== "Media") return [item];
-    const mediaSummary = summaries.resolve(item.target.mediaSummary);
-    return mediaSummary.kind === "Absent" ? [] : [{ ...item,
-      target: { ...item.target, mediaSummary: mediaSummary.value } }];
+    const mediaSummary = summaries.resolve(item.target.media_summary);
+    return mediaSummary === null ? [] : [{ ...item,
+      target: { ...item.target, media_summary: mediaSummary } }];
   }) ?? [];
   const [notice, setNotice] = useState<{
     text: string;
@@ -231,9 +231,9 @@ export default function SuggestionsSection({
             }
             rowControls={Object.fromEntries(
               currentRows.map((item) => {
-                const title = item.target.kind === "Media" ? item.target.mediaSummary.title : item.target.title;
+                const title = item.target.kind === "Media" ? item.target.media_summary.title : item.target.title;
                 const request = lectern && item.target.kind === "Media"
-                  ? ensureRequests.get(parseMediaId(item.target.mediaSummary.mediaId)) : undefined;
+                  ? ensureRequests.get(parseMediaId(item.target.media_summary.media_id)) : undefined;
                 const busy = request ? request.kind !== "Unconfirmed" : adding !== null;
                 const capacityBlocked = atCapacity && request === undefined;
                 const checking = request !== undefined && request.kind !== "Sending";

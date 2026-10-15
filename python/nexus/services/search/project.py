@@ -11,7 +11,6 @@ from sqlalchemy import RowMapping
 from sqlalchemy.orm import Session
 
 from nexus.schemas.media_summary import MediaSummaryOut
-from nexus.schemas.presence import Present, presence_from_nullable
 from nexus.schemas.retrieval import LocatorBackedResultType
 from nexus.schemas.search import (
     RESULT_MODELS,
@@ -92,7 +91,7 @@ def build_source_label(source: SearchResultSourceOut | MediaSummaryOut) -> str:
     names = ", ".join(c.credited_name for c in source.contributors if c.credited_name)
     date = source.original_published_date
     kind = (source.media_kind or "").replace("_", " ")
-    parts = [source.title, names, date.value if isinstance(date, Present) else "", kind]
+    parts = [source.title, names, date if date is not None else "", kind]
     return " - ".join(part for part in parts if part)
 
 
@@ -189,7 +188,7 @@ def project(
                 media_kind=row["media_kind"],
                 title=row["media_title"],
                 contributors=credits.get(row["media_id"], []),
-                original_published_date=presence_from_nullable(row["original_published_date"]),
+                original_published_date=row["original_published_date"],
             )
             values |= {"source": source, "title": source.title}
             values["source_label"] = build_source_label(source)

@@ -1,7 +1,7 @@
 """Current consumption state: the Lectern, read state, completion, listening and the reader cursor.
 
 Writes follow the package's viewer-locked transaction discipline; commands replay by
-``clientMutationId``, listening writes are fenced by the reset epoch and cursor saves carry their
+``client_mutation_id``, listening writes are fenced by the reset epoch and cursor saves carry their
 own revision. The server picks successors: Done names the next readable row after the removed
 one, a natural end the next audio row; a media off the Lectern names none.
 """
@@ -23,14 +23,6 @@ from nexus.db.retries import retry_serializable
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
 from nexus.schemas import consumption as wire
-from nexus.schemas.presence import (
-    Absent,
-    Present,
-    absent,
-    nullable_from_presence,
-    presence_from_nullable,
-    present,
-)
 from nexus.schemas.reader import CursorWrite, ReaderCursorSnapshot
 from nexus.services.consumption import (
     fresh_session,
@@ -170,7 +162,7 @@ def run_lectern_command(viewer_id: UUID, command: wire.LecternCommand) -> wire.L
             outcome = wire.OrderedOutcome()
         else:
             assert_never(command)
-        return {"outcome": outcome.model_dump(mode="json", by_alias=True)}
+        return {"outcome": outcome.model_dump(mode="json")}
 
     def answer(db: Session, memo: Mapping[str, Any]) -> wire.LecternResult:
         return wire.LecternResult(
@@ -281,15 +273,15 @@ def _undo_finish(db: Session, viewer_id: UUID, command: wire.UndoFinishCommand) 
     reader_cursor.fence_in_txn(db, viewer_id=viewer_id, media_id=command.media_id)
     if projection.media_kind(db, command.media_id) == _PODCAST:
         listening.fence(db, viewer_id=viewer_id, media_id=command.media_id)
-    if isinstance(command.restore, Present):
-        restore = command.restore.value
+    if command.restore is not None:
+        restore = command.restore
         lectern.restore(
             db,
             viewer_id=viewer_id,
             media_id=command.media_id,
             item_id=restore.item_id,
             added_at=restore.added_at,
-            after=nullable_from_presence(restore.after),
+            after=restore.after,
         )
 
 
@@ -305,7 +297,7 @@ def _settle(
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_KIND, "Natural-end settlement is podcast-episode only"
         )
-    expected = nullable_from_presence(command.expected_consumption_override_revision)
+    expected = command.expected_consumption_override_revision
     if projection.override_revision(db, viewer_id=viewer_id, media_id=media_id) != expected:
         return "Superseded"
     was_finished = _is_finished(db, viewer_id, media_id)
@@ -332,35 +324,31 @@ def _answer(
             ),
             None,
         )
-    progress: Absent | Present[wire.MediaProgressState] = absent()
+    progress: wire.MediaProgressState | None = None
     if memo["progress"] is not None:
         media_id = UUID(memo["progress"])
         kind = _reader_kind(db, viewer_id, media_id)
         heard = listening.load_many(db, viewer_id=viewer_id, media_ids=[media_id]).get(media_id)
-        progress = present(
-            wire.MediaProgressState(
-                media_id=media_id,
-                reader_cursor=reader_cursor.load_snapshot(
-                    db, viewer_id=viewer_id, media_id=media_id, media_kind=kind
+        progress = wire.MediaProgressState(
+            media_id=media_id,
+            reader_cursor=reader_cursor.load_snapshot(
+                db, viewer_id=viewer_id, media_id=media_id, media_kind=kind
+            ),
+            listening_state=wire.ListeningPositionOut(
+                position_ms=heard.position_ms if heard else 0,
+                reset_epoch=heard.reset_epoch if heard else 0,
+                consumption_override_revision=projection.override_revision(
+                    db, viewer_id=viewer_id, media_id=media_id
                 ),
-                listening_state=present(
-                    wire.ListeningPositionOut(
-                        position_ms=heard.position_ms if heard else 0,
-                        reset_epoch=heard.reset_epoch if heard else 0,
-                        consumption_override_revision=presence_from_nullable(
-                            projection.override_revision(db, viewer_id=viewer_id, media_id=media_id)
-                        ),
-                    )
-                )
-                if kind == _PODCAST
-                else absent(),
             )
+            if kind == _PODCAST
+            else None,
         )
     return wire.ConsumptionResult(
         outcome=memo["outcome"],
         lectern=snapshot,
-        next_item=absent() if next_item is None else present(next_item),
-        finish_id=absent() if memo["finish"] is None else present(command.client_mutation_id),
+        next_item=next_item,
+        finish_id=None if memo["finish"] is None else command.client_mutation_id,
         progress_state=progress,
     )
 
@@ -403,18 +391,18 @@ def record_listening(
                     "current": wire.ListeningPositionOut(
                         position_ms=heard.position_ms if heard else 0,
                         reset_epoch=heard.reset_epoch if heard else 0,
-                        consumption_override_revision=presence_from_nullable(
-                            projection.override_revision(db, viewer_id=viewer_id, media_id=media_id)
+                        consumption_override_revision=projection.override_revision(
+                            db, viewer_id=viewer_id, media_id=media_id
                         ),
-                    ).model_dump(mode="json", by_alias=True)
+                    ).model_dump(mode="json")
                 },
             )
         _resume(db, viewer_id, media_id)
         result = wire.ListeningPositionOut(
             position_ms=heard.position_ms,
             reset_epoch=heard.reset_epoch,
-            consumption_override_revision=presence_from_nullable(
-                projection.override_revision(db, viewer_id=viewer_id, media_id=media_id)
+            consumption_override_revision=projection.override_revision(
+                db, viewer_id=viewer_id, media_id=media_id
             ),
         )
         db.commit()
@@ -433,7 +421,7 @@ def install_preview_position(viewer_id: UUID, media_id: UUID, body: wire.Preview
             raise InvalidRequestError(
                 message="Preview position is supported only for Podcast episodes"
             )
-        duration_ms = nullable_from_presence(body.duration_ms)
+        duration_ms = body.duration_ms
         if listening.install_preview(
             db,
             viewer_id=viewer_id,
@@ -488,8 +476,8 @@ def _write_listening(
         viewer_id=viewer_id,
         media_id=media_id,
         position_ms=body.position_ms,
-        duration_ms=nullable_from_presence(body.duration_ms),
-        episode_rate=nullable_from_presence(body.episode_playback_rate),
+        duration_ms=body.duration_ms,
+        episode_rate=body.episode_playback_rate,
         expected_reset_epoch=body.expected_reset_epoch,
     )
 

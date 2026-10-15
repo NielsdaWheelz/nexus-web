@@ -35,12 +35,12 @@ export default function QuickReadsSection({ isActive }: { isActive: boolean }) {
   const loaded = resource.status === "ready" && resource.data.factsRevision === factsRevision
     ? resource.data.snapshot : retained;
   const summaries = useMediaSummaries(loaded?.items.flatMap((item) =>
-    item.target.kind === "Media" ? [item.target.mediaSummary] : []) ?? []);
+    item.target.kind === "Media" ? [item.target.media_summary] : []) ?? []);
   const rows = loaded?.items.flatMap((item) => {
     if (item.target.kind !== "Media") return [presentSuggestionItem(item)];
-    const mediaSummary = summaries.resolve(item.target.mediaSummary);
-    return mediaSummary.kind === "Absent" ? [] : [presentSuggestionItem({ ...item,
-      target: { ...item.target, mediaSummary: mediaSummary.value } })];
+    const mediaSummary = summaries.resolve(item.target.media_summary);
+    return mediaSummary === null ? [] : [presentSuggestionItem({ ...item,
+      target: { ...item.target, media_summary: mediaSummary } })];
   }) ?? [];
   return (
     <PaneSection

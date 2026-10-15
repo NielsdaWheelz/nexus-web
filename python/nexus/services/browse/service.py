@@ -30,8 +30,6 @@ from nexus.schemas.browse import (
     PreviewResolution,
 )
 from nexus.schemas.media_summary import MediaSummaryOut
-from nexus.schemas.presence import absent
-from nexus.schemas.presence import presence_from_nullable as maybe
 from nexus.services.browse import brave, gutenberg, podcast_index, youtube
 from nexus.services.browse.targets import (
     BraveWebArticleTarget,
@@ -113,9 +111,9 @@ async def search_browse(
         query=query.q,
         kind=query.kind,
         source=query.source,
-        sort=maybe(query.sort),
+        sort=query.sort,
         items=items,
-        next_cursor=maybe(None if after is None else encode_cursor(binding | {"at": after})),
+        next_cursor=None if after is None else encode_cursor(binding | {"at": after}),
     )
 
 
@@ -136,8 +134,8 @@ def _catalogue(
     return [
         OwnedMediaCandidate(
             resolution=_in_nexus(item.id, item.summary),
-            description=maybe(descriptions.get(item.id)),
-            image=absent(),
+            description=descriptions.get(item.id),
+            image=None,
         )
         for item in media
     ], after

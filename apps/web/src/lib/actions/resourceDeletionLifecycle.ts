@@ -31,7 +31,7 @@ export function settleDeletedResourcePanes(input: {
   // commit to the store, so a live projection would shift under iteration.
   const matchingPaneIds = state.panes
     .filter((pane) => {
-      const { locator } = resolvePaneRouteModel(pane.currentVisit.href);
+      const { locator } = resolvePaneRouteModel(pane.current_visit.href);
       return (
         locator?.kind === "resource_ref" && locator.ref === input.deletedRef
       );
@@ -39,7 +39,7 @@ export function settleDeletedResourcePanes(input: {
     .map((pane) => pane.id);
 
   for (const paneId of matchingPaneIds) {
-    if (paneId === state.activePrimaryPaneId) {
+    if (paneId === state.active_primary_pane_id) {
       input.workspace.navigatePane(paneId, input.fallbackHref, {
         replace: true,
         activate: true,

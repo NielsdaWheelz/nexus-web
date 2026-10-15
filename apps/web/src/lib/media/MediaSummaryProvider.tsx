@@ -11,7 +11,6 @@ import {
   type ReactNode,
 } from "react";
 import { apiFetch, isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
-import type { Presence } from "@/lib/api/presence";
 import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -19,18 +18,16 @@ import { isAbortError } from "@/lib/errors";
 import type { MediaSummary } from "./mediaSummary";
 
 interface Entry {
-  summary: Presence<MediaSummary>;
+  summary: MediaSummary | null;
   generation: number;
   retainCount: number;
   error: ApiError | null;
 }
 
 function queryFacts(summary: MediaSummary): string {
-  return JSON.stringify([summary.title, summary.contributors, summary.originalPublishedDate,
-    summary.processingStatus, summary.duration.kind === "Present" ? {
-      kind: "Present", value: { modality: summary.duration.value.modality,
-        totalMinutes: summary.duration.value.estimate.totalMinutes },
-    } : summary.duration]);
+  return JSON.stringify([summary.title, summary.contributors, summary.original_published_date,
+    summary.processing_status, summary.duration !== null ? { modality: summary.duration.modality,
+        totalMinutes: summary.duration.estimate.total_minutes } : summary.duration]);
 }
 
 function createMediaSummaries() {
@@ -69,16 +66,16 @@ function createMediaSummaries() {
     try {
       const result = await apiFetch<ApiJson<"/media/summaries/resolve", "post">>(
         "/api/media/summaries/resolve",
-        { method: "POST", body: JSON.stringify({ mediaIds }), signal: request.signal },
+        { method: "POST", body: JSON.stringify({ media_ids: mediaIds }), signal: request.signal },
       );
       if (closed || request.signal.aborted) return;
       for (const item of result.data.items) {
-        const entry = entries.get(item.mediaId)!;
-        if (entry.generation !== generations.get(item.mediaId)) continue;
+        const entry = entries.get(item.media_id)!;
+        if (entry.generation !== generations.get(item.media_id)) continue;
         const previous = entry.summary;
         const next = item.summary;
-        if (previous.kind !== next.kind || (previous.kind === "Present" && next.kind === "Present" &&
-          queryFacts(previous.value) !== queryFacts(next.value))) {
+        if ((previous === null) !== (next === null) || (previous !== null && next !== null &&
+          queryFacts(previous) !== queryFacts(next))) {
           queryRevision += 1;
         }
         entry.summary = next;
@@ -129,10 +126,10 @@ function createMediaSummaries() {
     snapshot: () => revision,
     queryRevision: () => queryRevision,
     retain(seeds: readonly MediaSummary[]) {
-      const ids = [...new Set(seeds.map((seed) => seed.mediaId))];
+      const ids = [...new Set(seeds.map((seed) => seed.media_id))];
       for (const seed of seeds) {
-        if (!entries.has(seed.mediaId)) entries.set(seed.mediaId, {
-          summary: { kind: "Present", value: seed }, generation: 0, retainCount: 0, error: null,
+        if (!entries.has(seed.media_id)) entries.set(seed.media_id, {
+          summary: seed, generation: 0, retainCount: 0, error: null,
         });
       }
       for (const id of ids) {
@@ -150,9 +147,9 @@ function createMediaSummaries() {
         }
       };
     },
-    resolve(seed: MediaSummary): Presence<MediaSummary> {
-      const summary = entries.get(seed.mediaId)?.summary;
-      return summary ?? { kind: "Present", value: seed };
+    resolve(seed: MediaSummary): MediaSummary | null {
+      const entry = entries.get(seed.media_id);
+      return entry === undefined ? seed : entry.summary;
     },
     error(ids: readonly string[]) {
       if (defect !== null) throw defect;
@@ -209,7 +206,7 @@ export function useMediaSummaries(seeds: readonly MediaSummary[]) {
   const owner = useContext(Context);
   if (owner === null) throw new Error("Media summaries require their account provider");
   const revision = useSyncExternalStore(owner.subscribe, owner.snapshot, () => 0);
-  const key = [...new Set(seeds.map((seed) => seed.mediaId))].sort().join(",");
+  const key = [...new Set(seeds.map((seed) => seed.media_id))].sort().join(",");
   const seedsRef = useRef(seeds);
   seedsRef.current = seeds;
   useEffect(() => owner.retain(seedsRef.current), [owner, key]);

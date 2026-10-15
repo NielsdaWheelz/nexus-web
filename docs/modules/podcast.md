@@ -115,8 +115,8 @@ Four durable facts, every other surface a read model over them:
   the slice never deletes episodes (an episode's aliases cascade with it).
 - **Subscription** (`podcast_subscriptions`) — `subscriptions.py`: a row exists
   iff the viewer follows the show. The row is also the sync's state and owns the
-  playback-rate and pause-shortening defaults (nullable pause shortening
-  projects as `Presence<Off | Natural>`, absent = Android device default) and
+  playback-rate and pause-shortening defaults (pause shortening is
+  `Off | Natural | null`, null = Android device default) and
   auto-queue. Enabling auto-queue starts its watermark at that moment
   (`auto_queue ⇒ auto_queue_watermark_at IS NOT NULL` is a CHECK).
 - **Backfill** (`podcast_subscription_backfills`, one per subscription, deleted

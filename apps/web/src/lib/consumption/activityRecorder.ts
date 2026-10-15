@@ -1,4 +1,3 @@
-import { absent, present, type Presence } from "@/lib/api/presence";
 import type {
   ActivityDeviceClass,
   ActivityModality,
@@ -53,15 +52,15 @@ const isProgress = (value: number) =>
   Number.isFinite(value) && value >= 0 && value <= 1;
 const isPosition = (value: number) => Number.isSafeInteger(value) && value >= 0;
 
-/** A measurement pair, Present only when both of its ends are valid. */
+/** A measurement pair, set only when both of its ends are valid. */
 function pair(
   start: number | undefined,
   end: number | undefined,
   valid: (value: number) => boolean,
-): [Presence<number>, Presence<number>] {
+): [number | null, number | null] {
   return start !== undefined && end !== undefined && valid(start) && valid(end)
-    ? [present(start), present(end)]
-    : [absent(), absent()];
+    ? [start, end]
+    : [null, null];
 }
 
 function closedSpan(
@@ -71,7 +70,7 @@ function closedSpan(
 ): ClosedActivitySpan {
   const { mediaRef, deviceClass } = lane;
   const head = { captureKey: crypto.randomUUID(), mediaRef, deviceClass };
-  const base = { occurredAt: new Date(startWall).toISOString(), durationMs };
+  const base = { occurred_at: new Date(startWall).toISOString(), duration_ms: durationMs };
   const [progressStart, progressEnd] = pair(
     start?.progress,
     end?.progress,
@@ -85,7 +84,13 @@ function closedSpan(
       end?.wordPosition,
       isPosition,
     );
-    const span = { ...base, progressStart, progressEnd, wordStart, wordEnd };
+    const span = {
+      ...base,
+      progress_start: progressStart,
+      progress_end: progressEnd,
+      word_start: wordStart,
+      word_end: wordEnd,
+    };
     return { ...head, modality: "Reading", span };
   }
   const [mediaPositionStartMs, mediaPositionEndMs] = pair(
@@ -95,10 +100,10 @@ function closedSpan(
   );
   const span = {
     ...base,
-    progressStart,
-    progressEnd,
-    mediaPositionStartMs,
-    mediaPositionEndMs,
+    progress_start: progressStart,
+    progress_end: progressEnd,
+    media_position_start_ms: mediaPositionStartMs,
+    media_position_end_ms: mediaPositionEndMs,
   };
   return { ...head, modality: "Listening", span };
 }

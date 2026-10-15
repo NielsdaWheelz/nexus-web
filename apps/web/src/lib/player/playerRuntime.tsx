@@ -24,7 +24,6 @@ import {
   type ReactNode,
 } from "react";
 import { apiFetch, decodeApiPayload } from "@/lib/api/client";
-import { absent, present, type Presence } from "@/lib/api/presence";
 import type { ApiJson } from "@/lib/api/wire";
 import {
   playerDescriptorFromWire,
@@ -59,8 +58,8 @@ export interface PreviewAudioDescriptor {
   readonly source: string;
   readonly sourceHref: string;
   readonly audioUrl: string;
-  readonly imageUrl: Presence<MediaImageProxySrc>;
-  readonly durationMs: Presence<number>;
+  readonly imageUrl: MediaImageProxySrc | null;
+  readonly durationMs: number | null;
 }
 
 export type PlayerSource =
@@ -155,7 +154,7 @@ export interface PlayerTimeline {
 }
 export interface PreviewAudioPosition {
   readonly positionMs: number;
-  readonly durationMs: Presence<number>;
+  readonly durationMs: number | null;
 }
 export interface PlayerCommands {
   playAudio(descriptor: PlayerDescriptor): void;
@@ -219,12 +218,12 @@ function lecternNext(
   current: PlayerDescriptor | null,
 ) {
   const at = items.findIndex(
-    (item) => item.mediaSummary.mediaId === current?.mediaId,
+    (item) => item.mediaSummary.media_id === current?.media_id,
   );
   for (const item of items.slice(at + 1)) {
     if (
       item.activation.kind === "FooterAudio" &&
-      item.mediaSummary.mediaId !== current?.mediaId
+      item.mediaSummary.media_id !== current?.media_id
     ) {
       return item.activation.descriptor;
     }
@@ -291,8 +290,8 @@ export function GlobalPlayerProvider({
   useEffect(() => {
     const before = shown.current;
     shown.current = episode;
-    if (before === null || before.mediaId === episode?.mediaId) return;
-    if (episode !== null && episode.mediaId === navigatingTo.current) {
+    if (before === null || before.media_id === episode?.media_id) return;
+    if (episode !== null && episode.media_id === navigatingTo.current) {
       navigatingTo.current = null;
       return;
     }
@@ -302,7 +301,7 @@ export function GlobalPlayerProvider({
     if (
       androidShell &&
       episode !== null &&
-      episode.mediaId !== requested.current
+      episode.media_id !== requested.current
     ) {
       lecternRef.current.revalidate();
     }
@@ -335,10 +334,10 @@ export function GlobalPlayerProvider({
     (descriptor: PlayerDescriptor) => {
       const target = engineRef.current;
       if (target === null) return;
-      requested.current = descriptor.mediaId;
+      requested.current = descriptor.media_id;
       const mine = latest.current + 1;
       enqueue(async () => {
-        const fresh = await freshDescriptor(descriptor.mediaId);
+        const fresh = await freshDescriptor(descriptor.media_id);
         if (mine === latest.current) await target.load(fresh ?? descriptor);
       });
     },
@@ -353,13 +352,13 @@ export function GlobalPlayerProvider({
       return source?.kind === "Episode" ? source.descriptor : null;
     };
     const navigate = (target: PlayerDescriptor) => {
-      navigatingTo.current = target.mediaId;
+      navigatingTo.current = target.media_id;
       play(target);
     };
     return {
       playAudio(descriptor) {
         // The loaded episode resumes through its engine, which owns where a resume starts.
-        if (playing()?.mediaId === descriptor.mediaId) live()?.play(descriptor);
+        if (playing()?.media_id === descriptor.media_id) live()?.play(descriptor);
         else play(descriptor);
       },
       playPreviewAudio(descriptor) {
@@ -377,7 +376,7 @@ export function GlobalPlayerProvider({
         return {
           positionMs: state.positionMs,
           durationMs:
-            state.durationMs > 0 ? present(state.durationMs) : absent(),
+            state.durationMs > 0 ? state.durationMs : null,
         };
       },
       resume: () => live()?.play(),
@@ -413,9 +412,9 @@ export function GlobalPlayerProvider({
       setPlaybackRate: (rate) => live()?.setRate(rate),
       async rememberPlaybackRateForPodcast() {
         const now = playing();
-        if (now?.podcastId.kind !== "Present") return;
-        await savePodcastSubscriptionSettings(now.podcastId.value, {
-          default_playback_speed: present(current().rate),
+        if (now?.podcast_id == null) return;
+        await savePodcastSubscriptionSettings(now.podcast_id, {
+          default_playback_speed: current().rate,
         });
       },
       setVolume: (volume) => live()?.setVolume(volume),
@@ -430,8 +429,8 @@ export function GlobalPlayerProvider({
     const offInstall = lecternRef.current.onCanonicalInstall((event) => {
         if (event.kind !== "progressState") return;
         const { state } = event;
-        if (state.listeningState.kind !== "Present") return;
-        return engine?.adopt(state.mediaId, state.listeningState.value);
+        if (state.listeningState === null) return;
+        return engine?.adopt(state.mediaId, state.listeningState);
       });
     const offFence = lecternRef.current.registerProgressFence({
       async prepare(mediaIds) {
@@ -510,7 +509,7 @@ export function GlobalPlayerProvider({
       positionMs,
       durationMs,
       bufferedMs,
-      chapter: chapters?.findLast((c) => c.startMs <= positionMs) ?? null,
+      chapter: chapters?.findLast((c) => c.start_ms <= positionMs) ?? null,
     }),
     [chapters, positionMs, durationMs, bufferedMs],
   );

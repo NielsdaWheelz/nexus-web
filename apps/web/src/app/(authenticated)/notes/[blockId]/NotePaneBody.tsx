@@ -107,8 +107,8 @@ export default function NotePaneBody() {
     if (!paneHash) appliedPassageRef.current = null;
   }, [paneHash]);
   useEffect(() => {
-    if (passageResolution.status !== "ready" || passageResolution.data.kind !== "Present") return;
-    const target = passageResolution.data.value;
+    if (passageResolution.status !== "ready" || passageResolution.data === null) return;
+    const target = passageResolution.data;
     if (target.kind !== "NoteTextOffsets" || appliedPassageRef.current === paneHash) return;
     appliedPassageRef.current = paneHash;
     setPulseTarget({
@@ -163,7 +163,7 @@ export default function NotePaneBody() {
       {!ready && filterQuery.trim() ? (
         <p role="status">No matching item found so far.</p>
       ) : null}
-      {passageResolution.status === "ready" && passageResolution.data.kind === "Absent" ? (
+      {passageResolution.status === "ready" && passageResolution.data === null ? (
         <p role="status">This passage is no longer available.</p>
       ) : null}
       {passageResolution.status === "error" ? (

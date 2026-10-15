@@ -16,7 +16,6 @@ from nexus.jobs.queue import DurableExecutionPhase
 from nexus.schemas.assistant_writes import CreatedRefOut, MachineAuthorshipOut
 from nexus.schemas.citation import CitationOut
 from nexus.schemas.llm import ExpectedChatFailure, GenerationSelection, RunSelectionOut
-from nexus.schemas.presence import Presence
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import MediaRetrievalLocator
 from nexus.services.tools.contract import ERROR_TYPES
@@ -106,7 +105,7 @@ class MessageOut(Wire):
     parent_message_id: UUID | None
     branch_anchor: dict[str, Any]
     fork_title: str | None
-    reader_selection: Presence[ReaderSelectionOut]
+    reader_selection: ReaderSelectionOut | None
     citations: list[CitationOut]
     trust_trail: AssistantTrustTrailOut | None
     can_rerun: bool
@@ -115,10 +114,10 @@ class MessageOut(Wire):
 
 
 class MessageDeleteOut(Wire):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(extra="forbid")
 
-    conversation_id: UUID = Field(alias="conversationId")
-    conversation_deleted: bool = Field(alias="conversationDeleted")
+    conversation_id: UUID
+    conversation_deleted: bool
 
 
 class ConversationTreeOut(Wire):
@@ -205,7 +204,7 @@ class ChatRunCreateRequest(Wire):
     ]
     content: str = Field(min_length=1)
     selection: GenerationSelection
-    reader_selection: Presence[ReaderSelectionInput]
+    reader_selection: ReaderSelectionInput | None
 
 
 class ChatRunRepeatRequest(Wire):
@@ -349,10 +348,10 @@ class TrustRunOut(Out):
     status: Literal["pending", "running", "complete", "error", "cancelled"]
     usage: dict[str, Any] | None = None
     error_code: str | None = None
-    support_id: Presence[str]
-    publication_warning: Presence[ChatPublicationWarning]
+    support_id: str | None
+    publication_warning: ChatPublicationWarning | None
     failure: ExpectedChatFailure | None = None
-    execution: Presence[ChatRunExecutionOut]
+    execution: ChatRunExecutionOut | None
 
 
 class TrustRetrievalOut(Out):

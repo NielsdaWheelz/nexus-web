@@ -10,8 +10,7 @@ from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BeforeValidator, ConfigDict, Field
 
-from nexus.schemas.consumption import ActivityModality, CamelOut, CommandIn
-from nexus.schemas.presence import Presence
+from nexus.schemas.consumption import ActivityModality, Closed, CommandIn
 
 
 def _civil_date(value: object) -> str:
@@ -29,7 +28,7 @@ ActivityExclusionHandle = Annotated[
 ]
 
 
-class _Row(CamelOut):
+class _Row(Closed):
     """Validated from a query row whose columns carry its field names; other columns are ignored."""
 
     model_config = ConfigDict(extra="ignore")
@@ -54,7 +53,7 @@ ActivityExclusionIn = Annotated[
 ]
 
 
-class ActivityExclusionResultOut(CamelOut):
+class ActivityExclusionResultOut(Closed):
     outcome: Literal["Excluded", "Restored"]
     exclusion_handle: ActivityExclusionHandle
 
@@ -78,12 +77,12 @@ class ActivitySessionOut(_Row):
     continues_after_range: bool
 
 
-class ActivitySessionPageOut(CamelOut):
+class ActivitySessionPageOut(Closed):
     items: list[ActivitySessionOut]
-    next_cursor: Presence[str]
+    next_cursor: str | None
 
 
-class ActivityTotalsOut(CamelOut):
+class ActivityTotalsOut(Closed):
     active_ms: int
     recorded_active_ms: int
     forward_word_position: int
@@ -105,12 +104,12 @@ class ActivityTimelineRowOut(_Row):
     active_ms: int
 
 
-class LocalDayOut(CamelOut):
+class LocalDayOut(Closed):
     date: date
     active_ms: int
 
 
-class LocalHourOut(CamelOut):
+class LocalHourOut(Closed):
     hour: int
     active_ms: int
 
@@ -123,19 +122,19 @@ class MediaActivityOut(_Row):
     forward_media_position_ms: int
 
 
-class MediaActivityBreakdownOut(CamelOut):
+class MediaActivityBreakdownOut(Closed):
     rows: list[MediaActivityOut]
     other_active_ms: int
 
 
-class ContributorActivityOut(CamelOut):
+class ContributorActivityOut(Closed):
     contributor_handle: str
     display_name: str
     roles: list[str]
     active_ms: int
 
 
-class ContributorActivityBreakdownOut(CamelOut):
+class ContributorActivityBreakdownOut(Closed):
     rows: list[ContributorActivityOut]
 
 
@@ -155,7 +154,7 @@ class ActiveExclusionOut(_Row):
     excluded_active_ms: int
 
 
-class _Scoped(CamelOut):
+class _Scoped(Closed):
     applied_filters: list[str]
     inapplicable_filters: list[str]
 
@@ -169,7 +168,7 @@ class ActivityStatsSectionOut(_Scoped):
     contributors: ContributorActivityBreakdownOut
     devices: list[DeviceActivityOut]
     sessions: ActivitySessionPageOut
-    longest_session: Presence[ActivitySessionOut]
+    longest_session: ActivitySessionOut | None
     active_exclusions: list[ActiveExclusionOut]
 
 
@@ -179,7 +178,7 @@ class MediaCompletionOut(_Row):
     total: int
 
 
-class ContributorCompletionOut(CamelOut):
+class ContributorCompletionOut(Closed):
     contributor_handle: str
     display_name: str
     roles: list[str]
@@ -198,7 +197,7 @@ class RetainedArtifactsOut(_Scoped):
     neutral_links: int
 
 
-class ConsumptionStatsOut(CamelOut):
+class ConsumptionStatsOut(Closed):
     activity: ActivityStatsSectionOut
     completion: CompletionStatsSectionOut
     retained_artifacts: RetainedArtifactsOut

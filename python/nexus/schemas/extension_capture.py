@@ -25,7 +25,6 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.schemas.presence import Presence
 from nexus.services.sealed_handles import UserHandle
 from nexus.services.url_normalize import validate_requested_url
 from nexus.services.web_article_structure import WEB_ARTICLE_HTML_MAX_BYTES
@@ -103,10 +102,10 @@ class ArticlePacket(_Strict):
     title: str = Field(max_length=1024)
     content_html: Annotated[str, AfterValidator(_bounded_utf8(WEB_ARTICLE_HTML_MAX_BYTES))]
     source_html: Annotated[str, AfterValidator(_bounded_utf8(ARTICLE_SOURCE_HTML_MAX_BYTES))]
-    byline: Presence[Annotated[str, StringConstraints(max_length=1024)]]
-    excerpt: Presence[Annotated[str, StringConstraints(max_length=4000)]]
-    site_name: Presence[Annotated[str, StringConstraints(max_length=1024)]]
-    published_time: Presence[Annotated[str, StringConstraints(max_length=128)]]
+    byline: Annotated[str, StringConstraints(max_length=1024)] | None
+    excerpt: Annotated[str, StringConstraints(max_length=4000)] | None
+    site_name: Annotated[str, StringConstraints(max_length=1024)] | None
+    published_time: Annotated[str, StringConstraints(max_length=128)] | None
 
 
 def decode_article_packet(raw: bytes) -> ArticlePacket:
@@ -139,6 +138,6 @@ class CaptureLimits(_Strict):
 
 class ExtensionSessionOut(_Strict):
     user_handle: UserHandle
-    email: Presence[str]
-    display_name: Presence[str]
+    email: str | None
+    display_name: str | None
     limits: CaptureLimits

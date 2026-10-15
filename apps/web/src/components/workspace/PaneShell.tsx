@@ -22,7 +22,6 @@ import Companion, {
 import PaneRouteBoundary from "@/components/workspace/PaneRouteBoundary";
 import ResizeHandle from "@/components/workspace/ResizeHandle";
 import { usePaneRefresh } from "@/components/workspace/usePaneRefresh";
-import { present } from "@/lib/api/presence";
 import {
   useMobileChrome,
   useMobileChromeHold,
@@ -295,9 +294,8 @@ function PaneView({
       onSelect: ({ triggerEl }) =>
         openShare(share, {
           returnFocusTo: () => triggerEl,
-          returnFocusFallback: present(() =>
-            findPaneLandmarkFocusTarget(paneId),
-          ),
+          returnFocusFallback: (() =>
+            findPaneLandmarkFocusTarget(paneId)),
         }),
     });
   }
@@ -402,7 +400,7 @@ function PaneView({
   // ---- geometry: desktop only; clamping is render-only ---------------------
   const layout = isMobile ? null : state.layout;
   const width = primaryWidth({
-    storedPx: pane.primaryWidthPx,
+    storedPx: pane.primary_width_px,
     columnPx: columnWidthPx,
     routeMaxPx: route.width.maxWidthPx,
     intrinsicPx: route.width.allowsIntrinsicPrimaryWidth

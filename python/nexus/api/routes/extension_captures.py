@@ -62,7 +62,6 @@ def create_capture(
             ),
             idempotency_key=request.headers.get("Idempotency-Key"),
         ),
-        by_alias=True,
     )
 
 
@@ -79,7 +78,6 @@ def read_capture(
             origin_kind="BrowserCapture",
             session_handle=session_handle,
         ),
-        by_alias=True,
     )
 
 
@@ -100,7 +98,6 @@ def confirm_capture(
             generation=request_body.generation,
             request_id=_request_id(request),
         ),
-        by_alias=True,
     )
 
 
@@ -119,7 +116,6 @@ def retry_capture(
             session_handle=session_handle,
             request=request_body,
         ),
-        by_alias=True,
     )
 
 

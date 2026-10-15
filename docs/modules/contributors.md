@@ -83,10 +83,10 @@ rejected cursor Refresh list.
 
 ## media authors
 
-`PUT /media/{id}/authors` takes `{clientMutationId, mode: "manual", authors[≤20]
-{creditedName, binding: {kind: "existing", contributorHandle} | {kind: "new",
-displayName}}}` or `{clientMutationId, mode: "automatic"}` (camel keys only) and
-answers `{data: {authorMode}}`. manual replaces the author slice in the sent
+`PUT /media/{id}/authors` takes `{client_mutation_id, mode: "manual", authors[≤20]
+{credited_name, binding: {kind: "existing", contributor_handle} | {kind: "new",
+display_name}}}` or `{client_mutation_id, mode: "automatic"}` and
+answers `{data: {author_mode}}`. manual replaces the author slice in the sent
 order and pins it; automatic releases the pin and keeps the rows until the next
 observation. a pinned media withholds automatic author proposals and reports
 `retained_manual_authors`. the editor reuses its mutation id while the body is

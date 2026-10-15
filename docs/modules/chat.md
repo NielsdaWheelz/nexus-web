@@ -94,7 +94,7 @@ transaction it settles every tool call of the answer still `pending` or
 `running`: `cancelled` for a cancelled run, else `error`. No tool call outlives
 its run as `running`.
 
-Trust-run `execution` is a required `Presence` value.
+Trust-run `execution` is a required, nullable value.
 nonterminal runs project `Queued | Running | Recovering | Suspended` plus
 `cancel_requested`, derived from the run's persisted stop intent. terminal
 runs project `Absent`. sse sends the same value as an unsequenced
@@ -264,7 +264,7 @@ The request:
 - `content`
 - `selection` — exact tagged route/model/reasoning, validated against the
   current catalog at admission
-- `reader_selection` — `Presence<{ key: ReaderSelectionKey; revision }>`
+- `reader_selection` — `{ key: ReaderSelectionKey; revision } | null`
 
 The fork being composed wins over a plain reply; a plain reply is an
 `assistant_message` anchor on the leaf. New-chat sends use

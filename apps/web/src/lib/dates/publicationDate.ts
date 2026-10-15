@@ -1,4 +1,3 @@
-import { absent, present, type Presence } from "@/lib/api/presence";
 
 declare const PUBLICATION_DATE: unique symbol;
 
@@ -75,6 +74,6 @@ export function decodePublicationDate(
 export function decodeOptionalPublicationDate(
   raw: unknown,
   name: string,
-): Presence<PublicationDate> {
-  return raw === null ? absent() : present(decodePublicationDate(raw, name));
+): PublicationDate | null {
+  return raw === null ? null : decodePublicationDate(raw, name);
 }

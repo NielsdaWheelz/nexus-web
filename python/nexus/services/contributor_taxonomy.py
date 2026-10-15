@@ -11,10 +11,8 @@ import re
 import secrets
 import unicodedata
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Final, Literal, NewType, get_args
-
-from nexus.schemas.presence import Presence, absent
 
 ContributorRole = Literal[
     "author",
@@ -105,7 +103,7 @@ class ContributorObservation:
     role: str
     raw_role: str | None
     identity_key: ContributorIdentityKey | None
-    contributor_handle: Presence[ContributorHandle] = field(default_factory=absent)
+    contributor_handle: ContributorHandle | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -239,7 +239,7 @@ async def stream_podcast_subscription_events(
 
     def read_snapshot() -> tuple[dict[str, Any], bool]:
         current = read_lifecycle(expected_subscription_id=lifecycle.subscription_id)
-        return current.snapshot.model_dump(mode="json", by_alias=True), current.terminal
+        return current.snapshot.model_dump(mode="json"), current.terminal
 
     return StreamingResponse(
         tail_snapshot_stream(

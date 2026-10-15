@@ -40,9 +40,9 @@ const MEDIA_ACTION = {
 
 /** Readiness keeps the control visible; a current canonical snapshot authorizes it. */
 export function ImportOpenAction({ item }: { readonly item: ImportItem }) {
-  return item.media_ref.kind === "Present" &&
+  return item.media_ref !== null &&
     (item.readiness.can_read || item.readiness.can_play) ? (
-    <OpenMedia item={item} mediaRef={item.media_ref.value} />
+    <OpenMedia item={item} mediaRef={item.media_ref} />
   ) : null;
 }
 
@@ -123,16 +123,16 @@ function MediaRecovery({
     offer.kind === "RetrySource"
       ? current?.kind === "RetrySource" &&
         current.input === offer.input &&
-        current.expectedAttemptId === offer.expected_attempt_id
+        current.expected_attempt_id === offer.expected_attempt_id
       : offer.kind === "RepairSource"
         ? current?.kind === "RepairSource" &&
           current.input === offer.input &&
-          current.expectedAttemptId === offer.expected_attempt_id &&
-          current.expectedJobId === offer.expected_job_id
+          current.expected_attempt_id === offer.expected_attempt_id &&
+          current.expected_job_id === offer.expected_job_id
         : current?.kind === "RepairSearch" &&
           current.input === offer.input &&
-          current.expectedRevision === offer.expected_revision &&
-          current.expectedJobId === offer.expected_job_id;
+          current.expected_revision === offer.expected_revision &&
+          current.expected_job_id === offer.expected_job_id;
   if (model.status === "Ready" && !matches) {
     return (
       <Button
@@ -184,21 +184,20 @@ function MediaActions({
       ? "search"
       : "source";
   const obligation = item.obligations[key];
-  const offer =
-    obligation.kind === "Present" ? obligation.value.recovery : null;
+  const offer = obligation !== null ? obligation.recovery : null;
   const metadata = item.obligations.metadata;
   const metadataPrimary =
     item.state.kind !== "Complete" && item.state.stage === "Metadata";
   return (
     <>
-      {metadataPrimary && metadata.kind === "Present" ? (
+      {metadataPrimary && metadata !== null ? (
         <MetadataResearchActions
           mediaId={mediaRef.slice("media:".length)}
-          view={metadata.value}
+          view={metadata}
           primaryOnly
         />
-      ) : offer?.kind === "Present" && offer.value.kind !== "RetryUpload" ? (
-        <MediaRecovery subject={subject} offer={offer.value} />
+      ) : offer != null && offer.kind !== "RetryUpload" ? (
+        <MediaRecovery subject={subject} offer={offer} />
       ) : null}
       <ImportOpenAction item={item} />
       <ResourceActionMenu
@@ -221,11 +220,8 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const handle = item.ref.slice("upload:".length);
   const source = item.obligations.source;
-  const recovery = source.kind === "Present" ? source.value.recovery : null;
-  const offer =
-    recovery?.kind === "Present" && recovery.value.kind === "RetryUpload"
-      ? recovery.value
-      : null;
+  const recovery = source !== null ? source.recovery : null;
+  const offer = recovery?.kind === "RetryUpload" ? recovery : null;
   const retrying = pending.has(pendingKey({ kind: "RetryUpload", handle }));
   const removing = pending.has(pendingKey({ kind: "RemoveUpload", handle }));
   const run = (command: UploadCommand) =>
@@ -263,8 +259,8 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
             // took focus would paint its ring inside a 1px box (WCAG 2.4.7).
             tabIndex={-1}
             aria-label={
-              item.original_filename.kind === "Present"
-                ? `Choose ${item.original_filename.value} to retry the upload`
+              item.original_filename !== null
+                ? `Choose ${item.original_filename} to retry the upload`
                 : "Choose the original file to retry the upload"
             }
             accept=".pdf,.epub,application/pdf,application/epub+zip"
@@ -307,8 +303,8 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
 
 /** Every action one import offers, the same in its row and its inspector. */
 export function ImportActions({ item }: { readonly item: ImportItem }) {
-  return item.media_ref.kind === "Present" ? (
-    <MediaActions item={item} mediaRef={item.media_ref.value} />
+  return item.media_ref !== null ? (
+    <MediaActions item={item} mediaRef={item.media_ref} />
   ) : (
     <UploadActions item={item} />
   );
@@ -325,17 +321,14 @@ export function ImportObligationActions({
   const mediaRef = item.media_ref;
   const subject = useMemo(
     () =>
-      mediaRef.kind === "Present"
-        ? { ref: assumeCanonicalResourceRef(mediaRef.value) }
-        : null,
+      mediaRef !== null ? { ref: assumeCanonicalResourceRef(mediaRef) } : null,
     [mediaRef],
   );
   if (subject === null)
     return obligation === "source" ? <UploadActions item={item} /> : null;
   const slot = item.obligations[obligation];
-  if (slot.kind === "Absent" || slot.value.recovery.kind === "Absent")
-    return null;
-  const offer = slot.value.recovery.value;
+  if (slot === null || slot.recovery === null) return null;
+  const offer = slot.recovery;
   return offer.kind === "RetryUpload" ? null : (
     <MediaRecovery subject={subject} offer={offer} />
   );

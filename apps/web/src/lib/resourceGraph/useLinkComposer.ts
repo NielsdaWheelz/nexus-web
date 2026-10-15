@@ -286,11 +286,11 @@ function createLinkComposer(feedback: FeedbackContextValue) {
 
   async function openResourceLink(ref: string): Promise<void> {
     try {
-      const { resourceItem: item } = await resolveResourceLocator({
+      const { resource_item: item } = await resolveResourceLocator({
         kind: "resource_ref",
         ref,
       });
-      if (item.missing || item.capabilities.linkMode === "none") {
+      if (item.missing || item.capabilities.link_mode === "none") {
         feedback.publish({
           kind: "Hud",
           content: { tone: "Warning", title: "This item can’t be linked." },
@@ -299,7 +299,7 @@ function createLinkComposer(feedback: FeedbackContextValue) {
       }
       openLink({
         source:
-          item.capabilities.linkMode === "materialize_passage"
+          item.capabilities.link_mode === "materialize_passage"
             ? { kind: "passage", candidate_ref: item.ref }
             : { kind: "resource", ref: item.ref },
         sourceRef: item.ref,

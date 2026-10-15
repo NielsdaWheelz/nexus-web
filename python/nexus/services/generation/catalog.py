@@ -58,7 +58,6 @@ from nexus.schemas.llm import (
     SubscriptionBilling,
     TemporarilyUnavailable,
 )
-from nexus.schemas.presence import Absent, Present
 from nexus.services.generation.policy import (
     CHAT_CONTEXT_BUDGET_TOKENS,
     CHAT_OUTPUT_BUDGET_TOKENS,
@@ -326,13 +325,13 @@ def _compose(
                     key=model.key,
                     label=model.label,
                     description=model.description,
-                    source_context_window=_presence(model.context_window),
-                    source_max_output_tokens=_presence(model.max_output_tokens),
+                    source_context_window=model.context_window,
+                    source_max_output_tokens=model.max_output_tokens,
                     effective_chat_context_budget_tokens=context,
                     effective_chat_output_budget_tokens=output,
                     readiness=readiness,
                     input_modalities=model.input_modalities,
-                    source_default_reasoning=_presence(model.default_reasoning),
+                    source_default_reasoning=model.default_reasoning,
                     reasoning=tuple(
                         GenerationReasoningRow(
                             key=key, label=reasoning_label, readiness=readiness, chat_state=state
@@ -442,7 +441,3 @@ def _disclosure(
 
 def _value[T](value: RuntimePresent[T] | object) -> T | None:
     return value.value if isinstance(value, RuntimePresent) else None
-
-
-def _presence[T](value: T | None) -> Present[T] | Absent:
-    return Absent() if value is None else Present[T](value=value)

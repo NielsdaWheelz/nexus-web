@@ -24,7 +24,6 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.errors import InvalidRequestError
 from nexus.schemas import consumption_activity as wire
-from nexus.schemas.presence import Absent, Present, absent, present
 from nexus.services.consumption.handles import EXCLUSION, seal, seal_device
 from nexus.services.contributor_credits import current_media_contributor_rows_sql
 from nexus.services.contributor_taxonomy import try_parse_contributor_handle
@@ -89,7 +88,7 @@ def resolve_scope(
     try:
         ZoneInfo(time_zone)
     except (ZoneInfoNotFoundError, ValueError) as exc:
-        raise InvalidRequestError(message="Invalid timeZone") from exc
+        raise InvalidRequestError(message="Invalid time_zone") from exc
     edges = db.execute(
         text(f"""WITH dates AS (
             SELECT CAST(:start AS date)::timestamp AS local_start,
@@ -119,7 +118,7 @@ def resolve_scope(
         raise InvalidRequestError(message="Invalid Consumption range")
     contributor = try_parse_contributor_handle(contributor_handle) if contributor_handle else None
     if contributor_handle and contributor is None:
-        raise InvalidRequestError(message="Invalid contributorHandle")
+        raise InvalidRequestError(message="Invalid contributor_handle")
     device_id = (
         resolve_device(db, viewer_id=viewer_id, handle=device_handle) if device_handle else None
     )
@@ -144,7 +143,7 @@ def resolve_device(db: Session, *, viewer_id: UUID, handle: str) -> str:
     ):
         if seal_device(device_id) == handle:
             return device_id
-    raise InvalidRequestError(message="Invalid deviceHandle")
+    raise InvalidRequestError(message="Invalid device_handle")
 
 
 def _filters(scope: Scope, alias: str, *, device: bool = True) -> str:
@@ -475,7 +474,7 @@ def consumption_stats(db: Session, scope: Scope, bucket: Bucket) -> wire.Consump
                 items=[_session(row, summaries) for row in newest[:_PAGE]],
                 next_cursor=_next_cursor(scope, params["as_of"], newest, _PAGE),
             ),
-            longest_session=present(_session(longest, summaries)) if longest else absent(),
+            longest_session=_session(longest, summaries) if longest else None,
             active_exclusions=[
                 wire.ActiveExclusionOut.model_validate(
                     row
@@ -626,10 +625,10 @@ def _session(
 
 def _next_cursor(
     scope: Scope, as_of: datetime, rows: list[dict[str, Any]], limit: int
-) -> Absent | Present[str]:
+) -> str | None:
     """A cursor after the page's last row, when ``rows`` holds one more than the page."""
     if len(rows) <= limit:
-        return absent()
+        return None
     last = rows[limit - 1]
     payload = {
         "a": as_of.isoformat(),
@@ -640,7 +639,7 @@ def _next_cursor(
         "d": seal_device(last["device_id"]),
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    return present(base64.urlsafe_b64encode(raw).rstrip(b"=").decode())
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
 
 def _decode(db: Session, scope: Scope, cursor: str) -> tuple[datetime, dict[str, Any]]:

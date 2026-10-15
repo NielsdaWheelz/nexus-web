@@ -43,7 +43,6 @@ from nexus.schemas.import_history import (
 )
 from nexus.schemas.imports import RepairSearchOffer
 from nexus.schemas.media import SearchRepairAdmission
-from nexus.schemas.presence import absent, present
 from nexus.services import media_intelligence_lifecycle
 from nexus.services.capabilities import SearchRecoveryAnswer, ViewerRecovery
 from nexus.services.content_chunking import (
@@ -332,14 +331,14 @@ def _media_blocks(db: Session, media_id: UUID, kind: str, plain_text: str) -> li
                 }
                 if spec.section_id is not None:
                     locator["section_id"] = spec.section_id
-                    locator["parent_section_id"] = spec.parent_section_id.model_dump(mode="json")
+                    locator["parent_section_id"] = spec.parent_section_id
                     locator["owns_container"] = spec.owns_container
                 if spec.anchor_id is not None:
                     locator["anchor_id"] = spec.anchor_id
                 if spec.heading_level is not None:
                     locator["heading_level"] = spec.heading_level
-                if spec.container_end_offset.kind == "Present":
-                    locator["container_end_offset"] = spec.container_end_offset.value
+                if spec.container_end_offset is not None:
+                    locator["container_end_offset"] = spec.container_end_offset
                 blocks.append(
                     IndexableBlock(source[start:end], base + start, locator, spec.heading_path)
                 )
@@ -413,9 +412,7 @@ def _current_job(db: Session, media_id: UUID, revision: int) -> queue.JobRow | N
 
 
 def _event(db: Session, media_id: UUID, facts: IndexFacts) -> None:
-    append_processing_event(
-        db, media_id=media_id, facts=facts, stage=present("Index"), failure_code=absent()
-    )
+    append_processing_event(db, media_id=media_id, facts=facts, stage="Index", failure_code=None)
 
 
 def request_media_content_reindex(

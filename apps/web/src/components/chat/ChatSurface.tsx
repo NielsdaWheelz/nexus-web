@@ -198,7 +198,7 @@ const Row = memo(function Row({
           executeCommittingMountedMutation(
             intent,
             () => actions.store.deleteMessage(message.id),
-            ({ conversationId: id, conversationDeleted }) =>
+            ({ conversation_id: id, conversation_deleted: conversationDeleted }) =>
               intent.settleDeletedConversation({
                 conversationRef: canonicalResourceRef({
                   scheme: "conversation",
@@ -223,10 +223,7 @@ const Row = memo(function Row({
         actions={actions}
       />
     );
-  const quote =
-    message.reader_selection.kind === "Present"
-      ? message.reader_selection.value
-      : null;
+  const quote = message.reader_selection;
   return (
     <div
       className={styles.message}

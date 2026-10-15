@@ -4,7 +4,7 @@ owner: `services/imports.py` composes and reads; source, search, and metadata ow
 
 ## obligations
 
-an import has independent `source`, `search`, and `metadata` presence slots. source includes unpublished uploads. search applies when a current index exists and the media is ready; it does not require a succeeded source attempt. metadata uses the metadata owner's latest operation, oldest unfinished operation, unfinished count, retry policy, and personal review. absent means no applicable recorded obligation, not success.
+an import has independent `source`, `search`, and `metadata` nullable slots. source includes unpublished uploads. search applies when a current index exists and the media is ready; it does not require a succeeded source attempt. metadata uses the metadata owner's latest operation, oldest unfinished operation, unfinished count, retry policy, and personal review. null means no applicable recorded obligation, not success.
 
 needs attention takes precedence: an applicable source/search failure, latest metadata failure, or latest unreviewed no-findings result. otherwise applicable source/search activity or any unfinished metadata job makes the row active. otherwise it is complete. attention and progress counts are exclusive row counts. history includes all current states. a newer metadata result supersedes older attention; older unfinished jobs still block research and keep observation alive.
 
@@ -20,7 +20,7 @@ classify before filtering. attention considers only attention obligations; progr
 
 ## reads
 
-four authenticated repeatable-read routes return their models through `Data`: `/imports/summary` (`ImportSummary`), `/imports` (`ImportPage`), `/imports/{ref}` (`ImportDetail`) and `/imports/{ref}/history` (`HistoryPage`). snake-case json, tagged presence and always-sent fields; the web reads them as generated types (`lib/imports/api.ts`) and decodes nothing by hand. `ImportPage` owns its consistency checks (item count ≤ matched count, unique refs, a continuing page is nonempty); `ImportDetail` owns issue-count equality. pages contain flat server-ordered items, without stage groups or stage totals.
+four authenticated repeatable-read routes return their models through `Data`: `/imports/summary` (`ImportSummary`), `/imports` (`ImportPage`), `/imports/{ref}` (`ImportDetail`) and `/imports/{ref}/history` (`HistoryPage`). snake-case json, plain nullable and always-sent fields; the web reads them as generated types (`lib/imports/api.ts`) and decodes nothing by hand. `ImportPage` owns its consistency checks (item count ≤ matched count, unique refs, a continuing page is nonempty); `ImportDetail` owns issue-count equality. pages contain flat server-ordered items, without stage groups or stage totals.
 
 a published upload keeps its `upload:<handle>` identity; the server owns the ref grammar. the url decoder admits a `?selected=` only as `upload:` or `media:` and one path segment (no `/`), so it cannot reach `/imports/summary` or another route; anything else is absent. a ref the server rejects (400 `E_INVALID_REQUEST`) or does not know (404 `E_IMPORT_NOT_FOUND`) reads "This import is no longer available".
 

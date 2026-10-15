@@ -44,7 +44,6 @@ from nexus.schemas.llm import (
     Ineligible,
     InvalidGenerationSelection,
 )
-from nexus.schemas.presence import Present
 from nexus.services.chat import citations, context, events, quotes, reads
 from nexus.services.chat.conversations import DEFAULT_TITLE
 from nexus.services.generation.catalog import (
@@ -80,9 +79,7 @@ async def create_chat_run(
     """Admit one send. Never a domain error: the outcome is a committed receipt."""
 
     key = _key(idempotency_key)
-    quote = (
-        request.reader_selection.value if isinstance(request.reader_selection, Present) else None
-    )
+    quote = request.reader_selection
     # The quote's revision is a precondition, not identity: a replay after the
     # highlight changed must still find its receipt.
     identity = {
@@ -231,7 +228,7 @@ async def _catalog_row(catalog: Catalog, selection: GenerationSelection) -> Row 
         )
     except InvalidSelection:
         failure = InvalidGenerationSelection(
-            field=Present(value="selection"),
+            field="selection",
             explanation="The exact generation selection is not in the configured catalog.",
         )
         return ApiError(

@@ -23,7 +23,6 @@ from sqlalchemy.orm import Session, sessionmaker
 from nexus.db.async_session import open_async_session
 from nexus.errors import InvalidRequestError
 from nexus.jobs.queue import JobExecutionContext, JobRow, update_running_job_payload
-from nexus.schemas.presence import Present
 from nexus.services.dossier.inputs import Candidate, Collected, collect, offer
 from nexus.services.import_history import source_supersession_media_id
 from nexus.services.media_read_map import load_media_document
@@ -223,7 +222,7 @@ def _page(db: Session, user_id: UUID, key: str, url: str) -> ResourceRef | datet
     except InvalidRequestError:
         return None
     winner = source_supersession_media_id(db, source_attempt_id=accepted.source_attempt_id)
-    media_id = winner.value if isinstance(winner, Present) else accepted.media_id
+    media_id = winner if winner is not None else accepted.media_id
     status, accepted_at = db.execute(
         text(
             "SELECT m.processing_status, a.created_at FROM media m, media_source_attempts a "

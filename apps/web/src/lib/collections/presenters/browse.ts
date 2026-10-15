@@ -1,6 +1,5 @@
 /** Browse result rows: candidates and podcast-preview episodes. */
 
-import { absent, present } from "@/lib/api/presence";
 import {
   browsePreviewHref,
   type BrowseCandidate,
@@ -18,14 +17,14 @@ export function presentBrowseCandidate(
 ): CollectionRowView {
   const { resolution } = candidate;
   if (resolution.kind === "InNexusMedia") {
-    return presentMedia(resolution.mediaSummary, {
+    return presentMedia(resolution.media_summary, {
       id: `${candidate.source}:owned:${resolution.href}`,
       primary: {
         kind: "link",
         href: resolution.href,
       },
       actionSubject: {
-        ref: assumeCanonicalResourceRef(resolution.actionSubjectRef),
+        ref: assumeCanonicalResourceRef(resolution.action_subject_ref),
       },
       selected: false,
     });
@@ -51,16 +50,16 @@ export function presentBrowseCandidate(
       candidate.kind === "Podcast"
         ? candidate.contributors
         : selectMediaAuthors(candidate.contributors),
-    publicationDate: candidate.publishedAt,
-    context: present({
+    publicationDate: candidate.published_at,
+    context: {
       kind: "Text",
       text: preview ? source : `${source} · In Nexus`,
-    }),
-    activity: absent(),
-    exceptionalStatus: absent(),
+    },
+    activity: null,
+    exceptionalStatus: null,
     actionSubject: preview
       ? null
-      : { ref: assumeCanonicalResourceRef(resolution.actionSubjectRef) },
+      : { ref: assumeCanonicalResourceRef(resolution.action_subject_ref) },
     selected: false,
   };
 }
@@ -78,13 +77,13 @@ export function presentPreviewEpisode(
     },
     title: { text: episode.title },
     contributors: selectMediaAuthors(episode.contributors),
-    publicationDate: episode.publishedAt,
-    context: present({
+    publicationDate: episode.published_at,
+    context: {
       kind: "Text",
-      text: `Podcast Index · ${episode.kindFacts.podcastTitle}`,
-    }),
-    activity: absent(),
-    exceptionalStatus: absent(),
+      text: `Podcast Index · ${episode.kind_facts.podcast_title}`,
+    },
+    activity: null,
+    exceptionalStatus: null,
     actionSubject: null,
     selected: false,
   };

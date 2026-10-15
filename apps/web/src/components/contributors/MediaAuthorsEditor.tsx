@@ -59,14 +59,14 @@ type Row =
 
 /** A PUT body before its client mutation id is chosen. */
 type Draft =
-  | Omit<Schema<"ManualMediaAuthorsRequest">, "clientMutationId">
-  | Omit<Schema<"AutomaticMediaAuthorsRequest">, "clientMutationId">;
+  | Omit<Schema<"ManualMediaAuthorsRequest">, "client_mutation_id">
+  | Omit<Schema<"AutomaticMediaAuthorsRequest">, "client_mutation_id">;
 
 const bound = (row: Bound): Row => ({ kind: "Bound", ...row });
 const identity = (binding: AuthorBinding) =>
   binding.kind === "existing"
-    ? `existing:${binding.contributorHandle}`
-    : `new:${contributorNameKey(binding.displayName)}`;
+    ? `existing:${binding.contributor_handle}`
+    : `new:${contributorNameKey(binding.display_name)}`;
 // JSON, so a credited name holding a delimiter can never collide two lists.
 const signature = (rows: readonly Bound[]) =>
   JSON.stringify(rows.map((row) => [identity(row.binding), row.creditedName]));
@@ -133,7 +133,7 @@ export default function MediaAuthorsEditor({
     id: createRandomId("author-row"),
     binding: {
       kind: "existing",
-      contributorHandle: credit.contributor_handle!,
+      contributor_handle: credit.contributor_handle!,
     },
     creditedName: credit.credited_name,
     canonical: credit.contributor_display_name ?? credit.credited_name,
@@ -206,13 +206,13 @@ function Editor({
   const dirty = signature(committed) !== signature(loaded);
   const takenHandles = new Set(
     boundRows.flatMap((row) =>
-      row.binding.kind === "existing" ? [row.binding.contributorHandle] : [],
+      row.binding.kind === "existing" ? [row.binding.contributor_handle] : [],
     ),
   );
   const takenNewKeys = new Set(
     boundRows.flatMap((row) =>
       row.binding.kind === "new"
-        ? [contributorNameKey(row.binding.displayName)]
+        ? [contributorNameKey(row.binding.display_name)]
         : [],
     ),
   );
@@ -273,7 +273,7 @@ function Editor({
     try {
       await putMediaAuthors(mediaId, {
         ...body,
-        clientMutationId: mutationId.current.id,
+        client_mutation_id: mutationId.current.id,
       });
     } catch (error) {
       lease.abort();
@@ -347,15 +347,15 @@ function Editor({
             onSelectExisting={(item: ContributorSearchItem) =>
               bind(row.id, row.revert, {
                 id: row.id,
-                binding: { kind: "existing", contributorHandle: item.handle },
-                creditedName: item.displayName,
-                canonical: item.displayName,
+                binding: { kind: "existing", contributor_handle: item.handle },
+                creditedName: item.display_name,
+                canonical: item.display_name,
               })
             }
             onCreateNew={(name) =>
               bind(row.id, row.revert, {
                 id: row.id,
-                binding: { kind: "new", displayName: name },
+                binding: { kind: "new", display_name: name },
                 creditedName: name,
                 canonical: name,
               })
@@ -542,7 +542,7 @@ function Editor({
               void submit({
                 mode: "manual",
                 authors: committed.map((row) => ({
-                  creditedName: row.creditedName,
+                  credited_name: row.creditedName,
                   binding: row.binding,
                 })),
               })

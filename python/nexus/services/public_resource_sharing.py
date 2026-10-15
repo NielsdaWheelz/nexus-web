@@ -25,7 +25,6 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceGrant
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.schemas.presence import presence_from_nullable
 from nexus.schemas.public_resource_sharing import (
     PublicHighlightOut,
     PublicPdfAnchorOut,
@@ -178,7 +177,7 @@ def _highlight(db: Session, highlight_id: UUID) -> PublicHighlightOut | None:
     else:
         start, end = target.start_offset, target.end_offset
         anchor = PublicTextAnchorOut(ordinal=row.idx, start_offset=start, end_offset=end)
-    quote = presence_from_nullable(row.exact or None)
+    quote = row.exact or None
     return PublicHighlightOut(quote=quote, color=row.color, anchor=anchor)
 
 
@@ -246,8 +245,8 @@ def read_share(db: Session, token: str) -> PublicShareOut:
     return PublicShareOut(
         title=share.title,
         bylines=load_current_source_author_bylines(db, media_id=share.media_id),
-        source_url=presence_from_nullable(share.source_url),
-        highlight=presence_from_nullable(share.highlight),
+        source_url=share.source_url,
+        highlight=share.highlight,
     )
 
 

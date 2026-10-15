@@ -147,11 +147,8 @@ export default function ChatComposer(props: {
       content: draft.text.trim(),
       selection: draft.selection.selection,
       reader_selection: quoted
-        ? {
-            kind: "Present",
-            value: { key: quoted.key, revision: quoted.revision },
-          }
-        : { kind: "Absent" },
+        ? { key: quoted.key, revision: quoted.revision }
+        : null,
     }).then(finish);
   };
   // cancel intent is monotonic, so saved or live saying so is exact

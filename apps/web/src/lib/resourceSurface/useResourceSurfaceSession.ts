@@ -94,14 +94,14 @@ type SharedGraph = { lastLinkMutation: LinkMutation | null; nodes: Map<string, R
 const graphOwners = new Map<string, SharedGraph>();
 function newestSurfaceNode(current: ResourceSurfaceNode | undefined, next: ResourceSurfaceNode): ResourceSurfaceNode {
   if (!current) return next;
-  const versions = { ...next.item.versionByLane };
-  for (const [lane, version] of Object.entries(current.item.versionByLane)) versions[lane] = Math.max(version, versions[lane] ?? 0);
+  const versions = { ...next.item.version_by_lane };
+  for (const [lane, version] of Object.entries(current.item.version_by_lane)) versions[lane] = Math.max(version, versions[lane] ?? 0);
   const lane = next.content.kind === "note_body" ? "body" : next.content.kind === "page_title" ? "title" : null;
   const older = lane
-    ? (current.item.versionByLane[lane] ?? 0) > (next.item.versionByLane[lane] ?? 0)
-    : Object.entries(current.item.versionByLane).some(([key, version]) => version > (next.item.versionByLane[key] ?? 0));
+    ? (current.item.version_by_lane[lane] ?? 0) > (next.item.version_by_lane[lane] ?? 0)
+    : Object.entries(current.item.version_by_lane).some(([key, version]) => version > (next.item.version_by_lane[key] ?? 0));
   const value = older ? current : next;
-  return { ...value, item: { ...value.item, versionByLane: versions } };
+  return { ...value, item: { ...value.item, version_by_lane: versions } };
 }
 function acceptGraphNode(graph: SharedGraph, node: ResourceSurfaceNode): ResourceSurfaceNode {
   const ref = node.item.ref;
@@ -109,7 +109,7 @@ function acceptGraphNode(graph: SharedGraph, node: ResourceSurfaceNode): Resourc
   graph.nodes.set(ref, next);
   for (const [endpoint, surface] of graph.surfaces) {
     // A node's newer links version does not refresh this adjacency snapshot.
-    const source = endpoint === ref ? { ...next, item: { ...next.item, versionByLane: { ...next.item.versionByLane, links: resourceSurfaceLaneVersion(surface.source.item, "links") } } } : surface.source;
+    const source = endpoint === ref ? { ...next, item: { ...next.item, version_by_lane: { ...next.item.version_by_lane, links: resourceSurfaceLaneVersion(surface.source.item, "links") } } } : surface.source;
     graph.surfaces.set(endpoint, { source, orderedItems: surface.orderedItems.map((row) => row.target.item.ref === ref ? { ...row, target: next } : row) });
   }
   return next;
@@ -122,7 +122,7 @@ function acceptGraphSurface(graph: SharedGraph, next: ResourceSurface): Resource
   if (current && resourceSurfaceLaneVersion(current.source.item, "links") > linksVersion) return current;
   const source = graph.nodes.get(ref)!;
   next = {
-    source: { ...source, item: { ...source.item, versionByLane: { ...source.item.versionByLane, links: linksVersion } } },
+    source: { ...source, item: { ...source.item, version_by_lane: { ...source.item.version_by_lane, links: linksVersion } } },
     orderedItems: next.orderedItems.map((row) => ({ ...row, target: graph.nodes.get(row.target.item.ref)! })),
   };
   graph.surfaces.set(ref, next);
@@ -487,7 +487,7 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
       return {
         path: ("/api/notes/daily/" + operation.localDate + "/captures") as FrozenRequest["path"],
         method: "POST",
-        body: JSON.stringify({ clientMutationId: operation.clientMutationId, noteId: operation.noteId, bodyPmJson: body.bodyPmJson }),
+        body: JSON.stringify({ client_mutation_id: operation.clientMutationId, note_id: operation.noteId, body_pm_json: body.bodyPmJson }),
       };
     }
     const ack = owner.graph.surfaces.get(operation.sourceRef);
@@ -552,8 +552,8 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
     const operation = beginAcknowledgement(id);
     if (operation.kind !== "capture") throw new Error("submitted operation is not a capture");
     const result = acceptDailyCaptureResult(data);
-    if (result.localDate !== operation.localDate || result.clientMutationId !== operation.clientMutationId) throw new TypeError("daily capture acknowledgement identity mismatch");
-    acceptSurface(result.surface, "page:" + result.pageId);
+    if (result.local_date !== operation.localDate || result.client_mutation_id !== operation.clientMutationId) throw new TypeError("daily capture acknowledgement identity mismatch");
+    acceptSurface(result.surface, "page:" + result.page_id);
     const captured = surfaceBody(result.surface, draftNoteRef(operation.noteId));
     if (!captured) throw new TypeError("daily capture omitted its note body");
     session.acknowledgeExternalBody(draftNoteRef(operation.noteId), captured);
@@ -981,7 +981,7 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
     if (ref.startsWith("note_block:") || ref.startsWith("page:")) { await loadNeighborhood(ref); return; }
     if (owner.graph.nodes.has(ref) || owner.graph.surfaces.has(ref) || [...owner.graph.surfaces.values()].some((surface) => surface.orderedItems.some((row) => row.target.item.ref === ref))) return;
     const resolved = await resolveResourceLocator({ kind: "resource_ref", ref: assumeCanonicalResourceRef(ref) });
-    acceptGraphNode(owner.graph, { item: resolved.resourceItem, content: { kind: "resource_summary" } });
+    acceptGraphNode(owner.graph, { item: resolved.resource_item, content: { kind: "resource_summary" } });
   }
 
 

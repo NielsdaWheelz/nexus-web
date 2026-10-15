@@ -19,7 +19,6 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.schemas.presence import Presence, absent, nullable_from_presence
 from nexus.schemas.publication_dates import PublicationDate, normalize_source_publication_date
 from nexus.services import library_entries
 from nexus.services import media_source_types as source_types
@@ -125,7 +124,7 @@ def accept_email_message(
         created_by_user_id=owner_user_id,
         created_at=now,
         updated_at=now,
-        edition_published_date=nullable_from_presence(edition_date),
+        edition_published_date=edition_date,
     )
     db.add(media)
     try:
@@ -155,7 +154,7 @@ def accept_email_message(
             "sender_name": sender_name,
             "sender_address": sender_address,
             "subject": subject,
-            "edition_published_date": edition_date.model_dump(),
+            "edition_published_date": edition_date,
         },
         idempotency_key=None,
         status="accepted",
@@ -251,17 +250,17 @@ def _sender_observation(sender_name: str, sender_address: str) -> ContributorObs
     return batch
 
 
-def _publication_date(value: str | None) -> Presence[PublicationDate]:
+def _publication_date(value: str | None) -> PublicationDate | None:
     if value is None:
-        return absent()
+        return None
     try:
         parsed = parsedate_to_datetime(value)
     # justify-ignore-error: a malformed external MIME date is an absent observation.
     except (TypeError, ValueError, IndexError):
-        return absent()
+        return None
     if parsed.tzinfo is None:
         if not value.rstrip().endswith("-0000"):
-            return absent()
+            return None
         parsed = parsed.replace(tzinfo=UTC)
     return normalize_source_publication_date(parsed.isoformat())
 

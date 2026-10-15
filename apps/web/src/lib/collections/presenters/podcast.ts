@@ -1,6 +1,5 @@
 /** One followed-podcast row, shared by the podcasts and library panes. */
 
-import { absent, present, type Presence } from "@/lib/api/presence";
 import type { Schema } from "@/lib/api/wire";
 import type { CollectionRowView } from "@/lib/collections/types";
 import type { PositiveCount } from "@/lib/consumption/activityFacts";
@@ -11,14 +10,13 @@ export interface PodcastPresenterItem {
   readonly id: string;
   readonly title: string;
   readonly contributors: readonly ContributorCredit[];
-  readonly unplayedCount: Presence<PositiveCount>;
-  readonly syncStatus: Presence<Schema<"PodcastSyncStatus">>;
-  readonly publicationDate: Presence<string>;
+  readonly unplayedCount: PositiveCount | null;
+  readonly syncStatus: Schema<"PodcastSyncStatus"> | null;
+  readonly publicationDate: string | null;
 }
 
 export function presentPodcast(item: PodcastPresenterItem): CollectionRowView {
-  const sync =
-    item.syncStatus.kind === "Present" ? item.syncStatus.value : null;
+  const sync = item.syncStatus;
   return {
     id: item.id,
     kind: "podcast",
@@ -30,17 +28,17 @@ export function presentPodcast(item: PodcastPresenterItem): CollectionRowView {
     title: { text: item.title },
     contributors: item.contributors,
     publicationDate: item.publicationDate,
-    context: absent(),
+    context: null,
     activity:
       sync === "Pending" || sync === "Running"
-        ? present({ kind: "PodcastSync", status: sync })
-        : item.unplayedCount.kind === "Present"
-          ? present({ kind: "Unplayed", count: item.unplayedCount.value })
-          : absent(),
+        ? { kind: "PodcastSync", status: sync }
+        : item.unplayedCount !== null
+          ? { kind: "Unplayed", count: item.unplayedCount }
+          : null,
     exceptionalStatus:
       sync === "Failed"
-        ? present({ kind: "PodcastSync", status: "Failed" })
-        : absent(),
+        ? { kind: "PodcastSync", status: "Failed" }
+        : null,
     actionSubject: {
       ref: canonicalResourceRef({ scheme: "podcast", id: item.id }),
     },

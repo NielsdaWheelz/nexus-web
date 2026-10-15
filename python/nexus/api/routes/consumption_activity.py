@@ -1,4 +1,4 @@
-"""Activity exclusions and personal history; the BFF injects ``currentDeviceId`` from the device
+"""Activity exclusions and personal history; the BFF injects ``current_device_id`` from the device
 cookie. Capture lives with the player routes."""
 
 from typing import Annotated
@@ -28,7 +28,7 @@ router = APIRouter(tags=["consumption"])
 def _media_id(raw: str) -> UUID:
     ref = parse_resource_ref(raw)
     if isinstance(ref, ResourceRefParseFailure) or ref.scheme != "media":
-        raise InvalidRequestError(message="Invalid mediaRef")
+        raise InvalidRequestError(message="Invalid media_ref")
     return ref.id
 
 
@@ -36,15 +36,13 @@ def _scope(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: RepeatableReadDbSession,
     end: Annotated[ConsumptionDate, Query()],
-    time_zone: Annotated[str, Query(alias="timeZone", min_length=1, max_length=100)],
-    current_device_id: Annotated[str, Query(alias="currentDeviceId", min_length=1, max_length=200)],
+    time_zone: Annotated[str, Query(min_length=1, max_length=100)],
+    current_device_id: Annotated[str, Query(min_length=1, max_length=200)],
     start: Annotated[ConsumptionDate | None, Query()] = None,
     modality: Annotated[ActivityModality | None, Query()] = None,
-    media_ref: Annotated[str | None, Query(alias="mediaRef", max_length=100)] = None,
-    contributor_handle: Annotated[
-        str | None, Query(alias="contributorHandle", max_length=200)
-    ] = None,
-    device_handle: Annotated[str | None, Query(alias="deviceHandle", max_length=100)] = None,
+    media_ref: Annotated[str | None, Query(max_length=100)] = None,
+    contributor_handle: Annotated[str | None, Query(max_length=200)] = None,
+    device_handle: Annotated[str | None, Query(max_length=100)] = None,
 ) -> stats.Scope:
     return stats.resolve_scope(
         db,

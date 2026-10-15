@@ -103,8 +103,7 @@ and decoded URL state, never the still-pending requested view. The shared manual
 cursor owner atomically adopts first-page rows, cursor, loading, and expected
 request failure; it aborts and generation-rejects an older continuation when a
 new first page commits. A failed continuation preserves committed rows and
-offers Retry. Owned cursor absence remains `Presence<string>` until the
-pagination adapter unwraps it.
+offers Retry. A `null` cursor ends the list.
 
 The browser recorder has one tab-local owner. Reader, non-Android global-audio,
 and visible-video adapters publish observations to it; none persists, retries,

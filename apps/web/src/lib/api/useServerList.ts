@@ -18,7 +18,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isApiError, type ApiError } from "@/lib/api/client";
-import type { Presence } from "@/lib/api/presence";
 import { requestWithRetry } from "@/lib/api/retryPolicy";
 import {
   modeledApiError,
@@ -30,7 +29,7 @@ import type { PaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 
 export interface ListPage<T> {
   readonly items: readonly T[];
-  readonly nextCursor: Presence<string>;
+  readonly next_cursor: string | null;
 }
 /** One key's committed rows, and the `stale` token they were read under. */
 export interface ListSnapshot<T> {
@@ -65,7 +64,7 @@ const NONE: readonly never[] = [];
 const isVisible = () =>
   typeof document === "undefined" || document.visibilityState !== "hidden";
 const nextOf = (page: ListPage<unknown>) =>
-  page.nextCursor.kind === "Present" ? page.nextCursor.value : null;
+  page.next_cursor;
 const aborted = () => new DOMException("The list view changed", "AbortError");
 
 function unique<T>(items: readonly T[], id: (item: T) => string): T[] {

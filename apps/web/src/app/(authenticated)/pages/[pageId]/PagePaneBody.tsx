@@ -15,7 +15,6 @@ import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { consumePendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { fetchNotePage } from "@/lib/notes/api";
-import { present, type Presence } from "@/lib/api/presence";
 import type {
   DailyPageSummary,
   NotePage,
@@ -58,7 +57,7 @@ interface PageView {
   readonly id: string;
   readonly title: string;
   readonly actionSubject: NotePage["actionSubject"];
-  readonly dailyPage: Presence<DailyPageSummary>;
+  readonly daily_page: DailyPageSummary | null;
 }
 
 function pageLoadErrorMessage(error: unknown): FeedbackContent {
@@ -190,8 +189,8 @@ export default function PagePaneBody({
   }, [page, ready]);
 
   const pageDailyLocalDate =
-    page?.dailyPage.kind === "Present"
-      ? page.dailyPage.value.localDate
+    page?.daily_page != null
+      ? page.daily_page.local_date
       : null;
   const dailyLocalDate = dailySourceDate ?? pageDailyLocalDate;
   const pageId = page?.id ?? (source.kind === "PageRef" ? source.pageId : null);
@@ -324,7 +323,7 @@ export default function PagePaneBody({
                     id: surface.source.item.id,
                   }),
                 },
-                dailyPage: present({ localDate: dailySourceDate }),
+                daily_page: { local_date: dailySourceDate },
               }
             : current,
       );

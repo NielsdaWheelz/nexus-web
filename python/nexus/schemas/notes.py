@@ -1,4 +1,4 @@
-"""Page and note-block wire shapes. The notes routes serialize ``by_alias=True``."""
+"""Page and note-block wire shapes."""
 
 from __future__ import annotations
 
@@ -7,15 +7,11 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from pydantic.alias_generators import to_camel
 
-from nexus.schemas.presence import Presence
 from nexus.schemas.resource_items import ResourceSurfaceOut, validate_note_body_pm_json
 
-_CAMEL = ConfigDict(alias_generator=to_camel, populate_by_name=True, from_attributes=True)
-_CAMEL_CLOSED = ConfigDict(
-    alias_generator=to_camel, populate_by_name=True, from_attributes=True, extra="forbid"
-)
+_ROW = ConfigDict(from_attributes=True)
+_CLOSED = ConfigDict(from_attributes=True, extra="forbid")
 
 
 class NoteBlockOut(BaseModel):
@@ -26,7 +22,7 @@ class NoteBlockOut(BaseModel):
     updated_at: datetime
     version_by_lane: dict[str, int]
 
-    model_config = _CAMEL
+    model_config = _ROW
 
 
 class NotePageSummaryOut(BaseModel):
@@ -34,7 +30,7 @@ class NotePageSummaryOut(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     updated_at: datetime
 
-    model_config = _CAMEL_CLOSED
+    model_config = _CLOSED
 
 
 class NotePagesOut(BaseModel):
@@ -46,11 +42,11 @@ class NotePagesOut(BaseModel):
 class DailyPageSummaryOut(BaseModel):
     local_date: date
 
-    model_config = _CAMEL_CLOSED
+    model_config = _CLOSED
 
 
 class NotePageOut(NotePageSummaryOut):
-    daily_page: Presence[DailyPageSummaryOut]
+    daily_page: DailyPageSummaryOut | None
 
 
 class LatentDailyPageDescriptor(BaseModel):
@@ -58,7 +54,7 @@ class LatentDailyPageDescriptor(BaseModel):
     local_date: date
     default_title: str
 
-    model_config = _CAMEL_CLOSED
+    model_config = _CLOSED
 
 
 class MaterializedDailyPageDescriptor(BaseModel):
@@ -67,13 +63,13 @@ class MaterializedDailyPageDescriptor(BaseModel):
     page: NotePageOut
     surface: ResourceSurfaceOut
 
-    model_config = _CAMEL_CLOSED
+    model_config = _CLOSED
 
     @model_validator(mode="after")
     def _validate_daily_page(self) -> MaterializedDailyPageDescriptor:
-        if self.page.daily_page.kind != "Present":
+        if self.page.daily_page is None:
             raise ValueError("materialized daily page must have daily metadata")
-        if self.page.daily_page.value.local_date != self.local_date:
+        if self.page.daily_page.local_date != self.local_date:
             raise ValueError("materialized daily page metadata must match local_date")
         return self
 
@@ -101,7 +97,7 @@ class DailyCaptureRequest(BaseModel):
     note_id: UUID
     body_pm_json: dict[str, Any]
 
-    model_config = _CAMEL_CLOSED
+    model_config = _CLOSED
 
     @field_validator("body_pm_json")
     @classmethod
@@ -115,4 +111,4 @@ class DailyCaptureResult(BaseModel):
     page_id: UUID
     surface: ResourceSurfaceOut
 
-    model_config = _CAMEL_CLOSED
+    model_config = _CLOSED

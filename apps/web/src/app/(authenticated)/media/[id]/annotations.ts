@@ -127,10 +127,10 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
       markers: (data?.markers ?? []).map((marker) => ({
           id: marker.item_id,
           position: marker.position,
-          end: marker.end_position.kind === "Present" ? marker.end_position.value : null,
+          end: marker.end_position,
           tone: marker.tone,
           label: marker.label,
-          preview: marker.preview.kind === "Present" ? marker.preview.value : null,
+          preview: marker.preview,
       })),
     };
     for (const listener of listeners) listener();

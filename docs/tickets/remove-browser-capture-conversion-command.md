@@ -38,6 +38,12 @@ this temporary slot with the command after that proof.
 on the restored 0244 clone, two ordinary CLI conversion passes both returned
 success with empty output and zero pending attempts.
 
+2026-10-13 update: the wire sweep (branch `cleanup/wire-nullable-snake`) adds a second
+pass to the same command, `unwrap_article_packet_presence`, which rewrites Presence-shaped
+stored packets (see `docs/issues/release-sweep.md`). keep the module until the release that
+carries the sweep ran it with a zero-work second pass; its unwrapped attempts also hold
+`retained_legacy_paths`, closed by the same statement below.
+
 fix, in order:
 
 1. after the production run prints its converted media and a second run converts
