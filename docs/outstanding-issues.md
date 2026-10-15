@@ -29,7 +29,7 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
-- [open] content index / saved evidence · 2026-10-15 book-repair qualification · reindex replaces spans and can invalidate saved jumps/graph links; exact selected dependencies and preservation admission remain unproved: [ticket](tickets/reindex-invalidates-saved-evidence-targets.md).
+- [open] content index / saved evidence · 2026-10-15 book-repair qualification · selected52 reindex would clear 424 claims and 100 persisted discovery connections; index necessity and preservation admission remain unresolved: [ticket](tickets/reindex-invalidates-saved-evidence-targets.md).
 - [open] x / title fidelity · 2026-10-14 full production review · two untouched labels reverse speaker/listener roles; normal repair follows the generic attribution correction: [ticket](tickets/x-title-biblical-speaker-attribution.md).
 - [open] release / host storage · 2026-10-14 corrective rollout · image pulls can consume the preflight disk reserve: [ticket](tickets/release-image-cache-consumes-disk-reserve.md).
 - [deferred] x / saved positions · 2026-10-14 owner decision · inline quotation becomes an embedded document; preserve the saved copy and explicit refresh conflict: [ticket](tickets/x-inline-quote-refresh-loses-saved-position.md).
@@ -318,7 +318,7 @@ unexpected timeouts. See
 - [planned] epub / recovery · 2026-10-14 plan · portrait uses existing fenced recovery and normal import limits; readability/indexing and metadata get separate outcomes: [ticket](tickets/epub-apparatus-prefix-scans-exhaust-parse-budget.md).
 - [open] 2026-09-26 processing review · historical terminal codes prevent recovery after parser corrections: [ticket](tickets/processing-terminal-policy-blocks-corrected-parser-recovery.md).
 - [open] 2026-09-26 processing review · missing images currently abort four epub imports: [ticket](tickets/epub-missing-images-abort-readable-books.md).
-- [open] 2026-09-26 processing review · two stored keats publications need heading normalization before reindex: [ticket](tickets/old-web-publications-lack-index-heading-normalization.md).
+- [open] 2026-09-26 processing review · both keats publications now pass exact clone heading normalization; index necessity and consumer qualification remain pending: [ticket](tickets/old-web-publications-lack-index-heading-normalization.md).
 - [open] 2026-09-26 processing review · historical gutenberg epub retry retains the wrong source adapter: [ticket](tickets/gutenberg-failed-import-retains-obsolete-web-adapter.md).
 - [open] 2026-09-26 processing review · two historical note indexes still need owned recovery; 0273 re-admits them, watch them after the release: [ticket](tickets/historical-note-index-failures-need-owned-recovery.md).
 - [open] 2026-09-26 processing review · transient storage errors are treated as permanent source loss: [ticket](tickets/storage-outage-is-misclassified-as-lost-source.md).
@@ -426,6 +426,7 @@ unexpected timeouts. See
 - [open] epub note boundary · 2026-10-15 source review · a declined complete-body boundary becomes a strong leading-paragraph target, omitting 88 authored characters; whole book unapplied: [ticket](tickets/epub-declined-note-boundary-becomes-leading-paragraph.md).
 - [open] epub reading ranges · 2026-10-15 source review · title-only containers truncate three publisher divisions, excluding 54,940 body characters from proposed section ranges; whole book unapplied: [ticket](tickets/epub-title-container-truncates-publisher-range.md).
 - [open] epub hierarchy · 2026-10-15 source review · heading rank overrides authored roots, including row232's parts and publisher history; three books unapplied: [ticket](tickets/epub-heading-rank-overrides-publisher-root.md).
+- [open] epub navigation headings · 2026-10-15 retained-content review · an existing guide section incorrectly parents six chapters and five back-matter divisions; preserve authored navigation while correcting heading eligibility: [ticket](tickets/epub-navigation-heading-becomes-book-parent.md).
 - [open] epub reading ranges · 2026-10-15 original-source review · an unmatched epigraph heading expands through later sibling publisher divisions to book end; whole book unapplied: [ticket](tickets/epub-unmatched-heading-crosses-publisher-boundary.md).
 - [open] epub reciprocal roles · 2026-10-15 source review · two proposals add reversed duplicate pairs between inline references and note-return links; whole books remain unapplied: [ticket](tickets/epub-backlinks-create-reversed-note-pairs.md).
 - [open] contributor repair output · 2026-10-15 clone rehearsal · raw-role correction is summarized as author→author despite an accurate full preview: [ticket](tickets/contributor-repair-summary-hides-raw-role-change.md).

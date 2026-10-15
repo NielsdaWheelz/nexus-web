@@ -73,6 +73,14 @@ rejection on one changed epub and one changed article; record those exact ids.
 that shared rejection path does not need repetition for every book. this trades
 per-book replay coverage for fewer invocations without reducing per-item state
 or idempotence checks.
+for articles, distinguish a publication change from an index-input change.
+equal complete index-block projections must preserve all index state, jobs,
+summaries, claims, connections and retrievals; no worker is required. prove a
+changed note-region projection still admits one ordinary reindex job. do not
+admit that worker without reviewing its actual saved-reference effects.
+if a candidate fails this contract, retain its interrupted-run evidence,
+reconcile every excluded row and reseed only the disposable reader database
+before qualifying the correction. preserve the other lane databases.
 the full portrait clone snapshot uses a separately reviewed 90-second statement
 budget, with the same 180-second outer deadline and read-only capability. its
 30-second sorted-hash attempt and 180-second primary-key-order attempt failed;

@@ -20,15 +20,40 @@ no jump when the cited span is gone; `locator_resolver.py:228–246` returns
 `E_NOT_FOUND`. snapshot survival therefore does not establish saved-target
 reopen or graph preservation. durable passage anchors are a separate identity.
 
-the selected64 reader metadata repair proof remains valid and unchanged. the
-proposed selected52 index phase has not run; its actual affected-reference,
-claim, summary and graph counts are UNKNOWN. this is an admission gap, not
-evidence of current live damage. workers and provider calls remain held.
+the 2026-10-15 read-only selected52 clone census binds 1,549 old spans, chunks
+and embeddings, 424 claims and 52 ready summary heads. cleanup would delete
+100 persisted `origin=discovery` edges, all with saved snapshots and targets in
+the old spans. 93 originate in selected media, six in other media and one in a
+note block. these are visible generated connections, not index-only rows:
+`connection_discovery.py:287–325` stores their rationale, and
+`resource_graph/connections.py:243–267` exposes them. embedding replacement does
+not recreate them. normal ready-index publication also changes the media-unit
+fingerprint and resets the summary for a later build; leaving follow-on workers
+unconsumed does not preserve this product state.
 
-first census the exact selected owners and their old index dependencies in a
-read-only clone snapshot. where dependencies exist, decide the required saved
-reference behavior before admitting replacement; fix the responsible identity
-or publication owner if preservation is required. do not waive chat/graph rows
+four selected-media retrievals have saved excerpts/locators but no old span
+pointer. the bounded census finds no touching user edges, cited-target edges,
+oracle pointers or orphan snapshot candidates. this narrows the actual risk;
+it does not prove every saved target reopens. graph counts are union-only
+candidate predicates, not a sequential worker effect proof. private evidence:
+`a-maintenance/selected52-early-census-v1/root-execution/execution/output/census/receipt.json`
+sha256 `9c7ab5bd21882b1d9c76e5ed419cc9bd9268d8ba911450bf837891c5eb3d4949`;
+independent ownership review `selected52-early-census-independent-review.json`
+sha256 `ed8604e52aa030bded06e3fe5ff2d506cc7a050cf2d7b845993abe41fec97a56`.
+
+the 22 completed frozen-150 per-item metadata proofs remain valid. the selected64
+schedule stopped at sequence 115, before book 23, after the unnecessary index
+mutation was established; the all64 run and its final global proof have NOT PASSED.
+the earlier census observed 14 repaired and 38 unrepaired article projections.
+no index worker has run. this is an admission gap, not evidence of current live
+damage. workers and provider calls remain held.
+
+first establish whether the reader's status-only change alters any index input;
+do not replace the index solely because unrelated metadata changed. for required
+ordinary reindexing, decide the saved-reference and generated-product contract
+before admitting replacement; fix the responsible identity or publication owner
+where preservation is required. recheck exact final dependencies before any
+worker admission. do not waive chat/graph rows
 through blanket verifier exclusions. keep the separate [old web heading
 normalization prerequisite](old-web-publications-lack-index-heading-normalization.md)
 and [oracle lazy-anchor refresh](oracle-anchor-chips-typographic-after-corpus-reindex.md)

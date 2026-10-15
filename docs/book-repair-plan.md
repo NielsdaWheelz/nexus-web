@@ -57,7 +57,7 @@ repair framework. reuse the source, contributor-identity, publication and job ow
 
 | operation | may change | must preserve |
 | --- | --- | --- |
-| reader repair | sections/toc locations, note groups, source-proved apparatus presentation and additions, navigation source issues; publication generation; existing article-index reconciliation | original source bytes/path/hash, fragment ids/order/hrefs/html/text/offsets/assets; existing apparatus ids/keys/kinds/exact locators/source identity and edge keys/endpoints/relations; ownership, libraries, annotations, highlights, progress, saved links and retrievals |
+| reader repair | sections/toc locations, note groups, source-proved apparatus presentation and additions, navigation source issues; publication generation; article-index reconciliation only when effective index blocks change | original source bytes/path/hash, fragment ids/order/hrefs/html/text/offsets/assets; existing apparatus ids/keys/kinds/exact locators/source identity and edge keys/endpoints/relations; ownership, libraries, annotations, highlights, progress, saved links and retrievals |
 | credit repair | uniquely matched `epub_opf` observations and proved additions through the existing identity owner | manual/unrelated credits, existing person identities; all reader/publication/index state and `metadata_enriched_at` |
 | portrait recovery | new attempt/job and appended history; first publication/index/metadata effects | media/source/creator identities, original bytes/hash and historical attempts; no mutation of an already published reader |
 
@@ -149,8 +149,9 @@ make apparatus removal refusal unconditional. remove
 `_specific_0245_bad_target` and `_assert_legacy_marker_unreferenced`.
 the backlink helper also preserves row 232 without deletion: its removal can
 make that item refuse. retain its [open obligation](tickets/reader-epub-row232-backlink-classification.md);
-do not add another book-specific fallback. all other valid proposals must remain
-equivalent except the intended, proved numeric-body enrichment.
+do not add another book-specific fallback. all other valid proposals remain
+equivalent except the proved numeric-body enrichment and removal of unnecessary
+article-index invalidation below.
 
 the existing operator interface remains:
 
@@ -170,6 +171,20 @@ apparatus key sets. extend its private dataclass with `item_changes` and
 prove publication round-trips that
 projection. these outputs make full review and uncertain-commit reconciliation
 possible; the generation-bound `inspection_digest` cannot serve as a postcommit hash.
+
+article repair must compare the complete ordered output of the existing
+`build_web_article_index_blocks` owner over the same fenced fragments and the
+before/proposed note regions. reuse that projection in navigation construction;
+do not compare unordered database rows or a reduced navigation response.
+equal output leaves index rows, jobs, summaries, claims, connections and
+retrievals unchanged. changed output requests ordinary reconciliation exactly
+once in the publication transaction. apparatus status and reader generation
+alone do not invalidate this index. prove both branches, fresh unchanged apply
+and stale refusal on the real clone; the 52 empty-note status repairs require
+zero index effects. necessary reindexing still needs its own
+[saved-evidence preservation proof](tickets/reindex-invalidates-saved-evidence-targets.md).
+this narrow correction adds fresh rehearsal cost; it avoids deleting unrelated
+product state or spending provider calls merely to normalize a status.
 
 ## lane c: source audit and portrait
 
