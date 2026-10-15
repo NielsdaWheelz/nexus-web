@@ -33,7 +33,9 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] release / host storage · 2026-10-14 corrective rollout · image pulls can consume the preflight disk reserve: [ticket](tickets/release-image-cache-consumes-disk-reserve.md).
 - [deferred] x / saved positions · 2026-10-14 owner decision · inline quotation becomes an embedded document; preserve the saved copy and explicit refresh conflict: [ticket](tickets/x-inline-quote-refresh-loses-saved-position.md).
 - [open] x / thread selection · 2026-10-14 archive review · an absent conversation root drops available preceding same-author posts: [ticket](tickets/x-thread-missing-root-drops-available-ancestors.md).
-- [open] web / android release · 2026-10-14 session-entry implementation · exact signed-apk qualification, coordinated cutover and production smoke remain: [ticket](tickets/session-entry-release-qualification.md).
+- [open] web / pane failure ownership · 2026-10-14 session-entry review · internal defects receive the same product retry as expected delivery failures: [ticket](tickets/pane-boundary-retries-internal-defects.md).
+- [open] web / pane failure copy · 2026-10-14 session-entry review · one-pane workspaces receive a false promise about other panes: [ticket](tickets/pane-failure-copy-assumes-other-panes.md).
+- [deferred] extension / production capture · 2026-10-14 owner decision · final temporary installation and retained auth passed; actual production `import_ref` decoding remains deferred: [ticket](tickets/session-entry-extension-cutover.md).
 - [deferred] imports / live metadata proof · 2026-10-14 · owner waived provider-dependent no-findings/review proof; available search settings reject research: [ticket](tickets/imports-live-metadata-proof-needs-working-search.md).
 - [open] metadata lifecycle / migration · 2026-10-14 imports qualification · deleted-media metadata jobs remain pending and block title cutover: [ticket](tickets/deleted-media-metadata-jobs-block-title-migration.md).
 
