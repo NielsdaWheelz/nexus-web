@@ -23,11 +23,8 @@ import {
   createDossierBuild,
   learnDossier,
 } from "@/lib/dossiers/dossierApi";
-import {
-  publishImportsInvalidation,
-  recoverMedia,
-  requestSourceRefresh,
-} from "@/lib/imports/api";
+import { publishImportsInvalidation, recoverMedia } from "@/lib/imports/api";
+import { requestSourceRefresh } from "@/lib/imports/ingest";
 import { markUnread, resetProgress } from "@/lib/consumption/state";
 import {
   placeOnLectern,

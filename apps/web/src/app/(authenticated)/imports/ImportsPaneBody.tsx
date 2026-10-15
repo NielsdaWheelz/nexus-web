@@ -7,39 +7,39 @@ import ImportsList, {
   type MatchedImportEvidence,
 } from "@/components/imports/ImportsList";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { usePaneUrlState } from "@/lib/panes/usePaneUrlState";
 import type { ImportsView } from "@/lib/imports/api";
 import { loadFailure } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import {
-  decodeImportsUrl,
   apiQuery,
+  decodeImportsUrl,
   encodeImportsUrl,
   firstView,
   selectView,
-  type ImportsUrlState,
 } from "@/lib/imports/query";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import { usePaneCompanion, type PaneCompanion } from "@/lib/panes/paneChrome";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { usePaneUrlState } from "@/lib/panes/usePaneUrlState";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 
 const CODEC = {
   decode: decodeImportsUrl,
-  encode: (state: ImportsUrlState) => encodeImportsUrl(state),
+  encode: encodeImportsUrl,
   basePath: "/imports",
 };
 
 /**
  * The Imports pane (docs/modules/imports.md): the url owns the view, the
  * filters and the selection; the counts choose the first view once; the
- * selected import is the pane's Companion (desktop: resizable column,
- * mobile: sheet), toggled from the header Inspector.
+ * selected import is the pane's companion (desktop: resizable column, mobile:
+ * sheet), opened only by explicit activation and toggled by the shell's
+ * Inspector control.
  */
 export default function ImportsPaneBody() {
   const { state, setState } = usePaneUrlState(CODEC);
-  const { summary, setPaneOpen, refresh } = useImports();
+  const { summary, paneOpened, refresh } = useImports();
   const { displayTimeZone } = useRenderEnvironment();
   const { requestSecondarySurface } = requirePaneRuntime(
     usePaneRuntime(),
@@ -50,11 +50,8 @@ export default function ImportsPaneBody() {
     [displayTimeZone],
   );
 
-  // An open pane is the live one; a closed pane polls only in its window.
-  useEffect(() => {
-    setPaneOpen(true);
-    return () => setPaneOpen(false);
-  }, [setPaneOpen]);
+  // A mounted pane keeps the observer polling; it counts until unmount.
+  useEffect(() => paneOpened(), [paneOpened]);
 
   // The counts choose a view once and the url records it once; a later count
   // never moves the reader, and the url write may not have landed yet.
@@ -70,19 +67,15 @@ export default function ImportsPaneBody() {
     setState(selectView(state, view, today()));
   }, [setState, state, today, view]);
 
+  // Why the selected import matched is a fact of its listed row under this
+  // query, which the detail read cannot know; the list reports it.
   const selected = state.selected ?? null;
-  // Why the selected import matched is a fact of the listed row, which the
-  // detail read cannot know; the list reports it for the current query.
   const [evidence, setEvidence] = useState<MatchedImportEvidence | null>(null);
   const query = view === null ? null : apiQuery(view, state);
   const matched =
     evidence?.importRef === selected && evidence.apiQuery === query
       ? evidence.event
       : null;
-  const [openIntent, setOpenIntent] = useState<{
-    ref: string;
-    triggerElement: HTMLButtonElement;
-  } | null>(null);
   usePaneCompanion(
     useMemo<PaneCompanion | null>(
       () =>
@@ -107,19 +100,24 @@ export default function ImportsPaneBody() {
       [matched, selected],
     ),
   );
-  // Publication commits in a layout effect. Consume explicit activation only
-  // after its URL selection has landed; restoring a URL never opens details.
+  // The companion publishes in a layout effect: consume an explicit
+  // activation only once its url selection has landed. Restoring a url never
+  // opens details.
+  const [openIntent, setOpenIntent] = useState<{
+    ref: string;
+    trigger: HTMLButtonElement;
+  } | null>(null);
   useEffect(() => {
     if (openIntent === null || selected !== openIntent.ref) return;
     requestSecondarySurface("import-detail", {
-      returnFocusTo: openIntent.triggerElement,
+      returnFocusTo: openIntent.trigger,
     });
     setOpenIntent(null);
   }, [openIntent, requestSecondarySurface, selected]);
   const onSelect = useCallback(
-    (ref: string, triggerElement: HTMLButtonElement) => {
+    (ref: string, trigger: HTMLButtonElement) => {
       setState({ ...state, selected: ref });
-      setOpenIntent({ ref, triggerElement });
+      setOpenIntent({ ref, trigger });
     },
     [setState, state],
   );
@@ -128,7 +126,17 @@ export default function ImportsPaneBody() {
   const [listSettled, setListSettled] = useState(false);
   usePaneReturnReady(view === null ? summary.status === "failed" : listSettled);
 
-  if (view === null) return <Unresolved refresh={refresh} />;
+  // Before the counts choose a view there is none to publish controls for.
+  if (view === null)
+    return summary.status === "failed" ? (
+      <FeedbackNotice
+        content={loadFailure(summary.error)}
+        announcement="Assertive"
+        actions={[{ label: "Try again", onClick: refresh }]}
+      />
+    ) : (
+      <PaneLoadingState label="Loading imports" announcement="Polite" />
+    );
   return (
     <ImportsList
       view={view}
@@ -139,22 +147,5 @@ export default function ImportsPaneBody() {
       onSelect={onSelect}
       onSettled={setListSettled}
     />
-  );
-}
-
-/**
- * Before the counts choose a view there is no view to publish controls for:
- * the pane loads, or says the summary failed.
- */
-function Unresolved({ refresh }: { readonly refresh: () => void }) {
-  const { summary } = useImports();
-  return summary.status === "failed" ? (
-    <FeedbackNotice
-      content={loadFailure(summary.error)}
-      announcement="Assertive"
-      actions={[{ label: "Try again", onClick: refresh }]}
-    />
-  ) : (
-    <PaneLoadingState label="Loading imports" announcement="Polite" />
   );
 }

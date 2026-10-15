@@ -45,13 +45,7 @@ from nexus.errors import (
 )
 from nexus.ids import new_uuid7
 from nexus.jobs.queue import jobs_for_payload, requeue_dead_job, supersede_unclaimed_job
-from nexus.schemas.import_history import (
-    RepairSourceRecovery,
-    ReprocessSourceRecovery,
-    RetrySourceRecovery,
-    SourceRecoveryAccepted,
-    SourceSucceeded,
-)
+from nexus.schemas.import_history import SourceRecoveryAccepted, SourceSucceeded
 from nexus.schemas.import_refs import MediaImportRef, format_import_ref
 from nexus.schemas.imports import RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.media_sources import FromUrlOut, SourceAdmission, SourceRepairAdmission
@@ -552,7 +546,7 @@ def complete_x_post_snapshot_attempt(
     attempt.status = st.SUCCEEDED
     attempt.error_code = attempt.error_message = None
     attempt.finished_at = attempt.updated_at = now
-    sa.record_event(db, attempt, SourceSucceeded(source_attempt_id=attempt.id, execution_id=None))
+    sa.record_event(db, attempt, SourceSucceeded(source_attempt_id=attempt.id))
     return attempt
 
 
@@ -663,12 +657,7 @@ def retry_source(
             raise ConflictError(ApiErrorCode.E_RETRY_NOT_ALLOWED, reason)
         successor = _admit_successor(db, media, latest, actor_id=viewer_id, request_id=request_id)
         sa.record_event(
-            db,
-            latest,
-            SourceRecoveryAccepted(
-                source_attempt_id=latest.id,
-                recovery=RetrySourceRecovery(new_source_attempt_id=successor.id),
-            ),
+            db, latest, SourceRecoveryAccepted(source_attempt_id=latest.id, recovery="RetrySource")
         )
         result = _admission(successor)
         record_input_change(db)
@@ -727,10 +716,7 @@ def reprocess_failed_stored_epub(
         sa.record_event(
             db,
             latest,
-            SourceRecoveryAccepted(
-                source_attempt_id=latest.id,
-                recovery=ReprocessSourceRecovery(new_source_attempt_id=successor.id),
-            ),
+            SourceRecoveryAccepted(source_attempt_id=latest.id, recovery="ReprocessSource"),
         )
         result = _admission(successor)
         record_input_change(db)
@@ -813,11 +799,7 @@ def repair_source(
         _require_unpublished_document(db, media)
         requeue_dead_job(db, job_id=expected_job_id)
         sa.record_event(
-            db,
-            latest,
-            SourceRecoveryAccepted(
-                source_attempt_id=latest.id, recovery=RepairSourceRecovery(job_id=expected_job_id)
-            ),
+            db, latest, SourceRecoveryAccepted(source_attempt_id=latest.id, recovery="RepairSource")
         )
         db.commit()
         return answer
