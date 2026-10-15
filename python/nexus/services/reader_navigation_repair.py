@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 from uuid import UUID
@@ -110,12 +110,12 @@ class _Prepared:
 def inspect_reader_navigation_repair(
     *,
     session_factory: sessionmaker[Session],
-    storage_client: StorageClient,
+    storage_factory: Callable[[], StorageClient],
     media_id: UUID,
 ) -> ReaderNavigationRepairInspection:
     """Prepare from retained bytes without writing storage or database state."""
     snapshot = _read_snapshot(session_factory, media_id)
-    prepared = _prepare(snapshot, storage_client)
+    prepared = _prepare(snapshot, storage_factory)
     _check_snapshot_current(session_factory, snapshot)
     return _inspection(snapshot, prepared)
 
@@ -123,7 +123,7 @@ def inspect_reader_navigation_repair(
 def apply_reader_navigation_repair(
     *,
     session_factory: sessionmaker[Session],
-    storage_client: StorageClient,
+    storage_factory: Callable[[], StorageClient],
     media_id: UUID,
     expected_inspection_digest: str,
     expected_generation: int,
@@ -132,7 +132,7 @@ def apply_reader_navigation_repair(
     snapshot = _read_snapshot(session_factory, media_id)
     if snapshot.generation != expected_generation:
         raise ValueError("Reader repair inspection is stale")
-    prepared = _prepare(snapshot, storage_client)
+    prepared = _prepare(snapshot, storage_factory)
     inspection = _inspection(snapshot, prepared)
     if inspection.inspection_digest != expected_inspection_digest:
         raise ValueError("Reader repair source or proposal differs from inspection")
@@ -294,13 +294,13 @@ def _align_apparatus_keys(
     return items, edges
 
 
-def _prepare(snapshot: _Snapshot, storage_client: StorageClient) -> _Prepared:
+def _prepare(snapshot: _Snapshot, storage_factory: Callable[[], StorageClient]) -> _Prepared:
     if snapshot.kind == "epub":
         assert snapshot.storage_path is not None and snapshot.source_size_bytes is not None
         with parser_attempt_directory(new_uuid7()) as directory:
             source_path = directory / "source.epub"
             stream_storage_object_to_file(
-                storage_client,
+                storage_factory(),
                 storage_path=snapshot.storage_path,
                 destination=source_path,
                 expected_size_bytes=snapshot.source_size_bytes,
