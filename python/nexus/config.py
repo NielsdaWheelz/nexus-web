@@ -203,13 +203,6 @@ class Settings(BaseSettings):
     # Public web origin: share links.
     app_public_url: str = Field(default="http://localhost:3000", alias="APP_PUBLIC_URL")
 
-    # Ingest recovery guardrails
-    ingest_reconcile_schedule_seconds: int = Field(
-        default=600, alias="INGEST_RECONCILE_SCHEDULE_SECONDS", ge=0
-    )
-    ingest_stale_extracting_seconds: int = Field(
-        default=1800, alias="INGEST_STALE_EXTRACTING_SECONDS", ge=1
-    )
     parser_temp_root: Path = Field(default=Path("/tmp/nexus-parser-tmp"), alias="PARSER_TEMP_ROOT")
 
     # Worker runtime: one lane per worker process.
@@ -377,7 +370,6 @@ class Settings(BaseSettings):
         """Ensure required settings are set for all environments."""
         self._validate_supabase_auth()
         self._validate_database_origin()
-        self._validate_deployed_ingest_reconcile()
         self._validate_deployed_storage()
         self._validate_handle_key()
         self._validate_storage_lifecycle()
@@ -409,13 +401,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 "DATABASE_URL must point at standalone Postgres, not Supabase Database."
             )
-
-    def _validate_deployed_ingest_reconcile(self) -> None:
-        if (
-            self.nexus_env in (Environment.STAGING, Environment.PROD)
-            and self.ingest_reconcile_schedule_seconds == 0
-        ):
-            raise ValueError("INGEST_RECONCILE_SCHEDULE_SECONDS must be > 0 in staging and prod.")
 
     def _validate_deployed_storage(self) -> None:
         if self.nexus_env not in (Environment.STAGING, Environment.PROD):

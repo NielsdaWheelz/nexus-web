@@ -54,7 +54,8 @@ type FileSummary = {
 type AcceptanceIntent = Readonly<{
   source: AddSource;
   destinations: readonly LibraryDestination[];
-  idempotencyKey: string;
+  /** Minted once per frozen intent: every resend carries it (a url's attempt id). */
+  id: string;
 }>;
 type FileIntent = AcceptanceIntent & {
   source: Extract<AddSource, { kind: "File" }>;
@@ -643,7 +644,6 @@ export function useAddContentSession(): AddContentSessionController {
     const { id, intent } = row;
     let importRef = row.kind === "AcceptanceUnresolved" ? row.importRef : null;
     const libraryIds = intent.destinations.map((destination) => destination.id);
-    const idempotencyKey = intent.idempotencyKey;
     try {
       let result: AcceptedIngest;
       const source = intent.source;
@@ -654,7 +654,7 @@ export function useAddContentSession(): AddContentSessionController {
         result = await addMediaFromUrl({
           url: source.url,
           libraryIds,
-          idempotencyKey,
+          id: intent.id,
           signal,
         });
       } else {
@@ -667,7 +667,7 @@ export function useAddContentSession(): AddContentSessionController {
         result = await uploadIngestFile({
           file: source.file,
           libraryIds,
-          idempotencyKey,
+          idempotencyKey: intent.id,
           signal,
           onPhaseChange,
           onImportRef: (ref) => {
@@ -741,7 +741,7 @@ export function useAddContentSession(): AddContentSessionController {
         intent: {
           source: validation.source,
           destinations: [...row.destinations],
-          idempotencyKey: createRandomId("media-add"),
+          id: crypto.randomUUID(),
         },
       };
       rows.push(queued);

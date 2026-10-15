@@ -44,7 +44,7 @@ The queue is a ledger of attempts; every rule below follows from three facts.
 | lane | kinds |
 |---|---|
 | interactive (in process) | `chat_run`, `dossier_build`, `enrich_metadata`, `oracle_reading_generate`, `podcast_sync_subscription_job` |
-| background (one child per job) | `ingest_media_source`, `media_content_reindex_job` (both Heavy), `note_reindex_job`, `media_unit_build`, `connection_discovery_scan`, `podcast_backfill_subscription`, `media_teardown`, `storage_object_cleanup`, and the periodic `reconcile_stale_ingest_media_job`, `podcast_refresh_due_job`, `atlas_project_job`, `storage_orphan_sweep`, `prune_background_jobs_job`, `purge_expired_auth_handoff_codes` |
+| background (one child per job) | `ingest_media_source`, `media_content_reindex_job` (both Heavy), `note_reindex_job`, `media_unit_build`, `connection_discovery_scan`, `podcast_backfill_subscription`, `media_teardown`, `storage_object_cleanup`, and the periodic `podcast_refresh_due_job`, `atlas_project_job`, `storage_orphan_sweep`, `prune_background_jobs_job`, `purge_expired_auth_handoff_codes` |
 
 A handler is `fn(*, payload, context) -> JobResult` in its owner:
 `JobResult = Mapping | RescheduleRequested(at, payload?) | TerminalJobFailure | None`.
@@ -72,7 +72,7 @@ Hooks (by path in the registry):
 - `on_failure(db, job) -> Mapping | None` runs under the claim before a failed
   attempt settles; a result means the owner's work already finished and the job
   completes with it. Source ingest's
-  (`source_attempt_failures.on_failure`): a committed success of this job's
+  (`source_publication.on_failure`): a committed success of this job's
   latest attempt completes `{"kind": "SourceProjectionSucceeded"}`; an attempt that
   is not this job's or not the media's latest completes `{"status": "superseded"}`.
 - `on_dead(db, job)` runs in the transaction that makes the job dead:
@@ -80,7 +80,7 @@ Hooks (by path in the registry):
   stop was asked), `generation.ledger.on_dead_letter` (closes the open generation;
   dossier, metadata, oracle, media units, connection scans),
   `podcasts.sync.dead_letter` (settles the sync Failed),
-  `source_attempt_failures.on_dead_letter` (a resource-limited or podcast
+  `source_publication.on_dead_letter` (a resource-limited or podcast
   transcript attempt publishes its terminal failure), and the three statements in
   `jobs/dead_letters.py` whose owners are heavy (note index `failed` with the job's
   code, teardown intent voided, backfill failed at its step).

@@ -75,8 +75,8 @@ operation are separate evidence; a healthy queue worker does not prove research.
 `DATABASE_URL`, `NEXUS_RUNTIME_IDENTITY_FILE` (local only; production uses the
 baked `/app/runtime-identity.json`), `WORKER_LANE`, `PARSER_TEMP_ROOT`,
 `BACKGROUND_PROCESS_*`, `BACKGROUND_JOB_PRUNE_*`, and the schedule knobs
-`PODCAST_REFRESH_DUE_SCHEDULE_SECONDS`, `INGEST_RECONCILE_SCHEDULE_SECONDS`,
-`ATLAS_PROJECT_SCHEDULE_SECONDS`, `STORAGE_ORPHAN_SWEEP_INTERVAL_SECONDS`. Leases
+`PODCAST_REFRESH_DUE_SCHEDULE_SECONDS`, `ATLAS_PROJECT_SCHEDULE_SECONDS`,
+`STORAGE_ORPHAN_SWEEP_INTERVAL_SECONDS`. Leases
 (30 s), heartbeats (5 s) and the idle wait are fixed by the runtime.
 
 ## Gutenberg catalog

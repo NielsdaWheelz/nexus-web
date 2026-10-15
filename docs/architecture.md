@@ -632,9 +632,8 @@ Two single-process workers run the same entrypoint with fixed `interactive` and
 
 - **Schedules**: the background lane enqueues each periodic kind's current UTC
   slot once cluster-wide (`periodic:<kind>:<slot start>`, unique dedupe key,
-  `available_at` = slot start). Routine periodic rows use priority 200 and yield to
-  ordinary priority-100 work; the stale-ingest reconciler alone uses priority
-  -1000. The interactive lane has no periodic kinds.
+  `available_at` = slot start). Periodic rows use priority 200 and yield to
+  ordinary priority-100 work. The interactive lane has no periodic kinds.
 - **Claims and runs**: `claim_next_job` picks one due row of the lane's kinds with
   `FOR UPDATE SKIP LOCKED` (new work _or_ a row whose 30 s liveness lease expired),
   takes the one Heavy capacity lease for a Heavy kind, flips it to `running` and
@@ -651,13 +650,13 @@ The **registry** (`jobs/registry.py`) is the one table of kinds: lane, handler
 retention and hook paths. Lanes, budgets and prune retention derive from it. See
 [modules/jobs.md](modules/jobs.md).
 
-Kinds (19): interactive `chat_run`, `dossier_build`, `enrich_metadata`,
+Kinds (18): interactive `chat_run`, `dossier_build`, `enrich_metadata`,
 `oracle_reading_generate`, `podcast_sync_subscription_job`; background
 `ingest_media_source`, `media_content_reindex_job`, `note_reindex_job`,
 `media_unit_build`, `connection_discovery_scan`, `podcast_backfill_subscription`,
 `media_teardown`, `storage_object_cleanup`, and the periodic
-`reconcile_stale_ingest_media_job`, `podcast_refresh_due_job`, `atlas_project_job`,
-`storage_orphan_sweep`, `prune_background_jobs_job`,
+`podcast_refresh_due_job`, `atlas_project_job`, `storage_orphan_sweep`,
+`prune_background_jobs_job`,
 `purge_expired_auth_handoff_codes`. The Project Gutenberg catalog sync is an
 operator command (`nexus sync-gutenberg-catalog`), not a kind.
 
@@ -671,8 +670,8 @@ reconciled after the fact.
 
 > Gotcha: a handler that _returns_ `{"status":"failed"}` still marks the
 > **queue** row succeeded — the failure is recorded on the domain row, and
-> recovery relies on the stale reconciler + manual API retry, not queue-level
-> retries. A handler that wants the job dead returns `TerminalJobFailure`.
+> recovery is the user's retry (a source's dead job is its repair offer), not
+> queue-level retries. A handler that wants the job dead returns `TerminalJobFailure`.
 
 **Generation boundary.** Every generative job — chat, Oracle, connection
 discovery, dossiers, media summaries, and metadata enrichment — makes one
@@ -1038,9 +1037,9 @@ capability-owned:
 - `media_file_access.py`: signed original-file download URLs.
 - `media_processing_state.py`: in-process queued, extraction-start, readiness,
   failure, and warning transitions. Source retry policy remains singular in
-  `media_source_ingest.py`.
-- `source_attempt_failures.py`: the terminal source-attempt transaction across
-  attempt, Media, transcript, Podcast job, and revisions;
+  `source_attempts.py` ([the ingest owner](modules/ingest.md)).
+- `source_publication.py`: the run's fence and the terminal source-attempt
+  transaction across attempt, Media, transcript and Podcast job;
   `media_processing_state.mark_media_failed_by_id` is its Media failure-field
   writer.
 
@@ -1053,13 +1052,14 @@ capability projection; `source` is not a `failure_stage`. `failure_stage='embed'
 is a soft warning that coexists with readable media. metadata research has its
 own retained job/outcome projection and never changes the source-error triple.
 
-**Capture entry points** (`api/routes/media_ingest.py`): `POST /media/from_url`,
-`POST /media/uploads` plus session-scoped confirm/retry/transport-failure/delete,
+**Capture entry points**: `POST /media/from-url` with source recovery
+(`api/routes/media_sources.py`), `POST /media/uploads` (`api/routes/media_ingest.py`)
+plus session-scoped confirm/retry/transport-failure/delete,
 and, behind the extension bearer, `POST /extension/captures` with its
 session-scoped `GET`/`confirm`/`retry`/`transport-failure`/`DELETE` routes
 (`api/routes/extension_captures.py`, owned by the same upload-session service).
 Routes are transport adapters; they call exactly one service owner. (The media routers are split per capability:
-`media.py` catalog, `media_ingest.py` ingest, `media_assets.py` image/EPUB-asset
+`media.py` catalog, `media_sources.py` and `media_ingest.py` ingest, `media_assets.py` image/EPUB-asset
 serving, `reader.py` reader read-model, `playback.py`, and
 `podcast_transcripts.py` — each importing only the services it delegates to.)
 Ingest `library_ids` are writable non-default destinations; media services
@@ -1075,9 +1075,9 @@ a slow but unstolen verifier still publishes while a stolen one never does. Ever
 confirm is idempotent: one locked read of the session row owns the
 already-published decision, so a replay that queues behind the winning
 publication returns the same projection rather than a conflict. Its publication
-response returns the stable media and source-attempt identities. Non-upload source acceptance returns `media_id`,
-`source_attempt_id`, `source_type`, `source_attempt_status`,
-`idempotency_outcome`, `processing_status`, and `ingest_enqueued`. Provider,
+response returns the stable media and source-attempt identities. Url acceptance carries a
+client-minted attempt id and returns `media_id`, `source_attempt_id`, `created` and
+`processing_status`. Provider,
 network, sanitization, extraction, and post-acceptance storage failures update
 the existing media row and latest source attempt; the user retries by creating a
 new source attempt through `POST /media/{id}/retry`.
@@ -1086,7 +1086,7 @@ new source attempt through `POST /media/{id}/retry`.
 this pipeline. `services/imports.py` classifies every upload session and every
 media with a source attempt into `Active | NeedsAttention | Complete`, answers
 `GET /imports{,/summary,/{ref},/{ref}/history}`, and reuses the same owner
-policies the catalog does — `media_source_ingest.source_recovery` for source
+policies the catalog does — `source_attempts.source_recovery` for source
 retry/repair and `content_indexing` for search repair — so counts, membership,
 and offered recovery cannot disagree. A published upload keeps its
 `upload:<handle>` identity for life, so one import is one row from acceptance to
@@ -1095,8 +1095,9 @@ constraints visible; a failed later page retains loaded rows, marks the loaded
 count as failed, and offers one retry of that cursor. See
 [the imports read owner](modules/imports.md).
 
-**Recovery/deletion:** `reconcile_stale_ingest_media` requeues/fails stale
-`extracting` rows and repairs content/semantic indexes. Upload-session expiry is
+**Recovery/deletion:** every source acceptance commits its job in the same
+transaction, so nothing reconciles: a dead job is the repair offer and a failed
+source the retry offer (`modules/ingest.md`). Upload-session expiry is
 projected as a user repair obligation; explicit removal owns its cleanup.
 `media_events` streams live status. `services/media_deletion.py` is explicit and
 reference-counted; storage deletion happens only after the DB commit.
@@ -1725,11 +1726,12 @@ official YouTube iframe only after action, and starts remote Podcast audio only
 after action. `BrowseSearch` and `BrowsePreviewEpisodes` are signed, unversioned,
 query/plan-bound cursor families.
 
-Acquisition reuses canonical owners: URL Add calls `/media/from_url`, episode
+Acquisition reuses canonical owners: URL Add calls `/media/from-url`, episode
 Add calls `/podcast-episodes/from-discovery`, and Subscribe calls
-`/podcasts/subscriptions`. Replayable commands use the required
-`Idempotency-Key`, stage Default/All plus named destinations, and replace Preview
-with the canonical owned pane only after success. browse publishes a query focus capability; preview publishes none.
+`/podcasts/subscriptions`. URL Add mints one attempt `id` per press, so a resend
+answers its own acceptance. Commands stage Default/All plus named destinations,
+and replace Preview with the canonical owned pane only after success. browse
+publishes a query focus capability; preview publishes none.
 
 ### 8.11 Collection refinement
 
@@ -2183,7 +2185,7 @@ The things most likely to bite you, distilled:
     citation edges, and context-ref-added events. Message documents remain text-only.
 11. **`background_jobs` is raw SQL**, invisible in `models.py`. Most ingest tasks'
     `{"status":"failed"}` returns mark the _queue_ row succeeded; recovery is the
-    reconciler + manual retry.
+    user's retry, and a dead source job is its repair offer.
 12. **No DB cascades.** Deletion is explicit, reference-counted, and orders external
     (storage) effects after the DB commit.
 13. **pgvector is fixed at 256 dims**; chunk ANN uses the current embedding
@@ -2208,7 +2210,7 @@ The things most likely to bite you, distilled:
 | The schema                                                        | `migrations/alembic/versions/0236_baseline_schema.sql` (the squashed baseline) + the revisions after it + the live database (`pg_dump --schema-only`); `python/nexus/db/models.py` is the ORM-mapped classes only                                                               |
 | Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
 | Generation backends                                               | `python/nexus/services/generation/`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md)                                                                                                    |
-| Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `web_article.py`, `x_ingest.py`, `youtube.py`, `remote_file.py`, `media_processing_state.py` |
+| Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_source_ingest.py`, `source_attempts.py`, `source_runner.py`, `source_publication.py`, `web_article.py`, `x_ingest.py`, `youtube.py`, `remote_file.py`, `media_processing_state.py`, [`modules/ingest.md`](modules/ingest.md) |
 | Imports workspace (query owner, history, pane)                    | `python/nexus/services/{imports,import_history}.py`, `python/nexus/api/routes/imports.py`, `apps/web/src/lib/imports/`, `apps/web/src/components/imports/`, `apps/web/src/app/(authenticated)/imports/`                                              |
 | Reader/highlights backend                                         | `python/nexus/services/{reader_profile,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote}.py`                                                                        |
 | Chat / conversations                                              | `python/nexus/services/chat/`, `python/nexus/api/routes/chat.py`, `python/nexus/schemas/conversation.py`                                                                                              |

@@ -18,19 +18,8 @@ SourceRecoveryRestriction = Literal["NotOwner", "SameSourceTerminal", "SourceNot
 type SourceRecoveryAnswer = RetrySourceOffer | RepairSourceOffer | SourceRecoveryRestriction | None
 type SearchRecoveryAnswer = RepairSearchOffer | Literal["NotOwner"] | None
 
-_REFRESHABLE_PROCESSING_STATUSES = {
-    ProcessingStatus.ready_for_reading.value,
-    ProcessingStatus.failed.value,
-}
 _DOCUMENT_MEDIA_KINDS = {MediaKind.epub.value, MediaKind.web_article.value}
 _TRANSCRIPT_MEDIA_KINDS = {MediaKind.video.value, MediaKind.podcast_episode.value}
-_SOURCE_REFRESH_MEDIA_KINDS = {
-    MediaKind.web_article.value,
-    MediaKind.video.value,
-    MediaKind.podcast_episode.value,
-    MediaKind.pdf.value,
-    MediaKind.epub.value,
-}
 _READABLE_TRANSCRIPT_STATES = {TranscriptState.ready.value, TranscriptState.partial.value}
 _READABLE_TRANSCRIPT_COVERAGES = {TranscriptCoverage.partial.value, TranscriptCoverage.full.value}
 _SAME_SOURCE_TERMINAL_ERROR_CODES = frozenset(
@@ -109,7 +98,6 @@ def is_text_document_ready(
 def derive_capabilities(
     kind: str,
     processing_status: str | ProcessingStatus,
-    last_error_code: str | None,
     *,
     media_file_exists: bool,
     reader_publication_ready: bool,
@@ -120,7 +108,7 @@ def derive_capabilities(
     retrieval_status: str | None = None,
     can_delete: bool = False,
     is_creator: bool = False,
-    source_refresh_available: bool = False,
+    source_refreshable: bool = False,
     source_recovery: SourceRecoveryAnswer,
     search_recovery: SearchRecoveryAnswer,
     metadata_retry: MetadataRetry,
@@ -164,14 +152,7 @@ def derive_capabilities(
         can_download_file=media_file_exists,
         can_delete=can_delete,
         can_retry=isinstance(source_recovery, RetrySourceOffer),
-        can_refresh_source=(
-            is_creator
-            and kind in _SOURCE_REFRESH_MEDIA_KINDS
-            and source_refresh_available
-            and processing_status in _REFRESHABLE_PROCESSING_STATUSES
-            and not is_same_source_terminal_error(last_error_code)
-            and not source_suspended
-        ),
+        can_refresh_source=source_refreshable,
         # Author editing must not depend on processing state: a failed ingest
         # still has editable authors. The access half is true by construction —
         # a media DTO is only assembled for media the viewer can already read.

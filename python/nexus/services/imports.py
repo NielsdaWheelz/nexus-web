@@ -84,18 +84,18 @@ from nexus.services.import_history import (
     read_history_page,
 )
 from nexus.services.media import list_media_for_viewer_by_ids
-from nexus.services.media_source_ingest import (
-    SourceRecoveryFacts,
-    source_recovery,
-    source_repairable_sql,
-)
 from nexus.services.media_upload_sessions import (
     UPLOAD_SESSION_ATTENTION_STATES,
     UPLOAD_SESSION_DERIVED_STATE_SQL,
 )
 from nexus.services.metadata_operations import metadata_operations_sql
 from nexus.services.sealed_handles import seal_upload_session, unseal_upload_session
-from nexus.services.source_history import COUNTED_PROGRESS_SOURCE_TYPES
+from nexus.services.source_attempts import (
+    SourceRecoveryFacts,
+    source_recovery,
+    source_repairable_sql,
+)
+from nexus.services.source_types import COUNTED_PROGRESS_SOURCE_TYPES
 
 _ATTENTION_PLAN = [
     SortKey("stage_rank", "asc", KeysetValueKind.Int),
@@ -782,7 +782,6 @@ def _source_obligation(row: RowMapping, media: MediaOut | None) -> SourceImportO
             job_id=row["attempt_job_id"],
             repairable=bool(row["source_repairable"]),
             is_creator=bool(row["is_creator"]),
-            is_operator=False,
         )
     )
     offered = isinstance(answer, RetrySourceOffer | RepairSourceOffer)

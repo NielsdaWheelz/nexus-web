@@ -46,7 +46,7 @@ from nexus.services.import_history import (
 from nexus.services.reader_apparatus import delete_media_apparatus
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.source_attempt_artifacts import source_attempt_storage_paths
+from nexus.services.source_types import stored_artifact_path
 from nexus.storage.client import StorageError, get_storage_client
 
 if TYPE_CHECKING:
@@ -349,9 +349,9 @@ def enumerate_media_storage_paths(db: Session, media_id: UUID) -> list[str]:
         """),
         {"media_id": media_id},
     ).fetchall():
-        for storage_path in source_attempt_storage_paths(source_payload):
-            if storage_path not in storage_paths:
-                storage_paths.append(storage_path)
+        storage_path = stored_artifact_path(source_payload)
+        if storage_path is not None and storage_path not in storage_paths:
+            storage_paths.append(storage_path)
     return storage_paths
 
 

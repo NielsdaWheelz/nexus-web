@@ -23,7 +23,7 @@ through 50 MiB. rejected files remain rows. file selection/drop appends in order
 recognized drops prevent native navigation even while intake is unavailable.
 
 `useAddContentSession` owns the immutable snapshot and its synchronous ref. the
-panel renders its commands; it never calls acquisition or allocates replay keys.
+panel renders its commands; it never calls acquisition or allocates request ids.
 row destinations, the new-item seed and the bulk header have separate scopes.
 header deltas add/remove one library on populated drafts and seed, preserving
 other selections. mixed coverage is derived; sent/saved rows are excluded.
@@ -47,8 +47,8 @@ while task close retains the stop guard. other picker consumers remain responsiv
 
 ## acceptance and leaving
 
-submission revalidates the ready subset, captures destinations and a new key per
-row synchronously, then admits two at a time within one mutation slot. invalid and
+submission revalidates the ready subset, captures destinations and a new id per
+row synchronously (a url's attempt id; an upload's key), then admits two at a time within one mutation slot. invalid and
 empty drafts send nothing. saved receipts remain in the task; ordinary completion
 neither navigates nor closes it. acceptance proves saving; upload publication
 proves verified bytes. neither proves completed extraction.
@@ -56,7 +56,7 @@ proves verified bytes. neither proves completed extraction.
 known refusals stay on their row, including revoked destination access. auth and
 sent defects retain their frozen request before the existing handoff. check/retry
 replays exactly that intent; edit/new attempt returns to draft and receives a new
-key only on submission. stopped unsent rows return to drafts; started urls remain
+id only on submission. stopped unsent rows return to drafts; started urls remain
 unconfirmed and files retain the existing upload/imports recovery semantics.
 accepted file rows release browser file handles. stop/reset/discard/unmount fence
 all older callbacks. reload loses browser drafts/files.

@@ -180,7 +180,7 @@ across all crashes would require a separate durable acquisition design.
 if postcommit finalization is interrupted, existing reservation cleanup jobs retain
 objects referenced by `media_file`/`epub_resources`; source replay does not rerun
 finalization after its terminal fence. superseded-object deletion remains the
-existing best-effort behavior; its separate [cleanup gap](tickets/superseded-storage-deletion-is-best-effort.md)
+existing best-effort behavior; its separate cleanup gap (since resolved by the ingest slice)
 is outside metadata correctness and is not silently claimed fixed here.
 
 successful playable-video ingestion always requests metadata, whether a provider

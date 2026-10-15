@@ -12,7 +12,7 @@ ten minutes. Nexus search reruns on every attempt: before admission drift is har
 import unicodedata
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import regex
 from llm_tools import WebSearchError, WebSearchProvider, WebSearchRequest
@@ -214,9 +214,10 @@ def _page(db: Session, user_id: UUID, key: str, url: str) -> ResourceRef | datet
         accepted = accept_url_source(
             db=db,
             viewer_id=user_id,
+            id=uuid5(NAMESPACE_URL, f"dossier:{key}"),
             url=url,
             library_ids=[],
-            idempotency_key=key,
+            request_id=None,
             ingest_purpose="artifact_research",
         )
     except InvalidRequestError:

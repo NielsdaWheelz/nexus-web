@@ -15,7 +15,7 @@ Resource access grants and anonymous public reading are separately owned by
 - **Web share surface** (`apps/web/src/app/share/*`) owns the compact capture
   card. It renders outside the authenticated app shell, shows an empty-state card
   for browser empty shares, blocks URL ingest until the user taps Save, and sends
-  selected destination IDs plus a stable per-URL `Idempotency-Key` in the first
+  selected destination IDs plus a stable per-URL attempt `id` in the first
   ingest request.
 - **Library destination UI** (`DestinationField`: a trigger and summary in
   flow, opening `DestinationChooser` in the shared `ChooserSurface`, a desktop
@@ -39,10 +39,10 @@ Native Android finishes immediately for empty shared text. Browser
 
 For URL shares, `/share` renders a destination picker before ingest. The user can
 search existing writable libraries or create a new one inline. Save calls
-`addMediaFromUrl({ url, libraryIds, idempotencyKey })`; Cancel performs no
+`addMediaFromUrl({ url, libraryIds, id })`; Cancel performs no
 ingest. Multi-URL shares use the same selected destination set for each URL and
-retry failed URLs only. Retrying a URL reuses its original idempotency key so an
-already accepted source attempt is not duplicated.
+retry failed URLs only. Retrying a URL resends its original attempt `id`, which
+answers the acceptance that already landed instead of duplicating it.
 
 For non-URL text, `/share` first reads `/me`, exact-decodes the account calendar
 timezone, freezes one account-local date with the capture identities, and sends

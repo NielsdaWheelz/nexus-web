@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import UUID4, BaseModel, ConfigDict, Field, model_validator
 
 from nexus.db.models import MediaKind, ProcessingStatus
 from nexus.db.models import TranscriptCoverage as MediaTranscriptCoverage
@@ -29,7 +29,6 @@ class _Strict(BaseModel):
 
 _CLOSED = ConfigDict(extra="forbid")
 
-MediaSourceAttemptStatus = Literal["accepted", "queued", "running", "succeeded", "failed"]
 MediaReadState = Literal["unread", "in_progress", "finished"]
 TranscriptState = Literal[
     "not_requested", "queued", "running", "ready", "partial", "unavailable", "failed_provider"
@@ -446,8 +445,6 @@ UploadSessionResponse = Annotated[
 
 
 class RetrySourceRequest(_Strict):
-    from_stage: Literal["source"]
-    client_mutation_id: ClientMutationUuidText
     expected_attempt_id: UUID
 
 
@@ -455,7 +452,6 @@ class SourceRepairRequest(_Strict):
     """Requeue the exact dead job of one nonterminal source attempt."""
 
     kind: Literal["Source"]
-    client_mutation_id: ClientMutationUuidText
     expected_attempt_id: UUID
     expected_job_id: UUID
 
@@ -464,7 +460,6 @@ class SearchRepairRequest(_Strict):
     """Requeue the exact dead reindex job of one content-index revision."""
 
     kind: Literal["Search"]
-    client_mutation_id: ClientMutationUuidText
     expected_revision: int = Field(ge=0)
     expected_job_id: UUID
 
@@ -475,22 +470,15 @@ MediaRepairRequest = Annotated[
 
 
 class RefreshSourceRequest(_Strict):
-    client_mutation_id: ClientMutationUuidText
     expected_attempt_id: UUID
 
 
-class SourceRefreshAdmission(_Strict):
-    kind: Literal["SourceRefresh"] = "SourceRefresh"
+class SourceAdmission(_Strict):
+    """A retry's or refresh's attempt and its job (none for a successor born settled)."""
+
     media_id: UUID
     source_attempt_id: UUID
-    job_id: UUID
-
-
-class SourceRetryAdmission(_Strict):
-    kind: Literal["SourceRetry"] = "SourceRetry"
-    media_id: UUID
-    source_attempt_id: UUID
-    job_id: UUID
+    job_id: UUID | None
 
 
 class SourceRepairAdmission(_Strict):
@@ -530,7 +518,13 @@ class TranscriptRequestOut(BaseModel):
     request_enqueued: bool
 
 
-class FromUrlRequest(BaseModel):
+class FromUrlRequest(_Strict):
+    """``id`` is the client-minted attempt id: resending it answers the same acceptance.
+
+    Version 4 only: successor and system ids are version 5 (``uuid5``), so a client id
+    can never name an attempt the server derives (I10)."""
+
+    id: UUID4
     url: str = Field(
         min_length=1,
         description="The URL to ingest. Must be an absolute http/https URL, including PDF, EPUB, article, or video URLs.",
@@ -538,15 +532,13 @@ class FromUrlRequest(BaseModel):
     library_ids: list[UUID] = Field(default_factory=list)
 
 
-class FromUrlResponse(BaseModel):
+class FromUrlOut(_Strict):
     import_ref: ImportRef
     media_id: UUID
     source_attempt_id: UUID
-    source_type: str
-    source_attempt_status: MediaSourceAttemptStatus
-    idempotency_outcome: Literal["created", "reused", "retrying", "refreshed"]
+    created: bool
+    """The answered attempt is this request's own and its media's first."""
     processing_status: ProcessingStatus
-    ingest_enqueued: bool
 
 
 class MediaFileOut(_Strict):

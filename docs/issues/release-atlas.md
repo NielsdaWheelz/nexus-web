@@ -34,8 +34,8 @@
   - `SELECT mts.transcript_origin, count(*) FROM media m JOIN media_transcript_states mts
     ON mts.media_id = m.id WHERE m.kind = 'podcast_episode' GROUP BY 1` (episodes that become
     shareable: `Publisher`; NULL-origin episodes stay unshareable).
-  - `SELECT count(*) FROM media_source_attempts WHERE source_type = 'video_transcript'` must
-    be 0 (the ingest slice's migration refuses otherwise; the gate no longer admits them).
+  - the `video_transcript` census is the ingest release's (`release-ingest.md`; its 0282
+    refuses any such attempt).
 - owner smoke: a public link to an epub with images and a footnote (images appear; the
   footnote and a cross-chapter link move inside the reader), a large pdf (one `bytes=0-`
   stream and at most a few chunk ranges, all 206 with no cookie on them, signed in or not;

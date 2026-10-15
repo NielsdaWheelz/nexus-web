@@ -159,8 +159,6 @@ def replace_document_embed_artifact(
                     db=db,
                     viewer_id=owner_user_id,
                     url=target.canonical_url,
-                    parent_media_id=media_id,
-                    document_embed_key=occurrence.occurrence_key,
                     library_ids=library_ids,
                 )
             except InvalidRequestError as exc:

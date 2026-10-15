@@ -2,9 +2,9 @@
 
 // The one acquisition owner (browse preview, podcast detail, the Subscribe
 // overlay): a split Add/Subscribe button whose chevron stages named library
-// destinations. One logical command carries one Idempotency-Key: a delivery
-// that may have landed replays it, and confirming that a show replaces filed
-// episodes mints one fresh key for the confirmed command.
+// destinations. One logical command carries one key (a url Add's attempt id): a
+// delivery that may have landed replays it, and confirming that a show replaces
+// filed episodes mints one fresh key for the confirmed command.
 
 import { useId, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";

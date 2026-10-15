@@ -5,7 +5,7 @@ together, so lifecycles call these instead of touching the columns.
 """
 
 from datetime import datetime
-from typing import Literal, cast
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import func, text
@@ -16,8 +16,6 @@ from nexus.services.x_source import has_retained_x_publication
 
 type MediaFailureStage = Literal["upload", "extract", "transcribe", "embed", "other"]
 
-_MEDIA_FAILURE_STAGES = frozenset(stage.value for stage in FailureStage)
-
 
 def is_metadata_enrichment_eligible(*, kind: str, processing_status: str) -> bool:
     """Metadata research does not require an audio/video transcript."""
@@ -25,13 +23,6 @@ def is_metadata_enrichment_eligible(*, kind: str, processing_status: str) -> boo
         processing_status == ProcessingStatus.pending
         and kind in (MediaKind.video, MediaKind.podcast_episode)
     )
-
-
-def require_media_failure_stage(value: str) -> MediaFailureStage:
-    """Narrow a boundary string to the closed Media failure-stage contract."""
-    if value not in _MEDIA_FAILURE_STAGES:
-        raise ValueError(f"unsupported Media failure stage: {value!r}")
-    return cast(MediaFailureStage, value)
 
 
 def mark_media_failed_by_id(

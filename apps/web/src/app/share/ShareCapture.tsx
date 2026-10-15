@@ -83,7 +83,7 @@ export default function ShareCapture({
     localDate: string;
     noteId: string;
   } | null>(null);
-  const urlIdempotencyKeys = useRef<Map<string, string>>(new Map());
+  const urlIds = useRef<Map<string, string>>(new Map());
   const destinationCreateIds = useRef<Map<string, string>>(new Map());
   const [selectedDestinations, setSelectedDestinations] = useState<
     readonly LibraryDestination[]
@@ -203,15 +203,15 @@ export default function ShareCapture({
   }
 
   async function saveUrl(url: string): Promise<CaptureResult> {
-    let idempotencyKey = urlIdempotencyKeys.current.get(url);
-    if (!idempotencyKey) {
-      idempotencyKey = createRandomId("share-url");
-      urlIdempotencyKeys.current.set(url, idempotencyKey);
+    let id = urlIds.current.get(url);
+    if (!id) {
+      id = crypto.randomUUID();
+      urlIds.current.set(url, id);
     }
     const result = await captureSourceUrl({
       url,
       libraryIds: selectedDestinations.map((destination) => destination.id),
-      idempotencyKey,
+      id,
       operation: "SaveSource",
     });
     return result.ok ? result : { ...result, reason: "Capture" };

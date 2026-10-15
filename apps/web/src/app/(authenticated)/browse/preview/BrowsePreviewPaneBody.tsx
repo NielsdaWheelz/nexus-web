@@ -267,7 +267,7 @@ export default function BrowsePreviewPaneBody() {
         const { mediaId } = await addMediaFromUrl({
           url,
           libraryIds: namedLibraryIds,
-          idempotencyKey,
+          id: idempotencyKey,
         });
         return { href: `/media/${mediaId}`, mediaId };
       }

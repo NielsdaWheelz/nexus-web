@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from nexus.db.models import Media, ProcessingStatus
 from nexus.errors import (
@@ -41,7 +41,6 @@ logger = get_logger(__name__)
 
 def prepare_epub_source(
     *,
-    session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt_id: UUID,
     storage_path: str,
@@ -51,7 +50,6 @@ def prepare_epub_source(
 ) -> EpubExtractionPlan:
     """Acquire and parse one EPUB into an immutable publication plan."""
     plan = build_epub_extraction_plan(
-        session_factory=session_factory,
         media_id=media_id,
         attempt_id=attempt_id,
         storage_path=storage_path,

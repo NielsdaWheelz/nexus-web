@@ -55,7 +55,7 @@ from nexus.schemas.import_history import (
     history_payload,
     queue_failure_code,
 )
-from nexus.services.source_history import source_failure_progress, source_history_stage
+from nexus.services.source_types import source_failure_progress, source_history_stage
 
 _APPEND_UPLOAD_EVENT = text(
     """

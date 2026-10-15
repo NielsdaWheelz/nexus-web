@@ -103,13 +103,13 @@ metadata job, independently of source readiness.
 
 ## source refresh
 
-`POST /media/{id}/refresh` requires `client_mutation_id` and `expected_attempt_id`;
-its 202 response contains `SourceRefreshAdmission` with media, attempt and job ids.
-`services/media_source_ingest.py` shares replay/storage/admission mechanics with
-source retry while keeping their policies distinct. authorization, the exact latest
-attempt and source policy precede mutation. receipt, new attempt and job commit
-together. identical replay returns that receipt after completion; a changed request
-or fresh stale expectation conflicts. browser retries retain the original intent.
+`POST /media/{id}/refresh` requires `expected_attempt_id`; its 202 response is a
+`SourceAdmission` with media, attempt and job ids. `services/media_source_ingest.py`
+admits retry and refresh through one successor step while keeping their policies
+distinct ([ingest](ingest.md)). authorization, the exact latest attempt and source
+policy precede mutation; the new attempt and its job commit together. a resend of
+the same expectation answers the successor that landed; a fresh stale expectation
+conflicts. browser retries resend the original expectation.
 
 native x retains its readable publication while refresh is queued, running, failed
 or stopped. first imports keep ordinary failure behavior. authorized refresh first
@@ -127,10 +127,11 @@ or a changed source can resolve it. title-only changes preserve content identity
 ## x source cutover
 
 `python -m nexus.ops.refresh_x_sources plan --manifest <path>` freezes existing
-native-x media, creators, expected attempts and mutation ids before admission and
-previews refusals. run after the release backup, writer stop and migration preflight.
-`apply` uses ordinary refresh admission; rerun it to recover lost responses and
-observe source/title settlement. it neither runs workers nor bypasses exact-job repair.
+native-x media, creators and expected attempts before admission and previews
+refusals. run after the release backup, writer stop and migration preflight.
+`apply` uses ordinary refresh admission; rerun it to recover lost responses (the
+same expected attempt answers its landed successor) and observe source/title
+settlement. it neither runs workers nor bypasses exact-job repair.
 
 receipts survive replacement of current snapshots. retained jobs after the database's
 frozen timestamp account for each target's first title obligation and inline children,

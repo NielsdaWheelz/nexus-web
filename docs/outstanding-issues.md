@@ -47,7 +47,6 @@ area · opened YYYY-MM-DD by <who> · P2
 
 - [open] suggestions / focus · 2026-10-14 source review · async add completion can reclaim focus the user moved: [ticket](tickets/suggestion-add-can-reclaim-moved-focus.md).
 - [open] release / provider credentials · 2026-10-14 release · local and production openai/brave exposure confirmed; owner explicitly deferred rotation: [ticket](tickets/metadata-qualification-provider-key-output.md).
-- [open] storage / cleanup · 2026-10-13 specification review · p2 · superseded-object deletion logs failures without durable retry: [ticket](tickets/superseded-storage-deletion-is-best-effort.md).
 - [open] web / workspace persistence · 2026-10-13 add/import live verification · p2 · context teardown can reach workspace save without its body: [ticket](tickets/workspace-session-unload-can-send-empty-body.md).
 - [deferred] nexus query / share extraction · 2026-10-13 add/import cutover · shared prose extraction still combines ambiguous urls and strips valid punctuation; add is repaired: [ticket](tickets/add-link-paste-mutates-url-input.md).
 
@@ -94,13 +93,8 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] ingest / web articles · 2026-10-10 url acquisition reauthor · servers that send brotli regardless of `Accept-Encoding` now read as unreadable: [ticket](tickets/egress-brotli-only-servers-read-as-unreadable.md).
 - [open] ingest / web articles · 2026-10-10 url acquisition reauthor · final urls are httpx-serialized, so a pre-cutover article whose url holds `|`/`^` may not dedupe: [ticket](tickets/fetched-final-url-serialization-differs-from-whatwg.md).
 - [open] release / ingest · 2026-10-10 url acquisition reauthor · owner confirms production does not set `OUTBOUND_HTTP_PROXY_URL`; api, worker and web deploy together: [ticket](tickets/url-acquisition-release-steps.md).
-- [open] ingest / source admission · 2026-10-09 ingest-url harness · re-adding a known web url answers 202 with a new media id that is then superseded and 404s: [ticket](tickets/readded-url-returns-a-media-id-that-is-then-superseded.md).
 - [open] transcripts / youtube · 2026-10-09 ingest-url harness · the explicit youtube transcript request imports captions inside the api request: [ticket](tickets/youtube-caption-import-blocks-the-api-request.md).
-- [open] ingest / media capabilities · 2026-10-09 python dead-code sweep · `can_refresh_source` sql hand-lists source types (omits `email_message`) and storage errors differently from the refresh admission: [ticket](tickets/source-refresh-capability-disagrees-with-admission.md).
-- [open] ingest / x thread acquisition · 2026-10-04 spec review · distinct keys can create duplicate thread media/jobs because nullable source identity has no unique constraint or lock; source-qualified: [ticket](tickets/concurrent-x-author-admission-duplicates-media.md).
 - [open] ingest / reuse deletion race · 2026-10-04 spec review · lookup may outlive a hard delete while the missing-row reference barrier silently continues into a foreign key or refresh defect; source-qualified: [ticket](tickets/url-reuse-after-hard-delete-raises-foreign-key.md).
-- [open] ingest / canonical teardown replay · 2026-10-04 source audit · loser teardown deletes the attempt carrying the original viewer/key, losing admission identity while history survives: [ticket](tickets/canonical-source-teardown-deletes-admission-replay.md).
-- [open] ingest / joined admission replay · 2026-10-04 source audit · joining an in-flight provider attempt forgets the new key; exact replay after settlement creates another terminal receipt: [ticket](tickets/joined-url-admission-does-not-record-its-replay-key.md).
 - [open] chat prompt · 2026-10-10 chat runs rewrite · the turn's context moved from the instructions to the input head (B11); unmeasured on a real model until the owner's post-deploy smoke: [ticket](tickets/chat-prompt-layout-unmeasured.md).
 - [open] chat storage · 2026-10-10 chat runs rewrite · every run keeps its whole frozen prompt after it ends (O(n²) per chat): [ticket](tickets/chat-run-intents-retained-forever.md).
 - [open] chat / reauthoring · 2026-10-04 chat rewrite · 5,607 formatted lines against a 5,000 cap; every cut but picker paging is held by owner decisions: [ticket](tickets/chat-reauthor-over-line-budget.md).
@@ -113,11 +107,9 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] nexus / mobile focus · 2026-10-09 workspace harness · mobile nexus Places navigates in place and leaves focus on the body: [ticket](tickets/mobile-nexus-places-leaves-focus-on-body.md).
 - [open] workspace / chat · 2026-10-04 mounted old proof · admitted pane/persisted visit and browser address diverged; the 2026-10-09 reauthoring routes the projection through next's router (L2 journeys pass) but the new-chat ordering was not replayed: [ticket](tickets/workspace-url-reverts-after-new-chat-adoption.md).
 - [open] ingest / duplicate feedback · 2026-10-04 source audit · identical command replay is labeled content duplication; qualify the browser marker before changing the public result: [ticket](tickets/source-replay-is-reported-as-content-duplicate.md).
-- [open] ingest / replay authority · 2026-10-04 source audit · replay validates current destination write access before reading the saved admission: [ticket](tickets/url-replay-requires-current-destination-write-access.md).
 - [open] media upload retry · 2026-10-04 source audit · the fresh and memo retry paths repeat the same capability generation/expiry in a private result: [ticket](tickets/upload-retry-repeats-capability-result.md).
 
 - [open] operator credentials · 2026-10-02 cleanup workflow · skid's three peer bearer fields were printed into a tool transcript; coordinate rotation with active sessions: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
-- [open] processing recovery / release · 2026-09-28 pr #387 investigation · the keats normalizations and gutenberg correction never ran in production (commands are unreleased); run them after the release, then land #387: [ticket](tickets/processing-repairs-await-release-then-387.md).
 - [open] release / vercel candidate · 2026-10-04 pr #524 · exact main merge 031c3c95 vercel candidate build failed at platform quota; green pr preview is a different commit: [ticket](tickets/vercel-main-candidate-build-rate-limited.md).
 - [open] resource sharing / production migration · 2026-09-28 resource-sharing reauthoring · run 0249's malformed/duplicate `resource_grants` count read-only against production before deploy: [ticket](tickets/resource-grants-0249-production-preflight.md).
 - [open] python comments / capabilities generator · 2026-09-28 pr-06 library placement · ten python comment lines and the resource-capabilities generator still cite deleted cutover docs: [ticket](tickets/code-comments-cite-deleted-cutovers.md).
@@ -173,13 +165,6 @@ backend · opened 2026-09-08 by Claude (imports cutover, Track A) · P3
 The safe-code catalog carries a PDF text warning as if it were a failure; the
 browser copy is corrected, but warnings still share the failure vocabulary. See
 [docs/tickets/import-history-pdf-text-warning-is-not-a-failure.md](tickets/import-history-pdf-text-warning-is-not-a-failure.md).
-
-### [OPEN] OI-030 — the source-refusal sentence duplicates browser copy
-backend · opened 2026-09-09 by Claude (imports cutover, Track C2) · P3
-The repairable-state refusal in `media_source_ingest.py` now repeats, word for
-word, the copy `mediaErrorMessage.ts` composes from the action catalog; make the
-server message diagnostic to remove that duplicate responsibility. See
-[docs/tickets/server-refusal-copy-duplicates-the-browser-owner-with-no-mirror.md](tickets/server-refusal-copy-duplicates-the-browser-owner-with-no-mirror.md).
 
 ### [OPEN] OI-031 — The counted unit recorded at a source failure is free text on the wire
 frontend · opened 2026-09-09 by Claude (imports cutover, Track E) · P3
@@ -290,7 +275,6 @@ unexpected timeouts. See
 - [open] secret scanning · 2026-09-18 pr #334 · gitguardian repeats an operator-classified false positive on a compose variable reference: [ticket](tickets/gitguardian-repeats-classified-variable-reference.md).
 
 - [deferred] 2026-09-23 firefox v1 · the signed unlisted build needs AMO credentials and the production origins: [ticket](tickets/extension-firefox-distribution-consent-is-undeclared.md).
-- [open] 2026-09-23 firefox v1 track a · remove the browser-capture conversion command after its production run: [ticket](tickets/remove-browser-capture-conversion-command.md).
 - [open] 2026-09-21 auth audit · android emulator origin: source now has one origin per process (set `APP_PUBLIC_URL` to the emulator's); emulator acceptance not run: [ticket](tickets/android-debug-origin-disagrees-with-bff-csrf-origin.md).
 - [open] 2026-09-25 local qualification · credential values appeared in an internal tool transcript; rotate outside the transcript's trust boundary: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
 
@@ -301,7 +285,6 @@ unexpected timeouts. See
 - [open] 2026-09-26 processing review · two stored keats publications need heading normalization before reindex: [ticket](tickets/old-web-publications-lack-index-heading-normalization.md).
 - [open] 2026-09-26 processing review · historical gutenberg epub retry retains the wrong source adapter: [ticket](tickets/gutenberg-failed-import-retains-obsolete-web-adapter.md).
 - [open] 2026-09-26 processing review · two historical note indexes still need owned recovery; 0273 re-admits them, watch them after the release: [ticket](tickets/historical-note-index-failures-need-owned-recovery.md).
-- [open] 2026-09-26 processing review · transient storage errors are treated as permanent source loss: [ticket](tickets/storage-outage-is-misclassified-as-lost-source.md).
 - [open] 2026-09-26 processing review · superseded oracle sources retain three unfiled failed media rows: [ticket](tickets/superseded-oracle-seeds-retain-unfiled-failed-media.md).
 - [open] 2026-09-26 processing plan · epub reprocessing can replace fragment identities beneath reader state: [ticket](tickets/epub-reprocessing-can-replace-reader-fragment-identity.md).
 - [open] 2026-09-25 notes writing acceptance · signed physical android w2 and optical input-to-visible-glyph w6 remain unverified: [ticket](tickets/notes-writing-android-acceptance-blocked.md).
@@ -318,7 +301,6 @@ unexpected timeouts. See
 - [open] resonance / synapse / performance · 2026-10-04 synapse reauthor · p2 · the new slate and exclusion sql has no production-shape plan yet: [ticket](tickets/synapse-slate-query-plans-unmeasured.md).
 - [open] resonance / semantic index · 2026-10-04 synapse reauthor · p3 · Similar is calibrated to one embedding model; a model change silently empties it: [ticket](tickets/similar-lane-model-calibration.md).
 - [open] transcripts / wire · 2026-10-10 content index reauthor · `TranscriptRequestReason` is declared twice (the wire's lacks `rss_feed`): [ticket](tickets/transcript-request-reason-vocabulary-duplicated.md).
-- [open] url acquisition · 2026-10-10 content index reauthor harness · re-adding an ingested url answers `created` with a new media id that is superseded and then 404s: [ticket](tickets/readding-a-url-answers-created-for-a-media-that-is-deleted.md).
 - [open] web media pane · 2026-10-10 content index reauthor harness · an open media pane keeps showing a suspended index after its search repair publishes, until reopened: [ticket](tickets/media-pane-retrieval-status-stale-after-search-repair.md).
 - [deferred] synapse / resonance · 2026-10-04 synapse reauthor · owner decisions: trigger policy, manual scan for media and highlights, the Similar work vector, and source-side relation grain: [ticket](tickets/synapse-owner-questions.md).
 - [open] resource graph / connections · 2026-10-10 graph reauthor · p2 · owner rollup re-enumerates every owned child on every connections page: [ticket](tickets/connections-owner-rollup-enumerates-children.md).
