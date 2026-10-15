@@ -43,13 +43,17 @@ sha256 `ed8604e52aa030bded06e3fe5ff2d506cc7a050cf2d7b845993abe41fec97a56`.
 
 the 22 completed frozen-150 per-item metadata proofs remain valid. the selected64
 schedule stopped at sequence 115, before book 23, after the unnecessary index
-mutation was established; the all64 run and its final global proof have NOT PASSED.
+mutation was established; that interrupted run and its final global proof never passed.
 the earlier census observed 14 repaired and 38 unrepaired article projections.
 no index worker has run. this is an admission gap, not evidence of current live
 damage. workers and provider calls remain held.
 
-first establish whether the reader's status-only change alters any index input;
-do not replace the index solely because unrelated metadata changed. for required
+merged #609 compares complete index-block inputs and skips reindex when they
+are equal. the later corrected 64-item rehearsal passed on its recorded
+26b/0278 candidate: private `b-reader/selected64-preservation-v3/actual-v1/closure-review.json`,
+sha256 `840624f65047c0bbc19c506f5f1884208bdf373708428b3309ef5ba016dc66f3`.
+final-artifact preservation remains pending. these historical results do not
+authorize an ordinary index replacement. for required
 ordinary reindexing, decide the saved-reference and generated-product contract
 before admitting replacement; fix the responsible identity or publication owner
 where preservation is required. recheck exact final dependencies before any

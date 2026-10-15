@@ -13,8 +13,8 @@ its 0283 baseline is independently accepted. that candidate completed 241
 contributor inspections and 30 reader inspections; 465 reader inspections were
 held before invocation on discovering the new main. four later deletions are
 accounted separately. the shared read-only bracket closed with exact equality
-across all 96 tables and 3,272,528 rows; old proofs do not qualify the new candidate. production repair and
-consumer acceptance remain NOT_RUN. the separate
+across all 96 tables and 3,272,528 rows. old proofs do not qualify the new
+candidate. production repair and consumer acceptance remain NOT_RUN. the separate
 [native consumption cutover](tickets/android-consumption-cutover-mismatch.md)
 still needs actual native/backend and physical-phone verification.
 owner decisions settled 2026-10-14. planning base: `75b17c0301be59da4a45dec8b35ab97d998e9199`.
@@ -36,7 +36,10 @@ campaign means complete accounting, not a claim that every book was repaired.
 | recovery | portrait below; normal source recovery, independently reported source/index/metadata outcomes |
 
 the 232 reader proposals comprised 176 epubs and 56 articles.
-reader and contributor scopes may overlap.
+reader and contributor scopes may overlap. historical complete accounting is
+168 content-approved, 57 unsafe, five source-unproved, 265 unchanged and four
+later deleted cases. current inspection covers the 495 surviving ids; exact
+source/input/full-proposal equality is required to carry a content decision.
 fresh inspection determines eligibility and counts. the failed historical
 aggregate stays failed; do not filter its rows into an apparently passing plan.
 newly added books and other viewers' libraries do not expand either frozen set.
@@ -49,7 +52,7 @@ newly added books and other viewers' libraries do not expand either frozen set.
 | the complete essays | `e6b755eb-c744-4391-b6ec-2b3ed2553837` | 37,078 ms |
 | cosmic connections | `2293419e-8bb2-4fa9-851e-d1010b24067f` | 887 numeric-only note bodies with absent html |
 | row 232 | `09f34c39-5c2c-481a-a713-9d83f7bbf320` | special backlink preservation; may become unresolved under the hard cut |
-| frankenstein | `ce72f700-7416-44a5-ac80-9a2fb8d23717` | source/credits unverified; keep its existing viewer and library |
+| frankenstein | `ce72f700-7416-44a5-ac80-9a2fb8d23717` | source and existing identity proved; fenced production correction pending; keep viewer/library |
 | portrait, norton critical edition | `9e5d8118-050d-48dc-9c99-870443481f61` | failed import; exact-source recovery unproved |
 
 authoritative evidence: [reader census](tickets/reader-source-notes-production-repair-pending.md),
@@ -126,9 +129,11 @@ use a reviewed runbook, not a new runner service:
   `--network=host` reaches the devbox tunnel only after verifying actual
   engine/rootless networking. no new production listener. inspect has read-only
   database capability; apply gets the existing
-  application write role. one connection, zero overflow, 30-second statement
-  timeout, two-second lock timeout. supply only required database/storage/auth
-  settings; no model-provider keys. verify the actual access path first.
+  application write role. one connection, zero overflow and a 30-second
+  statement timeout. the normal engine lock timeout is 10s; reader repair and
+  contributor transactions set 2s locally. measure both separately on the final
+  artifact; do not restore the removed lock-timeout setting. supply only required
+  database/storage/auth settings; no model-provider keys. verify the actual access path first.
 - remove private env files, tmpfs and owned tunnels after reconciliation.
   an outer ssh or `docker wait` timeout does not stop the workload.
 
@@ -178,9 +183,12 @@ python -m nexus.ops.reader_navigation_repair apply --media-id <uuid> --generatio
 ```
 
 inspect the entire diff, including labels, ordering, reference/edge metadata and
-source issues; #584 is not merely a body-text patch. zero removed identities
-is mandatory but insufficient by itself. the current inspection exposes only
-apparatus key sets. extend its private dataclass with `item_changes` and
+source issues; #584 is not merely a body-text patch. zero removed apparatus
+item/edge identities is mandatory but insufficient by itself. navigation
+coalescence may retire only explicitly reviewed division identities, with
+source-backed scope and reference/consumer obligations recorded. the old
+inspection exposed only apparatus key sets. #609 extends its private dataclass
+with `item_changes` and
 `edge_changes` through existing `_row_changes`, plus
 `installed_metadata_sha256` and `proposed_metadata_sha256` through existing
 `_digest` over normalized metadata. expose typed `status_before` and
@@ -216,8 +224,8 @@ identities, split semicolon names, merge people or broaden matching to manufactu
 frankenstein retains viewer `579543d7-64ec-4282-9f1b-7a445ebf672a`; reverify
 visibility and source identity without changing ownership or library membership.
 
-only if the audit produces a correction, implement the
-[missing preview fence](tickets/epub-contributor-apply-does-not-bind-preview.md):
+the audit produced one proved correction. merged #613 implements the
+[preview fence](tickets/epub-contributor-apply-does-not-bind-preview.md); qualify its contract:
 
 - preview emits `preview_digest` and full ordered before/proposed rows, not
   only counts or moved/added descriptions. bind viewer/media, verified source
@@ -230,13 +238,13 @@ only if the audit produces a correction, implement the
   locked serializable transaction before allocation/dml, including every retry.
   materialize that same checked identity plan; no second resolution race.
 
-no proposal means no contributor code pr or write. the api image excludes
+no current proposal means no credit write. the api image excludes
 `python/scripts`: supply this existing script read-only with a recorded hash
 matching the candidate, rather than assuming it is packaged.
 
 cleanup removed `ops/processing_recovery.py`; do not restore it. portrait's
-historical `E_ARCHIVE_UNSAFE` remains terminal under ordinary retry. add one
-operator-only `media_source_ingest.reprocess_failed_stored_epub` admission,
+historical `E_ARCHIVE_UNSAFE` remains terminal under ordinary retry. merged #619
+adds the operator-only `media_source_ingest.reprocess_failed_stored_epub` admission,
 with no public route, wire change, migration or permanent cli. it accepts the
 creator, media id, expected failed stored-epub attempt, exact source hash and
 request id through the existing serializable owner. verify owner, original row
@@ -292,16 +300,15 @@ remains separate.
 | owner / delivery | exclusive implementation files and responsibility |
 | --- | --- |
 | a: maintenance pr | `services/epub_ingest.py`; narrow operator error output in `ops/reader_navigation_repair.py` if required; `docker/Dockerfile.backend` only if timeout is absent. budget/containment receipts and operator-content designer |
-| b: finish #584 | `services/reader_navigation_repair.py`; strict enrichment, complete exception removal and full projection evidence; navigation/note content designer. compose the required storage-factory call in `ops/reader_navigation_repair.py` after a's typed refusal change |
-| c: source audit; conditional third pr | `python/scripts/repair_epub_contributors.py`, `services/epub_contributor_repair.py`; existing `contributor_writes.py` only if checked-plan materialization requires it. source/credit/recovery content designer |
+| b: reader pr #609 | `services/reader_navigation_repair.py`; strict enrichment, complete exception removal and full projection evidence; navigation/note content designer. compose the required storage-factory call in `ops/reader_navigation_repair.py` after a's typed refusal change |
+| c: source audit and contributor pr #613 | `python/scripts/repair_epub_contributors.py`, `services/epub_contributor_repair.py`; existing `contributor_writes.py` only if checked-plan materialization requires it. source/credit/recovery content designer |
 | c: recovery correction | `services/media_source_ingest.py`; one diagnosed stored-epub admission through current source/job/history owners, separate from the credit pr |
 | coordinator | this plan, runbook, private scope/receipts, tickets and integration; next canonical rollout, fresh backup and sole book production write owner |
 
 service/ops paths above are under `python/nexus/`. no shared-file parallel edits.
-two initial code prs; the source audit runs independently. integrate both,
-then qualify one immutable operator image. maintenance-only activation needs
-no web/api rollout if actual deployed consumers accept its output; schema
-equality alone is insufficient. any normal-runtime fix gets its own deployment.
+the source prs are merged. compose the remaining approved release work, then
+qualify its canonical artifacts and matched wire-2 consumers. operator output
+compatibility alone cannot qualify that combined normal-runtime release.
 
 before any clone worker runs, isolate database/queue AND output storage. use a
 separate rehearsal r2 bucket via existing `R2_BUCKET`, scoped credentials and
@@ -316,11 +323,10 @@ historical attempts/jobs and terminal history, record any fixture cascade effect
 the temporary harness uses unmodified `JobWorker.run_once()` plus
 `ChildExecutor.open(settings)` in the deployed worker image under its actual
 448 mib contract. source admission must leave its exact job as the only
-eligible/expired background work. after source success, freeze the exact index
-job and any newly produced, retained asset-cleanup jobs proved to reference
-portrait's new resources. consume ordinary claims only from that list, each
-at most once, stopping when index succeeds; the bound is asset-cleanup count
-plus one turn. stop on retry, failure, uncertainty or an unexpected next claim.
+eligible/expired background work. after source success, bind the actual queued
+index job and current registry before admitting its ordinary worker turn. the
+retired asset-cleanup claim loop is not part of this release. stop on retry,
+failure, uncertainty or any unrelated claim; do not consume it as setup.
 do not rewrite priorities, start periodic scheduling, invoke handlers directly
 or patch the registry. leave other follow-on jobs unconsumed;
 declare any real provider calls. normal production entrypoint proof remains live.
@@ -352,7 +358,10 @@ declare any real provider calls. normal production entrypoint proof remains live
    may continue through 0284–0287 without another restore. run one current
    495-item reader inspection pass; old content reviews carry only through
    exact source/input/full-proposal equality. reuse those fresh fences for
-   selected applies without a redundant pre-apply inspection pass. consumer
+   selected applies after audit equality, all fault restorations, positive-fixture
+   cleanup and a no-intervening-writer admission prove the full unchanged-item
+   bridge. retain original snapshots and their separately hashed comparison
+   copies; do not repeat the 168 pre-apply inspections. consumer
    requests use current snake-case nullable wire and `X-Nexus-Wire: 2`.
 5. **live:** take a fresh verified pre-apply production backup and record its
    cutoff; reuse the rehearsed backup only if no intervening relevant writes

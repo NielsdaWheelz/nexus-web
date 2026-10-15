@@ -30,7 +30,7 @@ sha256 `7925a8ee64c4e9ad528f875592a39a9adb60c03788a80d2c32cca9ca101e7d6a`;
 alias snapshot `c-sources/frankenstein-alias-v2`, sha256
 `a742efe4e49053d09f8f4b1dfc54721198ebd6259dafb5177b37d9ee561876df`.
 
-next: implement and qualify the [preview fence](epub-contributor-apply-does-not-bind-preview.md),
+next: qualify the merged [preview fence](epub-contributor-apply-does-not-bind-preview.md),
 then rehearse this exact correction before fresh production inspection/apply.
 preserve viewer `579543d7-64ec-4282-9f1b-7a445ebf672a`, ownership and library;
 do not auto-file the media or broaden matching.

@@ -30,8 +30,9 @@ with `article-readiness.json` sha256
 
 this establishes the current clone prerequisite, not when normalization occurred,
 current production readiness, a successful index run or consumer acceptance.
-do not normalize these already-normalized clone rows again. first establish whether
-the status-only reader repair requires indexing; ordinary reindex also has the
+do not normalize these already-normalized clone rows again. merged #609 skips
+reindex for equal complete index inputs; qualify that preservation on the final
+artifact. any required ordinary reindex still has the
 separate [saved-evidence preservation gap](reindex-invalidates-saved-evidence-targets.md).
 if a later production read actually finds unnormalized html, use the existing
 reader publication owner, preserving fragment ids, canonical text, authored

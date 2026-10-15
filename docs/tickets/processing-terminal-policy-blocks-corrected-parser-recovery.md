@@ -1,6 +1,6 @@
 # terminal source policy blocks recovery after parser corrections
 
-status: open
+status: operator admission implemented in merged #619; final-artifact recovery pending
 origin: 2026-09-26 processing-failure investigation
 area: source recovery / imports
 
@@ -35,9 +35,9 @@ its public request has no expected-source-hash field. the file-only audit
 binds the source files and historical baseline and reproduces the restriction
 through the actual pure policy function. it makes no database or source call.
 
-first replay the retained exact bytes without publication. add a narrow,
-explicit owner-controlled reprocess admission after changed processing
-conditions, preserving media identity, original bytes and failure history.
+merged #619 adds the narrow owner-controlled stored-epub reprocess admission
+after diagnosed processing changes. qualify it against the exact retained
+source, preserving media identity, original bytes and failure history.
 do not relabel historical failures, retry automatically forever, or bypass
 archive safety checks. use the current source-attempt/successor owner and
 ordinary worker; do not revive the deleted operator module or its replay

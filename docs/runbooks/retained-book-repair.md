@@ -19,7 +19,7 @@ release before live repair acceptance. no resize, reboot or brave calls.
 
 private campaign root:
 `/Users/nnandal/Documents/code/nexus-web-campaign-artifacts/2026-10-14/book-repair`.
-`progress.json` names current identities and work. retain original receipts;
+`coordinator/progress.json` names current identities and work. retain original receipts;
 new attempts get new paths. search explicit metadata files or parse named fields;
 never recursively print private source/proposal files to find hashes.
 
@@ -70,8 +70,10 @@ run one reader inspect/apply per immutable operator container, sequentially:
 with five-second kill grace. persist the container id before start; retain
 actual limits, counters, output and stopped-process evidence before removal.
 whitelist inspection fields; never record credentialed docker `Config.Env`.
-use a one-connection database pool, zero overflow, 30-second statement timeout
-and two-second lock timeout. an attach timeout does not terminate the container.
+use a one-connection database pool, zero overflow and a 30-second statement
+timeout. the normal engine lock timeout is 10s; maintenance owners set 2s in
+their transactions. verify both through the final artifact, without the removed
+lock-timeout setting. an attach timeout does not terminate the container.
 
 ```text
 python -m nexus.ops.reader_navigation_repair inspect --media-id <id>
@@ -100,27 +102,33 @@ summaries, claims, connections and retrievals; no worker is required. prove a
 changed note-region projection still admits one ordinary reindex job. do not
 admit that worker without reviewing its actual saved-reference effects.
 if a candidate fails this contract, retain its interrupted-run evidence,
-reconcile every excluded row and reseed only the disposable reader database
-before qualifying the correction. preserve the other lane databases.
+reconcile every excluded row before qualifying the correction. reseed the
+disposable reader database only if its state cannot supply a proved clean
+baseline; preserve any other lane databases.
 the full portrait clone snapshot uses a separately reviewed 90-second statement
 budget, with the same 180-second outer deadline and read-only capability. its
 30-second sorted-hash attempt and 180-second primary-key-order attempt failed;
-the restored sorted-hash query passed in 84.6 seconds across all 96 tables.
+that historical restored sorted-hash query passed in 84.6 seconds across 96
+tables. the final artifact needs its own measured snapshot over the discovered
+current inventory.
 this exception does not change reader inspect/apply or parser limits. after a
 timeout, confirm both the container and its database backend have stopped.
 fault injection is clone-only; remove its fixtures before the selected apply
 set. every row excluded from global hashes needs its own complete permitted-
 change and raw-identity proof.
-after 0287, a changed reader or credit apply also advances the single
-`suggestion_inputs.revision` by exactly one; no other field changes. fresh
-unchanged applies, refusals and rollbacks advance zero. compare feeds and
-shortlists exactly with their workers stopped. account for this explicit
-counter effect in fault/positive fixtures and the selected-set comparison;
+after 0287, a changed reader or credit apply and a fresh diagnosed recovery
+admission each advance `suggestion_inputs.revision` by exactly one in the same
+transaction; its other fields stay exact. unchanged repairs, refusals, rollbacks
+and landed-successor replays advance zero. capture the full singleton separately
+from reusable item snapshots and bind its exact row hash to the global digest.
+compare feeds and shortlists exactly with their workers stopped. account for
+actual committed owner calls in fault/positive fixtures and selected-set totals;
 do not reset the counter or hide its table from the proof.
 
 contributor preview uses the exact shipped script supplied read-only. audit
-verified opf observations and actual credits for all 245 ids. only a real
-correction justifies the conditional preview-fence implementation and write.
+verified opf observations and actual credits for the 241 surviving ids; account
+for the four later deletions offline. merged #613 supplies the preview fence;
+only a freshly proved correction permits a credit write.
 
 portrait uses the unmodified deployed worker image and its normal 448 mib,
 no-swap, disk-backed parser storage and 900-second child budget. export copied

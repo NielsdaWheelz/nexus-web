@@ -1,23 +1,24 @@
-# android still writes the retired consumption contract
+# android consumption cutover awaits native acceptance
 
 status: implemented in merged #630; native/runtime and phone acceptance pending
 origin: 2026-10-15 book coordinator release review, candidate `702ba2b826`
 area: android playback / api consumption
 
-the pre-fix candidate `ListeningRecorder.kt:290` sends `media_ref` to `/consumption/activity`;
+the pre-fix candidate `ListeningRecorder.kt:290` sent `media_ref` to `/consumption/activity`;
 the current closed activity schema requires `media_id`.
-`NexusOriginClient.kt:161` still posts to removed `/consumption/commands`.
-the recorder sends `SettleNaturalEnd` and expects `next_item`; the current
+`NexusOriginClient.kt:161` posted to removed `/consumption/commands`.
+that recorder sent `SettleNaturalEnd` and expected `next_item`; the current
 owner is `POST /media/{id}/natural-end`, returning 204. these 400/404 refusals
-are final to the recorder, so it discards the affected queued writes.
-the listening/settle lane is an in-memory deque: restarting also loses pending
-work. this is source-proved; current native/backend reproduction remains NOT_RUN.
+were final to that recorder, so it discarded the affected queued writes.
+its listening/settle lane was in memory, so restart also lost pending work.
+merged #630 corrects the protocol and persists that lane atomically. final
+native/backend reproduction and physical-phone acceptance remain NOT_RUN.
 
 prerequisite: drain the old phone's pending positions, listening and activity
 before the wire cutover. inspect actual downloaded copies; do not wipe storage
 or infer that every old copy is incompatible.
 
-fix: implement the existing contract in [release-consume](../issues/release-consume.md)
+implemented contract in [release-consume](../issues/release-consume.md)
 through the current native client/recorder. use `media_id`; capture the next
 eligible audio row from the current lectern before settling; advance only
 after 204. retain queued work on 426 and transport failure. remove the retired

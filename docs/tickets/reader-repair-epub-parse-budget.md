@@ -1,6 +1,6 @@
 # offline reader repair inherits the import parse ceiling
 
-status: planned postrelease; maintenance budget not yet qualified
+status: implemented in merged #608; final-artifact budget qualification pending
 origin: 2026-10-14 release r3 inspection and owner disposition
 area: epub parser / maintenance
 
@@ -18,11 +18,11 @@ these failures do not pass. [the complete census](reader-source-notes-production
 is invalid for apply; production navigation/note metadata remains unrepaired.
 remaining corpus repairs were explicitly deferred from the usable release.
 
-`MAX_EPUB_ARCHIVE_PARSE_TIME_MS` is the import setting, default and maximum
-30,000 ms (`python/nexus/config.py:272` at `58c7ecae6`). maintenance currently
-reuses it; its suitability for offline repair is UNESTABLISHED. neither a
-larger maintenance budget nor a requirement to finish every repair in 30
-seconds has been qualified. archive, source and identity checks remain required.
+`MAX_EPUB_ARCHIVE_PARSE_TIME_MS` was the historical import setting, default and maximum
+30,000 ms (`python/nexus/config.py:272` at `58c7ecae6`). maintenance reused it
+at that historical source. merged #608 keeps the ordinary 30,000 ms constant
+and supplies a separate 120,000 ms maintenance budget. the current final
+artifact still needs qualification; archive, source and identity checks remain required.
 at planning base `75b17c030`, `epub_ingest.py:770–775` checks elapsed time
 after parsing; this acceptance budget does not terminate an overlong process.
 
@@ -31,7 +31,7 @@ local source work includes canonical commits `87e552c574ab9b4783e3f0e33fafcadd6d
 `b447b1fd7c91fb319df5d38e5d9fd1b7ea2cbd86` and
 `ad56d5dbd64071897be26d1289f4eb3e51831386`; their local static/equivalence
 proofs do not qualify a combined maintenance run. b447/ad56 were not integrated.
-the performance worktree remains at `4c168245c` plus a preserved dirty patch.
+the retained performance checkpoint was at `4c168245c` plus a preserved dirty patch.
 its earlier combined normal runs returned in 29.767 s and 28.449 s; the third
 refused at 38,517 ms (38.576 s call wall time). the first margin was insufficient
 and the aggregate failed.
@@ -46,10 +46,11 @@ evidence: `release/attempts/58c7ecae6/r3-full-inspection-v2/`, manifest
 local canonical proofs remain in `release/canonical-nfc-buckets-20261014/`,
 `release/canonical-nfc-identity-20261014/` and `release/canonical-literal-text-20261014/`.
 
-next: implement and qualify the [book-repair plan](../book-repair-plan.md).
-it proposes a separate 120-second maintenance parse budget and a 180-second
+next: qualify the merged implementation under the [book-repair plan](../book-repair-plan.md).
+it uses a separate 120-second maintenance parse budget and a 180-second
 invocation deadline plus five-second kill grace, off-host with bounded memory
-and private temporary storage. these are candidates, not qualified limits.
+and private temporary storage. prior containment receipts qualify only their
+recorded candidates; the final artifact remains unqualified.
 normal import policy stays unchanged. retain explicit scope, source, generation,
 saved-coordinate and identity fences; record any remaining refusal as unresolved.
 
