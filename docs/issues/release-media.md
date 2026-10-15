@@ -28,19 +28,24 @@ the table.
 - `0284_media_units_by_generation` runs after `0283` with writers stopped, in the one end
   release; api, workers and web deploy together.
 - the unit census below is the gate, on the rehearsal and again in production right
-  before and right after the real 0284 (writers still stopped): after 0284 every ready
-  unit on a ready index must read current. a shortfall means the retired rule was not
-  recognised: list the stale ones (the query's `FILTER` negated), and in production
-  restore the backup (every such unit would read stale: abstracts hide from citations and
-  dossiers rebuild units on demand).
+  before and right after the real 0284 (writers still stopped). owner decision
+  2026-10-15: current after 0284 = current under the retired rule before 0284. 0284
+  rewrites exactly the units the retired rule calls current and leaves the rest, so the
+  ready units still stale after it are the ones already stale before it. on the
+  0bd6619236 backup: 418 ready, 403 current after (= 403 under the retired rule before);
+  the other 15 were last written 2026-06-18 to 2026-07-23 17:08 UTC, before `d4665bc31`
+  put the index generation into the fingerprint, and read stale under both rules. they
+  stay stale until a reindex or a dossier rebuilds them; nothing rebuilds a stale unit
+  proactively. the second query lists the stale ones: every row must predate
+  `d4665bc31`'s deploy. a newer stale unit means 0284 did not recognise it: in
+  production, restore the backup (its abstract would hide from citations).
 
 ### unit census (rehearsal on a restored backup, mac only; then production)
 
 ```sql
--- ready units on ready indexes, and those current under the NEW rule. a ready unit on a
--- ready index is current (a publish re-ensures its unit, a build publishes only at its
--- own fingerprint), so after 0284 current_units = ready_units, the same count as before.
--- before 0284 current_units is 0 (old fingerprints).
+-- ready units on ready indexes, and those current under the NEW rule. before 0284
+-- current_units is 0 (old fingerprints); after it, the units the retired rule called
+-- current (403 of 418 on the 0bd6619236 backup).
 SELECT count(*) AS ready_units, count(*) FILTER (WHERE h.content_fingerprint =
   encode(sha256(convert_to(concat_ws('|',
     coalesce(s.active_embedding_provider, ''), coalesce(s.active_embedding_model, ''),
@@ -49,6 +54,15 @@ SELECT count(*) AS ready_units, count(*) FILTER (WHERE h.content_fingerprint =
 FROM media_summaries h
 JOIN content_index_states s ON s.owner_kind = 'media' AND s.owner_id = h.media_id
 WHERE h.status = 'ready' AND s.status = 'ready';
+-- after 0284: the ready units still stale, newest first; each must predate d4665bc31's
+-- deploy (15 on the 0bd6619236 backup, newest 2026-07-23 17:08 UTC)
+SELECT h.media_id, h.updated_at FROM media_summaries h
+JOIN content_index_states s ON s.owner_kind = 'media' AND s.owner_id = h.media_id
+WHERE h.status = 'ready' AND s.status = 'ready' AND h.content_fingerprint <>
+  encode(sha256(convert_to(concat_ws('|',
+    coalesce(s.active_embedding_provider, ''), coalesce(s.active_embedding_model, ''),
+    to_char(s.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US')), 'UTF8')), 'hex')
+ORDER BY h.updated_at DESC;
 -- heads by status (informational)
 SELECT status, coalesce(error_code, '-'), count(*) FROM media_summaries GROUP BY 1, 2;
 -- before 0284: building units with no runnable build job (= 0284 step 2's count; after
