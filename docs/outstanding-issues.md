@@ -29,6 +29,7 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+- [blocked] library chooser / integration · 2026-10-15 · newer main deliberately removes the approved recovery substrate; owner contract choice and requalification required: [ticket](tickets/library-chooser-main-contract-conflict.md).
 - [unverified] library chooser / accessibility · 2026-10-15 qualification · three-engine focus checks passed; physical ime/soft keyboard and actual speech remain unobserved: [ticket](tickets/library-chooser-physical-accessibility-unverified.md).
 - [unverified] library chooser / recovery · 2026-10-15 qualification · admission quota failure passed; native receipt-retirement storage denial remains unproved: [ticket](tickets/library-chooser-retirement-storage-failure-unverified.md).
 - [open] podcast acquisition / replay · 2026-10-14 chooser specification · subscription/episode acquisition omit their frozen retry identity from the server replay boundary: [ticket](tickets/podcast-acquisition-retry-reapplies-placement.md).

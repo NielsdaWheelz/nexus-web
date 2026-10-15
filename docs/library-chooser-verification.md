@@ -107,9 +107,9 @@ were deleted after green/refactor. fixture data remains in the preserved volumes
 task api/web, firefox, geckodriver and fixture
 server were stopped. final unchanged static gate was rerun after deletion.
 
-the user's docker preservation instruction overrides volume cleanup: six task
-containers and their network are retained stopped; these three task volumes keep
-their disposable data:
+the six stopped task containers and their unused network were removed without
+volume deletion. the user's preservation instruction keeps these three task
+volumes and their disposable data:
 
 - `nexus-library-chooser-20261015_postgres-data`
 - `nexus-library-chooser-20261015_minio-data`
