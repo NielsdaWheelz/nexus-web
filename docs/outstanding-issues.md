@@ -30,7 +30,6 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 - [unverified] workspace / scrollbar input · 2026-10-14 · classic gutter passed; default overlay thumb produced no motion and remains unqualified: [ticket](tickets/canvas-overlay-scrollbar-release-unqualified.md).
-- [open] x / reader reopening · 2026-10-14 production consumer check · bare-route saved position remains below the reading line despite unchanged server locator: [ticket](tickets/x-reader-bare-route-position-not-restored.md).
 - [open] release / host storage · 2026-10-14 corrective rollout · image pulls can consume the preflight disk reserve: [ticket](tickets/release-image-cache-consumes-disk-reserve.md).
 - [deferred] x / saved positions · 2026-10-14 owner decision · inline quotation becomes an embedded document; preserve the saved copy and explicit refresh conflict: [ticket](tickets/x-inline-quote-refresh-loses-saved-position.md).
 - [open] x / thread selection · 2026-10-14 archive review · an absent conversation root drops available preceding same-author posts: [ticket](tickets/x-thread-missing-root-drops-available-ancestors.md).
@@ -151,7 +150,7 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] player / release · 2026-10-05 player re-author · web, api and a signed apk ship together after old activity outboxes drain: [ticket](tickets/player-cutover-release-steps.md).
 - [open] player / budget · 2026-10-05 player re-author · 7,202 in-budget lines against the 5,700 gate (full scope 8,545 against 7,000); owner accepts or orders cuts: [ticket](tickets/player-over-line-budget.md).
 - [open] reader / web · 2026-10-04 reader rewrite pr1 · the whole-document mount is unmeasured on a large book and on the phone (risk r1): [ticket](tickets/reader-whole-mount-large-book-unmeasured.md).
-- [open] reader / progress · 2026-10-05 reader rewrite pr2 · a cursor that failed to load is never re-read, so the pane stays read-only until reopened: [ticket](tickets/reader-cursor-load-failure-has-no-recovery.md).
+- [unverified] reader / progress · 2026-10-14 qualification review · initial cursor-load failure has a recovery path; focus-driven saved-position and save behavior remain unqualified: [ticket](tickets/reader-cursor-load-failure-has-no-recovery.md).
 - [open] reader / android · 2026-10-05 reader rewrite pr2 · the shipped css-highlight paint and taps are unverified in the android webview (hand check): [ticket](tickets/reader-highlights-android-webview-unverified.md).
 - [open] downloaded reader / mobile · 2026-10-11 scrollbar investigation · the phone reader reserves a separate 32px overview rail: [ticket](tickets/downloaded-reader-reserves-phone-map-rail.md).
 - [open] workspace / mobile · 2026-10-11 scrollbar verification · a 915px landscape phone exceeds the shared mobile layout cutoff: [ticket](tickets/phone-landscape-exceeds-mobile-layout-cutoff.md).
@@ -406,7 +405,6 @@ unexpected timeouts. See
 - [open] resource actions / web · 2026-10-10 workspace host reauthor · a resource's More menu opens with every canonical action blocked ("Actions are refreshing.") for one snapshot round trip: [ticket](tickets/resource-menu-opens-with-actions-blocked.md).
 - [open] workspace / pane return · 2026-10-10 authors reauthor · p3 · the quick-Back anchor fix landed (route content is the anchor root); acceptance waits on authors harness X8: [ticket](tickets/pane-return-anchor-searches-the-collection-bar.md).
 - [open] workspace / verification · 2026-10-10 workspace host reauthor · artifact find results and the podcast Inspector are not driven live (no fixtures): [ticket](tickets/host-companion-artifact-and-podcast-unverified.md).
-- [open] workspace / host canvas · 2026-10-10 workspace host reauthor · p2 · a resume aims the active pane once, before the panes left of it finish growing, so it ends partly or wholly off-screen: [ticket](tickets/resume-scroll-misses-late-pane-growth.md).
 - [deferred] web / overlays · 2026-10-10 overlay kernel reauthor · page-level menus, floating surfaces and citation cards on a phone do not own Back (the history entry exists only while a modal is open); product call pending: [ticket](tickets/mobile-page-menus-ignore-back.md).
 - [open] web / chat, overlays · 2026-10-10 overlay kernel reauthor · the desktop citation card is a tooltip holding a button (Open in context or Open source) that keyboard focus cannot reach: [ticket](tickets/citation-preview-actions-unreachable-by-keyboard.md).
 - [open] web / reader · 2026-10-10 overlay kernel reauthor (harness D8) · the selection dock anchors to the rect captured at the last selectionchange, so it does not follow a scroll: [ticket](tickets/selection-dock-does-not-follow-scroll.md).
@@ -437,7 +435,7 @@ unexpected timeouts. See
 - [open] web / chat, keyboard · 2026-10-14 shortcut-removal review · an active docent walk can steal modified keys such as command/control+p: [ticket](tickets/docent-shortcuts-steal-modified-keys.md).
 - [open] web / player, overlays · 2026-10-14 shortcut-removal review · player shortcuts remain active on a focused library chooser sheet: [ticket](tickets/player-shortcuts-ignore-overlays.md).
 - [open] web / keyboard verification · 2026-10-14 shortcut removal · fixed shortcuts passed static checks; authenticated browser journeys remain unverified: [ticket](tickets/fixed-shortcuts-browser-verification.md).
-- [open] release / x titles · 2026-10-14 · source/title census accepted; failed actual reader reopening holds corrective release and final consumer handoff: [ticket](tickets/x-title-production-cutover.md).
+- [open] web / icon · 2026-10-15 final consumer qualification · isolated firefox favicon request reported 500 then fetch error; cause unassigned: [ticket](tickets/final-firefox-favicon-request-failed.md).
 - [open] browser / replay · 2026-10-14 review · unresolved intents survive mounted runtime only, not navigation/login: [ticket](tickets/admission-intents-do-not-survive-navigation.md).
 - [open] reader / embeds · 2026-10-14 review · mounted parent cards do not refresh another media's changed label: [ticket](tickets/reader-embed-target-metadata-stays-stale.md).
 - [open] generation / queue locks · 2026-10-14 recovery review · tool generation→job order opposes dead-letter job→generation: [ticket](tickets/generation-dead-letter-inverts-tool-lock-order.md).

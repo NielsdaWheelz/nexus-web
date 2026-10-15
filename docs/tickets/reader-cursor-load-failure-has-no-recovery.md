@@ -1,19 +1,21 @@
-# a cursor that failed to load is never read again
+# initial cursor-load recovery remains unqualified
 
-status: open · origin: 2026-10-05 reader rewrite pr2 (carried from `reader-core-pr2-surface-gaps`) · area: web reader (`lib/documentReader/progress.ts`)
+status: open qualification gap · origin: 2026-10-05 reader rewrite pr2 (carried from `reader-core-pr2-surface-gaps`); reviewed 2026-10-14 at `0bd6619` · area: web reader
 
-when `GET /media/{id}/reader-state` fails on open, the document opens anyway with
-*reading position unavailable* and nothing saves (correct: the reader must not
-write over a cursor it never read). but `revalidate()` returns early while the
-view is `LoadFailed`, so pane activation, focus, `online` and `pageshow` never
-retry: the reader stays read-only until the pane is reopened. the hosted pane is
-long-lived, so a transient failure (offline at open, a 5xx) costs the whole
-session's progress.
+the original no-retry explanation is obsolete. ordinary cursor-load failures set
+`failed` in `apps/web/src/lib/documentReader/progress.ts:319–323`; revalidation now
+retries through `reconcileFence` at lines 218–221 and 270–288. visible window
+focus, `online`, `pageshow`, and visibility changes call revalidation in
+`apps/web/src/lib/documentReader/DocumentReader.tsx:119–132`.
 
-fix: let revalidation retry the load while `LoadFailed`; on success adopt the
-cursor exactly like a newer canonical (silently when dormant, else the *newer
-reading spot* choice), then save normally.
+the complete initial-failure recovery journey remains unproven. retained receipt
+`/private/tmp/nexus-x-titles-proof-20261014/reader-progress-green-final.json`, case
+`replacement_cursor_failure_is_readonly_and_source_reload_recovers`, proves
+read-only behavior after a replacement cursor failure and recovery through an
+explicit source reload. it does not prove recovery from a first-open failure
+through focus, position restoration or choice, and subsequent reading saves.
 
-acceptance: with the cursor GET failing at open and succeeding later, a
-focus/activation after recovery shows the saved spot (or the choice), and reading
-on saves; no write happens before the read succeeds.
+next: qualify that journey against the current reader; fix the responsible owner
+only if it fails. acceptance: the initial cursor request fails, then succeeds;
+focus or activation shows the saved spot or the newer-reading-spot choice, and
+subsequent genuine reading saves. no write occurs before the cursor read succeeds.
