@@ -30,6 +30,10 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [pending] libraries / inspector integration · 2026-10-15 · preserve inspector coarse sizing when composing the shared header rules: [ticket](tickets/libraries-inspector-header-integration.md).
+
+- [pending] libraries / toolbar integration · 2026-10-15 · compose visit-owned filtering with toolbar's mandatory status visibility: [ticket](tickets/libraries-toolbar-contract-integration.md).
+
 - [unverified] libraries / mobile presentation · 2026-10-15 · physical keyboard clearance awaits the unavailable samsung: [ticket](tickets/libraries-dialog-physical-keyboard-unverified.md).
 
 - [open] local verification / docker · 2026-10-14 · runtime recovered after read-only vm filesystem; host cause remains unresolved: [ticket](tickets/docker-desktop-read-only-filesystem-blocks-qualification.md).

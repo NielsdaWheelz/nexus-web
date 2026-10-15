@@ -32,6 +32,15 @@ the [physical handset check](tickets/libraries-dialog-physical-keyboard-unverifi
 
 all libraries created by the completed cases were deleted successfully; the isolated invitation fixture remains for the remaining check. [interim cleanup][cleanup] stopped the baseline runtime and removed its source archive. the candidate runtime, disposable runners, fixtures and private state remain outside the checkout until the physical check and any affected rechecks finish. then remove task-owned runners, dependencies, profiles, credentials, services and data, retaining receipts and screenshots. no permanent test suite, ci job or alternate gate remains.
 
+toolbar `225830792` introduces a required `status.visible` field. the
+[integration record](tickets/libraries-toolbar-contract-integration.md) specifies
+how to compose its adapter with this branch's visit-owned filter. these
+independent qualifications do not establish a combined-source pass.
+inspector `764b01b63` ([draft pr 617](https://github.com/NielsdaWheelz/nexus-web/pull/617))
+preserves the action order and interfaces. independent source review found a
+[header sizing merge requirement](tickets/libraries-inspector-header-integration.md):
+keep primary's fixed height separate from inspector's coarse-pointer sizing.
+
 [main]: ../../nexus-web-campaign-artifacts/2026-10-14/libraries-creation/receipts/qualification-main.json
 [gate]: ../../nexus-web-campaign-artifacts/2026-10-14/libraries-creation/receipts/static.log
 [baseline]: ../../nexus-web-campaign-artifacts/2026-10-14/libraries-creation/receipts/baseline/results.json
