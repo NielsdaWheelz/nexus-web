@@ -29,7 +29,7 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
-- [open] epub / section coalescence · 2026-10-15 book-repair source review · two withheld proposals retire three bounded divisions while their replacements remain unbounded: [ticket](tickets/epub-coalescence-drops-bounded-reading-divisions.md).
+- [open] epub / section coalescence · 2026-10-15 book-repair source review · three withheld proposals retire bounded divisions into replacements with absent or source-false extents: [ticket](tickets/epub-coalescence-drops-bounded-reading-divisions.md).
 - [open] epub / semantic extents · 2026-10-15 book-repair source review · clipping at a parent end turns four unknown nonempty chapter ranges into exact empty extents: [ticket](tickets/epub-parent-boundary-creates-empty-chapter.md).
 - [open] epub / division boundaries · 2026-10-15 book-repair source review · ef739 final-chapter advertising-tail ownership remains unadjudicated; proposed title union preserves the existing range: [ticket](tickets/epub-final-chapter-includes-advertising-tail.md).
 - [open] epub / division boundaries · 2026-10-15 book-repair source review · a new part extent includes 1,339 characters of a separately labelled bibliography; whole proposal stays unapplied: [ticket](tickets/epub-part-range-includes-unmarked-bibliography.md).
