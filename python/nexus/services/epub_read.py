@@ -1,9 +1,8 @@
-"""EPUB source reads: navigation, link rewriting, and the public sharing projection."""
+"""EPUB source reads: navigation and link rewriting."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
@@ -12,7 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.media import (
+from nexus.schemas.reader import (
     MediaNavigationOut,
     NavigationTextPointOut,
     NavigationTextRangeOut,
@@ -21,69 +20,10 @@ from nexus.schemas.media import (
     ReaderNavigationSectionOut,
     ReaderNavigationTocNodeOut,
 )
-from nexus.schemas.presence import absent, presence_from_nullable, present
 from nexus.services.html_tree import inner_html
 from nexus.services.reader_publication import (
     read_publication_source_issues,
 )
-
-_FRAGMENT_SOURCES_SQL = """
-    SELECT f.idx, COALESCE(n.label, source.package_href) AS label,
-           COALESCE(n.depth, 0) AS depth, f.html_sanitized, f.canonical_text
-    FROM fragments f
-    JOIN epub_fragment_sources source
-      ON source.media_id = f.media_id AND source.fragment_id = f.id
-    LEFT JOIN LATERAL (
-        SELECT COALESCE(toc.label, nav.label) AS label, toc.depth
-        FROM epub_nav_locations nav
-        LEFT JOIN LATERAL (
-            SELECT label, depth FROM epub_toc_nodes
-            WHERE media_id = nav.media_id AND section_id = nav.location_id
-              AND nav_type = 'toc'
-            ORDER BY order_key, node_id LIMIT 1
-        ) toc ON TRUE
-        WHERE nav.media_id = f.media_id AND nav.fragment_idx = f.idx
-        ORDER BY nav.start_offset, nav.ordinal LIMIT 1
-    ) n ON TRUE
-    WHERE f.media_id = :media_id
-      AND (CAST(:after_ordinal AS INTEGER) IS NULL OR f.idx > :after_ordinal)
-    ORDER BY f.idx LIMIT :limit
-"""
-
-
-@dataclass(frozen=True, slots=True)
-class EpubFragmentSourceContent:
-    """Unique render-unit facts for the public sharing projection."""
-
-    ordinal: int
-    label: str
-    depth: int
-    html_sanitized: str
-    canonical_text: str
-
-
-def list_epub_fragment_sources(
-    db: Session,
-    *,
-    media_id: UUID,
-    after_ordinal: int | None = None,
-    limit: int,
-) -> list[EpubFragmentSourceContent]:
-    """Read each source fragment once; the caller establishes audience authority."""
-    rows = db.execute(
-        text(_FRAGMENT_SOURCES_SQL),
-        {"media_id": media_id, "after_ordinal": after_ordinal, "limit": limit},
-    ).mappings()
-    return [
-        EpubFragmentSourceContent(
-            ordinal=row["idx"],
-            label=row["label"],
-            depth=row["depth"],
-            html_sanitized=row["html_sanitized"],
-            canonical_text=row["canonical_text"],
-        )
-        for row in rows
-    ]
 
 
 def read_epub_navigation(
@@ -124,16 +64,14 @@ def read_epub_navigation(
             fragment_id=fragment_ids[row["fragment_idx"]],
             offset=row["start_offset"],
         )
-        extent = absent()
+        extent = None
         if row["end_fragment_idx"] is not None:
-            extent = present(
-                NavigationTextRangeOut(
-                    start=target,
-                    end=NavigationTextPointOut(
-                        fragment_id=fragment_ids[row["end_fragment_idx"]],
-                        offset=row["end_offset"],
-                    ),
-                )
+            extent = NavigationTextRangeOut(
+                start=target,
+                end=NavigationTextPointOut(
+                    fragment_id=fragment_ids[row["end_fragment_idx"]],
+                    offset=row["end_offset"],
+                ),
             )
         elif row["end_offset"] is not None:
             # The structure write owner stores both extent coordinates together.
@@ -144,9 +82,9 @@ def read_epub_navigation(
             ReaderNavigationSectionOut(
                 section_id=row["location_id"],
                 label=row["label"],
-                parent_section_id=presence_from_nullable(row["parent_section_id"]),
+                parent_section_id=row["parent_section_id"],
                 target=target,
-                anchor_id=presence_from_nullable(row["href_fragment"]),
+                anchor_id=row["href_fragment"],
                 extent=extent,
                 source=row["source"],
             )
@@ -194,14 +132,12 @@ def read_epub_navigation(
         row["node_id"]: ReaderNavigationTocNodeOut(
             id=row["node_id"],
             label=row["label"],
-            target=present(
-                NavigationTextPointOut(
-                    fragment_id=fragment_ids[row["fragment_idx"]], offset=row["target_offset"]
-                )
+            target=NavigationTextPointOut(
+                fragment_id=fragment_ids[row["fragment_idx"]], offset=row["target_offset"]
             )
             if row["target_offset"] is not None
-            else absent(),
-            section_id=presence_from_nullable(row["section_id"]),
+            else None,
+            section_id=row["section_id"],
             children=[],
         )
         for row in toc_rows
@@ -220,22 +156,22 @@ def read_epub_navigation(
 
     node_by_section: dict[str, ReaderNavigationTocNodeOut] = {}
     for node in nodes.values():
-        if node.section_id.kind == "Present":
-            node_by_section.setdefault(node.section_id.value, node)
+        if node.section_id is not None:
+            node_by_section.setdefault(node.section_id, node)
     # Source-only headings augment the outline without changing publisher sibling order.
     missing = [section for section in sections if section.section_id not in node_by_section]
     for section in missing:
         node_by_section[section.section_id] = ReaderNavigationTocNodeOut(
             id=section.section_id,
             label=section.label,
-            target=present(section.target),
-            section_id=present(section.section_id),
+            target=section.target,
+            section_id=section.section_id,
             children=[],
         )
     for section in missing:
         node = node_by_section[section.section_id]
-        if section.parent_section_id.kind == "Present":
-            node_by_section[section.parent_section_id.value].children.append(node)
+        if section.parent_section_id is not None:
+            node_by_section[section.parent_section_id].children.append(node)
         else:
             roots.append(node)
 
@@ -243,13 +179,11 @@ def read_epub_navigation(
     for row in toc_rows:
         if row["nav_type"] == "toc":
             continue
-        target = absent()
+        target = None
         if row["fragment_idx"] is not None and row["target_offset"] is not None:
-            target = present(
-                NavigationTextPointOut(
-                    fragment_id=fragment_ids[row["fragment_idx"]],
-                    offset=row["target_offset"],
-                )
+            target = NavigationTextPointOut(
+                fragment_id=fragment_ids[row["fragment_idx"]],
+                offset=row["target_offset"],
             )
         locations[row["nav_type"]].append(
             ReaderNavigationLocationOut(id=row["node_id"], label=row["label"], target=target)

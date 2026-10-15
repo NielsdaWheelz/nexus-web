@@ -2416,5 +2416,21 @@
     "timing": "after disposable harness/stack deletion",
     "checks": "formatting, lint, generated contracts and type checks passed",
     "generated_outputs": "ordinary ignored shelf/extension assets and .next route types; no disposable fixture cache or test infrastructure restored"
+  },
+  "merge_integration": {
+    "origin": "2026-10-15; pr617 merge request",
+    "main_sha": "7bc7c8a13d7f0c866bef49ad1fc218b603393594",
+    "inspector_head": "764b01b6374dcf6be028082a9338e1ff106dec4a",
+    "resolution": "issue register only; retained inspector/navigation and main postgres entries",
+    "source_review": "independent indexed-diff pass; resourceRef, onDefect and snake_case fields retained; inspector-only app diff unchanged",
+    "web_source_sha256": "1de6a868134358f764bb2cc79552a5b1e5162c9aff754468ae98c717d1e6f32a",
+    "web_source_paths": 728,
+    "static_gate": {
+      "command": "./scripts/test",
+      "exit_code": 0,
+      "migration_head": "0286"
+    },
+    "live_qualification": "historical at recorded candidates; not replayed or relabeled for integration",
+    "production_smoke": "pending normal release"
   }
 }

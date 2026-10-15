@@ -24,19 +24,16 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.errors import InvalidRequestError
 from nexus.schemas import consumption_activity as wire
-from nexus.schemas.presence import Absent, Present, absent, present
-from nexus.services.consumption.handles import EXCLUSION, seal, seal_device
 from nexus.services.contributor_credits import current_media_contributor_rows_sql
 from nexus.services.contributor_taxonomy import try_parse_contributor_handle
 from nexus.services.highlights import count_retained_highlights
 from nexus.services.notes import count_retained_note_blocks
 from nexus.services.resource_graph.links import count_retained_neutral_links
 
-Bucket = Literal["Hour", "Day", "Week", "Month", "Year"]
+Bucket = Literal["Hour", "Day", "Month", "Year"]
 _LABEL = {
     "Hour": "%Y-%m-%d %H:00",
     "Day": "%Y-%m-%d",
-    "Week": "Week of %Y-%m-%d",
     "Month": "%Y-%m",
     "Year": "%Y",
 }
@@ -46,7 +43,6 @@ _MAXIMUM = datetime.max.replace(tzinfo=UTC)
 _CONTEXT = timedelta(minutes=30)
 _QUALIFYING_DAY_MS = 300_000
 _TOP = 25
-_PAGE = 50
 _NEWEST = "started_at DESC, media_id DESC, modality DESC, device_id DESC"
 
 
@@ -81,7 +77,7 @@ def resolve_scope(
     modality: wire.ActivityModality | None,
     media_id: UUID | None,
     contributor_handle: str | None,
-    device_handle: str | None,
+    device_id: str | None,
 ) -> Scope:
     """Civil bounds resolved once to UTC; 400 for invalid ranges, zones or handles."""
     if start is not None and start > end:
@@ -89,7 +85,7 @@ def resolve_scope(
     try:
         ZoneInfo(time_zone)
     except (ZoneInfoNotFoundError, ValueError) as exc:
-        raise InvalidRequestError(message="Invalid timeZone") from exc
+        raise InvalidRequestError(message="Invalid time_zone") from exc
     edges = db.execute(
         text(f"""WITH dates AS (
             SELECT CAST(:start AS date)::timestamp AS local_start,
@@ -119,10 +115,7 @@ def resolve_scope(
         raise InvalidRequestError(message="Invalid Consumption range")
     contributor = try_parse_contributor_handle(contributor_handle) if contributor_handle else None
     if contributor_handle and contributor is None:
-        raise InvalidRequestError(message="Invalid contributorHandle")
-    device_id = (
-        resolve_device(db, viewer_id=viewer_id, handle=device_handle) if device_handle else None
-    )
+        raise InvalidRequestError(message="Invalid contributor_handle")
     return Scope(
         viewer_id=viewer_id,
         start=resolved_start,
@@ -134,17 +127,6 @@ def resolve_scope(
         contributor=contributor,
         device_id=device_id,
     )
-
-
-def resolve_device(db: Session, *, viewer_id: UUID, handle: str) -> str:
-    """The viewer's own device behind a sealed handle; nobody else's devices are scanned."""
-    for device_id in db.scalars(
-        text("SELECT DISTINCT device_id FROM consumption_activity_spans WHERE user_id = :id"),
-        {"id": viewer_id},
-    ):
-        if seal_device(device_id) == handle:
-            return device_id
-    raise InvalidRequestError(message="Invalid deviceHandle")
 
 
 def _filters(scope: Scope, alias: str, *, device: bool = True) -> str:
@@ -239,7 +221,7 @@ def _sessions_sql(scope: Scope) -> str:
                        AS island
             FROM marked
         ), sessions AS (
-            SELECT 'media:' || media_id AS media_ref, media_id, modality, device_id,
+            SELECT media_id, modality, device_id,
                    min(title) AS title,
                    min(clipped_start) FILTER (WHERE in_range) AS started_at,
                    max(clipped_end) FILTER (WHERE in_range) AS ended_at,
@@ -264,7 +246,7 @@ def consumption_stats(db: Session, scope: Scope, bucket: Bucket) -> wire.Consump
     media = _rows(
         db,
         f"""{flagged}
-        SELECT media_id, 'media:' || media_id AS media_ref, min(title) AS title,
+        SELECT media_id, min(title) AS title,
                sum(ms)::bigint AS recorded_ms,
                coalesce(sum(ms) FILTER (WHERE effective), 0)::bigint AS active_ms,
                coalesce(sum(word_forward) FILTER (WHERE effective), 0)::bigint
@@ -360,19 +342,11 @@ def consumption_stats(db: Session, scope: Scope, bucket: Bucket) -> wire.Consump
     ranked = _rows(
         db,
         f"""{_sessions_sql(scope)}
-        SELECT * FROM (
-            SELECT sessions.*, count(*) OVER () AS session_count,
-                   row_number() OVER (ORDER BY {_NEWEST}) AS newest_rank,
-                   row_number() OVER (ORDER BY active_ms DESC, started_at, media_id, modality,
-                                               device_id) AS longest_rank
-            FROM sessions
-        ) ranked
-        WHERE newest_rank <= :page OR longest_rank = 1
-        ORDER BY newest_rank""",
-        params | {"page": _PAGE + 1},
+        SELECT sessions.*, count(*) OVER () AS session_count FROM sessions
+        ORDER BY active_ms DESC, started_at, media_id, modality, device_id LIMIT 1""",
+        params,
     )
-    newest = [row for row in ranked if row["newest_rank"] <= _PAGE + 1]
-    longest = next((row for row in ranked if row["longest_rank"] == 1), None)
+    longest = ranked[0] if ranked else None
 
     # An active exclusion counts the in-range spans it contains, under the same visibility and
     # filters as every other figure.
@@ -381,21 +355,25 @@ def consumption_stats(db: Session, scope: Scope, bucket: Bucket) -> wire.Consump
         f"""{flagged}
         SELECT x.id, x.device_id, x.modality, x.started_at, min(f.title) AS title,
                sum(f.ms)::bigint AS excluded_active_ms
-        FROM consumption_activity_exclusions x
+        FROM (
+            SELECT DISTINCT ON (media_id, modality, device_id, started_at, ended_at) *
+            FROM consumption_activity_exclusions
+            WHERE user_id = :viewer_id AND created_at <= :as_of
+              AND (restored_at IS NULL OR restored_at > :as_of)
+            ORDER BY media_id, modality, device_id, started_at, ended_at, created_at, id
+        ) x
         JOIN flagged f
           ON f.in_range AND f.media_id = x.media_id AND f.modality = x.modality
          AND f.device_id = x.device_id
          AND f.occurred_at >= x.started_at AND f.span_end <= x.ended_at
-        WHERE x.user_id = :viewer_id AND x.created_at <= :as_of
-          AND (x.restored_at IS NULL OR x.restored_at > :as_of)
-        GROUP BY x.id
+        GROUP BY x.id, x.device_id, x.modality, x.started_at
         ORDER BY x.started_at DESC, x.id DESC""",
         params,
     )
     completions = _rows(
         db,
         f"""WITH visible_media AS ({visible_media_ids_cte_sql()})
-        SELECT f.media_id, 'media:' || f.media_id AS media_ref, min(m.title) AS title,
+        SELECT f.media_id, min(m.title) AS title,
                count(*) AS total
         FROM consumption_completion_facts f
         JOIN visible_media vm ON vm.media_id = f.media_id
@@ -471,16 +449,10 @@ def consumption_stats(db: Session, scope: Scope, bucket: Bucket) -> wire.Consump
                 ]
             ),
             devices=devices,
-            sessions=wire.ActivitySessionPageOut(
-                items=[_session(row, summaries) for row in newest[:_PAGE]],
-                next_cursor=_next_cursor(scope, params["as_of"], newest, _PAGE),
-            ),
-            longest_session=present(_session(longest, summaries)) if longest else absent(),
+            longest_session=_session(longest, summaries) if longest else None,
             active_exclusions=[
                 wire.ActiveExclusionOut.model_validate(
-                    row
-                    | {"exclusion_handle": seal(EXCLUSION, row["id"])}
-                    | {"device": summaries[row["device_id"]]}
+                    row | {"device": summaries[row["device_id"]]}
                 )
                 for row in exclusions
             ],
@@ -514,7 +486,7 @@ def session_page(
     if cursor is None:
         as_of, keyset, after = db.scalar(text("SELECT now()")), {}, ""
     else:
-        as_of, keyset = _decode(db, scope, cursor)
+        as_of, keyset = _decode(scope, cursor)
         after = """WHERE (started_at, media_id, modality, device_id)
                    < (:after_start, :after_media, :after_modality, :after_device)"""
     params = _params(scope, as_of)
@@ -562,10 +534,8 @@ def exact_session_exists(
 def _devices(
     db: Session, scope: Scope, params: dict[str, Any]
 ) -> tuple[list[wire.DeviceActivityOut], dict[str, wire.DeviceSummaryOut]]:
-    """Devices seen in range, sealed and labelled "This device", or by classes and first seen.
-
-    Labels that would read alike take ordinals by first seen, then handle.
-    """
+    """Devices seen in range, labelled "This device", or by classes and first seen; labels
+    that would read alike take ordinals by first seen, then id."""
     rows = _rows(
         db,
         f"""{_flagged_sql(scope)}
@@ -582,7 +552,6 @@ def _devices(
     )
     zone = ZoneInfo(scope.time_zone)
     for row in rows:
-        row["device_handle"] = seal_device(row["device_id"])
         row["is_current"] = row["device_id"] == scope.current_device_id
         first_seen = row["first_seen_at"].astimezone(zone).date()
         classes = " + ".join(row["classes"])
@@ -592,7 +561,7 @@ def _devices(
     for label in {row["label"] for row in rows} - {"This device"}:
         alike = sorted(
             (row for row in rows if row["label"] == label),
-            key=lambda row: (row["first_seen_at"], row["device_handle"]),
+            key=lambda row: (row["first_seen_at"], row["device_id"]),
         )
         for ordinal, row in enumerate(alike, start=1):
             row["label"] = f"{label} · {ordinal}" if len(alike) > 1 else label
@@ -626,10 +595,10 @@ def _session(
 
 def _next_cursor(
     scope: Scope, as_of: datetime, rows: list[dict[str, Any]], limit: int
-) -> Absent | Present[str]:
+) -> str | None:
     """A cursor after the page's last row, when ``rows`` holds one more than the page."""
     if len(rows) <= limit:
-        return absent()
+        return None
     last = rows[limit - 1]
     payload = {
         "a": as_of.isoformat(),
@@ -637,13 +606,13 @@ def _next_cursor(
         "s": last["started_at"].isoformat(),
         "m": str(last["media_id"]),
         "o": last["modality"],
-        "d": seal_device(last["device_id"]),
+        "d": last["device_id"],
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    return present(base64.urlsafe_b64encode(raw).rstrip(b"=").decode())
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
 
-def _decode(db: Session, scope: Scope, cursor: str) -> tuple[datetime, dict[str, Any]]:
+def _decode(scope: Scope, cursor: str) -> tuple[datetime, dict[str, Any]]:
     """The snapshot and keyset a cursor names; 400 when malformed or minted for another query."""
     try:
         value = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
@@ -653,9 +622,9 @@ def _decode(db: Session, scope: Scope, cursor: str) -> tuple[datetime, dict[str,
             "after_start": datetime.fromisoformat(value["s"]),
             "after_media": UUID(value["m"]),
             "after_modality": value["o"],
-            "after_device": resolve_device(db, viewer_id=scope.viewer_id, handle=value["d"]),
+            "after_device": str(value["d"]),
         }
-    except (ValueError, TypeError, KeyError, InvalidRequestError) as exc:
+    except (ValueError, TypeError, KeyError) as exc:
         raise InvalidRequestError(message="Invalid sessions cursor") from exc
 
 

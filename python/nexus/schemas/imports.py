@@ -1,6 +1,6 @@
 """Imports workspace wire contracts (`docs/modules/imports.md`).
 
-One import is either an upload obligation (`upload:<handle>`) or visible media
+One import is either an upload obligation (`upload:<session id>`) or visible media
 with a recorded source attempt or metadata job (`media:<uuid>`). A published upload keeps
 its upload identity, so exactly one wire row exists per import for its whole
 life. Every model here is strict (`extra="forbid"`) and every union is
@@ -30,9 +30,8 @@ from nexus.schemas.import_history import (
     Stage,
 )
 from nexus.schemas.import_refs import ImportRef
-from nexus.schemas.media import SourceProgress
+from nexus.schemas.media_sources import SourceProgress
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
-from nexus.schemas.presence import Presence, Present
 from nexus.schemas.source_issues import SourceIssue
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 
@@ -64,9 +63,9 @@ ModeledRecoveryRestriction = Literal[
 class _ImportStateActiveFields(BaseModel):
     kind: Literal["Active"] = "Active"
     status: Literal["Queued", "Processing"]
-    waiting_reason: Presence[WaitingReason]
-    progress: Presence[SourceProgress]
-    next_retry_at: Presence[datetime]
+    waiting_reason: WaitingReason | None
+    progress: SourceProgress | None
+    next_retry_at: datetime | None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -78,7 +77,7 @@ class ImportStateActive(_ImportStateActiveFields):
 class ImportStateNeedsAttention(BaseModel):
     kind: Literal["NeedsAttention"] = "NeedsAttention"
     stage: Stage
-    failure_code: Presence[ImportFailureCode]
+    failure_code: ImportFailureCode | None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -97,7 +96,6 @@ ImportState = Annotated[
 
 class RetryUploadOffer(BaseModel):
     kind: Literal["RetryUpload"] = "RetryUpload"
-    expected_generation: int = Field(ge=1)
     input: Literal["ChooseOriginalFile"] = "ChooseOriginalFile"
 
     model_config = ConfigDict(extra="forbid")
@@ -142,7 +140,7 @@ class SourceImportStateActive(_ImportStateActiveFields):
 class SourceImportStateNeedsAttention(BaseModel):
     kind: Literal["NeedsAttention"] = "NeedsAttention"
     stage: SourceStage
-    failure_code: Presence[SafeFailureCode]
+    failure_code: SafeFailureCode | None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -154,7 +152,7 @@ class SearchImportStateActive(_ImportStateActiveFields):
 class SearchImportStateNeedsAttention(BaseModel):
     kind: Literal["NeedsAttention"] = "NeedsAttention"
     stage: Literal["Index"] = "Index"
-    failure_code: Presence[SafeFailureCode]
+    failure_code: SafeFailureCode | None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -164,8 +162,8 @@ class SourceImportObligation(BaseModel):
         SourceImportStateActive | SourceImportStateNeedsAttention | ImportStateComplete,
         Field(discriminator="kind"),
     ]
-    recovery: Presence[SourceRecoveryOffer]
-    unavailable_reason: Presence[ModeledRecoveryRestriction]
+    recovery: SourceRecoveryOffer | None
+    unavailable_reason: ModeledRecoveryRestriction | None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -173,8 +171,8 @@ class SourceImportObligation(BaseModel):
     def _one_recovery_answer(self) -> Self:
         # justify-service-invariant-check: "the current obligation has exactly one
         # recovery answer" relates two independently typed fields, which the field
-        # types cannot express; the owner policy decides which one is Present.
-        if isinstance(self.recovery, Present) and isinstance(self.unavailable_reason, Present):
+        # types cannot express; the owner policy decides which one is set.
+        if self.recovery is not None and self.unavailable_reason is not None:
             raise ValueError("an import offers recovery or refuses it, never both")
         return self
 
@@ -184,24 +182,24 @@ class SearchImportObligation(BaseModel):
         SearchImportStateActive | SearchImportStateNeedsAttention | ImportStateComplete,
         Field(discriminator="kind"),
     ]
-    recovery: Presence[RepairSearchOffer]
-    unavailable_reason: Presence[Literal["NotOwner"]]
+    recovery: RepairSearchOffer | None
+    unavailable_reason: Literal["NotOwner"] | None
 
     model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def _one_recovery_answer(self) -> Self:
         # justify-service-invariant-check: the owner policy must not simultaneously
-        # offer a repair and refuse it; Presence fields cannot express that relation.
-        if isinstance(self.recovery, Present) and isinstance(self.unavailable_reason, Present):
+        # offer a repair and refuse it; nullable fields cannot express that relation.
+        if self.recovery is not None and self.unavailable_reason is not None:
             raise ValueError("a search obligation offers recovery or refuses it, never both")
         return self
 
 
 class ImportObligations(BaseModel):
-    source: Presence[SourceImportObligation]
-    search: Presence[SearchImportObligation]
-    metadata: Presence[MetadataEnrichmentView]
+    source: SourceImportObligation | None
+    search: SearchImportObligation | None
+    metadata: MetadataEnrichmentView | None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -223,15 +221,15 @@ class ImportReadiness(BaseModel):
 class ImportItem(BaseModel):
     ref: ImportRef
     title: NonemptyString
-    original_filename: Presence[NonemptyString]
+    original_filename: NonemptyString | None
     media_kind: MediaKind
-    source_label: Presence[NonemptyString]
-    media_ref: Presence[MediaResourceRef]
+    source_label: NonemptyString | None
+    media_ref: MediaResourceRef | None
     readiness: ImportReadiness
     state: ImportState
     accepted_at: datetime
     updated_at: datetime
-    matched_event: Presence[HistoryEntry]
+    matched_event: HistoryEntry | None
     capabilities: Capabilities
     obligations: ImportObligations
     source_issue_count: int = Field(ge=0, strict=True)
@@ -243,7 +241,7 @@ class ImportPage(BaseModel):
     observed_at: datetime
     matched_count: int = Field(ge=0)
     items: list[ImportItem]
-    next_cursor: Presence[str]
+    next_cursor: str | None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -253,7 +251,7 @@ class ImportPage(BaseModel):
             raise ValueError("import page returned more items than it matched")
         if len({item.ref for item in self.items}) != len(self.items):
             raise ValueError("import page returned the same import twice")
-        if isinstance(self.next_cursor, Present) and not self.items:
+        if self.next_cursor is not None and not self.items:
             raise ValueError("import page continues a page that returned no items")
         return self
 
@@ -277,15 +275,13 @@ class ImportSourceIssues(BaseModel):
 class ImportDetail(BaseModel):
     item: ImportItem
     history_coverage: HistoryCoverage
-    source_issues: Presence[ImportSourceIssues]
+    source_issues: ImportSourceIssues | None
 
     model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def _source_issue_count(self) -> Self:
-        count = (
-            len(self.source_issues.value.issues) if isinstance(self.source_issues, Present) else 0
-        )
+        count = len(self.source_issues.issues) if self.source_issues is not None else 0
         if self.item.source_issue_count != count:
             raise ValueError("import source issues must match the current import count")
         return self
@@ -293,7 +289,7 @@ class ImportDetail(BaseModel):
 
 class HistoryPage(BaseModel):
     entries: list[HistoryEntry]
-    next_cursor: Presence[str]
+    next_cursor: str | None
 
     model_config = ConfigDict(extra="forbid")
 

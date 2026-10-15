@@ -203,8 +203,13 @@ explicit zoom cancels pending/held navigation before changing scale; saved-zoom
 restoration does not. cancellation retires active positioning synchronously.
 transient find matches and opaque pdf destinations use measured-placement reflow;
 their commands are not replayed passively. links and `#page=`/`#nameddest`
-destinations route through `inspect`; a file that fails to open is retried once
-with a fresh url from the source; the hosted pane asks for the width that shows
+destinations route through `inspect`; a file is a url pdf.js fetches (it sends
+same-origin cookies) or the host's own byte-range reads, fed to pdf.js as a range
+transport the way pdf.js reads a url: `bytes=0-` streams the whole file in and a chunk
+needed before the stream reaches it is read by range (the public reader's carry no
+credentials); a file that fails to open is retried once with a fresh one from the source,
+and a range read that fails later ends the open with Retry (pdf.js would wait for it
+forever); the hosted pane asks for the width that shows
 the widest page at scale 1 (or at its zoom); positions locate pages by their boxes
 (pdf.js's current page lags a scroll); marks are per-page overlay rects
 (`data-reader-mark`, class `hl-<colour>`) under the text layer, hit-tested in page

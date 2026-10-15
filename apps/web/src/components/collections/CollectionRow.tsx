@@ -67,18 +67,18 @@ function renderExceptionalStatus(status: ExceptionalStatus): ReactNode {
 
 function RowContextualMenu({
   sections,
-  actionSubject,
+  resourceRef,
   label,
   reorder,
   reorderHintId,
 }: {
   readonly sections: readonly ContextActionSection[];
-  readonly actionSubject: CollectionRowView["actionSubject"];
+  readonly resourceRef: CollectionRowView["resourceRef"];
   readonly label: string;
   readonly reorder?: SortableActivatorProps;
   readonly reorderHintId: string;
 }) {
-  if (!actionSubject && sections.every((section) => section.actions.length === 0)) {
+  if (!resourceRef && sections.every((section) => section.actions.length === 0)) {
     return null;
   }
   return (
@@ -91,7 +91,7 @@ function RowContextualMenu({
       ) : null}
       <ContextualActionMenu
         sections={sections}
-        actionSubject={actionSubject ?? undefined}
+        resourceRef={resourceRef ?? undefined}
         label={label}
         triggerRef={reorder?.setActivatorNodeRef}
         renderTrigger={
@@ -182,14 +182,14 @@ export default function CollectionRow({
 
   const supportParts: ReactNode[] = [];
   const remainingTime =
-    row.activity.kind === "Present" && row.activity.value.kind === "RemainingTime"
-      ? collectionActivityText(row.activity.value)
+    row.activity !== null && row.activity.kind === "RemainingTime"
+      ? collectionActivityText(row.activity)
       : null;
-  const date = row.publicationDate.kind === "Present" ? (
-    <time key="date" className={styles.year} dateTime={row.publicationDate.value}>
+  const date = row.publicationDate !== null ? (
+    <time key="date" className={styles.year} dateTime={row.publicationDate}>
       {mediaLayout
-        ? collectionPublicationYear(row.publicationDate.value)
-        : formatCollectionPublicationDate(row.publicationDate.value)}
+        ? collectionPublicationYear(row.publicationDate)
+        : formatCollectionPublicationDate(row.publicationDate)}
     </time>
   ) : null;
   const contributors = row.contributors.length > 0 ? (
@@ -203,10 +203,10 @@ export default function CollectionRow({
   ) : null;
   if (contributors) supportParts.push(contributors);
   if (date) supportParts.push(date);
-  if (row.context.kind === "Present" && !mediaLayout) {
+  if (row.context !== null && !mediaLayout) {
     supportParts.push(
       <span key="context" className={styles.context}>
-        {renderContext(row.context.value)}
+        {renderContext(row.context)}
       </span>,
     );
   }
@@ -245,17 +245,17 @@ export default function CollectionRow({
     </span>
   ) : bibliography;
   const evidence =
-    mediaLayout && row.context.kind === "Present"
-      ? <span className={styles.context}>{renderContext(row.context.value)}</span>
+    mediaLayout && row.context !== null
+      ? <span className={styles.context}>{renderContext(row.context)}</span>
       : undefined;
 
   const activity =
-    row.activity.kind === "Present" && row.activity.value.kind !== "RemainingTime"
-      ? collectionActivityText(row.activity.value)
+    row.activity !== null && row.activity.kind !== "RemainingTime"
+      ? collectionActivityText(row.activity)
       : null;
   const exceptionalStatus =
-    row.exceptionalStatus.kind === "Present"
-      ? renderExceptionalStatus(row.exceptionalStatus.value)
+    row.exceptionalStatus !== null
+      ? renderExceptionalStatus(row.exceptionalStatus)
       : undefined;
   const failed = mediaLayout && Boolean(exceptionalStatus);
   const status = exceptionalStatus || activity ? (
@@ -301,13 +301,13 @@ export default function CollectionRow({
     {
       id: "View",
       actions:
-        rowActionsAvailable && !row.actionSubject ? (row.flatActions ?? []) : [],
+        rowActionsAvailable && !row.resourceRef ? (row.flatActions ?? []) : [],
     },
   ];
   const actions = rowActionsAvailable ? (
     <RowContextualMenu
       sections={sections}
-      actionSubject={row.actionSubject}
+      resourceRef={row.resourceRef}
       label={menuLabel}
       reorder={reorder}
       reorderHintId={reorderHintId}

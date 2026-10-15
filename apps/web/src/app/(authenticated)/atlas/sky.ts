@@ -16,20 +16,20 @@ export interface DomePoint {
 
 export type Magnitude = "bright" | "glimmer" | "faint";
 
-export interface Star {
-  readonly layer: "corpus" | "readings";
+export type Star = {
   readonly id: string;
   readonly at: DomePoint;
   readonly magnitude: Magnitude;
   readonly nebula: boolean;
-  readonly corpus?: Schema<"StarOut">;
-  readonly folio?: OracleReadingSummary;
-}
+} & (
+  | { readonly layer: "corpus"; readonly work: Schema<"StarOut"> }
+  | { readonly layer: "readings"; readonly folio: OracleReadingSummary }
+);
 
 const NEBULA_RADIAL = 0.96;
 
 /** 32-bit FNV-1a: stable, fast, not cryptographic. */
-export function fnv1a(input: string): number {
+function fnv1a(input: string): number {
   let hash = 0x811c9dc5;
   for (let i = 0; i < input.length; i++) {
     hash ^= input.charCodeAt(i);
@@ -40,24 +40,24 @@ export function fnv1a(input: string): number {
 
 const unit = (key: string) => fnv1a(key) / 0x100000000;
 
-export function corpusStar(star: Schema<"StarOut">): Star {
-  const magnitude =
-    star.magnitude >= 5 ? "bright" : star.magnitude >= 1 ? "glimmer" : "faint";
-  const placed = star.x !== null && star.y !== null;
-  const dx = (star.x ?? 0.5) - 0.5;
-  const dy = 0.5 - (star.y ?? 0.5);
+export function corpusStar(work: Schema<"StarOut">): Star {
+  const placed = work.x !== null && work.y !== null;
+  const dx = (work.x ?? 0.5) - 0.5;
+  const dy = 0.5 - (work.y ?? 0.5);
+  const lit =
+    work.magnitude >= 5 ? "bright" : work.magnitude >= 1 ? "glimmer" : "faint";
   return {
     layer: "corpus",
-    id: star.media_id,
-    corpus: star,
-    magnitude: placed ? magnitude : "faint",
+    id: work.media_id,
+    work,
+    magnitude: placed ? lit : "faint",
     nebula: !placed,
     at: placed
       ? {
           angle: Math.atan2(dx, dy),
           radial: 0.06 + 0.84 * Math.SQRT2 * Math.hypot(dx, dy),
         }
-      : { angle: unit(star.media_id) * 2 * Math.PI, radial: NEBULA_RADIAL },
+      : { angle: unit(work.media_id) * 2 * Math.PI, radial: NEBULA_RADIAL },
   };
 }
 
@@ -91,13 +91,9 @@ export interface Screen {
   readonly camera: number;
 }
 
-/** Size the canvas backing store to its frame at the device pixel ratio. */
-export function fitCanvas(
-  canvas: HTMLCanvasElement,
-  frame: HTMLElement,
-  camera: number,
-): Screen {
-  const rect = frame.getBoundingClientRect();
+/** Size the canvas backing store to its parent at the device pixel ratio. */
+export function fitCanvas(canvas: HTMLCanvasElement, camera: number): Screen {
+  const rect = canvas.parentElement!.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   const w = Math.max(320, Math.floor(rect.width));
   const h = Math.max(320, Math.floor(rect.height));
@@ -108,20 +104,32 @@ export function fitCanvas(
     canvas.style.height = `${h}px`;
     canvas.getContext("2d")?.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
-  return {
-    w,
-    h,
-    cx: w / 2,
-    cy: h / 2,
-    radius: Math.min(w, h) / 2 - 24,
-    camera,
-  };
+  const radius = Math.min(w, h) / 2 - 24;
+  return { w, h, cx: w / 2, cy: h / 2, radius, camera };
 }
 
 export function toScreen(at: DomePoint, s: Screen): { x: number; y: number } {
   const theta = at.angle - s.camera;
   const r = at.radial * s.radius;
   return { x: s.cx + r * Math.sin(theta), y: s.cy - r * Math.cos(theta) };
+}
+
+/** The star nearest to a canvas point, within `radius` css pixels. */
+export function nearestStar(
+  stars: readonly Star[],
+  s: Screen,
+  x: number,
+  y: number,
+  radius: number,
+): Star | null {
+  let nearest: Star | null = null;
+  let best = radius ** 2;
+  for (const star of stars) {
+    const pos = toScreen(star.at, s);
+    const distance = (pos.x - x) ** 2 + (pos.y - y) ** 2;
+    if (distance < best) [nearest, best] = [star, distance];
+  }
+  return nearest;
 }
 
 /** Prim's tree over a constellation's positioned members, as id pairs. */
@@ -153,18 +161,11 @@ export function spanningTree(
   return pairs;
 }
 
-const STYLE: Record<
-  Magnitude,
-  { core: number; glow: number; alpha: number; rgb: string }
-> = {
-  bright: { core: 2.4, glow: 13, alpha: 0.55, rgb: "243, 233, 208" }, // --oracle-cream
-  glimmer: { core: 1.6, glow: 9, alpha: 0.3, rgb: "195, 154, 77" }, // --oracle-gold
-  faint: { core: 1.2, glow: 6, alpha: 0.15, rgb: "107, 42, 42" }, // --oracle-maroon
-};
-const CORE_ALPHA: Record<Magnitude, number> = {
-  bright: 1,
-  glimmer: 0.75,
-  faint: 0.35,
+// core radius, glow radius, glow alpha, core alpha, rgb (--oracle-cream, -gold, -maroon)
+const STYLE: Record<Magnitude, [number, number, number, number, string]> = {
+  bright: [2.4, 13, 0.55, 1, "243, 233, 208"],
+  glimmer: [1.6, 9, 0.3, 0.75, "195, 154, 77"],
+  faint: [1.2, 6, 0.15, 0.35, "107, 42, 42"],
 };
 const EDGE_RGB = { context: "195, 154, 77", contradicts: "138, 82, 54" };
 
@@ -257,12 +258,12 @@ export function drawSky(
     (a, b) => Number(a.nebula) - Number(b.nebula),
   );
   for (const star of ordered) {
-    const style = STYLE[star.magnitude];
+    const [core, glowSize, alpha, coreAlpha, rgb] = STYLE[star.magnitude];
     const pos = toScreen(star.at, s);
     const twinkle = 0.85 + 0.15 * Math.sin(fnv1a(star.id) * 0.37 + time * 0.5);
     const focus = star.id === scene.hovered ? 1.3 : 1;
     const glowRadius =
-      style.glow *
+      glowSize *
       (star.layer === "readings" ? 1.5 : star.nebula ? 0.7 : 1) *
       focus;
     const glow = ctx.createRadialGradient(
@@ -273,18 +274,15 @@ export function drawSky(
       pos.y,
       glowRadius,
     );
-    glow.addColorStop(
-      0,
-      `rgba(${style.rgb}, ${style.alpha * twinkle * focus})`,
-    );
-    glow.addColorStop(1, `rgba(${style.rgb}, 0)`);
+    glow.addColorStop(0, `rgba(${rgb}, ${alpha * twinkle * focus})`);
+    glow.addColorStop(1, `rgba(${rgb}, 0)`);
     ctx.fillStyle = glow;
     ctx.beginPath();
     ctx.arc(pos.x, pos.y, glowRadius, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = `rgba(${style.rgb}, ${CORE_ALPHA[star.magnitude] * twinkle})`;
+    ctx.fillStyle = `rgba(${rgb}, ${coreAlpha * twinkle})`;
     ctx.beginPath();
-    ctx.arc(pos.x, pos.y, style.core * focus, 0, Math.PI * 2);
+    ctx.arc(pos.x, pos.y, core * focus, 0, Math.PI * 2);
     ctx.fill();
   }
   if (scene.stars.some((star) => star.nebula)) {

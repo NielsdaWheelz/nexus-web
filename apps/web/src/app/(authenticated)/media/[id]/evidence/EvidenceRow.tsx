@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ExternalLink, LocateFixed, MessageSquare } from "lucide-react";
 import HtmlRenderer from "@/components/HtmlRenderer";
-import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
+import AnnotationNoteEditor from "@/components/notes/AnnotationNoteEditor";
 import ContextEdgeMenu from "@/components/resources/ContextEdgeMenu";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import MachineText from "@/components/ui/MachineText";
@@ -16,7 +16,7 @@ import { connectionMutationErrorMessage, mutateConnection, type ConnectionMutati
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import ConnectionCreation from "@/components/connections/ConnectionCreation";
 import type { ResourceActivation } from "@/lib/resources/activation";
-import { fetchResourceSurface } from "@/lib/resourceSurface/api";
+import { fetchNote } from "@/lib/notes/api";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import type { AnnotationVerbs } from "../useAnnotationVerbs";
@@ -29,7 +29,7 @@ type EvidenceObject = Schema<"ReaderEvidenceDirectlyAttachedOut">["object"];
 export interface EvidenceActions {
   readonly verbs: Pick<
     AnnotationVerbs,
-    "noteEdit" | "hovered" | "hover" | "closeNoteEdit" | "noteAccepted" | "noteMutation"
+    "noteEdit" | "hovered" | "hover" | "closeNoteEdit"
   >;
   readonly sources: ReadonlyMap<string, SourceTarget>;
   readonly open: (
@@ -81,7 +81,7 @@ function ObjectActions({
         <ExternalLink size={14} aria-hidden="true" />
       </button>
       <ResourceActionMenu
-        actionSubject={{ ref: assumeCanonicalResourceRef(object.ref) }}
+        resourceRef={assumeCanonicalResourceRef(object.ref)}
         label={`Actions for ${object.label}`}
       />
       {remove ? (
@@ -126,24 +126,11 @@ function NoteEditorHost({
     if (typeof currentNote.current === "object" && currentNote.current?.note_block_id === noteBlockId) return;
     let live = true;
     setNote("loading");
-    void fetchResourceSurface(`note_block:${noteBlockId}`).then(
-      ({ source }) => {
+    void fetchNote(noteBlockId).then(
+      (row) => {
         if (!live) return;
-        if (source.item.ref !== `note_block:${noteBlockId}` || source.content.kind !== "note_body") {
-          // justify-defect: a note surface projects the requested note body.
-          throw new TypeError("Link note surface has the wrong identity or content");
-        }
-        const { body, links } = source.item.versionByLane;
-        if (body === undefined || links === undefined) {
-          // justify-defect: an editable note exposes both owned version lanes.
-          throw new TypeError("Link note surface is missing note versions");
-        }
-        setNote({
-          note_block_id: noteBlockId,
-          body_pm_json: source.content.bodyPmJson,
-          body_text: source.content.bodyText,
-          version_by_lane: { body, links },
-        });
+        const { body_pm_json, body_text, body_version } = row;
+        setNote({ note_block_id: noteBlockId, body_pm_json, body_text, body_version });
       },
     ).catch((error: unknown) => {
       if (!live || handleUnauthenticatedApiError(error)) return;
@@ -163,12 +150,11 @@ function NoteEditorHost({
       ) : note === "failed" ? (
         <div role="alert">The note couldn’t be loaded. <button type="button" className={styles.textButton} onClick={() => setRetry((value) => value + 1)}>Retry</button></div>
       ) : (
-        <HighlightNoteEditor
-          target={{ ...target, ownerKey: `${target.kind}:${target.id}` }}
+        <AnnotationNoteEditor
+          target={target}
           note={note}
           editable
-          onEditAccepted={target.kind === "highlight" ? verbs.noteAccepted : undefined}
-          onMutationStarted={target.kind === "highlight" ? verbs.noteMutation : undefined}
+          focusRequest={verbs.noteEdit?.kind === target.kind && verbs.noteEdit.id === target.id ? verbs.noteEdit.request : 0}
           onSaved={(_targetId, saved) => { setNote(saved); actions.refresh(); }}
           onDetached={() => { setNote(null); actions.refresh(); }}
           onOpenLink={actions.openLink}
@@ -232,7 +218,7 @@ export default function EvidenceRow({
         <span className={styles.kind}>{kind}</span>
         {highlight ? (
           <ResourceActionMenu
-            actionSubject={{ ref: assumeCanonicalResourceRef(`highlight:${highlight.highlight_id}`) }}
+            resourceRef={assumeCanonicalResourceRef(`highlight:${highlight.highlight_id}`)}
             label="Highlight actions"
           />
         ) : null}
@@ -261,15 +247,15 @@ export default function EvidenceRow({
         <MachineText variant="inline" origin={{ label: item.origin === "discovery" ? "Connection discovery" : "Assistant" }}>
           {item.rationale}
         </MachineText>
-      ) : item.kind !== "SourceReference" && !highlight && item.excerpt.kind === "Present" && item.excerpt.value !== item.label ? (
-        <p className={styles.excerpt}>{item.excerpt.value}</p>
+      ) : item.kind !== "SourceReference" && !highlight && item.excerpt !== null && item.excerpt !== item.label ? (
+        <p className={styles.excerpt}>{item.excerpt}</p>
       ) : null}
       {"creation" in item && item.creation ? <ConnectionCreation creation={item.creation} /> : null}
       {"mutation" in item && item.mutation?.kind === "dismiss_discovery" ? <p className={styles.kind}>Dismissing hides this link and prevents rediscovery of this pair.</p> : null}
       {highlight && !editing
         ? notes.map((note) => (
             <p key={note.note_block_id} className={styles.note}>
-              {note.excerpt.kind === "Present" ? note.excerpt.value : ""}
+              {note.excerpt !== null ? note.excerpt : ""}
             </p>
           ))
         : null}
@@ -282,7 +268,7 @@ export default function EvidenceRow({
       {item.kind === "SourceReference"
         ? item.target_refs.map((ref) => {
             const target = actions.sources.get(ref)!;
-            const name = target.label.kind === "Present" ? target.label.value : null;
+            const name = target.label;
             const text = target.content.kind === "Unavailable" ? null : target.content.text;
             const expandable = text !== null && text.length > 240;
             const expanded = expandedSources.has(ref);

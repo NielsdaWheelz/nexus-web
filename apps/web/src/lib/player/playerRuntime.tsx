@@ -8,8 +8,8 @@
  * Every play starts from the server's resume point: another media loads its fresh descriptor,
  * and the loaded one resumes through its engine, which asks the server unless it holds a newer
  * sample itself. Loads run one at a time, last request winning, so a replay never reads a
- * position older than this device's own last write. The engine that hears an end settles it;
- * the server picks the next.
+ * position older than this device's own last write. The engine that hears an end settles it and
+ * plays the next audio row after the ended one, read from the Lectern before the settle.
  */
 
 import {
@@ -23,18 +23,15 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { apiFetch, decodeApiPayload } from "@/lib/api/client";
-import { absent, present, type Presence } from "@/lib/api/presence";
-import type { ApiJson } from "@/lib/api/wire";
+import { apiFetch } from "@/lib/api/client";
+import type { ApiJson, Schema } from "@/lib/api/wire";
+import { holdProgress, settleNaturalEnd } from "@/lib/consumption/state";
 import {
-  playerDescriptorFromWire,
-  type ChapterOut,
+  lecternItems,
+  lecternNext,
+  useLectern,
   type LecternItem,
-  type ListeningPosition,
-  type MediaId,
-  type PlayerDescriptor,
-} from "@/lib/lectern/contract";
-import { useLectern } from "@/lib/lectern/LecternProvider";
+} from "@/lib/lectern/lectern";
 import { createBrowserEngine } from "@/lib/player/browserEngine";
 import {
   createNativeEngine,
@@ -59,10 +56,11 @@ export interface PreviewAudioDescriptor {
   readonly source: string;
   readonly sourceHref: string;
   readonly audioUrl: string;
-  readonly imageUrl: Presence<MediaImageProxySrc>;
-  readonly durationMs: Presence<number>;
+  readonly imageUrl: MediaImageProxySrc | null;
+  readonly durationMs: number | null;
 }
 
+export type PlayerDescriptor = Schema<"PlayerDescriptor">;
 export type PlayerSource =
   | { readonly kind: "Episode"; readonly descriptor: PlayerDescriptor }
   | { readonly kind: "Preview"; readonly descriptor: PreviewAudioDescriptor };
@@ -123,12 +121,10 @@ export interface Engine {
   /** This session's override; null returns to the podcast's or the device's setting. */
   setShortenPauses(on: boolean | null): void;
   setShortenPausesDefault(on: boolean): void;
-  /** An operational refusal rejects with action feedback; its consumption command must not send. */
-  prepareProgressFence(mediaId: MediaId): Promise<void>;
-  /** An authority outage keeps the fence and local retry feedback; defects reject. */
-  reconcileProgressFence(mediaId: MediaId): Promise<void>;
-  /** Install committed reset authority; a bridge outage stays local and must not retry reset. */
-  adopt(mediaId: MediaId, position: ListeningPosition): Promise<void>;
+  /** An operational refusal rejects with action feedback; its consumption write must not send. */
+  prepareProgressFence(mediaId: string): Promise<void>;
+  /** Reads the server's position; an authority outage keeps the fence and local retry feedback. */
+  reconcileProgressFence(mediaId: string): Promise<void>;
   dismiss(): Promise<void>;
   close(): void;
 }
@@ -151,11 +147,11 @@ export interface PlayerTimeline {
   readonly positionMs: number;
   readonly durationMs: number;
   readonly bufferedMs: number;
-  readonly chapter: ChapterOut | null;
+  readonly chapter: Schema<"ChapterOut"> | null;
 }
 export interface PreviewAudioPosition {
   readonly positionMs: number;
-  readonly durationMs: Presence<number>;
+  readonly durationMs: number | null;
 }
 export interface PlayerCommands {
   playAudio(descriptor: PlayerDescriptor): void;
@@ -192,7 +188,7 @@ export function playingEpisode(state: PlayerState): PlayerDescriptor | null {
 
 /** The server's current descriptor; null when the server is slow or unreachable. */
 async function freshDescriptor(
-  mediaId: MediaId,
+  mediaId: string,
 ): Promise<PlayerDescriptor | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FRESH_DESCRIPTOR_BOUND_MS);
@@ -201,11 +197,7 @@ async function freshDescriptor(
       `/api/media/${mediaId}/player`,
       { signal: controller.signal, cache: "no-store" },
     );
-    return decodeApiPayload(
-      body,
-      ({ data }) => playerDescriptorFromWire(data),
-      "GET player",
-    );
+    return body.data;
   } catch {
     return null;
   } finally {
@@ -213,23 +205,10 @@ async function freshDescriptor(
   }
 }
 
-/** The first audio row after the current media's row (from the head when it has none). */
-function lecternNext(
-  items: readonly LecternItem[],
-  current: PlayerDescriptor | null,
-) {
-  const at = items.findIndex(
-    (item) => item.mediaSummary.mediaId === current?.mediaId,
-  );
-  for (const item of items.slice(at + 1)) {
-    if (
-      item.activation.kind === "FooterAudio" &&
-      item.mediaSummary.mediaId !== current?.mediaId
-    ) {
-      return item.activation.descriptor;
-    }
-  }
-  return null;
+/** The first audio row after `mediaId`'s row (from the head when it has none). */
+function nextAudio(items: readonly LecternItem[], mediaId: string | null) {
+  const activation = lecternNext(items, mediaId, "FooterAudio")?.activation;
+  return activation?.kind === "FooterAudio" ? activation.descriptor : null;
 }
 
 export function GlobalPlayerProvider({
@@ -257,7 +236,13 @@ export function GlobalPlayerProvider({
     const created = androidShell
       ? createNativeEngine(accountId, setResponding)
       : createBrowserEngine({
-          settle: (input) => lecternRef.current.settleNaturalEnd(input),
+          settle: settleNaturalEnd,
+          // Read before the settle removes the ended row; none when it had no row.
+          next: (mediaId) => {
+            const items = lecternItems(lecternRef.current);
+            const onLectern = items.some((item) => item.media_summary.media_id === mediaId);
+            return onLectern ? nextAudio(items, mediaId) : null;
+          },
           fresh: freshDescriptor,
           deviceClass: () => (mobileRef.current ? "Mobile" : "Desktop"),
           onPrevious: () => navigation.current.previous(),
@@ -285,14 +270,14 @@ export function GlobalPlayerProvider({
   // ---- device history ----
   const back = useRef<PlayerDescriptor[]>([]);
   const forward = useRef<PlayerDescriptor[]>([]);
-  const navigatingTo = useRef<MediaId | null>(null);
-  const requested = useRef<MediaId | null>(null);
+  const navigatingTo = useRef<string | null>(null);
+  const requested = useRef<string | null>(null);
   const shown = useRef<PlayerDescriptor | null>(null);
   useEffect(() => {
     const before = shown.current;
     shown.current = episode;
-    if (before === null || before.mediaId === episode?.mediaId) return;
-    if (episode !== null && episode.mediaId === navigatingTo.current) {
+    if (before === null || before.media_id === episode?.media_id) return;
+    if (episode !== null && episode.media_id === navigatingTo.current) {
       navigatingTo.current = null;
       return;
     }
@@ -302,21 +287,20 @@ export function GlobalPlayerProvider({
     if (
       androidShell &&
       episode !== null &&
-      episode.mediaId !== requested.current
+      episode.media_id !== requested.current
     ) {
-      lecternRef.current.revalidate();
+      lecternRef.current.refetch();
     }
   }, [androidShell, episode]);
   useEffect(() => {
-    if (androidShell && s.phase === "Ended") lecternRef.current.revalidate();
+    if (androidShell && s.phase === "Ended") lecternRef.current.refetch();
   }, [androidShell, s.phase]);
 
-  const lecternItems =
-    lectern.resource.status === "ready" ? lectern.resource.data.items : null;
+  const rows = lecternItems(lectern);
   // Forward history changes only with a source change, so `episode` covers it.
   const nextUp = useMemo(
-    () => forward.current.at(-1) ?? lecternNext(lecternItems ?? [], episode),
-    [episode, lecternItems],
+    () => forward.current.at(-1) ?? nextAudio(rows, episode?.media_id ?? null),
+    [episode, rows],
   );
 
   // ---- loads: one at a time, the latest request wins ----
@@ -335,10 +319,10 @@ export function GlobalPlayerProvider({
     (descriptor: PlayerDescriptor) => {
       const target = engineRef.current;
       if (target === null) return;
-      requested.current = descriptor.mediaId;
+      requested.current = descriptor.media_id;
       const mine = latest.current + 1;
       enqueue(async () => {
-        const fresh = await freshDescriptor(descriptor.mediaId);
+        const fresh = await freshDescriptor(descriptor.media_id);
         if (mine === latest.current) await target.load(fresh ?? descriptor);
       });
     },
@@ -353,13 +337,13 @@ export function GlobalPlayerProvider({
       return source?.kind === "Episode" ? source.descriptor : null;
     };
     const navigate = (target: PlayerDescriptor) => {
-      navigatingTo.current = target.mediaId;
+      navigatingTo.current = target.media_id;
       play(target);
     };
     return {
       playAudio(descriptor) {
         // The loaded episode resumes through its engine, which owns where a resume starts.
-        if (playing()?.mediaId === descriptor.mediaId) live()?.play(descriptor);
+        if (playing()?.media_id === descriptor.media_id) live()?.play(descriptor);
         else play(descriptor);
       },
       playPreviewAudio(descriptor) {
@@ -377,7 +361,7 @@ export function GlobalPlayerProvider({
         return {
           positionMs: state.positionMs,
           durationMs:
-            state.durationMs > 0 ? present(state.durationMs) : absent(),
+            state.durationMs > 0 ? state.durationMs : null,
         };
       },
       resume: () => live()?.play(),
@@ -404,18 +388,18 @@ export function GlobalPlayerProvider({
           navigate(target);
           return;
         }
-        const lecternTarget = lecternNext(
-          lecternRef.current.getCanonicalSnapshot()?.items ?? [],
-          now,
+        const lecternTarget = nextAudio(
+          lecternItems(lecternRef.current),
+          now?.media_id ?? null,
         );
         if (lecternTarget !== null) play(lecternTarget);
       },
       setPlaybackRate: (rate) => live()?.setRate(rate),
       async rememberPlaybackRateForPodcast() {
         const now = playing();
-        if (now?.podcastId.kind !== "Present") return;
-        await savePodcastSubscriptionSettings(now.podcastId.value, {
-          default_playback_speed: present(current().rate),
+        if (now?.podcast_id == null) return;
+        await savePodcastSubscriptionSettings(now.podcast_id, {
+          default_playback_speed: current().rate,
         });
       },
       setVolume: (volume) => live()?.setVolume(volume),
@@ -426,23 +410,16 @@ export function GlobalPlayerProvider({
   }, [enqueue, play]);
   navigation.current = commands;
 
-  useEffect(() => {
-    const offInstall = lecternRef.current.onCanonicalInstall((event) => {
-        if (event.kind !== "progressState") return;
-        const { state } = event;
-        if (state.listeningState.kind !== "Present") return;
-        return engine?.adopt(state.mediaId, state.listeningState.value);
-      });
-    const offFence = lecternRef.current.registerProgressFence({
-      async prepare(mediaIds) {
-        for (const mediaId of mediaIds) await engine?.prepareProgressFence(mediaId);
-      },
-      async reconcile(mediaIds) {
-        for (const mediaId of mediaIds) await engine?.reconcileProgressFence(mediaId);
-      },
-    });
-    return () => { offInstall(); offFence(); };
-  }, [engine]);
+  // Unread, reset and undo of the loaded episode: its unsaved sample settles first, the server's
+  // position after.
+  useEffect(
+    () =>
+      holdProgress({
+        prepare: async (mediaId) => engine?.prepareProgressFence(mediaId),
+        reconcile: async (mediaId) => engine?.reconcileProgressFence(mediaId),
+      }),
+    [engine],
+  );
 
   // Space plays/pauses, ←/→ skip, shift+←/→ previous/next; never inside controls or text.
   const keyed = useRef({ commands, playing: false, loaded: false });
@@ -510,7 +487,7 @@ export function GlobalPlayerProvider({
       positionMs,
       durationMs,
       bufferedMs,
-      chapter: chapters?.findLast((c) => c.startMs <= positionMs) ?? null,
+      chapter: chapters?.findLast((c) => c.start_ms <= positionMs) ?? null,
     }),
     [chapters, positionMs, durationMs, bufferedMs],
   );

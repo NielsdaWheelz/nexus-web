@@ -116,7 +116,7 @@ export function createNativeEngine(
     return source === null
       ? null
       : source.kind === "Episode"
-        ? source.descriptor.mediaId
+        ? source.descriptor.media_id
         : source.descriptor.target;
   };
   const keyed = (op: string, args: Record<string, unknown> = {}) => {
@@ -161,15 +161,6 @@ export function createNativeEngine(
         if (!(error instanceof Error) ||
             (error.message !== "Unavailable" && error.message !== "NotResponding")) throw error;
         // justify-ignore-error: the service's retry snapshot or onResponding(false) owns the outage; saving stays fenced until authority returns.
-      }
-    },
-    async adopt(mediaId, position) {
-      if (key() !== mediaId) return;
-      try {
-        await call("adopt", { key: mediaId, position });
-      } catch (error) {
-        if (!(error instanceof Error) || error.message !== "NotResponding") throw error;
-        // justify-ignore-error: reset already committed; onResponding(false) owns the missing native acknowledgement.
       }
     },
     dismiss: () => call("dismiss", {}, LOAD_TIMEOUT_MS).catch(() => undefined),

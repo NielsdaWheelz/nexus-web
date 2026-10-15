@@ -1,11 +1,11 @@
-"""Contributor DTOs: the snake-case provider credit input and the camelCase author surfaces."""
+"""Contributor DTOs: the provider credit input and the author surfaces."""
 
 from __future__ import annotations
 
 from typing import Annotated, Literal
+from uuid import UUID
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
-from pydantic.alias_generators import to_camel
 
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaSummaryOut
@@ -32,54 +32,52 @@ _Name = Annotated[
 ]
 
 
-class _CamelIn(BaseModel):
-    """Camel keys only: a snake key or an unknown key is a 422."""
+class _In(BaseModel):
+    """An unknown key is a 422."""
 
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=False, extra="forbid")
+    model_config = ConfigDict(extra="forbid")
 
 
-class _CamelOut(BaseModel):
-    """Serialised camel by ``ok(by_alias=True)``; constructed by field name."""
-
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+class _Out(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
 class ContributorCreditIn(BaseModel):
     """A typed provider credit: snake keys, strict; ordinal and source are server-owned."""
 
-    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=False, extra="forbid")
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     credited_name: str = Field(min_length=1, max_length=MAX_CONTRIBUTOR_NAME_CODE_POINTS)
     role: ContributorRole
     raw_role: str | None = Field(default=None, max_length=MAX_RAW_ROLE_LENGTH)
 
 
-class ExistingAuthorBinding(_CamelIn):
+class ExistingAuthorBinding(_In):
     kind: Literal["existing"]
     contributor_handle: str = Field(min_length=1)
 
 
-class NewAuthorBinding(_CamelIn):
+class NewAuthorBinding(_In):
+    """A person the save creates under the client's ``id``; a resend binds that person."""
+
     kind: Literal["new"]
+    id: UUID
     display_name: _Name
 
 
-class ManualAuthorRowIn(_CamelIn):
+class ManualAuthorRowIn(_In):
     """One ordered manual author row. Every row is role ``author``."""
 
     credited_name: _Name
     binding: Annotated[ExistingAuthorBinding | NewAuthorBinding, Field(discriminator="kind")]
 
 
-class ManualMediaAuthorsRequest(_CamelIn):
-    # 120 is the resource_mutations idempotency key length.
-    client_mutation_id: str = Field(min_length=1, max_length=120)
+class ManualMediaAuthorsRequest(_In):
     mode: Literal["manual"]
     authors: list[ManualAuthorRowIn] = Field(max_length=MAX_CREDITS_PER_MANAGED_ROLE)
 
 
-class AutomaticMediaAuthorsRequest(_CamelIn):
-    client_mutation_id: str = Field(min_length=1, max_length=120)
+class AutomaticMediaAuthorsRequest(_In):
     mode: Literal["automatic"]
 
 
@@ -88,16 +86,16 @@ MediaAuthorsPutRequest = Annotated[
 ]
 
 
-class MediaAuthorsOut(_CamelOut):
+class MediaAuthorsOut(_Out):
     author_mode: Literal["automatic", "manual"]
 
 
-class ContributorWorkExampleOut(_CamelOut):
+class ContributorWorkExampleOut(_Out):
     title: str
     href: str
 
 
-class ContributorSearchItemOut(_CamelOut):
+class ContributorSearchItemOut(_Out):
     handle: str
     href: str
     display_name: str
@@ -106,48 +104,44 @@ class ContributorSearchItemOut(_CamelOut):
     matched_alias: str | None
 
 
-class ContributorSearchPageOut(_CamelOut):
+class ContributorSearchPageOut(_Out):
     contributors: list[ContributorSearchItemOut]
     next_cursor: str | None
 
 
-class ResourceActionSubjectOut(_CamelOut):
-    ref: str
-
-
-class ContributorDetailOut(_CamelOut):
+class ContributorDetailOut(_Out):
     handle: str
     href: str
     display_name: str
     other_names: list[str]
-    action_subject: ResourceActionSubjectOut
+    action_ref: str
 
 
-class ContributorRoleFactOut(_CamelOut):
+class ContributorRoleFactOut(_Out):
     credited_name: str
     role: ContributorRole
     raw_role: str | None
 
 
-class MediaContributorWorkItemOut(_CamelOut):
+class MediaContributorWorkItemOut(_Out):
     kind: Literal["Media"] = "Media"
     media_summary: MediaSummaryOut
     href: str
     role_facts: list[ContributorRoleFactOut]
-    action_subject: ResourceActionSubjectOut
+    action_ref: str
 
 
-class PodcastContributorWorkItemOut(_CamelOut):
+class PodcastContributorWorkItemOut(_Out):
     kind: Literal["Podcast"] = "Podcast"
     title: str
     href: str
     content_kind: str
     role_facts: list[ContributorRoleFactOut]
-    action_subject: ResourceActionSubjectOut
+    action_ref: str
 
 
-class ExternalContributorWorkItemOut(_CamelOut):
-    """A catalogue ebook: not a Nexus resource, so it has no action subject."""
+class ExternalContributorWorkItemOut(_Out):
+    """A catalogue ebook: not a Nexus resource, so it has no action ref."""
 
     kind: Literal["ExternalWork"] = "ExternalWork"
     title: str

@@ -1,11 +1,19 @@
-"""Reader target, profile, and persisted resume-state schemas."""
+"""Reader target, profile, persisted resume-state, reading-copy, file and navigation schemas."""
 
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, FiniteFloat, model_validator
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    FiniteFloat,
+    model_validator,
+)
 
-from nexus.schemas.presence import Presence
+from nexus.schemas.source_issues import SourceIssue
 
 ThemeValue = Literal["light", "dark"]
 FontFamilyValue = Literal["serif", "sans"]
@@ -76,7 +84,7 @@ class EpubTextOffsetsTargetOut(ReaderTextOffsets):
 class TranscriptTextOffsetsTargetOut(ReaderTextOffsets):
     kind: Literal["TranscriptTextOffsets"] = "TranscriptTextOffsets"
     fragment_id: UUID
-    time_range: Presence[ReaderTimeRange]
+    time_range: ReaderTimeRange | None
 
 
 class PdfPageGeometryTargetOut(ReaderTargetModel):
@@ -196,7 +204,7 @@ class ReaderFragmentTarget(ReaderStateModel):
 class ReaderEpubTarget(ReaderStateModel):
     fragment_id: UUID
     href_path: NonBlankStr
-    anchor_id: Presence[Annotated[str, Field(min_length=1), AfterValidator(_non_blank)]]
+    anchor_id: Annotated[str, Field(min_length=1), AfterValidator(_non_blank)] | None
 
 
 class PdfReaderResumeState(ReaderStateModel):
@@ -263,3 +271,119 @@ class CursorWrite(BaseModel):
     base_revision: int = Field(ge=0)
     expected_reader_generation: int | None = Field(default=None, ge=1)
     """Android's offline position names the generation it was read in (I9)."""
+
+
+class ReadingCopyOut(BaseModel):
+    """An offline reading copy (a zip) in object storage: a signed url to fetch it without
+    credentials until ``expires_at``, and the publication generation it was built from."""
+
+    url: str
+    expires_at: AwareDatetime
+    generation: int
+
+
+class _Strict(BaseModel):
+    """Base for every closed model on this wire: an unknown key is rejected."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MediaFileOut(_Strict):
+    """A short-lived signed url of the media's file; ``expires_at`` is ISO 8601."""
+
+    url: str
+    expires_at: str
+
+
+class ReaderNavigationFragmentOut(_Strict):
+    """One unique canonical text unit in document order."""
+
+    fragment_id: UUID
+    fragment_idx: int = Field(ge=0, strict=True)
+    char_count: int = Field(ge=0, strict=True)
+
+
+class NavigationTextPointOut(_Strict):
+    """An exact canonical codepoint boundary within one source fragment."""
+
+    fragment_id: UUID
+    offset: int = Field(ge=0, strict=True)
+
+
+class NavigationTextRangeOut(_Strict):
+    """A semantic extent, potentially spanning several canonical fragments."""
+
+    start: NavigationTextPointOut
+    end: NavigationTextPointOut
+
+
+class ReaderNavigationSectionOut(_Strict):
+    section_id: str
+    label: str
+    parent_section_id: str | None
+    target: NavigationTextPointOut
+    anchor_id: str | None
+    extent: NavigationTextRangeOut | None
+    source: Literal["Publisher", "Heading", "Both", "InferredNumberedEntry"]
+
+
+class ReaderNavigationTocNodeOut(_Strict):
+    """A published destination, independently linked to a reading section."""
+
+    id: str
+    label: str
+    target: NavigationTextPointOut | None
+    section_id: str | None
+    children: list["ReaderNavigationTocNodeOut"]
+
+
+class ReaderNavigationLocationOut(_Strict):
+    """A non-TOC reader navigation target."""
+
+    id: str
+    label: str
+    target: NavigationTextPointOut | None
+
+
+class MediaNavigationOut(_Strict):
+    media_id: UUID
+    kind: Literal["epub", "web_article"]
+    generation: int = Field(ge=1, strict=True)
+    source_issues: list[SourceIssue]
+    fragments: list[ReaderNavigationFragmentOut]
+    sections: list[ReaderNavigationSectionOut]
+    toc_nodes: list[ReaderNavigationTocNodeOut]
+    landmarks: list[ReaderNavigationLocationOut]
+    page_list: list[ReaderNavigationLocationOut]
+
+    @model_validator(mode="after")
+    def validate_destinations(self) -> "MediaNavigationOut":
+        fragments = {fragment.fragment_id: fragment.char_count for fragment in self.fragments}
+        if len(fragments) != len(self.fragments):
+            raise ValueError("Reader navigation fragment identities are duplicated")
+        if [fragment.fragment_idx for fragment in self.fragments] != list(
+            range(len(self.fragments))
+        ):
+            raise ValueError("Reader navigation fragments are not in canonical order")
+        sections = {section.section_id: section.target for section in self.sections}
+        if len(sections) != len(self.sections):
+            raise ValueError("Reader navigation section identities are duplicated")
+
+        def valid_point(point: NavigationTextPointOut) -> bool:
+            count = fragments.get(point.fragment_id)
+            return count is not None and point.offset <= count
+
+        for section in self.sections:
+            if not valid_point(section.target):
+                raise ValueError("Reader section target is outside published fragments")
+        pending = list(self.toc_nodes)
+        while pending:
+            node = pending.pop()
+            pending.extend(node.children)
+            if node.target is not None and not valid_point(node.target):
+                raise ValueError("Reader contents target is outside published fragments")
+            if node.section_id is not None and (
+                node.target is None or sections.get(node.section_id) != node.target
+            ):
+                raise ValueError("Reader contents section linkage disagrees with its target")
+        return self

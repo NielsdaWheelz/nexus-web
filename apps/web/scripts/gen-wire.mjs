@@ -1,5 +1,6 @@
-// Renders the API's wire schema (`python -m nexus.wire_schema`) to TypeScript:
-// src/lib/api/wire.gen.ts, or the path given as the one argument.
+// Renders the API's wire schema (`python -m nexus.wire_schema`) to TypeScript,
+// with its wire revision as WIRE_REVISION: src/lib/api/wire.gen.ts, or the
+// path given as the one argument.
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -19,10 +20,12 @@ const schema = execFileSync(
     stdio: ["ignore", "pipe", "inherit"],
   },
 );
-const ast = await openapiTS(JSON.parse(schema), { silent: true });
+const document = JSON.parse(schema);
+const ast = await openapiTS(document, { silent: true });
 writeFileSync(
   output,
   "// GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.\n" +
     "// Regenerate: cd apps/web && bun run gen:wire\n\n" +
+    `export const WIRE_REVISION = ${document.info["x-nexus-wire"]};\n\n` +
     astToString(ast),
 );

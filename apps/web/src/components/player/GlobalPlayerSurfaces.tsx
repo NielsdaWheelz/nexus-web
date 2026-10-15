@@ -69,26 +69,24 @@ function Identity({
   const box = { alt: "", width: size, height: size, className: styles.artwork };
   const image =
     kind === "Episode"
-      ? descriptor.artworkUrl.kind === "Present" && (
+      ? descriptor.artwork_url !== null && (
           <MediaImage
             kind="proxied"
-            remoteUrl={descriptor.artworkUrl.value}
+            remoteUrl={descriptor.artwork_url}
             {...box}
           />
         )
-      : descriptor.imageUrl.kind === "Present" && (
+      : descriptor.imageUrl !== null && (
           <MediaImage
             kind="proxy-src"
-            src={descriptor.imageUrl.value}
+            src={descriptor.imageUrl}
             {...box}
           />
         );
   const subtitle =
     kind === "Preview"
       ? `Preview from ${descriptor.source}`
-      : descriptor.subtitle.kind === "Present"
-        ? descriptor.subtitle.value
-        : null;
+      : descriptor.subtitle;
   return (
     <Button
       variant="ghost"
@@ -273,7 +271,7 @@ export default function GlobalPlayerSurfaces() {
   const identity =
     loaded &&
     (loaded.source.kind === "Episode"
-      ? loaded.source.descriptor.mediaId
+      ? loaded.source.descriptor.media_id
       : loaded.source.descriptor.target);
   const title = loaded?.source.descriptor.title;
   const status = loaded && statusOf(loaded);
@@ -346,11 +344,11 @@ export default function GlobalPlayerSurfaces() {
   const openTarget = () => {
     setSheetOpen(false);
     workspace.activateWorkspaceTarget({
-      originPaneId: workspace.state.activePrimaryPaneId,
+      originPaneId: workspace.state.active_primary_pane_id,
       target: {
         href:
           source.kind === "Episode"
-            ? `/media/${source.descriptor.mediaId}`
+            ? `/media/${source.descriptor.media_id}`
             : source.descriptor.previewHref,
         labelHint: source.descriptor.title,
       },

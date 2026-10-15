@@ -158,7 +158,7 @@ actions remain accessible through nexus and ordinary controls.
 | Mobile Nexus renderer                                            | `apps/web/src/components/switchboard/SwitchboardTask.tsx` and `NexusButton.tsx`                                   |
 | Nexus workflow pages and row parts (both surfaces)               | `apps/web/src/components/nexus/NexusPages.tsx` and `NexusRow.tsx`                                                 |
 | Nexus ingress and direct action session                          | `apps/web/src/lib/nexus/events.ts` and `apps/web/src/components/nexus/useNexusController.ts`                      |
-| Daily Page location and append entry                             | `apps/web/src/lib/notes/openDailyPage.ts`; the store delivers the entry to the visit the target lands on          |
+| Daily Page location and note entries                             | `/daily/{date}` (`dailyDateFor` in `lib/notes/api.ts`) with `AppendNote` / `FocusNote`; the store delivers the entry to the visit the target lands on |
 | fixed shortcut definitions and projections                      | `apps/web/src/lib/shortcuts.ts`                                                                                   |
 | read-only shortcut reference                                     | `apps/web/src/app/(authenticated)/settings/keybindings/KeybindingsPaneBody.tsx`                                   |
 | Nexus history href canonicalization                              | `python/nexus/services/nexus_history.py`                                                                          |

@@ -18,7 +18,6 @@ import {
   REQUEST_PATH_HEADER,
   unavailablePath,
 } from "@/lib/auth/urls";
-import { isDevBuild } from "@/lib/build-mode";
 import { createRandomId } from "@/lib/createRandomId";
 import { getEnv } from "@/lib/env";
 import {
@@ -68,7 +67,7 @@ export async function middleware(request: NextRequest) {
     !PUBLIC_PATHS.has(pathname) &&
     !PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 
-  const dev = isDevBuild();
+  const dev = process.env.NODE_ENV === "development";
   const policyRequest = {
     nonce: cspNonce(),
     dev,
@@ -85,7 +84,6 @@ export async function middleware(request: NextRequest) {
       : appCsp({
           ...policyRequest,
           connect: getEnv().connectOrigins,
-          media: getEnv().mediaOrigins,
         });
 
   const isNavigation = request.method === "GET" || request.method === "HEAD";

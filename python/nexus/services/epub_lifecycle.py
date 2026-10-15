@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from nexus.db.models import Media, ProcessingStatus
 from nexus.errors import (
@@ -15,7 +15,6 @@ from nexus.errors import (
     ResourceLimitError,
 )
 from nexus.logging import get_logger
-from nexus.schemas.presence import Present, present
 from nexus.services.epub_ingest import (
     EpubExtractionError,
     EpubExtractionPlan,
@@ -42,7 +41,6 @@ logger = get_logger(__name__)
 
 def prepare_epub_source(
     *,
-    session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt_id: UUID,
     storage_path: str,
@@ -52,7 +50,6 @@ def prepare_epub_source(
 ) -> EpubExtractionPlan:
     """Acquire and parse one EPUB into an immutable publication plan."""
     plan = build_epub_extraction_plan(
-        session_factory=session_factory,
         media_id=media_id,
         attempt_id=attempt_id,
         storage_path=storage_path,
@@ -130,7 +127,7 @@ def publish_epub_source(
             observations=source_contributor_observations(
                 media_id=media_id, observation=result.contributor_observation, source="epub_opf"
             ),
-            metadata_enrichment=present(True),
+            metadata_enrichment=True,
         ), old_storage_paths
 
     outcome, old_storage_paths = replace_reader_publication(
@@ -154,7 +151,7 @@ def _persist_epub_metadata(media: Media, result: EpubExtractionResult) -> None:
         media.language = result.language[:32]
     if result.description and not media.description:
         media.description = result.description[:2000]
-    if isinstance(result.edition_published_date, Present):
-        media.edition_published_date = result.edition_published_date.value
-    if isinstance(result.edition_isbn, Present):
-        media.edition_isbn = result.edition_isbn.value
+    if result.edition_published_date is not None:
+        media.edition_published_date = result.edition_published_date
+    if result.edition_isbn is not None:
+        media.edition_isbn = result.edition_isbn

@@ -23,10 +23,9 @@ MEMORY_CONFIG="${NEXUS_MEMORY_CLIENT_CONFIG:-}"
 # interpolates itself (POSTGRES_*, CADDY_*); the rest are read by the app.
 readonly REQUIRED_KEYS="
 NEXUS_ENV APP_PUBLIC_URL SUPABASE_ISSUER SUPABASE_JWKS_URL SUPABASE_AUDIENCES
-NEXUS_INTERNAL_SECRET STREAM_CORS_ORIGINS CADDY_SITE CADDY_ACME_EMAIL DATABASE_URL
+NEXUS_INTERNAL_SECRET CADDY_SITE CADDY_ACME_EMAIL DATABASE_URL
 POSTGRES_USER POSTGRES_DB POSTGRES_PASSWORD R2_S3_API_ORIGIN R2_ACCESS_KEY_ID
-R2_SECRET_ACCESS_KEY R2_BUCKET STREAM_TOKEN_SIGNING_KEY STREAM_BASE_URL
-PODCASTS_ENABLED
+R2_SECRET_ACCESS_KEY R2_BUCKET NEXUS_HANDLE_KEY
 GENERATION_API_PROVIDERS POSTGRES_IMAGE
 CADDY_IMAGE PARSER_TEMP_ROOT
 "
@@ -128,19 +127,15 @@ PYTHONPATH="${ROOT_DIR}/python${PYTHONPATH:+:${PYTHONPATH}}" \
 from pathlib import Path
 import sys
 
-from nexus.schemas.presence import Absent
 from nexus.services.tools.memory import load_memory_client_config
 from universal_memory.policy import canonical_json
 
 config = load_memory_client_config(Path(sys.argv[1]) if sys.argv[1] else None)
-if isinstance(config, Absent):
-    value = {"kind": "Absent"}
-else:
-    value = {
-        "kind": "Present",
-        "value": config.value.model_dump(mode="json")
-        | {"bearer": config.value.bearer.get_secret_value()},
-    }
+value = (
+    None
+    if config is None
+    else config.model_dump(mode="json") | {"bearer": config.bearer.get_secret_value()}
+)
 Path(sys.argv[2]).write_text(canonical_json(value) + "\n")
 PY
 memory_digest="$(sha256sum "$MEMORY" | cut -d' ' -f1)"

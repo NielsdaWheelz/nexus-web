@@ -1,8 +1,8 @@
-"""Domain-authenticated entity handles and resource-share bearer tokens.
+"""Browse discovery-target handles and resource-share bearer tokens.
 
-Entity handles identify rows but never authorize actions. Their MAC covers the
-entity domain and version as well as the UUID. Share tokens are separate
-high-entropy bearer credentials resolved through a domain-separated verifier.
+A discovery target handle seals the canonical payload of one browse result so a
+client can name it back but never forge one. Share tokens are high-entropy bearer
+credentials resolved through a domain-separated verifier.
 """
 
 from __future__ import annotations
@@ -13,58 +13,22 @@ import hashlib
 import hmac
 import re
 import secrets
-from dataclasses import dataclass
-from typing import ClassVar
-from uuid import UUID
 
 from pydantic_core import core_schema
 
 from nexus.config import get_settings
 from nexus.errors import ApiErrorCode, InvalidRequestError
 
-_ENTITY_ID_BYTES = 16
-_ENTITY_TAG_BYTES = 16
-_ENTITY_PART_CHARS = 22
 _DISCOVERY_TARGET_MAX_BYTES = 4_096
 _DISCOVERY_TARGET_TAG_BYTES = 32
 _SHARE_TOKEN_BYTES = 32
 _SHARE_TOKEN_CHARS = 43
-_ENTITY_HANDLE_INPUT_PREFIX = b"nexus-handle\0"
 _HANDLE_KEY_INPUT_PREFIX = b"nexus-handle-key\0"
 _DISCOVERY_TARGET_INPUT_PREFIX = b"nexus-discovery-target\0"
 _DISCOVERY_TARGET_KEY_INPUT = b"nexus-handle-key\0browse-discovery-target"
 _B64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _DISCOVERY_TARGET_RE = re.compile(r"^ndt1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]{43})$")
-
-
-@dataclass(frozen=True, slots=True)
-class _EntityHandleSpec:
-    prefix: str
-    domain: str
-    version: str = "1"
-
-    @property
-    def pattern(self) -> re.Pattern[str]:
-        return re.compile(
-            rf"^{re.escape(self.prefix)}\."
-            rf"[A-Za-z0-9_-]{{{_ENTITY_PART_CHARS}}}\."
-            rf"[A-Za-z0-9_-]{{{_ENTITY_PART_CHARS}}}$"
-        )
-
-
-_RESOURCE_GRANT = _EntityHandleSpec(prefix="nrg1", domain="resource-grant")
-_USER = _EntityHandleSpec(prefix="nus1", domain="user")
-_LIBRARY_INVITATION = _EntityHandleSpec(
-    prefix="nli1",
-    domain="library-invitation",
-)
-_UPLOAD_SESSION = _EntityHandleSpec(prefix="nup1", domain="upload-session")
 _SHARE_TOKEN_RE = re.compile(rf"^nxshr1_[A-Za-z0-9_-]{{{_SHARE_TOKEN_CHARS}}}$")
-
-
-class InvalidSealedHandle(InvalidRequestError):
-    def __init__(self, message: str = "Invalid sealed handle") -> None:
-        super().__init__(ApiErrorCode.E_INVALID_REQUEST, message)
 
 
 class InvalidShareToken(InvalidRequestError):
@@ -78,42 +42,6 @@ class InvalidDiscoveryTargetHandle(InvalidRequestError):
             ApiErrorCode.E_INVALID_DISCOVERY_TARGET,
             "Invalid discovery target",
         )
-
-
-class _CanonicalEntityHandle(str):
-    _spec: ClassVar[_EntityHandleSpec]
-
-    @classmethod
-    def _validate(cls, value: str) -> _CanonicalEntityHandle:
-        _parse_entity_wire(value, cls._spec)
-        return cls(value)
-
-    @classmethod
-    def __get_pydantic_core_schema__(
-        cls,
-        _source_type: object,
-        _handler: object,
-    ) -> core_schema.CoreSchema:
-        return core_schema.no_info_after_validator_function(
-            cls._validate,
-            core_schema.str_schema(),
-        )
-
-
-class ResourceGrantHandle(_CanonicalEntityHandle):
-    _spec = _RESOURCE_GRANT
-
-
-class UserHandle(_CanonicalEntityHandle):
-    _spec = _USER
-
-
-class LibraryInvitationHandle(_CanonicalEntityHandle):
-    _spec = _LIBRARY_INVITATION
-
-
-class UploadSessionHandle(_CanonicalEntityHandle):
-    _spec = _UPLOAD_SESSION
 
 
 class ShareToken(str):
@@ -151,44 +79,10 @@ class DiscoveryTargetHandle(str):
         )
 
 
-def _root_key() -> bytes:
-    encoded = get_settings().effective_stream_token_signing_key
-    try:
-        root = base64.b64decode(encoded, validate=True)
-    except (binascii.Error, ValueError) as exc:
-        # justify-defect: this owner validates the configured signing root at use;
-        # malformed base64 is a configuration defect, not invalid handle input.
-        raise RuntimeError("STREAM_TOKEN_SIGNING_KEY is not strict base64") from exc
-    if len(root) < 32:
-        # justify-defect: a shorter configured root violates the sealed-handle
-        # security contract and cannot be a product-facing validation branch.
-        raise RuntimeError("STREAM_TOKEN_SIGNING_KEY must decode to at least 32 bytes")
-    return root
-
-
 def derive_handle_key(domain: str, version: str) -> bytes:
     """Derive a versioned handle key for trusted ASCII domain and version constants."""
     material = _HANDLE_KEY_INPUT_PREFIX + domain.encode("ascii") + b"\0" + version.encode("ascii")
-    return hmac.new(_root_key(), material, hashlib.sha256).digest()
-
-
-def _authenticated_input(spec: _EntityHandleSpec, entity_id: UUID) -> bytes:
-    return (
-        _ENTITY_HANDLE_INPUT_PREFIX
-        + spec.domain.encode("ascii")
-        + b"\0"
-        + spec.version.encode("ascii")
-        + b"\0"
-        + entity_id.bytes
-    )
-
-
-def _tag(spec: _EntityHandleSpec, entity_id: UUID) -> bytes:
-    return hmac.new(
-        derive_handle_key(spec.domain, spec.version),
-        _authenticated_input(spec, entity_id),
-        hashlib.sha256,
-    ).digest()[:_ENTITY_TAG_BYTES]
+    return hmac.new(get_settings().handle_key, material, hashlib.sha256).digest()
 
 
 def _b64url(raw: bytes) -> str:
@@ -228,20 +122,8 @@ def _decode_variable_canonical_b64url(value: str) -> bytes:
     return decoded
 
 
-def _parse_entity_wire(raw: str, spec: _EntityHandleSpec) -> tuple[UUID, bytes]:
-    if not spec.pattern.fullmatch(raw):
-        raise ValueError("invalid entity handle grammar")
-    prefix, id_part, tag_part = raw.split(".")
-    if prefix != spec.prefix:
-        raise ValueError("wrong entity handle prefix")
-    return (
-        UUID(bytes=_decode_canonical_b64url(id_part, expected_bytes=_ENTITY_ID_BYTES)),
-        _decode_canonical_b64url(tag_part, expected_bytes=_ENTITY_TAG_BYTES),
-    )
-
-
 def _discovery_target_key() -> bytes:
-    return hmac.new(_root_key(), _DISCOVERY_TARGET_KEY_INPUT, hashlib.sha256).digest()
+    return hmac.new(get_settings().handle_key, _DISCOVERY_TARGET_KEY_INPUT, hashlib.sha256).digest()
 
 
 def _discovery_target_tag(payload: bytes) -> bytes:
@@ -263,52 +145,6 @@ def _parse_discovery_target_wire(raw: str) -> tuple[bytes, bytes]:
             expected_bytes=_DISCOVERY_TARGET_TAG_BYTES,
         ),
     )
-
-
-def _seal(entity_id: UUID, spec: _EntityHandleSpec, handle_type):
-    return handle_type(f"{spec.prefix}.{_b64url(entity_id.bytes)}.{_b64url(_tag(spec, entity_id))}")
-
-
-def _unseal(raw: str, spec: _EntityHandleSpec, message: str) -> UUID:
-    try:
-        entity_id, presented_tag = _parse_entity_wire(raw, spec)
-    except ValueError as exc:
-        raise InvalidSealedHandle(message) from exc
-    if not hmac.compare_digest(presented_tag, _tag(spec, entity_id)):
-        raise InvalidSealedHandle(message)
-    return entity_id
-
-
-def seal_resource_grant(grant_id: UUID) -> ResourceGrantHandle:
-    return _seal(grant_id, _RESOURCE_GRANT, ResourceGrantHandle)
-
-
-def unseal_resource_grant(raw: str) -> UUID:
-    return _unseal(raw, _RESOURCE_GRANT, "Invalid resource grant handle")
-
-
-def seal_user(user_id: UUID) -> UserHandle:
-    return _seal(user_id, _USER, UserHandle)
-
-
-def unseal_user(raw: str) -> UUID:
-    return _unseal(raw, _USER, "Invalid user handle")
-
-
-def seal_library_invitation(invitation_id: UUID) -> LibraryInvitationHandle:
-    return _seal(invitation_id, _LIBRARY_INVITATION, LibraryInvitationHandle)
-
-
-def unseal_library_invitation(raw: str) -> UUID:
-    return _unseal(raw, _LIBRARY_INVITATION, "Invalid library invitation handle")
-
-
-def seal_upload_session(session_id: UUID) -> UploadSessionHandle:
-    return _seal(session_id, _UPLOAD_SESSION, UploadSessionHandle)
-
-
-def unseal_upload_session(raw: str) -> UUID:
-    return _unseal(raw, _UPLOAD_SESSION, "Invalid upload session handle")
 
 
 def seal_discovery_target(canonical_payload: bytes) -> DiscoveryTargetHandle:

@@ -42,7 +42,7 @@ export function useResourceInspector({
   onCitationActivate,
 }: UseResourceInspectorParams): void {
   const paneRuntime = usePaneRuntime();
-  const policy = RESOURCE_CAPABILITIES[scheme].inspectorPolicy;
+  const policy = RESOURCE_CAPABILITIES[scheme].inspector;
   const { contents, members, linkedItems, forks } = bodies;
   if (
     members != null &&

@@ -1,7 +1,6 @@
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { Schema } from "@/lib/api/wire";
-import { openGenerationRunStream } from "@/lib/api/generationRunStream";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { openStream } from "@/lib/api/stream";
 import type { Execution } from "./wire";
 
 // A pending answer's live overlay. The stream only paints; a message's status,
@@ -81,38 +80,27 @@ export function foldLive(live: Live, event: ChatEvent): Live {
   }
 }
 
-/** Tail a run's event log after `after`; `end` fires once unless aborted. */
+/** Tail a run's event log after `after`; `end` fires once unless stopped. */
 export function openRunTail(
   runId: string,
   after: number,
   on: { event(event: ChatEvent): void; end(reason: "done" | "lost"): void },
 ): () => void {
-  const controller = new AbortController();
-  const end = (reason: "done" | "lost") => {
-    if (!controller.signal.aborted) on.end(reason);
-    controller.abort();
-  };
-  openGenerationRunStream<ChatEvent>("chat-runs", runId, {
+  return openStream<ChatEvent>({
+    path: `/api/stream/chat-runs/${encodeURIComponent(runId)}/events`,
+    after: String(after),
     decode: (type, data, id) => {
-      if (!TYPES.has(type)) throw new Error(`Unknown SSE event type: ${type}`);
+      if (!TYPES.has(type)) throw new Error(`Unknown chat event type: ${type}`);
       // justify-type-assertion: the same deploy validated each payload on write.
       return { seq: Number(id || 0), type, data } as ChatEvent;
     },
     isTerminal: (event) => event.type === "done",
-    onEvent: (event) => {
-      if (!controller.signal.aborted) on.event(event);
-    },
+    onEvent: on.event,
     onError: (error) => {
       console.error("Chat run stream ended without its terminal event:", error);
-      end("lost");
+      on.end("lost");
     },
-    onComplete: (terminal) => end(terminal ? "done" : "lost"),
-    initialAfter: String(after),
-    maxReconnects: 8,
-    backoff: { baseMs: 1000, maxMs: 8000, jitterMs: 250 },
-    signal: controller.signal,
-  }).catch((error: unknown) => {
-    if (!handleUnauthenticatedApiError(error)) end("lost");
+    onComplete: () => on.end("done"),
+    maxBackoffMs: 8_000,
   });
-  return () => controller.abort();
 }

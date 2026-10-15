@@ -1,5 +1,17 @@
 "use client";
 
+// The tab's stored-media summaries, keyed by media id (J6). A list retains the summaries
+// it shows, seeded from its own read; a mount reads its rows again, and retained ids are
+// resolved again when consumption or bibliography changes and when the page returns to
+// the screen (at most once a minute); ids whose resolve failed, also when the network
+// returns. Resolves batch every retain of one commit, up to
+// 100 ids, one request at a time. A change to an ordering fact (title, credits, first
+// publication, status, duration) moves `queryRevision`, which lists put in their own
+// read's stale token. An id no list retains is forgotten.
+//
+// Not useServerValue/useServerList: those own one keyed read each, while this batches one
+// resolve across every mounted list and lets each list's own read seed and order it.
+
 import {
   createContext,
   useContext,
@@ -10,230 +22,228 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { apiFetch, isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
-import type { Presence } from "@/lib/api/presence";
-import type { ApiJson } from "@/lib/api/wire";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { apiFetch, type ApiError } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
-import { isAbortError } from "@/lib/errors";
+import { modeledApiError } from "@/lib/api/serverState";
+import type { ApiJson } from "@/lib/api/wire";
+import { useRefreshStamp } from "@/lib/consumption/refresh";
 import type { MediaSummary } from "./mediaSummary";
 
 interface Entry {
-  summary: Presence<MediaSummary>;
-  generation: number;
-  retainCount: number;
+  summary: MediaSummary | null;
   error: ApiError | null;
+  retained: number;
+  stale: boolean;
 }
 
-function queryFacts(summary: MediaSummary): string {
-  return JSON.stringify([summary.title, summary.contributors, summary.originalPublishedDate,
-    summary.processingStatus, summary.duration.kind === "Present" ? {
-      kind: "Present", value: { modality: summary.duration.value.modality,
-        totalMinutes: summary.duration.value.estimate.totalMinutes },
-    } : summary.duration]);
+function orderingFacts(summary: MediaSummary | null): string {
+  if (summary === null) return "null";
+  const { title, contributors, original_published_date, processing_status } =
+    summary;
+  const { duration } = summary;
+  return JSON.stringify([
+    title,
+    contributors,
+    original_published_date,
+    processing_status,
+    duration && [duration.modality, duration.estimate.total_minutes],
+  ]);
 }
 
-function createMediaSummaries() {
+function createStore() {
   const entries = new Map<string, Entry>();
-  const pending = new Set<string>();
   const listeners = new Set<() => void>();
   let revision = 0;
   let queryRevision = 0;
-  let controller: AbortController | null = null;
-  let closed = false;
+  let running = false;
   let scheduled = false;
-  let defect: unknown = null;
+  let defect: { error: unknown } | null = null;
 
-  function notify() {
+  const notify = () => {
     revision += 1;
     for (const listener of listeners) listener();
-  }
+  };
 
-  function schedule() {
-    if (closed || scheduled || controller !== null || pending.size === 0) return;
+  const schedule = () => {
+    if (scheduled || running) return;
     scheduled = true;
     queueMicrotask(() => {
       scheduled = false;
-      void refresh();
+      void resolve();
     });
-  }
+  };
 
-  async function refresh() {
-    if (closed || controller !== null) return;
-    const mediaIds = [...pending].filter((id) => entries.get(id)!.retainCount > 0).slice(0, 100);
-    if (mediaIds.length === 0) return;
-    const generations = new Map(mediaIds.map((id) => [id, entries.get(id)!.generation]));
-    for (const id of mediaIds) pending.delete(id);
-    const request = new AbortController();
-    controller = request;
+  async function resolve() {
+    const ids = [...entries]
+      .filter(([, entry]) => entry.stale && entry.retained > 0)
+      .map(([id]) => id)
+      .slice(0, 100);
+    if (ids.length === 0) return;
+    running = true;
+    for (const id of ids) entries.get(id)!.stale = false;
     try {
-      const result = await apiFetch<ApiJson<"/media/summaries/resolve", "post">>(
-        "/api/media/summaries/resolve",
-        { method: "POST", body: JSON.stringify({ mediaIds }), signal: request.signal },
-      );
-      if (closed || request.signal.aborted) return;
-      for (const item of result.data.items) {
-        const entry = entries.get(item.mediaId)!;
-        if (entry.generation !== generations.get(item.mediaId)) continue;
-        const previous = entry.summary;
-        const next = item.summary;
-        if (previous.kind !== next.kind || (previous.kind === "Present" && next.kind === "Present" &&
-          queryFacts(previous.value) !== queryFacts(next.value))) {
+      const { data } = await apiFetch<
+        ApiJson<"/media/summaries/resolve", "post">
+      >("/api/media/summaries/resolve", {
+        method: "POST",
+        body: JSON.stringify({ media_ids: ids }),
+      });
+      for (const { media_id, summary } of data.items) {
+        const entry = entries.get(media_id);
+        // Released, or invalidated in flight: the next request reads it again.
+        if (entry === undefined || entry.stale) continue;
+        if (orderingFacts(entry.summary) !== orderingFacts(summary))
           queryRevision += 1;
-        }
-        entry.summary = next;
+        entry.summary = summary;
         entry.error = null;
       }
     } catch (error) {
-      if (closed || isAbortError(error) || handleUnauthenticatedApiError(error)) return;
-      if (!isApiError(error) || isSameSystemApiDefect(error)) {
-        defect = error;
-      } else {
-        for (const id of mediaIds) {
-          const entry = entries.get(id)!;
-          if (entry.generation === generations.get(id)) entry.error = error;
-        }
+      const modeled = modeledApiError(error, (found) => {
+        defect = found;
+      });
+      for (const id of ids) {
+        const entry = entries.get(id);
+        if (modeled !== null && entry !== undefined && !entry.stale)
+          entry.error = modeled;
       }
     } finally {
-      if (controller === request) controller = null;
-      if (!closed) {
-        notify();
-        schedule();
-      }
+      running = false;
+      notify();
+      schedule();
     }
   }
 
-  function invalidate(ids: readonly string[]) {
+  const invalidate = (ids: Iterable<string>) => {
     for (const id of ids) {
       const entry = entries.get(id);
-      if (!entry) continue;
-      entry.generation += 1;
+      if (entry === undefined) continue;
+      entry.stale = true;
       entry.error = null;
-      if (entry.retainCount > 0) pending.add(id);
     }
     schedule();
-  }
+  };
 
-  function invalidateQueries() {
+  const invalidateQueries = (ids: Iterable<string>) => {
     queryRevision += 1;
-    invalidate([...entries.keys()]);
+    invalidate(ids);
     notify();
-  }
+  };
 
   return {
-    open() { closed = false; schedule(); },
     subscribe(listener: () => void) {
       listeners.add(listener);
-      return () => { listeners.delete(listener); };
+      return () => void listeners.delete(listener);
     },
-    snapshot: () => revision,
+    revision: () => revision,
     queryRevision: () => queryRevision,
     retain(seeds: readonly MediaSummary[]) {
-      const ids = [...new Set(seeds.map((seed) => seed.mediaId))];
+      const ids = [...new Set(seeds.map((seed) => seed.media_id))];
       for (const seed of seeds) {
-        if (!entries.has(seed.mediaId)) entries.set(seed.mediaId, {
-          summary: { kind: "Present", value: seed }, generation: 0, retainCount: 0, error: null,
-        });
+        if (!entries.has(seed.media_id))
+          entries.set(seed.media_id, {
+            summary: seed,
+            error: null,
+            retained: 0,
+            stale: true,
+          });
       }
-      for (const id of ids) {
-        const entry = entries.get(id)!;
-        if (entry.retainCount === 0) invalidate([id]);
-        entry.retainCount += 1;
-        pending.add(id);
-      }
-      schedule();
+      for (const id of ids) entries.get(id)!.retained += 1;
+      invalidate(ids);
       return () => {
         for (const id of ids) {
           const entry = entries.get(id)!;
-          entry.retainCount -= 1;
-          if (entry.retainCount === 0) pending.delete(id);
+          entry.retained -= 1;
+          if (entry.retained === 0) entries.delete(id);
         }
       };
     },
-    resolve(seed: MediaSummary): Presence<MediaSummary> {
-      const summary = entries.get(seed.mediaId)?.summary;
-      return summary ?? { kind: "Present", value: seed };
+    resolve: (seed: MediaSummary): MediaSummary | null => {
+      const entry = entries.get(seed.media_id);
+      return entry === undefined ? seed : entry.summary;
     },
-    error(ids: readonly string[]) {
-      if (defect !== null) throw defect;
-      return ids.map((id) => entries.get(id)?.error).find((error) => error != null) ?? null;
+    error(ids: readonly string[]): ApiError | null {
+      if (defect !== null) throw defect.error;
+      return (
+        ids
+          .map((id) => entries.get(id)?.error)
+          .find((error) => error != null) ?? null
+      );
     },
     retry: invalidate,
-    invalidateAll() { invalidate([...entries.keys()]); },
-    invalidateQueries,
-    invalidateBibliography(mediaId: string) {
-      queryRevision += 1;
-      invalidate([mediaId]);
-      notify();
-    },
-    close() {
-      closed = true;
-      controller?.abort();
-      pending.clear();
-    },
+    retryFailed: () =>
+      invalidate([...entries.keys()].filter((id) => entries.get(id)!.error)),
+    /** Consumption moved: reread; lists re-query only if an ordering fact moved. */
+    invalidateAll: () => invalidate(entries.keys()),
+    /** The page returned or bibliography changed: lists re-query too. */
+    invalidateQueries: () => invalidateQueries(entries.keys()),
+    invalidateBibliography: (mediaId: string) => invalidateQueries([mediaId]),
   };
 }
 
-const Context = createContext<ReturnType<typeof createMediaSummaries> | null>(null);
+type Store = ReturnType<typeof createStore>;
+const Context = createContext<Store | null>(null);
+
+function useStore(): Store {
+  const store = useContext(Context);
+  if (store === null)
+    throw new Error("Media summaries require their account provider");
+  return store;
+}
+
+/** Runs `effect` when `key` moves after the first render. */
+function useOnChange(key: string, effect: () => void) {
+  const seen = useRef(key);
+  useEffect(() => {
+    if (seen.current === key) return;
+    seen.current = key;
+    effect();
+  });
+}
 
 export function MediaSummaryProvider({ children }: { children: ReactNode }) {
-  const [owner] = useState(createMediaSummaries);
-  const consumption = useChangeStamp("Consumption");
-  const metadata = useChangeStamp("Metadata");
-  const seenMetadata = useRef(metadata);
+  const [store] = useState(createStore);
+  const foreground = useRefreshStamp(true, 60_000);
   useEffect(() => {
-    if (seenMetadata.current === metadata) return;
-    seenMetadata.current = metadata;
-    owner.invalidateQueries();
-  }, [metadata, owner]);
-  useEffect(() => { owner.invalidateAll(); }, [owner, consumption]);
-  useEffect(() => {
-    owner.open();
-    const refresh = () => { if (document.visibilityState !== "hidden") owner.invalidateQueries(); };
-    window.addEventListener("focus", refresh);
-    window.addEventListener("online", refresh);
-    window.addEventListener("pageshow", refresh);
-    document.addEventListener("visibilitychange", refresh);
-    return () => {
-      window.removeEventListener("focus", refresh);
-      window.removeEventListener("online", refresh);
-      window.removeEventListener("pageshow", refresh);
-      document.removeEventListener("visibilitychange", refresh);
-      owner.close();
-    };
-  }, [owner]);
-  return <Context.Provider value={owner}>{children}</Context.Provider>;
+    window.addEventListener("online", store.retryFailed);
+    return () => window.removeEventListener("online", store.retryFailed);
+  }, [store]);
+  useOnChange(useChangeStamp("Consumption"), store.invalidateAll);
+  useOnChange(
+    `${useChangeStamp("Metadata")}:${foreground}`,
+    store.invalidateQueries,
+  );
+  return <Context.Provider value={store}>{children}</Context.Provider>;
 }
 
 export function useMediaSummaries(seeds: readonly MediaSummary[]) {
-  const owner = useContext(Context);
-  if (owner === null) throw new Error("Media summaries require their account provider");
-  const revision = useSyncExternalStore(owner.subscribe, owner.snapshot, () => 0);
-  const key = [...new Set(seeds.map((seed) => seed.mediaId))].sort().join(",");
+  const store = useStore();
+  const revision = useSyncExternalStore(
+    store.subscribe,
+    store.revision,
+    () => 0,
+  );
+  const key = [...new Set(seeds.map((seed) => seed.media_id))].sort().join(",");
   const seedsRef = useRef(seeds);
   seedsRef.current = seeds;
-  useEffect(() => owner.retain(seedsRef.current), [owner, key]);
+  useEffect(() => store.retain(seedsRef.current), [store, key]);
   return useMemo(() => {
     const ids = key === "" ? [] : key.split(",");
     return {
-      resolve: owner.resolve,
-      error: owner.error(ids),
-      retry: () => owner.retry(ids),
+      resolve: store.resolve,
+      error: store.error(ids),
+      retry: () => store.retry(ids),
       revision,
-      queryRevision: owner.queryRevision(),
+      queryRevision: store.queryRevision(),
     };
-  }, [owner, revision, key]);
+  }, [store, revision, key]);
 }
 
-export function useMediaBibliographyInvalidation() {
-  const owner = useContext(Context);
-  if (owner === null) throw new Error("Media summaries require their account provider");
-  return owner.invalidateBibliography;
+export function useMediaBibliographyInvalidation(): (mediaId: string) => void {
+  return useStore().invalidateBibliography;
 }
 
-export function useMediaQueryRevision() {
-  const owner = useContext(Context);
-  if (owner === null) throw new Error("Media summaries require their account provider");
-  useSyncExternalStore(owner.subscribe, owner.snapshot, () => 0);
-  return owner.queryRevision();
+export function useMediaQueryRevision(): number {
+  const store = useStore();
+  useSyncExternalStore(store.subscribe, store.revision, () => 0);
+  return store.queryRevision();
 }

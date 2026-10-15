@@ -1,19 +1,14 @@
 "use client";
 
-import { useCallback, useId, useMemo, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
-import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { absent, present } from "@/lib/api/presence";
-import {
-  useCursorPagination,
-  type CursorPage,
-} from "@/lib/api/useCursorPagination";
-import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
-import type { AsyncResource } from "@/lib/api/useResource";
+import { apiFetch } from "@/lib/api/client";
+import { useSettled } from "@/lib/api/serverState";
+import { usePaneFreeServerList, type ListPage } from "@/lib/api/useServerList";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import {
   resourceIconForScheme,
@@ -29,15 +24,15 @@ type Target =
 
 /** A row's identity: the item's ref, or a passage's transient candidate ref. */
 const keyOf = (target: Target) =>
-  target.kind === "resource" ? target.item.ref : target.candidateRef;
+  target.kind === "resource" ? target.item.ref : target.candidate_ref;
 
 /** One page of visible items and passage candidates; the source is never offered. */
 async function searchTargets(
   q: string,
   sourceRef: string | undefined,
-  cursor: string | undefined,
+  cursor: string | null,
   signal: AbortSignal,
-): Promise<CursorPage<Target>> {
+): Promise<ListPage<Target>> {
   const { data } = await apiFetch<
     ApiJson<"/resource-items/targets/search", "post">
   >("/api/resource-items/targets/search", {
@@ -52,39 +47,39 @@ async function searchTargets(
   });
   return {
     items: data.targets,
-    nextCursor: data.nextCursor === null ? absent() : present(data.nextCursor),
+    next_cursor: data.next_cursor,
   };
 }
 
-/** Debounced first page plus cursor continuation for one query. */
+const NONE: readonly Target[] = [];
+
+/** One query's pages, read once it has held still for 200 ms; shown only for it. */
 function useTargetSearch(query: string, sourceRef: string | undefined) {
   const q = query.trim();
-  const identity = q ? JSON.stringify([q, sourceRef ?? null]) : null;
-  const [tick, setTick] = useState(0);
-  const retryFirst = useCallback(() => setTick((n) => n + 1), []);
-  const { data, dataIdentity, error, errorIdentity } = useDebouncedFetch(
-    identity === null ? null : `${identity}:${tick}`,
-    (signal) => searchTargets(q, sourceRef, undefined, signal),
-    { debounceMs: 200, identity },
-  );
-  const firstPage = useMemo<AsyncResource<CursorPage<Target>>>(() => {
-    if (identity === null) return { status: "idle" };
-    if (dataIdentity === identity && data !== null) {
-      return { status: "ready", data };
-    }
-    if (errorIdentity !== identity || error === null) {
-      return { status: "loading" };
-    }
-    if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-    return { status: "error", error, retry: retryFirst };
-  }, [data, dataIdentity, error, errorIdentity, identity, retryFirst]);
-  const more = useCursorPagination({
-    firstPage,
-    initialMoreError: null,
-    loadMorePage: (cursor, signal) =>
-      searchTargets(q, sourceRef, cursor, signal),
+  const settled = useSettled(q, 200);
+  const list = usePaneFreeServerList<Target>({
+    key: settled ? JSON.stringify([settled, sourceRef ?? null]) : null,
+    stale: "",
+    // The server's page (pickers.py TARGET_PAGE): one read per settled query.
+    pageSize: 10,
+    drain: false,
+    active: true,
+    id: keyOf,
+    fetchPage: (cursor, _limit, signal) =>
+      searchTargets(settled, sourceRef, cursor, signal),
   });
-  return { ...more, loading: identity !== null && more.status === "loading" };
+  const live = q !== "" && settled === q;
+  const ready = live && list.current;
+  const failure = live ? list.failure : null;
+  return {
+    items: ready ? list.items : NONE,
+    loading: q !== "" && !ready && failure === null,
+    error: failure?.error ?? null,
+    hasMore: ready && !list.complete,
+    loadingMore: list.running === "More",
+    loadMore: list.more,
+    retry: list.retry,
+  };
 }
 
 /**
@@ -116,7 +111,7 @@ export default function LinkTargetDialog({
       );
     } else {
       void composer.confirm(
-        { kind: "passage", candidate_ref: target.candidateRef },
+        { kind: "passage", candidate_ref: target.candidate_ref },
         target.label,
       );
     }
@@ -240,7 +235,7 @@ export default function LinkTargetDialog({
                   </span>
                 </span>
               )}
-              {target.existingLinkId ? (
+              {target.existing_link_id ? (
                 <span className={styles.linkedBadge}>Linked</span>
               ) : null}
             </div>

@@ -17,13 +17,12 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.schemas.media import (
-    DocumentEmbedOut,
+from nexus.schemas.document_embeds import DocumentEmbedOut
+from nexus.schemas.reader import (
     NavigationTextPointOut,
     ReaderNavigationSectionOut,
     ReaderNavigationTocNodeOut,
 )
-from nexus.schemas.presence import Present
 from nexus.schemas.reader_document import (
     ReaderPdfDocumentOut,
     ReaderPdfFileOut,
@@ -129,16 +128,16 @@ def build_reader_document(
 
     def depth(section: ReaderNavigationSectionOut) -> int:
         levels, parent = 0, section.parent_section_id
-        while isinstance(parent, Present) and parent.value in parents:
-            levels, parent = levels + 1, parents[parent.value]
+        while parent is not None and parent in parents:
+            levels, parent = levels + 1, parents[parent]
         return levels
 
     def node(toc: ReaderNavigationTocNodeOut) -> ReaderTocNodeOut:
         return ReaderTocNodeOut(
             id=toc.id,
             label=toc.label,
-            at=_point(toc.target.value) if isinstance(toc.target, Present) else None,
-            section_id=toc.section_id.value if isinstance(toc.section_id, Present) else None,
+            at=_point(toc.target) if toc.target is not None else None,
+            section_id=toc.section_id,
             children=[node(child) for child in toc.children],
         )
 
@@ -153,9 +152,7 @@ def build_reader_document(
                 label=section.label,
                 depth=depth(section),
                 at=_point(section.target),
-                anchor_id=section.anchor_id.value
-                if isinstance(section.anchor_id, Present)
-                else None,
+                anchor_id=section.anchor_id,
             )
             for section in navigation.sections
         ],

@@ -56,17 +56,17 @@ export default function ImportRow({
         <div className={styles.rowContext}>
           {reason === null ? null : <span>{reason}</span>}
           {concurrent === null ? null : <span>{concurrent}</span>}
-          {item.matched_event.kind === "Present" ? (
-            <span>{matchLine(item.matched_event.value, display, now)}</span>
+          {item.matched_event !== null ? (
+            <span>{matchLine(item.matched_event, display, now)}</span>
           ) : null}
           <span className={styles.provenance}>
             <span>{KIND_LABEL[item.media_kind]}</span>
-            {item.source_label.kind === "Present" ? (
-              <span>{item.source_label.value}</span>
+            {item.source_label !== null ? (
+              <span>{item.source_label}</span>
             ) : null}
-            {item.original_filename.kind === "Present" &&
-            item.original_filename.value !== item.title ? (
-              <span>original file: {item.original_filename.value}</span>
+            {item.original_filename !== null &&
+            item.original_filename !== item.title ? (
+              <span>original file: {item.original_filename}</span>
             ) : null}
             <time dateTime={age.dateTime}>{age.text}</time>
           </span>

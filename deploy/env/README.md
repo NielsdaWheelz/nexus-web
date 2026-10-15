@@ -64,7 +64,7 @@ until you are sure no rollback wants it.
 
 optional owner-chat memory is one private json handoff from the central sharing
 declaration. set `NEXUS_MEMORY_CLIENT_CONFIG` to the generated nexus `client.json`
-when publishing. omission publishes `{ "kind": "Absent" }`; the publisher
+(the config object itself) when publishing. omission publishes `null`; the publisher
 validates the same closed client contract as the backend before host work.
 it installs `/etc/nexus/memory-config/<sha256>.json` as root:10001 mode 0440
 before recording that immutable path in the application env. only the api and

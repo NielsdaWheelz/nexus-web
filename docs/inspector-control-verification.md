@@ -17,6 +17,15 @@ both source hashes cover 673 paths. the corrected production-mode build passed;
 its local `/version` returned the corrected commit. initial and final post-cleanup
 `./scripts/test` runs passed; the final gate exited 0 with migration head `0278`.
 
+merge integration: main `7bc7c8a13d7f0c866bef49ad1fc218b603393594` was
+integrated for pr #617. independent review confirmed its resource-ref
+and snake_case wire changes survived; the inspector diff is unchanged. only the
+issue register conflicted, and all entries were retained. the integrated
+`./scripts/test` passed with migration head `0286`. its web-source digest is
+`1de6a868134358f764bb2cc79552a5b1e5162c9aff754468ae98c717d1e6f32a`
+over 728 paths. this is static integration proof; earlier live runs retain their
+original source identities. production smoke remains pending.
+
 disposable playwright 1.59.1 drove browser → next/bff `:3198` → api `:8198`
 → isolated auth, database and storage. one article used ordinary extension
 capture/upload/confirmation and normal linux ingestion; one ordinary library

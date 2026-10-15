@@ -5,12 +5,15 @@
 
 import type { ResourceRowPrimary } from "@/components/ui/ResourceRow";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
-import type { Presence } from "@/lib/api/presence";
 import type { ContributorCredit } from "@/lib/contributors/credits";
-import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { Schema } from "@/lib/api/wire";
-import type { PositiveCount } from "@/lib/consumption/activityFacts";
+
+/** Source-decoder or source-owned derivation guarantee: integer >= 1. */
+export interface PositiveCount {
+  readonly value: number;
+}
 
 export type CollectionItemKind =
   | "media"
@@ -57,18 +60,18 @@ interface CollectionRowBase {
     readonly segments?: readonly EmphasisSegment[];
   };
   readonly contributors: readonly ContributorCredit[];
-  readonly publicationDate: Presence<string>;
-  readonly context: Presence<CollectionContext>;
-  readonly activity: Presence<CollectionActivity>;
-  readonly exceptionalStatus: Presence<ExceptionalStatus>;
+  readonly publicationDate: string | null;
+  readonly context: CollectionContext | null;
+  readonly activity: CollectionActivity | null;
+  readonly exceptionalStatus: ExceptionalStatus | null;
   /**
    * The canonical resource suffix for this row's one contextual More menu.
    * `null` means a non-resource row, which may contribute only `flatActions`.
    */
-  readonly actionSubject: ResourceActionSubject | null;
+  readonly resourceRef: CanonicalResourceRef | null;
   /**
    * Non-resource actions appended after row occurrence commands. These apply
-   * only when `actionSubject` is `null`; a resource row's canonical suffix is
+   * only when `resourceRef` is `null`; a resource row's canonical suffix is
    * supplied by the resource-action runtime.
    */
   readonly flatActions?: readonly ActionDescriptor[];

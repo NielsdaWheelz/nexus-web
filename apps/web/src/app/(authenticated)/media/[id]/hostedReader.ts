@@ -40,7 +40,7 @@ export function hostedSource(mediaId: string): ReaderSource {
         `/api/media/${mediaId}/file`,
         { signal, cache: "no-store" },
       );
-      return { url: data.url, headers: {}, expiresAtMs: Date.parse(data.expires_at) };
+      return { url: data.url, expiresAtMs: Date.parse(data.expires_at) };
     },
   };
 }

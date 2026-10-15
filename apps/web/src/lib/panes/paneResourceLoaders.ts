@@ -1,120 +1,42 @@
-// One loader per pane whose first-paint data is fetched by route params alone:
-// the server bootstrap seeds it and the pane's client mount loads it, through
-// the same code with a different transport (`ResourceFetcher`). Panes keyed by
-// mutable ui state (filters, search, editor scope) or streamed are absent.
+// The server's first-paint reads, per pane route: each names the reads a pane
+// makes from its route params alone, under the keys its hooks read, so the
+// workspace bootstrap seeds them and the pane body's first commit paints them
+// without a fetch (lib/api/serverState.tsx). A seeded key is the api path the
+// hook reads, a list's with its view query (canonical: empty), route params
+// unencoded; a seed no hook takes then is dropped unread. Panes keyed by
+// mutable ui state or streamed are absent.
 import type { ApiJson } from "@/lib/api/wire";
-import {
-  conversationsInitialResource,
-  librariesResource,
-  libraryEntriesResource,
-  libraryResource,
-  lecternSuggestionsResource,
-  mediaResource,
-  notePagesResource,
-  settingsAccountResource,
-  type ConversationIndexResourceParams,
-} from "@/lib/api/resource";
-import type { ResourceFetcher } from "@/lib/api/resourceTransport";
-import type { ListPage } from "@/lib/api/useServerList";
-import type { ConversationListItem } from "@/lib/chat/conversationIndex";
-import { libraryOutForId, type LibraryOut } from "@/lib/libraries/contract";
-import {
-  libraryEntryPageFromWire,
-  type LibraryEntryListItem,
-} from "@/lib/libraries/entryListItem";
-import { mediaDetailFromResponse, type MediaDetail } from "@/lib/media/mediaDetail";
-import { loadNotePages } from "@/lib/notes/pageContract";
+import { mediaDetailFromResponse } from "@/lib/media/mediaDetail";
 import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
 
-type Params = Record<string, string>;
+/** One GET of the api by its own path (no `/api`), parsed. */
+export type Get = <T>(path: `/${string}`) => Promise<T>;
+type Seeds = Record<string, (get: Get) => Promise<unknown>>;
 
-export interface PaneResourceLoader {
-  cacheKey: (params: Params) => string;
-  load: (request: ResourceFetcher, params: Params) => Promise<unknown>;
-}
+const data = (path: `/${string}`) => async (get: Get) =>
+  (await get<{ data: unknown }>(path)).data;
+const firstPage = (path: `/${string}`) => data(`${path}?limit=100`);
 
-export type ConversationsPaneSeed = ListPage<ConversationListItem>;
-export interface LibraryPaneSeed {
-  readonly library: LibraryOut;
-  readonly entries: ListPage<LibraryEntryListItem>;
-}
-export interface MediaPaneSeed {
-  readonly media: MediaDetail;
-}
-
-export async function loadMediaPane(
-  request: ResourceFetcher,
-  params: { id: string },
-): Promise<MediaPaneSeed> {
-  const response = await request<
-    { id: string },
-    ApiJson<"/media/{media_id}", "get">
-  >(mediaResource, params);
-  return { media: mediaDetailFromResponse(response, params.id) };
-}
-
-export const paneResourceLoaders: Partial<
-  Record<PaneRouteId, PaneResourceLoader>
+export const paneSeeds: Partial<
+  Record<PaneRouteId, (params: Record<string, string>) => Seeds>
 > = {
-  lectern: {
-    cacheKey: () => lecternSuggestionsResource.cacheKey({ refreshVersion: 0 }),
-    load: async (request) => {
-      const response = await request<
-        { refreshVersion: number },
-        ApiJson<"/lectern/suggestions", "get">
-      >(lecternSuggestionsResource, { refreshVersion: 0 });
-      return response.data;
-    },
+  libraries: () => ({ "/libraries?": firstPage("/libraries") }),
+  library: ({ id }) => {
+    const path = `/libraries/${encodeURIComponent(id)}` as const;
+    return {
+      [`/libraries/${id}`]: data(path),
+      [`/libraries/${id}/entries?`]: firstPage(`${path}/entries`),
+    };
   },
-  libraries: {
-    cacheKey: () => librariesResource.cacheKey({}),
-    load: async (request) => {
-      const response = await request<
-        { limit: number },
-        ApiJson<"/libraries", "get">
-      >(librariesResource, { limit: 100 });
-      return response.data;
-    },
-  },
-  library: {
-    cacheKey: ({ id }) => libraryResource.cacheKey({ id }),
-    load: async (request, { id }): Promise<LibraryPaneSeed> => {
-      const [library, entries] = await Promise.all([
-        request<{ id: string }, ApiJson<"/libraries/{library_id}", "get">>(
-          libraryResource,
-          { id },
+  media: ({ id }) => ({
+    [`/media/${id}`]: async (get) =>
+      mediaDetailFromResponse(
+        await get<ApiJson<"/media/{media_id}", "get">>(
+          `/media/${encodeURIComponent(id)}`,
         ),
-        request<
-          { id: string },
-          ApiJson<"/libraries/{library_id}/entries", "get">
-        >(libraryEntriesResource, { id }),
-      ]);
-      return {
-        library: libraryOutForId(library.data, id, "Library pane response.data"),
-        entries: libraryEntryPageFromWire(entries.data),
-      };
-    },
-  },
-  media: {
-    cacheKey: ({ id }) => mediaResource.cacheKey({ id }),
-    load: (request, { id }) => loadMediaPane(request, { id }),
-  },
-  notes: {
-    cacheKey: () => notePagesResource.cacheKey({}),
-    load: (request) => loadNotePages(request, {}),
-  },
-  conversations: {
-    cacheKey: () => conversationsInitialResource.cacheKey({}),
-    load: async (request): Promise<ConversationsPaneSeed> => {
-      const response = await request<
-        ConversationIndexResourceParams,
-        ApiJson<"/conversations", "get">
-      >(conversationsInitialResource, {});
-      return response.data;
-    },
-  },
-  settingsAccount: {
-    cacheKey: () => settingsAccountResource.cacheKey({}),
-    load: (request) => request(settingsAccountResource, {}),
-  },
+        id,
+      ),
+  }),
+  notes: () => ({ "/notes/pages?": firstPage("/notes/pages") }),
+  conversations: () => ({ "/conversations?": firstPage("/conversations") }),
 };

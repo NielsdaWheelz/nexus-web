@@ -2,13 +2,11 @@
 
 Pure data. Input schemas are what providers publish to the model; success models are
 what the model reads back; error classes feed the browser's closed error vocabulary
-and are never published. ``PROJECTION_REVISION`` changes when that vocabulary does,
-so a tab built against another one reloads.
+and are never published.
 """
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Annotated, Any, Literal, Never
@@ -23,7 +21,6 @@ from llm_tools import (
     ToolId,
     ToolLimits,
     ToolSpec,
-    canonical_json_bytes,
 )
 from pydantic import BaseModel, ConfigDict, Field
 from universal_memory.tools import MEMORY_READ_SPECS, MEMORY_SAVE_NOTE_SPEC
@@ -608,15 +605,6 @@ def _tags(schema: object) -> set[str]:
 
 
 ERROR_TYPES = tuple(sorted(set().union(*(_tags(s.error_schema.semantic) for s in SPECS.values()))))
-PROJECTION_REVISION = hashlib.sha256(
-    canonical_json_bytes(
-        {
-            "effects": [effect.value for effect in ToolEffect],
-            "error_types": list(ERROR_TYPES),
-            "presentation": {tool: list(shown) for tool, shown in PRESENTATION.items()},
-        }
-    )
-).hexdigest()
 
 
 def projection(tool_id: str) -> dict[str, Any]:

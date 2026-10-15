@@ -44,7 +44,6 @@ import ImportRow from "./ImportRow";
 import ImportsToolbar from "./ImportsToolbar";
 import styles from "./Imports.module.css";
 
-const ABSENT = { kind: "Absent" } as const;
 
 /** Historical evidence belongs to one selection under one applied query. */
 export interface MatchedImportEvidence {
@@ -97,7 +96,7 @@ export default function ImportsList({
 
   const selected = state.selected ?? null;
   const matched =
-    items.find((item) => item.ref === selected)?.matched_event ?? ABSENT;
+    items.find((item) => item.ref === selected)?.matched_event ?? null;
   useEffect(
     () => onMatched({ importRef: selected, apiQuery: query, event: matched }),
     [matched, onMatched, query, selected],

@@ -75,7 +75,7 @@ def build_reading_copy(db: Session, *, viewer_id: UUID, media_id: UUID, path: Pa
         )
     reader = {
         "media": {"id": str(media_id), "title": str(row.title), "kind": str(row.kind)},
-        "document": document.model_dump(mode="json", by_alias=True),
+        "document": document.model_dump(mode="json"),
     }
     db.rollback()
 

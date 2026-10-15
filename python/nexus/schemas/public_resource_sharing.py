@@ -7,7 +7,6 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 
 from nexus.schemas.highlights import HIGHLIGHT_COLORS
-from nexus.schemas.presence import Presence
 from nexus.schemas.reader import HighlightTargetPdfQuadOut
 
 
@@ -25,7 +24,7 @@ class PublicPdfAnchorOut(BaseModel):
 
 
 class PublicHighlightOut(BaseModel):
-    quote: Presence[str]
+    quote: str | None
     color: HIGHLIGHT_COLORS
     anchor: Annotated[PublicTextAnchorOut | PublicPdfAnchorOut, Field(discriminator="kind")]
 
@@ -33,5 +32,5 @@ class PublicHighlightOut(BaseModel):
 class PublicShareOut(BaseModel):
     title: str
     bylines: list[str]
-    source_url: Presence[str]
-    highlight: Presence[PublicHighlightOut]
+    source_url: str | None
+    highlight: PublicHighlightOut | None

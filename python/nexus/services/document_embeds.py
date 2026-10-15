@@ -23,8 +23,7 @@ from nexus.db.models import (
     ResourceEdge,
 )
 from nexus.errors import InvalidRequestError
-from nexus.schemas.media import (
-    DocumentEmbedAggregateStatus,
+from nexus.schemas.document_embeds import (
     DocumentEmbedDisplayActionOut,
     DocumentEmbedDisplayOut,
     DocumentEmbedKind,
@@ -34,7 +33,6 @@ from nexus.schemas.media import (
     DocumentEmbedProviderRefOut,
     DocumentEmbedResolutionStatus,
     DocumentEmbedSourceShape,
-    DocumentEmbedSummaryOut,
     DocumentEmbedTargetOut,
     DocumentEmbedTextOut,
     DocumentEmbedUrlOut,
@@ -159,8 +157,6 @@ def replace_document_embed_artifact(
                     db=db,
                     viewer_id=owner_user_id,
                     url=target.canonical_url,
-                    parent_media_id=media_id,
-                    document_embed_key=occurrence.occurrence_key,
                     library_ids=library_ids,
                 )
             except InvalidRequestError as exc:
@@ -340,28 +336,6 @@ def resolved_document_embed_target_media_ids(db: Session, *, media_id: UUID) -> 
     ]
 
 
-def document_embed_summaries_for_media(
-    db: Session, media_ids: Sequence[UUID]
-) -> dict[UUID, DocumentEmbedSummaryOut]:
-    if not media_ids:
-        return {}
-    rows = db.scalars(
-        select(DocumentEmbedArtifactState).where(
-            DocumentEmbedArtifactState.media_id.in_(list(media_ids))
-        )
-    ).all()
-    return {
-        row.media_id: DocumentEmbedSummaryOut(
-            status=cast(DocumentEmbedAggregateStatus, row.status),
-            total_count=row.total_count,
-            resolved_count=row.resolved_count,
-            unsupported_count=row.unsupported_count,
-            failed_count=row.failed_count,
-        )
-        for row in rows
-    }
-
-
 def list_document_embeds_for_media(
     db: Session, *, viewer_id: UUID, media_id: UUID
 ) -> list[DocumentEmbedOut]:
@@ -484,7 +458,7 @@ def _set_state_counts(state: DocumentEmbedArtifactState, rows: Sequence[Document
 
 
 # ---------------------------------------------------------------------------
-# Wire projection: the presence wrappers `schemas/media.py` declares
+# Wire projection: the nullable shapes `schemas/media.py` declares
 # ---------------------------------------------------------------------------
 
 

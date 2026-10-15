@@ -51,12 +51,7 @@ from nexus.services.resource_graph.resolve import (
     load_resource_batch,
     parent_media_id_for_read_pointer,
 )
-from nexus.services.resource_items.capabilities import (
-    resource_can_be_app_search_scope,
-    resource_citation_result_type,
-    resource_inspect_policy,
-    resource_read_policy,
-)
+from nexus.services.resource_items.capabilities import capability
 from nexus.services.search.query import (
     KIND_TO_RESULT_TYPES,
     SearchScope,
@@ -250,7 +245,7 @@ async def search(value: NexusSearchInput, call: Call) -> NexusSearchSuccess:
     else:
         scopes = []
         for uri in value.scopes:
-            if not resource_can_be_app_search_scope(admitted(call, uri)):
+            if not capability(admitted(call, uri).scheme).app_search_scope:
                 refuse("ResourceUnavailable")
             scopes.append(scope_from_uri(uri))
     if not scopes:
@@ -391,7 +386,7 @@ def _read(
         return "section", page.body, ("message", str(ref.id)), page.next_cursor
     if cursor is not None:
         refuse("InvalidCursor")
-    policy = resource_read_policy(ref)
+    policy = capability(ref.scheme).readable
     if policy in ("scope", "none"):
         refuse("Unreadable")
     if policy == "media":
@@ -407,7 +402,7 @@ def _read(
     loaded = load_resource_batch(db, [ref], viewer_id=viewer_id)[uri]
     if loaded.missing:
         refuse("ResourceUnavailable")
-    cited = resource_citation_result_type(ref)
+    cited = capability(ref.scheme).citable_result_type
     citation = None if cited is None else (cited, str(ref.id))
     if ref.scheme == "highlight":
         assert loaded.quote is not None  # the highlight loader always sets its visible quote
@@ -424,7 +419,7 @@ def _read(
 
 def inspect(value: ResourceInspectInput, call: Call) -> ResourceInspectSuccess:
     ref = admitted(call, value.uri)
-    if resource_inspect_policy(ref) != "media_document_map":
+    if capability(ref.scheme).inspectable != "media_document_map":
         refuse("Uninspectable")
     document = get_media_read_map_for_viewer(call.db, call.principal, ref.id)
     if document is None:
@@ -494,7 +489,7 @@ def relations(value: RelationsListInput, call: Call) -> RelationsListSuccess:
         )
         for item in page.items
     ]
-    citation = _cite(call, resource_citation_result_type(ref), str(ref.id), value.uri)
+    citation = _cite(call, capability(ref.scheme).citable_result_type, str(ref.id), value.uri)
     return RelationsListSuccess(
         evidence=_evidence(call, value.uri, [r.model_dump(mode="json") for r in found], citation),
         relations=found,

@@ -1,14 +1,10 @@
-import { absent, present, type Presence } from "@/lib/api/presence";
 import { isApiError } from "@/lib/api/client";
 
 interface ClientDefectReport {
   pane_id: string;
   visit_id: string;
-  phase: "Render";
-  command_id: Presence<string>;
-  run_id: Presence<string>;
   error_code: string;
-  request_id: Presence<string>;
+  request_id: string | null;
   component_stack: string;
 }
 const reported = new WeakSet<object>();
@@ -31,14 +27,11 @@ export function reportClientDefect(
   const report: ClientDefectReport = {
     pane_id: view.paneId.slice(0, 128),
     visit_id: view.visitId.slice(0, 128),
-    phase: "Render",
-    command_id: absent(),
-    run_id: absent(),
     error_code: code,
     request_id:
       isApiError(error) && error.requestId
-        ? present(error.requestId.slice(0, 200))
-        : absent(),
+        ? error.requestId.slice(0, 200)
+        : null,
     component_stack: view.componentStack.slice(0, 8000),
   };
   try {

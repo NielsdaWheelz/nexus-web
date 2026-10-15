@@ -1,67 +1,80 @@
-// The script background.ts injects into a pinned document: a self-contained
-// classic bundle whose only exports are types. Each injection connects one
-// port named "nexus-capture-content", serves exactly one request on it, and
-// disconnects; background.ts addresses an injection by that port and the
-// document identity Firefox attaches to its sender. The script can read this
-// document, find the element under a context-menu click, and download a
-// same-origin link in the page's own principal. It never receives a nexus
-// credential or an arbitrary fetch.
+// The script background.ts injects into a pinned document: a classic bundle whose
+// only exports are types. Each injection connects one port, serves one request
+// and disconnects; the background addresses it by that port and the document id
+// Firefox attaches. It reads this document, finds the element under a context
+// click, and downloads a same-origin link in the page's own principal. It never
+// sees a nexus credential.
+//
+// What leaves the browser is reduced for privacy and size, not sanitized: the
+// server's one sanitizer decides what is kept (Q5). Removed here: scripts,
+// styles, form controls and hidden subtrees; handler, style and data-*
+// attributes and srcdoc; urls in schemes that never leave the browser.
 
 import { extractArticle } from "@nexus-ingest/article_extraction";
-import { absent, present, type Presence } from "@/lib/api/presence";
 import {
   ARTICLE_CONTENT_MAX_BYTES,
   ARTICLE_SOURCE_MAX_BYTES,
   CONTENT_PORT,
-  captureFailure,
   CaptureFailureError,
-  fetchFailure,
-  readDocumentResponse,
+  failure,
+  readDocument,
   type ArticlePacket,
   type DocumentKind,
   type DocumentRead,
-} from "@/extension/captureContract";
+} from "@/extension/capture";
 
-/** Firefox MV2 content scripts: fetch in the page's principal, with its cookies. */
-declare const content: { fetch: typeof fetch };
+declare const content: { fetch: typeof fetch }; // Firefox MV2: fetch in the page's principal
 
 export type ContentRequest =
   | { kind: "extract" }
   | { kind: "bind"; targetElementId: number; linkUrl: string }
-  | { kind: "download"; url: string; limits: Record<DocumentKind, number> }
-  /** background's acknowledgement of a `document` reply, after its store committed */
-  | { kind: "stored" }
-  | { kind: "store_failed" };
+  | { kind: "download"; url: string; limits: Record<DocumentKind, number> };
 
 export type ContentReply =
   | { kind: "article"; packet: ArticlePacket; previewText: string }
   | { kind: "unreadable"; message: string }
   | { kind: "bound"; sameOrigin: boolean }
   | { kind: "unbound" }
-  /** `document` is held by this script until the background acknowledges it */
   | DocumentRead;
 
 const PREVIEW_MAX_CHARS = 1200;
 const TWEET_TEXT_MAX_CHARS = 500;
+const PRIVATE =
+  "script,style,noscript,template,form,input,button,select,option,optgroup,textarea," +
+  "fieldset,datalist,output,[hidden]";
+const NEVER_SENT = new Set([
+  "javascript:",
+  "vbscript:",
+  "data:",
+  "file:",
+  "blob:",
+]);
+/** The single-url attributes of html and svg markup that PRIVATE leaves. */
+const URL_ATTRIBUTES = new Set([
+  "href",
+  "src",
+  "poster",
+  "cite",
+  "data",
+  "background",
+  "longdesc",
+  "xlink:href",
+]);
+/** srcset candidates: a url (it may hold commas, never ends in one), then its
+    descriptors up to the next comma. */
+const SRCSET_CANDIDATES = /[\s,]*(\S*[^\s,])(?:,+|([^,]*))/g;
+const EVIDENCE =
+  'iframe[src], blockquote.twitter-tweet, [role="doc-footnote"], [role="doc-endnote"], ' +
+  '[role="doc-endnotes"], [role="doc-biblioentry"], [role="doc-bibliography"], ' +
+  '[epub\\:type~="footnote"], [epub\\:type~="endnote"], .references, .reflist, ' +
+  ".marginnote, fn, ref-list";
 
 const port = browser.runtime.connect({ name: CONTENT_PORT });
 const aborter = new AbortController();
-let acknowledged: (() => void) | null = null;
-
-port.onDisconnect.addListener(() => {
-  aborter.abort();
-  acknowledged?.();
-});
-port.onMessage.addListener((message) => {
-  void serve(message as ContentRequest);
-});
+port.onDisconnect.addListener(() => aborter.abort());
+port.onMessage.addListener((message) => void serve(message as ContentRequest));
 
 async function serve(request: ContentRequest): Promise<void> {
-  if (request.kind === "stored" || request.kind === "store_failed") {
-    acknowledged?.();
-    acknowledged = null;
-    return;
-  }
   let reply: ContentReply;
   try {
     reply =
@@ -72,45 +85,46 @@ async function serve(request: ContentRequest): Promise<void> {
           : await download(request.url, request.limits);
   } catch (error) {
     if (aborter.signal.aborted) return;
+    const message = `Nexus could not read this page: ${error instanceof Error ? error.message : String(error)}`;
     reply = {
       kind: "failed",
-      failure: error instanceof CaptureFailureError ? error.failure : captureFailure(
-        "E_CAPTURE_CONTENT",
-        `Nexus could not read this page: ${error instanceof Error ? error.message : String(error)}`,
-      ),
+      failure:
+        error instanceof CaptureFailureError
+          ? error.failure
+          : { code: "E_CAPTURE_CONTENT", message, requestId: null },
     };
   }
-  if (reply.kind === "document") {
-    // keep the blob referenced until the background has stored it durably
-    const stored = new Promise<void>((resolve) => {
-      acknowledged = resolve;
-    });
-    port.postMessage(reply);
-    await stored;
-  } else {
-    port.postMessage(reply);
-  }
+  // a document's blob is copied by the background on receipt
+  port.postMessage(reply);
   port.disconnect();
 }
 
-// --- extract ----------------------------------------------------------------
+// --- extract -------------------------------------------------------------------
 
 function extract(): ContentReply {
   const clone = document.cloneNode(true) as Document;
   const baseUri = document.baseURI;
-  // evidence first: the extractor mutates the clone
-  const sourceHtml = sourceEvidence(clone, baseUri);
+  const sourceHtml = sourceEvidence(clone, baseUri); // first: the extractor mutates the clone
   const article = extractArticle(clone);
-  if (article === null || typeof article.content !== "string" || article.content === "") {
-    return { kind: "unreadable", message: "This page has no readable article." };
+  if (!article?.content) {
+    return {
+      kind: "unreadable",
+      message: "This page has no readable article.",
+    };
   }
-  const parsed = new DOMParser().parseFromString(article.content, "text/html");
-  project(parsed.body, baseUri);
-  const contentHtml = parsed.body.innerHTML;
-  const text = collapse(parsed.body.textContent ?? "");
-  if (text === "") return { kind: "unreadable", message: "This page has no readable text." };
-  if (utf8Length(contentHtml) > ARTICLE_CONTENT_MAX_BYTES) {
-    return { kind: "unreadable", message: "The article is too large to capture." };
+  const body = new DOMParser().parseFromString(
+    article.content,
+    "text/html",
+  ).body;
+  reduce(body, baseUri);
+  const text = collapse(body.textContent ?? "");
+  if (text === "")
+    return { kind: "unreadable", message: "This page has no readable text." };
+  if (utf8Length(body.innerHTML) > ARTICLE_CONTENT_MAX_BYTES) {
+    return {
+      kind: "unreadable",
+      message: "The article is too large to capture.",
+    };
   }
   return {
     kind: "article",
@@ -118,152 +132,131 @@ function extract(): ContentReply {
       url: location.href,
       base_url: baseUri,
       title: bounded(article.title, 1024),
-      content_html: contentHtml,
+      content_html: body.innerHTML,
       source_html: sourceHtml,
-      byline: presence(article.byline, 1024),
-      excerpt: presence(article.excerpt, 4000),
-      site_name: presence(article.siteName, 1024),
-      published_time: presence(article.publishedTime, 128),
+      byline: nonblank(article.byline, 1024),
+      excerpt: nonblank(article.excerpt, 4000),
+      site_name: nonblank(article.siteName, 1024),
+      published_time: nonblank(article.publishedTime, 128),
     },
     previewText: text.slice(0, PREVIEW_MAX_CHARS),
   };
 }
 
-// What leaves the browser is content-bearing markup only. Dropped with their
-// content: scripts, styles, templates, forms and every control, hidden
-// elements, and embeds the server drops anyway. Kept per element: the
-// attributes sanitize_html admits (a: href/title/name; img: src/alt; th/td:
-// colspan/rowspan), authored targets and labels, the class/link/apparatus
-// attributes html_apparatus reads, and iframe src/title for embed evidence.
-// Everything else — event handlers, style, data-*, srcset — goes.
-const DROPPED_TAGS = new Set([
-  "script",
-  "style",
-  "noscript",
-  "template",
-  "form",
-  "input",
-  "button",
-  "select",
-  "option",
-  "optgroup",
-  "textarea",
-  "fieldset",
-  "datalist",
-  "output",
-  "object",
-  "embed",
-  "svg",
-  "meta",
-  "link",
-  "base",
-]);
-const KEPT_ATTRIBUTES = new Set(["id", "aria-labelledby", "class", "role", "epub:type", "rid", "ref-type"]);
-const KEPT_BY_TAG: Record<string, readonly string[]> = {
-  a: ["href", "title", "name"],
-  img: ["src", "alt"],
-  th: ["colspan", "rowspan"],
-  td: ["colspan", "rowspan"],
-  iframe: ["src", "title"],
-};
-const DROPPED_SCHEMES = new Set(["javascript:", "vbscript:", "data:", "file:"]);
-
-function project(root: HTMLElement, baseUri: string, preserveUnsupportedEvidence = false): void {
+/** Privacy and size, in place, for everything below `root` (a container the
+    caller does not send): drop private subtrees and attributes, make every url
+    absolute, drop urls that never leave the browser. In-document "#id" links
+    stay (the server reads the apparatus graph from them). */
+function reduce(root: Element, baseUri: string): void {
+  for (const element of root.querySelectorAll(PRIVATE)) element.remove();
   for (const element of root.querySelectorAll("*")) {
-    if (!element.isConnected) continue; // removed with an ancestor
-    const tag = element.localName;
-    const unsupportedEvidence = preserveUnsupportedEvidence && ["svg", "object", "embed"].includes(tag);
-    if ((DROPPED_TAGS.has(tag) && !unsupportedEvidence) || element.hasAttribute("hidden")) {
-      element.remove();
-      continue;
-    }
     for (const name of element.getAttributeNames()) {
-      if (!KEPT_ATTRIBUTES.has(name) && !(KEPT_BY_TAG[tag]?.includes(name) ?? false)) {
-        element.removeAttribute(name);
-        continue;
-      }
-      if (name !== "href" && name !== "src") continue;
       const value = element.getAttribute(name) ?? "";
-      // in-document links carry the apparatus graph; the server reads them as "#id"
-      if (name === "href" && value.startsWith("#")) continue;
-      const resolved = absolute(value, baseUri, name === "src");
-      if (resolved === null) element.removeAttribute(name);
-      else element.setAttribute(name, resolved);
+      if (
+        name.startsWith("on") ||
+        name.startsWith("data-") ||
+        name === "style" ||
+        name === "srcdoc"
+      ) {
+        element.removeAttribute(name);
+      } else if (URL_ATTRIBUTES.has(name) && !value.startsWith("#")) {
+        const url = absolute(value, baseUri);
+        if (url === null) element.removeAttribute(name);
+        else element.setAttribute(name, url);
+      } else if (name === "srcset" || name === "ping") {
+        // lists: each url absolute, one that never leaves the browser dropped
+        const srcset = name === "srcset";
+        const items = value.matchAll(srcset ? SRCSET_CANDIDATES : /(\S+)()/g);
+        const kept = Array.from(items, ([, url, rest = ""]) => {
+          const resolved = absolute(url, baseUri);
+          return resolved === null ? "" : resolved + rest;
+        });
+        element.setAttribute(
+          name,
+          kept.filter(Boolean).join(srcset ? ", " : " "),
+        );
+      }
     }
   }
 }
 
-/** `value` against `baseUri`, or null when it does not parse or names a
-    scheme that never leaves the browser; `src` must be http(s). */
-function absolute(value: string, baseUri: string, httpOnly: boolean): string | null {
-  let url: URL;
+function absolute(value: string, baseUri: string): string | null {
   try {
-    url = new URL(value, baseUri);
+    const url = new URL(value, baseUri);
+    return NEVER_SENT.has(url.protocol) ? null : url.href;
   } catch {
     return null;
   }
-  if (DROPPED_SCHEMES.has(url.protocol)) return null;
-  if (httpOnly && url.protocol !== "http:" && url.protocol !== "https:") return null;
-  return url.href;
 }
 
-/** Source notes and embeds omitted by article extraction. Complete subtrees only;
-    overflow refuses capture rather than silently publishing incomplete evidence. */
+/** Source notes and embeds article extraction omits: complete subtrees only, and
+    overflow refuses the capture rather than publish incomplete evidence. */
 function sourceEvidence(clone: Document, baseUri: string): string {
-  const selector = 'iframe[src], blockquote.twitter-tweet, [role="doc-footnote"], [role="doc-endnote"], [role="doc-endnotes"], [role="doc-biblioentry"], [role="doc-bibliography"], [epub\\:type~="footnote"], [epub\\:type~="endnote"], .references, .reflist, .marginnote, fn, ref-list';
   let html = "";
-  let bytes = 0;
-  for (const element of clone.querySelectorAll(selector)) {
-    if (element.parentElement?.closest(selector)) continue;
+  for (const element of clone.querySelectorAll(EVIDENCE)) {
+    // hidden evidence, or evidence under a hidden ancestor, never leaves
+    if (element.parentElement?.closest(EVIDENCE) || element.closest("[hidden]"))
+      continue;
     let piece: string | null;
-    if (element.localName === "iframe") piece = iframeEvidence(element, baseUri);
-    else if (element.matches("blockquote.twitter-tweet")) piece = tweetEvidence(clone, element, baseUri);
-    else {
-      const projected = new DOMParser().parseFromString(element.outerHTML, "text/html");
-      project(projected.body, baseUri, true);
-      piece = projected.body.innerHTML;
+    if (element.localName === "iframe") {
+      // an embed is an http(s) document; an about:blank ad slot is not
+      const src = absolute(element.getAttribute("src") ?? "", baseUri) ?? "";
+      const title = element.getAttribute("title");
+      piece = /^https?:/.test(src)
+        ? `<iframe src="${escape(src, true)}"${title ? ` title="${escape(title, true)}"` : ""}></iframe>`
+        : null;
+    } else if (element.matches("blockquote.twitter-tweet")) {
+      piece = tweetEvidence(clone, element, baseUri);
+    } else {
+      // a holder, so the subtree's own root is reduced too
+      const holder = clone.createElement("div");
+      holder.append(element.cloneNode(true));
+      reduce(holder, baseUri);
+      piece = holder.innerHTML;
     }
-    if (piece === null) continue;
-    const size = utf8Length(piece);
-    if (bytes + size > ARTICLE_SOURCE_MAX_BYTES) {
-      throw new CaptureFailureError(captureFailure("E_RESOURCE_LIMIT", "The page's source notes and embeds exceed the capture limit."));
+    if (!piece) continue;
+    if (utf8Length(html) + utf8Length(piece) > ARTICLE_SOURCE_MAX_BYTES) {
+      throw failure(
+        "E_RESOURCE_LIMIT",
+        "The page's source notes and embeds exceed the capture limit.",
+      );
     }
     html += piece;
-    bytes += size;
   }
   return html;
 }
 
-function iframeEvidence(iframe: Element, baseUri: string): string | null {
-  const src = absolute(iframe.getAttribute("src") ?? "", baseUri, true);
-  if (src === null) return null;
-  const title = iframe.getAttribute("title");
-  return `<iframe src="${escapeAttribute(src)}"${title ? ` title="${escapeAttribute(title)}"` : ""}></iframe>`;
-}
-
-function tweetEvidence(clone: Document, quote: Element, baseUri: string): string | null {
-  const hrefs: string[] = [];
-  for (const anchor of quote.querySelectorAll("a[href]")) {
-    const href = absolute(anchor.getAttribute("href") ?? "", baseUri, true);
-    if (href !== null) hrefs.push(href);
-  }
+/** A tweet as the server reads it: its text (joined like lxml itertext) and its links. */
+function tweetEvidence(
+  clone: Document,
+  quote: Element,
+  baseUri: string,
+): string | null {
+  const hrefs = Array.from(quote.querySelectorAll("a[href]"), (a) =>
+    absolute(a.getAttribute("href") ?? "", baseUri),
+  ).filter((href): href is string => href !== null && /^https?:/.test(href));
   if (hrefs.length === 0) return null;
-  // the server joins text nodes with spaces (lxml itertext)
   const texts: string[] = [];
-  const walker = clone.createTreeWalker(quote, 0x4 /* NodeFilter.SHOW_TEXT */);
+  const walker = clone.createTreeWalker(quote, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
     texts.push(node.nodeValue ?? "");
   }
-  const text = collapse(texts.join(" ")).slice(0, TWEET_TEXT_MAX_CHARS);
-  return `<blockquote class="twitter-tweet">${escapeText(text)}${hrefs.map((href) => `<a href="${escapeAttribute(href)}"></a>`).join("")}</blockquote>`;
+  const text = escape(
+    collapse(texts.join(" ")).slice(0, TWEET_TEXT_MAX_CHARS),
+    false,
+  );
+  const links = hrefs
+    .map((href) => `<a href="${escape(href, true)}"></a>`)
+    .join("");
+  return `<blockquote class="twitter-tweet">${text}${links}</blockquote>`;
 }
 
-function escapeText(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function escapeAttribute(value: string): string {
-  return escapeText(value).replace(/"/g, "&quot;");
+function escape(value: string, attribute: boolean): string {
+  const text = value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return attribute ? text.replace(/"/g, "&quot;") : text;
 }
 
 function collapse(value: string): string {
@@ -274,34 +267,38 @@ function utf8Length(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
 
-/** the first `limit` code points, like the server ingest's bounded metadata */
+/** The first `limit` code points, like the server's bounded metadata. */
 function bounded(value: string | null | undefined, limit: number): string {
-  return Array.from(value ?? "").slice(0, limit).join("");
+  return Array.from(value ?? "")
+    .slice(0, limit)
+    .join("");
 }
 
-function presence(value: string | null | undefined, limit: number): Presence<string> {
-  return typeof value === "string" && value.trim() !== "" ? present(bounded(value, limit)) : absent();
+function nonblank(
+  value: string | null | undefined,
+  limit: number,
+): string | null {
+  return value?.trim() ? bounded(value, limit) : null;
 }
 
-// --- bind -------------------------------------------------------------------
+// --- bind and download ---------------------------------------------------------
 
-/** The element under the context-menu click must still be in this document
-    and inside a link; the clicked url itself stays as Firefox reported it. */
+/** The clicked element must still be in this document and inside a link; the
+    url itself stays as Firefox reported it. */
 function bind(targetElementId: number, linkUrl: string): ContentReply {
   const element = browser.menus.getTargetElement(targetElementId);
-  if (!element || element.closest("a[href]") === null) return { kind: "unbound" };
-  let sameOrigin: boolean;
-  try {
-    sameOrigin = new URL(linkUrl).origin === location.origin;
-  } catch {
+  if (!element?.closest("a[href]") || !URL.canParse(linkUrl))
     return { kind: "unbound" };
-  }
-  return { kind: "bound", sameOrigin };
+  return {
+    kind: "bound",
+    sameOrigin: new URL(linkUrl).origin === location.origin,
+  };
 }
 
-// --- download ---------------------------------------------------------------
-
-async function download(url: string, limits: Record<DocumentKind, number>): Promise<DocumentRead> {
+async function download(
+  url: string,
+  limits: Record<DocumentKind, number>,
+): Promise<DocumentRead> {
   let response: Response;
   try {
     response = await content.fetch(url, {
@@ -311,7 +308,12 @@ async function download(url: string, limits: Record<DocumentKind, number>): Prom
     });
   } catch (error) {
     if (aborter.signal.aborted) throw error;
-    return { kind: "failed", failure: fetchFailure() };
+    const message =
+      "The link could not be downloaded. Check the connection and retry.";
+    return {
+      kind: "failed",
+      failure: { code: "E_CAPTURE_FETCH", message, requestId: null },
+    };
   }
-  return readDocumentResponse(response, limits);
+  return readDocument(response, limits);
 }

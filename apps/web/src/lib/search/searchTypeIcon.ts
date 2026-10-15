@@ -12,10 +12,7 @@ import {
 } from "lucide-react";
 import type { SearchType } from "./types";
 
-/**
- * Canonical icon for each search result type. The chat evidence disclosure
- * reuses this map: a retrieval's result_type is a subset of SearchType.
- */
+/** The icon for each search result type, in the pane and in Nexus. */
 export const SEARCH_TYPE_ICON: Record<SearchType, LucideIcon> = {
   contributor: UserRound,
   media: Globe,

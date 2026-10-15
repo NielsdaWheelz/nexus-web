@@ -11,12 +11,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from nexus.schemas.presence import Presence, Present
-from nexus.schemas.resource_items import CamelModel, ResourceItemOut
+from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.resource_graph.refs import ResourceScheme
 
 
-class ResourceTargetSearchRequest(CamelModel):
+class ResourceTargetSearchRequest(BaseModel):
     q: str
     source_ref: str | None = None
     exclude_refs: list[str] = Field(default_factory=list)
@@ -25,13 +24,13 @@ class ResourceTargetSearchRequest(CamelModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ResourceTargetResourceOut(CamelModel):
+class ResourceTargetResourceOut(BaseModel):
     kind: Literal["resource"] = "resource"
     item: ResourceItemOut
     existing_link_id: UUID | None
 
 
-class ResourceTargetPassageOut(CamelModel):
+class ResourceTargetPassageOut(BaseModel):
     kind: Literal["passage"] = "passage"
     candidate_ref: str
     source: ResourceItemOut
@@ -45,22 +44,20 @@ ResourceTargetOut = Annotated[
 ]
 
 
-class ResourceTargetSearchResponse(CamelModel):
+class ResourceTargetSearchResponse(BaseModel):
     targets: list[ResourceTargetOut]
     next_cursor: str | None
 
 
 class ResourceOpenableSearchRequest(BaseModel):
     q: str = Field(min_length=1, max_length=500)
-    schemes: Presence[Annotated[list[ResourceScheme], Field(min_length=1)]]
+    schemes: Annotated[list[ResourceScheme], Field(min_length=1)] | None
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     @model_validator(mode="after")
     def validate_unique_schemes(self) -> ResourceOpenableSearchRequest:
-        if isinstance(self.schemes, Present) and len(set(self.schemes.value)) != len(
-            self.schemes.value
-        ):
+        if self.schemes is not None and len(set(self.schemes)) != len(self.schemes):
             raise ValueError("schemes must not contain duplicates")
         return self
 

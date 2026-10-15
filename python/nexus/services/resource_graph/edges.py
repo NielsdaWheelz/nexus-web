@@ -24,11 +24,7 @@ from nexus.schemas.resource_graph import EDGE_KINDS, CitationSnapshot, EdgeKind,
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_items import versions
-from nexus.services.resource_items.capabilities import (
-    resource_can_be_citation_output_source,
-    resource_can_own_ordered_adjacency,
-    resource_link_mode,
-)
+from nexus.services.resource_items.capabilities import capability
 
 Pair = tuple[str, UUID]
 CONNECTION_DISCOVERY_SOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
@@ -105,7 +101,7 @@ def _validate(db: Session, viewer_id: UUID, edge: EdgeCreate) -> None:
     if edge.ordinal is not None:
         if edge.origin != "citation" or edge.ordinal < 1 or edge.snapshot is None:
             _invalid("Only citation edges carry an ordinal >= 1, with a snapshot")
-        if not resource_can_be_citation_output_source(edge.source):
+        if not capability(edge.source.scheme).citation_output_source:
             _invalid("Citation ordinals must start from a generated output resource")
     elif rationale:
         if edge.snapshot is None or not (edge.snapshot.excerpt or "").strip():
@@ -189,36 +185,21 @@ def replace_edges_for_origin(
 
 
 def create_link(
-    db: Session, *, viewer_id: UUID, source: ResourceRef, target: ResourceRef
-) -> EdgeWrite:
-    """Create or reuse the viewer's one link between two directly linkable resources."""
-    return _link(db, viewer_id, source, target, None)
-
-
-def restore_link(
     db: Session,
     *,
     viewer_id: UUID,
     source: ResourceRef,
     target: ResourceRef,
-    link_id: UUID,
-    created_at: datetime,
-) -> None:
-    """Re-create a receipt-owned link under its old identity; never retarget a live one."""
-    if not _link(db, viewer_id, source, target, (link_id, created_at)).created:
-        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Restored link already exists")
-
-
-def _link(
-    db: Session,
-    viewer_id: UUID,
-    source: ResourceRef,
-    target: ResourceRef,
-    identity: tuple[UUID, datetime] | None,
+    link_id: UUID | None = None,
 ) -> EdgeWrite:
+    """Create or reuse the viewer's one link between two directly linkable resources; a
+    new link takes ``link_id`` when given (an outline's client-minted id)."""
     if source == target:
         _invalid("An edge cannot relate a resource to itself")
-    if resource_link_mode(source) != "direct" or resource_link_mode(target) != "direct":
+    if (
+        capability(source.scheme).link_mode != "direct"
+        or capability(target.scheme).link_mode != "direct"
+    ):
         _invalid("Resource cannot be linked")
     assert_ref_visible(db, viewer_id=viewer_id, ref=target)
     assert_ref_visible(db, viewer_id=viewer_id, ref=source)
@@ -244,8 +225,8 @@ def _link(
         target_scheme=b.scheme,
         target_id=b.id,
     )
-    if identity is not None:
-        row.id, row.created_at = identity
+    if link_id is not None:
+        row.id = link_id
     db.add(row)
     db.flush()
     for endpoint, other in ((a, b), (b, a)):
@@ -254,7 +235,7 @@ def _link(
             key = conversation_rank(
                 db, viewer_id=viewer_id, conversation_id=endpoint.id, target=other
             )
-        elif resource_can_own_ordered_adjacency(endpoint):
+        elif capability(endpoint.scheme).adjacency_source:
             keys = db.scalars(
                 select(ResourceViewState.order_key).where(
                     ResourceViewState.user_id == viewer_id,

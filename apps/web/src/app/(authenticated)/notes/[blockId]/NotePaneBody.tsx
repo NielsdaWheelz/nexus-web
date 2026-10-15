@@ -1,183 +1,118 @@
 "use client";
 
+// A note (/notes/{id}): its body is the masthead, its links the outline below.
+// `#passage-{anchor}` and chat citations pulse a range of the body; EditNoteBody focuses
+// the body's end. Labelled by the body's first line.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import ResourceSurfaceEditor from "@/components/resource-surface/ResourceSurfaceEditor";
-import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
+import type { NotePulse } from "@/components/notes/NoteEditor";
+import OutlineEditor, { useOutlineFilter } from "@/components/notes/OutlineEditor";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
-import { consumePendingNoteActivation } from "@/lib/reader/pendingNoteActivation";
-import {
-  useNotePulseHighlight,
-  type NotePulseTarget,
-} from "@/lib/reader/pulseEvent";
-import { canonicalResourceRef } from "@/lib/sharing/targets";
-import type { ResourceSurface } from "@/lib/resources/resourceItems";
+import { useText } from "@/lib/notes/texts";
+import { useOutline } from "@/lib/notes/useOutline";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
 import {
   requirePaneRuntime,
+  usePaneEntryDelivery,
   usePaneHash,
   usePaneParam,
   usePaneRuntime,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
-import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { usePassageResolution } from "@/lib/reader/passageResolution";
-import { useResourceSurfaceFilterRows } from "@/components/resource-surface/useResourceSurfaceFilterRows";
-import {
-  notifyNoteBlockActionIntentOwnerReady,
-  useNoteBlockActionIntentOwner,
-  type NoteBlockActionIntent,
-} from "@/lib/notes/actionIntents";
-import {
-  createMountedEditorIntentController,
-  type MountedEditorIntentController,
-} from "@/lib/actions/mountedActionHandoff";
+import { consumePendingNoteActivation } from "@/lib/reader/pendingNoteActivation";
+import { useNotePulseHighlight, type NotePulseTarget } from "@/lib/reader/pulseEvent";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 
 export default function NotePaneBody() {
   const blockId = usePaneParam("blockId");
+  // justify-defect: the note route always carries its id.
   if (!blockId) throw new Error("note route requires a block id");
-  const paneRuntime = requirePaneRuntime(
-    usePaneRuntime(),
-    "NotePaneBody",
-  );
-  const activateTarget = paneRuntime.activateTarget;
-  const paneHash = usePaneHash();
-  const passageResolution = usePassageResolution({
-    hash: paneHash,
-    ownerScheme: "note_block",
-    ownerId: blockId,
-  });
-  const sourceRef = `note_block:${blockId}`;
-  const {
-    ready,
-    query: filterQuery,
-    queryControls,
-    acceptSurface,
-  } = useResourceSurfaceFilterRows(sourceRef, "Filter note items");
-  const [label, setLabel] = useState<string | null>(null);
-  const [focusBodySerial, setFocusBodySerial] = useState(0);
-  const editBodyIntentControllerRef = useRef<
-    MountedEditorIntentController<NoteBlockActionIntent> | null
-  >(null);
-  if (editBodyIntentControllerRef.current === null) {
-    editBodyIntentControllerRef.current = createMountedEditorIntentController(
-      notifyNoteBlockActionIntentOwnerReady,
-    );
-  }
-  const editBodyIntentController = editBodyIntentControllerRef.current;
-  const [pulse, setPulse] = useState<
-    (NotePulseTarget & { pulseId: number }) | null
-  >(null);
-  const pulseIdRef = useRef(0);
-  usePaneReturnReady(ready);
-  useSetPaneLabel(label);
-  const acceptEditBodyIntent = useCallback(
-    (intent: NoteBlockActionIntent) => {
-      if (!ready || !editBodyIntentController.accept(intent)) return false;
-      setFocusBodySerial((current) => current + 1);
-      return true;
-    },
-    [editBodyIntentController, ready],
-  );
-  useNoteBlockActionIntentOwner(
-    ready
-      ? canonicalResourceRef({ scheme: "note_block", id: blockId })
-      : null,
-    acceptEditBodyIntent,
-  );
-  const beginBodyIntentMutation = useCallback(
-    () => editBodyIntentController.beginMutation(),
-    [editBodyIntentController],
-  );
-  const abortBodyIntent = useCallback(() => {
-    editBodyIntentController.abortEditing();
-  }, [editBodyIntentController]);
-  useEffect(
-    () => () => {
-      editBodyIntentController.releaseOwner();
-    },
-    [editBodyIntentController],
-  );
-  const setPulseTarget = useCallback((target: NotePulseTarget) => {
-    const next = pulseIdRef.current + 1;
-    pulseIdRef.current = next;
-    setPulse({ ...target, pulseId: next });
-  }, []);
-  const appliedPassageRef = useRef<string | null>(null);
+  const runtime = requirePaneRuntime(usePaneRuntime(), "NotePaneBody");
+  const ref = `note_block:${blockId}`;
+  const outline = useOutline({ root: ref, dailyDate: null });
+  const text = useText(ref);
+  const titleRef = useRef<HTMLInputElement | null>(null);
+  const { query, queryControls } = useOutlineFilter(outline, ref, "Filter note items");
+  usePaneReturnReady(outline.status !== "loading");
+  const firstLine = typeof text?.value === "object" ? text.value.body_text.split("\n")[0]!.trim() : "";
+  useSetPaneLabel(text || outline.status === "failed" ? firstLine || "Note" : null);
+
+  const { delivery, claim } = usePaneEntryDelivery();
+  const feedback = useFeedback();
   useEffect(() => {
-    if (!paneHash) appliedPassageRef.current = null;
-  }, [paneHash]);
-  useEffect(() => {
-    if (passageResolution.status !== "ready" || passageResolution.data.kind !== "Present") return;
-    const target = passageResolution.data.value;
-    if (target.kind !== "NoteTextOffsets" || appliedPassageRef.current === paneHash) return;
-    appliedPassageRef.current = paneHash;
-    setPulseTarget({
-      blockId,
-      startOffset: target.start_offset,
-      endOffset: target.end_offset,
-      snippet: null,
-      highlightBehavior: "pulse",
-      focusBehavior: "scroll_into_view",
-    });
-    paneRuntime.router.replace(paneRuntime.pathname + (paneRuntime.searchParams.size ? `?${paneRuntime.searchParams}` : ""));
-  }, [blockId, paneHash, paneRuntime, passageResolution, setPulseTarget]);
+    if (delivery?.entry.kind !== "EditNoteBody" || outline.status !== "ready") return;
+    if (!claim(delivery)) return;
+    if (delivery.entry.noteBlockId === blockId) outline.focusRow("", "end");
+    else
+      feedback.publish({
+        kind: "Hud",
+        content: { tone: "Neutral", title: "This note is no longer available." },
+      });
+  }, [blockId, claim, delivery, feedback, outline]);
+
+  const [pulse, setPulse] = useState<NotePulse | null>(null);
+  const pulseAt = useCallback(
+    (target: Pick<NotePulseTarget, "startOffset" | "endOffset">) =>
+      setPulse((current) => ({
+        startOffset: target.startOffset,
+        endOffset: target.endOffset,
+        serial: (current?.serial ?? 0) + 1,
+      })),
+    [],
+  );
   useNotePulseHighlight((target) => {
-    if (target.blockId === blockId) setPulseTarget(target);
+    if (target.blockId === blockId) pulseAt(target);
   });
   useEffect(() => {
     const pending = consumePendingNoteActivation(blockId);
-    if (pending) setPulseTarget(pending);
-  }, [blockId, setPulseTarget]);
+    if (pending) pulseAt(pending);
+  }, [blockId, pulseAt]);
+  const hash = usePaneHash();
+  const passage = usePassageResolution({ hash, ownerScheme: "note_block", ownerId: blockId });
+  const appliedHash = useRef<string | null>(null);
+  useEffect(() => {
+    if (!hash) appliedHash.current = null;
+    if (passage.status !== "ready" || passage.data?.kind !== "NoteTextOffsets") return;
+    if (appliedHash.current === hash) return;
+    appliedHash.current = hash;
+    pulseAt({ startOffset: passage.data.start_offset, endOffset: passage.data.end_offset });
+    const query = runtime.searchParams.size ? `?${runtime.searchParams}` : "";
+    runtime.router.replace(runtime.pathname + query);
+  }, [hash, passage, pulseAt, runtime]);
+
   const connections = useMemo(
-    () => (
-      <ConnectionsSurface
-        resourceRef={{ scheme: "note_block", id: blockId }}
-      />
-    ),
+    () => <ConnectionsSurface resourceRef={{ scheme: "note_block", id: blockId }} />,
     [blockId],
   );
-  useResourceInspector({
-    scheme: "note_block",
-    handle: blockId,
-    bodies: { linkedItems: connections },
-  });
-  const handleSurfaceChange = useCallback(
-    (surface: ResourceSurface) => {
-      acceptSurface(surface);
-      if (surface.source.content.kind === "note_body") {
-        setLabel(surface.source.content.bodyText.trim() || "Note");
-      }
-    },
-    [acceptSurface],
-  );
-  usePaneChrome({
-    query: queryControls,
-    // The pane's canonical identity is its route key, never a fact of the
-    // filter-row state it happened to be gated on. The snapshot owns missing.
-    actionSubject: {
-      ref: canonicalResourceRef({ scheme: "note_block", id: blockId }),
-    },
-  });
+  useResourceInspector({ scheme: "note_block", handle: blockId, bodies: { linkedItems: connections } });
+  const resourceRef = canonicalResourceRef({ scheme: "note_block", id: blockId });
+  usePaneChrome(useMemo(() => ({ query: queryControls, resourceRef }), [resourceRef, queryControls]));
+
+  if (outline.status === "failed")
+    return (
+      <FeedbackNotice
+        content={{ tone: "Danger", title: "This note couldn’t be loaded" }}
+        announcement="Assertive"
+        actions={[{ label: "Retry", onClick: () => void outline.reload() }]}
+      />
+    );
+  if (!outline.root) return <PaneLoadingState label="Loading note…" announcement="Polite" />;
   return (
     <>
-      {!ready && filterQuery.trim() ? (
-        <p role="status">No matching item found so far.</p>
-      ) : null}
-      {passageResolution.status === "ready" && passageResolution.data.kind === "Absent" ? (
+      {passage.status === "ready" && passage.data === null ? (
         <p role="status">This passage is no longer available.</p>
       ) : null}
-      {passageResolution.status === "error" ? (
-        <p role="alert">The passage could not be opened.</p>
-      ) : null}
-      <ResourceSurfaceEditor
-        sourceRef={sourceRef}
-        rowFilterQuery={filterQuery}
-        onSurfaceChange={handleSurfaceChange}
-        focusBodySerial={focusBodySerial}
-        onSourceBodyMutationStarted={beginBodyIntentMutation}
-        onSourceBodyEditAborted={abortBodyIntent}
-        activateTarget={activateTarget}
-        notePulseTarget={pulse?.blockId === blockId ? pulse : null}
+      {passage.status === "failed" ? <p role="alert">The passage could not be opened.</p> : null}
+      <OutlineEditor
+        outline={outline}
+        filter={query}
+        pulse={pulse}
+        titleRef={titleRef}
+        activateTarget={runtime.activateTarget}
       />
     </>
   );

@@ -12,7 +12,7 @@ ten minutes. Nexus search reruns on every attempt: before admission drift is har
 import unicodedata
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import regex
 from llm_tools import WebSearchError, WebSearchProvider, WebSearchRequest
@@ -23,13 +23,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from nexus.db.async_session import open_async_session
 from nexus.errors import InvalidRequestError
 from nexus.jobs.queue import JobExecutionContext, JobRow, update_running_job_payload
-from nexus.schemas.presence import Present
 from nexus.services.dossier.inputs import Candidate, Collected, collect, offer
 from nexus.services.import_history import source_supersession_media_id
 from nexus.services.media_read_map import load_media_document
 from nexus.services.media_source_ingest import accept_url_source
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
-from nexus.services.resource_items.capabilities import resource_read_policy
+from nexus.services.resource_items.capabilities import capability
 from nexus.services.search.query import SearchKind, SearchQuery, SearchScope
 from nexus.services.search.service import search_scopes_async
 from nexus.services.url_normalize import normalize_url_for_display
@@ -158,7 +157,7 @@ def read_source(
     if loaded[read.uri].missing or loaded[target.uri].missing:
         return None
     quote = loaded[read.uri].quote
-    if resource_read_policy(read) == "media":
+    if capability(read.scheme).readable == "media":
         document = load_media_document(db, user_id, read.id)
         title, body = (document.title, document.body) if document is not None else ("", "")
     elif quote is not None:
@@ -215,15 +214,16 @@ def _page(db: Session, user_id: UUID, key: str, url: str) -> ResourceRef | datet
         accepted = accept_url_source(
             db=db,
             viewer_id=user_id,
+            id=uuid5(NAMESPACE_URL, f"dossier:{key}"),
             url=url,
             library_ids=[],
-            idempotency_key=key,
+            request_id=None,
             ingest_purpose="artifact_research",
         )
     except InvalidRequestError:
         return None
     winner = source_supersession_media_id(db, source_attempt_id=accepted.source_attempt_id)
-    media_id = winner.value if isinstance(winner, Present) else accepted.media_id
+    media_id = winner if winner is not None else accepted.media_id
     status, accepted_at = db.execute(
         text(
             "SELECT m.processing_status, a.created_at FROM media m, media_source_attempts a "

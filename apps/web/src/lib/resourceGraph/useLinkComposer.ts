@@ -10,7 +10,8 @@ import {
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
-import { resolveResourceLocator } from "@/lib/resources/resourceLocators";
+import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities";
+import { resolveResourceItem } from "@/lib/resources/items";
 import {
   createLink,
   deleteLink,
@@ -31,8 +32,6 @@ const CREATE_FAILURES: Record<string, string> = {
   E_LINK_TARGET_STALE: "That passage changed. Search for it again, then retry.",
   E_HIGHLIGHT_CONFLICT:
     "The selected passage changed. Close Link, select the passage again, and retry.",
-  E_IDEMPOTENCY_KEY_REPLAY_MISMATCH:
-    "The link request changed. Close Link, then try again.",
 };
 const UNCONFIRMED = "Couldn’t confirm the change.";
 
@@ -107,7 +106,7 @@ interface Snapshot {
 }
 
 /**
- * The app's one link-mutation owner. A pick freezes its intent (a fresh mutation id)
+ * The app's one link-mutation owner. A pick freezes its intent (a fresh link id)
  * and keeps running when the picker closes; a failure stays in the open picker with an
  * exact Retry, or becomes a persistent notice once the picker is closed. One save runs
  * at a time.
@@ -162,12 +161,8 @@ function createLinkComposer(feedback: FeedbackContextValue) {
     label: string,
     picked: boolean,
   ): Promise<void> {
-    const intent = {
-      clientMutationId: createRandomId("link"),
-      source: owner.source,
-      target,
-    };
-    const key = `resource-link:${intent.clientMutationId}`;
+    const intent = { link_id: createRandomId(), source: owner.source, target };
+    const key = `resource-link:${intent.link_id}`;
     const current = () => picked && snap.session === owner;
     async function submit(): Promise<void> {
       if (snap.committing) {
@@ -286,11 +281,9 @@ function createLinkComposer(feedback: FeedbackContextValue) {
 
   async function openResourceLink(ref: string): Promise<void> {
     try {
-      const { resourceItem: item } = await resolveResourceLocator({
-        kind: "resource_ref",
-        ref,
-      });
-      if (item.missing || item.capabilities.linkMode === "none") {
+      const item = await resolveResourceItem(ref);
+      const linkMode = RESOURCE_CAPABILITIES[item.scheme].link_mode;
+      if (item.missing || linkMode === "none") {
         feedback.publish({
           kind: "Hud",
           content: { tone: "Warning", title: "This item can’t be linked." },
@@ -299,7 +292,7 @@ function createLinkComposer(feedback: FeedbackContextValue) {
       }
       openLink({
         source:
-          item.capabilities.linkMode === "materialize_passage"
+          linkMode === "materialize_passage"
             ? { kind: "passage", candidate_ref: item.ref }
             : { kind: "resource", ref: item.ref },
         sourceRef: item.ref,

@@ -1,6 +1,5 @@
 // A pane's identity: the route's header contract plus what its body
 // published. Pure; formatting meta and credits belongs to PaneHeaderIdentity.
-import { absent, present, type Presence } from "@/lib/api/presence";
 import { getDestination } from "@/lib/navigation/destinations";
 import type { PaneRouteHeaderContract } from "@/lib/panes/paneRouteModel";
 
@@ -45,7 +44,7 @@ export type PaneHeaderModel =
       readonly kind: "Section";
       readonly title: string;
       readonly titlePending: boolean;
-      readonly context: Presence<string>;
+      readonly context: string | null;
       readonly meta: PaneHeaderMeta;
     }
   | {
@@ -78,7 +77,7 @@ export function resolvePaneHeaderModel(input: {
         title,
         titlePending: input.titlePending,
         // a library named "Libraries" must not read "Libraries — Libraries".
-        context: section && section !== title ? present(section) : absent(),
+        context: section && section !== title ? section : null,
         meta:
           publication?.kind === "Section" ? publication.meta : { kind: "None" },
       };
@@ -97,7 +96,7 @@ export function resolvePaneHeaderModel(input: {
 
 /** The landmark's name: the title and its section, never meta or credits. */
 export function paneHeaderAccessibleName(model: PaneHeaderModel): string {
-  return model.kind === "Section" && model.context.kind === "Present"
-    ? `${model.title} — ${model.context.value}`
+  return model.kind === "Section" && model.context !== null
+    ? `${model.title} — ${model.context}`
     : model.title;
 }

@@ -11,7 +11,6 @@ from nexus.auth.permissions import visible_media_ids_cte_sql, visible_podcast_id
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas import podcast as wire
 from nexus.schemas.collection_page import CollectionPage
-from nexus.schemas.presence import Absent, Present, presence_from_nullable
 from nexus.services import library_entries
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
 from nexus.services.consumption import projection
@@ -33,8 +32,8 @@ class PodcastState:
 class CompactPodcastTarget:
     podcast_id: UUID
     title: str
-    subtitle: Absent | Present[str]
-    image_url: Absent | Present[str]
+    subtitle: str | None
+    image_url: str | None
     href: str
 
 
@@ -89,8 +88,8 @@ def hydrate_compact_podcast_targets(
         targets[row.id] = CompactPodcastTarget(
             podcast_id=row.id,
             title=row.title,
-            subtitle=presence_from_nullable(", ".join(authors) or None),
-            image_url=presence_from_nullable(row.image_url),
+            subtitle=(", ".join(authors) or None),
+            image_url=row.image_url,
             href=href,
         )
     return targets
@@ -198,15 +197,15 @@ def list_subscriptions(
                 title=row["title"],
                 contributors=credits.get(row["podcast_id"], []),
                 unplayed_count=row["unplayed_count"],
-                latest_episode_published_at=presence_from_nullable(row["latest_published_at"]),
-                default_playback_speed=presence_from_nullable(row["default_playback_speed"]),
-                pause_shortening_mode=presence_from_nullable(row["pause_shortening_mode"]),
+                latest_episode_published_at=row["latest_published_at"],
+                default_playback_speed=row["default_playback_speed"],
+                pause_shortening_mode=row["pause_shortening_mode"],
                 auto_queue=row["auto_queue"],
                 sync_status=row["sync_status"],
             )
             for row in page
         ],
-        nextCursor=presence_from_nullable(next_cursor),
+        next_cursor=next_cursor,
     )
 
 

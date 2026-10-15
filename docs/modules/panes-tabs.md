@@ -30,7 +30,7 @@ panes.
 `usePaneRefresh` owns the refresh command, gesture, indicator and settled
 announcement. One execution runs at a time; it belongs to the fence (route and
 the publication's source key) that started it, and a new fence aborts it, so a
-result lands only where it was asked for. `useResource` owns fetch identity and retries. A
+result lands only where it was asked for. `useServerValue` and `useServerList` own fetch identity and retries. A
 collection pane's refresh awaits its list's `refetch()`, which settles when the
 reread commits or fails (architecture §8.12).
 

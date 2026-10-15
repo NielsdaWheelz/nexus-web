@@ -89,15 +89,15 @@ export default function PodcastEpisodeList({
   const transcribe = () =>
     command.run(TRANSCRIBE, async () => {
       const forecast = await forecastEpisodeTranscripts(podcastId, state);
-      const ask = `Eligible episodes: ${forecast.eligibleCount}\n\nSubmit batch transcript request?`;
+      const ask = `Eligible episodes: ${forecast.eligible_count}\n\nSubmit batch transcript request?`;
       if (!window.confirm(ask)) return;
       const result = await requestEpisodeTranscripts(
         podcastId,
         state,
-        forecast.selectionFingerprint,
+        forecast.selection_fingerprint,
       );
       setQueued(
-        `${result.queuedCount} of ${result.matchedCount} eligible episodes queued.`,
+        `${result.queued_count} of ${result.matched_count} eligible episodes queued.`,
       );
     });
 
@@ -170,12 +170,13 @@ export default function PodcastEpisodeList({
       <CollectionView
         returnScope="PodcastDetail.Episodes"
         rows={episodes.map((episode) =>
-          presentMedia(episode.mediaSummary, {
+          presentMedia(episode.media_summary, {
             id: episode.id,
             primary: { kind: "link", href: `/media/${episode.id}` },
-            actionSubject: {
-              ref: canonicalResourceRef({ scheme: "media", id: episode.id }),
-            },
+            resourceRef: canonicalResourceRef({
+              scheme: "media",
+              id: episode.id,
+            }),
             selected: false,
           }),
         )}

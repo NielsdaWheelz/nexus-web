@@ -36,6 +36,13 @@ a new text-pdf capture creates source work and requests metadata
 and bibliography research (`python/nexus/services/media_source_ingest.py:2264–2285`),
 including provider work; no public save option suppresses those jobs.
 
+update (ingest reauthor, uploads/capture/share page): `uploadSessionContract.ts`
+and `captureClient.ts` are gone. the extension reads the generated wire without a
+strict decoder of its own, upload and capture answers carry `import_ref` beside the
+client's `session_id`, and web, api and the signed extension ship from one sha
+([release](../issues/release-ingest.md)). the production capture proof below is
+still deferred and now concerns that extension.
+
 prerequisite: explicit admission of a later ordinary capture and its downstream
 work; use the matching production-origin artifact without compatibility code.
 acceptance: record source, artifact hash, manifest id/version and installation

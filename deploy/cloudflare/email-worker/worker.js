@@ -3,7 +3,8 @@
  *
  * Receives raw MIME messages via Cloudflare Email Routing, enforces a 2 MB
  * size cap (bounces larger messages), HMAC-SHA256-signs the raw body, and
- * POSTs to the Nexus /ingest/email endpoint.
+ * POSTs to the Nexus /ingest/email endpoint. A 4xx bounces the message; a 5xx
+ * or a network failure throws, so the sender retries.
  *
  * Required Worker secrets (set via `wrangler secret put`):
  *   EMAIL_INGEST_HMAC_SECRET  — shared HMAC secret (must match backend config)
@@ -72,6 +73,11 @@ export default {
       body: rawBytes,
     });
 
+    if (response.status >= 500) {
+      // Temporary (storage or database down, nothing was created): throw so the
+      // message is deferred and the sending server retries it later.
+      throw new Error(`Nexus Post Room is unavailable (HTTP ${response.status}).`);
+    }
     if (!response.ok) {
       // Log and bounce so the sender learns it failed.
       const body = await response.text().catch(() => "(no body)");

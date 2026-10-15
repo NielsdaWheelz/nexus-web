@@ -22,8 +22,6 @@ import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { isInvalidViewError, type ApiError } from "@/lib/api/client";
-import type { Presence } from "@/lib/api/presence";
-import { requestWithRetry } from "@/lib/api/retryPolicy";
 import { fetchBrowsePage, type BrowseCandidate } from "@/lib/browse/api";
 import {
   BROWSE_KIND_LABELS,
@@ -44,6 +42,7 @@ import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import {
   modeledApiError,
+  requestWithRetry,
   useThrowLater,
   useVisitSnapshot,
 } from "@/lib/api/serverState";
@@ -59,7 +58,7 @@ type Section =
   | {
       readonly status: "ready";
       readonly items: readonly BrowseCandidate[];
-      readonly next: Presence<string>;
+      readonly next: string | null;
       readonly more: "Idle" | "Loading" | ApiError;
     };
 type Ready = Extract<Section, { status: "ready" }>;
@@ -71,9 +70,9 @@ interface Run {
 
 const VISIT = definePaneVisitDataKey<Run>("Browse.Sections");
 const keyOf = (section: BrowseSection) => `${section.kind}:${section.source}`;
-const until = (time: Presence<string>) =>
-  time.kind === "Present"
-    ? ` until ${new Date(time.value).toLocaleTimeString()}`
+const until = (time: string | null) =>
+  time !== null
+    ? ` until ${new Date(time).toLocaleTimeString()}`
     : "";
 
 /** A section's failure row; any code a section does not model is a defect. */
@@ -81,8 +80,8 @@ function sectionErrorMessage(error: ApiError): string {
   // justify-type-assertion: provider failure details are the server's
   // BrowseProviderFailure contract; errors carry no generated schema.
   const details = error.details as {
-    readonly retryAt: Presence<string>;
-    readonly resetAt: Presence<string>;
+    readonly retry_at: string | null;
+    readonly reset_at: string | null;
   };
   switch (error.code) {
     case "E_NETWORK":
@@ -94,9 +93,9 @@ function sectionErrorMessage(error: ApiError): string {
     case "E_RATE_LIMITED":
       return "Rate limited";
     case "E_BROWSE_PROVIDER_RATE_LIMITED":
-      return `Rate limited${until(details.retryAt)}`;
+      return `Rate limited${until(details.retry_at)}`;
     case "E_BROWSE_PROVIDER_QUOTA_EXHAUSTED":
-      return `Quota exhausted${until(details.resetAt)}`;
+      return `Quota exhausted${until(details.reset_at)}`;
     default:
       throw error;
   }
@@ -230,7 +229,7 @@ export default function BrowsePaneBody() {
         from === null ? { status: "loading" } : { ...from, more: "Loading" },
       );
       const cursor =
-        from?.next.kind === "Present" ? from.next.value : undefined;
+        from?.next != null ? from.next : undefined;
       const load = (attempt: AbortSignal) =>
         fetchBrowsePage({ q, ...section, cursor, signal: attempt });
       requestWithRetry(load, signal).then(
@@ -240,7 +239,7 @@ export default function BrowsePaneBody() {
           settle({
             status: "ready",
             items,
-            next: page.nextCursor,
+            next: page.next_cursor,
             more: "Idle",
           });
         },
@@ -294,7 +293,7 @@ export default function BrowsePaneBody() {
     surfaced += state.items.length;
     for (const { resolution } of state.items) {
       if (resolution.kind === "InNexusMedia")
-        owned.push(resolution.mediaSummary);
+        owned.push(resolution.media_summary);
     }
   }
   const summaries = useMediaSummaries(owned);
@@ -384,13 +383,13 @@ export default function BrowsePaneBody() {
               return [presentBrowseCandidate(item)];
             }
             const resolution = item.resolution;
-            const summary = summaries.resolve(resolution.mediaSummary);
-            return summary.kind === "Absent"
+            const summary = summaries.resolve(resolution.media_summary);
+            return summary === null
               ? []
               : [
                   presentBrowseCandidate({
                     ...item,
-                    resolution: { ...resolution, mediaSummary: summary.value },
+                    resolution: { ...resolution, media_summary: summary },
                   }),
                 ];
           });
@@ -439,7 +438,7 @@ export default function BrowsePaneBody() {
           surface={false}
         />
         {state.status === "ready" &&
-        state.next.kind === "Present" &&
+        state.next !== null &&
         failure === null ? (
           <div className={styles.continuation}>
             <Button

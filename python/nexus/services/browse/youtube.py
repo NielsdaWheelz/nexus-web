@@ -14,7 +14,6 @@ from nexus.schemas.browse import (
     VideoPreview,
     VideoPreviewFacts,
 )
-from nexus.schemas.presence import presence_from_nullable as maybe
 from nexus.services.browse.targets import (
     BrowseFailureKind,
     BrowseProviderFailure,
@@ -88,12 +87,10 @@ def search(
                 resolution=PreviewResolution(target=seal_target(target)),
                 title=title,
                 contributors=single_credit(channel, "channel"),
-                description=maybe(description),
-                published_at=maybe(published),
-                image=maybe(image),
-                kind_facts=VideoFacts(
-                    video_ref=maybe(identity.provider_video_id), channel_title=maybe(channel)
-                ),
+                description=description,
+                published_at=published,
+                image=image,
+                kind_facts=VideoFacts(video_ref=identity.provider_video_id, channel_title=channel),
             )
         )
     return items, payload.get("nextPageToken")
@@ -115,12 +112,12 @@ def preview(target: YouTubeVideoTarget, handle: DiscoveryTargetHandle) -> VideoP
         target=handle,
         title=title,
         contributors=single_credit(channel, "channel"),
-        description=maybe(description),
-        published_at=maybe(published),
-        image=maybe(image),
+        description=description,
+        published_at=published,
+        image=image,
         source_href=identity.watch_url,
         resolution=PreviewResolution(target=handle),
         kind_facts=VideoPreviewFacts(
-            video_ref=target.video_ref, channel_title=maybe(channel), embed_href=identity.embed_url
+            video_ref=target.video_ref, channel_title=channel, embed_href=identity.embed_url
         ),
     )

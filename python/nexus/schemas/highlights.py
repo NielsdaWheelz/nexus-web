@@ -1,16 +1,10 @@
 """Highlight wire shapes."""
 
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-
-from nexus.schemas.resource_items import (
-    ExpectedNoteBody,
-    NoteBodyVersionsOut,
-    validate_note_body_pm_json,
-)
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 HIGHLIGHT_COLORS = Literal["yellow", "green", "blue", "pink", "purple"]
 
@@ -52,7 +46,7 @@ class LinkedNoteBlockRef(BaseModel):
     note_block_id: UUID
     body_pm_json: dict[str, object]
     body_text: str
-    version_by_lane: NoteBodyVersionsOut
+    body_version: int
 
 
 class TypedHighlightOut(BaseModel):
@@ -149,20 +143,3 @@ class UpdateHighlightRequest(BaseModel):
         if pdf_update != (self.exact is not None):
             raise ValueError("exact belongs to pdf_page_geometry anchor updates and only those")
         return self
-
-
-class SetHighlightNoteRequest(BaseModel):
-    note_block_id: UUID
-    client_mutation_id: str = Field(min_length=1, max_length=120)
-    expected_body: ExpectedNoteBody
-    body_pm_json: dict[str, Any]
-
-    model_config = ConfigDict(extra="forbid")
-
-    @field_validator("body_pm_json")
-    @classmethod
-    def check_body(cls, value: dict[str, Any]) -> dict[str, Any]:
-        validated = validate_note_body_pm_json(value)
-        if validated is None:
-            raise ValueError("body_pm_json is required")
-        return validated

@@ -22,8 +22,7 @@ from lxml.etree import ParserError
 from lxml.html import HtmlElement
 
 from nexus.errors import ResourceFailureDimension
-from nexus.schemas.media import NavigationTextPointOut, NavigationTextRangeOut
-from nexus.schemas.presence import Present, absent, present
+from nexus.schemas.reader import NavigationTextPointOut, NavigationTextRangeOut
 from nexus.schemas.reader_apparatus import NotesGroup
 from nexus.services.canonicalize import (
     HEADING_TAGS,
@@ -991,9 +990,9 @@ def derive_fragment_note_groups(
                     ).casefold()
                     == label
                 ]
-                if len(matches) != 1 or not isinstance(matches[0].parent_container, Present):
+                if len(matches) != 1 or matches[0].parent_container is None:
                     continue
-                index = matches[0].parent_container.value
+                index = matches[0].parent_container
             element = mapped.elements[index]
             if element.tag != ("section" if wrapper_tag == "aside" else wrapper_tag):
                 continue
@@ -1017,13 +1016,9 @@ def derive_fragment_note_groups(
                         ),
                     ),
                     heading=(
-                        present(
-                            NavigationTextPointOut(
-                                fragment_id=fragment_id, offset=heading.start_offset
-                            )
-                        )
+                        NavigationTextPointOut(fragment_id=fragment_id, offset=heading.start_offset)
                         if heading is not None
-                        else absent()
+                        else None
                     ),
                     provenance="Declared",
                 )
@@ -1084,7 +1079,7 @@ def derive_fragment_note_groups(
                     start=start_point,
                     end=NavigationTextPointOut(fragment_id=fragment_id, offset=end),
                 ),
-                heading=present(start_point),
+                heading=start_point,
                 provenance="Inferred",
             )
         )

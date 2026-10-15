@@ -5,10 +5,10 @@ import { X } from "lucide-react";
 import { useCallback, useEffect, useRef, type ComponentProps } from "react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
-import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
+import { NO_ACTIONS, useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
 import type { NexusRow, NexusSource } from "@/lib/nexus/model";
 import { rowFacts } from "@/lib/nexus/rows";
-import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import styles from "./Nexus.module.css";
 
 type MenuProps = Omit<ComponentProps<typeof ActionMenu>, "options">;
@@ -35,19 +35,16 @@ export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean
   );
 }
 
-function ResourceMenu({ subject, menuProps }: { subject: ResourceActionSubject; menuProps: MenuProps }) {
-  const model = useResourceActionMenuModel(subject);
-  const refresh = model.refresh;
+function ResourceMenu({ resourceRef, menuProps }: { resourceRef: CanonicalResourceRef; menuProps: MenuProps }) {
+  const { options, onOpenChange: fetchOnOpen } = useResourceActionMenu(resourceRef);
   const upstreamOpenChange = menuProps.onOpenChange;
   const onOpenChange = useCallback((open: boolean) => {
     upstreamOpenChange?.(open);
-    if (open) refresh();
-  }, [refresh, upstreamOpenChange]);
+    fetchOnOpen(open);
+  }, [fetchOnOpen, upstreamOpenChange]);
   return (
     <ActionMenu
-      options={model.descriptors}
-      triggerDisabled={model.triggerDisabled}
-      triggerDisabledReason={model.triggerDisabledReason}
+      options={options.length > 0 ? options : [NO_ACTIONS]}
       {...menuProps}
       onOpenChange={onOpenChange}
     />
@@ -61,7 +58,7 @@ export function NexusRowMenu({ row, closePane, menuProps }: { row: NexusRow; clo
   onOpenChange.current = menuProps.onOpenChange;
   const stableOpenChange = useCallback((open: boolean) => onOpenChange.current?.(open), []);
   const props = { ...menuProps, onOpenChange: stableOpenChange };
-  if (row.menu?.kind === "Resource") return <ResourceMenu subject={row.menu.subject} menuProps={props} />;
+  if (row.menu?.kind === "Resource") return <ResourceMenu resourceRef={row.menu.resourceRef} menuProps={props} />;
   if (row.menu?.kind !== "Tab") return null;
   const paneId = row.menu.paneId;
   return (

@@ -4,21 +4,20 @@ import re
 from collections.abc import Iterable, Mapping, Set
 from dataclasses import dataclass
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.schemas.presence import Presence
 
 _LIMIT = re.compile(r"[1-9][0-9]{0,2}\Z", re.ASCII)
 
 
 class CollectionPage[T](BaseModel):
-    """One page in list order; ``nextCursor`` is absent exactly at the end."""
+    """One page in list order; ``next_cursor`` is null exactly at the end."""
 
     items: list[T]
-    next_cursor: Presence[str] = Field(alias="nextCursor")
+    next_cursor: str | None
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    model_config = ConfigDict(extra="forbid")
 
 
 @dataclass(frozen=True)

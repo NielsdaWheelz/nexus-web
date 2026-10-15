@@ -1,4 +1,3 @@
-import { present } from "@/lib/api/presence";
 import type { ShareOpenOptions } from "@/lib/sharing/types";
 
 export function anchoredShareOpenOptions(
@@ -7,6 +6,6 @@ export function anchoredShareOpenOptions(
 ): ShareOpenOptions {
   return {
     returnFocusTo: () => triggerEl,
-    returnFocusFallback: present(fallback),
+    returnFocusFallback: fallback,
   };
 }

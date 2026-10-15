@@ -3,15 +3,10 @@
 // What a reader does with a selection or a mark. A selection is not yet a
 // resource: Highlight, Note, Ask, Learn and Share create its highlight first
 // and continue with it; Link creates nothing until a target is confirmed.
-// A mark's actions arrive as app-global highlight intents (the resource menu
-// is the one menu), accepted here while the mark is mounted.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// A mark's verbs from the resource menu arrive as this pane's entry (edit,
+// note, bounds, delete), served once the marks are loaded.
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useFeedback } from "@/components/feedback/Feedback";
-import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
-import {
-  createMountedEditorIntentController,
-  executeCommittingMountedMutation,
-} from "@/lib/actions/mountedActionHandoff";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -28,21 +23,17 @@ import type {
 } from "@/lib/documentReader/DocumentReader";
 import type { HighlightColor } from "@/lib/documentReader/model";
 import { artifactPaneHref, learnDossier } from "@/lib/dossiers/dossierApi";
+import { useLinkComposerHost } from "@/lib/actions/ResourceActionsProvider";
 import {
-  notifyHighlightActionIntentOwnerReady,
-  useHighlightActionIntentOwners,
-  type HighlightActionIntent,
-} from "@/lib/highlights/actionIntent";
-import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
-import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
+  requirePaneRuntime,
+  usePaneEntryDelivery,
+  usePaneRuntime,
+} from "@/lib/panes/paneRuntime";
 import { useShareController } from "@/lib/sharing/controller";
 import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
-import { canonicalResourceRef, resourceShareTarget } from "@/lib/sharing/targets";
+import { resourceShareTarget } from "@/lib/sharing/targets";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
 import type { AnnotationStore } from "./annotations";
-
-type NoteIntent = Extract<HighlightActionIntent, { kind: "AddHighlightNote" | "EditHighlightNote" }>;
-type Intent<K extends HighlightActionIntent["kind"]> = Extract<HighlightActionIntent, { kind: K }>;
 
 /** The quick note: a draft whose highlight exists, or is being created under it. */
 export interface QuickNote {
@@ -81,16 +72,13 @@ export interface AnnotationVerbs {
   recolour(color: HighlightColor | null): void;
   closeComposer(): void;
   closeNoteEdit(): void;
-  /** The note editor's mutation handoff for an accepted note intent. */
-  noteAccepted(noteRef: string, hasPending: () => boolean): void;
-  noteMutation(noteRef: string): MountedEditorMutationLease | null;
 }
 
 export function useAnnotationVerbs(input: {
   readonly mediaId: string;
   readonly store: AnnotationStore;
-  /** The marks mounted in the reader: their highlights' intents come here. */
-  readonly marks: readonly Mark[];
+  /** The marks mounted in the reader; menu entries are served once they load. */
+  readonly marks: readonly Mark[] | null;
   readonly canQuote: boolean;
   readonly openEvidence: (itemId: string | null) => void;
 }): AnnotationVerbs {
@@ -106,14 +94,9 @@ export function useAnnotationVerbs(input: {
   const [busy, setBusy] = useState(false);
   const [noteEdit, setNoteEdit] = useState<AnnotationVerbs["noteEdit"]>(null);
   const [choosingChat, setChoosingChat] = useState<string | null>(null);
-  const [colour, setColour] = useState<Intent<"EditHighlight"> | null>(null);
+  const [colour, setColour] = useState<string | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const bounds = useRef<Intent<"EditHighlightBounds"> | null>(null);
-  const notes = useMemo(
-    () => createMountedEditorIntentController<NoteIntent>(notifyHighlightActionIntentOwnerReady),
-    [],
-  );
-  const lease = useRef<{ noteRef: string; hasPending: () => boolean; lease: MountedEditorMutationLease } | null>(null);
+  const bounds = useRef<string | null>(null);
 
   const fail = useCallback(
     (error: unknown, title: string) => {
@@ -123,7 +106,7 @@ export function useAnnotationVerbs(input: {
     },
     [feedback],
   );
-  const { linkComposer: link } = useResourceOverlaysController();
+  const link = useLinkComposerHost();
 
   /** Creates the selection's highlight (or finds the viewer's exact twin), then continues with it. */
   const withHighlight = useCallback(
@@ -175,87 +158,44 @@ export function useAnnotationVerbs(input: {
     return () => window.removeEventListener("keydown", keydown);
   }, [capture, focused, note]);
 
-  const refs = useMemo(
-    () => marks.map((mark) => canonicalResourceRef({ scheme: "highlight", id: mark.id })),
-    [marks],
-  );
-  const accept = useCallback(
-    (intent: HighlightActionIntent) => {
-      const id = intent.ref.slice("highlight:".length);
-      if (colour || bounds.current || notes.occupied() || link.open) return false;
-      switch (intent.kind) {
-        case "EditHighlight":
-          setColour(intent);
-          break;
-        case "AddHighlightNote":
-        case "EditHighlightNote":
-          if (!notes.accept(intent)) return false;
-          setNoteEdit((current) => ({ kind: "highlight", id, request: (current?.request ?? 0) + 1 }));
-          openEvidence(`highlight:${id}`);
-          break;
-        case "EditHighlightBounds":
-          if (marks.find((m) => m.id === id)?.anchor.kind !== "text") return false;
-          bounds.current = intent;
-          setFocused(id);
-          feedback.publish({ kind: "Hud", content: { tone: "Info", title: "Select the new passage for this highlight" } });
-          break;
-        case "DeleteHighlight":
-          void executeCommittingMountedMutation(intent, () => store.remove(id), () => {
-            if (focused === id) setFocused(null);
-          }).catch((error: unknown) => {
-            notifyHighlightActionIntentOwnerReady(intent.ref);
-            fail(error, "Highlight wasn’t deleted");
-          });
-          break;
-      }
-      setMenu(null);
-      return true;
-    },
-    [colour, fail, feedback, focused, link, marks, notes, openEvidence, store],
-  );
-  useHighlightActionIntentOwners(refs, accept);
-  useEffect(() => () => notes.releaseOwner(), [notes]);
+  // A menu verb on one of this reader's highlights, served once the marks are
+  // loaded; a newer entry replaces the colour picker, note editor or bounds mode.
+  const { delivery, claim } = usePaneEntryDelivery();
+  useEffect(() => {
+    if (delivery === null || !("highlightId" in delivery.entry) || marks === null) return;
+    if (!claim(delivery)) return;
+    const { entry } = delivery;
+    const id = entry.highlightId;
+    const mark = marks.find((candidate) => candidate.id === id);
+    const notice = (title: string) => feedback.publish({ kind: "Hud", content: { tone: "Neutral", title } });
+    if (!mark) return notice("This highlight is no longer available.");
+    setColour(null);
+    bounds.current = null;
+    setMenu(null);
+    switch (entry.kind) {
+      case "EditHighlight":
+        return setColour(id);
+      case "EditHighlightNote":
+        setNoteEdit((current) => ({ kind: "highlight", id, request: (current?.request ?? 0) + 1 }));
+        return openEvidence(`highlight:${id}`);
+      case "EditHighlightBounds":
+        if (mark.anchor.kind !== "text") return notice("This highlight’s bounds can’t be edited.");
+        bounds.current = id;
+        setFocused(id);
+        return notice("Select the new passage for this highlight");
+      case "DeleteHighlight":
+        void store.remove(id).then(
+          () => setFocused((current) => (current === id ? null : current)),
+          (error: unknown) => fail(error, "Highlight wasn’t deleted"),
+        );
+    }
+  }, [claim, delivery, fail, feedback, marks, openEvidence, store]);
 
-  // The Evidence row's note editor holds these: stable, so its published body is too.
+  // The Evidence row's note editor holds this: stable, so its published body is too.
   const closeNoteEdit = useCallback(() => {
     setNoteEdit(null);
     store.refresh();
-    if (!lease.current?.hasPending()) {
-      lease.current?.lease.failed();
-      lease.current = null;
-      notes.abortEditing();
-    } else notes.releaseOwner();
-  }, [notes, store]);
-  const noteAccepted = useCallback(
-    (noteRef: string, hasPending: () => boolean) => {
-      if (!notes.occupied()) return;
-      if (lease.current?.noteRef === noteRef) {
-        lease.current.hasPending = hasPending;
-        return;
-      }
-      const begun = notes.beginMutation();
-      if (!begun) return;
-      lease.current = {
-        noteRef,
-        hasPending,
-        lease: {
-          committed: async () => {
-            await begun.committed().catch((error: unknown) => fail(error, "Note wasn’t saved"));
-            lease.current = null;
-          },
-          failed: () => {
-            begun.failed();
-            lease.current = null;
-          },
-        },
-      };
-    },
-    [fail, notes],
-  );
-  const noteMutation = useCallback(
-    (noteRef: string) => (lease.current?.noteRef === noteRef ? lease.current.lease : null),
-    [],
-  );
+  }, [store]);
 
   if (defect) throw defect.error;
   return {
@@ -265,17 +205,17 @@ export function useAnnotationVerbs(input: {
     focused,
     hovered,
     busy,
-    recolouring: colour?.ref.slice("highlight:".length) ?? null,
+    recolouring: colour,
     noteEdit,
     choosingChat,
     onSelection(next) {
-      const rebound = bounds.current;
-      if (rebound && next?.anchor.kind === "text") {
+      const id = bounds.current;
+      if (id && next?.anchor.kind === "text") {
         bounds.current = null;
-        const id = rebound.ref.slice("highlight:".length);
-        void executeCommittingMountedMutation(rebound, () => store.rebound(id, next.anchor as TextRange), () => {
-          document.getSelection()?.removeAllRanges();
-        }).catch((error: unknown) => fail(error, "Highlight wasn’t changed"));
+        void store.rebound(id, next.anchor as TextRange).then(
+          () => document.getSelection()?.removeAllRanges(),
+          (error: unknown) => fail(error, "Highlight wasn’t changed"),
+        );
         return;
       }
       setCapture(next);
@@ -357,21 +297,15 @@ export function useAnnotationVerbs(input: {
     hover: setHovered,
     openMenu: (ids, rect) => setMenu({ ids, rect }),
     recolour(color) {
-      const intent = colour;
+      const id = colour;
       setColour(null);
-      if (!intent) return;
-      if (!color) return intent.onAborted();
-      const id = intent.ref.slice("highlight:".length);
-      void executeCommittingMountedMutation(intent, () => store.recolor(id, color), () => {}).catch(
-        (error: unknown) => fail(error, "Highlight wasn’t changed"),
-      );
+      if (!id || !color) return;
+      void store.recolor(id, color).catch((error: unknown) => fail(error, "Highlight wasn’t changed"));
     },
     closeComposer() {
       setComposer(null);
       store.refresh();
     },
     closeNoteEdit,
-    noteAccepted,
-    noteMutation,
   };
 }

@@ -1,8 +1,7 @@
 // The dossier transport: typed head, build, learn and cancel calls through the
 // BFF proxy, and the build-status snapshot stream.
-import { apiCommand204, apiFetch, type ApiPath } from "@/lib/api/client";
-import { absent, present } from "@/lib/api/presence";
-import { sseClientDirect } from "@/lib/api/sse-client";
+import { apiFetch, type ApiPath } from "@/lib/api/client";
+import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 
 export type DossierTarget =
@@ -52,7 +51,7 @@ export async function createDossierBuild(
     method: "POST",
     headers: { "Idempotency-Key": idempotencyKey },
     body: JSON.stringify({
-      instruction: instruction ? present(instruction) : absent<string>(),
+      instruction: instruction ? instruction : null,
     }),
   };
   const path: ApiPath = `${headPath(target)}/builds`;
@@ -75,7 +74,7 @@ export async function learnDossier(
 }
 
 export async function cancelDossierBuild(buildHandle: string): Promise<void> {
-  await apiCommand204(
+  await apiFetch<void>(
     `/api/artifact-builds/${encodeURIComponent(buildHandle)}/cancel`,
     { method: "POST" },
   );
@@ -90,11 +89,11 @@ export function watchDossierBuild(
   onState: (build: DossierBuild) => void,
   onLost: () => void,
 ): () => void {
-  return sseClientDirect<DossierBuild, DossierBuild>({
-    path: `/stream/artifact-builds/${encodeURIComponent(buildHandle)}/events`,
+  return openStream<DossierBuild, DossierBuild>({
+    path: `/api/stream/artifact-builds/${encodeURIComponent(buildHandle)}/events`,
     decode: (type, build) => {
       if (type !== "state" && type !== "done")
-        throw new Error(`Unknown SSE event type: ${type}`);
+        throw new Error(`Unknown build event type: ${type}`);
       return build;
     },
     isTerminal: (build) => build.status !== "Active",

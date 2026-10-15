@@ -1,4 +1,4 @@
-"""Notes routes. camelCase envelopes; the index parses its own query keys."""
+"""Notes routes: pages, the daily page, note rows and outlines."""
 
 from datetime import date
 from typing import Annotated
@@ -7,19 +7,22 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import DbSession
+from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.responses import Data
+from nexus.schemas.collection_page import CollectionPage
 from nexus.schemas.notes import (
     CreatePageRequest,
+    DailyCaptureOut,
     DailyCaptureRequest,
-    DailyCaptureResult,
-    DailyPageDescriptor,
+    DailyPageOut,
     NoteBlockOut,
-    NotePageOut,
-    NotePagesOut,
-    UpdatePageRequest,
+    NotePageSummaryOut,
+    OutlineCommandsOut,
+    OutlineCommandsRequest,
+    OutlineOut,
 )
-from nexus.services import notes as notes_service
+from nexus.services import note_bodies, notes, outline
+from nexus.services.resource_graph.refs import require_ref
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 
@@ -27,51 +30,70 @@ ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 
 
 @router.get("/pages")
-def list_pages(request: Request, viewer: ViewerDep, db: DbSession) -> Data[NotePagesOut]:
-    view = notes_service.parse_notes_index_query(request.query_params.multi_items())
-    return Data(data=NotePagesOut(pages=notes_service.list_pages(db, viewer.user_id, view=view)))
+def list_pages(
+    request: Request, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[CollectionPage[NotePageSummaryOut]]:
+    """Keyset pages of the viewer's pages in the chats index's four views."""
+    items = request.query_params.multi_items()
+    return Data(data=notes.list_pages(db, viewer.user_id, items))
 
 
 @router.post("/pages", status_code=201)
-def create_page(request: CreatePageRequest, viewer: ViewerDep, db: DbSession) -> Data[NotePageOut]:
-    return Data(data=notes_service.create_page(db, viewer.user_id, request))
-
-
-@router.get("/pages/{page_id}")
-def get_page(page_id: UUID, viewer: ViewerDep, db: DbSession) -> Data[NotePageOut]:
-    return Data(data=notes_service.get_page(db, viewer.user_id, page_id))
-
-
-@router.patch("/pages/{page_id}")
-def update_page(
-    page_id: UUID, request: UpdatePageRequest, viewer: ViewerDep, db: DbSession
-) -> Data[NotePageOut]:
-    return Data(data=notes_service.update_page(db, viewer.user_id, page_id, request))
+def create_page(
+    request: CreatePageRequest, viewer: ViewerDep, db: DbSession
+) -> Data[NotePageSummaryOut]:
+    """Create by the client's id; a retry returns the page, another owner's id is 409."""
+    return Data(data=notes.create_page(db, viewer.user_id, request.id, request.title))
 
 
 @router.delete("/pages/{page_id}", status_code=204)
 def delete_page(page_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
-    notes_service.delete_page(db, viewer.user_id, page_id)
+    """Idempotent: a missing page is 204. The page's notes stay."""
+    notes.delete_page(db, viewer.user_id, page_id)
     return Response(status_code=204)
 
 
 @router.get("/daily/{local_date}")
 def read_daily_page(
-    local_date: date, viewer: ViewerDep, db: DbSession
-) -> Data[DailyPageDescriptor]:
-    return Data(data=notes_service.read_daily_page(db, viewer.user_id, local_date))
+    local_date: date, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[DailyPageOut]:
+    """The day's page outline, or a latent one; writes nothing."""
+    return Data(data=notes.read_daily_page(db, viewer.user_id, local_date))
 
 
-@router.post("/daily/{local_date}/captures", status_code=201)
-def capture_daily_page_note(
+@router.post("/daily/{local_date}/captures")
+def capture(
     local_date: date, request: DailyCaptureRequest, viewer: ViewerDep, db: DbSession
-) -> Data[DailyCaptureResult]:
-    result = notes_service.capture_daily_page_note(
-        db, viewer.user_id, local_date=local_date, request=request
+) -> Data[DailyCaptureOut]:
+    """Append the text last on the day's page. A retry with the same note id has landed.
+
+    Errors: E_EMPTY_NOTE_BODY (400) for blank text; E_NOTE_CONFLICT (409) for another
+    owner's note id."""
+    page_id = notes.capture(
+        db, viewer.user_id, local_date=local_date, note_id=request.note_id, text=request.text
     )
-    return Data(data=result)
+    return Data(data=DailyCaptureOut(page_id=page_id))
 
 
-@router.get("/blocks/{block_id}")
-def get_note_block(block_id: UUID, viewer: ViewerDep, db: DbSession) -> Data[NoteBlockOut]:
-    return Data(data=notes_service.get_note_block(db, viewer.user_id, block_id))
+@router.get("/blocks/{note_id}")
+def read_note(note_id: UUID, viewer: ViewerDep, db: DbSession) -> Data[NoteBlockOut]:
+    return Data(data=note_bodies.read_note(db, viewer_id=viewer.user_id, note_id=note_id))
+
+
+@router.get("/outline/{ref}")
+def read_outline(ref: str, viewer: ViewerDep, db: RepeatableReadDbSession) -> Data[OutlineOut]:
+    """A page's or note's links in its own order."""
+    return Data(data=outline.read(db, viewer_id=viewer.user_id, ref=require_ref(ref)))
+
+
+@router.post("/outline/commands")
+def outline_commands(
+    request: OutlineCommandsRequest, viewer: ViewerDep, db: DbSession
+) -> Data[OutlineCommandsOut]:
+    """Idempotent primitives applied in order in one transaction (services/outline.py).
+
+    Errors: E_INVALID_REQUEST (400) for a position outside the outline, a self-link or an
+    endpoint that is not a page or note; E_NOT_FOUND (404) for a move or relink of a link
+    not at the endpoint; E_NOTE_CONFLICT / E_RESOURCE_CONFLICT (409) for a stale text, a
+    taken id, an existing pair or a link that carries a note."""
+    return Data(data=outline.execute(db, viewer_id=viewer.user_id, commands=request.commands))

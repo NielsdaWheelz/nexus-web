@@ -233,7 +233,7 @@ override real saved progress.
   after open, so proactive refresh cannot help a loaded document; a failed fetch
   reopens with a fresh url at the placement.
 - **the note editor stays with notes**: the reader hosts
-  `HighlightNoteEditor` through its props; its durability and cas belong to the
+  `AnnotationNoteEditor` through its props; its saving and conflicts belong to the
   notes slice.
 - **note markers bind from server locators**: the link around a resolved source
   reference's range is the marker, so repaired legacy html needs no server
