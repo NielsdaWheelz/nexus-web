@@ -42,11 +42,13 @@ def repair_epub_contributors(
     mode = "apply" if applying else "preview"
     factory = create_session_factory()
     with factory() as db:
+        db.execute(text("SET LOCAL lock_timeout = '2s'"))
         if db.get(User, viewer_id) is None:
             raise ValueError("viewer does not exist")
     after: UUID | None = None
     while True:
         with factory() as db:
+            db.execute(text("SET LOCAL lock_timeout = '2s'"))
             selection = select(Media.id).where(
                 Media.kind == "epub", Media.id.in_(text(visible_media_ids_cte_sql()))
             )
@@ -74,6 +76,7 @@ def repair_epub_contributors(
         for media_id in selected:
             payload: dict[str, object] = {"media_id": str(media_id), "mode": mode}
             with factory() as db:
+                db.execute(text("SET LOCAL lock_timeout = '2s'"))
                 source = db.get(MediaFile, media_id)
                 if source is None:
                     payload.update(status="skipped", reason="source_missing")
@@ -122,6 +125,7 @@ def repair_epub_contributors(
                         db.execute(
                             text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
                         )
+                    db.execute(text("SET LOCAL lock_timeout = '2s'"))
                     selection = (
                         select(Media)
                         .options(defer(Media.plain_text))
