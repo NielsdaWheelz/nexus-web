@@ -2,8 +2,10 @@
 
 status: implementation in draft prs [#608](https://github.com/NielsdaWheelz/nexus-web/pull/608),
 [#609](https://github.com/NielsdaWheelz/nexus-web/pull/609) and
-[#613](https://github.com/NielsdaWheelz/nexus-web/pull/613); static checks,
-local source probes and operator containment proofs passed. restored-database qualification is in progress;
+[#613](https://github.com/NielsdaWheelz/nexus-web/pull/613); earlier static,
+source and containment proofs passed. the interrupted reader rehearsal exposed
+unnecessary article-index invalidation; its narrow correction still needs the
+static gate and fresh restored-database qualification.
 production repair and consumer acceptance remain NOT_RUN.
 owner decisions settled 2026-10-14. planning base: `75b17c0301be59da4a45dec8b35ab97d998e9199`.
 planning-time production: `665e7b3af03282d37ac1a2aac3c6589e2a0f5932`, schema 0277.

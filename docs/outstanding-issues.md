@@ -29,6 +29,7 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+- [open] epub / division authority · 2026-10-15 book-repair source review · appendix ownership of 1,089 global notes remains unproved; whole proposal stays unapplied: [ticket](tickets/epub-appendix-global-note-ownership-unproved.md).
 - [open] content index / saved evidence · 2026-10-15 book-repair qualification · selected52 reindex would clear 424 claims and 100 persisted discovery connections; index necessity and preservation admission remain unresolved: [ticket](tickets/reindex-invalidates-saved-evidence-targets.md).
 - [open] x / title fidelity · 2026-10-14 full production review · two untouched labels reverse speaker/listener roles; normal repair follows the generic attribution correction: [ticket](tickets/x-title-biblical-speaker-attribution.md).
 - [open] release / host storage · 2026-10-14 corrective rollout · image pulls can consume the preflight disk reserve: [ticket](tickets/release-image-cache-consumes-disk-reserve.md).
