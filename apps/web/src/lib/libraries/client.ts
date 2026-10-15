@@ -121,8 +121,13 @@ export async function createLibrary({
       signal,
     },
   );
+  const library = libraryOutForId(
+    response.data,
+    libraryId,
+    "create Library response.data",
+  );
   publishChange("Libraries");
-  return response.data;
+  return library;
 }
 
 export async function getMemberLibrary(

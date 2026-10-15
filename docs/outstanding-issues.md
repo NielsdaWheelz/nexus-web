@@ -29,6 +29,17 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+
+- [unverified] libraries / mobile presentation · 2026-10-15 · physical keyboard clearance awaits the unavailable samsung: [ticket](tickets/libraries-dialog-physical-keyboard-unverified.md).
+
+- [open] local verification / docker · 2026-10-14 · runtime recovered after read-only vm filesystem; host cause remains unresolved: [ticket](tickets/docker-desktop-read-only-filesystem-blocks-qualification.md).
+
+- [open] libraries / command boundary · 2026-10-14 specification review · acknowledgement identity check implemented; final cutover pending: [ticket](tickets/library-create-response-identity-is-unchecked.md).
+- [open] libraries / visit continuity · 2026-10-14 design review · visit-local filter restoration implemented; final cutover pending: [ticket](tickets/libraries-filter-is-not-retained-for-pane-return.md).
+- [open] libraries / interaction · 2026-10-14 design review · header dialog and receipts implemented; final physical acceptance pending: [ticket](tickets/libraries-creation-reserves-a-permanent-row.md).
+- [open] nexus / library creation · 2026-10-14 design review · pending completion can overtake a newer interaction: [ticket](tickets/nexus-library-create-completion-outlives-page.md).
+- [open] nexus / library replay · 2026-10-14 design review · whitespace-only edits replace an uncertain create's identity: [ticket](tickets/nexus-library-retry-whitespace-changes-identity.md).
+- [open] libraries / accessibility · 2026-10-14 design review · feature-instance ids implemented; final cutover pending: [ticket](tickets/libraries-pane-repeats-accessibility-ids.md).
 - [unverified] workspace / scrollbar input · 2026-10-14 · classic gutter passed; default overlay thumb produced no motion and remains unqualified: [ticket](tickets/canvas-overlay-scrollbar-release-unqualified.md).
 - [open] release / host storage · 2026-10-14 corrective rollout · image pulls can consume the preflight disk reserve: [ticket](tickets/release-image-cache-consumes-disk-reserve.md).
 - [deferred] x / saved positions · 2026-10-14 owner decision · inline quotation becomes an embedded document; preserve the saved copy and explicit refresh conflict: [ticket](tickets/x-inline-quote-refresh-loses-saved-position.md).

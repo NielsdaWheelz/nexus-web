@@ -67,6 +67,12 @@
   gap: var(--space-2);
 }
 
+.primaryActionContent {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 .statusMarker {
   position: absolute;
   inset-block-start: 4px;
@@ -79,7 +85,8 @@
 
 /* Pane chrome's 32px control, taller than Button's sm; pressed outranks
    Button's ghost hover, whatever the stylesheet order. */
-.trailing .companion {
+.trailing .companion,
+.trailing .primaryAction {
   height: var(--size-md);
 }
 
@@ -97,6 +104,15 @@
 
   .trailing {
     gap: var(--space-1);
+  }
+
+  .trailing .primaryAction {
+    width: var(--size-md);
+    padding: 0;
+  }
+
+  .primaryActionLabel {
+    display: none;
   }
 }
 

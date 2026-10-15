@@ -17,7 +17,10 @@ import {
 } from "react";
 import type { SurfaceHeaderNavigation } from "@/components/ui/SurfaceHeader";
 import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
-import type { PaneCompanionAction } from "@/lib/panes/paneChrome";
+import type {
+  PaneCompanionAction,
+  PanePrimaryAction,
+} from "@/lib/panes/paneChrome";
 import type { TargetLinkMouseEvent } from "@/lib/panes/targetLinkActivation";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
@@ -36,7 +39,8 @@ export interface MobilePaneChrome {
   readonly header: PaneHeaderModel;
   readonly activateChromeAnchor: (event: TargetLinkMouseEvent, anchor: HTMLAnchorElement) => void;
   readonly navigation: SurfaceHeaderNavigation;
-  /** The only header action outside More. */
+  readonly primaryAction?: PanePrimaryAction;
+  /** The Inspector action follows More. */
   readonly companionAction?: PaneCompanionAction;
   readonly paneActions: readonly ActionDescriptor[];
   readonly menuActions: readonly ActionDescriptor[];

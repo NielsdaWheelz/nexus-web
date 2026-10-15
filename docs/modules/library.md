@@ -327,6 +327,25 @@ subscriptions. `LibraryDestinationField` requires a caller-supplied
 pass **No additional libraries**; Podcast Subscribe, episode Add, and OPML pass
 **No libraries selected**.
 
+## libraries index creation
+
+the index publishes `Libraries.Create` through the pane header. its compact
+dialog belongs to that pane visit, independently of list loading, filters or
+invitations. visible acknowledged success opens the new library in the same
+pane; back restores the index's filter, sort and collection position.
+
+submission freezes one uuid and trimmed name. close hides sending work and
+revokes automatic navigation; reopening does not re-arm it. uncertain delivery
+keeps the exact command until an explicit same-id retry acknowledges it.
+visit memory retains that identity through pane switching/back, without owning
+the departed component's promise. reload and permanent visit disposal require
+list inspection/live repair. other creation surfaces remain independent.
+
+`createLibrary` checks response identity before publishing the acknowledged
+library change. that publication survives local presentation departure;
+departed observers cannot navigate or overwrite the current visit. the
+[creation plan](../libraries-creation-plan.md) owns its content and qualification.
+
 ## Frontend entry-view lifecycle
 
 the pane URL owns the requested `LibraryEntryView` (order + projection + entry
