@@ -261,7 +261,7 @@ def _require_recovery_manifest(
 ) -> None:
     """Keep recovery evidence beside the archive, surviving loss of the VPS."""
     expected = _RecoveryManifest(schema_version=1, source_sha=source_sha, evidence=evidence)
-    key = f"releases/{source_sha}/database.json"
+    key = evidence.key.removesuffix("/database.dump") + "/database.json"
     try:
         response = client.get_object(Bucket=evidence.bucket, Key=key)
     except ClientError as exc:
@@ -299,6 +299,7 @@ def main() -> None:
     verify = commands.add_parser("verify")
     for command in (create, verify):
         command.add_argument("--source-sha", required=True)
+        command.add_argument("--backup-key", required=True)
         command.add_argument("--database-identity", required=True)
         command.add_argument("--starting-revision", required=True)
     create.add_argument("--state-directory", required=True, type=Path)
@@ -309,6 +310,15 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _interrupt)
     signal.alarm(_TIMEOUT_SECONDS)
     try:
+        if args.command != "check" and (
+            re.fullmatch(r"[0-9a-f]{40}", args.source_sha) is None
+            or re.fullmatch(r"[0-9a-z][0-9a-z_]{0,63}", args.starting_revision) is None
+            or re.fullmatch(r"[^\r\n]+:[0-9]+", args.database_identity) is None
+            or len(args.backup_key) > 1024
+            or re.fullmatch(r"(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*/)+database\.dump", args.backup_key)
+            is None
+        ):
+            raise BackupFailure("backup source, key or database identity is malformed")
         endpoint = os.environ["R2_BACKUP_S3_API_ORIGIN"]
         parsed = urlsplit(endpoint)
         if (
@@ -348,16 +358,10 @@ def main() -> None:
                 client.head_bucket(Bucket=bucket)
                 print('{"status":"ready"}')
                 return
-            if (
-                re.fullmatch(r"[0-9a-f]{40}", args.source_sha) is None
-                or re.fullmatch(r"[0-9a-z][0-9a-z_]{0,63}", args.starting_revision) is None
-                or re.fullmatch(r"[^\r\n]+:[0-9]+", args.database_identity) is None
-            ):
-                raise BackupFailure("backup source or database identity is malformed")
             identity = {
                 "endpoint": endpoint,
                 "bucket": bucket,
-                "key": f"releases/{args.source_sha}/database.dump",
+                "key": args.backup_key,
                 "database_identity": args.database_identity,
                 "starting_revision": args.starting_revision,
             }

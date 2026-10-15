@@ -1,25 +1,27 @@
 # retained-book maintenance
 
-status: book and native fixes merged; combined release qualification pending.
-production repair NOT_RUN. previous 0278 and partial 0283 runs prove only their
-recorded candidates. the partial 0283 read-only bracket is closed: all 96 tables
-and 3,272,528 rows equal the accepted baseline. this does not complete the 465
-held reader inspections. final source includes the approved feature composition,
-schema 0287 and matched wire 2 consumers; freeze exact identities before use.
+status: the [usable fdd release](../releases/2026-10-15-nexus.md), schema 0287
+and wire 2, is accepted; the merge freeze has ended. retained-book qualification,
+live applies and repaired-book consumer acceptance remain pending. previous
+0278 and partial 0283 runs prove only their recorded candidates. the partial
+0283 read-only bracket closed with all 96 tables and 3,272,528 rows unchanged;
+that does not complete the 465 held reader inspections. freeze exact identities
+before each remaining phase.
 contract: [book-repair plan](../book-repair-plan.md). this runbook owns execution;
 the plan owns scope, allowed changes, proofs and acceptance.
 
 ## ownership and evidence
 
-the book coordinator owns the next canonical rollout, fresh backup and book
-production writes, as authorized on 2026-10-15. the reader, contributor and
+the book coordinator owns the fresh backup and book production writes, as
+authorized on 2026-10-15. the backup correction requires no application rollout.
+the reader, contributor and
 recovery lanes inspect independently; they do not compete for release or
-device control. bind actual settled runtime/device identities after that
-release before live repair acceptance. no resize, reboot or brave calls.
+device control. recheck settled runtime/device identities before live repair
+acceptance. no resize, reboot or brave calls.
 
 private campaign root:
 `/Users/nnandal/Documents/code/nexus-web-campaign-artifacts/2026-10-14/book-repair`.
-`coordinator/progress.json` names current identities and work. retain original receipts;
+`progress.json` names current identities and work. retain original receipts;
 new attempts get new paths. search explicit metadata files or parse named fields;
 never recursively print private source/proposal files to find hashes.
 
@@ -30,9 +32,13 @@ allocator settings do not qualify a normal worker's memory behavior.
 
 ## restore and capability setup
 
-1. use the existing backup cli for an unused actual candidate key. preserve its
-   local receipt, adjacent remote manifest, archive hash, terminal state and
-   invocation interval. a consistent dump with active writers has no operator-
+1. use the [backup owner](../../deployment.md#fresh-maintenance-backups) with a
+   new explicit archive key and a fresh local state directory. keep the actual
+   runtime source sha; it is provenance, not the backup's identity. bind the
+   reviewed operator commit/file hash separately from its dependency image and
+   deployed source. preserve the local receipt, adjacent remote manifest,
+   archive hash, terminal state and invocation interval. a consistent dump
+   with active writers has no operator-
    known exact acquisition time. replaying its receipt does not create a fresh
    cutoff; a later snapshot needs a separately identified backup.
 2. download and verify the entire archive. restore it into an isolated postgres

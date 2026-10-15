@@ -437,6 +437,7 @@ def backup(candidate: CandidateManifest, starting_revision: str) -> BackupEviden
             candidate,
             "run --rm --no-deps --no-TTY backup python -m nexus.release_backup create"
             f" --source-sha {candidate.source_sha}"
+            f" --backup-key releases/{candidate.source_sha}/database.dump"
             f" --database-identity {shlex.quote(identity)}"
             f" --starting-revision {starting_revision} --state-directory /backup-state",
             profile="backup",
@@ -729,6 +730,7 @@ def release(source_sha: str, workspace: Path, model_cutover_snapshot: Path | Non
                 candidate,
                 "run --rm --no-deps --no-TTY backup python -m nexus.release_backup verify"
                 f" --source-sha {candidate.source_sha}"
+                f" --backup-key {shlex.quote(reviewed.backup.key)}"
                 f" --database-identity {shlex.quote(reviewed.source_database_identity)}"
                 f" --starting-revision {reviewed.starting_revision}"
                 f" --sha256 {reviewed.backup.sha256} --byte-count {reviewed.backup.byte_count}",

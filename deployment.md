@@ -245,7 +245,8 @@ it binds, and re-proves the public `/version`.
    then stop the codex host with at least 45 seconds of grace and require exit 0
    from every writer and host (the reviewed legacy exception below records the
    actual signal termination) before running
-   `nexus.release_backup create`: one pass that streams `pg_dump`
+   `nexus.release_backup create --backup-key releases/<candidate-sha>/database.dump`:
+   one pass that streams `pg_dump`
    into a private R2 multipart upload, reads the remote bytes back through
    `pg_restore`, publishes a `database.json` recovery manifest beside the
    archive and prints the verified evidence.
@@ -427,6 +428,32 @@ Recovery is forward-only. If the candidate is bad, merge a fix and release the
 new SHA. A restore of the R2 archive is a separately reviewed disaster-recovery
 operation.
 
+### fresh maintenance backups
+
+`nexus.release_backup create` and `verify` require `--backup-key`: a literal
+relative object key, at most 1024 ascii bytes, with nonempty safe path segments
+and the exact final `/database.dump`. dot and dot-dot segments, leading slash,
+backslash and control characters are refused. the recovery manifest is the
+adjacent `database.json`; the existing evidence key identifies the backup.
+`--source-sha` records the associated release: the canonical controller keeps
+its candidate sha, including for a pre-migration backup of an older runtime.
+this maintenance snapshot uses the accepted deployed sha.
+
+a new snapshot requires both a new archive key and a fresh local state
+directory. reusing a receipt resumes/verifies its original archive, even after
+database changes. a different key with that receipt, or a completed archive
+without its receipt, refuses. keep the existing release objects intact; do not
+invent a source sha or repeat the release controller to take a later backup.
+
+use the existing backup container capability and resource limits. a reviewed
+operator-only correction can run as `python /maintenance/release_backup.py`
+with that exact public file mounted read-only in the unchanged api dependency
+image. bind its commit/file hash, image digest and actual database identity and
+revision separately; do not replace installed modules or change application
+source metadata. the operator still needs the private backup and postgres
+inputs, an explicit writer disposition and execution admission. archive
+verification does not claim an actual restore.
+
 ### database backup recovery
 
 A verified archive is a recovery point, not an automatic rollback. Restoring it
@@ -441,21 +468,21 @@ expected sha256, byte count, database identity and starting revision. R2's
 multipart ETag is not the archive's sha256.
 
 Configure an S3 client profile named `nexus-backups` with region `auto` and the
-operator-only credentials, without putting secrets in command arguments. Set
-`BACKUP_ENDPOINT` and `BACKUP_BUCKET` from the retained operator config, then
-download the desired release's recovery manifest:
+operator-only credentials, without putting secrets in command arguments. set
+`BACKUP_ENDPOINT` and `BACKUP_BUCKET` from the retained operator config and
+`BACKUP_KEY` from the chosen backup receipt. download its adjacent manifest:
 
 ```bash
 umask 077
 aws --profile nexus-backups --endpoint-url "$BACKUP_ENDPOINT" \
   s3api get-object --bucket "$BACKUP_BUCKET" \
-  --key "releases/$SOURCE_SHA/database.json" recovery.json
+  --key "${BACKUP_KEY%/database.dump}/database.json" recovery.json
 jq . recovery.json
 ```
 
 Require manifest schema `1` and its source SHA, endpoint, bucket and archive key
-to match the selected release and destination. Set `BACKUP_KEY`,
-`BACKUP_SHA256` and `BACKUP_BYTE_COUNT` from its evidence, then download and
+to match the selected associated release and backup destination. set `BACKUP_SHA256`
+and `BACKUP_BYTE_COUNT` from its evidence, then download and
 check the archive:
 
 ```bash

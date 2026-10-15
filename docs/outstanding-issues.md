@@ -441,3 +441,4 @@ unexpected timeouts. See
 - [open] email ingest / activation · 2026-10-15 · production post room remains unconfigured; delivery behavior is unqualified: [ticket](tickets/production-post-room-unconfigured.md).
 
 - [open] playback / accessibility · 2026-10-15 physical release check · normal pending saves can announce a false pause and leave stale feedback: [ticket](tickets/player-announces-paused-sync-during-normal-save.md).
+- [open] backup / maintenance · 2026-10-15 book campaign · fresh pre-apply backups need an archive key independent of runtime source provenance: [ticket](tickets/fresh-backup-key-coupled-to-release.md).
