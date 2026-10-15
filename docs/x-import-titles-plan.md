@@ -1,6 +1,6 @@
 # x import titles
 
-status: implemented; production migration complete, corrective source/title qualification in progress. owner decisions: 2026-10-14.
+status: implemented; source/title cutover and local reader correction qualified; canonical correction release and consumer acceptance pending. owner decisions: 2026-10-14.
 
 publish an excerpt immediately, then a contextual title through existing metadata
 jobs. retain attributed evidence; keep reading independent of naming and refresh.

@@ -96,18 +96,116 @@ approved retained-copy exception. all 64 current naming completions passed sourc
 one-generation and zero-tool checks. all six original content defects, 30 recovery
 parents and two children passed meaning review. the 32 new generations used
 53,508 input and 765 output tokens. two untouched old titles still reversed
-speaker/listener roles; final content acceptance remains blocked on their repair.
+speaker/listener roles; this failed acceptance was retained until ordinary repair.
 an isolated generic actor sentence failed one real call. explicit reported-speech
 grammar then passed the two native cases and independent content review, preserving
 non-title metadata, nonempty manual credits, source and reader rows. three calls
 total, zero tools; the failed first result remains recorded. the final attribution
-release and two ordinary production naming jobs are pending;
-see [the release item](tickets/x-title-production-cutover.md).
+release `3839b96a0` completed through the canonical controller. api, both workers,
+web and the current release pointer agree; all seven services are healthy at
+schema `0278`. its verified backup is 1,271,225,421 bytes, sha256
+`4c6f06829cfffb163e7e0edf162f09ad50a966faf3de31a41ee0bbaa27884971`,
+receipt `/var/backups/nexus/r2/3839b96a0cf2f5c5c103e32917cea130b61c016f/receipt.json`.
+final independently observed disk space is 2,633,871,360 bytes, above the 2-gib floor.
+selective removal of unreferenced retired images restored that reserve; the
+[controller's post-pull reserve gap](tickets/release-image-cache-consumes-disk-reserve.md)
+remains separate work.
+
+two normal replayable metadata requests repaired the residual labels without
+source reacquisition. actual titles are `Job’s suffering and structural oppression`
+and `Job hears a breakup cliché from the whirlwind`. independent review accepts
+the first as a nominal topic label that omits the source's explicit contrast,
+the second as an explicit listener construction; neither names the speaker
+explicitly or repeats the prior misattribution. these
+are recognition labels, not complete summaries. their two generations used
+2,076 input and 42 output tokens, zero tools. media comparisons exclude only
+`title`, `title_tsv`, `metadata_enriched_at` and `updated_at`; every other media field
+matches. complete reader, fragment, credit and snapshot rows, including publication
+timestamps, match the pinned baselines. complete old job and generation rows are
+unchanged. the other 63 items retain their title, source identity, reader generation
+and current successful naming job identity; no naming work remains unfinished.
+
+the installed exact-`3839` android packet passed hash, retained cold entry,
+canonical app link, same-account native google sign-in and offline return with
+the default network absent. original network settings and empty shelf were restored;
+the probe-owned copy was removed. the matching installed firefox extension passed
+ordinary toolbar-popup authentication; production capture is explicitly deferred
+by the owner. actual `03` title/body, metadata and expanded history passed,
+including source attempts 1–3, search revisions 1–2 and both completed title
+generations. nested operation details were not expanded. receipt:
+`/tmp/nexus-session-entry-release-20261014/firefox-qualification/03-history-expanded-ui.json`.
+
+actual bare-route `114a` reopening FAILED on both arrival axes despite unchanged
+canonical text and full cursor. isolated actual-module browser probes reproduce
+late-image loss of a clamped saved endpoint and preceding-pane growth hiding the
+active pane. separate source-reload probes also expose wrong-surface restoration,
+input lifetime and queued old-coordinate saves. the combined correction is
+locally qualified; `3839` remains deployed. final consumer proof and packet rebinding
+remain held; [the release item](tickets/x-title-production-cutover.md) stays open.
+native foreground browser qualification previously
+exposed unrelated credential content in a tool transcript; that path was stopped
+and the [incident](tickets/native-browser-credential-output.md) remains unresolved.
+
+## reader correction
+
+the consolidated correction keeps existing module boundaries and adds no api,
+schema, dependency or permanent test seam. local red/green qualification passed:
+
+- four actual-react text cases: matching-surface restore, prior-input restore,
+  during-load veto without incidental saves, and title-only node/selection preservation;
+- ten actual-runtime/progress browser cases: queued/in-flight/failed old saves,
+  explicit `readFrom`, title-only pending save, cursor failure/recovery, interrupted
+  source binding and ordinary reset/prepare/reconcile interleavings;
+- real pdf.js/react: same-identity title preserves exact viewer/page/canvas nodes,
+  page 2 at 125% and scroll 2611 without extra file/cursor/position/save; changed
+  publication/file still replaces and restores correctly;
+- fifteen navigator/reader checks against the final combined source: five actual
+  firefox text-layout cases and ten public runtime/navigation contracts;
+- eleven actual-hook/firefox canvas cases: instant activation, delayed growth,
+  shrink, horizontal pan/release, nested consumption, vertical reading, sibling
+  rebind, handled controls, touch intent and a classic scrollbar gutter.
+
+receipts: `reader-restoration-green-summary.json`,
+`reader-progress-green-summary.json`, `reader-progress-green-public-prepare-settled.json`
+and `pdf-title-green.json` in the proof directory. input ports in the progress
+check are controlled public interfaces, not a physical gesture claim. the pdf
+uses actual trusted wheel/button input and the installed renderer. fixture-only
+setup failures and superseded invalid-port receipts remain labelled as such.
+the final combined peer receipts are
+`/tmp/nexus-session-entry-release-20261014/reader-qualification-receipts/final.json`
+and `canvas-qualification/final-summary.json` in that campaign directory; their
+source hashes independently match. public pdf-navigation probes use a controlled
+positioner; the separate rendered-pdf proof establishes the viewer behavior.
+trusted touch intent was observed, native swipe movement was not.
+
+unaccepted old-coordinate movement and reports during publication rebinding are
+discarded. an admitted save drains first. an aborted binding keeps known content
+readable but read-only until source reload/remount; cursor-only retry cannot make
+old coordinates valid. this is deliberate input loss instead of a guessed remap.
+stable completed navigation targets survive passive layout; genuine input or a
+new decision releases them. transient pdf commands retain measured-placement
+reflow. canvas activation survives layout growth until actual canvas pan intent;
+nested scrolling does not release it. native overlay-thumb movement remains
+[unqualified](tickets/canvas-overlay-scrollbar-release-unqualified.md), not failed.
+the owner selected instant pane activation after firefox continued an obsolete
+smooth destination despite the attempted native cancellation. smooth-first
+activation is explicitly retired; those red receipts are not relabelled passes.
+the cost is losing that transition animation. no custom animation, pixel nudge
+or lifecycle mechanism replaces it.
 
 sanitized receipts are retained outside the repository at
-`/private/tmp/nexus-x-titles-proof-20261014/`. temporary tests, proof
-credentials, isolated containers, volumes and setup were deleted after final green;
-shared account state and standard development dependencies were preserved. no
-runtime test seam or harness remains. `./scripts/test` passed after deletion and
-`f30a844a5` integration (exit 0, canonical head `0278`); its receipt is
-`static-post-deletion.log` in that directory.
+`/private/tmp/nexus-x-titles-proof-20261014/`. the initial source/title checks,
+proof credentials, isolated containers, volumes and setup were deleted after green;
+shared account state and standard development dependencies were preserved.
+the reader-correction execution setups, owned browser profiles and test dependencies
+were deleted after combined green review. shared dependencies and production
+profiles were preserved. cleanup receipts are `reader-progress-cleanup.json`,
+`pdf-title-cleanup.json`, and the peer campaign's `reader-qualification-receipts/cleanup.json`
+and `canvas-cleanup.json`. no runtime test seam was added. `./scripts/test` passed after the initial,
+source/language and attribution check deletions (exit 0, canonical head `0278`);
+the final code receipt is `static-attribution-post-deletion.log` in that directory.
+the consolidated reader correction also passed `./scripts/test` after all accepted
+test deletions (exit 0, head `0278`): `static-reader-post-deletion.log`.
+the initial worktree run lacked standard locked ingestion dependencies; after
+linking the already-installed byte-matching lock/manifest set, the same gate passed.
+no product change or new dependency was needed; the failed setup log remains.

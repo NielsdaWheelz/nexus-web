@@ -26,5 +26,17 @@ geometry changes (its ResizeObserver already watches the canvas and every pane
 wrap), until the user scrolls, drags or wheels the canvas or another pane is
 activated.
 
-acceptance: host harness `H-R1b.resume-with-a-companion-left-of-the-active-pane-keeps-it-in-view`
-passes (drop its xfail).
+2026-10-14: actual `3839b96a0` firefox qualification also leaves active `114a`
+mostly outside its canvas (`x=1178..1842`, canvas `240..1280`). the isolated
+actual-hook/host-css probe reproduces complete loss after a preceding pane
+grows from 1000 to 1800 px; no input or repeated reveal. receipt:
+`/tmp/nexus-session-entry-release-20261014/canvas-growth-probe-3839b96a/receipt.json`.
+
+the owner selected instant activation after native cancellation failed to stop
+an obsolete smooth destination. the old smooth reds remain historical failures;
+that motion contract is retired.
+
+acceptance: late preceding-pane growth and growth during initial
+activation keep a fitting active pane fully visible. deliberate horizontal pan
+releases that aim; vertical reading and handled resize/tab keys do not. retain
+the red/green receipts, delete the temporary probe and verify the actual consumer.

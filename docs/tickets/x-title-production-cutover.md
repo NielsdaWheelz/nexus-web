@@ -1,45 +1,36 @@
 # x title production cutover
 
-status: in progress; two residual content qualification blockers
+status: in progress; actual reader reopening failed, corrective qualification pending
 origin: 2026-10-14 x title implementation
 area: release / existing x sources
 
-release `134f4f4c3` migrated production to `0278`, with verified r2 backup and
-aligned api/worker/web. the first census settled 54 targets and nine child titles,
-with two saved-position refusals. accounting is complete; content qualification
-is not. full-archive search omitted its historical lower bound and truncated 28
-thread captures. five english inputs received spanish/french titles, and one
-received the literal title `null`. forward correction and ordinary reacquisition
-were completed in `3a80349b8`: all 30 recovery requests and two new child titles
-settled successfully. actual source/cursor review passed. complete review of the
-64 current titles then found two untouched labels reversing speaker/listener
-roles; the generic attribution prompt correction and their ordinary repair remain
-required. the owner approved preserving the inline-quote
-position conflict as an explicit exception; keep its old copy and coordinate.
+release `3839b96a0cf2f5c5c103e32917cea130b61c016f` aligned api, both workers and
+web at schema `0278`; all seven services are healthy. the canonical controller
+verified its fresh 1,271,225,421-byte r2 backup, receipt
+`/var/backups/nexus/r2/3839b96a0cf2f5c5c103e32917cea130b61c016f/receipt.json`.
+the original frozen census accounts for 53 refreshed imports, one owner-approved
+preserved inline-quote conflict, and 11 new children. source/cursor review and
+all 64 current normalized title labels pass. old failed receipts remain intact;
+no source/title work is unfinished or unaccounted. details and limits are in
+[verification](../x-import-titles-verification.md).
 
-the original release prerequisite remains: `deploy/hetzner/deploy.sh:53–63` requires a clean checkout at exact
-`origin/main`; the release controller owns stopped writers and a verified backup.
-the feature branch is not that release candidate.
+the exact `3839` android packet passed entry/sign-in/offline checks; the matching
+firefox extension passed ordinary authentication. production capture is explicitly
+deferred. `03` title/body/metadata/expanded history passed. bare `114a` FAILED:
+its saved endpoint is below the reading line and its active pane mostly outside
+the canvas. the server cursor and canonical source remain unchanged.
 
-prerequisites: merge the qualified candidate, complete existing release gates,
-settle unfinished metadata/open media-enrichment generations/active x source work
-through their owners, then use the existing controller for the aligned api/worker/web
-release. `0278` refuses unresolved work; no downgrade/legacy decoder is available.
+prerequisite: finish the consolidated reader correction, canonical aligned release
+and exact consumer rebind through the coordinated session owner. no further source
+or model request is required. reopen the bare media route for
+`114a5cc0-bed9-4f3c-b069-b84702abfdd9`; verify restoration to fragment
+`826c3bed-826d-482c-a338-c1f5dc08b065`, code-point offset `134`, cursor revision
+`6`, publication generation `3`, with both arrival axes accounted for. use the
+complete expected locator and
+publication evidence in `/tmp/nexus-book-repair-20261014/x-release-handoff.json`;
+do not inject a target/hash jump or qualify offset `134` in another fragment.
 
-freeze other import/metadata admissions while applying the finite census; workers
-must run to execute its ordinary jobs. in the released environment:
-
-```sh
-python -m nexus.ops.refresh_x_sources plan --manifest /durable/operator/x-titles.json
-python -m nexus.ops.refresh_x_sources apply --manifest /durable/operator/x-titles.json
-```
-
-repeat `apply` with that same file to confirm receipts and settlement. use ordinary
-retry/exact-dead-job repair for refusals, without changing frozen request bytes.
-record an issue for each unresolved target/title failure; preserve unavailable copies.
-new quote children create title obligations, not new census targets.
-
-acceptance: verify deployed api/web sha and head `0278`; retain backup and frozen
-manifest; every target and inline title obligation has a recorded terminal
-disposition with zero unfinished/unaccounted work. inspect actual excerpts, titles,
-saved-copy recovery and reopened saved positions. delete this item after execution.
+acceptance: record those actual consumer observations in
+`/tmp/nexus-book-repair-20261014/session-release-handoff.json`, with installed
+consumer identities; delete this item. phone/extension release ownership remains
+with that campaign; no duplicate web/backend release.

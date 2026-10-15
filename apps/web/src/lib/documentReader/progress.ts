@@ -29,7 +29,7 @@ export type ProgressState =
 
 export interface ProgressSync {
   state(): ProgressState;
-  /** null: the cursor could not be read (LoadFailed); the document opens anyway. */
+  /** Bind an initial/replacement publication; retire old saves. null: failed or superseded binding. */
   start(signal: AbortSignal): Promise<ProgressView | null>;
   report(locator: Locator): void;
   flush(keepalive: boolean): Promise<void>;
@@ -99,10 +99,21 @@ export function createProgressSync(
   let generation = 0;
   // A genuine same-position input after load/unread still needs one accepted save.
   let activitySaved = false;
+  const needsSourceBinding = () => fenced && (
+    state.kind === "Loading" || (state.kind === "LoadFailed" && !failed)
+  );
+  const requireSourceReload = () => {
+    view = null;
+    failed = false;
+    fenced = true;
+    if (state.kind !== "LoadFailed") {
+      state = { kind: "LoadFailed", error: new Error("source reload required") };
+    }
+  };
 
   const publish = () => {
     state =
-      view === null
+      view === null || (fenced && state.kind !== "Ready")
         ? state
         : {
             kind: "Ready",
@@ -162,6 +173,7 @@ export function createProgressSync(
           revision: base().revision,
           keepalive,
         });
+        if (needsSourceBinding()) return;
         failed = false;
         if (result.kind === "Stale") {
           // The locator stays unsaved: keeping my spot saves it over the newer one.
@@ -172,7 +184,8 @@ export function createProgressSync(
         }
         if (result.kind === "Canonical" && result.snapshot.revision < base().revision) return;
         activitySaved = true;
-        generation += 1;
+        // A binding/command fence has already invalidated earlier reads.
+        if (!fenced) generation += 1;
         if (unsaved === locator) unsaved = null;
         if (result.kind === "Device") adopt(result.view);
         else {
@@ -185,6 +198,7 @@ export function createProgressSync(
           }
         }
       } catch (error) {
+        if (needsSourceBinding()) return;
         cutOff = keepalive || leaving;
         if (!cutOff) {
           console.error("reader_cursor_save_failed", error);
@@ -254,6 +268,8 @@ export function createProgressSync(
   }
 
   async function reconcileFence() {
+    // A cancelled source binding requires a source reload, not a cursor-only retry.
+    if (needsSourceBinding()) return;
     const mine = ++generation;
     try {
       const next = await port.load();
@@ -276,20 +292,35 @@ export function createProgressSync(
   return {
     state: () => state,
     async start(signal) {
+      if (signal.aborted) return null;
+      const mine = ++generation;
+      fenced = true;
+      window.clearTimeout(timer);
+      unsaved = null;
+      failed = false;
+      handoff = null;
+      state = { kind: "Loading" };
+      publish();
+      await inFlight;
+      if (mine !== generation) return null;
+      view = null;
+      failed = false;
+      handoff = null;
+      activitySaved = false;
       try {
+        signal.throwIfAborted();
         const loaded = await port.load(signal);
-        if (signal.aborted) return null;
-        generation += 1;
-        activitySaved = false;
-        handoff = null;
+        if (mine !== generation) return null;
+        signal.throwIfAborted();
         adopt(loaded);
+        fenced = false;
         publish();
-        schedule();
         return loaded;
       } catch (error) {
-        if (!signal.aborted) {
-          state = { kind: "LoadFailed", error };
-          hooks.changed();
+        if (mine === generation) {
+          failed = !signal.aborted;
+          state = { kind: "LoadFailed", error: signal.aborted ? signal.reason : error };
+          publish();
         }
         return null;
       }
@@ -314,24 +345,29 @@ export function createProgressSync(
     },
     revalidate,
     async prepareFence() {
+      if (needsSourceBinding()) requireSourceReload();
       fenced = true;
       generation += 1;
       window.clearTimeout(timer);
       await inFlight;
       if (handoff?.kind !== "Newer") await save(false);
       unsaved = null;
-      failed = false;
+      if (state.kind !== "LoadFailed") failed = false;
       publish();
     },
     reconcileFence,
     install(snapshot) {
+      const sourceBinding = needsSourceBinding();
       generation += 1;
       window.clearTimeout(timer);
-      view = { kind: "Canonical", snapshot };
+      if (sourceBinding) requireSourceReload();
+      else {
+        view = { kind: "Canonical", snapshot };
+        fenced = false;
+      }
       handoff = null;
       unsaved = null;
       failed = false;
-      fenced = false;
       activitySaved = false;
       publish();
     },
@@ -387,7 +423,7 @@ export function createProgressSync(
     },
     retry() {
       if (fenced) {
-        void reconcileFence().catch((error: unknown) => console.error("reader_cursor_reconcile_failed", error));
+        if (failed) void reconcileFence().catch((error: unknown) => console.error("reader_cursor_reconcile_failed", error));
         return;
       }
       void revalidate().then(() => {

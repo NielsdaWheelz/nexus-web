@@ -22,6 +22,16 @@ not a defect of the host slice; re-enrich metadata stays blocked while the
 media's enrichment job is `queued` (the sealed harness stack never starts it),
 which is the snapshot's own answer.
 
+2026-10-14 actual `3839` consumer evidence: `03` metadata and expanded history
+eventually opened. four h2 action reads spent 91,185–105,376 ms before
+`requestStart`, then 1,388–1,470 ms in the request. a later read spent 57,670 ms
+after `requestStart`; its successor took 679 ms. pre-send queueing is real but
+does not explain every delay; no backend cause is assigned. `usePaneIsVisible`
+means not minimized, not canvas intersection. receipts under
+`/tmp/nexus-session-entry-release-20261014/firefox-qualification/`:
+`03-action-read-timing.json`, `03-actions-later.json`,
+`production-consumer-3839-receipt.json`.
+
 what to do: keep the last good snapshot actionable while an open-triggered
 reconcile runs (block only commands whose verb the reconcile can invert), or
 reconcile on pane focus instead of on menu open.

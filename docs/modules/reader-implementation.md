@@ -67,8 +67,10 @@ lib/find               useFind, FindBar contract, highlightPainter (shared by ev
 workspace to the ports, the primitive never reaches for it.
 
 the runtime is a plain object; react reads it through `subscribe`/`getState`
-(`useSyncExternalStore`). surfaces register a `SurfaceHandle` (`capture`,
+(`useSyncExternalStore`). surfaces register a `SurfaceHandle` (`identity`, `capture`,
 `position`, `find`, pdf `setZoom`) and report viewports and input.
+only a surface owning the ready publication may consume restoration or report
+its viewport. metadata labels do not own the text or pdf viewer lifecycle.
 
 ## server contracts
 
@@ -132,9 +134,18 @@ pending chat pulse, `?apparatus_id`, resolved through `reader-targets`) enters
 exploring with the saved cursor as origin; else a positioned cursor applies;
 else a cold target (`?fragment`) applies; else the start. a cursor naming a unit
 this publication lacks opens at the start with *saved reading spot unavailable*
-and saves nothing until genuine input. any genuine input before restore skips it.
+and saves nothing until genuine input. genuine input during that source load
+skips restoration; earlier reading does not cancel a later publication's restore.
 late layout follows the same geometry fence as ordinary reflow; it cannot emit
 reading activity or retreat host chrome as though the user had scrolled.
+
+replacement retires prior viewport intent and queued old-coordinate saves, drains
+an already-dispatched save, then reads the authoritative cursor. reports during
+that binding are ignored; unaccepted movement is discarded, never guessed onto
+new content. an aborted binding keeps the known copy readable but read-only with
+*reading position unavailable*. cursor-only retry, reset and undo cannot reopen
+its writes; a successful source reload or remount must rebind content and cursor.
+an ordinary cursor-read failure after known content arrives remains retryable.
 
 **save.** a reading viewport reports `locatorAt(primary, terminal)`; the sync
 saves after 500 ms idle or 5 s after the first unsaved move, one request in
@@ -175,10 +186,12 @@ their placeholders inside a `data-document-embed-ui` wrapper, outside the
 canonical text. the public reader hydrates token-authorised images per unit as
 units near the viewport. the surface retains its last measured placement before
 a resize observer reports layout changes. width, typography, host chrome and
-realised-unit changes preserve that passage through the internal navigator
-`reflow({placement, change})` operation. it keeps mode and origin, retires
-earlier input intent and saves nothing; an active jump retains its target and
-later genuine input cancels positioning.
+realised-unit changes use the internal navigator `reflow({placement, change})`
+operation. the latest completed explicit stable target remains its geometry
+anchor until genuine reading input, another navigation/seek/continue or source
+replacement. without one, reflow preserves the measured passage. initial short
+content does not imply following the end. reflow keeps mode/origin and saves
+nothing; ordinary measurement cannot replace explicit intent.
 
 **pdf surface.** pdf.js `PDFViewer`; zoom 0.5–2 in quarter steps (a stored zoom
 outside is clamped; `null` while fitted to the width, so a position reopens fitted
@@ -186,7 +199,10 @@ anywhere). fitting and explicit zoom use the internal navigator `reflow`
 operation: capture the live reading line, change scale synchronously and restore
 under the existing cancellable positioning fence. it preserves reading/exploring
 mode and the first origin, clears earlier input intent and records no progress;
-an already-active jump keeps authority over its target. links and `#page=`/`#nameddest`
+explicit zoom cancels pending/held navigation before changing scale; saved-zoom
+restoration does not. cancellation retires active positioning synchronously.
+transient find matches and opaque pdf destinations use measured-placement reflow;
+their commands are not replayed passively. links and `#page=`/`#nameddest`
 destinations route through `inspect`; a file that fails to open is retried once
 with a fresh url from the source; the hosted pane asks for the width that shows
 the widest page at scale 1 (or at its zoom); positions locate pages by their boxes

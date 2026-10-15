@@ -96,6 +96,7 @@ export interface Reader {
   readFrom(point: ReaderPoint): void;
 }
 export interface SurfaceHandle extends Positioner {
+  readonly identity: string;
   readonly find: FindSource<unknown>;
   setZoom?(zoom: number): void;
 }
@@ -144,14 +145,18 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
   const listeners = new Set<() => void>();
   let surface: SurfaceHandle | null = null;
   let loading: AbortController | null = null;
-  let restore: { fresh: ReaderTarget | null; saved: Locator | null } | null =
-    null;
+  let restore: {
+    fresh: ReaderTarget | null;
+    saved: Locator | null;
+    inputCount: number;
+  } | null = null;
   let freshUsed = false;
   let input = {
     at: -Infinity,
     direction: "none" as "forward" | "backward" | "none",
   };
-  let inputSinceLoad = false;
+  // A load ignores earlier input; a title reread cannot erase a pending restore's veto.
+  let inputCount = 0;
   let isAway = false;
   let releaseChrome: (() => void) | null = null;
 
@@ -172,7 +177,9 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     );
   };
 
-  const navigator = createNavigator(() => surface, {
+  const navigator = createNavigator(() => {
+    return surface?.identity === ready()?.doc.identity ? surface : null;
+  }, {
     changed() {
       const navigation = navigator.state();
       if (navigation.positioning && !releaseChrome)
@@ -225,6 +232,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     loading?.abort();
     const controller = new AbortController();
     loading = controller;
+    const inputAtLoad = inputCount;
     const previous = ready()?.doc ?? null;
     if (!previous) set({ document: { status: "loading" } });
     try {
@@ -236,7 +244,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       if (controller.signal.aborted) return;
       freshUsed = true;
       const current = ready();
-      if (current?.doc.identity === doc.identity) {
+      if (current?.doc.identity === doc.identity && sync?.state().kind !== "LoadFailed") {
         // A source identity fixes body/targets, while its metadata label may change.
         // Keep measured coordinates, navigation and unsaved progress intact.
         if (current.doc.title !== doc.title) {
@@ -248,14 +256,26 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
         ? await sync?.start(controller.signal) ?? null
         : initialView;
       if (controller.signal.aborted) return;
-      if (previous) navigator.invalidateOrigin(doc.identity);
-      restore = { fresh: fresh ?? null, saved: view && savedLocator(view) };
+      if (previous) {
+        navigator.cancel();
+        navigator.invalidateOrigin(doc.identity);
+        input = { at: -Infinity, direction: "none" };
+      }
+      restore = {
+        fresh: fresh ?? null,
+        saved: view && savedLocator(view),
+        inputCount: inputAtLoad,
+      };
       set({
-        document: {
-          status: "ready",
-          doc,
-          structure: structureOf(doc, doc.kind === "pdf" ? doc.pages : null),
-        },
+        document: current?.doc.identity === doc.identity
+          ? current.doc.title === doc.title
+            ? current
+            : { ...current, doc: { ...current.doc, title: doc.title } }
+          : {
+              status: "ready",
+              doc,
+              structure: structureOf(doc, doc.kind === "pdf" ? doc.pages : null),
+            },
         viewport: null,
         restored: false,
         savedSpotUnavailable: false,
@@ -271,9 +291,9 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
   async function restoreOnce() {
     const doc = ready();
     const pending = restore;
-    if (!doc || !pending || !surface) return;
+    if (!doc || !pending || surface?.identity !== doc.doc.identity) return;
     restore = null;
-    if (!inputSinceLoad) {
+    if (inputCount === pending.inputCount) {
       const { fresh, saved } = pending;
       if (saved?.kind === "pdf" && saved.zoom !== null)
         surface.setZoom?.(clampZoom(saved.zoom));
@@ -283,7 +303,8 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       else if (saved) set({ savedSpotUnavailable: true });
       else if (options.entry.cold) await navigator.apply(options.entry.cold);
     }
-    set({ restored: true });
+    // A title reread keeps this restoration; a different publication retires it.
+    if (ready()?.doc.identity === doc.doc.identity) set({ restored: true });
   }
 
   return {
@@ -295,7 +316,6 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       return () => listeners.delete(listener);
     },
     mount() {
-      inputSinceLoad = false;
       void load();
       return () => {
         loading?.abort();
@@ -318,7 +338,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     },
     viewport(measured, pdf) {
       const doc = ready();
-      if (!doc) return;
+      if (!doc || surface?.identity !== doc.doc.identity) return;
       const { positioning, mode } = state.navigation;
       const reading =
         performance.now() - input.at < READER_INTENT_MS && !positioning;
@@ -350,9 +370,9 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     },
     input(direction) {
       input = { at: performance.now(), direction };
-      inputSinceLoad = true;
+      inputCount += 1;
       isAway = false;
-      if (state.navigation.positioning) navigator.cancel();
+      navigator.cancel();
     },
     reflow(change) {
       input = { at: -Infinity, direction: "none" };
@@ -386,14 +406,18 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     reconcileProgressFence: async () => sync?.reconcileFence(),
     install(snapshot) {
       sync?.install(snapshot);
-      void applySnapshot(snapshot);
+      if (sync?.state().kind === "Ready") void applySnapshot(snapshot);
     },
-    setZoom: (zoom) => surface?.setZoom?.(clampZoom(zoom)),
+    setZoom(zoom) {
+      navigator.cancel();
+      surface?.setZoom?.(clampZoom(zoom));
+    },
     readFrom(point) {
       const doc = ready();
       if (!doc) return;
       // Not genuine input: the viewport, wherever it is, must not overwrite this point.
-      inputSinceLoad = true;
+      input = { at: -Infinity, direction: "none" };
+      inputCount += 1;
       navigator.continueHere();
       sync?.report(
         locatorAt(doc.doc, doc.structure, point, {
