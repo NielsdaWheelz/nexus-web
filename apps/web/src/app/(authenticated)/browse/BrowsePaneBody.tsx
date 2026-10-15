@@ -131,7 +131,6 @@ function BrowseToolbar({ query, summary, inputRef, onQuery }: {
       placeholder: "Search across sources",
       value: draft,
       appliedValue: query.text,
-      maxLength: 200,
       error: invalid ? "Use up to 200 characters without control characters." : undefined,
       onChange: setDraft,
       onClear: () => { setDraft(""); onQuery({ ...query, text: "" }); },
@@ -169,7 +168,7 @@ function BrowseToolbar({ query, summary, inputRef, onQuery }: {
       kind: id === "kind" ? "All" : query.kind,
       source: null,
     })) }}
-    status={{ id: statusId, content: <>
+    status={{ id: statusId, visible: true, content: <>
       {mixedSources ? <span>Other sources: relevance</span> : null}
       {!youTube ? <span>Order: relevance</span> : null}
       <span id={statusId}>{query.text ? summary : "Enter a search term to browse sources."}</span>
@@ -298,10 +297,10 @@ export default function BrowsePaneBody() {
   }
   const summaries = useMediaSummaries(owned);
   const allSettled = settled === sections.length;
-  const sourceNoun = sections.length === 1 ? "source" : "sources";
+  const searchNoun = sections.length === 1 ? "search" : "searches";
   const summary = [
     `${surfaced} surfaced`,
-    `${settled} of ${sections.length} ${sourceNoun} settled`,
+    `${settled} of ${sections.length} ${searchNoun} finished`,
     ...(failed > 0 ? [`${failed} unavailable`] : []),
   ].join(" · ");
   usePaneReturnReady(

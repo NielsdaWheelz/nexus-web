@@ -1,0 +1,620 @@
+[
+  {
+    "input": {
+      "x": 676,
+      "y": 104,
+      "width": 304,
+      "height": 32,
+      "font": "13px",
+      "line": "17px",
+      "scrollWidth": 254,
+      "clientWidth": 254
+    },
+    "select": {
+      "x": 710.0166625976562,
+      "y": 144,
+      "width": 138.7166748046875,
+      "height": 32,
+      "font": "13px",
+      "line": "16.25px",
+      "scrollWidth": 137,
+      "clientWidth": 137
+    },
+    "label": {
+      "x": 676,
+      "y": 151.21665954589844,
+      "width": 26.01666259765625,
+      "height": 17.550003051757812,
+      "font": "13px",
+      "line": "17.55px",
+      "scrollWidth": 26,
+      "clientWidth": 26
+    },
+    "labelInkHeight": 17,
+    "details": {
+      "x": 676,
+      "y": 176,
+      "width": 304,
+      "height": 0,
+      "font": "13px",
+      "line": "20.8px",
+      "scrollWidth": 304,
+      "clientWidth": 304
+    },
+    "control": {
+      "x": 676,
+      "y": 104,
+      "width": 304,
+      "height": 72,
+      "font": "16px",
+      "line": "25.6px",
+      "scrollWidth": 304,
+      "clientWidth": 304
+    },
+    "pane": {
+      "x": 668,
+      "y": 40,
+      "width": 321,
+      "height": 975,
+      "font": "16px",
+      "line": "25.6px",
+      "scrollWidth": 320,
+      "clientWidth": 320
+    },
+    "viewport": {
+      "width": 1280,
+      "height": 1015,
+      "dpr": 1
+    },
+    "selected": "Oldest created",
+    "contentAudit": {
+      "measured": [
+        {
+          "text": "Custom order",
+          "width": 83.94999694824219
+        },
+        {
+          "text": "Newest added",
+          "width": 88.68333435058594
+        },
+        {
+          "text": "Oldest added",
+          "width": 82.18333435058594
+        },
+        {
+          "text": "Title A\u2013Z",
+          "width": 53.81666564941406
+        },
+        {
+          "text": "Title Z\u2013A",
+          "width": 53.81666564941406
+        },
+        {
+          "text": "Oldest created",
+          "width": 90.19999694824219
+        },
+        {
+          "text": "Newest created",
+          "width": 96.69999694824219
+        },
+        {
+          "text": "Name A\u2013Z",
+          "width": 63.36666488647461
+        },
+        {
+          "text": "Name Z\u2013A",
+          "width": 63.36666488647461
+        },
+        {
+          "text": "Recently added",
+          "width": 95.66666412353516
+        },
+        {
+          "text": "Creator A\u2013Z",
+          "width": 73.31666564941406
+        },
+        {
+          "text": "Creator Z\u2013A",
+          "width": 73.31666564941406
+        },
+        {
+          "text": "Newest published",
+          "width": 109.91666412353516
+        },
+        {
+          "text": "Oldest published",
+          "width": 103.41666412353516
+        },
+        {
+          "text": "Least time left",
+          "width": 86.48332977294922
+        },
+        {
+          "text": "Most time left",
+          "width": 83.68333435058594
+        },
+        {
+          "text": "Newest update",
+          "width": 92.53333282470703
+        },
+        {
+          "text": "Oldest update",
+          "width": 86.03333282470703
+        },
+        {
+          "text": "Newest episode",
+          "width": 98.81666564941406
+        },
+        {
+          "text": "Most unplayed",
+          "width": 90.51667022705078
+        },
+        {
+          "text": "Unsupported order",
+          "width": 117
+        },
+        {
+          "text": "Newest released",
+          "width": 102.73332977294922
+        },
+        {
+          "text": "Oldest released",
+          "width": 96.23332977294922
+        },
+        {
+          "text": "Shortest duration",
+          "width": 106.13333129882812
+        },
+        {
+          "text": "Longest duration",
+          "width": 103.88333129882812
+        },
+        {
+          "text": "Relevance",
+          "width": 63.5
+        },
+        {
+          "text": "Newest first",
+          "width": 73.88333129882812
+        }
+      ],
+      "fullRowBudget": 262,
+      "current": [
+        {
+          "text": "Oldest created",
+          "width": 90.19999694824219
+        },
+        {
+          "text": "Newest created",
+          "width": 96.69999694824219
+        },
+        {
+          "text": "Name A\u2013Z",
+          "width": 63.36666488647461
+        },
+        {
+          "text": "Name Z\u2013A",
+          "width": 63.36666488647461
+        }
+      ],
+      "currentBudget": 96.7166748046875
+    },
+    "mode": "normal",
+    "native": {
+      "full": 1,
+      "text": 1
+    }
+  },
+  {
+    "input": {
+      "x": 975,
+      "y": 168,
+      "width": 288,
+      "height": 64,
+      "font": "26px",
+      "line": "33px",
+      "scrollWidth": 190,
+      "clientWidth": 190
+    },
+    "select": {
+      "x": 975,
+      "y": 299.1000061035156,
+      "width": 288,
+      "height": 64,
+      "font": "26px",
+      "line": "32.5px",
+      "scrollWidth": 286,
+      "clientWidth": 286
+    },
+    "label": {
+      "x": 975,
+      "y": 248,
+      "width": 51.96665954589844,
+      "height": 35.100006103515625,
+      "font": "26px",
+      "line": "35.1px",
+      "scrollWidth": 52,
+      "clientWidth": 52
+    },
+    "labelInkHeight": 33,
+    "details": {
+      "x": 975,
+      "y": 363.1000061035156,
+      "width": 288,
+      "height": 0,
+      "font": "26px",
+      "line": "41.6px",
+      "scrollWidth": 288,
+      "clientWidth": 288
+    },
+    "control": {
+      "x": 975,
+      "y": 168,
+      "width": 288,
+      "height": 195.10000610351562,
+      "font": "32px",
+      "line": "51.2px",
+      "scrollWidth": 288,
+      "clientWidth": 288
+    },
+    "pane": {
+      "x": 959,
+      "y": 40,
+      "width": 321,
+      "height": 975,
+      "font": "32px",
+      "line": "51.2px",
+      "scrollWidth": 320,
+      "clientWidth": 320
+    },
+    "viewport": {
+      "width": 1280,
+      "height": 1015,
+      "dpr": 1
+    },
+    "selected": "Oldest created",
+    "contentAudit": {
+      "measured": [
+        {
+          "text": "Custom order",
+          "width": 167.8000030517578
+        },
+        {
+          "text": "Newest added",
+          "width": 177.25
+        },
+        {
+          "text": "Oldest added",
+          "width": 164.28334045410156
+        },
+        {
+          "text": "Title A\u2013Z",
+          "width": 107.63333129882812
+        },
+        {
+          "text": "Title Z\u2013A",
+          "width": 107.63333129882812
+        },
+        {
+          "text": "Oldest created",
+          "width": 180.31666564941406
+        },
+        {
+          "text": "Newest created",
+          "width": 193.28334045410156
+        },
+        {
+          "text": "Name A\u2013Z",
+          "width": 126.71666717529297
+        },
+        {
+          "text": "Name Z\u2013A",
+          "width": 126.71666717529297
+        },
+        {
+          "text": "Recently added",
+          "width": 191.21665954589844
+        },
+        {
+          "text": "Creator A\u2013Z",
+          "width": 146.5833282470703
+        },
+        {
+          "text": "Creator Z\u2013A",
+          "width": 146.5833282470703
+        },
+        {
+          "text": "Newest published",
+          "width": 219.6999969482422
+        },
+        {
+          "text": "Oldest published",
+          "width": 206.73333740234375
+        },
+        {
+          "text": "Least time left",
+          "width": 172.98333740234375
+        },
+        {
+          "text": "Most time left",
+          "width": 167.3333282470703
+        },
+        {
+          "text": "Newest update",
+          "width": 184.9499969482422
+        },
+        {
+          "text": "Oldest update",
+          "width": 171.98333740234375
+        },
+        {
+          "text": "Newest episode",
+          "width": 197.48333740234375
+        },
+        {
+          "text": "Most unplayed",
+          "width": 180.93333435058594
+        },
+        {
+          "text": "Unsupported order",
+          "width": 233.8333282470703
+        },
+        {
+          "text": "Newest released",
+          "width": 205.35000610351562
+        },
+        {
+          "text": "Oldest released",
+          "width": 192.38333129882812
+        },
+        {
+          "text": "Shortest duration",
+          "width": 212.18333435058594
+        },
+        {
+          "text": "Longest duration",
+          "width": 207.6999969482422
+        },
+        {
+          "text": "Relevance",
+          "width": 126.9000015258789
+        },
+        {
+          "text": "Newest first",
+          "width": 147.6666717529297
+        }
+      ],
+      "fullRowBudget": 246,
+      "current": [
+        {
+          "text": "Oldest created",
+          "width": 180.31666564941406
+        },
+        {
+          "text": "Newest created",
+          "width": 193.28334045410156
+        },
+        {
+          "text": "Name A\u2013Z",
+          "width": 126.71666717529297
+        },
+        {
+          "text": "Name Z\u2013A",
+          "width": 126.71666717529297
+        }
+      ],
+      "currentBudget": 246
+    },
+    "mode": "text",
+    "native": {
+      "full": 1,
+      "text": 2
+    }
+  },
+  {
+    "input": {
+      "x": 8,
+      "y": 64,
+      "width": 304,
+      "height": 32,
+      "font": "13px",
+      "line": "16.5px",
+      "scrollWidth": 254,
+      "clientWidth": 254
+    },
+    "select": {
+      "x": 42.01666259765625,
+      "y": 104,
+      "width": 138.7166748046875,
+      "height": 32,
+      "font": "13px",
+      "line": "16.25px",
+      "scrollWidth": 137,
+      "clientWidth": 137
+    },
+    "label": {
+      "x": 8,
+      "y": 111.21665954589844,
+      "width": 26.01666259765625,
+      "height": 17.550003051757812,
+      "font": "13px",
+      "line": "17.55px",
+      "scrollWidth": 26,
+      "clientWidth": 26
+    },
+    "labelInkHeight": 16.5,
+    "details": {
+      "x": 8,
+      "y": 136,
+      "width": 304,
+      "height": 0,
+      "font": "13px",
+      "line": "20.8px",
+      "scrollWidth": 304,
+      "clientWidth": 304
+    },
+    "control": {
+      "x": 8,
+      "y": 64,
+      "width": 304,
+      "height": 72,
+      "font": "16px",
+      "line": "25.6px",
+      "scrollWidth": 304,
+      "clientWidth": 304
+    },
+    "pane": {
+      "x": 0,
+      "y": 0,
+      "width": 320,
+      "height": 507.5,
+      "font": "16px",
+      "line": "25.6px",
+      "scrollWidth": 320,
+      "clientWidth": 320
+    },
+    "viewport": {
+      "width": 320,
+      "height": 508,
+      "dpr": 2
+    },
+    "selected": "Oldest created",
+    "contentAudit": {
+      "measured": [
+        {
+          "text": "Custom order",
+          "width": 83.96666717529297
+        },
+        {
+          "text": "Newest added",
+          "width": 88.66666412353516
+        },
+        {
+          "text": "Oldest added",
+          "width": 82.16666412353516
+        },
+        {
+          "text": "Title A\u2013Z",
+          "width": 53.79999923706055
+        },
+        {
+          "text": "Title Z\u2013A",
+          "width": 53.79999923706055
+        },
+        {
+          "text": "Oldest created",
+          "width": 90.16666412353516
+        },
+        {
+          "text": "Newest created",
+          "width": 96.66666412353516
+        },
+        {
+          "text": "Name A\u2013Z",
+          "width": 63.36666488647461
+        },
+        {
+          "text": "Name Z\u2013A",
+          "width": 63.36666488647461
+        },
+        {
+          "text": "Recently added",
+          "width": 95.5999984741211
+        },
+        {
+          "text": "Creator A\u2013Z",
+          "width": 73.30000305175781
+        },
+        {
+          "text": "Creator Z\u2013A",
+          "width": 73.30000305175781
+        },
+        {
+          "text": "Newest published",
+          "width": 109.9000015258789
+        },
+        {
+          "text": "Oldest published",
+          "width": 103.4000015258789
+        },
+        {
+          "text": "Least time left",
+          "width": 86.53333282470703
+        },
+        {
+          "text": "Most time left",
+          "width": 83.69999694824219
+        },
+        {
+          "text": "Newest update",
+          "width": 92.53333282470703
+        },
+        {
+          "text": "Oldest update",
+          "width": 86.03333282470703
+        },
+        {
+          "text": "Newest episode",
+          "width": 98.76667022705078
+        },
+        {
+          "text": "Most unplayed",
+          "width": 90.5
+        },
+        {
+          "text": "Unsupported order",
+          "width": 116.96666717529297
+        },
+        {
+          "text": "Newest released",
+          "width": 102.66666412353516
+        },
+        {
+          "text": "Oldest released",
+          "width": 96.16666412353516
+        },
+        {
+          "text": "Shortest duration",
+          "width": 106.16666412353516
+        },
+        {
+          "text": "Longest duration",
+          "width": 103.9000015258789
+        },
+        {
+          "text": "Relevance",
+          "width": 63.400001525878906
+        },
+        {
+          "text": "Newest first",
+          "width": 73.86666870117188
+        }
+      ],
+      "fullRowBudget": 262,
+      "current": [
+        {
+          "text": "Oldest created",
+          "width": 90.16666412353516
+        },
+        {
+          "text": "Newest created",
+          "width": 96.66666412353516
+        },
+        {
+          "text": "Name A\u2013Z",
+          "width": 63.36666488647461
+        },
+        {
+          "text": "Name Z\u2013A",
+          "width": 63.36666488647461
+        }
+      ],
+      "currentBudget": 96.7166748046875
+    },
+    "mode": "full",
+    "native": {
+      "full": 2,
+      "text": 1
+    }
+  }
+]

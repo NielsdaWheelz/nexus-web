@@ -34,6 +34,9 @@ area · opened YYYY-MM-DD by <who> · P2
 ## Open
 
 - [open] deployment / postgres maintenance · 2026-10-15 platform restack · the 64 MiB default /dev/shm fails a parallel VACUUM DiskFull under the 512 MiB cap; autovacuum is unaffected: [issue](issues/postgres-shm-blocks-parallel-maintenance.md).
+- [open] local development / storage · 2026-10-15 · macbook storage remains near full after a shared docker outage: [ticket](tickets/macbook-docker-storage-headroom.md).
+- [open] feedback / accessibility · 2026-10-15 toolbar qualification · a failure notice compresses enlarged text into fragments at 320px: [ticket](tickets/feedback-notice-compresses-enlarged-text.md).
+- [open] libraries / view choices · 2026-10-15 merge source audit · unknown sort values are offered as unbounded labels before server rejection: [ticket](tickets/library-unknown-sort-label-is-unbounded.md).
 - [open] shared action menu / keyboard · 2026-10-14 menu design audit · tab cycles inside a nonmodal menu: [ticket](tickets/action-menu-tab-keeps-focus-inside.md).
 - [open] resource actions / accessibility · 2026-10-14 menu design audit · inverse command labels carry checkbox state: [ticket](tickets/resource-menu-inverse-verbs-use-checkbox-state.md).
 - [open] shared action menu / feedback · 2026-10-14 menu design audit · disabled explanations are visually hidden: [ticket](tickets/action-menu-disabled-reasons-are-visually-hidden.md).
@@ -90,7 +93,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] podcasts, browse / reauthoring · 2026-10-10 podcasts/browse rewrite · 4,163 formatted lines against a 3,000 cap; no behaviour cut for budget: [ticket](tickets/podcasts-reauthor-over-line-budget.md).
 - [open] podcasts / backfill data · 2026-10-10 podcasts python reauthor · p3 · backfills a swallowed page failure completed before 0270 are indistinguishable and cannot be walked again: [ticket](tickets/backfills-completed-by-silent-page-failures.md).
 - [open] browse / preview schema · 2026-10-10 podcasts/browse rewrite · p3 · an episode preview's audio href is typed only as a string (spec D10): [ticket](tickets/browse-episode-audio-href-is-untyped.md).
-- [open] panes / filter rows · 2026-10-10 podcasts/browse rewrite · p3 · the partial row-status copy promises loading a manual Load-more list never does: [ticket](tickets/pane-filter-partial-copy-assumes-draining.md).
 - [open] browse / android player bridge · 2026-10-10 podcasts/browse rewrite · p3 · preview audio over `window.nexusPlayback` not exercised after the descriptor moved (json unchanged): [ticket](tickets/browse-preview-audio-android-unverified.md).
 - [open] generation / background jobs · 2026-10-10 generation rewrite · a dead background generation job closes its ledger row but leaves its reading, build or summary pending: [ticket](tickets/dead-background-jobs-leave-domain-rows-pending.md).
 - [open] generation / provider runtime · 2026-10-10 generation rewrite · the 24-turn and whole-generation timeout bounds on provider tool loops were chosen without evidence: [ticket](tickets/provider-tool-loop-bounds.md).
@@ -127,7 +129,7 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] android / auth · 2026-10-04 offline reauthoring harness · a force-stop right after login loses the session cookie; cookies flush only on page finish and pause: [ticket](tickets/android-session-cookie-not-flushed-after-login.md).
 - [open] hosted workspace / panes · 2026-10-04 offline review-fix harness · a restored pane whose media was deleted (404) replaced the whole workspace on android; the resolution registry is deleted, the android reproduction is still needed: [ticket](tickets/workspace-restore-fails-on-deleted-media-pane.md).
 - [open] reader / accessibility · 2026-09-26 reader navigation acceptance · talkback exposed the held-position live region, but its spoken words could not be independently observed: [ticket](tickets/reader-navigation-talkback-spoken-announcement-unverified.md).
-- [open] collection controls / accessibility verification · 2026-09-25, narrowed 2026-10-13 · live source/device checks passed; spoken screen-reader and actual accessibility-setting checks remain: [ticket](tickets/pane-controls-live-proof-blocked.md).
+- [open] collection controls / accessibility verification · 2026-09-25, narrowed 2026-10-15 · native query zoom passed; spoken feedback and unobserved reader/settings checks remain: [ticket](tickets/pane-controls-live-proof-blocked.md).
 - [open] podcast publisher transcript · 2026-09-26 reader acceptance · configured discovery through publisher transcript read/find remains unqualified: [ticket](tickets/podcast-publisher-transcript-journey-unqualified.md).
 - [open] android offline reading · 2026-09-26 source-note implementation · authored note links work, but downloaded readers lack aligned evidence inspection: [ticket](tickets/offline-reader-lacks-source-apparatus-inspection.md).
 - [open] player / release · 2026-10-05 player re-author · web, api and a signed apk ship together after old activity outboxes drain: [ticket](tickets/player-cutover-release-steps.md).
@@ -158,7 +160,7 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] epub / parser bound · 2026-09-27 corpus census · two backlink indexes exceed the bounded extractor: [ticket](tickets/reader-epub-backlink-index-exhaustion.md).
 - [open] api / operations · 2026-09-27 release preflight · a read-only live source-hash probe exited 137 and restarted the api once: [ticket](tickets/live-api-source-hash-probe-restarted-container.md).
 - [open] epub ingest · 2026-09-26 fragment-only nav fix review · unsafe authored nav hrefs lack source issues: [ticket](tickets/epub-unsafe-nav-targets-have-no-source-issue.md).
-- [open] worker / indexing · 2026-09-24 reader-inspector-controls · a missing indexing credential is classified as a handler failure (`E_WORKER_HANDLER_FAILED`) and retried to dead: [ticket](tickets/indexing-without-credential-is-a-child-defect.md).
+- [open] worker, search / configuration · 2026-09-24 reader-inspector-controls, 2026-10-15 toolbar · missing embedding credentials retry indexing to dead and return `E_INTERNAL` for media search: [ticket](tickets/indexing-without-credential-is-a-child-defect.md).
 - [open] local development · 2026-09-24 reader-inspector-controls · p3 · the local worker overlay hardcodes its minio cors origins and ports (its memory bound was fixed): [ticket](tickets/local-worker-overlay-memory-bound-fails-lane-check.md).
 - [open] workspace / deep links · 2026-09-25 article-section-navigation acceptance · a full-page article deep link can revert to the restored EPUB pane during bootstrap: [ticket](tickets/workspace-deep-link-reverts-during-reader-jump.md).
 - [open] android / local auth · 2026-09-25 article-section-navigation acceptance · isolated Next dev login showed an unattributed JSON.parse overlay; standalone login passed: [ticket](tickets/android-isolated-login-dev-overlay.md).
