@@ -9,6 +9,7 @@ import {
 import ActionMenu from "@/components/ui/ActionMenu";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ConnectionMutation } from "@/lib/resourceGraph/links";
+import styles from "./ContextEdgeMenu.module.css";
 
 const EDGE_ACTIONS: Record<
   ConnectionMutation["kind"],
@@ -104,7 +105,7 @@ export default function ContextEdgeMenu({
         label={label}
         // Its own icon, not "…": distinct from the resource menu beside it.
         renderTrigger={(props) => (
-          <button {...props}>
+          <button {...props} className={styles.trigger}>
             <ListMinus size={16} aria-hidden="true" />
           </button>
         )}

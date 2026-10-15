@@ -5,7 +5,7 @@
 // a chooser where marks overlap, the colour dialog, the link dialog and the
 // existing-chat picker.
 import { useState } from "react";
-import { Ellipsis, Highlighter, Link2, MessageCircleQuestion, NotebookPen } from "lucide-react";
+import { Highlighter, Link2, MessageCircleQuestion, NotebookPen } from "lucide-react";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
 import AnnotationNoteEditor from "@/components/notes/AnnotationNoteEditor";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
@@ -14,6 +14,7 @@ import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import MobileSheet from "@/components/ui/MobileSheet";
+import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import type { HighlightColor } from "@/lib/documentReader/model";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
@@ -112,9 +113,12 @@ export default function SelectionDock({
             { kind: "command", id: "share", label: "Share", onSelect: ({ triggerEl }) => verbs.share(triggerEl) },
           ]}
           renderTrigger={(trigger) => (
-            <Button {...trigger} variant="ghost" size={size} iconOnly title="More" disabled={verbs.busy}>
-              <Ellipsis size={16} aria-hidden="true" />
-            </Button>
+            <OverflowMenuButton
+              {...trigger}
+              className={isMobile ? styles.dockOverflowMobile : undefined}
+              title="More"
+              disabled={verbs.busy}
+            />
           )}
         />
       </div>

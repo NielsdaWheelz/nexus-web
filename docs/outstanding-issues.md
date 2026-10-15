@@ -1,5 +1,8 @@
 # Outstanding Issues & Follow-ups
 
+- [open] local development / setup · 2026-10-14 navbar qualification · bucket initializer image pull fails: [ticket](tickets/local-minio-init-image-unavailable.md).
+- [open] nexus / query editing · 2026-10-14 navbar review · result-cell arrows intercept native text editing; outside launcher scope: [ticket](tickets/nexus-query-arrows-intercept-text-editing.md).
+
 A register of **open code-level work** — issues found but left out of scope, bugs,
 refactors deferred because they were too much churn, and things that warrant a
 closer look later. **Add entries as they surface; delete them once resolved (record
@@ -29,7 +32,12 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+
 - [open] deployment / postgres maintenance · 2026-10-15 platform restack · the 64 MiB default /dev/shm fails a parallel VACUUM DiskFull under the 512 MiB cap; autovacuum is unaffected: [issue](issues/postgres-shm-blocks-parallel-maintenance.md).
+- [open] shared action menu / keyboard · 2026-10-14 menu design audit · tab cycles inside a nonmodal menu: [ticket](tickets/action-menu-tab-keeps-focus-inside.md).
+- [open] resource actions / accessibility · 2026-10-14 menu design audit · inverse command labels carry checkbox state: [ticket](tickets/resource-menu-inverse-verbs-use-checkbox-state.md).
+- [open] shared action menu / feedback · 2026-10-14 menu design audit · disabled explanations are visually hidden: [ticket](tickets/action-menu-disabled-reasons-are-visually-hidden.md).
+- [deferred] collections / reorder affordance · 2026-10-14 menu design audit · ellipsis also serves as drag handle; outside appearance scope: [ticket](tickets/collection-menu-trigger-doubles-as-drag-handle.md).
 - [unverified] workspace / scrollbar input · 2026-10-14 · classic gutter passed; default overlay thumb produced no motion and remains unqualified: [ticket](tickets/canvas-overlay-scrollbar-release-unqualified.md).
 - [open] release / host storage · 2026-10-14 corrective rollout · image pulls can consume the preflight disk reserve: [ticket](tickets/release-image-cache-consumes-disk-reserve.md).
 - [deferred] x / saved positions · 2026-10-14 owner decision · inline quotation becomes an embedded document; preserve the saved copy and explicit refresh conflict: [ticket](tickets/x-inline-quote-refresh-loses-saved-position.md).
@@ -134,6 +142,7 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] reader / budget · 2026-10-05 reader rewrite pr2 · the primitive is 4,519 formatted lines against its 4,200 gate and the scope 10,597 against 9,000; the gate was not raised, the owner re-plans: [ticket](tickets/reader-pr2-over-line-budget.md).
 - [open] owner review · 2026-10-04 cleanup campaign · reversible defaults taken without an explicit owner decision (oracle plates/seed/corpus access/plate metadata, connections attach): [ticket](tickets/cleanup-campaign-defaults-await-owner-review.md).
 - [open] oracle · 2026-10-04 cleanup campaign · the readings list can order readings against their folio numbers: [ticket](tickets/oracle-readings-list-order-can-invert-folios.md).
+- [open] workspace / pane chrome · 2026-10-14 inspector design review · icon-only inspector locally qualified and cleaned up; normal post-release smoke pending: [ticket](tickets/inspector-trigger-visible-label.md).
 - [open] reader / inspector · 2026-09-24 reader-inspector-controls · reload open on Contents briefly shows Evidence: [ticket](tickets/reader-contents-publishes-after-navigation.md).
 - [open] epub / sections · 2026-09-26 chapter implementation · ambiguous pillow frontmatter headings still become routine stops: [ticket](tickets/epub-contents-union-overpromotes-source-headings.md).
 - [open] reader / production · 2026-09-27 release preflight · four exact ready books need source-byte proof and fenced 0243 repair before the deferred cutover: [ticket](tickets/reader-chapter-production-correspondence-unverified.md).

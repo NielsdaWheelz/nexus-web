@@ -20,7 +20,7 @@ export type Side = "above" | "below" | "left" | "right" | "edge";
 export interface AnchorOptions {
   readonly enabled: boolean;
   /** Default "below"; with `flip`, the other side when this one does not fit. */
-  readonly placement?: "above" | "below";
+  readonly placement?: "above" | "below" | "right";
   readonly align?: "start" | "center" | "end";
   readonly gap?: number;
   readonly flip?: boolean;
@@ -77,7 +77,7 @@ function clip(rect: DOMRect, bounds: Bounds): DOMRect | null {
     : null;
 }
 
-/** Below or above the anchor, aligned on the cross axis, flipped when it must. */
+/** Beside the anchor, aligned on the cross axis, flipped when it must. */
 function beside(
   anchor: DOMRect,
   box: DOMRect,
@@ -85,6 +85,20 @@ function beside(
   options: AnchorOptions,
 ): Placed {
   const gap = options.gap ?? 4;
+  if (options.placement === "right") {
+    const right = anchor.right + gap;
+    const left = anchor.left - box.width - gap;
+    const side = options.flip && right + box.width > bounds.right && left >= bounds.left
+      ? "left"
+      : "right";
+    const align = options.align ?? "start";
+    const top = align === "start"
+      ? anchor.top
+      : align === "end"
+        ? anchor.bottom - box.height
+        : anchor.top + anchor.height / 2 - box.height / 2;
+    return { top, left: side === "right" ? right : left, side };
+  }
   const below = anchor.bottom + gap;
   const above = anchor.top - box.height - gap;
   const fitsBelow = below + box.height <= bounds.bottom;
@@ -289,6 +303,8 @@ export function useAnchoredPosition<T extends HTMLElement>(
     };
     const observer = new ResizeObserver(later);
     if (ref.current) observer.observe(ref.current);
+    const element = anchor && "current" in anchor ? anchor.current : anchor;
+    if (element instanceof HTMLElement) observer.observe(element);
     const unsubscribe = clearContent
       ? mobileViewport.subscribeContentBottomClearance(later)
       : null;
@@ -306,7 +322,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
       viewport?.removeEventListener("scroll", measure);
       viewport?.removeEventListener("resize", measure);
     };
-  }, [enabled, clearContent, measure, mobileViewport]);
+  }, [anchor, enabled, clearContent, measure, mobileViewport]);
 
   return { ref, ...placed, placed: placed.style !== HIDDEN };
 }

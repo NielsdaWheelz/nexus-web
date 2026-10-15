@@ -297,18 +297,28 @@ empty groups disappear. Route Share is omitted for a resource pane because its
 canonical plan owns Share. A single marker on More represents hidden status.
 Owner separation never creates a second trigger.
 
+the overflow control uses `OverflowMenuButton`: 32px desktop, at least 44px with a
+coarse pointer, and 48px in the mobile bar. its glyph and open/disabled/focus
+paint belong to the [visual system](visual-system.md#overflow-buttons).
+headers own only placement and the decorative status marker. the menu retains
+its existing commands, composition, refs and focus policy.
+
 Every primary identity projection uses one 60px track. The mobile safe area is
 additive.
 
 The sole promoted action is the typed companion action. `PaneShell` derives it
 (`companionAction` in `Companion.tsx`) iff the body publishes a Companion, and
 it is the only source of its name (`Inspector`), `PanelRight` icon and disclosure
-state; desktop renders it in `SurfaceHeader` as one labelled ghost `Button`
-(icon and label at natural width, 32px; the identity yields width first),
-mobile as an icon-only 48px bar button. Its open state is visually distinct and
-announced through `aria-expanded`; `aria-controls` names the
-mounted region while open, and the hover title is the projected
-`Show inspector`/`Hide inspector` command copy.
+state. both headers render its decorative 20px glyph with the stable accessible
+name `Inspector`. desktop uses an icon-only ghost `Button`: the header sets its
+local `--pane-control-size` to 32px, or 44px when any coarse pointer is available;
+mobile keeps its 48px bar button. its open state is visually distinct and
+announced through `aria-expanded`; `aria-controls` names the mounted region
+while open. the shared text-only `Tooltip` shows the projected
+`Show inspector`/`Hide inspector` command copy on mouse/pen hover or keyboard
+focus, including mobile keyboard use. it preserves button focus and ordinary
+commands; touch only activates the inspector. its lifecycle and passive overlay
+contract live in [overlays](overlays.md).
 
 `ContextualActionMenu` projects every remaining command through the existing
 `ActionMenu` in desktop and mobile chrome. `ReaderNavigation` presents canonical

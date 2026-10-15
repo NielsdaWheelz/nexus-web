@@ -9,6 +9,7 @@ import {
 import { ContributorCreditList } from "@/components/contributors/ContributorCredits";
 import type { SortableActivatorProps } from "@/components/sortable/SortableList";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
+import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import Pill from "@/components/ui/Pill";
 import ResourceRow from "@/components/ui/ResourceRow";
 import ContextualActionMenu, {
@@ -97,7 +98,7 @@ function RowContextualMenu({
         renderTrigger={
           reorder
             ? (triggerProps) => (
-                <button
+                <OverflowMenuButton
                   {...triggerProps}
                   aria-describedby={reorder.disabled ? undefined : reorderHintId}
                   aria-keyshortcuts={
@@ -139,9 +140,7 @@ function RowContextualMenu({
                     }
                     triggerProps.onKeyDown(event);
                   }}
-                >
-                  &hellip;
-                </button>
+                />
               )
             : undefined
         }
