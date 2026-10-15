@@ -1,9 +1,8 @@
 # release: consumption (PR 1 history: capture, exclusions, stats; PR 2 read state, the lectern, suggestions)
 
 hard cutover: the api refuses the old forms and there is no compatibility arm.
-`X-Nexus-Wire` is not bumped during the campaign (conventions): web, api and
-the apk ship together in the one release; an open tab fails its stats and
-activity requests until reloaded.
+the final combined release uses `X-Nexus-Wire: 2`: web, api and the apk ship
+together; an old tab fails its stats and activity requests until reloaded.
 
 | before | after | retry rule |
 |---|---|---|
@@ -49,7 +48,7 @@ activity requests until reloaded.
     refused for good (settle route 404/405, activity body 400) and dropped, so
     no apk ships before the android slice's recorder. install the new apk right
     after deploy (edge order).
-- **extension**: untouched.
+- **extension**: no consumption feature changes; use the matched wire-2 build.
 
 ## preflight / env / data
 

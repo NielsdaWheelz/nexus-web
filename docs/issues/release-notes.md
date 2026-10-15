@@ -6,8 +6,8 @@ stack" ship with the campaign's one release.
 - **api and web deploy together** (hard cutover): every notes route and shape changed
   (`docs/modules/notes.md`). `GET`/`PATCH /notes/pages/{id}` and the resource-items
   surface, title and body routes are gone; capture takes `{note_id, text}`; annotation
-  detaches take the note id in the path. `X-Nexus-Wire` is not bumped here (R6; the edge
-  slice's first value covers every pre-release break). an open tab from before the deploy
+  detaches take the note id in the path. the final combined release uses
+  `X-Nexus-Wire: 2`. an open tab from before the deploy
   fails its notes writes until it reloads. the apk carries no notes code (share is a web
   page).
 - **no migration, no env, config or job change.** `note_reindex_job` and its payload are
