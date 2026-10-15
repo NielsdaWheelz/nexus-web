@@ -37,57 +37,41 @@ Next Image local pattern; they are public files, not storage objects.
 Full contract: `docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §3.1 at `ebd648197`.
 
 Canonical member removal never deletes the final lifetime reference: it returns
-`409 E_MEDIA_LAST_REFERENCE`. Whole-resource deletion of document media
-(`WebArticle`, `Epub`, `Pdf`) uses `media_deletion.claim_media_teardown`, which
-locks the media row, checks zero committed references, inserts a
-`media_teardown_intents` row (application-generated UUIDv7 via
-`nexus.ids.new_uuid7`, not a database default — Python 3.12 has no standard
-UUIDv7 generator), and enqueues one addressable `media_teardown` job in that
-same transaction. Intent presence excludes the media from every public
-visibility query and makes new references fail with `E_MEDIA_DELETING` (409).
-The administrative whole-library teardown is the narrow exception: while its
-complete media lock set is held, it deletes a newly zero-reference document and
-child state transactionally, then deletes storage objects after commit. The one
-actual reference owner (`library_entries.py`) enforces the media-before-library
-barrier for reference writes. Whether any reference remains is a count of
-physical `library_entries` rows for that media, and nothing else.
+`409 E_MEDIA_LAST_REFERENCE`. Removing a media (`DELETE /media/{id}`: 204, idempotent;
+`media_deletion.remove_media_for_viewer`) drops it from the viewer's whole workspace at
+once. A document (`web_article`, `epub`, `pdf`) left with no reference (no library entry,
+no grant) gets a `media_teardown_intents` row (one per media; UUIDv7 from
+`nexus.ids.new_uuid7`) and one `media_teardown` job `{media_id, intent_id}` in the same
+transaction, under the media row lock; so do a duplicate document
+(`delete_duplicate_document_media`) and a document whose last grant or highlight goes
+(`claim_document_teardown_if_unreferenced_locked`). The intent excludes the media from
+every visibility query and makes new references fail with `E_MEDIA_DELETING` (409).
 
-Two durable task modules own all teardown and orphan storage deletion
-(`python/nexus/tasks/`); nothing reserves a path before a write:
+The job (`media_deletion.run_teardown_job`) is one step and acts only on its exact
+(intent, media). In one `retry_serializable` transaction under the media lock: no intent
+or another one is `Stale`; a reference that reappeared voids the intent and keeps the
+media (`Voided`); otherwise every row of the media goes in the load-bearing order (owner
+hooks before the rows they own, the content index before the media, highlight children
+before their roots), and the objects those rows named (`media_file`, `epub_resources`,
+the attempts' stored artifacts) are enumerated inside that transaction (`Deleted`).
+After commit it deletes those objects best-effort; an object it fails to delete, or one
+written after the deletion, is unowned and the orphan sweep reclaims it. There is no
+grace and no checkpoint. A dead job voids its exact intent while the media lives
+(`jobs/dead_letters.media_teardown`), so the media is readable again.
 
-- **`media_teardown.py`** — the claimed job. Reloads the current job row and
-  transitions its checkpoint: `Unprepared` -> `PathsPrepared` (lease-fenced,
-  the media's enumerated paths and `cleanupNotBefore` = now + the clock-skew
-  grace) -> `DeletionCommitted` (zero references: deletes child state through
-  owners — the one consumption call `delete_media_consumption_state_in_txn` —
-  then intent/media, all in one `retry_serializable` transaction) or `Voided`
-  (a reference reappeared: deletes only the intent). Absent intent + present
-  media records `NoOp`; a stale (non-matching) intent records `Stale`. Every
-  intent lookup/delete matches both `intentId` and `mediaId`, so an old job
-  never acts on a later intent. `DeletionCommitted` reschedules itself until
-  `cleanupNotBefore`, then deletes its persisted paths; deletion is
-  idempotent and failure retries. A write that lands after the deletion leaves
-  an unowned object for the sweep.
-- **`storage_orphan_sweep.py`** — the one reclaimer of objects no row names.
-  Writers store bytes first and then commit the row that names them, so a failed
-  commit, a late browser PUT's candidate, a superseded remote file, a reused
-  capture's candidate or a write after a teardown is unowned. The sweep durably
-  pages the `media/` prefix, ignores objects modified within
-  `storage_orphan_sweep_min_age_seconds` (default 24h), and deletes every path
-  that `media_file`, `epub_resources` and the attempts' stored artifacts
-  (`source_types.stored_artifact_path`) do not name. Orphans therefore live up
-  to ~30 h. Runs on the job registry's `periodic_interval_seconds` mechanism
-  (default `storage_orphan_sweep_interval_seconds` = 21600s / six hours) rather
-  than a self-chained successor — the registry's per-slot `enqueue_unique_job`
-  dedupe already guarantees an at-most-one run per slot, and
-  `never_prune_dead=True` keeps a failed run operator-discoverable via
-  `requeue_dead_job`.
-
-On dead-letter, a live media row causes only the exact matching intent to be
-voided; `DeletionCommitted` media jobs are never pruned, so paths stay
-operator-discoverable via `requeue_dead_job`. Domain code
-never writes `background_jobs` raw — every checkpoint write goes through the
-queue owner's exact-attempt/claimant/lease-fenced CAS methods.
+**`tasks/storage_orphan_sweep.py`** is the one reclaimer of objects no row names; nothing
+reserves a path before a write. Writers store bytes first and then commit the row that
+names them, so a failed commit, a late browser PUT's candidate, a superseded remote file,
+a reused capture's candidate, a write after a teardown or an object a teardown failed to
+delete is unowned. The sweep durably pages the `media/` prefix, ignores objects modified
+within `storage_orphan_sweep_min_age_seconds` (default 24h), and deletes every path that
+`media_file`, `epub_resources` and the attempts' stored artifacts
+(`source_types.stored_artifact_path`) do not name. Orphans therefore live up to ~30 h.
+Runs on the job registry's `periodic_interval_seconds` mechanism (default
+`storage_orphan_sweep_interval_seconds` = 21600s / six hours) rather than a self-chained
+successor — the registry's per-slot `enqueue_unique_job` dedupe already guarantees an
+at-most-one run per slot, and `never_prune_dead=True` keeps a failed run
+operator-discoverable via `requeue_dead_job`.
 
 The one-day R2 lifecycle rule on the `uploads/` direct-upload staging prefix is
 the only reclaimer of staged bytes: confirmation copies them to a candidate under

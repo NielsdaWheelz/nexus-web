@@ -81,9 +81,10 @@ Hooks (by path in the registry):
   dossier, metadata, oracle, connection scans),
   `podcasts.sync.dead_letter` (settles the sync Failed),
   `source_publication.on_dead_letter` (a resource-limited or podcast
-  transcript attempt publishes its terminal failure), and the three statements in
+  transcript attempt publishes its terminal failure), and the four statements in
   `jobs/dead_letters.py` whose owners are heavy (note index `failed` with the job's
-  code, teardown intent voided, backfill failed at its step, and a media unit's open
+  code, a dead `media_teardown`'s exact intent voided while its media lives, backfill
+  failed at its step, and a media unit's open
   generation closed with the exact head it was building, by id and fingerprint,
   `failed` with the job's code: no reader ever sees a unit "suspended").
 - `on_history(db, job, execution_id)` runs after each retry, dead, reclaim and

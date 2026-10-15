@@ -1353,23 +1353,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/media": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Media */
-        get: operations["list_media_media_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/media/from-url": {
         parameters: {
             query?: never;
@@ -1419,7 +1402,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Resolve Media Summaries */
+        /**
+         * Resolve Media Summaries
+         * @description Input order; an id the viewer cannot read resolves to null.
+         */
         post: operations["resolve_media_summaries_media_summaries_resolve_post"];
         delete?: never;
         options?: never;
@@ -1521,12 +1507,16 @@ export interface paths {
         };
         /**
          * Get Media
-         * @description 404 if the media does not exist or the viewer cannot read it.
+         * @description 404 when the media does not exist or the viewer cannot read it.
          */
         get: operations["get_media_media__media_id__get"];
         put?: never;
         post?: never;
-        /** Remove Media */
+        /**
+         * Remove Media
+         * @description Idempotent: a media the viewer cannot read is already removed (204); one reachable
+         *     only through a system library is 403.
+         */
         delete: operations["remove_media_media__media_id__delete"];
         options?: never;
         head?: never;
@@ -2766,7 +2756,9 @@ export interface paths {
         };
         /**
          * Stream Media Events
-         * @description Processing state until terminal; media the viewer cannot read is E_MEDIA_NOT_FOUND.
+         * @description Processing state until nothing it shows is in flight (source work, a requested
+         *     transcript, a readable media's index); media the viewer cannot read is E_MEDIA_NOT_FOUND.
+         *     The client reopens it on the actions that can restart work.
          */
         get: operations["stream_media_events_stream_media__media_id__events_get"];
         put?: never;
@@ -3316,60 +3308,20 @@ export interface components {
             /** Can Remove */
             can_remove: boolean;
         };
-        /** CapabilitiesOut */
+        /**
+         * CapabilitiesOut
+         * @description What this viewer can do with the media's text now; ``can_retry``: the source owner
+         *     offers a retry of the same source.
+         */
         CapabilitiesOut: {
-            /**
-             * Can Delete
-             * @default false
-             */
-            can_delete: boolean;
-            /** Can Download File */
-            can_download_file: boolean;
-            /**
-             * Can Edit Authors
-             * @default false
-             */
-            can_edit_authors: boolean;
             /** Can Highlight */
             can_highlight: boolean;
-            /** Can Play */
-            can_play: boolean;
             /** Can Quote */
             can_quote: boolean;
             /** Can Read */
             can_read: boolean;
-            /**
-             * Can Read Embeds
-             * @default false
-             */
-            can_read_embeds: boolean;
-            /**
-             * Can Refresh Source
-             * @default false
-             */
-            can_refresh_source: boolean;
-            /**
-             * Can Repair Search
-             * @default false
-             */
-            can_repair_search: boolean;
-            /**
-             * Can Repair Source
-             * @default false
-             */
-            can_repair_source: boolean;
-            /**
-             * Can Retry
-             * @default false
-             */
+            /** Can Retry */
             can_retry: boolean;
-            /**
-             * Can Retry Metadata
-             * @default false
-             */
-            can_retry_metadata: boolean;
-            /** Can Search */
-            can_search: boolean;
         };
         /**
          * CaptureLimits
@@ -4426,11 +4378,6 @@ export interface components {
             /** Data */
             data: components["schemas"]["LearnDossierOpenedOut"] | components["schemas"]["LearnDossierBuildAcceptedOut"];
         };
-        /** Data[Annotated[Union[MediaRemovedResult, MediaHiddenResult, MediaDeletingResult], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
-        Data_Annotated_Union_MediaRemovedResult__MediaHiddenResult__MediaDeletingResult___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
-            /** Data */
-            data: components["schemas"]["MediaRemovedResult"] | components["schemas"]["MediaHiddenResult"] | components["schemas"]["MediaDeletingResult"];
-        };
         /** Data[Annotated[Union[ReaderTargetTextOut, ReaderTargetPdfOut, ReaderTargetTimeOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         Data_Annotated_Union_ReaderTargetTextOut__ReaderTargetPdfOut__ReaderTargetTimeOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Data */
@@ -4982,22 +4929,6 @@ export interface components {
             reason: ("unsupported_provider" | "unparseable" | "not_applicable") | null;
             /** Value */
             value: string | null;
-        };
-        /** DocumentEmbedSummaryOut */
-        DocumentEmbedSummaryOut: {
-            /** Failed Count */
-            failed_count: number;
-            /** Resolved Count */
-            resolved_count: number;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "unsupported" | "empty" | "resolving" | "ready" | "partial" | "failed";
-            /** Total Count */
-            total_count: number;
-            /** Unsupported Count */
-            unsupported_count: number;
         };
         /** DocumentEmbedTargetOut */
         DocumentEmbedTargetOut: {
@@ -6700,14 +6631,6 @@ export interface components {
             /** Role Facts */
             role_facts: components["schemas"]["ContributorRoleFactOut"][];
         };
-        /** MediaDeletingResult */
-        MediaDeletingResult: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Deleting";
-        };
         /** MediaDurationOut */
         MediaDurationOut: {
             estimate: components["schemas"]["ReadingTimeEstimateOut"];
@@ -6727,18 +6650,6 @@ export interface components {
             /** Url */
             url: string;
         };
-        /** MediaHiddenResult */
-        MediaHiddenResult: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Hidden";
-            /** Remaining Reference Count */
-            remaining_reference_count: number;
-            /** Removed From Library Ids */
-            removed_from_library_ids: string[];
-        };
         /**
          * MediaKind
          * @description Types of media that can be ingested.
@@ -6747,17 +6658,12 @@ export interface components {
         MediaKind: "web_article" | "epub" | "pdf" | "video" | "podcast_episode";
         /**
          * MediaOut
-         * @description The media detail wire.
-         *
-         *     ``read_state`` / ``progress_fraction`` / ``progress_resettable`` and
-         *     ``last_engaged_at`` are the viewer's derived consumption facts;
-         *     ``player_descriptor`` is set only for a podcast episode with playable
-         *     audio.
+         * @description One media as this viewer sees it: bibliography, processing, readability and the
+         *     viewer's own consumption; ``player_descriptor`` only for a playable episode.
          */
         MediaOut: {
             /**
              * Author Mode
-             * @default automatic
              * @enum {string}
              */
             author_mode: "automatic" | "manual";
@@ -6768,6 +6674,7 @@ export interface components {
             capabilities: components["schemas"]["CapabilitiesOut"];
             /** Chapters */
             chapters: components["schemas"]["PodcastEpisodeChapterOut"][];
+            consumption: components["schemas"]["ConsumptionOut"];
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
             /**
@@ -6781,14 +6688,11 @@ export interface components {
             description_html: string | null;
             /** Description Text */
             description_text: string | null;
-            document_embed_summary: components["schemas"]["DocumentEmbedSummaryOut"] | null;
             duration: components["schemas"]["MediaDurationOut"] | null;
             /** Edition Isbn */
             edition_isbn: string | null;
             /** Edition Published Date */
             edition_published_date: string | null;
-            /** Failure Stage */
-            failure_stage: string | null;
             /**
              * Id
              * Format: uuid
@@ -6814,26 +6718,18 @@ export interface components {
              * @enum {string}
              */
             processing_status: "pending" | "extracting" | "ready_for_reading" | "failed" | "suspended";
-            /** Progress Fraction */
-            progress_fraction: number | null;
-            /** Progress Resettable */
-            progress_resettable: boolean;
             /** Provider */
             provider: string | null;
             /** Provider Id */
             provider_id: string | null;
             /** Publisher */
             publisher: string | null;
-            /** Read State */
-            read_state: ("unread" | "in_progress" | "finished") | null;
             /** Requested Url */
             requested_url: string | null;
             /** Retrieval Status */
             retrieval_status: string | null;
             /** Retrieval Status Reason */
             retrieval_status_reason: string | null;
-            /** Source Progress */
-            source_progress: (components["schemas"]["SourceStageProgress"] | components["schemas"]["SourceCountedProgress"]) | null;
             /** Title */
             title: string;
             transcript_coverage: components["schemas"]["TranscriptCoverage"] | null;
@@ -6849,12 +6745,10 @@ export interface components {
         };
         /**
          * MediaProcessingSnapshotOut
-         * @description The complete data frame for media processing state and done events.
+         * @description One processing stream frame: the facts source work, transcripts and indexing change.
          */
         MediaProcessingSnapshotOut: {
             capabilities: components["schemas"]["CapabilitiesOut"];
-            /** Failure Stage */
-            failure_stage: string | null;
             /** Last Error Code */
             last_error_code: string | null;
             /**
@@ -6866,24 +6760,8 @@ export interface components {
             retrieval_status: string | null;
             /** Retrieval Status Reason */
             retrieval_status_reason: string | null;
-            /** Source Progress */
-            source_progress: (components["schemas"]["SourceStageProgress"] | components["schemas"]["SourceCountedProgress"]) | null;
             transcript_coverage: components["schemas"]["TranscriptCoverage"] | null;
             transcript_state: components["schemas"]["TranscriptState"] | null;
-            /** Updated At */
-            updated_at: string;
-        };
-        /** MediaRemovedResult */
-        MediaRemovedResult: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Removed";
-            /** Remaining Reference Count */
-            remaining_reference_count: number;
-            /** Removed From Library Ids */
-            removed_from_library_ids: string[];
         };
         /** MediaSuggestionTargetOut */
         MediaSuggestionTargetOut: {
@@ -14964,46 +14842,6 @@ export interface operations {
             };
         };
     };
-    list_media_media_get: {
-        parameters: {
-            query?: {
-                /** @description Comma-separated media kind filter (web_article, epub, pdf, video, podcast_episode) */
-                kind?: string | null;
-                /** @description Optional title substring filter */
-                search?: string | null;
-                /** @description Pagination cursor */
-                cursor?: string | null;
-                /** @description Maximum results per page */
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     create_from_url_media_from_url_post: {
         parameters: {
             query?: never;
@@ -15307,13 +15145,11 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["Data_Annotated_Union_MediaRemovedResult__MediaHiddenResult__MediaDeletingResult___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
-                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

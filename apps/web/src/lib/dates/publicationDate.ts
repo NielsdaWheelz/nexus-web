@@ -1,79 +1,31 @@
+// A web search result's publication date arrives as its provider sent it. Every other
+// bibliography date is the server's PublicationDate (YYYY, YYYY-MM or YYYY-MM-DD) already.
 
-declare const PUBLICATION_DATE: unique symbol;
-
-/** A real partial ISO date or ISO 8601 instant, checked at a source boundary. */
-export type PublicationDate = string & {
-  readonly [PUBLICATION_DATE]: true;
-};
-
-const YEAR = /^(\d{4})$/;
-const YEAR_MONTH = /^(\d{4})-(\d{2})$/;
-const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const PARTIAL = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/;
 const INSTANT =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
 function isRealDate(year: string, month = "01", day = "01"): boolean {
-  if (year === "0000") return false;
   const parsed = new Date(`${year}-${month}-${day}T00:00:00Z`);
   return (
+    year !== "0000" &&
     !Number.isNaN(parsed.getTime()) &&
     parsed.toISOString().slice(0, 10) === `${year}-${month}-${day}`
   );
 }
 
-function isRealPartialDate(raw: string): boolean {
-  const year = YEAR.exec(raw);
-  if (year !== null) return isRealDate(year[1]);
-  const month = YEAR_MONTH.exec(raw);
-  if (month !== null) return isRealDate(month[1], month[2]);
-  const date = DATE.exec(raw);
-  return date !== null && isRealDate(date[1], date[2], date[3]);
-}
-
-/** Bibliographic dates carry calendar precision, never a release instant. */
-export function decodePublicationDateOnly(
-  raw: unknown,
-  name: string,
-): PublicationDate {
-  if (typeof raw === "string" && isRealPartialDate(raw)) {
-    return raw as PublicationDate;
-  }
-  throw new TypeError(`${name} must be a real YYYY, YYYY-MM, or YYYY-MM-DD`);
-}
-
-/**
- * Accept the wire grammars Nexus actually owns: partial ISO dates
- * (YYYY / YYYY-MM / YYYY-MM-DD) and timezone-qualified ISO instants.
- */
-export function decodePublicationDate(
-  raw: unknown,
-  name: string,
-): PublicationDate {
-  if (typeof raw !== "string") {
-    throw new TypeError(`${name} must be a publication date string`);
-  }
-  if (isRealPartialDate(raw)) return raw as PublicationDate;
-
+/** A real partial date or a qualified instant as given; anything else is no date. */
+export function decodeWebPublicationDate(raw: string | null): string | null {
+  if (raw === null) return null;
+  const partial = PARTIAL.exec(raw);
+  if (partial !== null)
+    return isRealDate(partial[1], partial[2], partial[3]) ? raw : null;
   const instant = INSTANT.exec(raw);
-  if (
+  const real =
     instant !== null &&
     isRealDate(instant[1], instant[2], instant[3]) &&
     Number(instant[4]) <= 23 &&
     Number(instant[5]) <= 59 &&
-    Number(instant[6]) <= 59 &&
-    !Number.isNaN(Date.parse(raw))
-  ) {
-    return raw as PublicationDate;
-  }
-
-  throw new TypeError(
-    `${name} must be a real YYYY, YYYY-MM, YYYY-MM-DD, or ISO 8601 instant`,
-  );
-}
-
-export function decodeOptionalPublicationDate(
-  raw: unknown,
-  name: string,
-): PublicationDate | null {
-  return raw === null ? null : decodePublicationDate(raw, name);
+    Number(instant[6]) <= 59;
+  return real ? raw : null;
 }

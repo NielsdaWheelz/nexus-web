@@ -41,7 +41,7 @@ def media_teardown(db: Session, job: JobRow) -> None:
         text("""DELETE FROM media_teardown_intents
             WHERE id = :intent_id AND media_id = :media_id
               AND EXISTS (SELECT 1 FROM media WHERE id = :media_id)"""),
-        {"intent_id": UUID(job.payload["intentId"]), "media_id": UUID(job.payload["mediaId"])},
+        {"intent_id": UUID(job.payload["intent_id"]), "media_id": UUID(job.payload["media_id"])},
     )
 
 

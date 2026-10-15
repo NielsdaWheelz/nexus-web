@@ -141,7 +141,7 @@ def registry() -> dict[str, JobDefinition]:
         ),
         "media_teardown": JobDefinition(
             "background",
-            "nexus.tasks.media_teardown:media_teardown",
+            "nexus.services.media_deletion:run_teardown_job",
             max_attempts=5,
             retry_delays=_HOURS,
             keep_dead=True,

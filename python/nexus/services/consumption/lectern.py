@@ -37,17 +37,12 @@ class _Row:
 def get_lectern(db: Session, viewer_id: UUID) -> wire.LecternOut:
     """The visible rows in order, each with its summary and how it activates; capacity counts
     every row."""
-    from nexus.services.media import list_collection_media_for_viewer_by_ids
+    from nexus.services.media import media_summaries
 
     membership = _load(db, viewer_id)
     rows = [row for row in membership if row.visible]
     media_ids = [row.media_id for row in rows]
-    summaries = {
-        media.id: media.summary
-        for media in list_collection_media_for_viewer_by_ids(
-            db, viewer_id=viewer_id, media_ids=media_ids
-        )
-    }
+    summaries = media_summaries(db, viewer_id=viewer_id, media_ids=media_ids)
     descriptors = projection.player_descriptors(db, viewer_id=viewer_id, media_ids=media_ids)
     return wire.LecternOut(
         items=[

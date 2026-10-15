@@ -1046,11 +1046,10 @@ capability-owned:
 **Entity & state machine:** `media.processing_status` runs
 `pending → extracting → ready_for_reading` or `failed`. Search/embedding
 readiness lives on the separate `content_index_states` machine.
-`failure_stage ∈ {upload, extract, transcribe, embed, other}`. Source
-retryability is derived from the latest `media_source_attempts` row and
-capability projection; `source` is not a `failure_stage`. `failure_stage='embed'`
-is a soft warning that coexists with readable media. metadata research has its
-own retained job/outcome projection and never changes the source-error triple.
+A failure moves as one (status, `last_error_code`, `last_error_message`); a code on
+a readable media is a soft warning (`mark_stage_warning`). Source retryability is
+derived from the latest `media_source_attempts` row. Metadata research has its own
+retained job/outcome projection and never changes that triple.
 
 **Capture entry points**: `POST /media/from-url` with source recovery
 (`api/routes/media_sources.py`), `POST /media/uploads` (`api/routes/media_uploads.py`)
@@ -2165,7 +2164,7 @@ The things most likely to bite you, distilled:
    and processing transitions have named owners.
 5. **`ready_for_reading` is the document success terminal**; search/embedding
    readiness is a _separate_ state machine. Source-attempt retry and metadata
-   retry are user-visible retry capabilities; `source` is not a `failure_stage`.
+   retry are user-visible retry capabilities.
 6. **Reader offsets are Unicode codepoints into current `canonical_text`.** The
    frontend canonicalizer must byte-match the Python one; a mismatch disables
    highlighting for that fragment.

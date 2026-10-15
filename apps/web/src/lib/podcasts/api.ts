@@ -2,12 +2,14 @@
 
 // Podcast http for the web (docs/modules/podcast.md). Every podcast write
 // here publishes "Podcasts" after success (lib/api/changes); podcast panes put
-// its stamp in their refetch token.
+// its stamp in their refetch token. A transcript batch queues source attempts,
+// so it also invalidates Imports (open media panes follow theirs again).
 
 import { apiFetch } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import { publishImportsInvalidation } from "@/lib/imports/api";
 
 export type PodcastDetail = Schema<"PodcastDetailOut">;
 export type PodcastSubscription = Schema<"PodcastSubscriptionStatusOut">;
@@ -208,5 +210,6 @@ export async function requestEpisodeTranscripts(
     body: JSON.stringify({ target, selection_fingerprint: selectionFingerprint }),
   });
   publishChange("Podcasts");
+  publishImportsInvalidation();
   return response.data;
 }

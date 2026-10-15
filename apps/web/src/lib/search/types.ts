@@ -1,6 +1,5 @@
 import type { ApiJson } from "@/lib/api/wire";
 import type { ContributorCredit } from "@/lib/contributors/credits";
-import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type { MediaSummary } from "@/lib/media/mediaSummary";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
@@ -24,7 +23,7 @@ export type SearchResultRowViewModel = {
       typeLabel: string;
       primaryText: string;
       sourceMeta: string | null;
-      publicationDate: PublicationDate | null;
+      publicationDate: string | null;
       contributorCredits: ContributorCredit[];
     }
 );

@@ -1,7 +1,7 @@
-"""Media detail, processing-stream and removal wire models."""
+"""The media detail wire and the processing stream's frame."""
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -11,31 +11,19 @@ from nexus.db.models import TranscriptCoverage as MediaTranscriptCoverage
 from nexus.db.models import TranscriptState as MediaTranscriptState
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributor_credit import ContributorCreditOut
-from nexus.schemas.media_sources import SourceProgress
-from nexus.schemas.media_summary import MediaDurationOut, MediaProcessingStatus
+from nexus.schemas.media_summary import ConsumptionOut, MediaDurationOut, MediaProcessingStatus
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.publication_dates import PublicationDate
 
-_CLOSED = ConfigDict(extra="forbid")
-
-MediaReadState = Literal["unread", "in_progress", "finished"]
-
 
 class CapabilitiesOut(BaseModel):
+    """What this viewer can do with the media's text now; ``can_retry``: the source owner
+    offers a retry of the same source."""
+
     can_read: bool
     can_highlight: bool
     can_quote: bool
-    can_search: bool
-    can_play: bool
-    can_download_file: bool
-    can_delete: bool = False
-    can_retry: bool = False
-    can_refresh_source: bool = False
-    can_retry_metadata: bool = False
-    can_repair_source: bool = False
-    can_repair_search: bool = False
-    can_edit_authors: bool = False
-    can_read_embeds: bool = False
+    can_retry: bool
 
 
 class PlaybackSourceOut(BaseModel):
@@ -46,19 +34,6 @@ class PlaybackSourceOut(BaseModel):
     provider_video_id: str | None
     watch_url: str | None
     embed_url: str | None
-
-
-DocumentEmbedAggregateStatus = Literal[
-    "unsupported", "empty", "resolving", "ready", "partial", "failed"
-]
-
-
-class DocumentEmbedSummaryOut(BaseModel):
-    status: DocumentEmbedAggregateStatus
-    total_count: int = Field(ge=0)
-    resolved_count: int = Field(ge=0)
-    unsupported_count: int = Field(ge=0)
-    failed_count: int = Field(ge=0)
 
 
 class ListeningStateOut(BaseModel):
@@ -82,17 +57,12 @@ class XSourceContext(BaseModel):
     unavailable_context_count: int = Field(ge=0)
     uncaptured_context_count: int = Field(ge=0)
 
-    model_config = _CLOSED
+    model_config = ConfigDict(extra="forbid")
 
 
 class MediaOut(BaseModel):
-    """The media detail wire.
-
-    ``read_state`` / ``progress_fraction`` / ``progress_resettable`` and
-    ``last_engaged_at`` are the viewer's derived consumption facts;
-    ``player_descriptor`` is set only for a podcast episode with playable
-    audio.
-    """
+    """One media as this viewer sees it: bibliography, processing, readability and the
+    viewer's own consumption; ``player_descriptor`` only for a playable episode."""
 
     id: UUID
     kind: MediaKind
@@ -103,21 +73,18 @@ class MediaOut(BaseModel):
     requested_url: str | None
     canonical_url: str | None
     processing_status: MediaProcessingStatus
-    source_progress: SourceProgress | None
     transcript_state: MediaTranscriptState | None
     transcript_coverage: MediaTranscriptCoverage | None
     transcript_origin: Literal["Publisher", "Imported", "Generated"] | None
     retrieval_status: str | None
     retrieval_status_reason: str | None
-    failure_stage: str | None
     last_error_code: str | None
     playback_source: PlaybackSourceOut | None
     listening_state: ListeningStateOut | None
     chapters: list[PodcastEpisodeChapterOut]
     capabilities: CapabilitiesOut
-    document_embed_summary: DocumentEmbedSummaryOut | None
     contributors: list[ContributorCreditOut]
-    author_mode: Literal["automatic", "manual"] = "automatic"
+    author_mode: Literal["automatic", "manual"]
     original_published_date: PublicationDate | None
     edition_published_date: PublicationDate | None
     edition_isbn: str | None
@@ -130,54 +97,20 @@ class MediaOut(BaseModel):
     metadata_enriched_at: datetime | None
     metadata_enrichment: MetadataEnrichmentView
     x_source_context: XSourceContext | None
-    read_state: MediaReadState | None
-    progress_fraction: float | None = Field(ge=0.0, le=1.0)
-    progress_resettable: bool
+    consumption: ConsumptionOut
     last_engaged_at: datetime | None
     player_descriptor: PlayerDescriptor | None
     created_at: datetime
     updated_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
-
 
 class MediaProcessingSnapshotOut(BaseModel):
-    """The complete data frame for media processing state and done events."""
+    """One processing stream frame: the facts source work, transcripts and indexing change."""
 
     processing_status: MediaProcessingStatus
-    source_progress: SourceProgress | None
     last_error_code: str | None
-    failure_stage: str | None
     retrieval_status: str | None
     retrieval_status_reason: str | None
     capabilities: CapabilitiesOut
     transcript_state: MediaTranscriptState | None
     transcript_coverage: MediaTranscriptCoverage | None
-    updated_at: str
-
-
-class MediaRemovedResult(BaseModel):
-    model_config = _CLOSED
-
-    kind: Literal["Removed"] = "Removed"
-    removed_from_library_ids: list[UUID]
-    remaining_reference_count: int = Field(ge=0)
-
-
-class MediaHiddenResult(BaseModel):
-    model_config = _CLOSED
-
-    kind: Literal["Hidden"] = "Hidden"
-    removed_from_library_ids: list[UUID]
-    remaining_reference_count: int = Field(ge=0)
-
-
-class MediaDeletingResult(BaseModel):
-    model_config = _CLOSED
-
-    kind: Literal["Deleting"] = "Deleting"
-
-
-MediaDeleteResult = Annotated[
-    MediaRemovedResult | MediaHiddenResult | MediaDeletingResult, Field(discriminator="kind")
-]

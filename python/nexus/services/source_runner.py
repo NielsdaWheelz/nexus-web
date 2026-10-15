@@ -303,7 +303,6 @@ def _settle(
             mark_stage_warning(
                 db,
                 media,
-                stage="extract",
                 error_code="E_PDF_TEXT_UNAVAILABLE",
                 error_message="PDF text is unavailable; OCR is required.",
             )

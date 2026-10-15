@@ -23,7 +23,11 @@ import {
   createDossierBuild,
   learnDossier,
 } from "@/lib/dossiers/dossierApi";
-import { recoverMedia, requestSourceRefresh } from "@/lib/imports/api";
+import {
+  publishImportsInvalidation,
+  recoverMedia,
+  requestSourceRefresh,
+} from "@/lib/imports/api";
 import { markUnread, resetProgress } from "@/lib/consumption/state";
 import {
   placeOnLectern,
@@ -477,10 +481,13 @@ export function projectResourceActions(
           blocked,
           opens
             ? follow("Follow")
-            : () =>
-                apiFetch(`/api/media/${id}/transcript/request`, {
+            : async () => {
+                await apiFetch(`/api/media/${id}/transcript/request`, {
                   method: "POST",
-                }),
+                });
+                // Imports shows the transcript's work; open panes follow it again.
+                publishImportsInvalidation();
+              },
           {
             state: ACTION_CATALOG.Transcript.states[state],
             tracked: !opens,
