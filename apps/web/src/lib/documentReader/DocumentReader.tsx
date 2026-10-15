@@ -73,23 +73,37 @@ export interface Decorations {
 export type DraftAnchor =
   | TextRange
   | (Extract<MarkAnchor, { kind: "pdf" }> & { readonly exact: string });
-export interface SelectionCapture {
+export interface Passage {
+  readonly identity: string;
+  readonly anchor: MarkAnchor;
+}
+export interface SelectionCapture extends Passage {
   readonly anchor: DraftAnchor;
   readonly quote: string;
+  readonly input: "pointer" | "keyboard" | "touch";
+}
+export interface PassageGeometry {
   readonly rect: DOMRect;
+  readonly lines: readonly DOMRect[];
+  readonly bounds: DOMRect;
 }
-export interface MarkEvent {
-  readonly kind: "activate" | "hover";
-  readonly ids: readonly string[];
-  readonly rect: DOMRect | null;
-}
+export type MarkEvent =
+  | { readonly kind: "hover"; readonly ids: readonly string[] }
+  | {
+      readonly kind: "activate";
+      readonly identity: string;
+      readonly marks: readonly Mark[];
+      readonly input: SelectionCapture["input"];
+    };
 export interface DocumentReaderViewProps {
   readonly reader: Reader;
   readonly profile: Schema<"ReaderProfileOut">;
   readonly isMobile: boolean;
   readonly decorations?: Decorations;
+  /** The composing passage, independent of the saved decoration map. */
+  readonly activePassage?: Passage | null;
   /** Absent: selection is inert. */
-  readonly onSelection?: (capture: SelectionCapture | null) => void;
+  readonly onSelection?: (capture: SelectionCapture) => void;
   readonly onMarks?: (event: MarkEvent) => void;
   readonly onApparatus?: (
     key: string,

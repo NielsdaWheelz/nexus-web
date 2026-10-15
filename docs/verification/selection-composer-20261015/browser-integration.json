@@ -1,0 +1,1299 @@
+{
+  "main-port-cap-chromium.json": {
+    "case": "cap",
+    "engine": "chromium",
+    "time": "2026-10-15T17:19:25.898Z",
+    "requests": [],
+    "responses": [],
+    "native": [],
+    "observations": [
+      {
+        "name": "pane-limit-retained",
+        "panes": 12,
+        "composerKept": true,
+        "noResend": true
+      },
+      {
+        "name": "pane-limit-navigation-retry",
+        "quotedComposer": true,
+        "zeroEnsureOrRunOrNoteWritesOnRetry": true
+      }
+    ],
+    "errors": [],
+    "version": "147.0.7727.15",
+    "mediaId": "7a32992f-1bda-4b04-a4e1-a3906492bbf2",
+    "platform": "MacIntel",
+    "result": "green"
+  },
+  "main-port-database.json": {
+    "readOnly": true,
+    "head": "0286",
+    "rows": {
+      "empty_saved": {
+        "note": {
+          "id": "783ba799-d048-4a0e-91f0-3aa11d098596",
+          "body_pm_json": {
+            "type": "paragraph"
+          },
+          "body_text": ""
+        },
+        "version": 2,
+        "all_edges": 1
+      },
+      "globally_deleted": {
+        "note": null,
+        "version": null,
+        "all_edges": 0
+      },
+      "pdf_saved": {
+        "note": {
+          "id": "9a982df5-aac0-4de5-bbaa-0799c0e558e3",
+          "body_pm_json": {
+            "type": "paragraph",
+            "content": [
+              {
+                "text": "alpha",
+                "type": "text"
+              },
+              {
+                "text": " bold",
+                "type": "text",
+                "marks": [
+                  {
+                    "type": "strong"
+                  }
+                ]
+              },
+              {
+                "type": "hard_break"
+              },
+              {
+                "text": "second",
+                "type": "text"
+              }
+            ]
+          },
+          "body_text": "alpha bold\nsecond"
+        },
+        "version": 1,
+        "all_edges": 1
+      }
+    },
+    "kept_highlight": {
+      "id": "a0906822-df24-41e3-b3d9-dc190382084a",
+      "color": "yellow",
+      "anchor_kind": "fragment_offsets"
+    },
+    "result": "green"
+  },
+  "main-port-deletehighlight-chromium.json": {
+    "case": "deletehighlight",
+    "engine": "chromium",
+    "time": "2026-10-15T17:17:48.726Z",
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/api/media/7a32992f-1bda-4b04-a4e1-a3906492bbf2/highlights",
+        "body": {
+          "anchor": {
+            "kind": "text",
+            "unit_id": "645a440c-2655-4ca4-90bf-48ff37591476",
+            "start_offset": 2034,
+            "end_offset": 2061
+          },
+          "color": "yellow"
+        }
+      },
+      {
+        "method": "PUT",
+        "path": "/api/highlights/0870d082-2189-4252-8611-45744e9df5e1/note",
+        "body": {
+          "note_id": "f84db60d-8a61-4b34-a86e-9168e32f5609",
+          "body_pm_json": {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "alpha"
+              },
+              {
+                "type": "text",
+                "marks": [
+                  {
+                    "type": "strong"
+                  }
+                ],
+                "text": " bold"
+              },
+              {
+                "type": "hard_break"
+              },
+              {
+                "type": "text",
+                "text": "second"
+              }
+            ]
+          },
+          "expected": {
+            "kind": "absent",
+            "version": 1
+          }
+        }
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/highlights/0870d082-2189-4252-8611-45744e9df5e1",
+        "body": null
+      }
+    ],
+    "responses": [
+      {
+        "method": "POST",
+        "path": "/api/media/7a32992f-1bda-4b04-a4e1-a3906492bbf2/highlights",
+        "status": 200,
+        "body": {
+          "data": {
+            "created": true,
+            "highlight": {
+              "id": "0870d082-2189-4252-8611-45744e9df5e1",
+              "anchor": {
+                "type": "fragment_offsets",
+                "media_id": "7a32992f-1bda-4b04-a4e1-a3906492bbf2",
+                "fragment_id": "645a440c-2655-4ca4-90bf-48ff37591476",
+                "start_offset": 2034,
+                "end_offset": 2061
+              },
+              "color": "yellow",
+              "exact": "Passage 12. Aurora records ",
+              "prefix": "e or a question. This text is invented for local qualification.\n",
+              "suffix": "the orbit in a blue notebook. Attention stays with the passage w",
+              "created_at": "2026-10-15T17:17:50.423989Z",
+              "updated_at": "2026-10-15T17:17:50.423989Z",
+              "author_user_id": "d9210a8f-ed22-434a-a11b-248483e7ae21",
+              "is_owner": true,
+              "links_version": 1,
+              "linked_conversations": [],
+              "linked_note_blocks": []
+            }
+          }
+        }
+      },
+      {
+        "method": "PUT",
+        "path": "/api/highlights/0870d082-2189-4252-8611-45744e9df5e1/note",
+        "status": 200,
+        "body": {
+          "data": {
+            "note_block_id": "f84db60d-8a61-4b34-a86e-9168e32f5609",
+            "body_pm_json": {
+              "type": "paragraph",
+              "content": [
+                {
+                  "text": "alpha",
+                  "type": "text"
+                },
+                {
+                  "text": " bold",
+                  "type": "text",
+                  "marks": [
+                    {
+                      "type": "strong"
+                    }
+                  ]
+                },
+                {
+                  "type": "hard_break"
+                },
+                {
+                  "text": "second",
+                  "type": "text"
+                }
+              ]
+            },
+            "body_text": "alpha bold\nsecond",
+            "body_version": 1
+          }
+        }
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/highlights/0870d082-2189-4252-8611-45744e9df5e1",
+        "status": 204
+      }
+    ],
+    "native": [
+      {
+        "trusted": true,
+        "pointerType": "mouse",
+        "text": "Passage 12. Aurora records "
+      }
+    ],
+    "observations": [
+      {
+        "name": "native-immediate-focus",
+        "trusted": true,
+        "selected": "Passage 12. Aurora records ",
+        "firstText": "alpha",
+        "highlightNoteWrites": 0
+      },
+      {
+        "name": "enter-rich-save",
+        "highlightId": "0870d082-2189-4252-8611-45744e9df5e1",
+        "noteId": "f84db60d-8a61-4b34-a86e-9168e32f5609",
+        "version": 1,
+        "body": {
+          "type": "paragraph",
+          "content": [
+            {
+              "text": "alpha",
+              "type": "text"
+            },
+            {
+              "text": " bold",
+              "type": "text",
+              "marks": [
+                {
+                  "type": "strong"
+                }
+              ]
+            },
+            {
+              "type": "hard_break"
+            },
+            {
+              "text": "second",
+              "type": "text"
+            }
+          ]
+        },
+        "color": "yellow"
+      },
+      {
+        "name": "existing-prefill",
+        "sameNoteId": true,
+        "rich": true,
+        "focused": true
+      },
+      {
+        "name": "canonical-delete-highlight",
+        "highlightId": "0870d082-2189-4252-8611-45744e9df5e1",
+        "noteId": "f84db60d-8a61-4b34-a86e-9168e32f5609",
+        "confirmation": true,
+        "status": 204,
+        "composerClosed": true,
+        "highlightReadStatus": 404
+      }
+    ],
+    "errors": [],
+    "version": "147.0.7727.15",
+    "mediaId": "7a32992f-1bda-4b04-a4e1-a3906492bbf2",
+    "platform": "MacIntel",
+    "source": "Passage 12. Aurora records the orbit in a blue notebook. Attention stays with the passage while a thought becomes a note or a question. This text is invented for local qualification.",
+    "highlightId": "0870d082-2189-4252-8611-45744e9df5e1",
+    "noteId": "f84db60d-8a61-4b34-a86e-9168e32f5609",
+    "confirmation": {
+      "type": "confirm",
+      "message": "Delete highlight?\n\nDelete this highlight? Its note is kept. This can\u2019t be undone."
+    },
+    "result": "green",
+    "database": {
+      "readOnly": true,
+      "highlightRows": 0,
+      "highlightEdges": 0,
+      "survivingNote": {
+        "id": "f84db60d-8a61-4b34-a86e-9168e32f5609",
+        "body_pm_json": {
+          "type": "paragraph",
+          "content": [
+            {
+              "text": "alpha",
+              "type": "text"
+            },
+            {
+              "text": " bold",
+              "type": "text",
+              "marks": [
+                {
+                  "type": "strong"
+                }
+              ]
+            },
+            {
+              "type": "hard_break"
+            },
+            {
+              "text": "second",
+              "type": "text"
+            }
+          ]
+        },
+        "body_text": "alpha bold\nsecond"
+      },
+      "result": "green"
+    }
+  },
+  "main-port-evidence-chromium.json": {
+    "case": "evidence",
+    "engine": "chromium",
+    "time": "2026-10-15T17:22:12.234Z",
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/api/highlights/2c84a842-d3f6-4779-8e5d-477160313f54/note/delete",
+        "body": {
+          "note_id": "44de987a-803b-4b0d-9064-d813109b0507",
+          "expected_version": 1
+        }
+      }
+    ],
+    "responses": [
+      {
+        "method": "POST",
+        "path": "/api/highlights/2c84a842-d3f6-4779-8e5d-477160313f54/note/delete",
+        "status": 200,
+        "body": {
+          "data": {
+            "deleted_note_id": "44de987a-803b-4b0d-9064-d813109b0507"
+          }
+        }
+      }
+    ],
+    "native": [],
+    "observations": [
+      {
+        "name": "evidence-loaded",
+        "noteId": "44de987a-803b-4b0d-9064-d813109b0507",
+        "editorCount": 1,
+        "rich": true
+      },
+      {
+        "name": "evidence-global-delete",
+        "deleted": {
+          "deleted_note_id": "44de987a-803b-4b0d-9064-d813109b0507"
+        },
+        "evidenceEditorClosed": true,
+        "composerAndHighlightKept": true,
+        "noPaneCrash": true
+      }
+    ],
+    "errors": [],
+    "version": "147.0.7727.15",
+    "mediaId": "7a32992f-1bda-4b04-a4e1-a3906492bbf2",
+    "platform": "MacIntel",
+    "result": "green",
+    "visual": [
+      {
+        "role": null,
+        "label": null,
+        "color": "rgb(237, 237, 239)",
+        "background": "rgba(0, 0, 0, 0)",
+        "opacity": "1",
+        "bounds": {
+          "x": 253,
+          "y": 347.578125,
+          "width": 576,
+          "height": 237.59375
+        }
+      },
+      {
+        "role": "group",
+        "label": "passage annotation",
+        "color": "rgb(237, 237, 239)",
+        "background": "rgb(28, 28, 31)",
+        "opacity": "1",
+        "bounds": {
+          "x": 248,
+          "y": 342.578125,
+          "width": 586,
+          "height": 247.59375
+        }
+      }
+    ]
+  },
+  "main-port-heldack-chromium.json": {
+    "case": "heldack",
+    "engine": "chromium",
+    "time": "2026-10-15T17:22:42.601Z",
+    "requests": [
+      {
+        "method": "PUT",
+        "path": "/api/highlights/2c84a842-d3f6-4779-8e5d-477160313f54/note",
+        "body": {
+          "note_id": "02861610-2182-4932-abd6-1aab8896cc44",
+          "body_pm_json": {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "save A exact body"
+              }
+            ]
+          },
+          "expected": {
+            "kind": "absent",
+            "version": 3
+          }
+        }
+      }
+    ],
+    "responses": [
+      {
+        "method": "PUT",
+        "path": "/api/highlights/2c84a842-d3f6-4779-8e5d-477160313f54/note",
+        "status": 200,
+        "body": {
+          "data": {
+            "note_block_id": "02861610-2182-4932-abd6-1aab8896cc44",
+            "body_pm_json": {
+              "type": "paragraph",
+              "content": [
+                {
+                  "text": "save A exact body",
+                  "type": "text"
+                }
+              ]
+            },
+            "body_text": "save A exact body",
+            "body_version": 1
+          }
+        }
+      }
+    ],
+    "native": [
+      {
+        "trusted": true,
+        "pointerType": "mouse",
+        "text": "Passage 8. Aurora records the"
+      }
+    ],
+    "observations": [
+      {
+        "name": "held-real-save-ack",
+        "status": 200,
+        "noteId": "02861610-2182-4932-abd6-1aab8896cc44"
+      },
+      {
+        "name": "late-save-does-not-take-B",
+        "newPassageText": "Passage 8. Aurora records the",
+        "body": "draft B kept",
+        "focused": true,
+        "saveWrites": 1
+      }
+    ],
+    "errors": [],
+    "version": "147.0.7727.15",
+    "mediaId": "7a32992f-1bda-4b04-a4e1-a3906492bbf2",
+    "platform": "MacIntel",
+    "result": "green",
+    "visual": [
+      {
+        "role": null,
+        "label": null,
+        "color": "rgb(237, 237, 239)",
+        "background": "rgba(0, 0, 0, 0)",
+        "opacity": "1",
+        "bounds": {
+          "x": 253,
+          "y": 379.765625,
+          "width": 576,
+          "height": 205.59375
+        }
+      },
+      {
+        "role": "group",
+        "label": "passage annotation",
+        "color": "rgb(237, 237, 239)",
+        "background": "rgb(28, 28, 31)",
+        "opacity": "1",
+        "bounds": {
+          "x": 248,
+          "y": 374.765625,
+          "width": 586,
+          "height": 215.59375
+        }
+      }
+    ]
+  },
+  "main-port-mobile-chromium.json": {
+    "case": "mobile",
+    "engine": "chromium",
+    "time": "2026-10-15T17:15:40.835Z",
+    "requests": [],
+    "responses": [],
+    "native": [
+      {
+        "trusted": true,
+        "pointerType": "mouse",
+        "text": "Passage 8. Aurora records the"
+      },
+      {
+        "trusted": true,
+        "pointerType": "mouse",
+        "text": "Passage 9. Aurora records the"
+      },
+      {
+        "trusted": true,
+        "pointerType": "mouse",
+        "text": "Passage 8. Aurora records the"
+      }
+    ],
+    "observations": [
+      {
+        "name": "mobile-reader-unmounted",
+        "viewport": "390x844",
+        "nativePhone": false,
+        "readerBodies": 0,
+        "blankChatNoRun": true
+      },
+      {
+        "name": "mobile-draft-caret-roundtrip",
+        "richBodyAndCaretRestored": true,
+        "before": {
+          "html": "<p>mobile alpha<strong> bold</strong><br>second</p>",
+          "prefix": "mobile alpha boldseco",
+          "anchorText": "second",
+          "anchorOffset": 4
+        },
+        "after": {
+          "html": "<p>mobile alpha<strong> bold</strong><br>second</p>",
+          "prefix": "mobile alpha boldseco",
+          "anchorText": "second",
+          "anchorOffset": 4
+        },
+        "noteWrites": 0
+      }
+    ],
+    "errors": [],
+    "version": "147.0.7727.15",
+    "mediaId": "7a32992f-1bda-4b04-a4e1-a3906492bbf2",
+    "platform": "MacIntel",
+    "result": "green"
+  },
+  "main-port-mobilevisual-chromium.json": {
+    "case": "mobilevisual",
+    "engine": "chromium",
+    "time": "2026-10-15T17:23:53.666Z",
+    "requests": [],
+    "responses": [],
+    "native": [
+      {
+        "trusted": true,
+        "pointerType": "mouse",
+        "text": "Passage 8. Aurora records the"
+      }
+    ],
+    "observations": [],
+    "errors": [],
+    "version": "147.0.7727.15",
+    "mediaId": "7a32992f-1bda-4b04-a4e1-a3906492bbf2",
+    "platform": "MacIntel",
+    "result": "green",
+    "visual": [
+      {
+        "role": null,
+        "label": null,
+        "color": "rgb(237, 237, 239)",
+        "background": "rgba(0, 0, 0, 0)",
+        "opacity": "1",
+        "bounds": {
+          "x": 13,
+          "y": 285.765625,
+          "width": 364,
+          "height": 333.59375
+        }
+      },
+      {
+        "role": "group",
+        "label": "passage annotation",
+        "color": "rgb(237, 237, 239)",
+        "background": "rgb(28, 28, 31)",
+        "opacity": "1",
+        "bounds": {
+          "x": 8,
+          "y": 280.765625,
+          "width": 374,
+          "height": 343.59375
+        }
+      }
+    ]
+  },
+  "main-port-native-chromium.json": {
+    "case": "native",
+    "engine": "chromium",
+    "time": "2026-10-15T17:23:14.363Z",
+    "requests": [],
+    "responses": [],
+    "native": [
+      {
+        "trusted": true,
+        "pointerType": "mouse",
+        "text": "Passage 6. Aurora records the"
+      }
+    ],
+    "observations": [
+      {
+        "name": "native-immediate-focus",
+        "trusted": true,
+        "selected": "Passage 6. Aurora records the",
+        "firstText": "alpha",
+        "highlightNoteWrites": 0
+      }
+    ],
+    "errors": [],
+    "version": "147.0.7727.15",
+    "mediaId": "7a32992f-1bda-4b04-a4e1-a3906492bbf2",
+    "platform": "MacIntel",
+    "source": "Passage 6. Aurora records the orbit in a blue notebook. Attention stays with the passage while a thought becomes a note or a question. This text is invented for local qualification.",
+    "result": "green",
+    "visual": [
+      {
+        "role": null,
+        "label": null,
+        "color": "rgb(237, 237, 239)",
+        "background": "rgba(0, 0, 0, 0)",
+        "opacity": "1",
+        "bounds": {
+          "x": 253,
+          "y": 380.75,
+          "width": 576,
+          "height": 205.59375
+        }
+      },
+      {
+        "role": "group",
+        "label": "passage annotation",
+        "color": "rgb(237, 237, 239)",
+        "background": "rgb(28, 28, 31)",
+        "opacity": "1",
+        "bounds": {
+          "x": 248,
+          "y": 375.75,
+          "width": 586,
+          "height": 215.59375
+        }
+      }
+    ]
+  },
+  "main-port-native-firefox.json": {
+    "case": "native",
+    "engine": "firefox",
+    "time": "2026-10-15T17:10:33.659Z",
+    "requests": [],
+    "responses": [],
+    "native": [
+      {
+        "trusted": true,
+        "pointerType": "mouse",
+        "text": "assage 6. Aurora records "
+      }
+    ],
+    "observations": [
+      {
+        "name": "native-immediate-focus",
+        "trusted": true,
+        "selected": "assage 6. Aurora records ",
+        "firstText": "alpha",
+        "highlightNoteWrites": 0
+      }
+    ],
+    "errors": [],
+    "version": "148.0.2",
+    "mediaId": "7a32992f-1bda-4b04-a4e1-a3906492bbf2",
+    "platform": "MacIntel",
+    "source": "Passage 6. Aurora records the orbit in a blue notebook. Attention stays with the passage while a thought becomes a note or a question. This text is invented for local qualification.",
+    "result": "green"
+  },
+  "main-port-native-webkit.json": {
+    "case": "native",
+    "engine": "webkit",
+    "time": "2026-10-15T17:11:41.365Z",
+    "requests": [],
+    "responses": [],
+    "native": [
+      {
+        "trusted": true,
+        "pointerType": "mouse",
+        "text": "assage 6. Aurora records "
+      }
+    ],
+    "observations": [
+      {
+        "name": "native-immediate-focus",
+        "trusted": true,
+        "selected": "assage 6. Aurora records ",
+        "firstText": "alpha\n",
+        "highlightNoteWrites": 0
+      }
+    ],
+    "errors": [
+      "ResizeObserver loop completed with undelivered notifications."
+    ],
+    "version": "26.4",
+    "mediaId": "7a32992f-1bda-4b04-a4e1-a3906492bbf2",
+    "platform": "MacIntel",
+    "source": "Passage 6. Aurora records the orbit in a blue notebook. Attention stays with the passage while a thought becomes a note or a question. This text is invented for local qualification.",
+    "result": "green"
+  },
+  "main-port-pane-limit-red.json": {
+    "case": "chat",
+    "engine": "chromium",
+    "time": "2026-10-15T17:08:47.519Z",
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/api/media/7a32992f-1bda-4b04-a4e1-a3906492bbf2/highlights",
+        "body": {
+          "anchor": {
+            "kind": "text",
+            "unit_id": "645a440c-2655-4ca4-90bf-48ff37591476",
+            "start_offset": 576,
+            "end_offset": 605
+          },
+          "color": "yellow"
+        }
+      }
+    ],
+    "responses": [
+      {
+        "method": "POST",
+        "path": "/api/media/7a32992f-1bda-4b04-a4e1-a3906492bbf2/highlights",
+        "status": 200,
+        "body": {
+          "data": {
+            "created": true,
+            "highlight": {
+              "id": "7831d9a0-ea1f-49ef-a379-a54db9a1fdf5",
+              "anchor": {
+                "type": "fragment_offsets",
+                "media_id": "7a32992f-1bda-4b04-a4e1-a3906492bbf2",
+                "fragment_id": "645a440c-2655-4ca4-90bf-48ff37591476",
+                "start_offset": 576,
+                "end_offset": 605
+              },
+              "color": "yellow",
+              "exact": "Passage 4. Aurora records the",
+              "prefix": "e or a question. This text is invented for local qualification.\n",
+              "suffix": " orbit in a blue notebook. Attention stays with the passage whil",
+              "created_at": "2026-10-15T17:08:49.662299Z",
+              "updated_at": "2026-10-15T17:08:49.662299Z",
+              "author_user_id": "d9210a8f-ed22-434a-a11b-248483e7ae21",
+              "is_owner": true,
+              "links_version": 1,
+              "linked_conversations": [],
+              "linked_note_blocks": []
+            }
+          }
+        }
+      }
+    ],
+    "native": [
+      {
+        "trusted": true,
+        "pointerType": "mouse",
+        "text": "Passage 4. Aurora records the"
+      }
+    ],
+    "observations": [
+      {
+        "name": "before-chat",
+        "url": "http://localhost:3295/media/7a32992f-1bda-4b04-a4e1-a3906492bbf2",
+        "focused": true,
+        "editor": ""
+      },
+      {
+        "name": "after-chat-key",
+        "url": "http://localhost:3295/media/7a32992f-1bda-4b04-a4e1-a3906492bbf2",
+        "editors": 0,
+        "active": "composer integration 7a32992f\ncomposer integration 7a32992f\n1 / 1\nSelect section\ncomposer integration 7a32992f\nResults\nOptions\nEnter a search term\nSEARCH AND AI ARE STILL PREPARING.\nYou can keep reading while document search is prepared.\ncomposer integration 7a32992f\n\nPassage 1. Aurora records the orbit in a blue notebook. Attention stays with the passage while a thought becomes a note or a question. This text is invented for local qualification.\n\nPassage 2. Aurora records the orbit in a blue notebook. Attention stays with the passage while a thought becomes a note or a question. This text is invented for local qualification.\n\nPassage 3. Aurora records the orbit in a blue notebook. Attention stays with the passage while a thought becomes a note or a question. This text is invented for local qualification.\n\nPassage 4. Aurora records the orbit in a blue notebook. Attention stays with the passage while a thought becomes a note or a question. This text is invented for local qualification.\n\nPassage 5. Aurora records the orbit in a blue notebook. Attention stays with the passage while a thought becomes a note or a question. This text is invented for local qualification.\n\nPassage 6. Aurora records the orbit in a blue notebook. Attention stays with the passage while a thought becomes a note or a question. This text is invented for local qualification.\n\nPassage 7. Aurora records the orbit in a blue notebook. Attention stays with the passage while a thought becomes a note or a question. This text is invented for local qualification.\n\nPassage 8. Aurora records the orbit in a blue notebook. Attention stays with the passage while a thought becomes a note or a question. This text is invented for local qualification.\n\nPassage 9. Aurora records the orbit in a blue notebook. Attention stays with the passage while a thought becomes a note or a question. This text is invented for local qualification.\n\nPassage 10. Aurora records the orbit in a blue notebook. Attention stays with the passage while a thought becomes a note or a question. This text is invented for local qualification.\n\nPassage 11. Aurora records the orbit in a blue notebook. Attention stays with the passage while a thought becomes a note or a question. This text is invented for local qualification.\n\nPassage 12. Aurora records the orbit in a blue notebook. Attention stays with the passage while a thought becomes a note or a question. This text is invented for local qualification.\n\nEnd of article",
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/api/media/7a32992f-1bda-4b04-a4e1-a3906492bbf2/highlights",
+            "body": {
+              "anchor": {
+                "kind": "text",
+                "unit_id": "645a440c-2655-4ca4-90bf-48ff37591476",
+                "start_offset": 576,
+                "end_offset": 605
+              },
+              "color": "yellow"
+            }
+          }
+        ]
+      }
+    ],
+    "errors": [],
+    "version": "147.0.7727.15",
+    "mediaId": "7a32992f-1bda-4b04-a4e1-a3906492bbf2",
+    "platform": "MacIntel",
+    "source": "Passage 4. Aurora records the orbit in a blue notebook. Attention stays with the passage while a thought becomes a note or a question. This text is invented for local qualification.",
+    "result": "confirmed product red",
+    "failure": "pane-limit rejection closes composer without opening chat or feedback"
+  },
+  "main-port-pdf-chromium.json": {
+    "case": "pdf",
+    "engine": "chromium",
+    "time": "2026-10-15T17:11:26.167Z",
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/api/media/2c5a3c92-fd0c-4409-8984-21601eb87533/highlights",
+        "body": {
+          "anchor": {
+            "kind": "pdf",
+            "page_number": 1,
+            "quads": [
+              {
+                "x1": 53.977,
+                "y1": 282.621,
+                "x2": 197.439,
+                "y2": 282.621,
+                "x3": 197.439,
+                "y3": 296.121,
+                "x4": 53.977,
+                "y4": 296.121
+              }
+            ],
+            "exact": "This is invented text for the"
+          },
+          "color": "yellow"
+        }
+      },
+      {
+        "method": "PUT",
+        "path": "/api/highlights/6d92552c-644f-4790-b9d3-8f4f2b957ccc/note",
+        "body": {
+          "note_id": "9a982df5-aac0-4de5-bbaa-0799c0e558e3",
+          "body_pm_json": {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "alpha"
+              },
+              {
+                "type": "text",
+                "marks": [
+                  {
+                    "type": "strong"
+                  }
+                ],
+                "text": " bold"
+              },
+              {
+                "type": "hard_break"
+              },
+              {
+                "type": "text",
+                "text": "second"
+              }
+            ]
+          },
+          "expected": {
+            "kind": "absent",
+            "version": 1
+          }
+        }
+      }
+    ],
+    "responses": [
+      {
+        "method": "POST",
+        "path": "/api/media/2c5a3c92-fd0c-4409-8984-21601eb87533/highlights",
+        "status": 200,
+        "body": {
+          "data": {
+            "created": true,
+            "highlight": {
+              "id": "6d92552c-644f-4790-b9d3-8f4f2b957ccc",
+              "anchor": {
+                "type": "pdf_page_geometry",
+                "media_id": "2c5a3c92-fd0c-4409-8984-21601eb87533",
+                "page_number": 1,
+                "quads": [
+                  {
+                    "x1": 53.977,
+                    "y1": 282.621,
+                    "x2": 197.439,
+                    "y2": 282.621,
+                    "x3": 197.439,
+                    "y3": 296.121,
+                    "x4": 53.977,
+                    "y4": 296.121
+                  }
+                ]
+              },
+              "color": "yellow",
+              "exact": "This is invented text for the",
+              "prefix": "riting stays local until the reader deliberately saves or asks.\n",
+              "suffix": " isolated selection composer fixture.\n1\n\nSelection composer fixt",
+              "created_at": "2026-10-15T17:11:28.913549Z",
+              "updated_at": "2026-10-15T17:11:28.913549Z",
+              "author_user_id": "ad2c1ba7-e44a-41bb-92e8-93ff9224113a",
+              "is_owner": true,
+              "links_version": 1,
+              "linked_conversations": [],
+              "linked_note_blocks": []
+            }
+          }
+        }
+      },
+      {
+        "method": "PUT",
+        "path": "/api/highlights/6d92552c-644f-4790-b9d3-8f4f2b957ccc/note",
+        "status": 200,
+        "body": {
+          "data": {
+            "note_block_id": "9a982df5-aac0-4de5-bbaa-0799c0e558e3",
+            "body_pm_json": {
+              "type": "paragraph",
+              "content": [
+                {
+                  "text": "alpha",
+                  "type": "text"
+                },
+                {
+                  "text": " bold",
+                  "type": "text",
+                  "marks": [
+                    {
+                      "type": "strong"
+                    }
+                  ]
+                },
+                {
+                  "type": "hard_break"
+                },
+                {
+                  "text": "second",
+                  "type": "text"
+                }
+              ]
+            },
+            "body_text": "alpha bold\nsecond",
+            "body_version": 1
+          }
+        }
+      }
+    ],
+    "native": [
+      {
+        "trusted": true,
+        "pointerType": "mouse",
+        "text": "This is invented text for the"
+      }
+    ],
+    "observations": [
+      {
+        "name": "native-immediate-focus",
+        "trusted": true,
+        "selected": "This is invented text for the",
+        "firstText": "alpha",
+        "highlightNoteWrites": 0
+      },
+      {
+        "name": "enter-rich-save",
+        "highlightId": "6d92552c-644f-4790-b9d3-8f4f2b957ccc",
+        "noteId": "9a982df5-aac0-4de5-bbaa-0799c0e558e3",
+        "version": 1,
+        "body": {
+          "type": "paragraph",
+          "content": [
+            {
+              "text": "alpha",
+              "type": "text"
+            },
+            {
+              "text": " bold",
+              "type": "text",
+              "marks": [
+                {
+                  "type": "strong"
+                }
+              ]
+            },
+            {
+              "type": "hard_break"
+            },
+            {
+              "text": "second",
+              "type": "text"
+            }
+          ]
+        },
+        "color": "yellow"
+      },
+      {
+        "name": "existing-prefill",
+        "sameNoteId": true,
+        "rich": true,
+        "focused": true
+      }
+    ],
+    "errors": [],
+    "version": "147.0.7727.15",
+    "mediaId": "2c5a3c92-fd0c-4409-8984-21601eb87533",
+    "platform": "MacIntel",
+    "source": "This is invented text for the isolated selection composer fixture.",
+    "highlightId": "6d92552c-644f-4790-b9d3-8f4f2b957ccc",
+    "noteId": "9a982df5-aac0-4de5-bbaa-0799c0e558e3",
+    "result": "green"
+  },
+  "main-port-text-chromium.json": {
+    "case": "text",
+    "engine": "chromium",
+    "time": "2026-10-15T17:09:59.375Z",
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/api/media/7a32992f-1bda-4b04-a4e1-a3906492bbf2/highlights",
+        "body": {
+          "anchor": {
+            "kind": "text",
+            "unit_id": "645a440c-2655-4ca4-90bf-48ff37591476",
+            "start_offset": 758,
+            "end_offset": 787
+          },
+          "color": "yellow"
+        }
+      },
+      {
+        "method": "PUT",
+        "path": "/api/highlights/a0906822-df24-41e3-b3d9-dc190382084a/note",
+        "body": {
+          "note_id": "1996fb03-ae77-41bd-9c67-a6dc5e24ee02",
+          "body_pm_json": {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "alpha"
+              },
+              {
+                "type": "text",
+                "marks": [
+                  {
+                    "type": "strong"
+                  }
+                ],
+                "text": " bold"
+              },
+              {
+                "type": "hard_break"
+              },
+              {
+                "type": "text",
+                "text": "second"
+              }
+            ]
+          },
+          "expected": {
+            "kind": "absent",
+            "version": 1
+          }
+        }
+      },
+      {
+        "method": "PUT",
+        "path": "/api/highlights/a0906822-df24-41e3-b3d9-dc190382084a/note",
+        "body": {
+          "note_id": "1996fb03-ae77-41bd-9c67-a6dc5e24ee02",
+          "body_pm_json": {
+            "type": "paragraph"
+          },
+          "expected": {
+            "kind": "version",
+            "version": 1
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/highlights/a0906822-df24-41e3-b3d9-dc190382084a/note/delete",
+        "body": {
+          "note_id": "1996fb03-ae77-41bd-9c67-a6dc5e24ee02",
+          "expected_version": 2
+        }
+      }
+    ],
+    "responses": [
+      {
+        "method": "POST",
+        "path": "/api/media/7a32992f-1bda-4b04-a4e1-a3906492bbf2/highlights",
+        "status": 200,
+        "body": {
+          "data": {
+            "created": true,
+            "highlight": {
+              "id": "a0906822-df24-41e3-b3d9-dc190382084a",
+              "anchor": {
+                "type": "fragment_offsets",
+                "media_id": "7a32992f-1bda-4b04-a4e1-a3906492bbf2",
+                "fragment_id": "645a440c-2655-4ca4-90bf-48ff37591476",
+                "start_offset": 758,
+                "end_offset": 787
+              },
+              "color": "yellow",
+              "exact": "Passage 5. Aurora records the",
+              "prefix": "e or a question. This text is invented for local qualification.\n",
+              "suffix": " orbit in a blue notebook. Attention stays with the passage whil",
+              "created_at": "2026-10-15T17:10:01.574961Z",
+              "updated_at": "2026-10-15T17:10:01.574961Z",
+              "author_user_id": "d9210a8f-ed22-434a-a11b-248483e7ae21",
+              "is_owner": true,
+              "links_version": 1,
+              "linked_conversations": [],
+              "linked_note_blocks": []
+            }
+          }
+        }
+      },
+      {
+        "method": "PUT",
+        "path": "/api/highlights/a0906822-df24-41e3-b3d9-dc190382084a/note",
+        "status": 200,
+        "body": {
+          "data": {
+            "note_block_id": "1996fb03-ae77-41bd-9c67-a6dc5e24ee02",
+            "body_pm_json": {
+              "type": "paragraph",
+              "content": [
+                {
+                  "text": "alpha",
+                  "type": "text"
+                },
+                {
+                  "text": " bold",
+                  "type": "text",
+                  "marks": [
+                    {
+                      "type": "strong"
+                    }
+                  ]
+                },
+                {
+                  "type": "hard_break"
+                },
+                {
+                  "text": "second",
+                  "type": "text"
+                }
+              ]
+            },
+            "body_text": "alpha bold\nsecond",
+            "body_version": 1
+          }
+        }
+      },
+      {
+        "method": "PUT",
+        "path": "/api/highlights/a0906822-df24-41e3-b3d9-dc190382084a/note",
+        "status": 200,
+        "body": {
+          "data": {
+            "note_block_id": "1996fb03-ae77-41bd-9c67-a6dc5e24ee02",
+            "body_pm_json": {
+              "type": "paragraph"
+            },
+            "body_text": "",
+            "body_version": 2
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/highlights/a0906822-df24-41e3-b3d9-dc190382084a/note/delete",
+        "status": 200,
+        "body": {
+          "data": {
+            "deleted_note_id": "1996fb03-ae77-41bd-9c67-a6dc5e24ee02"
+          }
+        }
+      }
+    ],
+    "native": [
+      {
+        "trusted": true,
+        "pointerType": "mouse",
+        "text": "Passage 5. Aurora records the"
+      }
+    ],
+    "observations": [
+      {
+        "name": "native-immediate-focus",
+        "trusted": true,
+        "selected": "Passage 5. Aurora records the",
+        "firstText": "alpha",
+        "highlightNoteWrites": 0
+      },
+      {
+        "name": "enter-rich-save",
+        "highlightId": "a0906822-df24-41e3-b3d9-dc190382084a",
+        "noteId": "1996fb03-ae77-41bd-9c67-a6dc5e24ee02",
+        "version": 1,
+        "body": {
+          "type": "paragraph",
+          "content": [
+            {
+              "text": "alpha",
+              "type": "text"
+            },
+            {
+              "text": " bold",
+              "type": "text",
+              "marks": [
+                {
+                  "type": "strong"
+                }
+              ]
+            },
+            {
+              "type": "hard_break"
+            },
+            {
+              "text": "second",
+              "type": "text"
+            }
+          ]
+        },
+        "color": "yellow"
+      },
+      {
+        "name": "existing-prefill",
+        "sameNoteId": true,
+        "rich": true,
+        "focused": true
+      },
+      {
+        "name": "enter-empty-keeps-note",
+        "noteId": "1996fb03-ae77-41bd-9c67-a6dc5e24ee02",
+        "body": {
+          "type": "paragraph"
+        },
+        "version": 2
+      },
+      {
+        "name": "fresh-empty-backspace-global-delete",
+        "deleted": {
+          "deleted_note_id": "1996fb03-ae77-41bd-9c67-a6dc5e24ee02"
+        },
+        "highlightKept": true,
+        "lastCharacterAndRepeatAndModifiedKeysSafe": true
+      },
+      {
+        "name": "blank-chat",
+        "runPosts": 0,
+        "quotedComposer": true,
+        "url": "http://localhost:3295/conversations/new#mediaId=7a32992f-1bda-4b04-a4e1-a3906492bbf2&highlightId=a0906822-df24-41e3-b3d9-dc190382084a"
+      }
+    ],
+    "errors": [],
+    "version": "147.0.7727.15",
+    "mediaId": "7a32992f-1bda-4b04-a4e1-a3906492bbf2",
+    "platform": "MacIntel",
+    "source": "Passage 5. Aurora records the orbit in a blue notebook. Attention stays with the passage while a thought becomes a note or a question. This text is invented for local qualification.",
+    "highlightId": "a0906822-df24-41e3-b3d9-dc190382084a",
+    "noteId": "1996fb03-ae77-41bd-9c67-a6dc5e24ee02",
+    "result": "green"
+  }
+}

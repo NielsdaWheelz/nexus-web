@@ -8,6 +8,7 @@
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import type { WriteRequest } from "@/lib/notes/writes";
 import type { RailMarker } from "@/lib/documentReader/chrome/MapRail";
 import type {
   Decorations,
@@ -38,11 +39,8 @@ export interface AnnotationStore {
   refresh(): void;
   /** The viewer's own highlight of exactly this extent (library-mates' marks paint too). */
   twin(anchor: MarkAnchor): string | null;
-  /** `existing`: the viewer already highlighted the exact span; nothing was written. */
-  create(
-    anchor: DraftAnchor,
-    color: HighlightColor,
-  ): Promise<{ readonly id: string; readonly existing: boolean }>;
+  prepareCreate(anchor: DraftAnchor, color: HighlightColor): WriteRequest;
+  acknowledge(highlight: Highlight): void;
   recolor(id: string, color: HighlightColor): Promise<void>;
   rebound(id: string, anchor: TextRange): Promise<void>;
   remove(id: string): Promise<void>;
@@ -196,18 +194,13 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
     },
     refresh: () => void read(),
     twin,
-    async create(anchor, color) {
-      const same = twin(anchor);
-      if (same) return { id: same, existing: true };
-      const { data } = await apiFetch<
-        ApiJson<"/media/{media_id}/highlights", "post">
-      >(`/api/media/${mediaId}/highlights`, {
-        method: "POST",
-        body: JSON.stringify({ anchor: wireAnchor(anchor), color }),
-      });
-      const painted = anchorOfHighlight(data);
-      settle(data.id, painted && { id: data.id, color: data.color, anchor: painted });
-      return { id: data.id, existing: false };
+    prepareCreate(anchor, color) {
+      return { path: `/api/media/${mediaId}/highlights`, method: "POST",
+        body: { anchor: wireAnchor(anchor), color } };
+    },
+    acknowledge(highlight) {
+      const painted = anchorOfHighlight(highlight);
+      settle(highlight.id, painted && { id: highlight.id, color: highlight.color, anchor: painted });
     },
     async recolor(id, color) {
       const { data } = await apiFetch<ApiJson<"/highlights/{highlight_id}", "patch">>(

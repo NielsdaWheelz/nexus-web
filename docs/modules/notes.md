@@ -21,8 +21,10 @@ capture, annotations), `api/routes/notes.py`. web (under `apps/web/src/`):
 | `GET /notes/blocks/{id}` → `{id, body_pm_json, body_text, body_version}` | read |
 | `GET /notes/outline/{ref}` → `{source, links[{link_id, has_link_note, target}]}` | read |
 | `POST /notes/outline/commands {commands}` → `{outlines, nodes, deleted}` | every primitive idempotent |
-| `PUT /highlights/{id}/note`, `PUT /resource-graph/links/{id}/note {note_id, body_pm_json}` | that note attached has landed; another: 409 |
+| `PUT /highlights/{id}/note {note_id, body_pm_json, expected}` | absent: loaded highlight `links_version`; version: exact attachment and note `body_version` |
+| `PUT /resource-graph/links/{id}/note {note_id, body_pm_json}` | that note attached has landed; another: 409 |
 | `DELETE …/note/{note_id}` → 204 | idempotent; the note stays |
+| `POST /highlights/{id}/note/delete {note_id, expected_version}` → `{deleted_note_id}` | exact attached note/body version; an already absent note stays absent |
 
 an outline node is `{ref, label, summary, missing, activation, content}`, content
 `page{title, title_version, daily_date}` | `note{body_pm_json, body_text,
@@ -59,13 +61,16 @@ the outline, a self-link or an endpoint that is not a page or note is 400.
 - I4 creates take client ids: pages, notes, links (`edges.create_link(link_id)`).
 - I6 a date has at most one page and a page at most one date; reading a day writes
   nothing.
-- I7 a capture's blank text is 400 `E_EMPTY_NOTE_BODY`; an empty new annotation is
-  never sent.
+- I7 a capture's blank text is 400 `E_EMPTY_NOTE_BODY`. the reader composer omits
+  creation only for a canonical empty paragraph; other rich bodies save normally.
+  an existing note can be saved empty without changing its identity or links.
 - I8, the place rule: a note's places are its user links, annotations, link notes
   and citations. an outline `remove` (Backspace on an empty row, a join, undo of an
   insert) deletes the note it leaves with no place. links are undirected, so
-  "nothing holds it" is a degree test, and only outline edits, which can be undone,
-  delete. page delete and "Remove annotation" keep notes. join is refused when the
+  "nothing holds it" is a degree test. this rule belongs to outline edits, whose
+  undo can recreate a removed note; explicit global deletion from the passage
+  composer removes every place. page delete and "Remove annotation" keep notes.
+  join is refused when the
   later note has another place or its link carries a note, so a join always
   deletes the later note. a batch removes deepest rows first, so a parent removed
   with its child is deleted too.
@@ -92,8 +97,41 @@ the outline, a self-link or an endpoint that is not a page or note is 400.
   edit applies at once and records its inverse; undo sends the inverse. a refused
   write cancels the structure writes queued after it, reloads the outlines, resets
   the texts they carried to their acked values without saving them, clears undo
-  history and says so. only a reply's `deleted` stops a removed note's text saving.
+  history and says so. a reply's `deleted` or an acknowledged global note deletion
+  stops the removed note's text saving. global deletion removes loaded placements,
+  rejects older reads and clears histories that could recreate that note.
 - a latent day shows one draft row; its first non-empty save sends `ensure_daily`
   and its insert. panes take the entries `EditPageTitle`, `EditNoteBody`,
   `AppendNote` and `FocusNote`; the launcher's quick note is one capture, then the
   day opened at that note.
+
+## explicit passage notes
+
+`SelectionDock` reuses `NoteEditor` with local `selectionDrafts` and `bodyHistory`;
+it does not enroll the draft in `texts` or autosave on blur. enter saves,
+shift-enter inserts the existing newline, and command/control-enter sends a new
+quoted chat without changing the saved note. bodies use `NoteBody`'s canonical
+`body_pm_json`/`body_text`; edits and focus use `NoteEdit`/`FocusSelection`.
+composition and nested controls keep their own keys. caret, rich body and undo
+history survive reader body unmounts in the existing pane visit, not reload.
+
+highlight-note creation freezes the observed viewer attachment slot's
+`links_version` in `expected: {kind: "absent", version}`. the same attached id
+answers unchanged; a changed slot conflicts. updates use
+`expected: {kind: "version", version: body_version}` against the exact attachment.
+`AnnotationNoteEditor` also reads that slot before binding its first creator;
+its other surfaces retain normal autosave and link-note creation is unchanged.
+
+fresh backspace on an already empty paragraph (or `delete empty note`) uses the
+explicit global delete command, not outline remove or annotation detach. it
+checks the exact attachment and body version, then calls canonical note teardown
+in one transaction. every edge, historical citation and associated view state
+is removed; highlight, connected resources and stored chat text remain. there
+is no new undo service. acknowledgement marks the shared text gone, announces
+`resource_deleted` and uses `settleDeletedResourcePanes` for visible note panes.
+
+these commands use the tab's online write queue and its exact in-flight retries.
+there is no browser journal or reload recovery. a committed highlight may remain
+after note save or chat refusal; uncertain chat retains its exact sender in the
+reader visit while the tab lives. [highlight](highlight.md) owns the full
+selection interaction; [chat](chat.md) owns admission and immutable quotes.

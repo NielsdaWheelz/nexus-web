@@ -15,9 +15,16 @@ export type LinkSource = Schema<"CreateLinkRequest">["source"];
 export type LinkTarget = Schema<"CreateLinkRequest">["target"];
 export type LinkMutation =
   | { kind: "created"; sourceRef: string; targetRef: string }
-  | { kind: "deleted"; linkId: string };
+  | { kind: "deleted"; linkId: string }
+  | { kind: "resource_deleted"; ref: string };
 
 const listeners = new Set<(mutation: LinkMutation) => void>();
+const deletedResources = new Set<string>();
+
+/** A committed deletion outranks older reads, including for later subscribers. */
+export function isDeletedResource(ref: string): boolean {
+  return deletedResources.has(ref);
+}
 
 export function subscribeLinkMutations(
   listener: (mutation: LinkMutation) => void,
@@ -28,6 +35,12 @@ export function subscribeLinkMutations(
 
 function announce(mutation: LinkMutation): void {
   for (const listener of listeners) listener(mutation);
+}
+
+/** Only the acknowledged resource teardown may announce this fact. */
+export function announceResourceDeletion(ref: string): void {
+  deletedResources.add(ref);
+  announce({ kind: "resource_deleted", ref });
 }
 
 export async function queryConnections(

@@ -23,6 +23,7 @@ import {
   type Positioner,
 } from "./navigator";
 import type { FindSource } from "@/lib/find/find";
+import type { Passage, PassageGeometry } from "./DocumentReader";
 import type { ReaderHost, ReaderProgressPort, ReaderSource } from "./ports";
 import {
   createProgressSync,
@@ -74,6 +75,10 @@ export interface ReaderState {
 export interface Reader {
   getState(): ReaderState;
   subscribe(listener: () => void): () => void;
+  measurePassage(passage: Passage): PassageGeometry | null;
+  measureBounds(): DOMRect | null;
+  /** Return focus to the source without moving its reading position. */
+  focusSource(): void;
   inspect(input: {
     readonly target: ReaderTarget;
     readonly signal?: AbortSignal;
@@ -98,6 +103,9 @@ export interface Reader {
 export interface SurfaceHandle extends Positioner {
   readonly identity: string;
   readonly find: FindSource<unknown>;
+  measurePassage(passage: Passage): PassageGeometry | null;
+  measureBounds(): DOMRect | null;
+  focusSource(): void;
   setZoom?(zoom: number): void;
 }
 export interface ReaderRuntime extends Reader {
@@ -314,6 +322,21 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
+    },
+    measurePassage(passage) {
+      return passage.identity === ready()?.doc.identity &&
+        surface?.identity === passage.identity
+        ? surface.measurePassage(passage)
+        : null;
+    },
+    measureBounds() {
+      return surface && surface.identity === ready()?.doc.identity
+        ? surface.measureBounds()
+        : null;
+    },
+    focusSource() {
+      if (surface && surface.identity === ready()?.doc.identity)
+        surface.focusSource();
     },
     mount() {
       void load();

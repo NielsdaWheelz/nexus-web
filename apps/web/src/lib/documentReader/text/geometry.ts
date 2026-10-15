@@ -13,6 +13,8 @@ import {
   resolveDomRangeOffsets,
   resolveDomTextRanges,
 } from "@/lib/canonicalText/domTextRanges";
+import type { PassageGeometry, TextRange } from "../DocumentReader";
+import { measureScrollport } from "../scrollport";
 import type {
   Placement,
   ReaderTarget,
@@ -36,10 +38,10 @@ export interface TextGeometry {
   scrollTo(to: ReaderTarget | Placement): boolean;
   arrived(to: ReaderTarget | Placement): boolean;
   ranges(unit: string, start: number, end: number): StaticRange[];
+  measurePassage(anchor: TextRange): PassageGeometry | null;
   selection(selection: Selection): {
     readonly anchor: { kind: "text"; unit: string; start: number; end: number };
     readonly quote: string;
-    readonly rect: DOMRect;
   } | null;
   /** An element id, looked up only inside its unit (ids repeat across spine documents). */
   anchor(unit: string, id: string): HTMLElement | null;
@@ -261,6 +263,29 @@ export function createTextGeometry(
       const found = entry(unit);
       return (found && resolveDomTextRanges(found.cursor, start, end)) ?? [];
     },
+    measurePassage({ unit, start, end }) {
+      const bounds = measureScrollport(scrollport);
+      if (!bounds || !column.isConnected) return null;
+      const found = entry(unit);
+      if (!found) return null;
+      const ranges = resolveDomTextRanges(found.cursor, start, end);
+      if (!ranges) return null;
+      const lines = ranges.flatMap((range) => {
+        probe.setStart(range.startContainer, range.startOffset);
+        probe.setEnd(range.endContainer, range.endOffset);
+        return [...probe.getClientRects()].filter((rect) => rect.width > 0 && rect.height > 0);
+      });
+      if (!lines.length) return null;
+      const left = Math.min(...lines.map((rect) => rect.left));
+      const top = Math.min(...lines.map((rect) => rect.top));
+      const right = Math.max(...lines.map((rect) => rect.right));
+      const bottom = Math.max(...lines.map((rect) => rect.bottom));
+      return {
+        rect: new DOMRect(left, top, right - left, bottom - top),
+        lines,
+        bounds,
+      };
+    },
     selection(selection) {
       if (selection.isCollapsed || selection.rangeCount === 0) return null;
       const range = selection.getRangeAt(0);
@@ -286,7 +311,6 @@ export function createTextGeometry(
           end: offsets.endOffset,
         },
         quote,
-        rect: range.getBoundingClientRect(),
       };
     },
     anchor,

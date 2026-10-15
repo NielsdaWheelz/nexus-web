@@ -28,3 +28,8 @@ explicit manifest-owned resources before scoped cleanup; do not infer foreign
 stopped-state preservation from the failed global listing.
 
 next action: retain command/container facts on recurrence and establish its cause before selecting any separately authorized host change. acceptance: establish the recurrence's cause and resolution with ordinary full enumeration working; one healthy listing alone does not qualify.
+
+2026-10-15 selection-composer integration cleanup inventory again reported
+`rw layer snapshot not found for container 1303c215bf960cd4f0ce7f293dbf90d13b1753f9171b2c202b1511635e15d349`
+for unfiltered `docker ps -a`. exact task-name/label inventory worked. no repair,
+prune or reset was attempted; cleanup is restricted to positively owned resources.

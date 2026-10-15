@@ -360,6 +360,12 @@ export function usePaneVisitData<T>(
   return sample.current.value;
 }
 
+/** Commit retained visit data before a navigation can unmount its body. */
+export function usePaneVisitDataWriter<T>(key: PaneVisitDataKey<T>): (value: T | null) => void {
+  const { memory, visitId, routeKey } = useScope();
+  return useCallback((value: T | null) => memory.write(visitId, routeKey, key.name, value), [key.name, memory, routeKey, visitId]);
+}
+
 /** Call before a same-path view swap; the offset returns once `commitToken` changes. */
 export function usePaneScrollRetention(commitToken: unknown): () => void {
   const { memory, paneId } = useScope();

@@ -1,0 +1,2445 @@
+{
+  "scope": "isolated local qualification; 503/401 prove refusal/retention, not accepted provider delivery; synthetic composing-key flags do not prove native os ime",
+  "groups": {
+    "native_reader": {
+      "reader-cross-engine": [
+        {
+          "case": "a/select-and-immediate-type",
+          "build": "baseline",
+          "engine": "chromium",
+          "version": "147.0.7727.15",
+          "gesture": "native double-click drag",
+          "sourceCaptured": {
+            "trusted": true,
+            "pointerType": "mouse",
+            "noncollapsed": true,
+            "selected": "Mercury carries a silver",
+            "inReader": true
+          },
+          "errors": [],
+          "editorCount": 0,
+          "editorFocused": false,
+          "body": [],
+          "result": "confirmed red"
+        },
+        {
+          "case": "a/select-and-immediate-type",
+          "build": "candidate",
+          "engine": "chromium",
+          "version": "147.0.7727.15",
+          "gesture": "native double-click drag",
+          "sourceCaptured": {
+            "trusted": true,
+            "pointerType": "mouse",
+            "noncollapsed": true,
+            "selected": "Mercury carries a silver",
+            "inReader": true
+          },
+          "errors": [],
+          "editorCount": 1,
+          "editorFocused": true,
+          "body": [
+            "alpha"
+          ],
+          "result": "green"
+        },
+        {
+          "case": "a/select-and-immediate-type",
+          "build": "baseline",
+          "engine": "firefox",
+          "version": "148.0.2",
+          "gesture": "native primary mouse drag",
+          "sourceCaptured": {
+            "trusted": true,
+            "pointerType": "mouse",
+            "noncollapsed": true,
+            "selected": "ercury carries a silv",
+            "inReader": true
+          },
+          "errors": [],
+          "editorCount": 0,
+          "editorFocused": false,
+          "body": [],
+          "result": "confirmed red"
+        },
+        {
+          "case": "a/select-and-immediate-type",
+          "build": "candidate",
+          "engine": "firefox",
+          "version": "148.0.2",
+          "gesture": "native primary mouse drag",
+          "sourceCaptured": {
+            "trusted": true,
+            "pointerType": "mouse",
+            "noncollapsed": true,
+            "selected": "ercury carries a silv",
+            "inReader": true
+          },
+          "errors": [],
+          "editorCount": 1,
+          "editorFocused": true,
+          "body": [
+            "alpha"
+          ],
+          "result": "green"
+        },
+        {
+          "case": "a/select-and-immediate-type",
+          "build": "baseline",
+          "engine": "webkit",
+          "version": "26.4",
+          "gesture": "native primary mouse drag",
+          "sourceCaptured": {
+            "trusted": true,
+            "pointerType": "mouse",
+            "noncollapsed": true,
+            "selected": "ercury carries a sil",
+            "inReader": true
+          },
+          "errors": [],
+          "editorCount": 0,
+          "editorFocused": false,
+          "body": [],
+          "result": "confirmed red"
+        },
+        {
+          "case": "a/select-and-immediate-type",
+          "build": "candidate",
+          "engine": "webkit",
+          "version": "26.4",
+          "gesture": "native primary mouse drag",
+          "sourceCaptured": {
+            "trusted": true,
+            "pointerType": "mouse",
+            "noncollapsed": true,
+            "selected": "ercury carries a sil",
+            "inReader": true
+          },
+          "errors": [],
+          "editorCount": 1,
+          "editorFocused": true,
+          "body": [
+            "alpha"
+          ],
+          "result": "green"
+        }
+      ],
+      "reader-cases": [
+        {
+          "case": "text",
+          "engine": "firefox",
+          "version": "148.0.2",
+          "errors": [],
+          "steps": [
+            {
+              "opening": {
+                "surface": {
+                  "x": 248.26666259765625,
+                  "y": 416.6166687011719,
+                  "left": 248.26666259765625,
+                  "right": 833.7166748046875,
+                  "top": 416.6166687011719,
+                  "bottom": 632.0166625976562,
+                  "width": 585.4500122070312,
+                  "height": 215.39999389648438
+                },
+                "port": {
+                  "x": 240,
+                  "y": 218.8000030517578,
+                  "left": 240,
+                  "right": 851,
+                  "top": 218.8000030517578,
+                  "bottom": 700.0000152587891,
+                  "width": 611,
+                  "height": 481.20001220703125
+                },
+                "scroll": 0,
+                "anchorState": "visible",
+                "caret": "true",
+                "placement": "below",
+                "focused": "Passage note",
+                "body": "text draft",
+                "highlights": [
+                  {
+                    "key": "hl-yellow",
+                    "size": 31
+                  },
+                  {
+                    "key": "hl-green",
+                    "size": 10
+                  },
+                  {
+                    "key": "hl-hover",
+                    "size": 1
+                  },
+                  {
+                    "key": "hl-focus",
+                    "size": 1
+                  }
+                ]
+              },
+              "release": [
+                {
+                  "trusted": true,
+                  "text": "ercury carries a silv",
+                  "collapsed": false
+                }
+              ]
+            },
+            {
+              "editorSelectionStable": true
+            },
+            {
+              "scrolled": {
+                "surface": {
+                  "x": 248,
+                  "y": 226.8000030517578,
+                  "left": 248,
+                  "right": 834,
+                  "top": 226.8000030517578,
+                  "bottom": 471.1999969482422,
+                  "width": 586,
+                  "height": 244.39999389648438
+                },
+                "port": {
+                  "x": 240,
+                  "y": 218.8000030517578,
+                  "left": 240,
+                  "right": 851,
+                  "top": 218.8000030517578,
+                  "bottom": 700.0000152587891,
+                  "width": 611,
+                  "height": 481.20001220703125
+                },
+                "scroll": 264,
+                "anchorState": "offscreen",
+                "caret": null,
+                "placement": "edge",
+                "focused": "Passage note",
+                "body": "text draft",
+                "highlights": [
+                  {
+                    "key": "hl-yellow",
+                    "size": 31
+                  },
+                  {
+                    "key": "hl-green",
+                    "size": 10
+                  },
+                  {
+                    "key": "hl-hover",
+                    "size": 1
+                  },
+                  {
+                    "key": "hl-focus",
+                    "size": 1
+                  }
+                ]
+              }
+            },
+            {
+              "resized": {
+                "surface": {
+                  "x": 248,
+                  "y": 226.8000030517578,
+                  "left": 248,
+                  "right": 812,
+                  "top": 226.8000030517578,
+                  "bottom": 471.1999969482422,
+                  "width": 564,
+                  "height": 244.39999389648438
+                },
+                "port": {
+                  "x": 240,
+                  "y": 218.8000030517578,
+                  "left": 240,
+                  "right": 851,
+                  "top": 218.8000030517578,
+                  "bottom": 600.0000152587891,
+                  "width": 611,
+                  "height": 381.20001220703125
+                },
+                "scroll": 264,
+                "anchorState": "offscreen",
+                "caret": null,
+                "placement": "edge",
+                "focused": "Passage note",
+                "body": "text draft",
+                "highlights": [
+                  {
+                    "key": "hl-yellow",
+                    "size": 31
+                  },
+                  {
+                    "key": "hl-green",
+                    "size": 10
+                  },
+                  {
+                    "key": "hl-hover",
+                    "size": 1
+                  },
+                  {
+                    "key": "hl-focus",
+                    "size": 1
+                  }
+                ]
+              }
+            },
+            {
+              "afterEscape": {
+                "port": {
+                  "x": 240,
+                  "y": 218.8000030517578,
+                  "left": 240,
+                  "right": 851,
+                  "top": 218.8000030517578,
+                  "bottom": 600.0000152587891,
+                  "width": 611,
+                  "height": 381.20001220703125
+                },
+                "scroll": 264,
+                "focused": "Document reading area",
+                "highlights": [
+                  {
+                    "key": "hl-yellow",
+                    "size": 31
+                  },
+                  {
+                    "key": "hl-green",
+                    "size": 10
+                  }
+                ]
+              }
+            }
+          ],
+          "result": "green"
+        },
+        {
+          "case": "keyboard",
+          "engine": "firefox",
+          "version": "148.0.2",
+          "errors": [],
+          "steps": [
+            {
+              "keyboardBeforeRelease": {
+                "text": "ercury ca",
+                "collapsed": false,
+                "editors": 0
+              },
+              "after": {
+                "surface": {
+                  "x": 249.56666564941406,
+                  "y": 416.20001220703125,
+                  "left": 249.56666564941406,
+                  "right": 832.4166412353516,
+                  "top": 416.20001220703125,
+                  "bottom": 630.6500091552734,
+                  "width": 582.8499755859375,
+                  "height": 214.4499969482422
+                },
+                "port": {
+                  "x": 240,
+                  "y": 218.8000030517578,
+                  "left": 240,
+                  "right": 851,
+                  "top": 218.8000030517578,
+                  "bottom": 700.0000152587891,
+                  "width": 611,
+                  "height": 481.20001220703125
+                },
+                "scroll": 0,
+                "anchorState": "visible",
+                "caret": "true",
+                "placement": "below",
+                "focused": "Passage note",
+                "body": "keynote",
+                "highlights": [
+                  {
+                    "key": "hl-hover",
+                    "size": 1
+                  },
+                  {
+                    "key": "hl-focus",
+                    "size": 1
+                  }
+                ]
+              }
+            }
+          ],
+          "result": "green"
+        }
+      ],
+      "reader-cases-pdf-green": [
+        {
+          "case": "pdf",
+          "engine": "firefox",
+          "version": "148.0.2",
+          "errors": [],
+          "steps": [
+            {
+              "opening": {
+                "surface": {
+                  "x": 248.93333435058594,
+                  "y": 230.10000610351562,
+                  "left": 248.93333435058594,
+                  "right": 833.0500335693359,
+                  "top": 230.10000610351562,
+                  "bottom": 445,
+                  "width": 584.11669921875,
+                  "height": 214.89999389648438
+                },
+                "port": {
+                  "x": 240,
+                  "y": 218.8000030517578,
+                  "left": 240,
+                  "right": 1096,
+                  "top": 218.8000030517578,
+                  "bottom": 700.0000152587891,
+                  "width": 856,
+                  "height": 481.20001220703125
+                },
+                "scroll": 0,
+                "anchorState": "visible",
+                "caret": "true",
+                "placement": "above",
+                "focused": "Passage note",
+                "body": "pdf draft",
+                "highlights": [
+                  {
+                    "key": "hl-yellow",
+                    "size": 31
+                  },
+                  {
+                    "key": "hl-green",
+                    "size": 10
+                  }
+                ]
+              },
+              "release": [
+                {
+                  "trusted": true,
+                  "text": "ercury carries a sil",
+                  "collapsed": false
+                }
+              ]
+            },
+            {
+              "editorSelectionStable": true
+            },
+            {
+              "scrolled": {
+                "surface": {
+                  "x": 248,
+                  "y": 226.8000030517578,
+                  "left": 248,
+                  "right": 834,
+                  "top": 226.8000030517578,
+                  "bottom": 471.1999969482422,
+                  "width": 586,
+                  "height": 244.39999389648438
+                },
+                "port": {
+                  "x": 240,
+                  "y": 218.8000030517578,
+                  "left": 240,
+                  "right": 1096,
+                  "top": 218.8000030517578,
+                  "bottom": 700.0000152587891,
+                  "width": 856,
+                  "height": 481.20001220703125
+                },
+                "scroll": 441,
+                "anchorState": "offscreen",
+                "caret": null,
+                "placement": "edge",
+                "focused": "Passage note",
+                "body": "pdf draft",
+                "highlights": [
+                  {
+                    "key": "hl-yellow",
+                    "size": 31
+                  },
+                  {
+                    "key": "hl-green",
+                    "size": 10
+                  }
+                ]
+              }
+            },
+            {
+              "resized": {
+                "surface": {
+                  "x": 248,
+                  "y": 226.8000030517578,
+                  "left": 248,
+                  "right": 812,
+                  "top": 226.8000030517578,
+                  "bottom": 471.1999969482422,
+                  "width": 564,
+                  "height": 244.39999389648438
+                },
+                "port": {
+                  "x": 240,
+                  "y": 218.8000030517578,
+                  "left": 240,
+                  "right": 1096,
+                  "top": 218.8000030517578,
+                  "bottom": 600.0000152587891,
+                  "width": 856,
+                  "height": 381.20001220703125
+                },
+                "scroll": 441,
+                "anchorState": "offscreen",
+                "caret": null,
+                "placement": "edge",
+                "focused": "Passage note",
+                "body": "pdf draft",
+                "highlights": [
+                  {
+                    "key": "hl-yellow",
+                    "size": 31
+                  },
+                  {
+                    "key": "hl-green",
+                    "size": 10
+                  }
+                ]
+              }
+            },
+            {
+              "afterEscape": {
+                "port": {
+                  "x": 240,
+                  "y": 218.8000030517578,
+                  "left": 240,
+                  "right": 1096,
+                  "top": 218.8000030517578,
+                  "bottom": 600.0000152587891,
+                  "width": 856,
+                  "height": 381.20001220703125
+                },
+                "scroll": 441,
+                "focused": "PDF document",
+                "highlights": [
+                  {
+                    "key": "hl-yellow",
+                    "size": 31
+                  },
+                  {
+                    "key": "hl-green",
+                    "size": 10
+                  }
+                ]
+              }
+            }
+          ],
+          "result": "green"
+        }
+      ],
+      "preload-cases": {
+        "case": "delayed-preload-owner",
+        "errors": [],
+        "steps": [
+          {
+            "loadingShell": true,
+            "sameReadWhileReopened": true
+          },
+          {
+            "lateAAfterB": {
+              "body": "beta saved note beta draft",
+              "focusPreserved": true,
+              "editorIdentityPreserved": true
+            }
+          },
+          {
+            "dirtyAandBDraftsRetained": true,
+            "reads": {
+              "alpha": 2,
+              "beta": 1
+            }
+          },
+          {
+            "nativeUndoRedoAfterReopen": true
+          }
+        ],
+        "reads": {
+          "alpha": 2,
+          "beta": 1
+        },
+        "result": "green"
+      },
+      "preload-focus": {
+        "case": "delayed-preload-does-not-reclaim-focus",
+        "errors": [],
+        "departed": {
+          "tag": "DIV",
+          "label": "Query details",
+          "text": "Enter a search termFind optionsMatch caseWhole wordLimit to this section"
+        },
+        "afterLoad": {
+          "body": "alpha saved note",
+          "outsideFocusPreserved": true
+        },
+        "escapeOutsideFocusPreserved": true,
+        "result": "green"
+      },
+      "reopen-bounds": {
+        "case": "retained-draft-explicit-rebound-activation",
+        "errors": [],
+        "native": {
+          "trusted": true,
+          "text": "epeat this paragraph to"
+        },
+        "changed": {
+          "id": "76cb8e8c-34a9-4f7d-aa9c-a3d37277f03c",
+          "quote": "epeat this paragraph to",
+          "anchor": {
+            "type": "fragment_offsets",
+            "media_id": "e1c4257c-f3f1-4c91-ae63-875d79b131f2",
+            "fragment_id": "f12c49fd-f875-42f0-93f2-db7cd5933afa",
+            "start_offset": 687,
+            "end_offset": 710
+          }
+        },
+        "reopened": {
+          "cue": "epeat this paragraph to",
+          "ranges": [
+            "epeat this pa",
+            "ragraph to",
+            "epeat this paragraph to"
+          ],
+          "body": "alpha saved note unsaved rebound",
+          "focus": "Passage note",
+          "anchorState": "visible"
+        },
+        "result": "green",
+        "fixtureRestored": true
+      },
+      "pdf-save": {
+        "case": "native-pdf-note-and-blank-save",
+        "errors": [],
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/api/media/2c5a3c92-fd0c-4409-8984-21601eb87533/highlights",
+            "body": {
+              "client_mutation_id": "094c7d4b-5f95-4de4-89dc-5618ca852d51",
+              "anchor": {
+                "kind": "pdf",
+                "page_number": 1,
+                "quads": [
+                  {
+                    "x1": 65.513,
+                    "y1": 199.363,
+                    "x2": 208.863,
+                    "y2": 199.363,
+                    "x3": 208.863,
+                    "y3": 212.113,
+                    "x4": 65.513,
+                    "y4": 212.113
+                  }
+                ],
+                "exact": "durable annotation keeps i"
+              },
+              "color": "yellow"
+            }
+          },
+          {
+            "method": "PUT",
+            "path": "/api/highlights/615f9319-820f-4810-adec-30c9ae9b96aa/note",
+            "body": {
+              "note_block_id": "08c7bb48-7f02-4fb0-844a-d36ff08a358f",
+              "client_mutation_id": "094c7d4b-5f95-4de4-89dc-5618ca852d51",
+              "expected_body": {
+                "kind": "absent"
+              },
+              "body_pm_json": {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "pdf native save 0ab054e9"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/api/media/2c5a3c92-fd0c-4409-8984-21601eb87533/highlights",
+            "body": {
+              "client_mutation_id": "f863e609-9da3-420a-a5d0-2e68fae3c6e6",
+              "anchor": {
+                "kind": "pdf",
+                "page_number": 1,
+                "quads": [
+                  {
+                    "x1": 72.062,
+                    "y1": 241.337,
+                    "x2": 206.337,
+                    "y2": 241.337,
+                    "x3": 206.337,
+                    "y3": 254.087,
+                    "x4": 72.062,
+                    "y4": 254.087
+                  }
+                ],
+                "exact": "ting stays local until the r"
+              },
+              "color": "yellow"
+            }
+          }
+        ],
+        "swatches": [
+          {
+            "label": "yellow highlight",
+            "fill": "rgba(255, 235, 59, 0.4)",
+            "width": 27.9666748046875,
+            "height": 27.966659545898438
+          },
+          {
+            "label": "green highlight",
+            "fill": "rgba(76, 175, 80, 0.35)",
+            "width": 27.966659545898438,
+            "height": 27.966659545898438
+          },
+          {
+            "label": "blue highlight",
+            "fill": "rgba(33, 150, 243, 0.35)",
+            "width": 27.9666748046875,
+            "height": 27.966659545898438
+          },
+          {
+            "label": "pink highlight",
+            "fill": "rgba(233, 30, 99, 0.35)",
+            "width": 27.966659545898438,
+            "height": 27.966659545898438
+          },
+          {
+            "label": "purple highlight",
+            "fill": "rgba(156, 39, 176, 0.35)",
+            "width": 27.9666748046875,
+            "height": 27.966659545898438
+          }
+        ],
+        "native": [
+          {
+            "trusted": true,
+            "text": "durable annotation keeps i"
+          },
+          {
+            "trusted": true,
+            "text": "ting stays local until the r"
+          }
+        ],
+        "note": {
+          "highlightId": "615f9319-820f-4810-adec-30c9ae9b96aa",
+          "noteId": "08c7bb48-7f02-4fb0-844a-d36ff08a358f",
+          "body": "pdf native save 0ab054e9",
+          "exact": "durable annotation keeps i",
+          "color": "yellow"
+        },
+        "blank": {
+          "highlightId": "83851ec4-6696-4943-a92b-55aeb55d3bc7",
+          "exact": "ting stays local until the r",
+          "color": "yellow",
+          "noteCount": 0
+        },
+        "result": "green",
+        "database": {
+          "readOnly": true,
+          "rows": [
+            {
+              "kind": "note",
+              "highlight_id": "615f9319-820f-4810-adec-30c9ae9b96aa",
+              "color": "yellow",
+              "exact": "durable annotation keeps i",
+              "anchor_kind": "pdf_page_geometry",
+              "note_id": "08c7bb48-7f02-4fb0-844a-d36ff08a358f",
+              "body_text": "pdf native save 0ab054e9",
+              "body_pm_json": {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "text": "pdf native save 0ab054e9",
+                    "type": "text"
+                  }
+                ]
+              },
+              "quad_count": 1
+            },
+            {
+              "kind": "blank",
+              "highlight_id": "83851ec4-6696-4943-a92b-55aeb55d3bc7",
+              "color": "yellow",
+              "exact": "ting stays local until the r",
+              "anchor_kind": "pdf_page_geometry",
+              "note_id": null,
+              "body_text": null,
+              "body_pm_json": null,
+              "quad_count": 1
+            }
+          ],
+          "result": "green"
+        }
+      },
+      "pdf-zoom": {
+        "case": "pdf-live-zoom",
+        "errors": [],
+        "before": {
+          "mark": {
+            "x": 496.4666748046875,
+            "y": 451.5666809082031,
+            "width": 132.79998779296875,
+            "height": 17
+          },
+          "surface": {
+            "x": 400.5711669921875,
+            "y": 231.550537109375,
+            "width": 582.857666015625,
+            "height": 214.44387817382812
+          },
+          "page": {
+            "x": 402,
+            "y": 288.79998779296875,
+            "width": 834,
+            "height": 1074.0000610351562
+          },
+          "editor": "zoom draft",
+          "focused": "Passage note",
+          "state": "visible"
+        },
+        "after": {
+          "mark": {
+            "x": 366.8333435058594,
+            "y": 436.01666259765625,
+            "width": 166.00003051757812,
+            "height": 21.25
+          },
+          "surface": {
+            "x": 248,
+            "y": 465.26666259765625,
+            "width": 586,
+            "height": 215.60003662109375
+          },
+          "page": {
+            "x": 251,
+            "y": 234.8000030517578,
+            "width": 1038,
+            "height": 1338.0000457763672
+          },
+          "editor": "zoom draft",
+          "focused": "Zoom",
+          "state": "visible"
+        },
+        "result": "green"
+      },
+      "pdf-notify": {
+        "case": "pdf-extra-metadata-notify",
+        "errors": [],
+        "readerRequests": 1,
+        "readerRequestsBefore": 1,
+        "ensureStatus": 200,
+        "after": {
+          "sourceStillConnected": true,
+          "editorText": "draft survives metadata",
+          "focused": "Passage note",
+          "composerCount": 1,
+          "transientMarks": 1
+        },
+        "result": "green"
+      },
+      "cold-map-chat": {
+        "case": "cold-map-blank-chat-canonical-reuse",
+        "errors": [],
+        "conflicts": [],
+        "mapReadsHeld": 2,
+        "chatRunPosts": 0,
+        "ensureRequests": [
+          {
+            "client_mutation_id": "ea685add-7d6d-40e3-8756-ae2b87c58877",
+            "anchor": {
+              "kind": "text",
+              "unit_id": "f12c49fd-f875-42f0-93f2-db7cd5933afa",
+              "start_offset": 545,
+              "end_offset": 573
+            },
+            "color": "yellow"
+          }
+        ],
+        "native": {
+          "trusted": true,
+          "text": "est fixture contains only in"
+        },
+        "seed": {
+          "highlightId": "935dcaf2-44ca-42bb-b235-d0588645121d",
+          "noteId": "7e74bb7b-aa28-4b82-a25f-397588cef6f0",
+          "body": {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "cold-map note preserved c7da9518",
+                "marks": [
+                  {
+                    "type": "strong"
+                  }
+                ]
+              }
+            ]
+          },
+          "text": "cold-map note preserved c7da9518",
+          "bodyVersion": 1,
+          "color": "purple",
+          "otherKey": "cold-map-other-8bcdd8bb-e6fd-4a81-ac9d-bd20db5418f9",
+          "created": true
+        },
+        "ensure": {
+          "status": 200,
+          "data": {
+            "client_mutation_id": "ea685add-7d6d-40e3-8756-ae2b87c58877",
+            "created": false,
+            "highlight": {
+              "id": "935dcaf2-44ca-42bb-b235-d0588645121d",
+              "anchor": {
+                "type": "fragment_offsets",
+                "media_id": "e1c4257c-f3f1-4c91-ae63-875d79b131f2",
+                "fragment_id": "f12c49fd-f875-42f0-93f2-db7cd5933afa",
+                "start_offset": 545,
+                "end_offset": 573
+              },
+              "color": "purple",
+              "exact": "est fixture contains only in",
+              "prefix": " and a prompt without silently rewriting that annotation.\n\nThe t",
+              "suffix": "vented text. Delete one empty note, keep its highlight, and leav",
+              "created_at": "2026-10-15T08:36:39.478944Z",
+              "updated_at": "2026-10-15T08:36:39.478944Z",
+              "author_user_id": "ad2c1ba7-e44a-41bb-92e8-93ff9224113a",
+              "is_owner": true,
+              "linked_conversations": [],
+              "linked_note_blocks": [
+                {
+                  "note_block_id": "7e74bb7b-aa28-4b82-a25f-397588cef6f0",
+                  "body_pm_json": {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "text": "cold-map note preserved c7da9518",
+                        "type": "text",
+                        "marks": [
+                          {
+                            "type": "strong"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "body_text": "cold-map note preserved c7da9518",
+                  "version_by_lane": {
+                    "body": 1,
+                    "links": 1
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "quotedChat": {
+          "available": true,
+          "emptyPrompt": "",
+          "text": " and a prompt without silently rewriting that annotation.\n\nThe test fixture contains only invented text. Delete one empty note, keep its highlight, and leav"
+        },
+        "result": "green",
+        "mapReadsDeliveredAfterRelease": 2,
+        "verifiedAssertions": {
+          "mapReadsDeliveredThroughQuotedChat": 0,
+          "oneFrozenYellowEnsure": true,
+          "sameCanonicalIdPurpleColorRichNoteAndVersion": true,
+          "zero409": true,
+          "zeroChatRunPosts": true
+        }
+      },
+      "reader-final-ui": [
+        {
+          "case": "saved-composer-settled-desktop",
+          "errors": [],
+          "surface": {
+            "opacity": "1",
+            "background": "rgb(28, 28, 31)",
+            "color": "rgb(237, 237, 239)",
+            "ancestorOpacity": 1,
+            "rect": {
+              "x": 248,
+              "y": 488.171875,
+              "width": 586,
+              "height": 226.796875
+            },
+            "coarse": false,
+            "anchorState": "visible"
+          },
+          "targets": [
+            {
+              "tag": "BUTTON",
+              "label": "yellow highlight",
+              "width": 28,
+              "height": 28,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "green highlight",
+              "width": 28,
+              "height": 28,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "blue highlight",
+              "width": 28,
+              "height": 28,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "pink highlight",
+              "width": 28,
+              "height": 28,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "purple highlight",
+              "width": 28,
+              "height": 28,
+              "disabled": true
+            },
+            {
+              "tag": "BUTTON",
+              "label": "copy text",
+              "width": 84.375,
+              "height": 28,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "save note",
+              "width": 86.78125,
+              "height": 28,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "new chat",
+              "width": 83.234375,
+              "height": 28,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "existing chat…",
+              "width": 118.734375,
+              "height": 28,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "Open",
+              "width": 59.75,
+              "height": 28,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "Open in new pane",
+              "width": 138.640625,
+              "height": 28,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "Link…",
+              "width": 64.546875,
+              "height": 28,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "Learn from this",
+              "width": 121.09375,
+              "height": 28,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "Edit bounds",
+              "width": 100.453125,
+              "height": 28,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "Share…",
+              "width": 74.875,
+              "height": 28,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "Delete highlight",
+              "width": 124.53125,
+              "height": 28,
+              "disabled": false
+            }
+          ],
+          "result": "green"
+        },
+        {
+          "case": "saved-composer-mobile-targets",
+          "errors": [],
+          "surface": {
+            "opacity": "1",
+            "background": "rgb(28, 28, 31)",
+            "color": "rgb(237, 237, 239)",
+            "ancestorOpacity": 1,
+            "rect": {
+              "x": 8,
+              "y": 168.171875,
+              "width": 374,
+              "height": 418.796875
+            },
+            "coarse": true,
+            "anchorState": "visible"
+          },
+          "targets": [
+            {
+              "tag": "BUTTON",
+              "label": "yellow highlight",
+              "width": 44,
+              "height": 44,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "green highlight",
+              "width": 44,
+              "height": 44,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "blue highlight",
+              "width": 44,
+              "height": 44,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "pink highlight",
+              "width": 44,
+              "height": 44,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "purple highlight",
+              "width": 44,
+              "height": 44,
+              "disabled": true
+            },
+            {
+              "tag": "BUTTON",
+              "label": "copy text",
+              "width": 109.34375,
+              "height": 44,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "save note",
+              "width": 112.125,
+              "height": 44,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "new chat",
+              "width": 108.03125,
+              "height": 44,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "existing chat…",
+              "width": 149,
+              "height": 44,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "Open",
+              "width": 80.953125,
+              "height": 44,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "Open in new pane",
+              "width": 171.96875,
+              "height": 44,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "Link…",
+              "width": 86.46875,
+              "height": 44,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "Learn from this",
+              "width": 151.71875,
+              "height": 44,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "Edit bounds",
+              "width": 127.90625,
+              "height": 44,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "Share…",
+              "width": 98.40625,
+              "height": 44,
+              "disabled": false
+            },
+            {
+              "tag": "BUTTON",
+              "label": "Delete highlight",
+              "width": 155.6875,
+              "height": 44,
+              "disabled": false
+            }
+          ],
+          "undersized": [],
+          "result": "green"
+        }
+      ]
+    },
+    "application": {
+      "composer-live": [
+        {
+          "case": "a/no-write-before-commit",
+          "result": "green",
+          "facts": {
+            "highlightNoteWritesBeforeCommit": 0,
+            "firstTextPreserved": true,
+            "newline": true
+          },
+          "time": "2026-10-15T08:07:26.863Z"
+        },
+        {
+          "case": "a/nonempty-enter-one-note",
+          "result": "green",
+          "facts": {
+            "color": "yellow",
+            "oneNote": true,
+            "bodyVersion": 1
+          },
+          "time": "2026-10-15T08:07:27.000Z"
+        },
+        {
+          "case": "b/preload-rich-body",
+          "result": "green",
+          "facts": {
+            "sameNoteId": true,
+            "marksLinkBreakUnicode": true
+          },
+          "time": "2026-10-15T08:07:28.309Z"
+        },
+        {
+          "case": "b/save-empty-preserves-id",
+          "result": "green",
+          "facts": {
+            "sameNoteId": true,
+            "emptySaved": true
+          },
+          "time": "2026-10-15T08:07:28.448Z"
+        },
+        {
+          "case": "f/guarded-empty-backspace",
+          "result": "green",
+          "facts": {
+            "lastCharacterKeptNote": true,
+            "modifiedKeyKeptNote": true,
+            "freshEmptyKeyDeletedNote": true,
+            "highlightKept": true
+          },
+          "time": "2026-10-15T08:07:28.769Z"
+        },
+        {
+          "case": "a/blank-enter-highlight-only",
+          "result": "green",
+          "facts": {
+            "defaultColor": "yellow",
+            "noteCount": 0
+          },
+          "time": "2026-10-15T08:07:29.027Z"
+        },
+        {
+          "case": "c/blank-chat-no-run",
+          "result": "green",
+          "facts": {
+            "runPosts": 0,
+            "noteCount": 0,
+            "quotedComposer": true
+          },
+          "time": "2026-10-15T08:07:29.304Z"
+        }
+      ],
+      "rich-live": [
+        {
+          "case": "b/fresh-blank-looking-rich-note",
+          "result": "green",
+          "facts": {
+            "blankLookingRichCreatedNote": true,
+            "hardBreaks": 2
+          },
+          "time": "2026-10-15T08:50:31.881Z"
+        },
+        {
+          "case": "b/empty-save-retains-every-link",
+          "result": "green",
+          "facts": {
+            "sameNoteId": true,
+            "emptyBody": true,
+            "allEdgeIdsUnchanged": true,
+            "edgeCount": 2
+          },
+          "time": "2026-10-15T08:50:32.072Z"
+        }
+      ],
+      "interruption-live": [
+        {
+          "case": "d/lost-ensure-ack",
+          "result": "green",
+          "facts": {
+            "attempts": 2,
+            "identicalFrozenBytes": true,
+            "committedOnce": true
+          }
+        },
+        {
+          "case": "d/lost-note-ack",
+          "result": "green",
+          "facts": {
+            "attempts": 2,
+            "identicalFrozenBytes": true,
+            "committedOnce": true
+          }
+        },
+        {
+          "case": "e/late-a-cannot-close-b",
+          "result": "green",
+          "facts": {
+            "aCommitted": true,
+            "bRetained": "newer b",
+            "bFocus": true
+          }
+        },
+        {
+          "case": "d/close-tab-after-note-commit",
+          "result": "green",
+          "facts": {
+            "sameFrozenRequest": true,
+            "noRetiredRecoveryAfterReload": true
+          }
+        }
+      ],
+      "delete-live": [
+        {
+          "case": "f/delete-replay-replacement-requires-review",
+          "result": "green",
+          "facts": {
+            "sameDeleteRequest": true,
+            "pendingDeleteReadonly": true,
+            "unseenReplacementProtected": true,
+            "explicitReviewPrefillsReplacement": true
+          }
+        },
+        {
+          "case": "f/retirement-retry-preserves-new-draft",
+          "result": "green",
+          "facts": {
+            "newerDraftPreserved": true,
+            "oldNoteStillGone": true,
+            "laterExplicitSaveUsesNewNoteId": true
+          }
+        }
+      ],
+      "consumer-live": [
+        {
+          "case": "c/responsive-rich-draft-roundtrip",
+          "result": "green",
+          "facts": {
+            "viewport": "390x844",
+            "nativeTouchProof": false,
+            "readerBodyUnmounted": true,
+            "richBodyAndCaretRestored": true,
+            "blankChatNoRun": true,
+            "highlightId": "100f3fdc-2113-417e-813f-2999f6cc68df"
+          }
+        },
+        {
+          "case": "f/mounted-note-pane-deletion",
+          "result": "green",
+          "facts": {
+            "deletedNotice": true,
+            "noPaneCrash": true,
+            "highlightAndEmptyComposerKept": true
+          }
+        }
+      ],
+      "shared-highlight-browser": {
+        "case": "shared-highlight-existing-chat",
+        "pageErrors": [],
+        "writes": [],
+        "responses": [
+          {
+            "method": "GET",
+            "path": "/api/highlights/833a7c9e-b893-4192-b77d-c0fe09cadd14",
+            "status": 200
+          }
+        ],
+        "result": "green",
+        "facts": {
+          "viewerIsOwner": false,
+          "colorControlsDisabled": true,
+          "chooserOpened": true,
+          "highlightWrites": 0,
+          "authorColor": "purple"
+        }
+      },
+      "chat-terminal-storage-browser": {
+        "case": "composer-chat-terminal-storage-failure",
+        "setup": "recovered pending command fixture; actual unauthenticated local API refusal; browser storage denial",
+        "sends": [
+          {
+            "status": 401,
+            "code": "E_UNAUTHENTICATED",
+            "key": "53aa9761-d2bd-4256-85f5-905ea4633259",
+            "body": "{\"destination\":{\"kind\":\"New\"},\"content\":\"keep this exact prompt through terminal storage failure\",\"selection\":{\"route\":\"CodexPersonal\",\"model\":\"retained-model-for-auth-boundary-proof\",\"reasoning\":\"medium\"},\"reader_selection\":{\"kind\":\"Present\",\"value\":{\"key\":{\"media_id\":\"265cf1b9-fbcc-470c-887c-3a768842dc9b\",\"highlight_id\":\"833a7c9e-b893-4192-b77d-c0fe09cadd14\"},\"revision\":\"19d29c923a1c0388f6a87cb7ab68cac370a0a3c03507e33ae4e30100599a369b\"}}}"
+          },
+          {
+            "status": 401,
+            "code": "E_UNAUTHENTICATED",
+            "key": "53aa9761-d2bd-4256-85f5-905ea4633259",
+            "body": "{\"destination\":{\"kind\":\"New\"},\"content\":\"keep this exact prompt through terminal storage failure\",\"selection\":{\"route\":\"CodexPersonal\",\"model\":\"retained-model-for-auth-boundary-proof\",\"reasoning\":\"medium\"},\"reader_selection\":{\"kind\":\"Present\",\"value\":{\"key\":{\"media_id\":\"265cf1b9-fbcc-470c-887c-3a768842dc9b\",\"highlight_id\":\"833a7c9e-b893-4192-b77d-c0fe09cadd14\"},\"revision\":\"19d29c923a1c0388f6a87cb7ab68cac370a0a3c03507e33ae4e30100599a369b\"}}}"
+          }
+        ],
+        "pageErrors": [],
+        "afterFailure": {
+          "pendingChildRetained": true,
+          "parentRetained": true,
+          "parentPause": "storage",
+          "issue": "Unknown",
+          "discardVisible": false,
+          "terminalStorageDenials": 1
+        },
+        "storageOrder": [
+          "child-settled-denied",
+          "child-settled-retained",
+          "parent-retired",
+          "child-cleared"
+        ],
+        "afterRetry": {
+          "exactKeyAndBytes": true,
+          "actualStatus": 401,
+          "terminalReceiptRetainedBeforeParentRetired": true,
+          "childClearedAfterRetirement": true,
+          "reloadDoesNotRevive": true,
+          "providerRunCreated": false
+        },
+        "result": "green"
+      },
+      "recovery-storage-browser": {
+        "case": "reader-recovery-storage-unavailable",
+        "cases": [
+          {
+            "mode": "enumeration",
+            "pageErrors": [],
+            "denials": 32,
+            "result": "green",
+            "facts": {
+              "readerStayedMounted": true,
+              "unavailableBanner": true,
+              "restoreAndRetryWithoutRemount": true,
+              "parentRediscoveredAndCompleted": true,
+              "orphanRefusalShownAndRetired": true,
+              "actualRefusalStatus": 401
+            }
+          },
+          {
+            "mode": "read",
+            "pageErrors": [],
+            "denials": 32,
+            "result": "green",
+            "facts": {
+              "readerStayedMounted": true,
+              "unavailableBanner": true,
+              "restoreAndRetryWithoutRemount": true,
+              "parentRediscoveredAndCompleted": true,
+              "orphanRefusalShownAndRetired": true,
+              "actualRefusalStatus": 401
+            }
+          }
+        ],
+        "result": "green"
+      },
+      "rendered-citation": {
+        "browser": "147.0.7727.15",
+        "scope": "normal conversation and reader panes; ordinary composer deletion; real committed API reply held until note citation preview is open",
+        "fixture": "synthetic historical messages/citation edges; canonical API note/highlight",
+        "cases": [
+          {
+            "case": "normal-conversation-renders-both-citations-and-note-preview",
+            "passed": true,
+            "noteHref": "/notes/47938683-bb47-4eab-9719-bcccc60b121a",
+            "sourceHref": "/media/e1c4257c-f3f1-4c91-ae63-875d79b131f2"
+          },
+          {
+            "case": "normal-composer-acknowledgement-unmounts-open-note-preview",
+            "passed": true,
+            "deletedCitationAbsent": true,
+            "oldTextUnchanged": true,
+            "survivorOrdinal": 2,
+            "survivorHref": "/media/e1c4257c-f3f1-4c91-ae63-875d79b131f2"
+          },
+          {
+            "case": "surviving-citation-keeps-preview-and-source-target",
+            "passed": true,
+            "sourceId": "e1c4257c-f3f1-4c91-ae63-875d79b131f2"
+          }
+        ],
+        "highlightQuote": "\nRepeat this paragraph to inspe",
+        "deleteHttpStatus": 200
+      },
+      "active-owner-final": {
+        "case": "current-source-active-highlight-owner",
+        "errors": [],
+        "steps": [
+          {
+            "lateAKeepsB": true,
+            "bodyAndFocusKept": true,
+            "detachedANoteUnchanged": true
+          },
+          {
+            "matchingComposerDismissed": true
+          }
+        ],
+        "result": "green"
+      },
+      "reader-delete-highlight-red": {
+        "case": "delete-visible-composer-highlight",
+        "phase": "red",
+        "errors": [],
+        "highlightId": "935dcaf2-44ca-42bb-b235-d0588645121d",
+        "noteId": "7e74bb7b-aa28-4b82-a25f-397588cef6f0",
+        "deleteStatus": 204,
+        "liveHighlightStatus": 404,
+        "after": {
+          "composerCount": 1,
+          "editorBody": "cold-map note preserved c7da9518 unsaved prose",
+          "saveEnabled": true,
+          "chatEnabled": true,
+          "activePaint": [
+            "est fixture contains only in"
+          ]
+        },
+        "expected": {
+          "composerCount": 0,
+          "unsavedDraftRetained": true
+        },
+        "result": "red"
+      }
+    },
+    "editor_writer_chat": {
+      "editor-red": {
+        "phase": "red",
+        "browser": "147.0.7727.15",
+        "scope": "mounted product NoteBodyEditor in a temporary React host; real keyboard and DOM; composition-flag event explicitly synthetic",
+        "cases": [
+          {
+            "case": "composing-enter-cannot-fall-through-to-newline",
+            "passed": false,
+            "saves": 0,
+            "body": {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "hard_break"
+                }
+              ]
+            },
+            "event": "synthetic keydown isComposing=true outside an active PM composition"
+          },
+          {
+            "case": "new-resource-restores-caret-even-with-same-token",
+            "passed": false,
+            "text": "Xabcd"
+          },
+          {
+            "case": "restored-text-selection-shows-current-format-controls",
+            "passed": true,
+            "toolbars": 1
+          }
+        ]
+      },
+      "editor-green": {
+        "phase": "green",
+        "browser": "147.0.7727.15",
+        "scope": "mounted product NoteBodyEditor in a temporary React host; real keyboard and DOM; composition-flag event explicitly synthetic",
+        "cases": [
+          {
+            "case": "composing-enter-cannot-fall-through-to-newline",
+            "passed": true,
+            "saves": 0,
+            "body": {
+              "type": "paragraph"
+            },
+            "event": "synthetic keydown isComposing=true outside an active PM composition"
+          },
+          {
+            "case": "new-resource-restores-caret-even-with-same-token",
+            "passed": true,
+            "text": "aXbcd"
+          },
+          {
+            "case": "restored-text-selection-shows-current-format-controls",
+            "passed": true,
+            "toolbars": 1
+          },
+          {
+            "case": "focus-and-save-newline-chat-chords",
+            "passed": true,
+            "focusedImmediately": true,
+            "text": "alpha\nbeta",
+            "saves": 2,
+            "chats": 2,
+            "repeatSubmittedOnce": true
+          },
+          {
+            "case": "last-character-repeat-and-modified-backspace-guards",
+            "passed": true,
+            "deletions": 1
+          },
+          {
+            "case": "blank-looking-rich-bodies-never-trigger-note-deletion",
+            "passed": true,
+            "bodies": [
+              "whitespace",
+              "hard-break",
+              "code-block",
+              "image",
+              "object-embed"
+            ]
+          },
+          {
+            "case": "deleting-selected-content-only-edits",
+            "passed": true
+          },
+          {
+            "case": "rich-note-prefill-caret-and-save-preserve-structure",
+            "passed": true,
+            "body": {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "marks": [
+                    {
+                      "type": "strong"
+                    }
+                  ],
+                  "text": "αx"
+                },
+                {
+                  "type": "hard_break"
+                },
+                {
+                  "type": "text",
+                  "marks": [
+                    {
+                      "type": "link",
+                      "attrs": {
+                        "href": "https://example.com",
+                        "title": null
+                      }
+                    }
+                  ],
+                  "text": "β"
+                }
+              ]
+            }
+          },
+          {
+            "case": "code-block-shift-enter-retains-code-newline",
+            "passed": true
+          },
+          {
+            "case": "nested-link-input-enter-adds-link-without-submitting",
+            "passed": true
+          },
+          {
+            "case": "unhandled-escape-remains-available-to-containing-overlay",
+            "passed": true,
+            "defaultPrevented": false
+          },
+          {
+            "case": "nested-hyperlink-escape-closes-only-link-menu",
+            "passed": true,
+            "defaultPrevented": true
+          },
+          {
+            "case": "block-editor-retains-escape-selection-command",
+            "passed": true,
+            "defaultPrevented": true
+          },
+          {
+            "case": "embedded-control-enter-keeps-control-ownership",
+            "passed": true
+          },
+          {
+            "case": "readonly-editor-cannot-save-delete-or-change-body",
+            "passed": true
+          },
+          {
+            "case": "touch-style-mount-defers-focus-until-editor-tap",
+            "passed": true,
+            "nativeMobileKeyboard": "not tested"
+          }
+        ]
+      },
+      "infra-red": {
+        "phase": "red",
+        "browser": "147.0.7727.15",
+        "source": "367da80e0c1beb1c426f6d2d72201b0733809b50",
+        "cases": [
+          {
+            "case": "lost-save-ack-retains-frozen-parent",
+            "passed": true,
+            "serverCommitted": true,
+            "noteId": "21b21626-191a-4213-80cc-4110778b73dd"
+          },
+          {
+            "case": "recover-exact-save-settles-once",
+            "passed": true,
+            "noteId": "21b21626-191a-4213-80cc-4110778b73dd",
+            "bodyVersion": 1
+          },
+          {
+            "case": "recover-settle-reload-does-not-revive",
+            "passed": false,
+            "reoffered": 1,
+            "sourceAgain": true
+          }
+        ]
+      },
+      "infra-refactor": {
+        "phase": "refactor",
+        "browser": "147.0.7727.15",
+        "source": "working tree",
+        "cases": [
+          {
+            "case": "lost-save-ack-retains-frozen-parent",
+            "passed": true,
+            "serverCommitted": true,
+            "noteId": "b4debddc-59e8-436f-aaab-b7265d12df32"
+          },
+          {
+            "case": "recover-exact-save-settles-once",
+            "passed": true,
+            "noteId": "b4debddc-59e8-436f-aaab-b7265d12df32",
+            "bodyVersion": 1
+          },
+          {
+            "case": "recover-settle-reload-does-not-revive",
+            "passed": true,
+            "reoffered": 0,
+            "sourceAgain": false
+          },
+          {
+            "case": "retirement-storage-failure-preserves-parent-before-child-cleanup",
+            "passed": true,
+            "injected": "actual browser Storage.removeItem denial",
+            "retiredOnlyAfterDurableRemoval": true
+          },
+          {
+            "case": "child-cleanup-error-does-not-revive-parent",
+            "passed": true,
+            "acknowledgements": 1,
+            "parentAbsent": true
+          },
+          {
+            "case": "real-chat-runtime-unavailable-retains-pending-through-reload",
+            "passed": true,
+            "catalogueStatus": 503,
+            "status": 503,
+            "code": "E_GENERATION_RUNTIME_UNAVAILABLE",
+            "sameKeyAndBytes": true
+          },
+          {
+            "case": "real-chat-admission-lost-ack-replays-same-key-bytes",
+            "passed": true,
+            "httpStatus": 503,
+            "outcome": "DefiniteRefusal",
+            "code": "E_UNAUTHENTICATED",
+            "providerRunCreated": false,
+            "terminalStatus": 401
+          },
+          {
+            "case": "settled-child-survives-reload-until-explicit-parent-ack",
+            "passed": true,
+            "noSecondHttp": true,
+            "cleanupRemoved": true
+          }
+        ]
+      },
+      "infra-crash-red": {
+        "phase": "red",
+        "browser": "147.0.7727.15",
+        "case": "tab-close-after-server-commit-before-ack",
+        "beforeClose": [
+          {
+            "paused": null,
+            "submitted": true
+          }
+        ],
+        "recovery": {
+          "adopted": true,
+          "retryStarted": false,
+          "paused": null
+        },
+        "passed": false
+      },
+      "infra-crash-green": {
+        "phase": "green",
+        "browser": "147.0.7727.15",
+        "case": "tab-close-after-server-commit-before-ack",
+        "beforeClose": [
+          {
+            "paused": null,
+            "submitted": true
+          }
+        ],
+        "recovery": {
+          "adopted": true,
+          "retryStarted": true,
+          "paused": null
+        },
+        "passed": true,
+        "bodyVersion": 1
+      },
+      "citation-invalidation": {
+        "browser": "147.0.7727.15",
+        "scope": "actual conversation store and API; rendered citation popovers not mounted",
+        "fixture": "synthetic historical messages/citation edges; canonical API note/highlight",
+        "cases": [
+          {
+            "case": "baseline-citation-event-does-not-invalidate",
+            "phase": "red",
+            "passed": false,
+            "staleOrdinals": [
+              1,
+              2
+            ],
+            "expected": [
+              2
+            ]
+          },
+          {
+            "case": "committed-deletion-immediately-removes-only-target-citation",
+            "phase": "green",
+            "passed": true,
+            "remainingOrdinals": [
+              2
+            ],
+            "textUnchanged": true,
+            "contextInvalidated": true
+          },
+          {
+            "case": "pre-deletion-in-flight-tree-cannot-restore-citation",
+            "phase": "green",
+            "passed": true,
+            "delayedServerResponseOrdinals": [
+              1,
+              2
+            ],
+            "remainingOrdinals": [
+              2
+            ],
+            "textUnchanged": true
+          },
+          {
+            "case": "highlight-remains-without-note",
+            "phase": "green",
+            "passed": true
+          }
+        ]
+      },
+      "surface-red": {
+        "phase": "red",
+        "browser": "147.0.7727.15",
+        "scope": "mounted product resource-surface session in temporary React host; real local API fixtures and held actual pre-delete response",
+        "cases": [
+          {
+            "case": "mounted-parent-removes-deleted-note-placement",
+            "passed": true
+          },
+          {
+            "case": "deleted-open-note-root-becomes-missing-without-crash",
+            "passed": false,
+            "error": "persisted resource surface requires a surface"
+          },
+          {
+            "case": "held-predelete-initial-surface-cannot-resurrect-placement",
+            "passed": false,
+            "rows": [
+              "note_block:7813b852-6915-415f-88c7-c64eaffa9305"
+            ]
+          }
+        ],
+        "fixture": {
+          "noteId": "7813b852-6915-415f-88c7-c64eaffa9305",
+          "highlightId": "286524ef-f8fb-4adf-a516-8cc330e35a25",
+          "version": 1,
+          "pages": [
+            "page:b6b19a23-15a2-4873-9dd0-0370ae5235e0",
+            "page:2ab1908f-a419-457c-84fd-bfaf725c4393"
+          ]
+        }
+      },
+      "surface-refactor": {
+        "phase": "refactor",
+        "browser": "147.0.7727.15",
+        "scope": "mounted product resource-surface session in temporary React host; real local API fixtures and held actual pre-delete response",
+        "cases": [
+          {
+            "case": "mounted-parent-removes-deleted-note-placement",
+            "passed": true
+          },
+          {
+            "case": "deleted-open-note-root-becomes-missing-without-crash",
+            "passed": true,
+            "error": null
+          },
+          {
+            "case": "held-predelete-initial-surface-cannot-resurrect-placement",
+            "passed": true,
+            "rows": []
+          }
+        ],
+        "fixture": {
+          "noteId": "0296513f-2c1d-4cf0-b863-9e55d80d99e7",
+          "highlightId": "0e1f8d9d-b37d-4331-8329-1c0d0dcfd8c0",
+          "version": 1,
+          "pages": [
+            "page:f79e348c-1b8e-4da0-8277-a6f3cc6c8afa",
+            "page:f194c4e6-6e52-4486-97ab-db564c67738e"
+          ]
+        }
+      },
+      "surface-initial-read": {
+        "browser": "147.0.7727.15",
+        "case": "deleted-initial-root-read-cannot-mount-before-any-surface-subscriber",
+        "scope": "held real API note surface; actual product hook first mount happens after deletion",
+        "initialStatus": 200,
+        "passed": true
+      }
+    },
+    "persistence": {
+      "persistence-red": {
+        "phase": "red",
+        "run_id": "66f964b0-1e8a-4da6-b287-d8755fb272c6",
+        "cases": [
+          {
+            "case": "text-contract",
+            "passed": false,
+            "facts": {
+              "status": 400
+            }
+          },
+          {
+            "case": "text-exact-replay",
+            "passed": false,
+            "facts": {
+              "legacy_duplicate": {
+                "error": {
+                  "code": "E_HIGHLIGHT_CONFLICT",
+                  "message": "Highlight already exists at this range",
+                  "request_id": "8b02c81f-5d9c-471d-be68-8c5371873ec7"
+                }
+              }
+            }
+          },
+          {
+            "case": "pdf-contract",
+            "passed": false,
+            "facts": {
+              "status": 400
+            }
+          },
+          {
+            "case": "pdf-exact-replay",
+            "passed": false,
+            "facts": {
+              "legacy_duplicate": {
+                "error": {
+                  "code": "E_HIGHLIGHT_CONFLICT",
+                  "message": "Duplicate PDF highlight",
+                  "request_id": "7b855b21-3aec-4900-a523-0882ebd89ac7"
+                }
+              }
+            }
+          },
+          {
+            "case": "rich-save-replay",
+            "passed": true,
+            "facts": {
+              "status": 200,
+              "body_version": 1
+            }
+          },
+          {
+            "case": "empty-save-same-note",
+            "passed": true,
+            "facts": {
+              "status": 200
+            }
+          },
+          {
+            "case": "stale-delete-refused",
+            "passed": false,
+            "facts": {
+              "status": 404
+            }
+          },
+          {
+            "case": "global-delete-contract",
+            "passed": false,
+            "facts": {
+              "status": 404
+            }
+          },
+          {
+            "case": "missing-body-patch-never-creates",
+            "passed": false,
+            "facts": {
+              "status": 200,
+              "error": null
+            }
+          }
+        ]
+      },
+      "persistence-green-final": {
+        "phase": "green",
+        "run_id": "d05cc9b0-7f66-435e-aa0e-31f4b05ef5e1",
+        "cases": [
+          {
+            "case": "text-contract",
+            "passed": true,
+            "facts": {
+              "status": 200
+            }
+          },
+          {
+            "case": "text-exact-replay",
+            "passed": true,
+            "facts": {
+              "status": 200
+            }
+          },
+          {
+            "case": "text-extent-reuse",
+            "passed": true,
+            "facts": {
+              "status": 200
+            }
+          },
+          {
+            "case": "text-key-mismatch",
+            "passed": true,
+            "facts": {
+              "status": 409,
+              "error": {
+                "code": "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH",
+                "message": "Resource mutation id was reused with a different request",
+                "request_id": "c8025269-9388-46a7-a83e-dcfc59f332fb"
+              }
+            }
+          },
+          {
+            "case": "pdf-contract",
+            "passed": true,
+            "facts": {
+              "status": 200
+            }
+          },
+          {
+            "case": "pdf-exact-replay",
+            "passed": true,
+            "facts": {
+              "status": 200
+            }
+          },
+          {
+            "case": "pdf-extent-reuse",
+            "passed": true,
+            "facts": {
+              "status": 200
+            }
+          },
+          {
+            "case": "pdf-key-mismatch",
+            "passed": true,
+            "facts": {
+              "status": 409,
+              "error": {
+                "code": "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH",
+                "message": "Resource mutation id was reused with a different request",
+                "request_id": "7cc6063a-7d6e-4a29-b8a4-fc22c2614f4f"
+              }
+            }
+          },
+          {
+            "case": "rich-save-replay",
+            "passed": true,
+            "facts": {
+              "status": 200,
+              "body_version": 1
+            }
+          },
+          {
+            "case": "empty-save-same-note",
+            "passed": true,
+            "facts": {
+              "status": 200
+            }
+          },
+          {
+            "case": "stale-delete-refused",
+            "passed": true,
+            "facts": {
+              "status": 409
+            }
+          },
+          {
+            "case": "global-delete-contract",
+            "passed": true,
+            "facts": {
+              "status": 200
+            }
+          },
+          {
+            "case": "delete-replay",
+            "passed": true,
+            "facts": {
+              "status": 200
+            }
+          },
+          {
+            "case": "deleted-version-save-refused",
+            "passed": true,
+            "facts": {
+              "status": 409
+            }
+          },
+          {
+            "case": "delete-all-links-no-resurrection",
+            "passed": true,
+            "facts": {
+              "notes": 0,
+              "edges": 0,
+              "view_states": 0,
+              "highlight": 1,
+              "surviving_ordinals": [
+                [
+                  2
+                ]
+              ]
+            }
+          },
+          {
+            "case": "missing-body-patch-never-creates",
+            "passed": true,
+            "facts": {
+              "status": 409,
+              "error": {
+                "code": "E_RESOURCE_CONFLICT",
+                "message": "Note body does not exist",
+                "request_id": "20f48534-8e98-4d79-a6b1-ef3195c1c820"
+              }
+            }
+          },
+          {
+            "case": "concurrent-exact-extent",
+            "passed": true,
+            "facts": {
+              "statuses": [
+                200,
+                200
+              ],
+              "same_highlight": true
+            }
+          }
+        ]
+      },
+      "persistence-adversarial-green": {
+        "cases": [
+          {
+            "case": "concurrent-same-key",
+            "passed": true
+          },
+          {
+            "case": "existing-body-patch",
+            "passed": true
+          },
+          {
+            "case": "existing-body-patch-replay",
+            "passed": true
+          },
+          {
+            "case": "reuse-preserves-note-colour",
+            "passed": true
+          },
+          {
+            "case": "wrong-attachment-delete-refused",
+            "passed": true
+          },
+          {
+            "case": "delete-needs-version",
+            "passed": true
+          },
+          {
+            "case": "historical-ensure-receipt-never-resurrects-note",
+            "passed": true
+          }
+        ]
+      },
+      "ensure-rebound-race-red": {
+        "phase": "red",
+        "cases": [
+          {
+            "kind": "text",
+            "waited_on_lock": true,
+            "same_highlight": false,
+            "created": true,
+            "preserved_colour": false,
+            "highlight_ids": [
+              "2cdd28da-7a14-4d56-9e8d-c7d9e5c8808d",
+              "41b5f3b0-8874-4777-9e2b-ffa99fc5404a"
+            ],
+            "passed": false
+          },
+          {
+            "kind": "pdf",
+            "waited_on_lock": true,
+            "same_highlight": false,
+            "created": true,
+            "preserved_colour": false,
+            "highlight_ids": [
+              "2e7cf671-1c69-47d9-963f-03a8d72ce0df",
+              "20c0ae09-9d03-40dc-ac02-0e4a4d5e4c07"
+            ],
+            "passed": false
+          }
+        ]
+      },
+      "ensure-rebound-race-green": {
+        "phase": "green",
+        "cases": [
+          {
+            "kind": "text",
+            "waited_on_lock": true,
+            "same_highlight": true,
+            "created": false,
+            "preserved_colour": true,
+            "highlight_ids": [
+              "9e75c66e-1020-464e-8df5-eb3e8c73795e",
+              "9e75c66e-1020-464e-8df5-eb3e8c73795e"
+            ],
+            "passed": true
+          },
+          {
+            "kind": "pdf",
+            "waited_on_lock": true,
+            "same_highlight": true,
+            "created": false,
+            "preserved_colour": true,
+            "highlight_ids": [
+              "2387b548-6cad-4dd0-8dc1-25246c74c3b6",
+              "2387b548-6cad-4dd0-8dc1-25246c74c3b6"
+            ],
+            "passed": true
+          }
+        ]
+      },
+      "link-rebound-race-red": {
+        "phase": "red",
+        "cases": [
+          {
+            "kind": "text",
+            "waited_on_lock": true,
+            "unexpected_link_created": true,
+            "created_source_ref": "highlight:e10e04fd-57c6-46c9-8457-b2bfec885cfd",
+            "passed": false
+          },
+          {
+            "kind": "pdf",
+            "waited_on_lock": true,
+            "unexpected_link_created": true,
+            "created_source_ref": "highlight:756ad05a-5564-424b-9801-9f0a3dea08de",
+            "passed": false
+          }
+        ]
+      },
+      "link-rebound-race-green": {
+        "phase": "green",
+        "cases": [
+          {
+            "kind": "text",
+            "waited_on_lock": true,
+            "error": "ApiError",
+            "code": "E_HIGHLIGHT_CONFLICT",
+            "detail": "Highlight already exists at this range",
+            "passed": true
+          },
+          {
+            "kind": "pdf",
+            "waited_on_lock": true,
+            "error": "ApiError",
+            "code": "E_HIGHLIGHT_CONFLICT",
+            "detail": "Duplicate PDF highlight",
+            "passed": true
+          }
+        ]
+      }
+    },
+    "cleanup": {
+      "infra-test-deletion": {
+        "removed": [
+          "infra-acceptance.cjs",
+          "crash-recovery-acceptance.cjs",
+          "citation-acceptance.cjs",
+          "editor-acceptance.cjs",
+          "surface-acceptance.cjs",
+          "surface-initial-read-acceptance.cjs",
+          "infra/"
+        ],
+        "remainingOwnedTests": [],
+        "sharedRuntimeAndAuthPreserved": true
+      },
+      "reader-driver-cleanup": {
+        "at": "2026-10-15T09:14:21.810473+00:00",
+        "removed": [
+          "cold-map-chat.cjs",
+          "pdf-notify.cjs",
+          "pdf-save-db.py",
+          "pdf-save.cjs",
+          "pdf-zoom.cjs",
+          "preload-cases.cjs",
+          "preload-focus.cjs",
+          "reader-acceptance.cjs",
+          "reader-cases.cjs",
+          "reader-debug.cjs",
+          "reopen-bounds.cjs",
+          "reader-final-ui.cjs",
+          "reader-delete-highlight-final.cjs",
+          "reader-delete-highlight-green.cjs"
+        ],
+        "remainingOwnedExecutableDrivers": 0,
+        "retained": "all state receipts/screenshots, reader-fixture.pdf, pdf-fixture.json, preload-fixture.json; common auth/config and services remain under root cleanup ownership"
+      },
+      "persistence-proof-cleanup": {
+        "owner": "annotation_chat_review",
+        "time": "2026-10-15T08:50:01.299418+00:00",
+        "removed_sources": [
+          "/private/tmp/nexus-selection-seed-20261015.py",
+          "/private/tmp/nexus-selection-persistence-20261015.py",
+          "/private/tmp/nexus-selection-composer-20261015/ensure-rebound-race.py",
+          "/private/tmp/nexus-selection-composer-20261015/link-rebound-race.py",
+          "/private/tmp/nexus-selection-composer-20261015/seed-citation-preview.py",
+          "/private/tmp/nexus-selection-composer-20261015/seed-shared-highlight.py",
+          "/private/tmp/nexus-selection-composer-20261015/shared-highlight-browser.cjs",
+          "/private/tmp/nexus-selection-composer-20261015/chat-terminal-storage-browser.cjs",
+          "/private/tmp/nexus-selection-composer-20261015/recovery-storage-browser.cjs"
+        ],
+        "retained": "sanitized receipts, screenshots, fixture metadata/data, operational generation runtime preparation; no app source or service changes"
+      },
+      "rendered-citation-test-deletion": {
+        "removed": [
+          "rendered-citation-acceptance.cjs"
+        ],
+        "absent": true,
+        "retained_receipt": "state/rendered-citation.json",
+        "cases_passed": 3,
+        "source_changes": false
+      },
+      "root-proof-cleanup": {
+        "deleted": [
+          "acceptance.cjs",
+          "auth_fixture.py",
+          "browser.cjs",
+          "composer-acceptance.cjs",
+          "consumer-acceptance.cjs",
+          "consumer-auth.py",
+          "consumer-browser.cjs",
+          "consumer-fixture.py",
+          "delete-acceptance.cjs",
+          "interruption-acceptance.cjs",
+          "rich-acceptance.cjs",
+          "ui-auth.py",
+          "ui-browser.cjs",
+          "ui-fixture.py",
+          "update-module-docs.py",
+          "active-owner-final.cjs"
+        ],
+        "baselineProcessStoppedAfterIdentityCheck": true,
+        "baselineWorktreeRemoved": true,
+        "newTestDependencies": 0,
+        "taskVolumesPreserved": true,
+        "fixtureDataRetainedForPendingGeneration": true,
+        "candidateRuntimeRetainedForPendingGeneration": true,
+        "generationHostStarted": false,
+        "sharedAccountMutated": false
+      }
+    },
+    "excluded_setup_attempts": {
+      "reader-active-owner-readiness": {
+        "counted_as_acceptance": false,
+        "reason": "exact full quote cannot be required of disjoint purple paint ranges; no reader click/deletion exercised",
+        "receipt": {
+          "case": "highlight-deletion-composer-lifetime",
+          "errors": [],
+          "steps": [],
+          "hmr": [],
+          "seed": {
+            "highlightId": "b6197f2e-e31d-40e3-81e6-4de70d61ea50",
+            "noteId": "1be131ef-4ddd-4165-8d5e-a0dedd58db0c",
+            "body": "highlight deletion saved 454bb1"
+          },
+          "result": "failed",
+          "failure": "page.waitForFunction: Timeout 20000ms exceeded.\n    at /private/tmp/nexus-selection-composer-20261015/reader-delete-highlight-green.cjs:19:578",
+          "afterFailure": {
+            "clicks": [],
+            "composerCount": 0,
+            "focus": null
+          }
+        }
+      }
+    }
+  }
+}

@@ -15,13 +15,14 @@ current note); ``delete_note`` is idempotent.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import NoteBlock
+from nexus.db.models import NoteBlock, ResourceVersion
 from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.notes import NoteBlockOut
 from nexus.services.content_indexing import IndexOwner, delete_content_index
@@ -96,13 +97,45 @@ def owned_note(db: Session, *, viewer_id: UUID, note_id: UUID) -> NoteBlock:
 
 
 def read_note(db: Session, *, viewer_id: UUID, note_id: UUID) -> NoteBlockOut:
-    block = owned_note(db, viewer_id=viewer_id, note_id=note_id)
-    return NoteBlockOut(
-        id=block.id,
-        body_pm_json=block.body_pm_json,
-        body_text=block.body_text,
-        body_version=_version(db, viewer_id, note_id),
+    note = read_notes(db, viewer_id=viewer_id, note_ids=[note_id]).get(note_id)
+    if note is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note not found")
+    return note
+
+
+def read_notes(
+    db: Session, *, viewer_id: UUID, note_ids: Sequence[UUID]
+) -> dict[UUID, NoteBlockOut]:
+    """Read each owned body and its version in one statement snapshot.
+
+    Separate queries under READ COMMITTED can pair an older body with a newer
+    version, admitting a subsequent edit that unknowingly overwrites that version.
+    Selecting columns also avoids older ORM identity-map bodies.
+    """
+    rows = db.execute(
+        select(
+            NoteBlock.id,
+            NoteBlock.body_pm_json,
+            NoteBlock.body_text,
+            func.coalesce(ResourceVersion.version, 1),
+        )
+        .outerjoin(
+            ResourceVersion,
+            and_(
+                ResourceVersion.user_id == viewer_id,
+                ResourceVersion.resource_scheme == "note_block",
+                ResourceVersion.resource_id == NoteBlock.id,
+                ResourceVersion.lane == "body",
+            ),
+        )
+        .where(NoteBlock.user_id == viewer_id, NoteBlock.id.in_(note_ids))
     )
+    return {
+        note_id: NoteBlockOut(
+            id=note_id, body_pm_json=body, body_text=body_text, body_version=version
+        )
+        for note_id, body, body_text, version in rows
+    }
 
 
 def ensure_note(
@@ -165,7 +198,7 @@ def delete_note(db: Session, *, viewer_id: UUID, note_id: UUID) -> None:
         return
     ref = note_ref(note_id)
     dossier_engine.on_subject_deleted(db, ref)
-    delete_edges_for_deleted_resource(db, ref=ref)
+    delete_edges_for_deleted_resource(db, ref=ref, remove_inbound_citations=True)
     passage_anchors.delete_for_owner(db, owner_scheme="note_block", owner_id=note_id)
     delete_content_index(db, owner=IndexOwner("note_block", note_id))
     delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)

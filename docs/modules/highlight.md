@@ -14,9 +14,9 @@ Backend owners are `python/nexus/services/highlights.py`,
 `python/nexus/schemas/highlights.py`.
 
 Frontend owners are the hosted media pane's `annotations.ts` (reads and
-writes) and `useAnnotationVerbs.ts` and `SelectionDock.tsx` (the verbs;
-`useAnnotationVerbs` also serves the highlight pane entries a resource menu
-hands the pane).
+writes), `useSelectionComposer.ts` and `selectionDrafts.ts` (explicit commands
+and visit drafts), and `useAnnotationVerbs.ts` and `SelectionDock.tsx` (verbs and
+presentation; `useAnnotationVerbs` also serves highlight pane entries).
 Paint and hit-testing live in the reader module, and chat run assembly lives in
 the chat module.
 
@@ -46,11 +46,12 @@ media owner. Authors can mutate their own highlights; readable shared
 highlights can be listed and opened according to the canonical permissions
 path.
 
-A fresh reader selection becomes a durable Highlight only as a side effect of
-a confirmed **Link** (see [connections](connections.md)):
-the Link service creates the Highlight, canonicalizes the endpoints, and
-creates or reuses the Link in one transaction, so cancelling the Link dialog
-writes nothing. An existing Highlight is reused as a Link source or target and
+a fresh reader selection is local until an explicit command needs a highlight.
+new highlights default to yellow; reuse preserves the existing colour and note.
+for **Link** (see [connections](connections.md)), the Link service creates the
+Highlight, canonicalizes the endpoints, and creates or reuses the Link in one
+transaction, so cancelling the Link dialog writes nothing. an existing Highlight
+is reused as a Link source or target and
 is never deleted by Link creation or Undo — Undo removes only the Link row.
 Highlights remain first-class resources outside of Link: a highlight is also
 the durable identity `reader_selection`/quote-to-chat binds to, independent of
@@ -115,8 +116,12 @@ painted. Before creating, the store looks for the viewer's own highlight of the
 exact extent and reuses it (one highlight per user per span); a library-mate's
 highlight there never blocks the viewer's own.
 
-Highlight responses are generated wire types (`TypedHighlightOut`); creation is
-one typed route, `POST /media/{id}/highlights` with a text or pdf anchor.
+highlight responses are generated wire types (`TypedHighlightOut`), including the
+viewer's note attachment `links_version`. `POST /media/{id}/highlights` takes
+`{anchor, color}` and returns `{created, highlight}`. it authoritatively reuses
+the viewer's current exact extent or creates it; the map's twin lookup is only
+an optimization. retry converges on current state, without historical receipts:
+if the highlight was deleted, a later ensure may create a new one.
 
 ## Mutations And Notes
 
@@ -127,11 +132,23 @@ owner and require the selection's `exact` quote.
 
 Attached notes are note blocks linked to highlights through `resource_edges`
 with `origin='highlight_note'`. There is no separate highlight-note table.
-`PUT /highlights/{highlight_id}/note {note_id, body_pm_json}` creates the
-highlight's one note and attaches it (that note already attached has landed; another
-note attached is 409); later edits are ordinary note writes. `DELETE
-/highlights/{highlight_id}/note/{note_id}` detaches it idempotently and keeps the
-note.
+`PUT /highlights/{highlight_id}/note` takes `{note_id, body_pm_json, expected}`.
+`expected: {kind: "absent", version: highlight.links_version}` creates in the
+observed empty viewer slot; the same id already attached is unchanged, and a
+changed slot conflicts. `{kind: "version", version: note.body_version}` updates
+the exact current viewer attachment through the canonical note-body writer,
+including an empty save. readable shared highlights permit the viewer's own
+note; colour, bounds and highlight deletion remain owner-only.
+
+`DELETE /highlights/{highlight_id}/note/{note_id}` still detaches and keeps the
+note. `POST /highlights/{highlight_id}/note/delete` instead takes
+`{note_id, expected_version}` and returns `{deleted_note_id}`: while present, the
+note must be owned, attached there and at that body version. it deletes the note
+globally, every association including historical citations, and their view state;
+the highlight, connected resources and old chat text remain. an already absent
+note remains absent. the [notes](notes.md) teardown owns this transaction;
+acknowledgement announces `resource_deleted`, settles note panes through
+`settleDeletedResourcePanes`, and invalidates loaded projections and older reads.
 Ordinary highlight deletion is explicit and child-first: graph/view-state
 attachments (including any `link_note` motif and user links naming the
 highlight), then PDF quads, then the PDF/fragment anchor, then the highlight
@@ -146,15 +163,11 @@ deletion on refresh, and that call is removed. An unresolved Highlight after
 content changes stays visible in Evidence or Connections rather than
 disappearing or silently repointing to the wrong location.
 
-The quick-note composer is a frontend presentation owner. It may create a
-highlight and then attach a note in one gesture, but persistence still flows
-through the canonical highlight and note paths.
-
-the selection Note action focuses the quick-note textbox (`AnnotationNoteEditor`).
-enter and shift+enter insert a line break; there is no flush-and-close: the note
-saves 1.5 s after typing stops (at once when the tab hides), and "Done editing
-note" closes the composer. desktop and mobile composers own back dismissal
-throughout the selection-to-editor handoff.
+the reader composer uses the existing online `notes/writes` queue for explicit
+commands. each mutation retains its request while the tab lives; there is no
+reload journal. ensure and note save are separate commits, so a failed note save
+can leave a valid highlight. normal note surfaces keep their autosave owner;
+the reader's unsaved draft is not registered with it.
 
 ## Learn
 
@@ -194,20 +207,30 @@ in the visible band are marked), and the document-map rail shows marker
 locations across the document. Evidence owns neither highlight persistence nor
 mutation behavior.
 
-A fresh reader selection has no Highlight yet: the pane's `SelectionDock` offers
-this pre-resource gesture. Materialized Highlights mount `ResourceActionMenu`,
-which reads the highlight's verbs when it opens, so every representation lists
-the same actions. Clicking one mark in reader text or a PDF opens that menu at the
-click; where marks overlap, a *Highlights here* chooser lists them topmost
-first. Rows in Evidence retain their overflow trigger.
-The selection actions use the fixed names
-**Highlight**, **Note**, **Link**, **Ask**, **Learn**,
-**Ask in existing chat…**, and **Share**. `SelectionDock` owns their order: the
-direct icon row is **Highlight**, **Note**, **Link**, **Ask**, and the **More**
-overflow menu is **Learn**, **Ask in existing chat…**, **Share**. Capability
-decides which actions exist and never which tier they land in. Selection actions
-are single-flight (`useAnnotationVerbs`): one creation at a time, released after
-success or failure so the selection can retry.
+completed desktop selection opens one anchored group with a focused rich editor
+below visible actions. touch preserves native selection handles until the editor
+is tapped. all five colours and applicable `copy text`, `save note`, `new chat`,
+`existing chat…`, `link`, `learn` and `share` commands remain visible and may wrap.
+saved-highlight actions reuse the canonical action descriptors and permissions;
+there is no selection overflow menu. one clicked mark opens the same composer;
+overlapping marks first offer `choose highlight`. Evidence retains its resource
+menu.
+
+opening an existing mark loads its viewer note before editing. enter saves the
+current rich body; a canonical empty paragraph on a fresh passage creates only
+the highlight, while an existing note keeps its id and links when saved empty.
+shift-enter retains the editor's newline command; command/control-enter starts
+a new quoted chat without saving note edits. a fresh unmodified, nonrepeating
+backspace on an already empty paragraph at its collapsed start deletes the
+persisted note globally. composition, selected content, last-character deletion,
+whitespace, breaks, code and embeds do not trigger that command. a visible
+`delete empty note` button invokes the same operation.
+
+selection, opening, typing, blur and dismissal do not save. escape or an outside
+press hides the surface and retains the draft/caret in the reader visit; mobile
+body unmounts retain it, reload does not. late completions cannot focus or close a
+newer interaction. live passage measurement follows scroll, reflow and pdf zoom;
+an offscreen composer pins inside its source pane, without scrolling the reader.
 
 The canonical passage/document scope and typed highlight association contract
 is
@@ -215,11 +238,12 @@ is
 
 ## Quote-To-Chat
 
-Reader quote-to-chat is Highlight-first: a durable Highlight must exist before
-launch, and chat launch performs no conversation mutation. Fresh selection
-offers **Ask** and **Ask in existing chat…**; an existing Highlight offers
-**Ask in new chat** and **Ask in existing chat…**. Both navigate to the chat
-destination and pass a typed launch intent, never a generic subject send.
+reader quote-to-chat is highlight-first. `new chat` sends a nonblank note-field
+prompt through existing atomic chat admission, with the canonical quote and the
+model selection frozen at invocation; annotation edits remain unsaved. blank
+text opens the quoted new-chat composer without a run. `existing chat…` retains
+the typed quote handoff without sending that field. [chat](chat.md#reader-quote-to-chat-immutable-snapshot)
+owns exact send retries and quote snapshots.
 
 On send the server row-locks the Highlight, derives the canonical `exact`,
 `prefix`, `suffix`, source label, and `locator` from the stored anchor/quote

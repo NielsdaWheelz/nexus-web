@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 1;
+export const WIRE_REVISION = 2;
 
 export interface paths {
     "/artifact-builds/{artifact_build_id}/cancel": {
@@ -692,12 +692,27 @@ export interface paths {
         get?: never;
         /**
          * Put Highlight Note
-         * @description Create the highlight's one note and attach it. That note already attached has
-         *     landed; another note attached is 409 E_NOTE_CONFLICT. Later edits are outline
-         *     ``set_body`` commands.
+         * @description Create in the loaded empty slot or update the exact attached note.
          */
         put: operations["put_highlight_note_highlights__highlight_id__note_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/highlights/{highlight_id}/note/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete Highlight Note */
+        post: operations["delete_highlight_note_highlights__highlight_id__note_delete_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -715,10 +730,10 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Delete Highlight Note
+         * Detach Highlight Note
          * @description Detach the note (idempotent); the note stays.
          */
-        delete: operations["delete_highlight_note_highlights__highlight_id__note__note_id__delete"];
+        delete: operations["detach_highlight_note_highlights__highlight_id__note__note_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1643,8 +1658,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create Highlight */
-        post: operations["create_highlight_media__media_id__highlights_post"];
+        /** Ensure Highlight */
+        post: operations["ensure_highlight_media__media_id__highlights_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2897,6 +2912,16 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AbsentHighlightNoteExpected */
+        AbsentHighlightNoteExpected: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "absent";
+            /** Version */
+            version: number;
+        };
         /** AcceptedChatAdmission */
         AcceptedChatAdmission: {
             /**
@@ -4238,19 +4263,6 @@ export interface components {
             /** Target */
             target: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"];
         };
-        /**
-         * CreateMediaHighlightRequest
-         * @description One highlight model on the wire: a text span or page quads, and a colour.
-         */
-        CreateMediaHighlightRequest: {
-            /** Anchor */
-            anchor: components["schemas"]["TextHighlightAnchorIn"] | components["schemas"]["PdfHighlightAnchorIn"];
-            /**
-             * Color
-             * @enum {string}
-             */
-            color: "yellow" | "green" | "blue" | "pink" | "purple";
-        };
         /** CreatePageRequest */
         CreatePageRequest: {
             /**
@@ -4515,6 +4527,10 @@ export interface components {
         Data_DailyPageOut_: {
             data: components["schemas"]["DailyPageOut"];
         };
+        /** Data[DeleteHighlightNoteOut] */
+        Data_DeleteHighlightNoteOut_: {
+            data: components["schemas"]["DeleteHighlightNoteOut"];
+        };
         /** Data[DossierBuildCreatedOut] */
         Data_DossierBuildCreatedOut_: {
             data: components["schemas"]["DossierBuildCreatedOut"];
@@ -4522,6 +4538,10 @@ export interface components {
         /** Data[DossierHeadOut] */
         Data_DossierHeadOut_: {
             data: components["schemas"]["DossierHeadOut"];
+        };
+        /** Data[EnsureMediaHighlightOut] */
+        Data_EnsureMediaHighlightOut_: {
+            data: components["schemas"]["EnsureMediaHighlightOut"];
         };
         /** Data[ExtensionSessionOut] */
         Data_ExtensionSessionOut_: {
@@ -4784,6 +4804,24 @@ export interface components {
         Data_list_UserSearchOut__: {
             /** Data */
             data: components["schemas"]["UserSearchOut"][];
+        };
+        /** DeleteHighlightNoteOut */
+        DeleteHighlightNoteOut: {
+            /**
+             * Deleted Note Id
+             * Format: uuid
+             */
+            deleted_note_id: string;
+        };
+        /** DeleteHighlightNoteRequest */
+        DeleteHighlightNoteRequest: {
+            /** Expected Version */
+            expected_version: number;
+            /**
+             * Note Id
+             * Format: uuid
+             */
+            note_id: string;
         };
         /** DetachContextMutation */
         DetachContextMutation: {
@@ -5122,6 +5160,25 @@ export interface components {
              */
             local_date: string;
         };
+        /** EnsureMediaHighlightOut */
+        EnsureMediaHighlightOut: {
+            /** Created */
+            created: boolean;
+            highlight: components["schemas"]["TypedHighlightOut"];
+        };
+        /**
+         * EnsureMediaHighlightRequest
+         * @description Create or reuse the viewer's exact text span or canonical page geometry.
+         */
+        EnsureMediaHighlightRequest: {
+            /** Anchor */
+            anchor: components["schemas"]["TextHighlightAnchorIn"] | components["schemas"]["PdfHighlightAnchorIn"];
+            /**
+             * Color
+             * @enum {string}
+             */
+            color: "yellow" | "green" | "blue" | "pink" | "purple";
+        };
         /** EpisodePreview */
         EpisodePreview: {
             /** Contributors */
@@ -5317,6 +5374,16 @@ export interface components {
              * @enum {string}
              */
             kind: "Existing";
+        };
+        /** ExistingHighlightNoteExpected */
+        ExistingHighlightNoteExpected: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "version";
+            /** Version */
+            version: number;
         };
         /** ExtensionSessionOut */
         ExtensionSessionOut: {
@@ -10794,6 +10861,23 @@ export interface components {
             note_id: string;
         };
         /**
+         * SetHighlightNoteRequest
+         * @description Create in the loaded empty slot or edit its exact attached note.
+         */
+        SetHighlightNoteRequest: {
+            /** Body Pm Json */
+            body_pm_json: {
+                [key: string]: unknown;
+            };
+            /** Expected */
+            expected: components["schemas"]["AbsentHighlightNoteExpected"] | components["schemas"]["ExistingHighlightNoteExpected"];
+            /**
+             * Note Id
+             * Format: uuid
+             */
+            note_id: string;
+        };
+        /**
          * SetMemberRoleRequest
          * @description `expected_role` is the role the client last read (the expected version).
          */
@@ -11536,9 +11620,11 @@ export interface components {
             /** Is Owner */
             is_owner: boolean;
             /** Linked Conversations */
-            linked_conversations?: components["schemas"]["LinkedConversationRef"][];
+            linked_conversations: components["schemas"]["LinkedConversationRef"][];
             /** Linked Note Blocks */
-            linked_note_blocks?: components["schemas"]["LinkedNoteBlockRef"][];
+            linked_note_blocks: components["schemas"]["LinkedNoteBlockRef"][];
+            /** Links Version */
+            links_version: number;
             /** Prefix */
             prefix: string;
             /** Suffix */
@@ -13521,7 +13607,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AnnotationNoteRequest"];
+                "application/json": components["schemas"]["SetHighlightNoteRequest"];
             };
         };
         responses: {
@@ -13545,7 +13631,42 @@ export interface operations {
             };
         };
     };
-    delete_highlight_note_highlights__highlight_id__note__note_id__delete: {
+    delete_highlight_note_highlights__highlight_id__note_delete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                highlight_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteHighlightNoteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_DeleteHighlightNoteOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    detach_highlight_note_highlights__highlight_id__note__note_id__delete: {
         parameters: {
             query?: never;
             header?: never;
@@ -15368,7 +15489,7 @@ export interface operations {
             };
         };
     };
-    create_highlight_media__media_id__highlights_post: {
+    ensure_highlight_media__media_id__highlights_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -15379,17 +15500,17 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateMediaHighlightRequest"];
+                "application/json": components["schemas"]["EnsureMediaHighlightRequest"];
             };
         };
         responses: {
             /** @description Successful Response */
-            201: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_TypedHighlightOut_"];
+                    "application/json": components["schemas"]["Data_EnsureMediaHighlightOut_"];
                 };
             };
             /** @description Validation Error */

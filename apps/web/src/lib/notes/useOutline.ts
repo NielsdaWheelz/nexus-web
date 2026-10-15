@@ -19,7 +19,7 @@ import { docFromBody, emptyBody, parseBody, type NoteBody } from "@/lib/notes/no
 import * as model from "@/lib/notes/outline";
 import * as store from "@/lib/notes/texts";
 import { enqueueWrite } from "@/lib/notes/writes";
-import { subscribeLinkMutations } from "@/lib/resourceGraph/links";
+import { isDeletedResource, subscribeLinkMutations } from "@/lib/resourceGraph/links";
 import { resolveResourceItem } from "@/lib/resources/items";
 
 type Reply = Schema<"OutlineCommandsOut">;
@@ -29,33 +29,73 @@ type Reply = Schema<"OutlineCommandsOut">;
 const graph: model.Graph = new Map();
 const latest = new Map<string, model.OutlineData>();
 const loading = new Map<string, Promise<void>>();
-const listeners = new Set<() => void>();
-/** The texts each unsettled structure write carries, by its serial. */
-const carried = new Map<number, ReadonlySet<string>>();
+const listeners = new Set<(invalidated: ReadonlySet<string> | null) => void>();
+/** The texts and resource dependencies of each unsettled structure write. */
+const carried = new Map<number, { texts: ReadonlySet<string>; refs: ReadonlySet<string> }>();
+let observingLinks = false;
 let pendingStructure = 0;
 let jobSerial = 0;
 let cancelledBefore = 0;
 let refusals = 0;
 let reportRefusal: (error: unknown) => void = () => undefined;
 
-function publish() {
-  for (const listener of listeners) listener();
+function publish(invalidated: ReadonlySet<string> | null = null) {
+  for (const listener of listeners) listener(invalidated);
+}
+
+function liveOutline(outline: model.OutlineData): model.OutlineData | null {
+  if (isDeletedResource(outline.source.ref)) return null;
+  return { ...outline, links: outline.links.filter((link) => !isDeletedResource(link.target.ref)) };
+}
+
+/** The retained graph outlives its panes, so its invalidation subscription does too. */
+function observeLinks() {
+  if (observingLinks) return;
+  observingLinks = true;
+  subscribeLinkMutations((mutation) => {
+    if (mutation.kind === "resource_deleted") {
+      store.setGone(mutation.ref);
+      for (const entries of [graph, latest]) {
+        for (const [ref, outline] of entries) {
+          const live = liveOutline(outline);
+          if (live) entries.set(ref, live);
+          else entries.delete(ref);
+        }
+      }
+      publish(new Set([mutation.ref]));
+      return;
+    }
+    const refs = mutation.kind === "created"
+      ? [mutation.sourceRef, mutation.targetRef].filter((ref) => graph.has(ref))
+      : [...graph].flatMap(([ref, outline]) => outline.links.some((link) => link.link_id === mutation.linkId) ? [ref] : []);
+    for (const ref of refs) void load(ref, true).catch(() => undefined);
+  });
 }
 
 function adopt(outline: model.OutlineData) {
-  graph.set(outline.source.ref, outline);
-  for (const node of [outline.source, ...outline.links.map((l) => l.target)]) {
+  const live = liveOutline(outline);
+  if (!live) {
+    graph.delete(outline.source.ref);
+    store.setGone(outline.source.ref);
+    return;
+  }
+  graph.set(live.source.ref, live);
+  for (const node of [live.source, ...live.links.map((l) => l.target)]) {
     const body = bodyOf(node);
     if (body && node.content.kind === "note")
       store.adoptText(node.ref, body, node.content.body_version);
-    else if (node.content.kind === "page" && node === outline.source)
+    else if (node.content.kind === "page" && node === live.source)
       store.adoptText(node.ref, node.content.title, node.content.title_version);
   }
 }
 
 /** Keep a reply's outlines until no structure write is pending, then adopt them all. */
 function receive(outlines: readonly model.OutlineData[]) {
-  for (const outline of outlines) latest.set(outline.source.ref, outline);
+  for (const outline of outlines) {
+    const live = liveOutline(outline);
+    if (live) latest.set(live.source.ref, live);
+    else latest.delete(outline.source.ref);
+  }
   if (pendingStructure > 0) return;
   for (const outline of latest.values()) adopt(outline);
   latest.clear();
@@ -64,6 +104,7 @@ function receive(outlines: readonly model.OutlineData[]) {
 /** Read `ref`'s outline (again when `force`); a loaded outline keeps its optimistic
  * state while structure writes are pending. */
 function load(ref: string, force = false): Promise<void> {
+  if (isDeletedResource(ref)) return Promise.resolve();
   if (!force && graph.has(ref)) return Promise.resolve();
   const inflight = loading.get(ref);
   if (inflight) return inflight;
@@ -95,6 +136,27 @@ const textBody = (noteId: string): NoteBody => {
 
 const version = (ref: string) => store.readText(ref)?.acked?.version ?? 1;
 
+/** Capture link targets before an optimistic edit can remove or move them. */
+function editReferences(edits: readonly model.Edit[]): Set<string> {
+  const refs = new Set<string>();
+  for (const edit of edits) {
+    if (edit.kind === "set_body" || edit.kind === "insert_note") refs.add(model.noteRef(edit.note_id));
+    if (edit.kind === "set_title") refs.add(`page:${edit.page_id}`);
+    if (edit.kind === "insert_resource") refs.add(edit.target);
+    if (edit.kind === "relink") refs.add(edit.destination);
+    if (!("endpoint" in edit)) continue;
+    refs.add(edit.endpoint);
+    const target = graph.get(edit.endpoint)?.links.find((link) => link.link_id === edit.link_id)?.target.ref;
+    if (target) refs.add(target);
+    if ("after" in edit && edit.after !== null) {
+      const endpoint = edit.kind === "relink" ? edit.destination : edit.endpoint;
+      const preceding = graph.get(endpoint)?.links.find((link) => link.link_id === edit.after)?.target.ref;
+      if (preceding) refs.add(preceding);
+    }
+  }
+  return refs;
+}
+
 /**
  * Send one structure batch. Expected versions are read when it is sent, after every
  * earlier write settled; `removed` names the note each remove's link pointed at.
@@ -103,13 +165,18 @@ function sendEdits(
   edits: readonly model.Edit[],
   removed: ReadonlyMap<string, string>,
   texts: ReadonlySet<string>,
+  refs: ReadonlySet<string>,
 ) {
   const serial = ++jobSerial;
   pendingStructure += 1;
-  carried.set(serial, texts);
+  carried.set(serial, { texts, refs });
   enqueueWrite<Reply>({
     build() {
       if (serial <= cancelledBefore) return null;
+      if ([...refs].some(isDeletedResource)) {
+        refuse(null, serial, "affected");
+        return null;
+      }
       const commands = edits.map((edit) => {
         if (edit.kind === "set_body")
           return { ...edit, expected_version: version(model.noteRef(edit.note_id)) };
@@ -139,12 +206,13 @@ function sendEdits(
  * unless a later write recreates it (an undo). Titles save on their own (texts). */
 function acknowledge(reply: Reply, edits: readonly model.Edit[]) {
   const later = [...carried.values()];
-  for (const ref of reply.deleted) if (!later.some((refs) => refs.has(ref))) store.setGone(ref);
+  for (const ref of reply.deleted) if (!later.some((entry) => entry.texts.has(ref))) store.setGone(ref);
   const inserted = new Set(
     edits.flatMap((e) => (e.kind === "insert_note" ? [model.noteRef(e.note_id)] : [])),
   );
   const targets = reply.outlines.flatMap((outline) => outline.links.map((l) => l.target));
   for (const node of [...reply.nodes, ...targets.filter((t) => inserted.has(t.ref))]) {
+    if (isDeletedResource(node.ref)) continue;
     const body = bodyOf(node);
     if (body && node.content.kind === "note")
       store.acknowledgeText(node.ref, body, node.content.body_version);
@@ -152,18 +220,23 @@ function acknowledge(reply: Reply, edits: readonly model.Edit[]) {
 }
 
 /** Cancel this write and every queued structure write; reload; reset their texts. */
-function refuse(error: unknown, serial: number) {
+function refuse(error: unknown, serial: number, history: "all" | "affected" = "all") {
   const texts = new Set<string>();
-  for (const [at, refs] of carried) if (at >= serial) refs.forEach((r) => texts.add(r));
+  const refs = new Set<string>();
+  for (const [at, entry] of carried) {
+    if (at < serial) continue;
+    entry.texts.forEach((ref) => texts.add(ref));
+    entry.refs.forEach((ref) => refs.add(ref));
+  }
   carried.clear();
   cancelledBefore = jobSerial;
   pendingStructure = 0;
-  refusals += 1;
+  if (history === "all") refusals += 1;
   latest.clear();
   for (const ref of texts) store.resetText(ref);
   for (const ref of graph.keys()) void load(ref, true).catch(() => undefined);
   reportRefusal(error);
-  publish();
+  publish(history === "affected" ? refs : null);
 }
 
 // ---- one pane ---------------------------------------------------------------------
@@ -183,7 +256,7 @@ export interface NoteEdit {
 
 type Item = { selBefore: Selection; selAfter: Selection } & (
   | { kind: "text"; ref: string; before: NoteBody; after: NoteBody; at: number }
-  | { kind: "structure"; forward: readonly model.Edit[]; inverse: readonly model.Edit[] }
+  | { kind: "structure"; forward: readonly model.Edit[]; inverse: readonly model.Edit[]; refs: ReadonlySet<string> }
 );
 
 export type FocusSelection = { anchor: number; head: number } | "end";
@@ -265,9 +338,23 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
   const resolved = useRef(new Map<string, model.OutlineNode>());
 
   useEffect(() => {
-    listeners.add(rerender);
-    return () => void listeners.delete(rerender);
-  }, []);
+    observeLinks();
+    const changed = (invalidated: ReadonlySet<string> | null) => {
+      if (invalidated && history.current.items.some((item) =>
+        item.kind === "text" ? invalidated.has(item.ref) : [...item.refs].some((ref) => invalidated.has(ref)),
+      )) {
+        history.current = { items: [], index: 0, refusals };
+        boundaryNext.current = true;
+      }
+      if (root) {
+        while (view.current.zoom.length && model.zoomEndpoint(graph, root, view.current.zoom) === null)
+          view.current.zoom = view.current.zoom.slice(0, -1);
+      }
+      rerender();
+    };
+    listeners.add(changed);
+    return () => void listeners.delete(changed);
+  }, [root]);
   if (history.current.refusals !== refusals)
     history.current = { items: [], index: 0, refusals };
 
@@ -317,20 +404,6 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
   }, [dailyDate, input.root]);
   useEffect(() => void reload(), [reload]);
 
-  useEffect(
-    () =>
-      subscribeLinkMutations((mutation) => {
-        const refs =
-          mutation.kind === "created"
-            ? [mutation.sourceRef, mutation.targetRef].filter((ref) => graph.has(ref))
-            : [...graph].flatMap(([ref, o]) =>
-                o.links.some((l) => l.link_id === mutation.linkId) ? [ref] : [],
-              );
-        for (const ref of refs) void load(ref, true).catch(() => undefined);
-      }),
-    [],
-  );
-
   const rows = root && graph.has(root) ? model.outlineRows(graph, root, view.current) : [];
   const endpoint = (root && model.zoomEndpoint(graph, root, view.current.zoom)) ?? root ?? "";
 
@@ -342,6 +415,11 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
   /** Apply, send and (unless replaying history) record one structure batch. */
   function commit(edits: readonly model.Edit[], after: Selection, record = true, before = selection) {
     if (!edits.length) return;
+    const refs = editReferences(edits);
+    if ([...refs].some(isDeletedResource)) {
+      feedback.publish({ kind: "Hud", content: { tone: "Neutral", title: "A note used by this change was deleted." } });
+      return;
+    }
     const removed = new Map<string, string>();
     for (const edit of edits) {
       if (edit.kind !== "remove") continue;
@@ -364,10 +442,13 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       store.createText(model.noteRef(made.note), textBody(made.note), null);
       setLatent(false);
     }
-    sendEdits(made ? [...materialize(made), ...edits] : edits, removed, texts);
+    const commands = made ? [...materialize(made), ...edits] : edits;
+    if (made) editReferences(commands).forEach((ref) => refs.add(ref));
+    sendEdits(commands, removed, texts, refs);
     if (record) {
       const items = history.current.items.slice(0, history.current.index);
-      items.push({ kind: "structure", forward: edits, inverse, selBefore: before, selAfter: after });
+      items.push({ kind: "structure", forward: edits, inverse,
+        refs: new Set([...refs, ...editReferences(inverse)]), selBefore: before, selAfter: after });
       history.current = { ...history.current, items, index: items.length };
     }
     boundaryNext.current = true;
@@ -461,6 +542,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       rerender();
     },
     editText(key: string, ref: string, edit: NoteEdit) {
+      if (isDeletedResource(ref)) return;
       const { items, index } = history.current;
       const top = items[index - 1];
       const now = Date.now();
@@ -584,7 +666,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     setTitle(title: string) {
       if (!root) return;
       if (latent && dailyDate) {
-        sendEdits([{ kind: "ensure_daily", local_date: dailyDate }], new Map(), new Set());
+        sendEdits([{ kind: "ensure_daily", local_date: dailyDate }], new Map(), new Set(), new Set());
         setLatent(false);
       }
       store.editText(root, title);

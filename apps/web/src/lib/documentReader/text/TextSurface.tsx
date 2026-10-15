@@ -20,7 +20,8 @@ import type { DocumentReaderViewProps } from "../DocumentReader";
 import { clock, type Placement, type ReaderTarget, type Structure, type TextDocument } from "../model";
 import type { NavOutcome } from "../navigator";
 import type { ReaderRuntime, SurfaceHandle } from "../runtime";
-import { nextFrame, useScrollport } from "../scrollport";
+import { useReaderSelection } from "../selection";
+import { measureScrollport, nextFrame, useScrollport } from "../scrollport";
 import { createTextFind } from "./find";
 import { createTextGeometry, type TextGeometry } from "./geometry";
 import { createPainter, type Painter } from "./paint";
@@ -71,8 +72,7 @@ export default function TextSurface({
   const [embeds, setEmbeds] = useState<
     readonly (readonly [string, HTMLElement])[]
   >([]);
-  const { profile, decorations, isMobile } = view;
-  const selectable = view.onSelection !== undefined;
+  const { profile, decorations, activePassage, isMobile } = view;
   const embedded = view.renderEmbed !== undefined;
   // Estimated px per codepoint: one line of the column holds about its width in characters.
   const density =
@@ -87,10 +87,24 @@ export default function TextSurface({
     painter.current?.focus(
       viewRef.current.profile.focus_mode,
       primary.kind === "text" ? primary : null,
-      selecting.current,
+      selecting.current || viewRef.current.activePassage?.identity === doc.identity,
     );
   }, [doc.identity, runtime]);
   useScrollport(scrollport, runtime, measure, scrollIndicator);
+  const selectionInput = useReaderSelection(scrollport, {
+    identity,
+    textSelector: "[data-reader-text]",
+    capture(selection) {
+      const capture = geometry.current?.selection(selection);
+      return capture ? { ...capture, identity } : null;
+    },
+    onSelection: view.onSelection,
+    onSelecting(inside) {
+      if (inside === selecting.current) return;
+      selecting.current = inside;
+      measure();
+    },
+  });
 
   useLayoutEffect(() => {
     const port = scrollport.current!;
@@ -98,12 +112,23 @@ export default function TextSurface({
     const paint = createPainter(port, text, identity);
     geometry.current = text;
     painter.current = paint;
-    paint.paint(viewRef.current.decorations);
+    paint.paint(viewRef.current.decorations, viewRef.current.activePassage);
     const handle: SurfaceHandle = {
       identity,
       find: createTextFind(
         { identity, format, sections, units, length }, structure, text, paint, runtime,
       ),
+      measurePassage(passage) {
+        return passage.identity === identity && passage.anchor.kind === "text"
+          ? text.measurePassage(passage.anchor)
+          : null;
+      },
+      measureBounds() {
+        return measureScrollport(port);
+      },
+      focusSource() {
+        port.focus({ preventScroll: true });
+      },
       capture() {
         const capture = text.capture();
         return capture && { ...capture.placement, identity };
@@ -151,8 +176,8 @@ export default function TextSurface({
     };
   }, [identity, format, sections, units, length, measure, runtime, structure]);
 
-  useEffect(() => painter.current?.paint(decorations), [decorations]);
-  useEffect(measure, [measure, profile.focus_mode]);
+  useLayoutEffect(() => painter.current?.paint(decorations, activePassage), [decorations, activePassage]);
+  useLayoutEffect(measure, [measure, profile.focus_mode, activePassage]);
 
   // Per-unit dom work once a unit nears the viewport (public: token-authorised images).
   useEffect(() => {
@@ -177,38 +202,6 @@ export default function TextSurface({
     };
   }, [identity, units, runtime]);
 
-  // A live selection suspends focus dimming; the capture reaches the host settled.
-  useEffect(() => {
-    let timer: number | undefined;
-    const change = () => {
-      const selection = document.getSelection();
-      const inside = Boolean(
-        selection?.anchorNode &&
-        !selection.isCollapsed &&
-        column.current?.contains(selection.anchorNode),
-      );
-      if (inside !== selecting.current) {
-        selecting.current = inside;
-        measure();
-      }
-      if (!selectable) return;
-      window.clearTimeout(timer);
-      timer = window.setTimeout(
-        () => {
-          const capture =
-            (inside && geometry.current?.selection(selection!)) || null;
-          viewRef.current.onSelection?.(capture);
-        },
-        isMobile ? 400 : 120,
-      );
-    };
-    document.addEventListener("selectionchange", change);
-    return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener("selectionchange", change);
-    };
-  }, [isMobile, measure, selectable]);
-
   // Embed cards render into slots inside their placeholders, outside the canonical text.
   useEffect(() => {
     if (!embedded) return;
@@ -230,6 +223,7 @@ export default function TextSurface({
   }, [identity, units, embedded]);
 
   function click(event: MouseEvent<HTMLDivElement>) {
+    if (!document.getSelection()?.isCollapsed) return;
     const target = event.target as Element;
     const { onApparatus, onMarks } = viewRef.current;
     const note = target.closest<HTMLElement>("[data-reader-apparatus-item-id]");
@@ -254,10 +248,15 @@ export default function TextSurface({
       return;
     }
     if (link?.getAttribute("href") === "#") event.preventDefault();
-    if (!document.getSelection()?.isCollapsed) return;
     const ids = painter.current?.hit(event.clientX, event.clientY) ?? [];
-    const rect = new DOMRect(event.clientX, event.clientY, 0, 0);
-    if (ids.length > 0) onMarks?.({ kind: "activate", ids, rect });
+    const current = viewRef.current.decorations;
+    const marks = current?.identity === identity
+      ? ids.flatMap((id) => current.marks.filter((mark) => mark.id === id))
+      : [];
+    if (marks.length) onMarks?.({
+      kind: "activate", identity, marks,
+      input: event.detail === 0 ? "keyboard" : selectionInput.current,
+    });
   }
 
   /** Hover hit-tests marks under a mouse; only a change is reported. */
@@ -266,8 +265,7 @@ export default function TextSurface({
     event.currentTarget.style.cursor = ids.length ? "pointer" : "";
     if (ids.join(" ") === hovered.current) return;
     hovered.current = ids.join(" ");
-    const rect = new DOMRect(event.clientX, event.clientY, 0, 0);
-    viewRef.current.onMarks?.({ kind: "hover", ids, rect });
+    viewRef.current.onMarks?.({ kind: "hover", ids });
     const note = (event.target as Element).closest<HTMLElement>(
       "[data-reader-apparatus-item-id]",
     );

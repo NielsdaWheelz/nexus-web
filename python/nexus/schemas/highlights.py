@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from nexus.schemas.notes import AnnotationNoteRequest
+
 HIGHLIGHT_COLORS = Literal["yellow", "green", "blue", "pink", "purple"]
 
 
@@ -60,10 +62,13 @@ class TypedHighlightOut(BaseModel):
     updated_at: datetime
     author_user_id: UUID
     is_owner: bool
+    links_version: int
     linked_conversations: list[LinkedConversationRef] = Field(default_factory=list)
     linked_note_blocks: list[LinkedNoteBlockRef] = Field(default_factory=list)
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True, json_schema_serialization_defaults_required=True
+    )
 
 
 class PdfQuadIn(PdfQuadOut):
@@ -108,13 +113,54 @@ class PdfHighlightAnchorIn(PdfBoundsUpdate):
     kind: Literal["pdf"]
 
 
-class CreateMediaHighlightRequest(BaseModel):
-    """One highlight model on the wire: a text span or page quads, and a colour."""
+class EnsureMediaHighlightRequest(BaseModel):
+    """Create or reuse the viewer's exact text span or canonical page geometry."""
 
     anchor: Annotated[TextHighlightAnchorIn | PdfHighlightAnchorIn, Field(discriminator="kind")]
     color: HIGHLIGHT_COLORS
 
     model_config = ConfigDict(extra="forbid")
+
+
+class EnsureMediaHighlightOut(BaseModel):
+    created: bool
+    highlight: TypedHighlightOut
+
+
+class AbsentHighlightNoteExpected(BaseModel):
+    kind: Literal["absent"]
+    version: int = Field(ge=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ExistingHighlightNoteExpected(BaseModel):
+    kind: Literal["version"]
+    version: int = Field(ge=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+HighlightNoteExpected = Annotated[
+    AbsentHighlightNoteExpected | ExistingHighlightNoteExpected, Field(discriminator="kind")
+]
+
+
+class SetHighlightNoteRequest(AnnotationNoteRequest):
+    """Create in the loaded empty slot or edit its exact attached note."""
+
+    expected: HighlightNoteExpected
+
+
+class DeleteHighlightNoteRequest(BaseModel):
+    note_id: UUID
+    expected_version: int = Field(ge=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class DeleteHighlightNoteOut(BaseModel):
+    deleted_note_id: UUID
 
 
 class PdfAnchorUpdateRequest(BaseModel):

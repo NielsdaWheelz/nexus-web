@@ -99,12 +99,20 @@
 }
 
 .view {
+  position: relative;
   max-width: 76ch;
   color: var(--ink);
   font-size: var(--text-md);
   line-height: var(--leading-normal);
   outline: none;
   white-space: pre-wrap;
+}
+
+.view[data-empty="true"]::before {
+  position: absolute;
+  color: var(--ink-faint);
+  content: attr(data-placeholder);
+  pointer-events: none;
 }
 
 .view :global(p) {

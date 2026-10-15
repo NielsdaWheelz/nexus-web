@@ -1,4 +1,4 @@
-"""Highlight routes: one create for text and pdf, read, recolour/rebound, delete, note."""
+"""Highlight routes: ensure text/pdf, read, recolour/rebound, delete and note commands."""
 
 from typing import Annotated
 from uuid import UUID
@@ -9,37 +9,28 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession
 from nexus.responses import Data
 from nexus.schemas.highlights import (
-    CreateMediaHighlightRequest,
+    DeleteHighlightNoteOut,
+    DeleteHighlightNoteRequest,
+    EnsureMediaHighlightOut,
+    EnsureMediaHighlightRequest,
     LinkedNoteBlockRef,
+    SetHighlightNoteRequest,
     TypedHighlightOut,
     UpdateHighlightRequest,
 )
-from nexus.schemas.notes import AnnotationNoteRequest
 from nexus.services import highlights as highlights_service
 from nexus.services import notes
-from nexus.services import pdf_highlights as pdf_highlights_service
 
 router = APIRouter(tags=["highlights"])
 
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 
 
-@router.post("/media/{media_id}/highlights", status_code=201)
-def create_highlight(
-    media_id: UUID, request: CreateMediaHighlightRequest, viewer: ViewerDep, db: DbSession
-) -> Data[TypedHighlightOut]:
-    anchor = request.anchor
-    if anchor.kind == "pdf":
-        return Data(
-            data=pdf_highlights_service.create_pdf_highlight(
-                db, viewer.user_id, media_id, anchor, request.color
-            )
-        )
-    return Data(
-        data=highlights_service.create_text_highlight(
-            db, viewer.user_id, media_id, anchor, request.color
-        )
-    )
+@router.post("/media/{media_id}/highlights")
+def ensure_highlight(
+    media_id: UUID, request: EnsureMediaHighlightRequest, viewer: ViewerDep, db: DbSession
+) -> Data[EnsureMediaHighlightOut]:
+    return Data(data=highlights_service.ensure_highlight(db, viewer.user_id, media_id, request))
 
 
 @router.get("/highlights/{highlight_id}")
@@ -56,17 +47,16 @@ def update_highlight(
 
 @router.put("/highlights/{highlight_id}/note")
 def put_highlight_note(
-    highlight_id: UUID, request: AnnotationNoteRequest, viewer: ViewerDep, db: DbSession
+    highlight_id: UUID, request: SetHighlightNoteRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[LinkedNoteBlockRef]:
-    """Create the highlight's one note and attach it. That note already attached has
-    landed; another note attached is 409 E_NOTE_CONFLICT. Later edits are outline
-    ``set_body`` commands."""
-    note = notes.attach_highlight_note(
+    """Create in the loaded empty slot or update the exact attached note."""
+    note = notes.set_highlight_note(
         db,
         viewer.user_id,
         highlight_id=highlight_id,
         note_id=request.note_id,
         body_pm_json=request.body_pm_json,
+        expected=request.expected,
     )
     return Data(
         data=LinkedNoteBlockRef(
@@ -79,12 +69,26 @@ def put_highlight_note(
 
 
 @router.delete("/highlights/{highlight_id}/note/{note_id}", status_code=204)
-def delete_highlight_note(
+def detach_highlight_note(
     highlight_id: UUID, note_id: UUID, viewer: ViewerDep, db: DbSession
 ) -> Response:
     """Detach the note (idempotent); the note stays."""
     notes.detach_highlight_note(db, viewer.user_id, highlight_id=highlight_id, note_id=note_id)
     return Response(status_code=204)
+
+
+@router.post("/highlights/{highlight_id}/note/delete")
+def delete_highlight_note(
+    highlight_id: UUID, request: DeleteHighlightNoteRequest, viewer: ViewerDep, db: DbSession
+) -> Data[DeleteHighlightNoteOut]:
+    notes.delete_highlight_note(
+        db,
+        viewer.user_id,
+        highlight_id=highlight_id,
+        note_id=request.note_id,
+        expected_version=request.expected_version,
+    )
+    return Data(data=DeleteHighlightNoteOut(deleted_note_id=request.note_id))
 
 
 @router.delete("/highlights/{highlight_id}", status_code=204)

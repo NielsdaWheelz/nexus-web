@@ -157,8 +157,8 @@ resource-context chat path. Chat reads only the head's `content_text`; it
 never receives stored HTML and never mutates or incrementally
 edits the Dossier.
 
-There is no inline reader-chat adapter. Reader Highlight quotes launch through
-the typed intent owned by `Conversation` (see Reader Quote-To-Chat below);
+the reader composer uses existing chat admission for a nonblank prompt and the
+quote launch intent for a blank prompt (see Reader Quote-To-Chat below).
 generic resource-context chats go through `createConversationAbout`
 (`lib/chat/conversationIndex.ts`), which creates a context-bearing
 conversation via `POST /conversations`; the menu opens it as a `Conversation` pane.
@@ -407,15 +407,15 @@ citation, and not a context ref.
 
 It is a transient layer of the overlay stack (`docs/modules/overlays.md`): Escape, a press
 outside it and its anchor element and, inside a modal, Back dismiss it. Placement comes from
-`useAnchoredPosition` (text-selection line placement with a caret, viewport clamping, mobile
-bottom clearance, re-measuring on scroll and resize); pointerdown prevention keeps a live selection.
+`useAnchoredPosition` (text-selection line placement with a caret, viewport clamping,
+mobile bottom clearance, re-measuring on scroll and resize). reader composers
+measure their canonical passage against the live source pane and keep their
+own selection paint; focusing the editor does not dismiss them.
 
-Fresh reader selection is the icon toolbar: `SelectionPopover` sequences
-Highlight-first chat creation and `SelectionActionDock` renders **Ask** as a
-direct icon control and **Ask in existing chat…** as a text-labeled item in the
-**More** menu. The dock does not create conversations or own destination
-behavior. Both actions create or reuse the default-yellow Highlight before
-launch, and neither creates a Conversation before the first send.
+`SelectionDock` shows visible actions above the canonical rich `NoteEditor`.
+`useSelectionComposer` owns explicit save/chat commands and the visit's unsaved
+note drafts; [highlight](highlight.md#reader-presentation) owns the interaction
+contract. unrelated action surfaces retain their own selection behavior.
 
 `ActionMenu` remains separate because it owns menu semantics: roving keyboard behavior,
 menu roles, focus restoration, and menuitem rendering. A menu opened inside a floating
@@ -438,14 +438,14 @@ projection, and prompt-render input); the snapshot shape is
 `key{media_id, highlight_id}`, `source_label`, `exact`, `prefix`, `suffix`, and
 `locator: MediaRetrievalLocator`.
 
-The request sends `reader_selection: Present<{ key: ReaderSelectionKey;
-revision }>` only. The server derives the `highlight:<id>` subject and its
+the request sends `reader_selection: { key: ReaderSelectionKey; revision } | null`.
+the server derives the `highlight:<id>` subject and its
 `media:<id>` companion under the Highlight row lock and writes them as
 `ResourceEdge(kind="context")` rows in the same atomic commit; neither is client
 input, and client quote text is rejected. `ReaderSelectionKey{media_id,
-highlight_id}` is the durable selection identity and part of the idempotency
-hash; `ReaderSelectionRevision` (lowercase 64-char SHA-256 hex) is a
-compare-on-send precondition only and is explicitly excluded from that hash.
+highlight_id}` is the durable selection identity. `ReaderSelectionRevision`
+(lowercase 64-char SHA-256 hex) is a compare-on-send precondition; retry keeps
+the same chat run id and submitted request.
 
 `reader_selection` is not a branch anchor and is not cited. Assistant selection
 and reader selection compose in one send only as separate fields.
@@ -460,6 +460,23 @@ body); **Open source** reopens the passage from the snapshot's locator. A send
 carries only the key and the preview's revision; an accepted send spends the
 hash. `ConversationDestinationOverlay` is the existing-chat picker: the 25
 newest chats, or a title search over `GET /conversations?title_search=`.
+
+the reader's `new chat` command freezes the entered `body_text.trim()` and
+configured model selection before ensuring the highlight or reading its quote.
+a nonblank prompt sends `destination: New` with the canonical preview's key and
+revision; it does not save annotation edits. `createReaderChatSend` in
+`lib/chat/drafts.ts` captures one key and serialized request, coalesces concurrent
+attempts and keeps its terminal outcome. uncertain delivery retries the same
+bytes while the tab lives. the existing reader visit retains that continuation
+across body unmounts; it has no storage journal or reload recovery and does not
+use the ordinary `new` chat draft. an acknowledged highlight survives a refused
+send. only the same active, unchanged opening navigates automatically; otherwise
+feedback offers `open chat`.
+
+a blank prompt opens the quoted new-chat composer without a run. `existing
+chat…` opens the existing quote handoff without sending the note field. both
+paths retain the unsaved rich note and caret in the reader visit. ordinary chat
+drafts retain the session-storage contract described above.
 
 ## Chats Index
 
@@ -503,6 +520,12 @@ Final markdown, citation edges, retrieval back-pointers, context refs and their
 transaction. A degraded answer writes no edges. Rendered citations are built from
 the final edges by `build_citation_outs_for_sources` (in `reads`), uniformly with
 Oracle and Universal Dossiers.
+
+global note deletion removes its historical citation edges as well as its other
+associations. the acknowledged `resource_deleted` graph event removes matching
+citations and open previews from mounted conversation stores, refreshes context
+and fences older reads. stored message text and surviving citation ordinals are
+unchanged: removing `[1]` does not retarget `[2]`.
 
 `message_retrievals` is chat-owned **telemetry** and the sole durable
 per-result record: candidate generation and rerank/selection are transient,

@@ -12,7 +12,7 @@ import MachineText from "@/components/ui/MachineText";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
-import { connectionMutationErrorMessage, mutateConnection, type ConnectionMutation } from "@/lib/resourceGraph/links";
+import { connectionMutationErrorMessage, isDeletedResource, mutateConnection, subscribeLinkMutations, type ConnectionMutation } from "@/lib/resourceGraph/links";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import ConnectionCreation from "@/components/connections/ConnectionCreation";
 import type { ResourceActivation } from "@/lib/resources/activation";
@@ -117,30 +117,49 @@ function NoteEditorHost({
   );
   const currentNote = useRef(note);
   currentNote.current = note;
+  const currentDone = useRef(done);
+  currentDone.current = done;
+  const loadedNoteId = typeof note === "object" ? note?.note_block_id ?? null : null;
+  const deleted = (noteBlockId !== null && isDeletedResource(`note_block:${noteBlockId}`)) ||
+    (loadedNoteId !== null && isDeletedResource(`note_block:${loadedNoteId}`));
   const [retry, setRetry] = useState(0);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   useEffect(() => {
-    if (!noteBlockId) return;
+    let live = true;
+    const closeDeleted = () => {
+      const loaded = currentNote.current;
+      if ((noteBlockId !== null && isDeletedResource(`note_block:${noteBlockId}`)) ||
+        (typeof loaded === "object" && loaded !== null && isDeletedResource(`note_block:${loaded.note_block_id}`))) {
+        live = false;
+        currentDone.current();
+        return true;
+      }
+      return false;
+    };
+    if (closeDeleted()) return;
+    const unsubscribe = subscribeLinkMutations((change) => {
+      if (live && change.kind === "resource_deleted") closeDeleted();
+    });
+    const cleanup = () => { live = false; unsubscribe(); };
+    if (!noteBlockId) return cleanup;
     // A save already supplied this exact body and versions. Keep its editor
     // mounted so an unsaved successor remains in the same writing session.
-    if (typeof currentNote.current === "object" && currentNote.current?.note_block_id === noteBlockId) return;
-    let live = true;
+    if (typeof currentNote.current === "object" && currentNote.current?.note_block_id === noteBlockId) return cleanup;
     setNote("loading");
     void fetchNote(noteBlockId).then(
       (row) => {
-        if (!live) return;
+        if (!live || closeDeleted()) return;
         const { body_pm_json, body_text, body_version } = row;
         setNote({ note_block_id: noteBlockId, body_pm_json, body_text, body_version });
       },
     ).catch((error: unknown) => {
-      if (!live || handleUnauthenticatedApiError(error)) return;
+      if (!live || closeDeleted() || handleUnauthenticatedApiError(error)) return;
       if (!isApiError(error) || isSameSystemApiDefect(error)) { setDefect({ error }); return; }
       setNote("failed");
     });
-    return () => {
-      live = false;
-    };
-  }, [noteBlockId, retry]);
+    return cleanup;
+  }, [loadedNoteId, noteBlockId, retry]);
+  if (deleted) return null;
   if (defect) throw defect.error;
   const { verbs } = actions;
   return (
