@@ -1,263 +1,165 @@
-import type { EmphasisSegment } from "@/lib/ui/emphasis";
+// The one projection of a wire search result into the row the pane and Nexus
+// show. Identities are the server's: services/search/project.py builds refs,
+// context and activation together and refuses an unactivatable row, so this
+// module derives display text only.
+
 import type { ApiJson } from "@/lib/api/wire";
 import {
   decodeOptionalPublicationDate,
   decodePublicationDateOnly,
   type PublicationDate,
 } from "@/lib/dates/publicationDate";
-import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
-import type { SearchResultRowViewModel, SearchType } from "./types";
+import type { EmphasisSegment } from "@/lib/ui/emphasis";
+import type { SearchResultRowViewModel } from "./types";
 
-type SearchResult = ApiJson<"/search", "get">["results"][number];
-type NonMediaSearchResult = Exclude<SearchResult, { media_summary: unknown }>;
+type Result = ApiJson<"/search", "get">["results"][number];
+type TextResult = Exclude<Result, { media_summary: unknown }>;
+type Described = {
+  typeLabel: string;
+  primaryText: string;
+  sourceMeta: string | null;
+};
 
-function sanitizeSnippet(snippet: string): string {
-  return snippet.replace(/<\/?b>/gi, "");
-}
-
+/** `<b>`…`</b>` is the only markup a snippet carries. */
 export function parseSnippetSegments(snippet: string): EmphasisSegment[] {
-  if (!snippet) {
-    return [];
-  }
-
   const segments: EmphasisSegment[] = [];
-  const parts = snippet.split(/(<\/?b>)/gi);
   let emphasized = false;
-
-  for (const part of parts) {
-    const normalized = part.toLowerCase();
-    if (normalized === "<b>") {
-      emphasized = true;
-      continue;
-    }
-    if (normalized === "</b>") {
-      emphasized = false;
-      continue;
-    }
-    if (!part) {
-      continue;
-    }
-    segments.push({ text: part, emphasized });
+  for (const part of snippet.split(/(<\/?b>)/i)) {
+    const tag = part.toLowerCase();
+    if (tag === "<b>" || tag === "</b>") emphasized = tag === "<b>";
+    else if (part) segments.push({ text: part, emphasized });
   }
-
   return segments;
 }
 
-function buildSourceMeta(result: NonMediaSearchResult): string | null {
-  if (result.type === "contributor") {
-    // the author label supplies this row's metadata.
-    return null;
-  }
+const titled = (title: string, kind: string | null) =>
+  [title, kind?.replace(/_/g, " ")].filter(Boolean).join(" — ") || null;
 
-  if (result.type === "message") {
-    return result.source_label ?? `message #${result.seq}`;
-  }
+/** Type label, title and source line; the arguments name the per-type rules. */
+const describe = (
+  typeLabel: string,
+  primaryText: string,
+  sourceMeta: string | null,
+): Described => ({ typeLabel, primaryText, sourceMeta });
 
-  if (result.type === "conversation") {
-    return result.source_label ?? "conversation";
+function described(result: TextResult, plain: string): Described {
+  const label = result.source_label;
+  switch (result.type) {
+    case "contributor":
+      return describe(
+        "author",
+        result.contributor.display_name || plain || "Author",
+        null,
+      );
+    case "podcast":
+      return describe("podcast", result.title || plain || "Untitled", label);
+    case "page":
+      return describe("page", result.title || plain || "Untitled page", label);
+    case "note_block":
+      return describe(
+        "note",
+        result.highlight_excerpt || result.body_text || plain || "Note",
+        "note",
+      );
+    case "highlight":
+      return describe(
+        "highlight",
+        result.exact || plain || "Highlight",
+        label ?? "highlight",
+      );
+    case "fragment":
+      return describe("fragment", plain || "Fragment", label ?? "fragment");
+    case "message":
+      return describe(
+        "message",
+        plain || `Message #${result.seq}`,
+        label ?? `message #${result.seq}`,
+      );
+    case "conversation":
+      return describe(
+        "conversation",
+        result.title || plain || "Conversation",
+        label ?? "conversation",
+      );
+    case "artifact":
+      return describe(
+        "artifact",
+        result.title || plain || "Dossier",
+        label ?? "artifact",
+      );
+    case "evidence_span":
+      return describe(
+        result.citation_label,
+        plain || result.citation_label,
+        label ?? result.citation_label,
+      );
+    case "web_result":
+      return describe(
+        "web result",
+        result.title || plain || result.url,
+        result.source_name ?? result.display_url ?? label ?? "web",
+      );
+    case "content_chunk":
+      return describe(
+        result.citation_label,
+        plain,
+        label || titled(result.title, result.media_kind),
+      );
+    case "reader_apparatus_item":
+      return describe(
+        result.apparatus_kind.replace(/_/g, " "),
+        plain,
+        label || titled(result.source.title, result.source.media_kind),
+      );
   }
-
-  if (result.type === "artifact") {
-    return result.source_label ?? "artifact";
-  }
-
-  if (result.type === "evidence_span") {
-    return result.source_label ?? result.citation_label;
-  }
-
-  if (result.type === "podcast") {
-    return result.source_label;
-  }
-
-  if (result.type === "page") {
-    return result.source_label;
-  }
-
-  if (result.type === "note_block") {
-    return "note";
-  }
-
-  if (result.type === "highlight") {
-    return result.source_label ?? "highlight";
-  }
-
-  if (result.type === "fragment") {
-    return result.source_label ?? "fragment";
-  }
-
-  if (result.type === "web_result") {
-    return (
-      result.source_name ?? result.display_url ?? result.source_label ?? "web"
-    );
-  }
-
-  if (result.type === "content_chunk") {
-    if (result.media_id === null || result.media_kind === null) {
-      // justify-defect: a chunk must identify its source media, unlike other titled rows.
-      throw new Error("Search chunk has no media identity");
-    }
-    return result.source_label ||
-      [result.title, result.media_kind.replace(/_/g, " ")].filter(Boolean).join(" — ") || null;
-  }
-  if (result.source_label) return result.source_label;
-
-  const parts = [result.source.title];
-  if (result.source.media_kind) {
-    parts.push(result.source.media_kind.replace(/_/g, " "));
-  }
-
-  return parts.filter(Boolean).join(" — ") || null;
 }
 
-function publicationDateFor(
-  result: NonMediaSearchResult,
-): PublicationDate | null {
-  if (result.type === "web_result") {
+function publicationDate(result: TextResult): PublicationDate | null {
+  if (result.type === "web_result")
     return decodeOptionalPublicationDate(
       result.published_at,
-      "search web_result published_at",
+      "search published_at",
     );
-  }
-  if (!("source" in result)) return null;
-  const date = result.source.original_published_date;
-  return date === null
-    ? date
-    : decodePublicationDateOnly(date, "Search source.original_published_date");
+  if (!("source" in result) || result.source.original_published_date === null)
+    return null;
+  return decodePublicationDateOnly(
+    result.source.original_published_date,
+    "search source.original_published_date",
+  );
 }
 
-function buildPrimaryText(result: NonMediaSearchResult): string {
-  if (result.type === "contributor") {
-    return (
-      result.contributor.display_name ||
-      sanitizeSnippet(result.snippet) ||
-      "Author"
-    );
-  }
-  if (result.type === "note_block") {
-    if (result.highlight_excerpt) return result.highlight_excerpt;
-    return result.body_text || sanitizeSnippet(result.snippet) || "Note";
-  }
-  if (result.type === "podcast") {
-    return result.title || sanitizeSnippet(result.snippet) || "Untitled";
-  }
-  if (result.type === "page") {
-    return result.title || sanitizeSnippet(result.snippet) || "Untitled page";
-  }
-  if (result.type === "highlight") {
-    return result.exact || sanitizeSnippet(result.snippet) || "Highlight";
-  }
-  if (result.type === "fragment") {
-    return sanitizeSnippet(result.snippet) || "Fragment";
-  }
-  if (result.type === "message") {
-    return sanitizeSnippet(result.snippet) || `Message #${result.seq}`;
-  }
-  if (result.type === "conversation") {
-    return result.title || sanitizeSnippet(result.snippet) || "Conversation";
-  }
-  if (result.type === "artifact") {
-    return result.title || sanitizeSnippet(result.snippet) || "Dossier";
-  }
-  if (result.type === "evidence_span") {
-    return sanitizeSnippet(result.snippet) || result.citation_label;
-  }
-  if (result.type === "web_result") {
-    return result.title || sanitizeSnippet(result.snippet) || result.url;
-  }
-  return sanitizeSnippet(result.snippet);
-}
-
-const TYPE_LABELS: Partial<Record<SearchType, string>> = {
-  contributor: "author",
-  page: "page",
-  conversation: "conversation",
-  artifact: "artifact",
-  web_result: "web result",
-};
-
-function adaptSearchResultRow(result: SearchResult): SearchResultRowViewModel {
-  const activation = result.activation;
-  if (
-    parseResourceRef(activation.resource_ref) === null ||
-    activation.kind === "none" ||
-    !activation.href
-  ) {
-    // justify-defect: search only emits canonical, activatable occurrences.
-    throw new Error("Search result missing canonical activation");
-  }
-  const context = result.context_ref;
-  if (
-    ("media_summary" in result && context.type !== "media") ||
-    ([
-      "contributor", "content_chunk", "fragment", "evidence_span",
-      "reader_apparatus_item", "conversation", "artifact", "web_result",
-    ].includes(result.type) && context.type !== result.type) ||
-    (result.type === "content_chunk" &&
-      (!context.evidence_span_ids || context.evidence_span_ids.length === 0)) ||
-    (result.type === "note_block" &&
-      ((result.note_origin === "highlight_note") !== (result.highlight_excerpt !== null))) ||
-    (result.type === "web_result" && context.id !== result.source_id)
-  ) {
-    // justify-defect: occurrence context and variant-specific identities must agree.
-    throw new Error("Search result identity is inconsistent");
-  }
-  if (
-    result.type === "contributor" &&
-    (!result.contributor_handle || !result.contributor.display_name)
-  ) {
-    // justify-defect: contributor search identities and their display names are nonempty.
-    throw new Error("Search contributor identity is empty");
-  }
-  if (result.type === "artifact") {
-    const ref = parseResourceRef(result.resource_ref);
-    if (ref?.scheme !== "artifact_revision" || ref.id !== result.revision_id) {
-      // justify-defect: a dossier occurrence names the exact revision it carries.
-      throw new Error("Search artifact revision is inconsistent");
-    }
-  }
+/** The row for one result; none for a result that opens nowhere. */
+export function projectSearchResult(
+  result: Result,
+): SearchResultRowViewModel[] {
+  const href = result.activation.href;
+  if (href === null) return [];
   const base = {
     key: `${result.type}-${result.id}`,
     score: result.score,
     resourceRef: result.resource_ref,
     ownerResourceRef: result.owner_resource_ref,
-    activation,
-    actionSubject: { ref: assumeCanonicalResourceRef(result.action_subject_ref) },
+    activation: { ...result.activation, href },
+    actionSubject: {
+      ref: assumeCanonicalResourceRef(result.action_subject_ref),
+    },
     snippetSegments: parseSnippetSegments(result.snippet),
   };
-  if ("media_summary" in result) {
-    const summary = result.media_summary;
-    if (
-      summary.media_id !== result.id ||
-      ((result.type === "episode") !== (summary.media_kind === "podcast_episode")) ||
-      ((result.type === "video") !== (summary.media_kind === "video"))
-    ) {
-      // justify-defect: the summary and result tag must name the same media and kind.
-      throw new Error("Search media identity is inconsistent");
-    }
-    const mediaSummary = summary;
-    return { ...base, type: result.type, mediaSummary };
-  }
-  const primaryText = buildPrimaryText(result);
-  return {
-    ...base,
-    type: result.type,
-    paneLabelHint: primaryText,
-    typeLabel:
-      result.type === "content_chunk" || result.type === "evidence_span"
-        ? result.citation_label
-        : (TYPE_LABELS[result.type] ?? result.type),
-    primaryText,
-    sourceMeta: buildSourceMeta(result),
-    publicationDate: publicationDateFor(result),
-    contributorCredits: "source" in result
-      ? result.source.contributors
-      : result.type === "podcast" ? result.contributors : [],
-  };
-}
-
-export function adaptSearchResults(
-  results: SearchResult[],
-): SearchResultRowViewModel[] {
-  return results.map(adaptSearchResultRow);
+  if ("media_summary" in result)
+    return [{ ...base, type: result.type, mediaSummary: result.media_summary }];
+  return [
+    {
+      ...base,
+      type: result.type,
+      ...described(result, result.snippet.replace(/<\/?b>/gi, "")),
+      publicationDate: publicationDate(result),
+      contributorCredits:
+        "source" in result
+          ? result.source.contributors
+          : result.type === "podcast"
+            ? result.contributors
+            : [],
+    },
+  ];
 }

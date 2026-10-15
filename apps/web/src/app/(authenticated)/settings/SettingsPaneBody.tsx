@@ -4,11 +4,7 @@ import CollectionView from "@/components/collections/CollectionView";
 import { presentSettingsRow } from "@/lib/collections/presenters/settings";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 
-const SETTINGS_ITEMS: {
-  href: string;
-  title: string;
-  description: string;
-}[] = [
+const SECTIONS = [
   {
     href: "/settings/account",
     title: "Account",
@@ -39,17 +35,10 @@ const SETTINGS_ITEMS: {
 
 export default function SettingsPaneBody() {
   usePaneReturnReady(true);
-
   return (
     <CollectionView
       returnScope="Settings.Sections"
-      rows={SETTINGS_ITEMS.map((item) =>
-        presentSettingsRow({
-          title: item.title,
-          description: item.description,
-          href: item.href,
-        }),
-      )}
+      rows={SECTIONS.map(presentSettingsRow)}
       status="ready"
       ariaLabel="Settings"
     />

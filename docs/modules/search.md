@@ -1,6 +1,6 @@
 # search
 
-status: implemented · origin: 2026-10-10 search reauthor (cleanup/search-reauthor), result boundary 2026-10-02 · area: search, browse, link pickers
+status: implemented · origin: 2026-10-10 search reauthor (cleanup/search-reauthor), result boundary 2026-10-02, pane 2026-10-13 (cleanup/search-settings-reauthor) · area: search, browse, link pickers
 
 one retriever and one ranking rule serve the search pane (`GET /search`), the nexus
 launcher (openables, then owned search), the link picker
@@ -95,12 +95,31 @@ takes each query key once (a repeated key is 400 `E_INVALID_REQUEST`, as an unkn
 `type`; every field is always sent (context `evidence_span_ids` too) and required in
 openapi. rows carry score/snippet, occurrence, owner and action-subject refs,
 activation, citation target and context ref; passage types act on their owner.
-`<b>`/`</b>` is the only snippet markup. the web projects the generated wire once
-(`lib/search/searchApi.ts`, `searchViewModel.ts`) and keeps its semantic checks:
-canonical activation, media id/kind/context agreement, chunk evidence, contributor
-identity, highlight-note iff excerpt, artifact revision and web snapshot identity. blank
-unfiltered input makes no request; the pane debounces 200 ms, requests 20 rows and
-appends cursor pages; nexus requests 40 owned rows after openables settle, web excluded.
+`<b>`/`</b>` is the only snippet markup. `project.py` builds refs, context and activation
+together and refuses an unactivatable row, so the web trusts them: `searchViewModel.ts`
+projects each result once into the row the pane and nexus show (type label, title, source
+line, date, credits), never throws, and drops a row whose `activation.href` is null. nexus
+requests 40 owned rows after openables settle, web excluded.
+
+## the search pane
+
+the pane url is the query. `searchParams.ts` writes it canonically: kinds in
+`SEARCH_KINDS` order, omitted for all six and `kinds=` for none; list values deduped; an
+empty `scope` is all. one `useServerList` owns the rows, keyed by the canonical params, 20
+a page, refetched when the media query revision moves; a pane return paints its visit
+snapshot. a blank query (text under two characters after trim, the server's
+`MIN_QUERY_LENGTH`, and no format, author or role filter) and `kinds=` are lists of no rows
+that never ask the server; a later search retains nothing from them.
+
+the box is a draft (`SearchControls.tsx`). 200 ms after an edit its text and completed
+operators become the query; Enter does so at once. an operator becomes a chip only from a
+token the user has left, or on Enter, which also takes the token being typed; until then
+the operator-shaped token at the caret of the last edit stays in the box and out of the
+query. a chip's token leaves the box with one adjacent space and the caret keeps its place
+(`settleSearchBox`). the url's own text is never parsed for operators, and the box is
+replaced only when the url's text differs from the text the pane last wrote (Nexus, pane
+history, a restored visit). Escape and × clear the text and keep the filters; Escape on an
+empty box is not consumed.
 
 ## verification and trade-offs
 

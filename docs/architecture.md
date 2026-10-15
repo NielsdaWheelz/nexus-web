@@ -466,8 +466,8 @@ configured ingest address; PATCH retains null. settings preserves its GET
 address while acknowledging only the edited field. web calls use generated
 method-specific contracts; bootstrap alone projects the two-field account domain.
 its provider keeps the current account-local zone. plain-text share freezes that
-date before saving. native names allow 100 raw code points while the web form allows
-80 UTF-16 units; [alignment remains deferred](tickets/account-display-name-has-conflicting-length-bounds.md).
+date before saving. python owns the display-name bound (100 code points); the web form
+defers to it (the 400 names it) and an empty name clears the name.
 bare `/daily` opens today's daily page in the account zone (the workspace bootstrap
 resolves it).
 page/note links, highlight-note attachments and backlinks use `resource_edges`;

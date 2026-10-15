@@ -10,8 +10,6 @@ export interface ResourceDescriptor<TParams> {
   clientPath: (params: TParams) => ApiPath;
 }
 
-export type NoResourceParams = Record<string, never>;
-
 // The pagination keys every keyset collection endpoint accepts.
 interface CollectionPageParams {
   cursor?: string;
@@ -167,8 +165,3 @@ export const conversationsInitialResource: ResourceDescriptor<ConversationIndexR
       `/api/conversations${conversationIndexPageQuery(params)}`,
   };
 
-export const settingsAccountResource: ResourceDescriptor<NoResourceParams> = {
-  cacheKey: () => "settings-account:me",
-  serverPath: () => "/me",
-  clientPath: () => "/api/me",
-};
