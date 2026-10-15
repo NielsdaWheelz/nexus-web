@@ -2447,6 +2447,20 @@
         "migration_head": "0286"
       },
       "live_qualification": "historical; no new screenshot/live claim"
+    },
+    {
+      "main_sha": "69c00182c8328f46cec893517971f87f03cdbf16",
+      "upstream_pr": 625,
+      "review": "independent composition pass; right-placement and anchor observation preserve inspector positioning; passive rail help yields after inspector Escape via defaultPrevented; neither claims command ownership",
+      "conflict_resolution": "none; upstream navigation implementation and both overlay contracts retained",
+      "web_source_sha256": "50ff0f7d5fd118c526c0d749b9267280b30601d04d443c37cc44f358fce1dca4",
+      "web_source_paths": 732,
+      "static_gate": {
+        "command": "./scripts/test",
+        "exit_code": 0,
+        "migration_head": "0286"
+      },
+      "live_qualification": "historical; no new screenshot/live claim"
     }
   ]
 }

@@ -33,6 +33,14 @@ register conflict retained all entries; inspector entries now sit beside the
 existing inspector issue. `./scripts/test` passed again at head `0286`. original
 screenshots remain historical, including the earlier more-button appearance.
 
+final integration: main `69c00182c8328f46cec893517971f87f03cdbf16`
+added pr #625's navigation launcher. independent review confirmed positioning,
+anchor observation and passive escape ordering compose with inspector help;
+neither help surface owns commands. no conflicts or source edits were needed.
+`./scripts/test` passed at head `0286`. the web-source digest is
+`50ff0f7d5fd118c526c0d749b9267280b30601d04d443c37cc44f358fce1dca4`
+over 732 paths. live evidence remains at its recorded candidates.
+
 disposable playwright 1.59.1 drove browser → next/bff `:3198` → api `:8198`
 → isolated auth, database and storage. one article used ordinary extension
 capture/upload/confirmation and normal linux ingestion; one ordinary library

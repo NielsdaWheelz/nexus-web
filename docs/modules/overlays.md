@@ -9,7 +9,8 @@ losing their place. owners, under `apps/web/src/`:
   commands, light dismiss, the scrim rule, the Tab trap, return focus, the
   synthetic history entry.
 - `lib/ui/useAnchoredPosition.ts`: where a floating box goes (an element, a
-  rect or a text selection's lines; flip, clamp, re-measure on scroll and
+  rect or a text selection's lines; element placement above/below/right,
+  cross-axis alignment, flip, clamp, re-measure on scroll and
   resize). a captured rect does not move with a scroll, so the selection
   surfaces stay put ([ticket](../tickets/selection-dock-does-not-follow-scroll.md)).
 - `lib/ui/useKeyboardInset.ts`: the ios keyboard geometry and its report to the
@@ -156,6 +157,21 @@ propagation hides it from the document. `ActionMenu` stops every key, since
 react bubbles a portaled menu's keys through its owners (the linked-notes
 editor's block keys would take Escape and Delete), and so answers Escape itself
 (focus in the menu makes it the owner).
+
+## passive navigation help
+
+the collapsed rail tooltip uses a transient with `eligible: () => false` and
+no return-focus behavior. the kernel supplies outside-press dismissal and
+modal coverage; the caption never becomes the interaction owner or suppresses
+command/control+k. the rail owns its one dismiss-only escape capture listener
+while help is positioned/visible. it consumes only plain, unhandled,
+non-composing escape while no actual interaction owner is active.
+
+the host mounts hidden for measurement before exposing a description id.
+coverage hides the caption/relationship immediately and clears its state;
+unchanged hover cannot revive it. `useAnchoredPosition` places the host to the
+right, while the host's full-height transparent corridor keeps pointer transfer
+continuous. this local mechanism is not a generic interactive-preview owner.
 
 ## surfaces
 
