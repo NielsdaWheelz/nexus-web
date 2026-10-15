@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import PaneHeaderIdentity from "@/components/ui/PaneHeaderIdentity";
+import Tooltip from "@/components/ui/Tooltip";
 import { useMobileChromeSurface, useMobilePaneChrome } from "@/lib/mobileShell/chrome";
 import { projectActionControlState } from "@/lib/ui/actionDescriptor";
 import { cx } from "@/lib/ui/cx";
@@ -79,18 +80,23 @@ export default function MobilePaneBar() {
           />
         ) : null}
         {companion && companionState ? (
-          <button
-            type="button"
-            className={cx(styles.topBarButton, companionState.active && styles.topBarButtonActive)}
-            aria-label={companion.label}
-            aria-pressed={companionState.barPressed}
-            aria-expanded={companionState.barExpanded}
-            aria-controls={companionState.barControls}
-            disabled={companion.disabled}
-            onClick={(event) => companion.onSelect({ triggerEl: event.currentTarget })}
-          >
-            {companion.icon}
-          </button>
+          <Tooltip
+            text={companionState.menuLabel}
+            renderTrigger={(props) => (
+              <button
+                {...props}
+                type="button"
+                className={cx(styles.topBarButton, companionState.active && styles.topBarButtonActive)}
+                aria-label={companion.label}
+                aria-expanded={companionState.barExpanded}
+                aria-controls={companionState.barControls}
+                disabled={companion.disabled}
+                onClick={(event) => companion.onSelect({ triggerEl: event.currentTarget })}
+              >
+                {companion.icon}
+              </button>
+            )}
+          />
         ) : null}
       </div>
     </header>

@@ -25,3 +25,34 @@ verification is paused again; use the repository's Linux CI for remaining
 qualification while the host issue is investigated. Host controller runs
 `6a15d716922698b2` and
 `767029063b07431b` failed with cleanup errors and are not passing evidence.
+
+2026-10-15 06:54–06:56 utc, inspector/libraries qualification: the shared engine
+became unavailable again. a bounded `docker version --format
+'{{.Server.Version}}'` timed out after 7 seconds; task api `:8198/readyz`
+reported `unavailable`; task auth `:59461/auth/v1/health` reset the connection
+(`curl` exit 56). the libraries coordinator independently observed a stalled
+`docker ps` and auth reset. vm `init.log` rotated at local 23:54:48.459.
+these observations do not establish the current cause or a virtualization crash.
+both tasks held live qualification; no restart, reset, prune or shared mutation
+was issued by inspector. preserve all worktrees' services and volumes.
+
+recovery coordination moved to toolbar `t-d54f30ad71761fc2`, with release consulted.
+the coordinator reports isolated databases failing with `readonlyfilesystem`;
+inspector's host `df` independently reports 100% capacity, 3.9 gib available.
+inspector removed only its newly created detached-build cache (494 mib), retaining
+the completed artifact; no shared docker data was removed. restart ownership
+must be confirmed through toolbar before a normal desktop restart.
+
+the coordinator subsequently reported suggestions had repaired docker before
+toolbar's window; toolbar issued no restart. daemon queries and auth health
+recovered. inspector restarted only its existing postgres, minio and worker
+containers, preserving their volumes. ordinary password auth and article/library
+reads passed, followed by the recovered chromium matrix and focused firefox/
+webkit checks. no inspector restart of docker, prune, reset or production
+operation occurred. the immediate interruption is recovered; its cause and the
+historical virtualization failures remain unresolved.
+
+next: investigate host capacity and engine failure evidence before attributing
+the recurrence. coordinate any shared-engine operation through the active owner;
+preserve every task's volumes. repeated healthy task checks establish recovery,
+not a durable repair of the underlying host issue.
