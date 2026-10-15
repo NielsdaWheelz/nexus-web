@@ -419,6 +419,7 @@ unexpected timeouts. See
 - [open] reader maintenance · 2026-10-14 plan review · the one-off apparatus deletion exception conflicts with the new preservation contract; removing its backlink exception can make row 232 refuse: [ticket](tickets/reader-repair-has-apparatus-deletion-exception.md).
 - [open] contributor maintenance · 2026-10-14 plan review · apply does not bind the externally reviewed preview or its resolved person identities; fix before any proposed correction: [ticket](tickets/epub-contributor-apply-does-not-bind-preview.md).
 - [open] epub navigation · 2026-10-14 source review · three declared epub 3 books have ncx contents but no nav document; proposed toc losses are excluded from repair: [ticket](tickets/reader-repair-epub3-missing-nav.md).
+- [open] retained source · 2026-10-14 rehearsal · two previously verified epub originals now return NoSuchKey at their recorded paths; current source ownership/lifecycle is unreconciled: [ticket](tickets/epub-original-missing-after-source-audit.md).
 - [open] reader maintenance · 2026-10-14 plan review · inspection exposes changed apparatus keys but lacks full diffs and separate projection hashes for review and uncertain-commit reconciliation: [ticket](tickets/reader-repair-inspection-lacks-complete-projection-evidence.md).
 
 - [planned] reader apparatus · 2026-10-14 repair plan · re-scope draft #584 for strict enrichment, no identity deletion and complete proposal evidence; no merge/apply: [plan](book-repair-plan.md) · [ticket](tickets/reader-repair-existing-apparatus-correspondence.md).
