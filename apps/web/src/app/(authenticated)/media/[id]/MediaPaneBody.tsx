@@ -17,7 +17,6 @@ import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
 import LecternNextPrompt from "@/components/LecternNextPrompt";
 import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { useCompletionUndo } from "@/lib/lectern/useCompletionUndo";
 import { apiFetch } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
@@ -31,10 +30,11 @@ import DocumentReaderView, {
 } from "@/lib/documentReader/DocumentReader";
 import type { FindSource } from "@/lib/find/find";
 import { useFind } from "@/lib/find/useFind";
-import { useLectern } from "@/lib/lectern/LecternProvider";
-import { parseMediaId } from "@/lib/lectern/contract";
+import { holdProgress, useFinish } from "@/lib/consumption/state";
+import { lecternItems, lecternNext, useLectern, type LecternItem } from "@/lib/lectern/lectern";
 import { mediaDetailFromResponse, type MediaDetail } from "@/lib/media/mediaDetail";
 import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
+import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { useMediaMetadataOperations } from "@/lib/media/mediaMetadataOperations";
 import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
 import {
@@ -85,8 +85,12 @@ function MediaPane({ id }: { readonly id: string }) {
   const isMobile = useIsMobileViewport();
   const feedback = useFeedback();
   const { profile } = useReaderContext();
-  const lectern = useLectern();
-  const offerUndo = useCompletionUndo();
+  const lectern = lecternItems(useLectern());
+  const finish = useFinish();
+  // J4: the media's Lectern row (membership is the Lectern's) and its read state (the summary
+  // owner's, which follows Consumption, so a reading auto-finish shows here at once).
+  const row = lectern.find((item) => item.media_summary.media_id === id);
+  const summaries = useMediaSummaries(row ? [row.media_summary] : []);
   const { seekTo, resume } = usePlayerCommands();
   const root = useRef<HTMLDivElement>(null);
 
@@ -130,21 +134,15 @@ function MediaPane({ id }: { readonly id: string }) {
     readable,
   );
   const doc = useReaderState(reader, (s) => (s.document.status === "ready" ? s.document.doc : null));
-  // A lectern progress reset: this reader's unsaved progress settles first, then
-  // the reset cursor installs.
-  useEffect(() => {
-    const offInstall = lectern.onCanonicalInstall((event) => {
-      if (event.kind === "progressState" && event.state.mediaId === id) reader.install(event.state.readerCursor);
-    });
-    const offFence = lectern.registerProgressFence({
-      prepare: (mediaIds) => mediaIds.includes(parseMediaId(id)) ? reader.prepareProgressFence() : Promise.resolve(),
-      reconcile: (mediaIds) => mediaIds.includes(parseMediaId(id)) ? reader.reconcileProgressFence() : Promise.resolve(),
-    });
-    return () => {
-      offInstall();
-      offFence();
-    };
-  }, [id, lectern, reader]);
+  // Unread, reset and undo of this media: unsaved progress settles first, the server's cursor after.
+  useEffect(
+    () =>
+      holdProgress({
+        prepare: (mediaId) => (mediaId === id ? reader.prepareProgressFence() : Promise.resolve()),
+        reconcile: (mediaId) => (mediaId === id ? reader.reconcileProgressFence() : Promise.resolve()),
+      }),
+    [id, reader],
+  );
 
   // A title job is admitted with source publication, before naming may fail.
   // Manual title admission costs the same small reread; it does not reload progress.
@@ -416,24 +414,15 @@ function MediaPane({ id }: { readonly id: string }) {
       </div>
     );
 
-  const next = (() => {
-    const items = lectern.resource.status === "ready" ? lectern.resource.data.items : [];
-    const index = items.findIndex((item) => item.mediaSummary.media_id === id);
-    if (index < 0 || items[index].mediaSummary.consumption.state !== "Finished") return null;
-    return items.slice(index + 1).find((item) => item.activation.kind === "Readable") ?? null;
-  })();
-  // Done finishes this media (with or without a lectern row) and names the next readable item.
-  const openNext = async () => {
-    const before = lectern.resource.status === "ready" ? lectern.resource.data : { items: [] };
-    const result = await lectern.done(parseMediaId(id));
-    offerUndo({ mediaId: parseMediaId(id), before, finishId: result.finishId, done: true });
-    if (result.nextItem !== null)
-      activateTarget({
-        target: { href: result.nextItem.href, labelHint: result.nextItem.mediaSummary.title },
-        disposition: { kind: "Fork" },
-      });
+  const finished = row && summaries.resolve(row.media_summary)?.consumption.state === "Finished";
+  const next = finished ? lecternNext(lectern, id, "Readable") : null;
+  // Finish and leave the Lectern (its Undo puts the row back), then open the row the prompt named.
+  const openNext = async (target: LecternItem) => {
+    await finish(id, { leaveLectern: true });
+    const { media_id: mediaId, title } = target.media_summary;
+    activateTarget({ target: { href: `/media/${mediaId}`, labelHint: title }, disposition: { kind: "Fork" } });
   };
-  const prompt = next ? <LecternNextPrompt title={next.mediaSummary.title} onSelect={() => void openNext()} /> : null;
+  const prompt = next ? <LecternNextPrompt title={next.media_summary.title} onSelect={() => void openNext(next)} /> : null;
   const embeds = doc?.kind === "text" ? doc.embeds : [];
 
   return (

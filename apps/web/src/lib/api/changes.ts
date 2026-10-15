@@ -10,6 +10,7 @@ import { useSyncExternalStore } from "react";
 //   Libraries    the viewer's libraries: created, renamed, deleted, joined
 //   Entries      what some library holds or its order
 //   Consumption  reading or listening state
+//   Lectern      the viewer's Lectern rows or their order
 //   Metadata     a media's title, authors or first publication
 //   Podcasts     a followed show, its settings or its backfill
 //   Chats        the chats index
@@ -18,6 +19,7 @@ export type ChangeTopic =
   | "Libraries"
   | "Entries"
   | "Consumption"
+  | "Lectern"
   | "Metadata"
   | "Podcasts"
   | "Chats"
@@ -27,6 +29,7 @@ const counts: Record<ChangeTopic, number> = {
   Libraries: 0,
   Entries: 0,
   Consumption: 0,
+  Lectern: 0,
   Metadata: 0,
   Podcasts: 0,
   Chats: 0,

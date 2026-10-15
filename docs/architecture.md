@@ -1550,50 +1550,51 @@ The **Lectern** is the one ordered, mixed-media list of outstanding intentions
 (podcast, video, reader, agent, and Nexus actions all address it); **Now
 Playing** is one device-local audio session, not a second durable list.
 `services/consumption/` is the sole backend consumption owner, split by table:
-`lectern.py` (`consumption_queue_items` membership/order), `service.py` (the
-command facades and the DML of
-`consumption_overrides` explicit `Unread`/`Finished` plus the natural-end
-override revision, `consumption_completion_facts`, and
-`reader_engagement_states` reader recency — `last_engaged_at`),
+`lectern.py` (`consumption_queue_items` membership and order, and the Lectern
+read), `state.py` (the DML of `consumption_overrides`, a `finished`/`unread`/none
+register whose revision every write advances and never reuses,
+`consumption_completion_facts`, and `reader_engagement_states` reader recency —
+`last_engaged_at`; the finish, undo, unread, reset and natural-end writes),
 `listening.py` (`podcast_listening_states` position/duration/nullable episode
 rate under the `reset_epoch` fence), `reader_cursor.py`
 (`reader_media_state` revisioned
 `Empty`/`Positioned` cursor CAS), `activity.py`
-(`consumption_activity_spans` ingest), `exclusions.py`, `stats.py`
-(read-time aggregation, sessionization and the Stats and Sessions payloads),
-and `projection.py` (the combined
-explicit-override + reader-engagement read model, the Lectern snapshot, and
-batched `PlayerDescriptor`s reusing `derive_playback_source`; the server owns
+(`consumption_activity_spans` ingest and `consumption_activity_exclusions`),
+`stats.py` (read-time aggregation, sessionization and the Stats and Sessions
+payloads), and `projection.py` (the one read-state ladder and batched
+`PlayerDescriptor`s reusing `derive_playback_source`; the server owns
 the resume point, so a finished episode's descriptor starts at 0). Consumption exposes
 policy-neutral engagement and complete queue-membership reads to suggestions; it
-does not own a second public Recent product. `GET /lectern/slate` builds the
-on-demand **At hand** projection from Continuity, Arrival, and factual graph,
+does not own a second public Recent product. `GET /lectern/suggestions` builds
+the on-demand **Suggestions** list from Continuity, Arrival, and factual graph,
 author, and calibrated semantic evidence. It returns at most ten placeable
 media outside the complete queue and excludes `Finished` targets; a full queue
-suppresses it. `GET /lectern/quick-reads` independently returns at most five
-unfinished documents with `0 < remaining_seconds < 600`, including queued media
-and working at full capacity. readiness and raw duration filter the candidates
-before every acquisition cap. it reuses existing qualification/ranking without
-a fallback family, accepts no query parameters and performs no model calls.
-Two bounded aggregate command ports — `POST /lectern/commands`
-(`EnsureItem`/`PlaceItems`/`RemoveItem`/`SetOrder`) and `POST /consumption/commands`
-(`EnsureMediaFinished`/`Done`/`SetUnread`/`ResetProgress`/`UndoFinish`/
-`SettleNaturalEnd`) — each share one `retry_serializable` transaction, one
-canonical response, and `client_mutation_id` replay through
-`services/resource_mutation_replay.py`; `GET /lectern`, `GET /media/{id}/player`
-and the epoch-fenced `PUT /media/{id}/listening-state` sit outside that replay
-ledger. An absent value on every wire shape is `null`, its key always present
+suppresses it. `GET /lectern/quick-reads` returns at most five visible
+unfinished documents with `0 < remaining_seconds < 600`, Lectern members
+included, in progress first (most recently read), then newest added. Both perform no model
+calls. Every write runs under the viewer row lock, is absolute and states its
+retry rule; there is no replay ledger: `PUT`/`DELETE /lectern/items/{media_id}`
+(First or After another media, a drag moving one row; a null placement only
+ensures membership: an absent media goes last, a present row stays),
+`POST /media/{id}/finish` (answering the token its undo echoes), `/finish/undo`,
+`/unread`, `/progress/reset` and `/natural-end` (fenced on the override revision
+and the terminal sample's reset epoch). The server names no next row: the
+device that hears an end reads it from the Lectern
+([`modules/player.md`](modules/player.md)). An absent value on every wire shape
+is `null`, its key always present
 ([`local-rules/typed-wire.md`](local-rules/typed-wire.md)).
 
 Media teardown (see [`modules/storage.md`](modules/storage.md)) composes one
-consumption call, `consumption_service.delete_media_consumption_state_in_txn`
+consumption call, `state.delete_media_consumption_state_in_txn`
 (all users' Lectern/override/listening/reader-cursor/reader-engagement/
 activity/completion rows), inside the
 deletion transaction — `media_deletion.py` never writes those tables
 directly.
 
-Frontend: `AuthenticatedShell` mounts `LecternProvider` (the snapshot resource
-and every command on one promise chain, `lib/lectern/`) above
+Frontend: `AuthenticatedShell` mounts `LecternProvider` (one shared Lectern
+read, its two writes and the unanswered adds, `lib/lectern/lectern.tsx`; the
+read-state writes are
+`lib/consumption/state.tsx`) above
 `GlobalPlayerProvider` (`lib/player/playerRuntime.tsx`), which wraps
 `WorkspaceHost` and `GlobalPlayerSurfaces`. The latter projects one shell-owned
 **Media player** landmark as the desktop bar or the mobile mini bar and sheet;
@@ -1603,8 +1604,9 @@ listening writer, Media Session and activity observer (`browserEngine.ts`); the
 Android shell uses the service-owned Media3 player through `window.nexusPlayback`
 (`nativeEngine.ts`) and mounts none of those browser owners. The provider
 exposes stable Commands plus separate Session and Timeline contexts. A natural
-end is one `SettleNaturalEnd` sent by the engine that heard it; the server
-picks the next audio row. See
+end is one `POST /media/{id}/natural-end` sent by the engine that heard it; on
+204 that engine plays the next audio row it read from the Lectern before
+settling, from the position the server reports. See
 [`modules/player.md`](modules/player.md) and
 [`modules/consumption-activity.md`](modules/consumption-activity.md) for the
 full file map. The shared player also owns an exhaustive ephemeral
@@ -1613,21 +1615,20 @@ origin, heartbeat, podcast preference, activity/completion writes, or
 previous/next behavior. After Episode Add, the
 consumption owner may install the observed Preview position once, only when
 owned progress is still empty. The shared
-`SuggestionsSection` consumes an optional Lectern first-paint seed and
-otherwise queries only while its pane is active. It delegates Add to the
-existing Lectern or library mutation owner and owns local removal/refill, not
-destination state. its known focus/refill defects remain tracked in the
-[connections module](modules/connections.md). the lectern section order is queue, quick reads,
-then suggestions. `QuickReadsSection` uses an independent client `usePaneFreeServerValue` read,
-refreshing on active mount, reactivation and the Consumption and Entries
-change topics (§8.12).
-its shared `LecternAddControl` offers add/check/on-lectern; opening navigates
-without enqueueing and addition retains the row. all user-facing adds use
-`EnsureItem`, which appends absent media without moving existing members.
-`Ensured` acknowledges the operation; a fresh action capability describes current
-membership. `atCapacity` counts hidden rows too. unresolved attempts retain their
-id/body and remain recoverable above pane lifetime; other edits remain available.
-shared collection rows retain standard menus, factual dates and
+`SuggestionsSection` (Quick reads, Lectern and library suggestions) reads once
+when its pane becomes active and on Retry, never on a change topic. It
+delegates Add to the existing Lectern or library mutation owner and owns
+deterministic stable refill, not destination state: after an Add the list
+keeps its rows and one replacement until the next activation. the lectern
+section order is queue, quick reads, then suggestions. quick reads have no
+selection controls; each row's shared `LecternAddControl` (also in the
+transcript) offers add/check/on-lectern; opening navigates without enqueueing
+and addition retains the row. every user-facing add is the ensure write (a null
+placement), which appends absent media without moving existing members. its
+204 acknowledges the add; a fresh action read describes current membership.
+`at_capacity` counts hidden rows too. an add without an answer keeps its
+request above pane lifetime and offers "check add"; other edits remain
+available. shared collection rows retain standard menus, factual dates and
 reading estimates without relation explanations or inline expansion. known
 stored media share title, author credits, original publication year,
 unread/current percentage/finished, and plain remaining time at canonical 1×.

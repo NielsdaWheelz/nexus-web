@@ -22,7 +22,7 @@ import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { ActivityCapture } from "@/lib/consumption/capture";
 import { readerSurfaceStyle } from "@/lib/documentReader/DocumentReader";
 import { ImportsProvider } from "@/lib/imports/ImportsProvider";
-import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { LecternProvider } from "@/lib/lectern/lectern";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { MediaSummaryProvider } from "@/lib/media/MediaSummaryProvider";
 import { MobileChromeProvider } from "@/lib/mobileShell/chrome";

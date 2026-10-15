@@ -39,13 +39,13 @@ consumption state, or user-authored time.
 For every Stats query:
 
 ```text
-recordedActiveMs = accepted visible observed duration
-excludedActiveMs = recorded duration removed by active exclusions
-activeMs         = recordedActiveMs - excludedActiveMs
+recorded_active_ms = accepted visible observed duration
+excluded_active_ms = recorded duration removed by active exclusions
+active_ms          = recorded_active_ms - excluded_active_ms
 ```
 
 All breakdowns, sessions, streaks, and Year presentation derive from effective
-`activeMs`. There is no manual or alternate observed-time projection.
+`active_ms`. There is no manual or alternate observed-time projection.
 
 ## Owners
 
@@ -53,7 +53,7 @@ All breakdowns, sessions, streaks, and Year presentation derive from effective
 | --- | --- |
 | Viewer-locked write transactions | `python/nexus/services/consumption/__init__.py` |
 | Span ingest and session exclusions | `python/nexus/services/consumption/activity.py` |
-| Current state writes, completion facts and public reads | `python/nexus/services/consumption/service.py` |
+| Current state writes, completion facts and the player read | `python/nexus/services/consumption/state.py` |
 | Aggregation, filtering, sessions and the Stats and Sessions payloads | `python/nexus/services/consumption/stats.py` |
 | The read-state derivation | `python/nexus/services/consumption/projection.py` |
 | Wire shapes and routes | `python/nexus/schemas/consumption_activity.py`, `api/routes/consumption_activity.py`; the web reads generated wire types |
@@ -97,7 +97,7 @@ devices), works their `media_id`, exclusions their uuid `id`. Nothing is sealed.
   session is active (the viewer lock serializes the check); Stats lists older
   duplicates once.
 - Every Stats read projects one `as_of` snapshot over currently visible media;
-  `activeMs = recordedActiveMs - excludedActiveMs`.
+  `active_ms = recorded_active_ms - excluded_active_ms`.
 - Civil ranges resolve once to utc instants in the request's zone (the sql
   three-hour midnight rule); dates a zone skips return empty facts.
 - Browser capture has one tab-local owner: each (media, modality) group accrues

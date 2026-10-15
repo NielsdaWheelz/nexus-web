@@ -20,7 +20,6 @@ from nexus.auth.permissions import (
 )
 from nexus.db.models import Media, MediaKind, TranscriptCoverage, TranscriptState
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.schemas.consumption_state import ConsumptionOut, ConsumptionStateValue
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.media import (
     ListeningStateOut,
@@ -29,7 +28,13 @@ from nexus.schemas.media import (
     MediaReadState,
     PodcastEpisodeChapterOut,
 )
-from nexus.schemas.media_summary import MediaDurationOut, MediaProcessingStatus, MediaSummaryOut
+from nexus.schemas.media_summary import (
+    ConsumptionOut,
+    ConsumptionState,
+    MediaDurationOut,
+    MediaProcessingStatus,
+    MediaSummaryOut,
+)
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView, MetadataRetry
 from nexus.schemas.reading_time import ReadingTimeEstimateOut
 from nexus.services.capabilities import (
@@ -62,10 +67,11 @@ from nexus.text import escape_like
 
 _LIST_LIMIT_MAX = 200
 _TERMINAL_PROCESSING_STATUSES = ("ready_for_reading", "failed", "suspended")
-_CONSUMPTION_STATE: dict[MediaReadState, ConsumptionStateValue] = {
-    "unread": "Unread",
-    "in_progress": "InProgress",
-    "finished": "Finished",
+# MediaOut keeps its lower-case read state label.
+_READ_STATE: dict[ConsumptionState, MediaReadState] = {
+    "Unread": "unread",
+    "InProgress": "in_progress",
+    "Finished": "finished",
 }
 
 _LATEST_SOURCE_ATTEMPT_SQL = """(
@@ -566,8 +572,8 @@ def list_collection_media_for_viewer_by_ids(
                         "MediaProcessingStatus", _status_to_str(row["processing_status"])
                     ),
                     consumption=ConsumptionOut(
-                        state=_CONSUMPTION_STATE[read_states[media_id].state],
-                        progress=read_states[media_id].progress_fraction,
+                        state=read_states[media_id].state,
+                        progress=read_states[media_id].progress,
                     ),
                     duration=_summary_duration(row, kind_value, reading_times),
                 ),
@@ -577,7 +583,7 @@ def list_collection_media_for_viewer_by_ids(
                 transcript_coverage=transcript_coverage,
                 listening_state=_listening_state(row),
                 author_mode="manual" if bool(row["authors_manually_managed"]) else "automatic",
-                progress_resettable=read_states[media_id].progress_resettable,
+                progress_resettable=read_states[media_id].resettable,
                 audio_playable=playback_source is not None and bool(playback_source.stream_url),
                 has_original_file=bool(row["has_file"]),
                 capabilities=CollectionMediaCapabilities(
@@ -674,15 +680,12 @@ def _hydrate_media_out(
         return []
     media_ids = [UUID(str(row["id"])) for row in rows]
     kinds = [_status_to_str(row["kind"]) for row in rows]
-    has_audio = [row["listening_position_ms"] is not None for row in rows]
 
     def pick(flags: list[bool]) -> list[UUID]:
         return [media_id for media_id, flag in zip(media_ids, flags, strict=True) if flag]
 
     pdf_ids = pick([kind == MediaKind.pdf.value for kind in kinds])
     episode_ids = pick([kind == MediaKind.podcast_episode.value for kind in kinds])
-    audio_ids = pick(has_audio)
-    document_ids = pick([not audio for audio in has_audio])
 
     pdf_readiness = batch_pdf_quote_text_ready(db, pdf_ids) if pdf_ids else {}
     contributors_by_media = load_contributor_credits_for_media(db, media_ids)
@@ -700,15 +703,7 @@ def _hydrate_media_out(
             if kind in (MediaKind.web_article.value, MediaKind.epub.value, MediaKind.pdf.value)
         ],
     )
-    # Recency: audio rows through the listening owner, documents through the
-    # reader-engagement owner; both are the consumption projection.
-    engaged_at: dict[UUID, datetime] = {}
-    if audio_ids:
-        engaged_at |= projection.listening_recency(db, viewer_id=viewer_id, media_ids=audio_ids)
-    if document_ids:
-        engaged_at |= projection.reader_engagement_recency(
-            db, viewer_id=viewer_id, media_ids=document_ids
-        )
+    engaged_at = projection.engagement_recency(db, viewer_id=viewer_id, media_ids=media_ids)
     descriptors = (
         projection.player_descriptors(db, viewer_id=viewer_id, media_ids=episode_ids)
         if episode_ids
@@ -797,9 +792,9 @@ def _hydrate_media_out(
                 description_text=row["podcast_description_text"],
                 metadata_enriched_at=row["metadata_enriched_at"],
                 metadata_enrichment=metadata_views[media_id],
-                read_state=read_state.state,
-                progress_fraction=read_state.progress_fraction,
-                progress_resettable=read_state.progress_resettable,
+                read_state=_READ_STATE[read_state.state],
+                progress_fraction=read_state.progress,
+                progress_resettable=read_state.resettable,
                 last_engaged_at=engaged_at.get(media_id),
                 player_descriptor=(descriptor),
                 created_at=row["created_at"],

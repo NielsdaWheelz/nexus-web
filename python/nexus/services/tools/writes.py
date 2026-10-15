@@ -20,7 +20,6 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.resource_graph import CitationSnapshot
 from nexus.services import highlights, library_entries, note_bodies, notes, text_quote, users
 from nexus.services.consumption import lectern
-from nexus.services.consumption import service as consumption
 from nexus.services.passage_anchors import normalize_quote_text
 from nexus.services.resource_graph.edges import EdgeCreate, create_edge, delete_edge
 from nexus.services.resource_graph.refs import (
@@ -294,9 +293,7 @@ def queue_add(value: QueueAddInput, call: Call) -> QueueAddSuccess:
     media = _ref(value.media_uri, ("media",))
     assert_ref_visible(db, viewer_id=viewer, ref=media)
     # only the owner's lock-held inserted receipt makes the item the assistant's.
-    inserted = consumption.ensure_missing_items_for_assistant_in_current_transaction(
-        db, viewer_id=viewer, media_ids=[media.id]
-    )
+    inserted = lectern.append_missing_in_txn(db, viewer_id=viewer, media_ids=[media.id])
     found = lectern.find_item_for_media(db, viewer_id=viewer, media_id=media.id)
     if found is None:
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
@@ -320,9 +317,7 @@ def revert(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
         elif kind == "note_block":
             note_bodies.delete_note(db, viewer_id=viewer_id, note_id=target)
         elif kind == "queue":
-            consumption.remove_lectern_item_in_current_transaction(
-                db, viewer_id=viewer_id, item_id=target
-            )
+            lectern.remove_item_in_txn(db, viewer_id=viewer_id, item_id=target)
         else:
             _unfile(db, viewer_id, ref)
     except ApiError as exc:

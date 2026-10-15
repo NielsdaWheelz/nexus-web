@@ -386,23 +386,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/consumption/commands": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Post Consumption Command */
-        post: operations["post_consumption_command_consumption_commands_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/consumption/exclusions/{exclusion_id}": {
         parameters: {
             query?: never;
@@ -875,7 +858,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/lectern/commands": {
+    "/lectern/items/{media_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -883,10 +866,11 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        put?: never;
-        /** Post Lectern Command */
-        post: operations["post_lectern_command_lectern_commands_post"];
-        delete?: never;
+        /** Place On Lectern */
+        put: operations["place_on_lectern_lectern_items__media_id__put"];
+        post?: never;
+        /** Remove From Lectern */
+        delete: operations["remove_from_lectern_lectern_items__media_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1689,6 +1673,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/media/{media_id}/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finish */
+        post: operations["finish_media__media_id__finish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/{media_id}/finish/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Undo Finish */
+        post: operations["undo_finish_media__media_id__finish_undo_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/media/{media_id}/highlights": {
         parameters: {
             query?: never;
@@ -1757,6 +1775,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/media/{media_id}/natural-end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Settle Natural End */
+        post: operations["settle_natural_end_media__media_id__natural_end_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/media/{media_id}/player": {
         parameters: {
             query?: never;
@@ -1785,6 +1820,23 @@ export interface paths {
         put?: never;
         /** Install Preview Position */
         post: operations["install_preview_position_media__media_id__preview_position_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/{media_id}/progress/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reset Progress */
+        post: operations["reset_progress_media__media_id__progress_reset_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1943,6 +1995,23 @@ export interface paths {
          * @description 202 when it enqueued work, else 200.
          */
         post: operations["request_media_transcript_media__media_id__transcript_request_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/{media_id}/unread": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark Unread */
+        post: operations["mark_unread_media__media_id__unread_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3066,18 +3135,21 @@ export interface components {
             /** Streak */
             streak: number;
         };
-        /** AfterPlacement */
+        /**
+         * AfterPlacement
+         * @description After this media's visible row; first when it has none.
+         */
         AfterPlacement: {
-            /**
-             * Item Id
-             * Format: uuid
-             */
-            item_id: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "After";
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
         };
         /**
          * AnnotationNoteRequest
@@ -3964,7 +4036,10 @@ export interface components {
              */
             kind: "Consumption";
         };
-        /** ConsumptionOut */
+        /**
+         * ConsumptionOut
+         * @description The viewer's read state of the media: the override, else progress, else engagement.
+         */
         ConsumptionOut: {
             /** Progress */
             progress: number | null;
@@ -3973,19 +4048,6 @@ export interface components {
              * @enum {string}
              */
             state: "Unread" | "InProgress" | "Finished";
-        };
-        /** ConsumptionResult */
-        ConsumptionResult: {
-            /** Finish Id */
-            finish_id: string | null;
-            lectern: components["schemas"]["LecternSnapshot"];
-            next_item: components["schemas"]["LecternItemOut"] | null;
-            /**
-             * Outcome
-             * @enum {string}
-             */
-            outcome: "Done" | "Superseded" | "Gone";
-            progress_state: components["schemas"]["MediaProgressState"] | null;
         };
         /** ConsumptionStatsOut */
         ConsumptionStatsOut: {
@@ -4509,10 +4571,6 @@ export interface components {
         Data_ConnectionPageOut_: {
             data: components["schemas"]["ConnectionPageOut"];
         };
-        /** Data[ConsumptionResult] */
-        Data_ConsumptionResult_: {
-            data: components["schemas"]["ConsumptionResult"];
-        };
         /** Data[ConsumptionStatsOut] */
         Data_ConsumptionStatsOut_: {
             data: components["schemas"]["ConsumptionStatsOut"];
@@ -4557,6 +4615,10 @@ export interface components {
         Data_DossierHeadOut_: {
             data: components["schemas"]["DossierHeadOut"];
         };
+        /** Data[Finish] */
+        Data_Finish_: {
+            data: components["schemas"]["Finish"];
+        };
         /** Data[FromUrlResponse] */
         Data_FromUrlResponse_: {
             data: components["schemas"]["FromUrlResponse"];
@@ -4581,13 +4643,9 @@ export interface components {
         Data_ImportSummary_: {
             data: components["schemas"]["ImportSummary"];
         };
-        /** Data[LecternResult] */
-        Data_LecternResult_: {
-            data: components["schemas"]["LecternResult"];
-        };
-        /** Data[LecternSnapshot] */
-        Data_LecternSnapshot_: {
-            data: components["schemas"]["LecternSnapshot"];
+        /** Data[LecternOut] */
+        Data_LecternOut_: {
+            data: components["schemas"]["LecternOut"];
         };
         /** Data[LibraryInvitationOut] */
         Data_LibraryInvitationOut_: {
@@ -5037,27 +5095,6 @@ export interface components {
             /** Value */
             value: string | null;
         };
-        /**
-         * DoneCommand
-         * @description Finish, leave the Lectern and name the next readable row.
-         */
-        DoneCommand: {
-            /**
-             * Client Mutation Id
-             * Format: uuid
-             */
-            client_mutation_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Done";
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
-        };
         /** DossierBuildCreatedOut */
         DossierBuildCreatedOut: {
             /** Artifact Ref */
@@ -5197,50 +5234,6 @@ export interface components {
              * Format: date
              */
             local_date: string;
-        };
-        /** EnsureItemCommand */
-        EnsureItemCommand: {
-            /**
-             * Client Mutation Id
-             * Format: uuid
-             */
-            client_mutation_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "EnsureItem";
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
-        };
-        /** EnsureMediaFinishedCommand */
-        EnsureMediaFinishedCommand: {
-            /**
-             * Client Mutation Id
-             * Format: uuid
-             */
-            client_mutation_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "EnsureMediaFinished";
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
-        };
-        /** EnsuredOutcome */
-        EnsuredOutcome: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Ensured";
         };
         /** EpisodePreview */
         EpisodePreview: {
@@ -5484,6 +5477,25 @@ export interface components {
              * @enum {string}
              */
             kind: "Failed";
+        };
+        /**
+         * Finish
+         * @description A finish's answer and its undo's body: the revision it wrote, the status it replaced, the
+         *     completion fact it recorded and the row it removed.
+         */
+        Finish: {
+            /** Completion Id */
+            completion_id: string | null;
+            /** Prior Status */
+            prior_status: ("finished" | "unread") | null;
+            removed: components["schemas"]["RemovedItem"] | null;
+            /** Revision */
+            revision: number;
+        };
+        /** FinishIn */
+        FinishIn: {
+            /** Leave Lectern */
+            leave_lectern: boolean;
         };
         /** FirstPlacement */
         FirstPlacement: {
@@ -6151,13 +6163,6 @@ export interface components {
              * Format: date-time
              */
             added_at: string;
-            /** Href */
-            href: string;
-            /**
-             * Item Id
-             * Format: uuid
-             */
-            item_id: string;
             media_summary: components["schemas"]["MediaSummaryOut"];
         };
         /** LecternMembershipAction */
@@ -6172,14 +6177,11 @@ export interface components {
             /** Lectern Item Id */
             lectern_item_id: string | null;
         };
-        /** LecternResult */
-        LecternResult: {
-            lectern: components["schemas"]["LecternSnapshot"];
-            /** Outcome */
-            outcome: components["schemas"]["EnsuredOutcome"] | components["schemas"]["PlacedOutcome"] | components["schemas"]["RemovedOutcome"] | components["schemas"]["OrderedOutcome"];
-        };
-        /** LecternSnapshot */
-        LecternSnapshot: {
+        /**
+         * LecternOut
+         * @description The visible rows; ``at_capacity`` counts the whole membership, hidden rows included.
+         */
+        LecternOut: {
             /** At Capacity */
             at_capacity: boolean;
             /** Items */
@@ -6550,8 +6552,7 @@ export interface components {
         };
         /**
          * ListeningIn
-         * @description One listening sample. An absent rate keeps the stored episode rate; an absent duration
-         *     keeps the stored duration.
+         * @description One sample under its epoch; a null duration or rate keeps the stored one.
          */
         ListeningIn: {
             /** Duration Ms */
@@ -6893,17 +6894,6 @@ export interface components {
             transcript_state: components["schemas"]["TranscriptState"] | null;
             /** Updated At */
             updated_at: string;
-        };
-        /** MediaProgressState */
-        MediaProgressState: {
-            listening_state: components["schemas"]["ListeningPositionOut"] | null;
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
-            /** Reader Cursor */
-            reader_cursor: components["schemas"]["ReaderCursorEmpty"] | components["schemas"]["ReaderCursorPositioned"];
         };
         /** MediaRemovedResult */
         MediaRemovedResult: {
@@ -7453,6 +7443,12 @@ export interface components {
             /** Before Entry Id */
             before_entry_id: string | null;
         };
+        /** NaturalEndIn */
+        NaturalEndIn: {
+            /** Expected Override Revision */
+            expected_override_revision: number | null;
+            terminal_listening: components["schemas"]["ListeningIn"];
+        };
         /** NeedsAttention */
         NeedsAttention: {
             capabilities: components["schemas"]["UploadSessionCapabilities"];
@@ -7819,14 +7815,6 @@ export interface components {
         };
         /** @enum {string} */
         OracleSourceKind: "public_domain" | "user_media";
-        /** OrderedOutcome */
-        OrderedOutcome: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Ordered";
-        };
         /**
          * OutlineCommandsOut
          * @description The outlines whose links changed, the nodes whose text was written, the notes deleted.
@@ -8093,39 +8081,20 @@ export interface components {
             zoom: number | null;
         };
         /**
+         * PlaceIn
+         * @description A null placement only ensures membership: an absent media goes last, a present row stays.
+         */
+        PlaceIn: {
+            /** Placement */
+            placement: (components["schemas"]["FirstPlacement"] | components["schemas"]["AfterPlacement"]) | null;
+        };
+        /**
          * PlaceItemRequest
          * @description `replace_episodes` confirms that a show replaces its directly filed episodes.
          */
         PlaceItemRequest: {
             /** Replace Episodes */
             replace_episodes: boolean;
-        };
-        /** PlaceItemsCommand */
-        PlaceItemsCommand: {
-            /**
-             * Client Mutation Id
-             * Format: uuid
-             */
-            client_mutation_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "PlaceItems";
-            /** Media Ids */
-            media_ids: string[];
-            /** Placement */
-            placement: components["schemas"]["FirstPlacement"] | components["schemas"]["AfterPlacement"];
-        };
-        /** PlacedOutcome */
-        PlacedOutcome: {
-            /** Item Ids */
-            item_ids: string[];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Placed";
         };
         /** PlaybackAction */
         PlaybackAction: {
@@ -8174,7 +8143,8 @@ export interface components {
         };
         /**
          * PlayerDescriptor
-         * @description What a device needs to play one episode; ``position_ms`` is the server's resume point.
+         * @description What a device needs to play one episode; ``position_ms`` is the server's resume point and
+         *     ``consumption_override_revision`` the version a natural end is fenced on.
          */
         PlayerDescriptor: {
             /** Artwork Url */
@@ -9875,36 +9845,23 @@ export interface components {
              */
             link_id: string;
         };
-        /** RemoveItemCommand */
-        RemoveItemCommand: {
+        /**
+         * RemovedItem
+         * @description A Lectern row a finish removed: put back with its id and added time.
+         */
+        RemovedItem: {
             /**
-             * Client Mutation Id
-             * Format: uuid
+             * Added At
+             * Format: date-time
              */
-            client_mutation_id: string;
-            /**
-             * Item Id
-             * Format: uuid
-             */
-            item_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "RemoveItem";
-        };
-        /** RemovedOutcome */
-        RemovedOutcome: {
+            added_at: string;
+            /** After Item Id */
+            after_item_id: string | null;
             /**
              * Item Id
              * Format: uuid
              */
             item_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Removed";
         };
         /**
          * RenameLibraryRequest
@@ -10000,24 +9957,6 @@ export interface components {
              * Format: uuid
              */
             new_source_attempt_id: string;
-        };
-        /** ResetProgressCommand */
-        ResetProgressCommand: {
-            /**
-             * Client Mutation Id
-             * Format: uuid
-             */
-            client_mutation_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "ResetProgress";
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
         };
         /** ResolveMediaSummariesIn */
         ResolveMediaSummariesIn: {
@@ -11036,21 +10975,6 @@ export interface components {
              */
             role: "admin" | "member";
         };
-        /** SetOrderCommand */
-        SetOrderCommand: {
-            /**
-             * Client Mutation Id
-             * Format: uuid
-             */
-            client_mutation_id: string;
-            /** Item Ids */
-            item_ids: string[];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "SetOrder";
-        };
         /** SetTitle */
         SetTitle: {
             /** Expected Version */
@@ -11067,48 +10991,6 @@ export interface components {
             page_id: string;
             /** Title */
             title: string;
-        };
-        /** SetUnreadCommand */
-        SetUnreadCommand: {
-            /**
-             * Client Mutation Id
-             * Format: uuid
-             */
-            client_mutation_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "SetUnread";
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
-        };
-        /**
-         * SettleNaturalEndCommand
-         * @description Fenced finish of an episode the device heard end; names the next audio row.
-         */
-        SettleNaturalEndCommand: {
-            /**
-             * Client Mutation Id
-             * Format: uuid
-             */
-            client_mutation_id: string;
-            /** Expected Consumption Override Revision */
-            expected_consumption_override_revision: number | null;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "SettleNaturalEnd";
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
-            terminal_listening: components["schemas"]["ListeningIn"];
         };
         /** ShareMembersOut */
         ShareMembersOut: {
@@ -11892,52 +11774,6 @@ export interface components {
              * Format: uuid
              */
             tool_call_id: string;
-        };
-        /**
-         * UndoFinishCommand
-         * @description Undo the finish ``finish_id`` names: the override it replaced and the
-         *     first-completion fact it recorded, as the server stored them, and the row a Done removed.
-         */
-        UndoFinishCommand: {
-            /**
-             * Client Mutation Id
-             * Format: uuid
-             */
-            client_mutation_id: string;
-            /**
-             * Finish Id
-             * Format: uuid
-             */
-            finish_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "UndoFinish";
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
-            restore: components["schemas"]["UndoRestoreIn"] | null;
-        };
-        /**
-         * UndoRestoreIn
-         * @description The Lectern row a Done removed: put back with its id and added time.
-         */
-        UndoRestoreIn: {
-            /**
-             * Added At
-             * Format: date-time
-             */
-            added_at: string;
-            /** After */
-            after: string | null;
-            /**
-             * Item Id
-             * Format: uuid
-             */
-            item_id: string;
         };
         /** UnlinkMutation */
         UnlinkMutation: {
@@ -13382,39 +13218,6 @@ export interface operations {
             };
         };
     };
-    post_consumption_command_consumption_commands_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EnsureMediaFinishedCommand"] | components["schemas"]["DoneCommand"] | components["schemas"]["SetUnreadCommand"] | components["schemas"]["ResetProgressCommand"] | components["schemas"]["UndoFinishCommand"] | components["schemas"]["SettleNaturalEndCommand"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_ConsumptionResult_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     exclude_session_consumption_exclusions__exclusion_id__put: {
         parameters: {
             query?: never;
@@ -14399,32 +14202,61 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_LecternSnapshot_"];
+                    "application/json": components["schemas"]["Data_LecternOut_"];
                 };
             };
         };
     };
-    post_lectern_command_lectern_commands_post: {
+    place_on_lectern_lectern_items__media_id__put: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                media_id: string;
+            };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["EnsureItemCommand"] | components["schemas"]["PlaceItemsCommand"] | components["schemas"]["RemoveItemCommand"] | components["schemas"]["SetOrderCommand"];
+                "application/json": components["schemas"]["PlaceIn"];
             };
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_LecternResult_"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    remove_from_lectern_lectern_items__media_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -16032,6 +15864,74 @@ export interface operations {
             };
         };
     };
+    finish_media__media_id__finish_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FinishIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_Finish_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    undo_finish_media__media_id__finish_undo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Finish"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_highlight_media__media_id__highlights_post: {
         parameters: {
             query?: never;
@@ -16173,6 +16073,39 @@ export interface operations {
             };
         };
     };
+    settle_natural_end_media__media_id__natural_end_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NaturalEndIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_player_media__media_id__player_get: {
         parameters: {
             query?: never;
@@ -16218,6 +16151,35 @@ export interface operations {
                 "application/json": components["schemas"]["PreviewPositionIn"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_progress_media__media_id__progress_reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             204: {
@@ -16526,6 +16488,35 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Data_TranscriptRequestOut_"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mark_unread_media__media_id__unread_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

@@ -7,10 +7,12 @@ while audio plays) and every reader-state save (`media/[id]/hostedReader.ts`)
 publishes `Consumption` (`lib/api/changes.ts`). each mounted view that follows it
 rereads: a library pane in the Remaining order or the In progress / unfinished
 projections rereads its whole loaded prefix (`lib/libraries/useLibraryEntries.ts`
-`followsConsumption`), state-filtered episodes reread, quick reads and
-suggestions refetch, and `MediaSummaryProvider.invalidateAll` re-resolves every
-retained summary. the Stats pane follows `Consumption` only while it is the
-active pane. cost is unchanged from before the cut (the revision bus did
+`followsConsumption`), state-filtered episodes reread, and
+`MediaSummaryProvider.invalidateAll` re-resolves every retained summary. the
+consumption slice's own consumers are gated (2026-10-14): the Stats pane
+follows `Consumption` only while it is the active pane, quick reads and
+suggestions refresh only when the lectern pane becomes active, and the Lectern
+read does not follow it. the publisher split below stays open. cost is unchanged from before the cut (the revision bus did
 the same); kept for conservation (design Q3).
 
 the cheaper alternative: publish `Consumption` only on state transitions

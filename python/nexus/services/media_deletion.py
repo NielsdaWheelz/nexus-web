@@ -36,7 +36,7 @@ from nexus.services import (
     passage_anchors,
     resource_grants,
 )
-from nexus.services.consumption import service as consumption_service
+from nexus.services.consumption import state as consumption_state
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.contributor_writes import MediaTarget
 from nexus.services.import_history import (
@@ -443,7 +443,7 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     )
     _delete_by_media_id(db, media_id, *_MEDIA_CHILD_TABLES)
 
-    consumption_service.delete_media_consumption_state_in_txn(db, media_id=media_id)
+    consumption_state.delete_media_consumption_state_in_txn(db, media_id=media_id)
     _delete_by_media_id(db, media_id, "user_media_deletions")
     contributors.cleanup_credits_for_deleted_target(db, target=MediaTarget(media_id))
     media_upload_sessions.delete_published_media_support_in_current_transaction(

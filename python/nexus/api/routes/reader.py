@@ -29,7 +29,7 @@ from nexus.services import (
     reader_document_map,
     reading_copy,
 )
-from nexus.services.consumption import service as consumption_service
+from nexus.services.consumption import state
 from nexus.services.resource_graph import reader_targets
 from nexus.storage.client import get_storage_client
 
@@ -88,14 +88,14 @@ def get_reader_state(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
 ) -> Data[ReaderCursorSnapshot]:
-    return Data(data=consumption_service.get_reader_cursor(db, viewer.user_id, media_id))
+    return Data(data=state.get_reader_cursor(db, viewer.user_id, media_id))
 
 
 @router.put("/media/{media_id}/reader-state")
 def put_reader_state(
     media_id: UUID, payload: CursorWrite, viewer: Annotated[Viewer, Depends(get_viewer)]
 ) -> Data[ReaderCursorSnapshot]:
-    return Data(data=consumption_service.put_reader_cursor(viewer.user_id, media_id, payload))
+    return Data(data=state.put_reader_cursor(viewer.user_id, media_id, payload))
 
 
 @router.get("/media/{media_id}/file")

@@ -12,11 +12,12 @@
  * "News" is a sample the server may not have: playing, seeking, a write in flight or failed.
  * Without news this device's position is no newer than the server's, so a play asks the server
  * (another device may have moved or reset it) and an unload writes nothing.
- * The device that hears an end settles it; the server picks what plays next.
+ * The device that hears an end settles it and, once the settle lands, plays the Lectern's next
+ * audio row (`deps.next`, read before the settle) from where the server says it stands.
  */
 
 import { apiFetch, isApiError } from "@/lib/api/client";
-import type { ApiJson } from "@/lib/api/wire";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   registerActivityObserver,
@@ -24,14 +25,6 @@ import {
   type ActivityObserver,
 } from "@/lib/consumption/capture";
 import { publishChange } from "@/lib/api/changes";
-import type {
-  ConsumptionResult,
-  ListeningIn,
-  ListeningPosition,
-  MediaId,
-  NaturalEnd,
-  PlayerDescriptor,
-} from "@/lib/lectern/contract";
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import {
   IDLE_ENGINE_STATE,
@@ -39,15 +32,22 @@ import {
   PLAYER_SKIP_FORWARD_MS,
   type Engine,
   type EngineState,
+  type PlayerDescriptor,
   type PreviewAudioDescriptor,
 } from "@/lib/player/playerRuntime";
 
+type ListeningIn = Schema<"ListeningIn">;
+type ListeningPosition = Schema<"ListeningPositionOut">;
+
 export interface BrowserEngineDeps {
   settle(
-    input: NaturalEnd & { clientMutationId: string },
-  ): Promise<ConsumptionResult>;
+    mediaId: string,
+    body: Schema<"NaturalEndIn">,
+  ): Promise<"Settled" | "Superseded" | "Gone">;
+  /** The audio row after this media's Lectern row; null when it has none. */
+  next(mediaId: string): PlayerDescriptor | null;
   /** The server's descriptor now; null when it does not answer in time. */
-  fresh(mediaId: MediaId): Promise<PlayerDescriptor | null>;
+  fresh(mediaId: string): Promise<PlayerDescriptor | null>;
   deviceClass(): ActivityObservation["deviceClass"];
   onPrevious(): void;
   onNext(): void;
@@ -133,7 +133,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       expected_reset_epoch: current.resetEpoch,
     };
   };
-  const path = (mediaId: MediaId) =>
+  const path = (mediaId: string) =>
     `/api/media/${mediaId}/listening-state` as const;
   const news = (current: Episode) =>
     !audio.ended &&
@@ -243,34 +243,32 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
 
   // ---- natural end ----
   const settle = async (current: Episode, mine: number) => {
-    const clientMutationId = crypto.randomUUID();
+    const mediaId = current.descriptor.media_id;
+    const next = deps.next(mediaId);
     // Keep the event's epoch even while its own prior heartbeat settles. That acknowledgement
     // may have completed the episode; an intervening unread/reset still supersedes this end.
     const terminalListening = listening(current);
     await current.writing;
     if (!state.synced) {
-      const fresh = await deps.fresh(current.descriptor.media_id);
+      const fresh = await deps.fresh(mediaId);
       if (fresh?.reset_epoch === terminalListening.expected_reset_epoch)
         current.overrideRevision = fresh.consumption_override_revision;
     }
-    const input = {
-      clientMutationId,
-      mediaId: current.descriptor.media_id,
-      terminalListening,
-      expectedConsumptionOverrideRevision: current.overrideRevision,
+    const body = {
+      terminal_listening: terminalListening,
+      expected_override_revision: current.overrideRevision,
     };
+    // A resend that already landed answers Settled too (the server recognises it).
     for (let attempt = 0; ; attempt += 1) {
       try {
-        const result = await deps.settle(input);
+        const outcome = await deps.settle(mediaId, body);
         if (mine !== generation) return;
         set({ synced: true });
-        const next =
-          result.nextItem !== null
-            ? result.nextItem.activation
-            : null;
-        if (result.outcome === "Done" && next?.kind === "FooterAudio") {
-          await engine.load(next.descriptor);
-        }
+        if (outcome !== "Settled" || next === null) return;
+        // The Lectern's copy of the row is as old as its last read: the server decides where
+        // the next episode starts, as for any other play.
+        const fresh = await deps.fresh(next.media_id);
+        if (mine === generation) await engine.load(fresh ?? next);
         return;
       } catch (error) {
         if (handleUnauthenticatedApiError(error) || mine !== generation) return;
@@ -615,12 +613,6 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       }
       adoptInto(current, fresh);
       current.fenced = false;
-      set({ error: null });
-    },
-    async adopt(mediaId, position) {
-      if (episode?.descriptor.media_id !== mediaId) return;
-      adoptInto(episode, position);
-      episode.fenced = false;
       set({ error: null });
     },
     async dismiss() {

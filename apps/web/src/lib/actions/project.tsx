@@ -24,11 +24,11 @@ import {
   learnDossier,
 } from "@/lib/dossiers/dossierApi";
 import { recoverMedia, requestSourceRefresh } from "@/lib/imports/api";
+import { markUnread, resetProgress } from "@/lib/consumption/state";
 import {
-  assumeLecternItemId,
-  assumeMediaId,
-  playerDescriptorFromWire,
-} from "@/lib/lectern/contract";
+  placeOnLectern,
+  removeFromLectern,
+} from "@/lib/lectern/lectern";
 import { deleteLibrary } from "@/lib/libraries/api";
 import { deleteMedia } from "@/lib/media/mediaLibraries";
 import {
@@ -107,8 +107,6 @@ export function projectResourceActions(
 ): ActionDescriptor[] {
   const { ref, activation } = facts;
   const id = ref.slice(ref.indexOf(":") + 1);
-  const mediaId = assumeMediaId(id);
-  const { lectern } = ctx;
   // A verb acts from the pane active when it runs.
   const originPaneId = () => ctx.workspace().state.active_primary_pane_id;
   const activate = (
@@ -118,13 +116,14 @@ export function projectResourceActions(
       .workspace()
       .activateWorkspaceTarget({ ...request, originPaneId: originPaneId() });
 
-  const lecternBlocked = (adding: boolean): BlockedReason | undefined => {
-    const { resource } = lectern;
-    if (resource.status === "error") return "TemporarilyUnavailable";
-    if (resource.status !== "ready") return "Loading";
-    if (lectern.busy) return "Busy";
-    if (adding && resource.data.atCapacity) return "CapacityReached";
-  };
+  // A lectern write waits for no load or busy state, but not for a failed read either;
+  // an add needs room (the server's count).
+  const lecternBlocked = (adding: boolean): BlockedReason | undefined =>
+    ctx.lectern.failed
+      ? "TemporarilyUnavailable"
+      : adding && ctx.lectern.atCapacity
+        ? "CapacityReached"
+        : undefined;
 
   const make = (
     actionId: ActionId,
@@ -238,27 +237,18 @@ export function projectResourceActions(
     ],
     PlayNext: [
       () => {
-        // After the playing episode's row (when it is another media), else first.
+        // After the playing episode's row (the server puts it first without one).
         const playing = playingEpisode(ctx.player.state)?.media_id;
-        const row = lectern
-          .getCanonicalSnapshot()
-          ?.items.find(
-            (item) =>
-              item.mediaSummary.media_id === playing && playing !== mediaId,
-          );
-        return lectern.placeItems({
-          mediaIds: [mediaId],
-          placement: row
-            ? { kind: "After", itemId: row.itemId }
+        return placeOnLectern(
+          id,
+          playing !== undefined && playing !== id
+            ? { kind: "After", media_id: playing }
             : { kind: "First" },
-        });
+        );
       },
       { blocked: lecternBlocked(true) },
     ],
-    ResetProgress: [
-      () => lectern.resetProgress(mediaId),
-      { blocked: lecternBlocked(false) },
-    ],
+    ResetProgress: [() => resetProgress(id)],
     LibraryPlacement: [
       () => {
         const { anchor, fallback } = focusReturn();
@@ -439,13 +429,13 @@ export function projectResourceActions(
         const loaded =
           player.kind === "Loaded" &&
           player.source.kind === "Episode" &&
-          player.source.descriptor.media_id === mediaId;
+          player.source.descriptor.media_id === id;
         const phase =
           loaded && (player.phase === "Paused" || player.phase === "Ended")
             ? player.phase
             : "Idle";
         // playAudio resumes the loaded episode, or starts at the server's resume point.
-        const descriptor = playerDescriptorFromWire(action.player_descriptor);
+        const descriptor = action.player_descriptor;
         return make(
           "Playback",
           blocked,
@@ -459,12 +449,10 @@ export function projectResourceActions(
         return make(
           "Consumption",
           blocked,
-          async () => {
-            if (finished) return lectern.setUnread(mediaId);
-            const before = lectern.getCanonicalSnapshot() ?? { items: [] };
-            const { finishId } = await lectern.ensureMediaFinished(mediaId);
-            ctx.offerCompletionUndo({ mediaId, before, finishId, done: false });
-          },
+          () =>
+            finished
+              ? markUnread(id)
+              : ctx.finish(id, { leaveLectern: false }),
           {
             state: episode
               ? finished
@@ -474,7 +462,6 @@ export function projectResourceActions(
                 ? states.DocumentFinished
                 : states.DocumentIncomplete,
             checked: finished,
-            blocked: lecternBlocked(false),
           },
         );
       }
@@ -511,10 +498,10 @@ export function projectResourceActions(
       case "LecternMembership": {
         const itemId = action.lectern_item_id;
         const states = ACTION_CATALOG.LecternMembership.states;
-        // An unacknowledged add owns its frozen command: the menu checks it
-        // instead of sending another (fresh membership facts cannot settle it).
+        // An unanswered add owns its request: the menu checks it instead of
+        // sending another (fresh membership facts cannot settle it).
         const request =
-          itemId === null ? lectern.ensureRequests.get(mediaId) : undefined;
+          itemId === null ? ctx.lectern.adds.get(id) : undefined;
         if (request) {
           const unconfirmed = request.kind === "Unconfirmed";
           return {
@@ -536,8 +523,8 @@ export function projectResourceActions(
           blocked,
           () =>
             itemId === null
-              ? lectern.ensureItem({ mediaId, title: facts.label })
-              : lectern.removeItem(assumeLecternItemId(itemId)),
+              ? ctx.lectern.add({ mediaId: id, title: facts.label })
+              : removeFromLectern(id),
           {
             state: itemId === null ? states.Absent : states.Present,
             checked: itemId !== null,

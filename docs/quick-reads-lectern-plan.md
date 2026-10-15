@@ -13,7 +13,7 @@ quick reads answers “what can i finish soon?”; membership is independent.
 - direct add retains the row; opening never enqueues. migrate all user-facing
   adds to ensure-membership, with truthful recovery, exact capacity and reactivation.
 - defer suggestions’ [focus](tickets/suggestion-add-can-reclaim-moved-focus.md)
-  and [refill](tickets/suggestion-add-refetch-replaces-stable-survivors.md) defects.
+  and refill (since resolved: the consumption reauthor reads suggestions once per activation) defects.
   adapt acceptance, recovery and capacity admission; retain current focus/refill
   behavior.
 - keep unrelated edits available after an uncertain attempt. preserve existing
