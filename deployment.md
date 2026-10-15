@@ -104,6 +104,18 @@ agree with the source SHA, and uploads one artifact
 `nexus-backend-release-<sha>` containing `candidate-manifest.json` (schema 3):
 the two image digests and the expected Alembic revision.
 
+before creating a builder or writing the deploy key, publication requires at
+least 8 gib free at the actual docker data root and runner temp directory. this
+budget allows the observed 3.5 gb build state, 2.05 gb of runtime images and
+roughly 3 gb of additional scratch and runner output; the build-state measurement
+is a lower bound, so this is an admission floor, not a guaranteed peak under
+concurrent host writes. after both builds, the workflow removes only its own
+builder and cache before pulling the published images. build summaries and
+local build-record export are disabled; image provenance and sboms remain.
+insufficient space refuses publication without pruning other workloads. recover
+capacity deliberately, then publish a fresh source commit under the same
+first-attempt rule. qualify the budget against the actual successor publication.
+
 The release resolves that artifact through `gh`, requires exactly one unexpired
 copy, and requires its workflow run to be a `push` to `main` at that exact SHA
 with `conclusion == success` and `run_attempt == 1`. It then re-proves the OCI
