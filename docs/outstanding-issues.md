@@ -421,7 +421,6 @@ unexpected timeouts. See
 - [open] epub navigation · 2026-10-14 source review · three declared epub 3 books have ncx contents but no nav document; proposed toc losses are excluded from repair: [ticket](tickets/reader-repair-epub3-missing-nav.md).
 - [open] apparatus ordering · 2026-10-15 source review · target keys invert nested source lists; exact cosmic composition preserves supported ordering, shared defect deferred: [ticket](tickets/apparatus-source-order-inverts-nested-notes.md).
 - [open] epub note boundaries · 2026-10-15 source review · both kjv proposals merge separate authored glosses; unsafe proposals remain unapplied pending a shared extraction fix: [ticket](tickets/epub-multiple-notes-share-whole-paragraph-body.md).
-- [open] retained source · 2026-10-14 rehearsal · four previously verified epub originals now return NoSuchKey at their recorded paths; current source ownership/lifecycle is unreconciled: [ticket](tickets/epub-original-missing-after-source-audit.md).
 - [open] epub note materialization · 2026-10-15 source review · essays proposal omits an authored continuation; whole-book repair remains unapplied pending a shared extraction fix: [ticket](tickets/epub-materialization-drops-note-continuation.md).
 - [open] reader maintenance · 2026-10-14 plan review · inspection exposes changed apparatus keys but lacks full diffs and separate projection hashes for review and uncertain-commit reconciliation: [ticket](tickets/reader-repair-inspection-lacks-complete-projection-evidence.md).
 
