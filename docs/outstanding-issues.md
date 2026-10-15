@@ -33,6 +33,11 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [open] local verification / docker · 2026-10-14 · runtime recovered after read-only filesystem; broader host cause remains unverified: [ticket](tickets/docker-desktop-read-only-filesystem-blocks-qualification.md).
+
+- [deferred] libraries / mobile presentation · 2026-10-15 · owner requested merge/cleanup before physical keyboard proof; follow-up remains: [ticket](tickets/libraries-dialog-physical-keyboard-unverified.md).
+- [open] nexus / library creation · 2026-10-14 · pending completion can overtake a newer interaction: [ticket](tickets/nexus-library-create-completion-outlives-page.md).
+- [open] nexus / library replay · 2026-10-14 · whitespace-only edits replace an uncertain create identity: [ticket](tickets/nexus-library-retry-whitespace-changes-identity.md).
 - [open] deployment / postgres maintenance · 2026-10-15 platform restack · the 64 MiB default /dev/shm fails a parallel VACUUM DiskFull under the 512 MiB cap; autovacuum is unaffected: [issue](issues/postgres-shm-blocks-parallel-maintenance.md).
 - [open] local development / storage · 2026-10-15 · macbook storage remains near full after a shared docker outage: [ticket](tickets/macbook-docker-storage-headroom.md).
 - [open] feedback / accessibility · 2026-10-15 toolbar qualification · a failure notice compresses enlarged text into fragments at 320px: [ticket](tickets/feedback-notice-compresses-enlarged-text.md).

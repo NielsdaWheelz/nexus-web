@@ -172,3 +172,23 @@ is a resource action of media and shows, separate from Share. See
 Library Dossier is one binding of the Universal Dossier engine keyed by the
 library subject and audience: membership is its read and generation boundary.
 Its citations are `resource_edges` from `artifact_revision:<id>`.
+
+## libraries index creation
+
+the index publishes `Libraries.Create` through the pane header. its compact
+dialog belongs to the pane visit, independently of list loading, filtering or
+invitations. acknowledged foreground success opens the library in the same
+pane; back restores filter, sort and collection position.
+
+submission freezes one uuid and trimmed name. close hides sending work and
+revokes automatic navigation; reopening does not re-arm it. uncertain delivery
+keeps that command until explicit same-id replay acknowledges it. visit memory
+retains identity through pane switching/back, without owning the departed
+component's promise. reload and permanent visit disposal use list inspection
+and live repair. separate creation surfaces remain independent.
+
+`lib/libraries/api.ts` checks response identity before publishing the acknowledged
+change. publication survives presentation departure; departed observers cannot
+navigate or overwrite the current visit. the [creation plan](../libraries-creation-plan.md)
+owns content; the [verification receipt](../libraries-creation-verification.md)
+records qualification and the deferred physical keyboard check.

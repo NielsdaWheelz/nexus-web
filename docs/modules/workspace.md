@@ -305,8 +305,9 @@ response reports the command error and leaves the view for refresh; the browser
 neither retries the delete nor reads a commit witness.
 
 Desktop and mobile primary headers keep stable Back and Forward positions,
-expose exactly one **More** trigger when contextual commands exist, and render
-the optional typed companion action after it. Search/Return, Refresh, route Share,
+render the body's optional `PanePrimaryAction` before exactly one **More** trigger
+when contextual commands exist, and render the optional typed companion action
+after it. Search/Return, Refresh, route Share,
 published view commands, and canonical resource actions appear in that order;
 empty groups disappear. Route Share is omitted for a resource pane because its
 canonical plan owns Share. A single marker on More represents hidden status.
@@ -321,7 +322,15 @@ its existing commands, composition, refs and focus policy.
 Every primary identity projection uses one 60px track. The mobile safe area is
 additive.
 
-The sole promoted action is the typed companion action. `PaneShell` derives it
+`PaneChrome.primaryAction` is one command with an id, full accessible label,
+short visible label, icon and existing `onSelect({ triggerEl })` contract.
+the body owns its availability and behavior; the shell only projects it.
+desktop renders a 32px ghost button, with icon and short label above 479px pane
+width and a square icon-only button at 479px or below. mobile uses its 48px bar button.
+the libraries index publishes `Libraries.Create`; it opens or resumes that
+visit's creation dialog without depending on collection loading or filtering.
+
+the typed companion action remains separate. `PaneShell` derives it
 (`companionAction` in `Companion.tsx`) iff the body publishes a Companion, and
 it is the only source of its name (`Inspector`), `PanelRight` icon and disclosure
 state. both headers render its decorative 20px glyph with the stable accessible
@@ -685,7 +694,11 @@ landmark). Wheel, touch, pointer and scroll keys cancel a pending restore.
 Visit data is written on every commit and tagged with its routeKey, so a replace
 to another route never restores stale data; a list's snapshot carries the change
 stamp it was read under, and a return rereads when the stamp moved
-(architecture §8.12). `usePaneScrollRetention` holds the live offset across a
+(architecture §8.12). `usePaneVisitDataWriter` records an immutable snapshot
+synchronously before a write or navigation can outlive its presentation. its
+stable function uses the mounted visit's latest committed route key; callers
+own delivery lifetime and stop writing after departure. it adds no task owner
+or durable storage. `usePaneScrollRetention` holds the live offset across a
 same-path view swap. The scrollport registers its route content
 (`usePaneReturnScrollport`'s `contentRef`), so the anchor search starts past
 the stationary query controls. Reader, Chat transcripts, and Atlas keep their separate

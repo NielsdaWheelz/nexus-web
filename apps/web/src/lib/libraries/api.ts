@@ -59,14 +59,21 @@ export function getLibrary(id: string, signal?: AbortSignal) {
   return data<Library>(libraryPath(id), signal);
 }
 
-export async function createLibrary(input: {
-  readonly id: string;
-  readonly name: string;
-}): Promise<Library> {
+export async function createLibrary(
+  input: { readonly id: string; readonly name: string },
+  signal?: AbortSignal,
+): Promise<Library> {
   const response = await apiFetch<{ data: Library }>("/api/libraries", {
     method: "POST",
     body: JSON.stringify(input),
+    signal,
   });
+  if (response.data.id !== input.id) {
+    // justify-defect: this acknowledgement must name the command's library.
+    throw new Error(
+      `Create library response id ${JSON.stringify(response.data.id)} does not match requested library ${JSON.stringify(input.id)}`,
+    );
+  }
   publishChange("Libraries");
   return response.data;
 }
