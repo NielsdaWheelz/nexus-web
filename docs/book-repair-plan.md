@@ -1,14 +1,20 @@
 # retained-book repair plan
 
 status: implementation in prs [#608](https://github.com/NielsdaWheelz/nexus-web/pull/608),
-[#609](https://github.com/NielsdaWheelz/nexus-web/pull/609) and
-[#613](https://github.com/NielsdaWheelz/nexus-web/pull/613), rebased onto cleanup
-main `43433c845d7b51d94ece4ffcb83db2434735a23d`. the merge freeze ended
-2026-10-15. earlier 0278 proofs remain historical: the combined candidate needs
-fresh restored-database qualification at 0283. changed-region index admission
-remains unproved; article inspection also exposed eager storage construction,
-whose correction passes an explicit factory and opens storage only for epubs.
-production repair and consumer acceptance remain NOT_RUN.
+[#609](https://github.com/NielsdaWheelz/nexus-web/pull/609),
+[#613](https://github.com/NielsdaWheelz/nexus-web/pull/613) and
+[#619](https://github.com/NielsdaWheelz/nexus-web/pull/619). cleanup main advanced
+again to `cd0e4304203816687f0afd443b36c5eb9552646a`, including migrations
+0284–0286 and changes to configuration, storage and media publication. rebase
+and current qualification are pending. the restored backup passed 0279–0283;
+its 0283 baseline is independently accepted. that candidate completed 241
+contributor inspections and 30 reader inspections; 465 reader inspections were
+held before invocation on discovering the new main. four later deletions are
+accounted separately. the shared read-only preservation bracket still needs
+closing; old proofs do not qualify the new candidate. production repair and
+consumer acceptance remain NOT_RUN. the separate
+[native consumption cutover](tickets/android-consumption-cutover-mismatch.md)
+also needs correction before the next phone/backend release.
 owner decisions settled 2026-10-14. planning base: `75b17c0301be59da4a45dec8b35ab97d998e9199`.
 planning-time production: `665e7b3af03282d37ac1a2aac3c6589e2a0f5932`, schema 0277.
 recheck identities before execution. this work does not gate the usable release.
@@ -282,7 +288,7 @@ remains separate.
 | b: finish #584 | `services/reader_navigation_repair.py`; strict enrichment, complete exception removal and full projection evidence; navigation/note content designer. compose the required storage-factory call in `ops/reader_navigation_repair.py` after a's typed refusal change |
 | c: source audit; conditional third pr | `python/scripts/repair_epub_contributors.py`, `services/epub_contributor_repair.py`; existing `contributor_writes.py` only if checked-plan materialization requires it. source/credit/recovery content designer |
 | c: recovery correction | `services/media_source_ingest.py`; one diagnosed stored-epub admission through current source/job/history owners, separate from the credit pr |
-| coordinator | this plan, runbook, private scope/receipts, tickets and integration; sole book production write owner |
+| coordinator | this plan, runbook, private scope/receipts, tickets and integration; next canonical rollout, fresh backup and sole book production write owner |
 
 service/ops paths above are under `python/nexus/`. no shared-file parallel edits.
 two initial code prs; the source audit runs independently. integrate both,

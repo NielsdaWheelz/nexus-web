@@ -1,6 +1,6 @@
 # title-page containers override cross-document publisher divisions
 
-status: open; three whole-book repairs unsafe, not applied
+status: open; four historical whole-book repairs unsafe, not applied
 origin: 2026-10-15 book-repair retained-source review, operator `150328b65`
 area: epub section ownership and semantic extents
 
@@ -67,6 +67,27 @@ independent `c-sources/cf26-authored-part-independent-review.json`, sha256
 the original source, five admitted members and complete final proposal are
 bound. its separately proved note bodies do not authorize this hierarchy loss.
 
+media `3d8664d1-2d8d-451f-be13-b689ce94c664` supplies a collection-scope
+failure. retained contents lists *letters to a young poet*, its ten dated
+letters, then the separate *letter from the young worker*. the collection's
+local `section` contains only its 23-character title. the proposal clips its
+extent from `7:0–14:10437` to `7:0–7:23`, while retaining all ten dated letter
+destinations as its children at fragments 8–17. their 67,085 characters now
+fall beyond the asserted parent end. the prior collection extent was already
+incomplete and is not endorsed; an embedded sonnet and the second work's
+scope remain unadjudicated. stored text and child destinations survive.
+
+the exact retained contents, twelve title/body contexts and complete historical
+proposal are bound by `a-maintenance/navigation3d-title-scope-review-v2.json`,
+sha256 `f28a929a6ee631afcfd7e39f068c06bfb669c0b8f4863cfedc4bbcfd49f24d8f`.
+source sha256 `098b23a8d62122d1fc751542b2578a9261df54679fb71c2e9cca7b6f8693636c`;
+proposal sha256 `b758dd209819693be8d0bf8954f25b439f6737deb3a3eac867d4ed2c00de5810`.
+independent review: `c-sources/a-3d-title-scope-independent-review.json`, sha256
+`f7a17d0dc73a8e6f1dfa71d4e98e28da3907ceee46cd57d163736e2ddb5e94f9`.
+original navigation was not acquired. this is
+source-150/schema-0278 evidence; fresh integrated-stack reproduction is
+required before carrying the refusal into a new qualification.
+
 `python/nexus/services/epub_structure.py:700` assigns the local container end
 to the merged owner. `reader_structure.py:112` uses that end for the reading
 division; `epub_read.py:128` exposes it as the section extent. separately,
@@ -79,7 +100,8 @@ the bounded repair campaign.
 
 acceptance: the real-source full proposal preserves the three authored body
 scopes, cyberiad's twelve authored part memberships and cf26's three proved
-part memberships, with all section
+part memberships, and the named letters collection's ten source-proved child
+scopes, with all section
 identities and destinations required by the reviewed contract. also verify a genuine container that ends before the next
 publisher division. qualify complete installed extents and reader consumers
 before applying these books; other proposal fields remain separately reviewed.

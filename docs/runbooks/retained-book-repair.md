@@ -1,16 +1,19 @@
 # retained-book maintenance
 
-status: rebased onto cleanup main 43433c845; fresh 0283 qualification pending.
-production repair NOT_RUN. previous 0278 runs prove only their recorded candidates.
+status: rebasing onto cleanup main cd0e430420 (schema 0286); qualification pending.
+production repair NOT_RUN. previous 0278 and partial 0283 runs prove only their
+recorded candidates. close the partial 0283 read-only bracket before continuing
+migrations; it does not imply completion of the held reader audit.
 contract: [book-repair plan](../book-repair-plan.md). this runbook owns execution;
 the plan owns scope, allowed changes, proofs and acceptance.
 
 ## ownership and evidence
 
-one coordinator owns production writes. the reader, contributor and recovery
-lanes inspect independently; they do not compete for release or device control.
-wait for the current release owner to hand off settled runtime/device identities
-before live consumer acceptance. no resize, reboot or brave calls.
+the book coordinator owns the next canonical rollout, fresh backup and book
+production writes, as authorized on 2026-10-15. the reader, contributor and
+recovery lanes inspect independently; they do not compete for release or
+device control. bind actual settled runtime/device identities after that
+release before live repair acceptance. no resize, reboot or brave calls.
 
 private campaign root:
 `/Users/nnandal/Documents/code/nexus-web-campaign-artifacts/2026-10-14/book-repair`.
