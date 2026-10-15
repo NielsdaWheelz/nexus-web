@@ -83,6 +83,12 @@ def is_text_document_ready(
     return is_document_status_ready(processing_status)
 
 
+def publication_readable(kind: str, *, has_file: bool, publication_ready: bool) -> bool:
+    """A document is readable from its ready reader publication (``ready_publication_rows_sql``:
+    never inferred from an uploaded file); a pdf also needs its file."""
+    return publication_ready and (kind != "pdf" or has_file)
+
+
 def reading_capabilities(
     kind: str,
     *,
@@ -94,15 +100,12 @@ def reading_capabilities(
 ) -> tuple[bool, bool, bool]:
     """``(can_read, can_highlight, can_quote)``.
 
-    A document reads, highlights and quotes from its ready reader publication
-    (``ready_publication_rows_sql``: never inferred from an uploaded file); a pdf also needs
-    its file, and its quotes its complete text. A transcript is readable when ready or
-    partial with some coverage.
+    A document reads, highlights and quotes while its publication is readable
+    (``publication_readable``); a pdf's quotes also need its complete text. A transcript is
+    readable when ready or partial with some coverage.
     """
     if kind in _TRANSCRIPT_KINDS:
         ready = _transcript_readable(transcript_state, transcript_coverage)
         return ready, ready, ready
-    if kind == "pdf":
-        can_read = has_file and publication_ready
-        return can_read, can_read, can_read and pdf_quote_text_ready
-    return publication_ready, publication_ready, publication_ready
+    can_read = publication_readable(kind, has_file=has_file, publication_ready=publication_ready)
+    return can_read, can_read, can_read and (kind != "pdf" or pdf_quote_text_ready)
