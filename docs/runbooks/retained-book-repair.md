@@ -67,6 +67,12 @@ frozen id, including refusals. review every complete proposal before selecting
 apply. rehearse the selected set, transactional refusal/uncertainty controls,
 full protected-state comparison and fresh unchanged inspection/apply. keep
 failed proofs and missing results visible.
+every selected item gets full apply/persisted-projection verification, fresh
+inspection and an unchanged apply using its fresh fence. prove old-fence replay
+rejection on one changed epub and one changed article; record those exact ids.
+that shared rejection path does not need repetition for every book. this trades
+per-book replay coverage for fewer invocations without reducing per-item state
+or idempotence checks.
 the full portrait clone snapshot uses a separately reviewed 90-second statement
 budget, with the same 180-second outer deadline and read-only capability. its
 30-second sorted-hash attempt and 180-second primary-key-order attempt failed;
