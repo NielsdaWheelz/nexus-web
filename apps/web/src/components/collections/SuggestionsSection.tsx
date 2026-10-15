@@ -28,9 +28,8 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
   returnScope: string;
 }) {
   const lectern = destination.kind === "Lectern";
-  const { ensureRequests, resource: lecternResource, onCanonicalInstall, getCanonicalSnapshot } = useLectern();
-  const atCapacity = lectern && (suggestions.state?.capability === "LecternFull" ||
-    (lecternResource.status === "ready" && lecternResource.data.atCapacity));
+  const { ensureRequests, onCanonicalInstall, getCanonicalSnapshot } = useLectern();
+  const atCapacity = lectern && suggestions.state?.capability === "LecternFull";
   const [adding, setAdding] = useState<string | null>(null);
   const [adopting, setAdopting] = useState(false);
   const [notice, setNotice] = useState<{ text: string; requestId?: string } | null>(null);
@@ -71,7 +70,7 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
   const readFailureError = suggestions.readError ?? suggestions.observationError;
   const waiting = suggestions.adopted === null && !readFailure && suggestions.admissionError === null && !needsRepair;
   const progress = waiting ? suggestions.state === null ? "loading suggestions…" : "finding suggestions…"
-    : preparing ? "updating suggestions…" : null;
+    : preparing ? suggestions.adopted === null ? "finding suggestions…" : "updating suggestions…" : null;
   const firstCompletion = suggestions.adopted !== null;
   const availableId = suggestions.staged?.id ?? null;
   useEffect(() => {

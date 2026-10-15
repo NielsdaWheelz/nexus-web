@@ -20,6 +20,11 @@ interface AdoptedPool {
   displayed: string[];
 }
 
+interface ReadEvidence {
+  includedPublicationId?: string;
+  validatedPoolId?: string;
+}
+
 interface SuggestionsView {
   state: SuggestionState | null;
   adopted: AdoptedPool | null;
@@ -138,7 +143,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
     function failed(error: unknown, area: "Read" | "Observation", input?: SuggestionRefresh) {
       if (isAbortError(error) || controller.signal.aborted) return;
       if (handleUnauthenticatedApiError(error)) return withdraw();
-      if (isApiError(error) && (error.status === 403 || error.status === 404)) return withdraw();
+      if (isApiError(error) && !isSameSystemApiDefect(error) && (error.status === 403 || error.status === 404)) return withdraw();
       if (isApiError(error) && !isSameSystemApiDefect(error)) {
         commit((value) => input
           ? { ...value, admissionError: { input, error } }
@@ -157,8 +162,9 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
       setDefect({ error });
     }
 
-    function installState(state: SuggestionState) {
+    function installState(state: SuggestionState, evidence: ReadEvidence = {}) {
       observationVersion += 1;
+      const inputsChanged = current.current.state?.inputRevision !== state.inputRevision;
       commit((value) => ({
         ...value, state,
         ...(state.capability === "NotApplicable" ? { adopted: null, staged: null } : {}),
@@ -168,11 +174,20 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
           ? null : value.admissionError,
       }));
       armTimer();
+      const value = current.current;
+      const latest = state.latest.kind === "Present" && state.latest.value.id !== evidence.includedPublicationId &&
+        state.latest.value.id !== value.adopted?.publication.id && state.latest.value.id !== value.staged?.id;
+      const viewPool = inputsChanged && value.adopted !== null && value.adopted.publication.id !== evidence.validatedPoolId;
+      if (latest || viewPool) {
+        // HTTP can reveal new inputs or a publication before its stream event.
+        // Every observation owns discovery; hydration proves only its own pool.
+        void queue({ latest, view: viewPool });
+      }
     }
 
-    function readState(response: { observedAt: string; state: SuggestionState }, version: number) {
+    function readState(response: { observedAt: string; state: SuggestionState }, version: number, evidence: ReadEvidence = {}) {
       clock.current = { serverTime: Date.parse(response.observedAt), receivedAt: performance.now() };
-      if (version === observationVersion) installState(response.state);
+      if (version === observationVersion) installState(response.state, evidence);
       if (clearAdmissionAfterRead) {
         clearAdmissionAfterRead = false;
         commit((value) => ({ ...value, admissionError: null }));
@@ -189,12 +204,16 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
       const version = observationVersion;
       const response = await getSuggestions(path, controller.signal);
       if (controller.signal.aborted) return;
-      readState(response, version);
+      readState(response, version, response.publication.kind === "Present" ? {
+        includedPublicationId: response.publication.value.id,
+        validatedPoolId: response.publication.value.id,
+      } : {});
       const authoritative = current.current.state;
       if (authoritative && (response.state.inputRevision < authoritative.inputRevision ||
           (response.state.latest.kind === "Present" && authoritative.latest.kind === "Present" &&
             response.state.latest.value.id !== authoritative.latest.value.id))) {
         pendingLatest = true;
+        if (autoAt !== null) pendingAutoAdopt = autoAt;
         return;
       }
       commit((value) => {
@@ -222,7 +241,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
       const version = observationVersion;
       const response = await viewSuggestions(path, selected.items.map((item) => item.target.ref), controller.signal);
       if (controller.signal.aborted) return;
-      readState(response, version);
+      readState(response, version, { validatedPoolId: selected.id });
       if (current.current.state && response.state.inputRevision < current.current.state.inputRevision) {
         if (adopting) {
           pendingAdoption = true;
@@ -365,13 +384,8 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
         onEvent: (event) => {
           if (controller.signal.aborted || session !== observationSession) return;
           if (event.kind === "Withdrawn") return withdraw();
-          const previous = current.current.state;
           installState(event.state);
           commit((value) => ({ ...value, observationError: null, observationInterrupted: false }));
-          const latestChanged = previous?.latest.kind !== event.state.latest.kind ||
-            (previous?.latest.kind === "Present" && event.state.latest.kind === "Present" && previous.latest.value.id !== event.state.latest.value.id);
-          const inputsChanged = previous?.inputRevision !== event.state.inputRevision;
-          if (latestChanged || inputsChanged) void queue({ latest: latestChanged, view: inputsChanged });
         },
         onError: (error) => {
           if (session === observationSession) failed(error, "Observation");
