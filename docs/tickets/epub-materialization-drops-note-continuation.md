@@ -1,6 +1,6 @@
 # external note materialization drops an authored continuation
 
-status: open; six whole-book repairs unsafe, not applied
+status: open; eight whole-book repairs unsafe, not applied
 origin: 2026-10-15 book-repair source review, operator `150328b65`
 area: epub apparatus body materialization
 
@@ -62,6 +62,28 @@ sha256 `ba76c18e93d15a9c1c66b0d06d391f5e35f66bb47f03297fd7735ae42d6cf334`.
 earlier local assumptions about an empty named anchor are retained as proof
 failures; the corrected checks bind its exact adjacent reciprocal link.
 
+two more fixed intervals show the same loss:
+
+- `24e67f54-353e-4791-8db5-72c935a4bf9c`,
+  `text/part0035.html#iPIVC03_5`: note 5's leading paragraph ends with a
+  colon, followed by a 1,072-character block quotation before independently
+  reciprocal note 6. the quotation's only anchor is an empty page marker.
+- `11980da0-9758-40ab-902e-4bd1ea0b77e7`,
+  `OEBPS/Text/notes.html#N13_n64`: a 157-character unnumbered note
+  paragraph follows note 64 before the next explicit titled notes division.
+  the unrelated first note after that heading is outside the selected-pair
+  census and carries no new reciprocal-proof claim.
+
+both complete bodies are collected by the boundary owner and then reduced
+to their leading paragraphs by the materializer. evidence:
+`b-reader/two-further-note-continuation-review-v2/receipt.json`, sha256
+`114976c612b70d827d0da514f044abb1100890f952cc77d2e0f8334600d91960`;
+independent `c-sources/two-further-continuations-independent-review.json`, sha256
+`2afc56aee9263aa8f492c83483206fc38c40cba064658fb00054dfed977feada`.
+the second possible quotation in 24e67 and other proposed fields remain
+unadjudicated. the earlier next-note census assumption is retained as a local
+proof failure; no extraction rerun or broader source reading was performed.
+
 in `python/nexus/services/html_apparatus.py`, `_inferred_note_html` collects
 continuation paragraphs, but `_materialize_external_targets_in_document`
 recovers the leading paragraph and rebuilds the body from that paragraph alone.
@@ -69,7 +91,7 @@ preserve the verified complete body at this owner. retain refusal for unproved
 boundaries; do not broaden inference, special-case this book or alter retained
 fragments. this shared extraction fix is outside the bounded repair campaign.
 
-acceptance: real-source previews preserve every authored paragraph in all six
+acceptance: real-source previews preserve every authored paragraph in all eight
 cases, rich structure, labels, reciprocal links and valid retained locators.
 qualify each full book proposal and normal consumers before applying it. the
 essays positive raw-fragment bridge remains not run because it cannot make

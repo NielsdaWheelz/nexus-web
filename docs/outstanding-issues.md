@@ -30,7 +30,7 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 - [open] epub / section coalescence · 2026-10-15 book-repair source review · three withheld proposals retire bounded divisions into replacements with absent or source-false extents: [ticket](tickets/epub-coalescence-drops-bounded-reading-divisions.md).
-- [open] epub / semantic extents · 2026-10-15 book-repair source review · clipping at a parent end turns four unknown nonempty chapter ranges into exact empty extents: [ticket](tickets/epub-parent-boundary-creates-empty-chapter.md).
+- [open] epub / semantic extents · 2026-10-15 book-repair source review · clipping at a parent end gives seven nonempty divisions false empty extents across two books: [ticket](tickets/epub-parent-boundary-creates-empty-chapter.md).
 - [open] epub / division boundaries · 2026-10-15 book-repair source review · ef739 final-chapter advertising-tail ownership remains unadjudicated; proposed title union preserves the existing range: [ticket](tickets/epub-final-chapter-includes-advertising-tail.md).
 - [open] epub / division boundaries · 2026-10-15 book-repair source review · a new part extent includes 1,339 characters of a separately labelled bibliography; whole proposal stays unapplied: [ticket](tickets/epub-part-range-includes-unmarked-bibliography.md).
 - [open] epub / division authority · 2026-10-15 book-repair source review · a notes divider's proposed nine-child backmatter scope remains unproved; whole proposal stays unapplied: [ticket](tickets/epub-notes-divider-scope-unproved.md).
@@ -428,7 +428,7 @@ unexpected timeouts. See
 - [open] epub navigation · 2026-10-14 source review · three declared epub 3 books have ncx contents but no nav document; proposed toc losses are excluded from repair: [ticket](tickets/reader-repair-epub3-missing-nav.md).
 - [open] apparatus ordering · 2026-10-15 source review · target keys invert nested source lists; exact cosmic composition preserves supported ordering, shared defect deferred: [ticket](tickets/apparatus-source-order-inverts-nested-notes.md).
 - [open] epub note boundaries · 2026-10-15 source review · both kjv proposals merge separate authored glosses; unsafe proposals remain unapplied pending a shared extraction fix: [ticket](tickets/epub-multiple-notes-share-whole-paragraph-body.md).
-- [open] epub note materialization · 2026-10-15 source review · six proposals omit authored note continuations; all remain unapplied pending a shared extraction fix: [ticket](tickets/epub-materialization-drops-note-continuation.md).
+- [open] epub note materialization · 2026-10-15 source review · eight proposals omit authored note continuations; all remain unapplied pending a shared extraction fix: [ticket](tickets/epub-materialization-drops-note-continuation.md).
 - [open] epub note boundary · 2026-10-15 source review · a declined complete-body boundary becomes a strong leading-paragraph target, omitting 88 authored characters; whole book unapplied: [ticket](tickets/epub-declined-note-boundary-becomes-leading-paragraph.md).
 - [open] epub reading ranges · 2026-10-15 source review · local title containers truncate three divisions and erase fifteen source-proved part memberships; three books unapplied: [ticket](tickets/epub-title-container-truncates-publisher-range.md).
 - [open] epub hierarchy · 2026-10-15 source review · heading rank crosses source-proved chapter, reference and work/footer boundaries; fourteen books unapplied: [ticket](tickets/epub-heading-rank-overrides-publisher-root.md).
