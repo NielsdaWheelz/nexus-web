@@ -146,6 +146,12 @@ def compose_tools(
     )
     plans = {}
     for plan_id, tool_ids in contract.PLANS.items():
+        if search is None and plan_id in (
+            "ChatReadAdditiveWrite",
+            "ChatMemoryRead",
+            "ChatMemoryReadSave",
+        ):
+            tool_ids = tuple(tool_id for tool_id in tool_ids if tool_id != "web.search")
         profile = CapabilityProfile(
             id=ProfileId(re.sub(r"(?<!^)(?=[A-Z])", "_", plan_id).lower()),
             grants=tuple(ToolGrant(id=ToolId(tool_id), limits=None) for tool_id in tool_ids),
@@ -252,7 +258,7 @@ async def run_tool(
 ) -> ToolOutput:
     """Run one model call. ``arguments`` is its JSON object, or why the transport refused it."""
 
-    if tool_id not in contract.PLANS[run.plan.id]:
+    if tool_id not in run.plan.tools.profile.grants:
         unavailable = _failure("ToolUnavailable")
         return ToolOutput(None, unavailable, canonical_json_bytes(unavailable).decode())
     binding = run.plan.tools.catalog_view.binding(ToolId(tool_id))
