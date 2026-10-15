@@ -1,0 +1,73 @@
+{
+  "case": "reader-find-returns-to-held-reading-position",
+  "sourceStart": {
+    "head": "367da80e0c1beb1c426f6d2d72201b0733809b50",
+    "servedSourceTreeSha256": "9155f72b1886ccfa42e609903b431f8acd7e1ab9deb77a5db83306f28b27f642",
+    "webDiffSha256": "12cbaffcf51986fbaa3a18b606758822447b9518e3a25fe5516b2ba522ee0272",
+    "fileCount": 1168
+  },
+  "method": "real Firefox wheel input; normal find query; reader-owned return action; rendered paragraph placement and retired public controls",
+  "browser": "148.0.2",
+  "origin": {
+    "identity": "proof paragraph 011.",
+    "unit": "01a13e87-7084-7fdf-83e0-35eb448b84dd",
+    "relativeTop": 146.40000915527344,
+    "paragraphHeight": 120,
+    "scrollTop": 1460,
+    "scrollportTop": 218.8000030517578,
+    "scrollportHeight": 781.2000122070312,
+    "scrollPaddingTop": "48px",
+    "visible": true
+  },
+  "matchedText": {
+    "text": "returnproofdestination",
+    "relativeTop": 47.899993896484375,
+    "height": 23,
+    "visible": true
+  },
+  "destination": {
+    "identity": "proof paragraph 070.",
+    "unit": "01a13e87-7084-7fdf-83e0-35eb448b84dd",
+    "relativeTop": -72.60000610351562,
+    "paragraphHeight": 144,
+    "scrollTop": 10175,
+    "scrollportTop": 248.60000610351562,
+    "scrollportHeight": 751.4000244140625,
+    "scrollPaddingTop": "48px",
+    "visible": false
+  },
+  "displacedOrigin": {
+    "identity": "proof paragraph 011.",
+    "unit": "01a13e87-7084-7fdf-83e0-35eb448b84dd",
+    "relativeTop": -8568.600006103516,
+    "paragraphHeight": 120,
+    "scrollTop": 10175,
+    "scrollportTop": 248.60000610351562,
+    "scrollportHeight": 751.4000244140625,
+    "scrollPaddingTop": "48px",
+    "visible": false
+  },
+  "heldPositionCopy": "reading spot held · Proof chapter\nreading spot held · Proof chapter\nback to your spot\ncontinue reading here\nkeep inspecting",
+  "returned": {
+    "identity": "proof paragraph 011.",
+    "unit": "01a13e87-7084-7fdf-83e0-35eb448b84dd",
+    "relativeTop": 146.40000915527344,
+    "paragraphHeight": 120,
+    "scrollTop": 1460,
+    "scrollportTop": 218.8000030517578,
+    "scrollportHeight": 781.2000122070312,
+    "scrollPaddingTop": "48px",
+    "visible": true
+  },
+  "restoredOffsetDifferencePx": 0,
+  "returnControlsRetired": true,
+  "heldStatusRetired": true,
+  "pass": true,
+  "sourceEnd": {
+    "head": "367da80e0c1beb1c426f6d2d72201b0733809b50",
+    "servedSourceTreeSha256": "9155f72b1886ccfa42e609903b431f8acd7e1ab9deb77a5db83306f28b27f642",
+    "webDiffSha256": "12cbaffcf51986fbaa3a18b606758822447b9518e3a25fe5516b2ba522ee0272",
+    "fileCount": 1168
+  },
+  "sourceStable": true
+}
