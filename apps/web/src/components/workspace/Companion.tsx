@@ -205,7 +205,7 @@ export function companionAction(
     kind: "command",
     id: "resource-inspector-companion",
     label: "Inspector",
-    icon: <PanelRight size={16} aria-hidden="true" />,
+    icon: <PanelRight size={20} aria-hidden="true" />,
     // the controller owns focus return.
     restoreFocusOnClose: false,
     state: expanded

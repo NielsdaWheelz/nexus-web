@@ -77,12 +77,18 @@
   background: var(--accent);
 }
 
-/* Pane chrome's 32px control, taller than Button's sm; pressed outranks
-   Button's ghost hover, whatever the stylesheet order. */
+/* This header owns both axes through Button's existing density contract. */
 .trailing .companion {
-  height: var(--size-md);
+  --pane-control-size: var(--size-md);
 }
 
+@media (any-pointer: coarse) {
+  .trailing .companion {
+    --pane-control-size: var(--size-xl);
+  }
+}
+
+/* Pressed outranks Button's ghost hover, whatever the stylesheet order. */
 .trailing .pressed,
 .trailing .pressed:hover:not(:disabled) {
   background: var(--surface-active);

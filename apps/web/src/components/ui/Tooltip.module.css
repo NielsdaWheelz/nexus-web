@@ -1,0 +1,32 @@
+.surface {
+  position: fixed;
+  z-index: var(--z-popover);
+  inline-size: max-content;
+  padding-block-start: var(--space-2);
+}
+
+.surface[data-side="above"] {
+  padding-block-start: 0;
+  padding-block-end: var(--space-2);
+}
+
+.caption {
+  max-inline-size: min(16rem, 100%);
+  padding: var(--space-1) var(--space-2);
+  border: var(--stroke-hairline) solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@media (forced-colors: active) {
+  .caption {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+}
