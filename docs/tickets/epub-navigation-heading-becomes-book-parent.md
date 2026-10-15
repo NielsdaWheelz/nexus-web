@@ -1,6 +1,6 @@
 # navigation heading becomes a book-wide parent
 
-status: open; existing installed metadata defect, preserved by the proposed repair
+status: open; existing guide defect preserved; separate new contents containment independently confirmed unsafe
 origin: 2026-10-15 book-repair retained-content review, operator `150328b65`
 area: epub reading-division inference
 
@@ -38,8 +38,32 @@ no database mutation or consumer execution establishes a live symptom here.
 the union changes need their own disposition; this record does not approve
 the existing hierarchy or the whole repair.
 
+media `2ce4bf54-f9dd-472e-8005-e8a9582f212d` shows a new effect of the same
+navigation-heading inference. its complete retained contents document at
+fragment 4 has 21 links; all non-link text is the `CONTENTS` heading. one link
+points to the separately headed preface in fragment 5. the candidate newly
+parents that preface and its closing note under the contents h1, and expands
+the contents range from `4:0–5:0` to `4:0–6:0`, across all 6,843 characters
+of the next document. a navigation link does not establish reading-division
+ownership of its target. the preface and note ranges and stored text survive.
+
+this complete proposed regression is bound by
+`a-maintenance/navigation2ce-contents-scope-review-v1.json`, sha256
+`607e511290b7fed578f9eb8dea555cfd9cb1cb9de6862ea61e82797bc4b6d70f`;
+executed fixed helper `9580b329a9c3bfa40ceb988a0c29bc87793e68850189ca4a65ac89364f2280fe`
+passed once with empty stderr. source `017f10daa86f649a67a5eddcb2a86a8d087400745f3f99432593f626e41adb6c`;
+proposal `55cd44a6311419e68714da441ed262e2c01fe349b97e183e42abe0d2ca87f0d9`. exact retained html/text and full-row hashes
+bind the source reading. original navigation was not acquired; this conclusion
+does not require flat publisher-outline parity. other proposed fields remain
+unadjudicated, and no apply or reader consumer was executed. independent
+source and complete-projection review is recorded in
+`c-sources/a2ce-contents-independent-review.json`, sha256
+`65e57edf36a8a4d6719266f51eafca0ccb3b10310cfc2529dd1f152880346ad8`.
+
 acceptance: this real retained/source case produces no routine guide section
 or guide-parented chapter/back-matter divisions. authored links, text,
 chapter identities and legitimate nested divisions remain intact. inspect
 the full proposed metadata and verify normal navigation/reading consumers
-before repairing this existing state.
+before repairing this existing state. the second case keeps the contents
+page bounded to its navigation role and leaves preface/note outside it, while
+preserving the authored links and their destinations.
