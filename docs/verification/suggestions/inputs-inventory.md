@@ -47,7 +47,7 @@ shared helpers flush; the named transaction owner records the change last.
 | system corpus seeding | oracle/corpus.py work transaction: after corpus/library/credit changes. oracle-only reading anchors are not ranker input |
 | system corpus visibility | libraries.py `join_system_library` returns insertion fact; oracle/readings.py records only new membership, after reading/job creation |
 | transcript admission/publication | podcasts/transcription.py request/batch/import/worker owners: after admitted or published transcript effects. status-only running observation excluded |
-| reader repair | reader_navigation_repair.py: after final validation, before commit. source queue repair alone is not a changed ranking input |
+| reader repair | reader_navigation_repair.py: changed apply records once after projection, index work and final validation, before commit; unchanged/refused work records nothing. source queue repair alone is not a changed ranking input |
 | assistant writes and undo | tools/run.py `_complete`: after successful write result/ledger/event publication; tools/assistant_writes.py undo: after the reverted receipt. nested write helpers do not record |
 
 retired source adapters, governance/sharing modules, consumption replay owner, resource-item
@@ -136,10 +136,11 @@ this targeted integration proof does not claim to rerun every historical source 
 
 ## release composition review
 
-composition with main `01db6ad58ca2` adds final invalidation at two operator
-commit owners: fresh stored-epub reprocessing and changed contributor-repair
-apply. response construction and all domain writes precede the counter; settled
-successors, previews, refusals and unchanged reports remain quiet. reader
-navigation repair already records after its final validation. independent source
-review and the unchanged static gate cover these additions; prior live receipts
-do not claim to exercise them. the coordinator owns canonical runtime replay.
+composition with main `05d85a7e486b` adds final invalidation at fresh stored-epub
+reprocessing and changed contributor-repair apply, and retains it only at changed
+reader-repair apply under the new complete projection contract. response
+construction and all domain writes precede the counter; settled successors,
+previews, refusals and unchanged reports remain quiet. reader repair advances
+the revision exactly once on changed apply. independent source review and the
+unchanged static gate cover these additions; prior live receipts do not claim
+to exercise them. the coordinator owns canonical runtime replay.

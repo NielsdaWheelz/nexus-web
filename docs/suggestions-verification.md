@@ -18,11 +18,12 @@ runtime identity was aligned. affected browser interaction, layout and corpus
 paints ran on the final build. receipts retain their actual source identities.
 
 the later [release composition receipt](verification/suggestions/release-composition.json)
-records integration with main `01db6ad58ca2`: preserve both toolbar and suggestions
-imports and add final invalidation at fresh stored-epub reprocessing and changed
-contributor-repair commit owners. independent source review and `./scripts/test`
-cover that delta; no new runtime proof is claimed. the coordinator will qualify
-the exact combined release, including pending book-reader changes.
+records integration with main `05d85a7e486b`: preserve toolbar/suggestions
+composition and book-reader repair contracts; add final invalidation at fresh
+stored-epub reprocessing, changed contributor repair and changed reader repair.
+reader changed apply advances the revision once; unchanged/refused work does not.
+independent source review and `./scripts/test` cover that delta; no new runtime
+proof is claimed. the coordinator will qualify the exact combined release.
 
 the cutover uses snake_case/null wire revision 2 and migration `0287` after
 canonical `0286`. the small local database migrated from empty; the remote copy

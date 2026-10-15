@@ -1,9 +1,9 @@
 {
-  "date_utc": "2026-10-15T17:35:02.023716+00:00",
+  "date_utc": "2026-10-15T17:38:46.741775+00:00",
   "scope": "final source composition for coordinator-owned merge; no new runtime or deployment actions",
   "merge_parents": {
-    "prior_feature": "1e26f273ea7a9fc33fc8a12f8b93a35dcc9d2cbb",
-    "incoming_main": "01db6ad58ca2e40ecc6b2035185bb9f0c0487d8c"
+    "prior_feature": "49e82502bbf18470c471886d8dc3f363556bb624",
+    "incoming_main": "05d85a7e486b9541d572527ba1a2ae09e7a32aa8"
   },
   "prior_live_application": "01297cb151db0e6fe05688f5e4c1d3013e345187",
   "checked_application_file_sha256": {
@@ -14,25 +14,45 @@
     "python/nexus/services/suggestion_changes.py": "aa97beb30ede4628b9f4b3618fd5060628f6b0e19d4b6e61b59a2033c39bf1b2",
     "python/nexus/api/edge.py": "fc77a97ace400bed0d9f566c68dfcde760c37d57991aa5b2a8cf938bf5025cd2",
     "apps/web/src/lib/api/wire.gen.ts": "c0855526ebe2dd4d54fe943046a11a8fc98193a20f6e213199c3188bf96a8a2f",
-    "migrations/alembic/versions/0287_suggestion_publications.py": "514f128497d7401875d8274063399ee508794d80e2d57531a94455bcd16890b1"
+    "migrations/alembic/versions/0287_suggestion_publications.py": "514f128497d7401875d8274063399ee508794d80e2d57531a94455bcd16890b1",
+    "python/nexus/services/reader_navigation_repair.py": "22ed0fb0ddc59c3a5e84a851ab78aee69c7e333ee6c4e780a4ff8fa33a3eb94c",
+    "python/nexus/ops/reader_navigation_repair.py": "5d0c108f4ff7368349619a1bfbfedda6c9d2d95bd65420bed6c3db60bcbfa3fa"
   },
   "changes": [
     "lectern conflict retains both suggestion refresh and toolbar metadata imports; automatic library toolbar composition reviewed",
     "fresh stored-epub reprocess records input change after admission, history and response construction, immediately before commit",
     "changed contributor-repair apply records after identity, credit and alias writes, immediately before commit",
+    "reader repair preserves exact main609 behavior; only the suggestions import and one final changed-apply invalidation are added",
     "duplicate shared docker storage tickets consolidated without closing the unresolved capacity issue"
   ],
   "source_review": {
     "frontend": "suggestions/quick reads remain independent of entry pagination; main count/reset/status contracts preserved",
     "backend": "new source owners invalidate once; settled successors, previews, refusals and unchanged repairs stay quiet",
     "independent_adversarial_review": "passes; no later domain work or nested duplicate commit/record; rollback covers domain writes, revision and notification",
-    "runtime_requalification": "not performed in this merge step; coordinator owns the exact combined canonical replay"
+    "runtime_requalification": "not performed in this merge step; coordinator owns the exact combined canonical replay",
+    "reader_repair": {
+      "relative_to": "05d85a7e486b9541d572527ba1a2ae09e7a32aa8",
+      "suggestions_delta": "exactly two added lines: import and final record_input_change",
+      "changed_apply_revision_delta": 1,
+      "unchanged_revision_delta": 0,
+      "refused_revision_delta": 0,
+      "preserved": [
+        "typed source refusals",
+        "120-second parsing budget",
+        "complete projection and digests",
+        "numeric body proofs",
+        "conditional article reindex"
+      ],
+      "ordering": "replacement, optional index admission and installed-projection validation precede the only revision update; nested owners do not increment",
+      "notification": "pg_notify and revision share the domain publication transaction; failure rolls everything back",
+      "evidence": "independent source review; no new runtime check claimed"
+    }
   },
   "static": {
     "command": "./scripts/test",
     "exit_code": 0,
     "migration_head": "0287",
-    "log_sha256": "6267a3721dc755911b952e474a039dc6a6330294ec8e569df039f7f29b503e7e",
+    "log_sha256": "de257d37b88f6a71cf0ea78e2b1ee515f7a83d28a14aadcf77363954bf4095d2",
     "log_retained": false,
     "later_changes": "documentation only"
   },
@@ -71,14 +91,11 @@
     "release_owner": "book release coordinator",
     "deployment_requirements": "matching api/worker/web plus rebuilt native/extension clients, normal migration controller and verified backup",
     "native_wire_source": "gradle derives NEXUS_WIRE from generated web wire revision; old native builds require replacement",
-    "feature_exclusions": [
-      "selection composer",
-      "library chooser"
-    ],
     "protection_changes": false,
     "runtime_operations": false,
     "deployment_operations": false,
-    "production_operations": false
+    "production_operations": false,
+    "source_scope": "suggestions pr626 only; coordinator separately composes pending feature prs629/631/632 before canonical qualification"
   },
   "cleanup": {
     "prior_temporary_tests_and_services": "deleted/stopped per integration cleanup receipts",
