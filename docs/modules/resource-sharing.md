@@ -48,51 +48,76 @@ Library subjects carry `members` (can the viewer manage them) from
 A link is `{APP_PUBLIC_URL}/s#share=nxshr1_<43>`. The token lives in the URL
 fragment and is stored raw; resolution is equality on that column and depends
 on no key. `/s` sends it only in the `X-Nexus-Share-Token` header of
-credential-free, uncached fetches to `/api/public/resource-share`, whose one
-catch-all BFF route forwards four closed shapes (the share, `document`, `file`,
-`assets/nxpa1_…`) and 404s anything else.
+credential-free, uncached, no-redirect fetches to `/api/public/resource-share`,
+whose one catch-all BFF route forwards four closed shapes (the share,
+`document`, `file`, `assets/[0-9]{1,9}`) and 404s anything else. The PDF's
+bytes ride the same fetch, not pdf.js's own, which would send the viewer's
+cookies: one `bytes=0-` read streams the whole file, and a chunk pdf.js needs
+before the stream reaches it is read by range.
 
 `services/public_resource_sharing.py` resolves the token, then gates the
-subject. The gate is the same predicate link creation uses and may only
-loosen, because tightening it breaks links already handed out: no teardown,
-text-ready (else `ProjectionNotReady`), a succeeded source attempt, podcasts
-fed by RSS, videos from YouTube with a disclosable URL, at least one
-fragment/section, a PDF file, and a resolvable highlight. Every other outcome,
-including bad handles and wrong-kind endpoints, is one masked
-`404 E_NOT_FOUND "Share unavailable"`. Authorization precedes interpretation:
-handles and Range are read only after the token passes; query strings are
-ignored.
+subject. The gate is the same predicate link creation uses (`link_readiness`)
+and may only loosen, because tightening it breaks links already handed out: no
+teardown; text-ready (else `ProjectionNotReady`); a succeeded source attempt;
+a podcast episode only with a publisher transcript
+(`transcript_origin = 'Publisher'`); a video only from `youtube_video` with a
+disclosable URL; an EPUB with a succeeded EPUB attempt; a PDF with an
+`application/pdf` file of at least one byte; any other kind with a fragment;
+and a resolvable highlight. Its facts are one statement after the lock: no
+section or asset read. Every other outcome, including wrong-kind endpoints and
+unknown ordinals, is one masked `404 E_NOT_FOUND "Share unavailable"`.
+Authorization precedes interpretation: path segments and Range are read only
+after the token passes; query strings are ignored.
 
-a read locks the media `FOR SHARE`, then reads its facts in a fresh statement.
-article and transcript publication takes a conflicting parent `FOR NO KEY UPDATE`
-or `FOR UPDATE` lock. an article or transcript highlight must resolve to a current same-media
-fragment; a stale anchor fails upstream with the same masked 404. the share
-is one response: title, bylines, disclosable source URL and the shared
-highlight (quote, color, and a text anchor naming a fragment/segment ordinal or
-a PDF page and quads). `document` is the reader document the signed-in reader
-mounts (`GET /media/{id}/reader`, `services/reader_document.py`) projected
-through the public allowlist: unit ids are ordinals, html passes `public_html`,
-no embeds and no source issues; a PDF's file is `/api/public/resource-share/file`.
-`/s` mounts it in the shared reader (`lib/documentReader`) read-only, opened at
-the shared highlight. EPUB images are fetched by handles sealed to (grant,
-media, content revision): HMAC under `NEXUS_HANDLE_KEY`, byte-stable
-across releases, so a content change fails old handles closed. PDF bytes stream through FastAPI with
-the token reauthorized on every range request; there are no signed storage
-URLs, and uvicorn aborts a body that disagrees with its Content-Length.
+A read locks the media `FOR SHARE`, then reads its facts in a fresh statement.
+Article and transcript publication takes a conflicting parent
+`FOR NO KEY UPDATE` or `FOR UPDATE` lock. An article or transcript highlight
+must resolve to a current same-media fragment; a stale anchor fails with the
+same masked 404. The share is one response: title, bylines, disclosable source
+URL and the shared highlight (quote, color, and a text anchor naming a
+fragment/segment ordinal or a PDF page and quads). `document` is the reader
+document the signed-in reader mounts (`services/reader_document.py`, built with
+no viewer, so no embeds) rebuilt field by field through the public allowlist: a
+field the private document gains never crosses unseen. Unit ids are ordinals,
+html passes `public_html`, source issues are empty; a PDF's file is
+`/api/public/resource-share/file`. `/s` mounts it in the shared reader
+(`lib/documentReader`) read-only, opened at the shared highlight.
 
-`public_html.py` is the closed HTML policy: tag and attribute allowlist,
-script-like subtrees dropped, links forced external and referrer-free, every
-image source removed and EPUB assets rewritten to handles (the reader fetches
-them with the token as units near the viewport).
+EPUB images are `assets/{n}`: `n` indexes the media's public image list
+(`epub_assets.list_public_epub_asset_sources`: every stored image type but SVG,
+in package order); `n >= len` is the masked 404. Published EPUB content is
+immutable (`reader_publication` refuses replacing it), so an ordinal in an open
+tab names the same image for as long as the link lives; if republication is
+ever allowed, the asset path must carry the publication generation. PDF bytes
+stream through FastAPI with the token reauthorized on every request; there are
+no signed storage URLs. The first storage chunk is read before the answer
+starts, so a missing or failing object is the masked 404, not a truncated body.
+A single `bytes=a-b` or `bytes=a-` range answers 206 with `Content-Range`; a
+range in another unit or several ranges get the whole file (200); an
+unsatisfiable range is 416 `E_INVALID_REQUEST` with `Content-Range: bytes */size`.
+
+`public_html.py` is the closed output policy, separate from (and stricter than)
+ingest sanitizing: tag and attribute allowlist (the structural containers ingest
+keeps stay, so an in-document link's target id survives), script-like subtrees
+dropped, `on*` stripped; absolute http(s) links without credentials open `_blank` with
+`noopener noreferrer` and `referrerpolicy=no-referrer`; a same-document `#id`
+link stays; an EPUB link to another unit names it by ordinal
+(`data-nexus-fragment-id`, plus `data-nexus-anchor-id`, `href="#"`); every other
+href is removed; every image loses its source, and an EPUB image whose source
+is its private asset path carries its ordinal as `data-nexus-public-asset`.
 `public_source_urls.py` decides the disclosable URL: a generic web URL (ingest
-already validated and normalized it) minus params, query and fragment; X,
-YouTube and arXiv only when every identity of the attempt agrees; nothing else.
+already validated and normalized it) minus params, query and fragment; an X
+post or YouTube video only when its ref and every URL of the attempt agree; a
+`remote_pdf_url` only when every URL names the same arXiv paper
+(`https://arxiv.org/abs/<id>`); nothing else.
 
-Every public API response, errors included, carries `Cache-Control: private,
+Every public API answer, errors included, carries `Cache-Control: private,
 no-store`, `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex, nofollow`,
 `nosniff`, `Cross-Origin-Resource-Policy: same-origin`, a `default-src 'none'`
-CSP and no `Set-Cookie`, stamped by `app.py`'s middleware, the BFF and
-`web/middleware.ts`. The WAF rate-limits `^/api/public/resource-share(?:/.*)?$`.
+CSP and no `Set-Cookie`, stamped by the BFF's share lane (`lib/api/proxy.ts`
+`proxyShare`) alone; `/s` itself is noindex, no-referrer and no-store under
+`publicReaderCsp`. The WAF rate-limits `^/api/public/resource-share(?:/.*)?$`
+(120 a minute per ip).
 
 ## Web
 
@@ -111,6 +136,10 @@ route here come from `lib/api/wire.gen.ts`.
 
 `app/s/PublicShareReader.tsx` renders the document in the shared reader
 (`lib/documentReader`'s `DocumentReaderView`) over `publicSource.ts`
-(`document`, token-authorised epub images as units near the viewport, the pdf
-file with the token header), read-only: no progress, no selection, the shared
-highlight as its one mark (global `hl-*` colors) and its entry target.
+(`document`, token-authorised epub images by ordinal as blob urls revoked with
+their unit, the pdf's byte ranges), read-only: no progress, no selection, the
+shared highlight as its one mark (global `hl-*` colors) and its entry target.
+Only the server's masked 404 reads as a dead link ("Share unavailable"); a
+transport failure shows its copy with Retry (focus waits on the page's status
+region while it retries). Only a `#share=` hash change
+re-resolves; an in-document link never leaves the reading.

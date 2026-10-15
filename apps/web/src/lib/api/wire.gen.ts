@@ -2479,7 +2479,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/public/resource-share/assets/{asset_handle}": {
+    "/public/resource-share/assets/{ordinal}": {
         parameters: {
             query?: never;
             header?: never;
@@ -2487,7 +2487,7 @@ export interface paths {
             cookie?: never;
         };
         /** Get Public Resource Share Asset */
-        get: operations["get_public_resource_share_asset_public_resource_share_assets__asset_handle__get"];
+        get: operations["get_public_resource_share_asset_public_resource_share_assets__ordinal__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -17433,14 +17433,14 @@ export interface operations {
             };
         };
     };
-    get_public_resource_share_asset_public_resource_share_assets__asset_handle__get: {
+    get_public_resource_share_asset_public_resource_share_assets__ordinal__get: {
         parameters: {
             query?: never;
             header?: {
                 "X-Nexus-Share-Token"?: string;
             };
             path: {
-                asset_handle: string;
+                ordinal: string;
             };
             cookie?: never;
         };

@@ -1,9 +1,8 @@
-"""EPUB source reads: navigation, link rewriting, and the public sharing projection."""
+"""EPUB source reads: navigation and link rewriting."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
@@ -25,64 +24,6 @@ from nexus.services.html_tree import inner_html
 from nexus.services.reader_publication import (
     read_publication_source_issues,
 )
-
-_FRAGMENT_SOURCES_SQL = """
-    SELECT f.idx, COALESCE(n.label, source.package_href) AS label,
-           COALESCE(n.depth, 0) AS depth, f.html_sanitized, f.canonical_text
-    FROM fragments f
-    JOIN epub_fragment_sources source
-      ON source.media_id = f.media_id AND source.fragment_id = f.id
-    LEFT JOIN LATERAL (
-        SELECT COALESCE(toc.label, nav.label) AS label, toc.depth
-        FROM epub_nav_locations nav
-        LEFT JOIN LATERAL (
-            SELECT label, depth FROM epub_toc_nodes
-            WHERE media_id = nav.media_id AND section_id = nav.location_id
-              AND nav_type = 'toc'
-            ORDER BY order_key, node_id LIMIT 1
-        ) toc ON TRUE
-        WHERE nav.media_id = f.media_id AND nav.fragment_idx = f.idx
-        ORDER BY nav.start_offset, nav.ordinal LIMIT 1
-    ) n ON TRUE
-    WHERE f.media_id = :media_id
-      AND (CAST(:after_ordinal AS INTEGER) IS NULL OR f.idx > :after_ordinal)
-    ORDER BY f.idx LIMIT :limit
-"""
-
-
-@dataclass(frozen=True, slots=True)
-class EpubFragmentSourceContent:
-    """Unique render-unit facts for the public sharing projection."""
-
-    ordinal: int
-    label: str
-    depth: int
-    html_sanitized: str
-    canonical_text: str
-
-
-def list_epub_fragment_sources(
-    db: Session,
-    *,
-    media_id: UUID,
-    after_ordinal: int | None = None,
-    limit: int,
-) -> list[EpubFragmentSourceContent]:
-    """Read each source fragment once; the caller establishes audience authority."""
-    rows = db.execute(
-        text(_FRAGMENT_SOURCES_SQL),
-        {"media_id": media_id, "after_ordinal": after_ordinal, "limit": limit},
-    ).mappings()
-    return [
-        EpubFragmentSourceContent(
-            ordinal=row["idx"],
-            label=row["label"],
-            depth=row["depth"],
-            html_sanitized=row["html_sanitized"],
-            canonical_text=row["canonical_text"],
-        )
-        for row in rows
-    ]
 
 
 def read_epub_navigation(
