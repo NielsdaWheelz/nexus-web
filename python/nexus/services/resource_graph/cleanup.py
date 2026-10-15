@@ -36,7 +36,6 @@ from nexus.db.models import (
     MessageRetrieval,
     ResourceEdge,
     ResourceExternalSnapshot,
-    ResourceMutation,
     ResourceVersion,
     ResourceViewState,
 )
@@ -133,7 +132,7 @@ def delete_orphaned_external_snapshots(db: Session, *, snapshot_ids: Iterable[UU
 
 
 def delete_resource_protocol_state(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> None:
-    """The viewer's versions, view states and mutation memos for a resource that died."""
+    """The viewer's versions and view states for a resource that died."""
     pair = (ref.scheme, ref.id)
     db.execute(
         delete(ResourceVersion).where(
@@ -149,11 +148,5 @@ def delete_resource_protocol_state(db: Session, *, viewer_id: UUID, ref: Resourc
                 tuple_(ResourceViewState.surface_scheme, ResourceViewState.surface_id) == pair,
                 tuple_(ResourceViewState.target_scheme, ResourceViewState.target_id) == pair,
             ),
-        )
-    )
-    db.execute(
-        delete(ResourceMutation).where(
-            ResourceMutation.user_id == viewer_id,
-            ResourceMutation.mutation_scope.like(f"resource:{ref.uri}:%"),
         )
     )

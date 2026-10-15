@@ -44,23 +44,15 @@ export async function queryConnections(
   return data;
 }
 
-/** The caller freezes `clientMutationId` per intent, so a retry replays the same link.
- * The announcement carries the stored (canonical) order, also for a reused link. */
-export async function createLink(input: {
-  clientMutationId: string;
-  source: LinkSource;
-  target: LinkTarget;
-}): Promise<Schema<"CreateLinkOut">> {
+/** The caller mints `link_id` once per intent, so a retry that landed answers the
+ * same link. The announcement carries the stored (canonical) order, also for a
+ * reused link. */
+export async function createLink(
+  input: Schema<"CreateLinkRequest">,
+): Promise<Schema<"CreateLinkOut">> {
   const { data } = await apiFetch<ApiJson<"/resource-graph/links", "post">>(
     "/api/resource-graph/links",
-    {
-      method: "POST",
-      body: JSON.stringify({
-        client_mutation_id: input.clientMutationId,
-        source: input.source,
-        target: input.target,
-      }),
-    },
+    { method: "POST", body: JSON.stringify(input) },
   );
   const { source, target } = data.connection;
   announce({ kind: "created", sourceRef: source.ref, targetRef: target.ref });

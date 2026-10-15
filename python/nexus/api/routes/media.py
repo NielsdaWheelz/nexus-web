@@ -74,7 +74,7 @@ def review_media_metadata_result(
 def put_media_authors(
     media_id: UUID, request: MediaAuthorsPutRequest, viewer: ViewerDep
 ) -> Data[MediaAuthorsOut]:
-    """The contributors facade owns its own session, re-check, replay and mutation."""
+    """The contributors facade owns its own session, re-check and mutation."""
     return Data(
         data=contributors.put_media_authors(viewer=viewer, media_id=media_id, request=request)
     )

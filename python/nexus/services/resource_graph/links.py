@@ -1,17 +1,14 @@
 """User link commands: create (with a minted highlight or passage anchor), remove, and the
-link's one ordinary note. Each command is SERIALIZABLE with retry; create replays its
-exact first response for a repeated ``client_mutation_id``; the note commands are
-idempotent by the client's note id.
+link's one ordinary note. Each command is SERIALIZABLE with retry. Create is named by the
+client's ``link_id``: a resend that landed answers that link as created; the note commands
+are idempotent by the client's note id.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import datetime
-from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -31,19 +28,13 @@ from nexus.services.resource_graph.connections import connection_for_edge
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible, resolve_refs
 from nexus.services.resource_items.capabilities import capability
-from nexus.services.resource_mutation_replay import (
-    canonical_json_bytes,
-    lookup_replay,
-    record_replay,
-)
 from nexus.services.search.pickers import candidate_owner_and_quote
-
-_LINK_SCOPE = "resource_graph:link"
 
 
 def create_link(db: Session, *, viewer_id: UUID, request: CreateLinkRequest) -> CreateLinkOut:
     """Create or reuse one link; a highlight or passage anchor minted for it is written in
-    the same transaction, so both exist or neither does."""
+    the same transaction, so both exist or neither does. ``link_id`` held by any other
+    link is 409; a resend after the link was deleted creates it again."""
 
     def op() -> CreateLinkOut:
         source = request.source
@@ -76,18 +67,25 @@ def create_link(db: Session, *, viewer_id: UUID, request: CreateLinkRequest) -> 
         target_ref = materialize_link_endpoint(db, viewer_id=viewer_id, endpoint=request.target)
         if source_ref == target_ref:
             raise ApiError(ApiErrorCode.E_LINK_SELF, "A resource cannot be linked to itself")
-        write = edges.create_link(db, viewer_id=viewer_id, source=source_ref, target=target_ref)
-        return CreateLinkOut(
-            created=write.created,
+        held = db.get(ResourceEdge, request.link_id)
+        if held is not None:
+            pair = edges.existing_link_pair(db, viewer_id=viewer_id, a=source_ref, b=target_ref)
+            if pair is None or pair.id != held.id:
+                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Link id is taken")
+        write = edges.create_link(
+            db, viewer_id=viewer_id, source=source_ref, target=target_ref, link_id=request.link_id
+        )
+        out = CreateLinkOut(
+            created=write.created or write.edge.id == request.link_id,
             created_source_ref=minted.uri if minted is not None else None,
             connection=connection_for_edge(
                 db, viewer_id=viewer_id, edge_id=write.edge.id, ref=source_ref
             ),
         )
+        db.commit()
+        return out
 
-    body = request.model_dump(mode="json")
-    key = request.client_mutation_id
-    return _replayed(db, viewer_id, _LINK_SCOPE, key, body, CreateLinkOut.model_validate, op)
+    return retry_serializable(db, "create_link", op)
 
 
 def delete_link(db: Session, *, viewer_id: UUID, link_id: UUID) -> None:
@@ -211,46 +209,6 @@ def count_retained_neutral_links(
     return sum(
         not a.missing and not b.missing for a, b in zip(resolved[::2], resolved[1::2], strict=True)
     )
-
-
-def _replayed[T: BaseModel | None](
-    db: Session,
-    viewer_id: UUID,
-    scope: str,
-    client_mutation_id: str,
-    request_json: dict[str, Any],
-    decode: Callable[[dict[str, object]], T],
-    op: Callable[[], T],
-) -> T:
-    """Run ``op`` SERIALIZABLE and memoize its response, or return the memo. The memo is
-    looked up before anything else, so a replay outlives the link it answered."""
-    request_bytes = canonical_json_bytes(request_json)
-
-    def attempt() -> T:
-        memo = lookup_replay(
-            db,
-            viewer_id=viewer_id,
-            scope=scope,
-            client_mutation_id=client_mutation_id,
-            request_bytes=request_bytes,
-        )
-        if memo is not None:
-            return decode(memo)
-        response = op()
-        record_replay(
-            db,
-            viewer_id=viewer_id,
-            scope=scope,
-            client_mutation_id=client_mutation_id,
-            request_bytes=request_bytes,
-            response_json=response.model_dump(mode="json")
-            if isinstance(response, BaseModel)
-            else {},
-        )
-        db.commit()
-        return response
-
-    return retry_serializable(db, scope, attempt)
 
 
 def _link(db: Session, viewer_id: UUID, link_id: UUID) -> edges.EdgeOut:

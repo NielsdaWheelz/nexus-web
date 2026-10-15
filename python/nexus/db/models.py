@@ -240,35 +240,6 @@ class ResourceVersion(Base):
     )
 
 
-class ResourceMutation(Base):
-    """Replay receipts, with server-owned inverse effects for writing edits."""
-
-    __tablename__ = "resource_mutations"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    mutation_scope: Mapped[str] = mapped_column(Text, nullable=False)
-    client_mutation_id: Mapped[str] = mapped_column(Text, nullable=False)
-    request_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    response_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    effects_json: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-
 class ResourceViewState(Base):
     """Endpoint link order and saved collapse defaults for writing occurrences."""
 

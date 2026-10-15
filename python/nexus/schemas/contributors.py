@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Annotated, Literal
+from uuid import UUID
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
@@ -57,7 +58,10 @@ class ExistingAuthorBinding(_In):
 
 
 class NewAuthorBinding(_In):
+    """A person the save creates under the client's ``id``; a resend binds that person."""
+
     kind: Literal["new"]
+    id: UUID
     display_name: _Name
 
 
@@ -69,14 +73,11 @@ class ManualAuthorRowIn(_In):
 
 
 class ManualMediaAuthorsRequest(_In):
-    # 120 is the resource_mutations idempotency key length.
-    client_mutation_id: str = Field(min_length=1, max_length=120)
     mode: Literal["manual"]
     authors: list[ManualAuthorRowIn] = Field(max_length=MAX_CREDITS_PER_MANAGED_ROLE)
 
 
 class AutomaticMediaAuthorsRequest(_In):
-    client_mutation_id: str = Field(min_length=1, max_length=120)
     mode: Literal["automatic"]
 
 

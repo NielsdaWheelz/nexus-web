@@ -32,8 +32,6 @@ const CREATE_FAILURES: Record<string, string> = {
   E_LINK_TARGET_STALE: "That passage changed. Search for it again, then retry.",
   E_HIGHLIGHT_CONFLICT:
     "The selected passage changed. Close Link, select the passage again, and retry.",
-  E_IDEMPOTENCY_KEY_REPLAY_MISMATCH:
-    "The link request changed. Close Link, then try again.",
 };
 const UNCONFIRMED = "Couldn’t confirm the change.";
 
@@ -108,7 +106,7 @@ interface Snapshot {
 }
 
 /**
- * The app's one link-mutation owner. A pick freezes its intent (a fresh mutation id)
+ * The app's one link-mutation owner. A pick freezes its intent (a fresh link id)
  * and keeps running when the picker closes; a failure stays in the open picker with an
  * exact Retry, or becomes a persistent notice once the picker is closed. One save runs
  * at a time.
@@ -163,12 +161,8 @@ function createLinkComposer(feedback: FeedbackContextValue) {
     label: string,
     picked: boolean,
   ): Promise<void> {
-    const intent = {
-      clientMutationId: createRandomId("link"),
-      source: owner.source,
-      target,
-    };
-    const key = `resource-link:${intent.clientMutationId}`;
+    const intent = { link_id: createRandomId(), source: owner.source, target };
+    const key = `resource-link:${intent.link_id}`;
     const current = () => picked && snap.session === owner;
     async function submit(): Promise<void> {
       if (snap.committing) {

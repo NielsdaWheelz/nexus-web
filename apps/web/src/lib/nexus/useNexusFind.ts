@@ -94,9 +94,9 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   const baseData = base.status === "ready" ? base.data.data : null;
   const typedFrecency = text && typed.status === "ready" ? typed.data.data.frecency_by_href : null;
 
-  /** Record an accepted selection now; a transport failure offers Retry with the same mutation id. */
-  const remember = (selection: Omit<Schema<"NexusSelectionRecordRequest">, "client_mutation_id">) => {
-    const body = JSON.stringify({ client_mutation_id: crypto.randomUUID(), ...selection });
+  /** Record an accepted selection now; a transport failure offers Retry (a retry after a lost answer counts twice). */
+  const remember = (selection: Schema<"NexusSelectionRecordRequest">) => {
+    const body = JSON.stringify(selection);
     const send = () =>
       apiFetch<ApiJson<"/me/nexus-selections", "post">>("/api/me/nexus-selections", { method: "POST", keepalive: true, body }).then(
         () => {

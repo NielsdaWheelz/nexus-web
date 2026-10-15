@@ -14,20 +14,17 @@ policy (`apps/web/src/components/nexus/useNexusController.ts:268,376`); `Ask` an
 are deliberately excluded despite being internal routes. proposed `rememberable?: true`
 expresses that existing concept.
 if adopted, retire stored/request/history source, stored updated-at and unused wire
-data; the existing `apiFetch<void>` contract suffices. preserve every replay id/hash/payload.
-new empty-object memos require `is not None`
-(`python/nexus/services/resource_mutation_replay.py:40–98`).
-deleting memos would permit duplicate increments.
+data; the existing `apiFetch<void>` contract suffices. a selection is a plain increment
+(the replay ledger is gone, 0286), so no receipt constrains the cut.
 
 the request shape changes: old source-bearing bodies fail with 400 at extra-field
-validation; new-shaped bodies reusing old ids mismatch with 409. historical same-id replay usability is
-not preserved across this hard cut. `deploy/hetzner/deploy.sh:111–114` releases backend
+validation. `deploy/hetzner/deploy.sh:111–114` releases backend
 before web promotion; `deploy/hetzner/release.py:636` stops api/workers, not old tabs/public web.
 prerequisite: accept that refusal window with operator quiescence and post-promotion
 reload, or defer. no atomic web/API cutover, compatibility path or resend is supplied.
 
 proposal remains unadopted; migration/runtime/deployment checks not_run. acceptance:
-owner decision, populated migration preserving creation/ranking/replay state, unchanged
-eligible activation/history, exact retry/no duplicate and changed-body mismatch. retain
+owner decision, populated migration preserving creation/ranking state, unchanged
+eligible activation/history. retain
 deployment ancestry/stopped-writer/backup gates. delete this ticket after an accepted
 cut or an explicit decision to keep the current contract.

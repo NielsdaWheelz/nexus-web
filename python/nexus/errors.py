@@ -98,10 +98,6 @@ class ApiErrorCode(str, Enum):
     E_EMBEDDING_PROVIDER_UNAVAILABLE = ("E_EMBEDDING_PROVIDER_UNAVAILABLE", 503)
     E_MESSAGE_TOO_LONG = ("E_MESSAGE_TOO_LONG", 400)  # Message exceeds 20,000 char limit
     E_RATE_LIMITED = ("E_RATE_LIMITED", 429)  # live-stream listener capacity (db/listen.py)
-    E_IDEMPOTENCY_KEY_REPLAY_MISMATCH = (
-        "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH",
-        409,
-    )  # Key reused with different payload
 
     # Reader-selection quote-to-chat errors
     E_READER_SELECTION_NOT_FOUND = ("E_READER_SELECTION_NOT_FOUND", 404)  # highlight/media absent

@@ -205,12 +205,17 @@ def materialize_observation_credits(
     return resolved
 
 
-def create_contributor(db: Session, *, display_name: str) -> ResolvedCredit:
-    """A new person with a resolving display alias, at the base handle while it is free."""
+def create_contributor(
+    db: Session, *, display_name: str, contributor_id: UUID | None = None
+) -> ResolvedCredit:
+    """A new person with a resolving display alias, at the base handle while it is free;
+    it takes ``contributor_id`` when given (an author editor's client-minted id)."""
     handle = new_contributor_handle(display_name, distinct=False)
     if db.scalar(select(Contributor.id).where(Contributor.handle == handle)) is not None:
         handle = new_contributor_handle(display_name, distinct=True)
     contributor = Contributor(handle=handle, display_name=display_name)
+    if contributor_id is not None:
+        contributor.id = contributor_id
     db.add(contributor)
     db.flush()  # assigns the id; a uniqueness race retries the whole operation
     ensure_alias(db, contributor_id=contributor.id, alias=display_name, resolves_identity=True)

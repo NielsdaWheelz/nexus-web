@@ -33,8 +33,7 @@ downloads are adjacent, not player state ([offline](offline.md)).
 ## Invariants
 
 1. Every write is serializable under the viewer row lock
-   (`services/consumption/__init__.py: viewer_txn`); no write reads or writes
-   `resource_mutations`.
+   (`services/consumption/__init__.py: viewer_txn`).
 2. Every write is absolute and states its retry rule: Lectern placements put
    the media where asked again; a removal of an absent row succeeds; finish
    re-applies (no second completion); unread and reset re-apply (the fences
