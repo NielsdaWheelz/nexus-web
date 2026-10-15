@@ -39,7 +39,13 @@ entered an attached host; their path later overshot the moving caption. the
 final bounded probe stops at entry: at 124ms, anchor width was 99.52px and
 anchor right equalled host left at 107.52px. help stayed visible through text
 entry. the sampled trace did not demonstrate a broken hover path; no additional
-source repair was justified. the product-file hashes still match the green run.
+source repair was justified. the pre-publication product files match the green
+run's recorded hashes.
+
+publication: the clean rebase onto `7bc7c8a13` preserves three upstream workspace
+field renames in `AppNav`. the tooltip hook, css and positioning files are
+unchanged. the feature patch is identical under `git range-diff`; post-rebase
+static qualification runs in [pr #625](https://github.com/NielsdaWheelz/nexus-web/pull/625).
 
 ## review and limits
 
