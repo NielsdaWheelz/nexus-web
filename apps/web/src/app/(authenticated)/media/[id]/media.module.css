@@ -12,6 +12,20 @@
   height: 100%;
 }
 
+.stateScrollport {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.stateScrollport[data-mobile="true"] {
+  padding-top: var(--mobile-pane-content-offset);
+  padding-bottom: var(--mobile-content-bottom-clearance);
+  scroll-padding-top: var(--mobile-pane-content-offset);
+  scroll-padding-bottom: var(--mobile-content-bottom-clearance);
+}
+
 .state {
   display: flex;
   flex-direction: column;
