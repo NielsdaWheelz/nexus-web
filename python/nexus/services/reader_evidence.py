@@ -354,15 +354,8 @@ def _apparatus_activation(
         locator_status=target.locator_status,
         locator_current=isinstance(resolution, ReaderEvidenceResolvedOut),
     )
-    if href is None:
-        return ResourceActivationOut(
-            resource_ref=target.resource_ref,
-            kind="none",
-            href=None,
-            unresolved_reason="not_routeable",
-        )
     return ResourceActivationOut(
-        resource_ref=target.resource_ref, kind="route", href=href, unresolved_reason=None
+        resource_ref=target.resource_ref, kind="none" if href is None else "route", href=href
     )
 
 

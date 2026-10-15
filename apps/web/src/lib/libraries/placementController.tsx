@@ -8,8 +8,6 @@ import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 export interface LibraryPlacementOpenOptions {
   anchor: ReturnFocusTarget;
   returnFocusFallback: ReturnFocusTarget | null;
-  /** Reconciles the subject's action snapshot after a successful placement write. */
-  reconcileActions: () => Promise<void>;
 }
 
 export interface LibraryPlacementSession {

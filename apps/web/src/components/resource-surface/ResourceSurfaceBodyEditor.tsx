@@ -6,10 +6,11 @@ import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import NoteBodyEditor, { type NoteBodyEdit, type NoteBodyEditorDocument, type NoteBodyInputHandoff, type NoteBodySelection } from "@/components/notes/NoteBodyEditor";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
+import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
-import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
-import type { ResourceItem, SurfacePosition } from "@/lib/resources/resourceItems";
+import { useLinkComposerHost } from "@/lib/actions/ResourceActionsProvider";
+import type { ResourceItem } from "@/lib/resources/items";
+import type { SurfacePosition } from "@/lib/resources/resourceItems";
 import type { ResourceOutline, OutlineRow } from "@/lib/resourceSurface/outline";
 import { ProtectedSurfaceLinkError, TerminalSurfaceLinkError } from "@/lib/resourceSurface/outline";
 import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
@@ -17,7 +18,6 @@ import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneFilterRows";
-import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { resourceSurfaceFilterFields } from "./resourceSurfaceFilterFields";
 import styles from "./ResourceSurfaceBodyEditor.module.css";
 
@@ -51,7 +51,7 @@ export default function ResourceSurfaceBodyEditor({
   onActivate, onOpenObject, onFeedback, onError, inputHandoff,
   onInputHandoffClaimed,
 }: Props) {
-  const { linkComposer } = useResourceOverlaysController();
+  const linkComposer = useLinkComposerHost();
   const [dragId, setDragId] = useState<string | null>(null);
   const [drop, setDrop] = useState<{ id: string; placement: "before" | "after" | "inside" } | null>(null);
   const sectionRef = useRef<HTMLElement | null>(null);
@@ -218,19 +218,19 @@ function RowActions({ row, label, text, outline, enabled, report, onSelectBlock 
   row: OutlineRow; label: string; text: string; outline: ResourceOutline; enabled: boolean;
   report: (error: unknown) => void; onSelectBlock: () => void;
 }) {
-  const model = useResourceActionMenuModel({ ref: assumeCanonicalResourceRef(row.target.item.ref) });
+  const resource = useResourceActionMenu(row.target.item.ref);
   const [menuOpen, setMenuOpen] = useState(false);
   useMobileChromeHold(menuOpen);
-  const refresh = model.refresh;
+  const fetchOnOpen = resource.onOpenChange;
   const onOpenChange = useCallback((open: boolean) => {
     setMenuOpen(open);
-    if (open) refresh();
-  }, [refresh]);
+    fetchOnOpen(open);
+  }, [fetchOnOpen]);
   const run = (work: Promise<void>) => { void work.catch(report); };
   const siblings = outline.rows.filter((candidate) => candidate.endpointRef === row.endpointRef && candidate.path.linkPath.slice(0, -1).join() === row.path.linkPath.slice(0, -1).join());
   const index = siblings.findIndex((candidate) => candidate.occurrenceId === row.occurrenceId);
   const preceding = siblings.slice(0, index).reverse().find((candidate) => !candidate.terminal && candidate.target.content.kind === "note_body");
-  const options: ActionDescriptor[] = [...model.descriptors.filter((action) => action.tone !== "danger")];
+  const options: ActionDescriptor[] = [...resource.options.filter((action) => action.tone !== "danger")];
   options.push(
     { kind: "command", id: "Notes.SelectBlock", label: "Select block", onSelect: onSelectBlock },
     { kind: "command", id: "Notes.CopyText", label: "Copy text", disabled: Boolean(row.terminal), onSelect: () => run(copyText(text)) },
@@ -241,6 +241,6 @@ function RowActions({ row, label, text, outline, enabled, report, onSelectBlock 
     { kind: "command", id: "Notes.MoveLater", label: "Move link later", disabled: !enabled || index >= siblings.length - 1, onSelect: () => run(outline.move(row.occurrenceId, "down")) },
     { kind: "command", id: "Notes.RemoveLink", label: "Remove link", tone: "danger", disabled: !enabled || row.hasLinkNote, onSelect: () => run(outline.remove([row.occurrenceId])) },
   );
-  options.push(...model.descriptors.filter((action) => action.tone === "danger"));
+  options.push(...resource.options.filter((action) => action.tone === "danger"));
   return <ActionMenu label={`More actions for ${label}`} options={options} onOpenChange={onOpenChange} />;
 }

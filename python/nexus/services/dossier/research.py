@@ -28,7 +28,7 @@ from nexus.services.import_history import source_supersession_media_id
 from nexus.services.media_read_map import load_media_document
 from nexus.services.media_source_ingest import accept_url_source
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
-from nexus.services.resource_items.capabilities import resource_read_policy
+from nexus.services.resource_items.capabilities import capability
 from nexus.services.search.query import SearchKind, SearchQuery, SearchScope
 from nexus.services.search.service import search_scopes_async
 from nexus.services.url_normalize import normalize_url_for_display
@@ -157,7 +157,7 @@ def read_source(
     if loaded[read.uri].missing or loaded[target.uri].missing:
         return None
     quote = loaded[read.uri].quote
-    if resource_read_policy(read) == "media":
+    if capability(read.scheme).readable == "media":
         document = load_media_document(db, user_id, read.id)
         title, body = (document.title, document.body) if document is not None else ("", "")
     elif quote is not None:

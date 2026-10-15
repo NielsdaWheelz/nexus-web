@@ -65,9 +65,7 @@ function undoFailure(error: unknown): FeedbackContent | null {
   }
 }
 
-export function useCompletionUndo(
-  reconcile: (mediaId: MediaId) => void,
-): (input: CompletionUndoInput) => void {
+export function useCompletionUndo(): (input: CompletionUndoInput) => void {
   const { undoFinish, getCanonicalSnapshot } = useLectern();
   const { publish } = useFeedback();
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
@@ -109,11 +107,9 @@ export function useCompletionUndo(
             key: `completion-undo-failed:${input.mediaId}`,
             content,
           });
-        return;
       }
-      reconcile(input.mediaId);
     },
-    [getCanonicalSnapshot, publish, reconcile, undoFinish],
+    [getCanonicalSnapshot, publish, undoFinish],
   );
 
   const offer = useCallback(

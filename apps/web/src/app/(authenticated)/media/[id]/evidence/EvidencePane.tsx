@@ -7,7 +7,7 @@
 // band; scrolling the list browses. A group's jump is a reader jump.
 import { useEffect, useMemo, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
-import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
+import { useLinkComposerHost } from "@/lib/actions/ResourceActionsProvider";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import type { AnnotationState } from "../annotations";
@@ -50,7 +50,7 @@ export default function EvidencePane({
   readonly onJump: (group: Group) => void;
   readonly onRetry: () => void;
 }) {
-  const { linkComposer } = useResourceOverlaysController();
+  const linkComposer = useLinkComposerHost();
   const [hidden, setHidden] = useState<ReadonlySet<Filter>>(new Set());
   const [following, setFollowing] = useState(true);
   const [active, setActive] = useState<string | null>(null);

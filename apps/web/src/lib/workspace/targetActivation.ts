@@ -16,18 +16,48 @@ export type WorkspaceTargetDisposition =
   | { kind: "Fork" }
   | { kind: "Adopt" };
 
-export interface WorkspacePaneEntry {
-  kind: "AppendNote";
-  noteId: string;
-  clientMutationId: string;
-  initialText: string;
-}
+/**
+ * What the landing pane does once it is ready (contract: campaign
+ * notes/activation-contract.md). The href picks the pane; ids are plain uuids.
+ * The consuming pane claims an entry before acting and owns every outcome.
+ */
+export type WorkspacePaneEntry =
+  // daily page: the quick note's text
+  | {
+      readonly kind: "AppendNote";
+      readonly noteId: string;
+      readonly clientMutationId: string;
+      readonly initialText: string;
+    }
+  // page pane: focus the title
+  | { readonly kind: "EditPageTitle"; readonly pageId: string }
+  // note pane: focus the body
+  | { readonly kind: "EditNoteBody"; readonly noteBlockId: string }
+  // media pane: one highlight; a null note block adds a note
+  | { readonly kind: "EditHighlight"; readonly highlightId: string }
+  | {
+      readonly kind: "EditHighlightNote";
+      readonly highlightId: string;
+      readonly noteBlockId: string | null;
+    }
+  | { readonly kind: "EditHighlightBounds"; readonly highlightId: string }
+  | { readonly kind: "DeleteHighlight"; readonly highlightId: string }
+  // chat pane: one message of the loaded transcript
+  | {
+      readonly kind:
+        | "ForkMessage"
+        | "WalkMessageSources"
+        | "RerunMessage"
+        | "RegenerateMessage"
+        | "DeleteMessage";
+      readonly messageId: string;
+    };
 
 export interface WorkspaceTargetActivationRequest {
   originPaneId: string;
   target: WorkspaceTarget;
   disposition: WorkspaceTargetDisposition;
-  /** Daily Today/quick note: hand `entry` to the exact visit the target lands on. */
+  /** Hand `entry` to the exact visit the target lands on. */
   paneEntryActivation?: {
     activationId: string;
     entry: WorkspacePaneEntry | null;

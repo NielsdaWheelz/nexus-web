@@ -19,7 +19,7 @@ from nexus.schemas.resource_items import ExpectedNoteBody, validate_note_body_pm
 from nexus.services.resource_graph.edges import EdgeCreate, replace_edges_for_origin
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items import versions
-from nexus.services.resource_items.capabilities import resource_can_embed
+from nexus.services.resource_items.capabilities import capability
 
 
 def note_ref(block_id: UUID) -> ResourceRef:
@@ -139,7 +139,7 @@ def sync_note_body_edges(db: Session, *, viewer_id: UUID, block: NoteBlock) -> N
         edges=[
             EdgeCreate(source=source, target=target, kind="context", origin="note_body")
             for target in _body_target_refs(block.body_pm_json)
-            if target != source and resource_can_embed(target)
+            if target != source and capability(target.scheme).embeddable
         ],
     )
 

@@ -370,13 +370,6 @@ def _subject(scheme: Literal["media", "podcast"], target_id: UUID) -> ResourceAc
     return ResourceActionSubjectOut(ref=ResourceRef(scheme=scheme, id=target_id).uri)
 
 
-def resolve_contributor_ref_by_handle(
-    db: Session, *, viewer_id: UUID, contributor_handle: str
-) -> ResourceRef:
-    contributor = _visible_contributor(db, contributor_handle, viewer_id)
-    return ResourceRef(scheme="contributor", id=contributor.id)
-
-
 def resolve_contributor_ids_by_handles(db: Session, handles: Sequence[str]) -> dict[str, UUID]:
     """Map handles to contributor ids, dropping unknown ones, in first-seen input order."""
     wanted = list(dict.fromkeys(handles))

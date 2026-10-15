@@ -13,8 +13,15 @@ import { useSyncExternalStore } from "react";
 //   Metadata     a media's title, authors or first publication
 //   Podcasts     a followed show, its settings or its backfill
 //   Chats        the chats index
+//   Notes        the viewer's pages: deleted
 export type ChangeTopic =
-  "Libraries" | "Entries" | "Consumption" | "Metadata" | "Podcasts" | "Chats";
+  | "Libraries"
+  | "Entries"
+  | "Consumption"
+  | "Metadata"
+  | "Podcasts"
+  | "Chats"
+  | "Notes";
 
 const counts: Record<ChangeTopic, number> = {
   Libraries: 0,
@@ -23,6 +30,7 @@ const counts: Record<ChangeTopic, number> = {
   Metadata: 0,
   Podcasts: 0,
   Chats: 0,
+  Notes: 0,
 };
 const listeners = new Set<() => void>();
 

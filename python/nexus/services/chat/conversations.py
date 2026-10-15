@@ -41,7 +41,7 @@ from nexus.services.resource_graph.refs import (
     ResourceRefParseFailure,
     parse_resource_ref,
 )
-from nexus.services.resource_items.capabilities import resource_link_mode
+from nexus.services.resource_items.capabilities import capability
 
 DEFAULT_TITLE = "Chat"
 _DATE, _ID, _TEXT, _INT = (
@@ -84,7 +84,7 @@ def create(
             )
         endpoint = (
             LinkPassageEndpoint(candidate_ref=ref.uri)
-            if resource_link_mode(ref) == "materialize_passage"
+            if capability(ref.scheme).link_mode == "materialize_passage"
             else LinkResourceEndpoint(ref=ref.uri)
         )
         create_link(
@@ -298,25 +298,10 @@ def _lock_owned(db: Session, viewer_id: UUID, conversation_id: UUID) -> None:
         raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
 
 
-def owned_conversation_ids(
-    db: Session, *, viewer_id: UUID, conversation_ids: list[UUID]
-) -> set[UUID]:
-    """The ids the viewer owns: chats are owner-only, so this is also visibility."""
-
-    return set(
-        db.scalars(
-            select(Conversation.id).where(
-                Conversation.owner_user_id == viewer_id, Conversation.id.in_(conversation_ids)
-            )
-        )
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class MessageActionFacts:
     """Closed facts needed to plan one visible message's resource actions."""
 
-    is_owner: bool
     fork_applicable: bool
     walk_sources_applicable: bool
     rerun_applicable: bool
@@ -350,7 +335,6 @@ def message_action_facts(
         answer = row.role == "assistant" and row.status == "complete"
         run = runs.get(row.id)
         facts[row.id] = MessageActionFacts(
-            is_owner=True,
             fork_applicable=answer,
             walk_sources_applicable=answer and counts.get(row.id, 0) >= 2,
             rerun_applicable=run is not None and reads.can_rerun(run),

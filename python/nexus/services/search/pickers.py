@@ -22,8 +22,9 @@ from nexus.schemas.resource_search import (
 from nexus.services import locator_resolver, passage_anchors
 from nexus.services.resource_graph.edges import existing_link_pair
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, parse_resource_ref
-from nexus.services.resource_items.capabilities import resource_link_mode
-from nexus.services.resource_items.surfaces import _parse_ref_or_error, resource_items_out
+from nexus.services.resource_items.capabilities import capability
+from nexus.services.resource_items.items import resource_items_out
+from nexus.services.resource_items.surfaces import _parse_ref_or_error
 from nexus.services.search.project import SCHEMES, snippet
 from nexus.services.search.query import MIN_QUERY_LENGTH, decode_offset, encode_cursor, is_offset
 from nexus.services.search.semantic import Embedding, embed_text
@@ -104,11 +105,11 @@ def _targets(
         hits = merge(hit for family in (*_DIRECT, *_PASSAGES) for hit in rank(db, r, family))
         candidates = _refs(hits[: r.k])
     candidates = [ref for ref in candidates if ref.uri not in excluded]
-    direct = [ref for ref in candidates if resource_link_mode(ref) == "direct"]
+    direct = [ref for ref in candidates if capability(ref.scheme).link_mode == "direct"]
     items = {item.ref: item for item in resource_items_out(db, viewer_id=viewer_id, refs=direct)}
     admitted: dict[str, ResourceTargetOut] = {}
     for ref in candidates:
-        passage = resource_link_mode(ref) == "materialize_passage"
+        passage = capability(ref.scheme).link_mode == "materialize_passage"
         quote = candidate_owner_and_quote(db, ref=ref) if passage else None
         if ref.uri in items and not items[ref.uri].missing:
             key = ref.uri
@@ -145,7 +146,7 @@ def _source_identity(
 ) -> tuple[str, ResourceRef | None]:
     """The identity a source occupies (itself, or its passage's anchor key) and the ref its
     existing links hang off (itself, or its saved anchor)."""
-    mode = resource_link_mode(ref)
+    mode = capability(ref.scheme).link_mode
     if mode == "none":
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot be linked")
     if mode == "direct":

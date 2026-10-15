@@ -26,7 +26,7 @@ owns one route and one optional field.
 | bridge | `offline/OfflineBridge.kt` ⇄ `apps/web/src/lib/offline/bridge.ts` | `window.nexusDownloads` on the hosted and shelf origins |
 | router | `offline/ShelfRouter.kt` | serves `https://appassets.androidplatform.net/shelf/**`; 404s every other subresource while the shelf is the main document |
 | shelf | `apps/web/src/shelf/` (`Shelf.tsx`, `ShelfReader.tsx`) | the Downloads screen and the shared reader core over a copy; built by `bun run build:shelf` into the git-ignored `assets/shelf` |
-| hosted | `lib/actions/resourceActionMenu.tsx` (`Download`), `components/appnav/AccountMenu.tsx` | menu commands, *Downloads* entry, purge before sign-out |
+| hosted | `lib/actions/project.tsx` (`Download`), `components/appnav/AccountMenu.tsx` | menu commands, *Downloads* entry, purge before sign-out |
 | server | `python/nexus/services/reading_copy.py`, `POST /media/{id}/reading-copy`, `PUT /media/{id}/reader-state` + `expected_reader_generation` | builds copies; fences offline position writes |
 
 the player plays a ready episode from its file: `NexusPlaybackService` takes a

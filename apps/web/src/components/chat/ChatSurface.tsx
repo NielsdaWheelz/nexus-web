@@ -4,7 +4,6 @@ import {
   forwardRef,
   Fragment,
   memo,
-  useCallback,
   useImperativeHandle,
   useLayoutEffect,
   useRef,
@@ -14,12 +13,6 @@ import { ArrowDown } from "lucide-react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import Button from "@/components/ui/Button";
-import { executeCommittingMountedMutation } from "@/lib/actions/mountedActionHandoff";
-import {
-  settleMessageActionMutation,
-  useMessageActionIntentOwner,
-  type MessageActionIntent,
-} from "@/lib/chat/messageActionIntent";
 import type { Live } from "@/lib/chat/runTail";
 import type { BranchDraft, ChatView } from "@/lib/chat/tree";
 import type { Message } from "@/lib/chat/wire";
@@ -152,7 +145,7 @@ const ChatSurface = forwardRef<
 });
 export default ChatSurface;
 
-/** One message, and the owner of the resource-menu actions aimed at it. */
+/** One message and its resource menu. */
 const Row = memo(function Row({
   message,
   ordinal,
@@ -167,52 +160,6 @@ const Row = memo(function Row({
   actions: RowActions;
 }) {
   const ref = canonicalResourceRef({ scheme: "message", id: message.id });
-  const accept = useCallback(
-    (intent: MessageActionIntent) => {
-      const assistant = message.role === "assistant";
-      switch (intent.kind) {
-        case "ForkMessage":
-          if (assistant)
-            actions.fork({
-              parentId: message.id,
-              anchor: { kind: "assistant_message", message_id: message.id },
-              quote: "",
-            });
-          return assistant;
-        case "WalkMessageSources":
-          if (!assistant || message.citations.length < 2) return false;
-          actions.walk(message);
-          return true;
-        case "RerunMessage":
-        case "RegenerateMessage": {
-          const op = intent.kind === "RerunMessage" ? "rerun" : "regenerate";
-          if (assistant)
-            void settleMessageActionMutation(intent, async () =>
-              (await actions.store.repeat(op, message.id))
-                ? "Committed"
-                : "Failed",
-            );
-          return assistant;
-        }
-        case "DeleteMessage":
-          executeCommittingMountedMutation(
-            intent,
-            () => actions.store.deleteMessage(message.id),
-            ({ conversation_id: id, conversation_deleted: conversationDeleted }) =>
-              intent.settleDeletedConversation({
-                conversationRef: canonicalResourceRef({
-                  scheme: "conversation",
-                  id,
-                }),
-                conversationDeleted,
-              }),
-          ).catch(() => undefined); // the store reported the failure
-          return true;
-      }
-    },
-    [message, actions],
-  );
-  useMessageActionIntentOwner(ref, accept);
   if (message.role === "assistant")
     return (
       <AssistantMessage

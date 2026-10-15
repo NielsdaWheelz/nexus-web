@@ -4,12 +4,14 @@ status: open
 origin: 2026-10-14 x title implementation review
 area: browser / mutation replay
 
-metadata and source-refresh intents live in provider-owned maps in
-`apps/web/src/lib/actions/resourceActionRuntime.tsx:160`. a full reload or login
-navigation discards the original request identity. the unauthenticated handler
+metadata and source-refresh intents live in module maps (`unconfirmed` in
+`apps/web/src/lib/media/mediaMetadataOperations.ts`, `unconfirmedRefreshes` in
+`apps/web/src/lib/imports/api.ts`; until the actions reauthor, provider-owned maps
+in the deleted `resourceActionRuntime.tsx`). a full reload or login navigation
+discards the original request identity. the unauthenticated handler
 at `apps/web/src/lib/auth/UnauthenticatedApiBoundary.tsx:17` uses
 `window.location.assign`. retaining an intent on 401 therefore preserves it
-only until navigation; 403/404 retention works while the provider stays mounted.
+only until navigation; 403/404 retention works until the page unloads.
 
 if a request succeeded but its response was lost, and its job finishes before
 the user returns, a fresh action can create another job instead of confirming

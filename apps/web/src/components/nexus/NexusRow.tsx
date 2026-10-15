@@ -5,7 +5,7 @@ import { X } from "lucide-react";
 import { useCallback, useEffect, useRef, type ComponentProps } from "react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
-import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
+import { NO_ACTIONS, useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
 import type { NexusRow, NexusSource } from "@/lib/nexus/model";
 import { rowFacts } from "@/lib/nexus/rows";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
@@ -36,18 +36,15 @@ export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean
 }
 
 function ResourceMenu({ subject, menuProps }: { subject: ResourceActionSubject; menuProps: MenuProps }) {
-  const model = useResourceActionMenuModel(subject);
-  const refresh = model.refresh;
+  const { options, onOpenChange: fetchOnOpen } = useResourceActionMenu(subject.ref);
   const upstreamOpenChange = menuProps.onOpenChange;
   const onOpenChange = useCallback((open: boolean) => {
     upstreamOpenChange?.(open);
-    if (open) refresh();
-  }, [refresh, upstreamOpenChange]);
+    fetchOnOpen(open);
+  }, [fetchOnOpen, upstreamOpenChange]);
   return (
     <ActionMenu
-      options={model.descriptors}
-      triggerDisabled={model.triggerDisabled}
-      triggerDisabledReason={model.triggerDisabledReason}
+      options={options.length > 0 ? options : [NO_ACTIONS]}
       {...menuProps}
       onOpenChange={onOpenChange}
     />

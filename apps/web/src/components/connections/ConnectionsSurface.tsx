@@ -24,7 +24,7 @@ import {
 } from "@/lib/resourceGraph/links";
 import { formatResourceRef, type ResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { CONNECTION_DISCOVERY_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities";
-import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
+import { useLinkComposerHost } from "@/lib/actions/ResourceActionsProvider";
 import { fetchDiscoveryScanStatus, requestDiscoveryScan, type DiscoveryScanStatus } from "@/lib/connectionDiscovery";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
@@ -58,7 +58,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   refreshKey?: number;
 }) {
   const selfRef = formatResourceRef(resourceRef);
-  const { linkComposer } = useResourceOverlaysController();
+  const linkComposer = useLinkComposerHost();
   const feedback = useFeedback();
   const [refreshTick, setRefreshTick] = useState(0);
   const [attaching, setAttaching] = useState(false);

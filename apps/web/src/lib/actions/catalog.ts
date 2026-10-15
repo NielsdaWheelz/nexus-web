@@ -36,8 +36,11 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
+import type { ApiError } from "@/lib/api/client";
+import { CONFLICT_NOTICE } from "@/lib/imports/copy";
 
-export type ResourceActionGroup =
+type Group =
   | "Navigate"
   | "Consume"
   | "Organize"
@@ -46,44 +49,36 @@ export type ResourceActionGroup =
   | "Manage"
   | "Danger";
 
-export interface ResourceActionConfirmation {
+/** `{title}` is replaced by the resource's label. */
+export interface Confirmation {
   readonly title: string;
   readonly body: string;
 }
 
-interface CatalogEntry {
+interface Entry {
   readonly label: string;
   readonly icon: LucideIcon;
-  readonly group: ResourceActionGroup;
-  readonly confirmation?: ResourceActionConfirmation;
+  readonly group: Group;
+  readonly confirmation?: Confirmation;
   readonly states?: Readonly<
     Record<string, { readonly label: string; readonly icon: LucideIcon }>
   >;
 }
 
-// Insertion order is menu order. Each stable action id owns its copy once.
-export const RESOURCE_ACTION_CATALOG = {
-  "ResourceAction.Open": {
-    label: "Open",
-    icon: ArrowUpRight,
-    group: "Navigate",
-  },
-  "ResourceAction.OpenInNewPane": {
+/**
+ * Every verb's copy, keyed by the server's action kind (a recovery offer by its
+ * offer kind). Insertion order is menu order; groups are separated.
+ */
+export const ACTION_CATALOG = {
+  Open: { label: "Open", icon: ArrowUpRight, group: "Navigate" },
+  OpenInNewPane: {
     label: "Open in new pane",
     icon: PanelsTopLeft,
     group: "Navigate",
   },
-  "ResourceOperation.OpenSource": {
-    label: "Open source",
-    icon: ExternalLink,
-    group: "Navigate",
-  },
-  "ResourceAction.Media.Metadata": {
-    label: "metadata…",
-    icon: Info,
-    group: "Navigate",
-  },
-  "ResourceOperation.Media.Playback": {
+  OpenSource: { label: "Open source", icon: ExternalLink, group: "Navigate" },
+  MediaMetadata: { label: "metadata…", icon: Info, group: "Navigate" },
+  Playback: {
     label: "Play",
     icon: Play,
     group: "Consume",
@@ -93,12 +88,8 @@ export const RESOURCE_ACTION_CATALOG = {
       Ended: { label: "Replay", icon: RotateCcw },
     },
   },
-  "ResourceOperation.Media.PlayNext": {
-    label: "Play next",
-    icon: ListStart,
-    group: "Consume",
-  },
-  "ResourceOperation.Media.Consumption": {
+  PlayNext: { label: "Play next", icon: ListStart, group: "Consume" },
+  Consumption: {
     label: "Mark as finished",
     icon: CircleCheck,
     group: "Consume",
@@ -109,42 +100,33 @@ export const RESOURCE_ACTION_CATALOG = {
       EpisodePlayed: { label: "Mark as unplayed", icon: Undo2 },
     },
   },
-  "ResourceOperation.Media.ResetProgress": {
-    label: "Reset progress",
-    icon: RotateCcw,
-    group: "Consume",
-  },
-  "ResourceOperation.Media.Transcript": {
+  ResetProgress: { label: "Reset progress", icon: RotateCcw, group: "Consume" },
+  Transcript: {
     label: "Request transcript…",
     icon: Captions,
     group: "Consume",
     states: {
-      NotRequested: { label: "Request transcript…", icon: Captions },
-      Queued: { label: "Transcript queued", icon: Captions },
-      Running: { label: "Transcript processing", icon: Captions },
-      Ready: { label: "Open transcript", icon: Captions },
-      Partial: { label: "Open transcript", icon: Captions },
-      Unavailable: { label: "Transcript unavailable", icon: Captions },
-      FailedProvider: { label: "Retry transcript", icon: RotateCcw },
+      not_requested: { label: "Request transcript…", icon: Captions },
+      queued: { label: "Transcript queued", icon: Captions },
+      running: { label: "Transcript processing", icon: Captions },
+      ready: { label: "Open transcript", icon: Captions },
+      partial: { label: "Open transcript", icon: Captions },
+      unavailable: { label: "Transcript unavailable", icon: Captions },
+      failed_provider: { label: "Retry transcript", icon: RotateCcw },
     },
   },
-  "ResourceOperation.Media.Offline": {
+  Download: {
     label: "Download for offline",
     icon: Download,
     group: "Consume",
     states: {
-      Absent: { label: "Download for offline", icon: Download },
       Downloading: { label: "Cancel download", icon: CircleX },
       Failed: { label: "Retry download", icon: RotateCcw },
       Ready: { label: "Remove download", icon: Trash2 },
     },
   },
-  "RelationshipAction.LibraryPlacement": {
-    label: "Libraries…",
-    icon: Library,
-    group: "Organize",
-  },
-  "RelationshipAction.LecternMembership": {
+  LibraryPlacement: { label: "Libraries…", icon: Library, group: "Organize" },
+  LecternMembership: {
     label: "add to lectern",
     icon: ListPlus,
     group: "Organize",
@@ -153,7 +135,7 @@ export const RESOURCE_ACTION_CATALOG = {
       Present: { label: "Remove from Lectern", icon: ListMinus },
     },
   },
-  "RelationshipAction.PodcastSubscription": {
+  PodcastSubscription: {
     label: "Subscribe",
     icon: Rss,
     group: "Organize",
@@ -162,17 +144,17 @@ export const RESOURCE_ACTION_CATALOG = {
       Subscribed: { label: "Unsubscribe", icon: Rss },
     },
   },
-  "ResourceAction.Chat": {
+  Chat: {
     label: "Chat about this…",
     icon: MessageCircle,
     group: "CreateTransform",
   },
-  "ResourceOperation.Highlight.Edit": {
+  EditHighlight: {
     label: "Edit highlight…",
     icon: Highlighter,
     group: "CreateTransform",
   },
-  "ResourceOperation.Highlight.Note": {
+  HighlightNote: {
     label: "Add note…",
     icon: NotebookPen,
     group: "CreateTransform",
@@ -181,122 +163,102 @@ export const RESOURCE_ACTION_CATALOG = {
       Present: { label: "Edit note…", icon: NotebookPen },
     },
   },
-  "ResourceAction.Link": {
-    label: "Link…",
-    icon: Link2,
-    group: "CreateTransform",
-  },
-  "ResourceOperation.Highlight.Learn": {
+  LinkResource: { label: "Link…", icon: Link2, group: "CreateTransform" },
+  LearnHighlight: {
     label: "Learn from this",
     icon: BookOpenText,
     group: "CreateTransform",
   },
-  "ResourceOperation.Highlight.EditBounds": {
+  EditHighlightBounds: {
     label: "Edit bounds",
     icon: SquareDashedText,
     group: "CreateTransform",
   },
-  "ResourceOperation.Message.Fork": {
+  ForkMessage: {
     label: "Fork from here",
     icon: GitFork,
     group: "CreateTransform",
   },
-  "ResourceOperation.Message.WalkSources": {
+  WalkMessageSources: {
     label: "Walk through sources",
     icon: Waypoints,
     group: "CreateTransform",
   },
-  "ResourceOperation.Message.Rerun": {
-    label: "Rerun",
-    icon: RefreshCw,
-    group: "CreateTransform",
-  },
-  "ResourceOperation.Message.Regenerate": {
+  RerunMessage: { label: "Rerun", icon: RefreshCw, group: "CreateTransform" },
+  RegenerateMessage: {
     label: "Regenerate",
     icon: Sparkles,
     group: "CreateTransform",
   },
-  "ResourceOperation.Page.EditTitle": {
+  EditPageTitle: {
     label: "Edit title…",
     icon: Pencil,
     group: "CreateTransform",
   },
-  "ResourceOperation.NoteBlock.EditBody": {
+  EditNoteBody: {
     label: "Edit note",
     icon: FilePenLine,
     group: "CreateTransform",
   },
-  "ResourceOperation.Artifact.Regenerate": {
+  RegenerateArtifact: {
     label: "Regenerate",
     icon: Sparkles,
     group: "CreateTransform",
   },
-  "ResourceAction.Share": {
-    label: "Share…",
-    icon: Share2,
-    group: "ShareExport",
-  },
-  "ResourceOperation.Media.DownloadOriginal": {
+  Share: { label: "Share…", icon: Share2, group: "ShareExport" },
+  DownloadOriginal: {
     label: "Download original",
     icon: FileDown,
     group: "ShareExport",
   },
-  "ResourceOperation.Media.RetryProcessing": {
+  RetrySource: {
     label: "Retry source processing",
     icon: RotateCcw,
     group: "Manage",
   },
-  "ResourceOperation.Media.RepairSource": {
+  RepairSource: {
     label: "Retry stopped processing",
     icon: Wrench,
     group: "Manage",
   },
-  "ResourceOperation.Media.RepairSearch": {
+  RepairSearch: {
     label: "Rebuild search index",
     icon: Search,
     group: "Manage",
   },
-  "ResourceOperation.Media.RefreshSource": {
-    label: "refresh source",
-    icon: RefreshCw,
-    group: "Manage",
-  },
-  "ResourceOperation.Media.RetryMetadata": {
+  RefreshSource: { label: "refresh source", icon: RefreshCw, group: "Manage" },
+  RetryMetadata: {
     label: "research metadata",
     icon: Sparkles,
     group: "Manage",
   },
-  "ResourceOperation.Media.ReviewMetadataResult": {
+  ReviewMetadataResult: {
     label: "mark reviewed",
     icon: CircleCheck,
     group: "Manage",
   },
-  "ResourceOperation.Media.EditAuthors": {
-    label: "Edit authors…",
-    icon: Users,
-    group: "Manage",
-  },
-  "ResourceOperation.Library.Settings": {
+  EditAuthors: { label: "Edit authors…", icon: Users, group: "Manage" },
+  LibrarySettings: {
     label: "Library settings…",
     icon: Settings,
     group: "Manage",
   },
-  "ResourceOperation.Podcast.Settings": {
+  PodcastSettings: {
     label: "Podcast settings…",
     icon: Settings,
     group: "Manage",
   },
-  "ResourceOperation.Podcast.Refresh": {
+  RefreshPodcast: {
     label: "Check for new episodes",
     icon: RefreshCw,
     group: "Manage",
   },
-  "ResourceOperation.Podcast.RetryBackfill": {
+  RetryPodcastBackfill: {
     label: "Retry backlog",
     icon: RotateCcw,
     group: "Manage",
   },
-  "ResourceOperation.Media.Remove": {
+  RemoveMedia: {
     label: "Remove from Nexus",
     icon: Trash2,
     group: "Danger",
@@ -305,7 +267,7 @@ export const RESOURCE_ACTION_CATALOG = {
       body: "Remove “{title}” from Nexus, every Library, and the Lectern? This can’t be undone.",
     },
   },
-  "ResourceOperation.Library.Delete": {
+  DeleteLibrary: {
     label: "Delete Library",
     icon: Trash2,
     group: "Danger",
@@ -314,7 +276,7 @@ export const RESOURCE_ACTION_CATALOG = {
       body: "Delete “{title}”? Its items stay in Nexus. This can’t be undone.",
     },
   },
-  "ResourceOperation.Conversation.Delete": {
+  DeleteConversation: {
     label: "Delete chat",
     icon: Trash2,
     group: "Danger",
@@ -323,7 +285,7 @@ export const RESOURCE_ACTION_CATALOG = {
       body: "Delete “{title}” and its messages? This can’t be undone.",
     },
   },
-  "ResourceOperation.Message.Delete": {
+  DeleteMessage: {
     label: "Delete message",
     icon: Trash2,
     group: "Danger",
@@ -332,7 +294,7 @@ export const RESOURCE_ACTION_CATALOG = {
       body: "Delete this message? This can’t be undone.",
     },
   },
-  "ResourceOperation.Highlight.Delete": {
+  DeleteHighlight: {
     label: "Delete highlight",
     icon: Trash2,
     group: "Danger",
@@ -341,15 +303,50 @@ export const RESOURCE_ACTION_CATALOG = {
       body: "Delete this highlight and its note? This can’t be undone.",
     },
   },
-  "ResourceOperation.Page.Delete": {
+  DeletePage: {
     label: "Delete page",
     icon: Trash2,
     group: "Danger",
     confirmation: {
       title: "Delete page?",
-      body: "Delete “{title}” and its note blocks? This can’t be undone.",
+      body: "Delete “{title}”? Its notes are kept.",
     },
   },
-} as const satisfies Record<string, CatalogEntry>;
+} as const satisfies Record<string, Entry>;
 
-export type ResourceActionId = keyof typeof RESOURCE_ACTION_CATALOG;
+export type ActionId = keyof typeof ACTION_CATALOG;
+
+export const BLOCKED_COPY = {
+  PermissionDenied: "You don’t have permission to do this.",
+  Locked: "This item is locked.",
+  Processing: "Available when processing finishes.",
+  TemporarilyUnavailable: "Temporarily unavailable. Try again.",
+  Loading: "Still loading. Try again in a moment.",
+  CapacityReached: "Lectern is full. Remove an item to add this one.",
+  RequiresOnline: "Connect to the internet to use this action.",
+  UnsupportedOnDevice: "Not supported on this device.",
+  Busy: "This action is in progress.",
+} as const;
+
+export type BlockedReason = keyof typeof BLOCKED_COPY;
+
+/** A verb's modeled failure; a recovery that met newer work is the imports conflict. */
+export function actionFailure(
+  id: ActionId,
+  label: string,
+  error: ApiError,
+): FeedbackContent {
+  const recovery =
+    id === "RetrySource" || id === "RepairSource" || id === "RepairSearch";
+  return recovery && error.code === "E_RESOURCE_CONFLICT"
+    ? { ...CONFLICT_NOTICE, requestId: error.requestId }
+    : {
+        tone: "Danger",
+        title:
+          id === "LecternMembership" && label === "add to lectern"
+            ? "couldn’t add to lectern"
+            : `Could not ${label.replace(/…$/, "")}`,
+        message: error.message,
+        requestId: error.requestId,
+      };
+}

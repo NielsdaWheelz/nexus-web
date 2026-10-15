@@ -17,7 +17,7 @@ from nexus.schemas.resource_items import (
 from nexus.services import note_bodies
 from nexus.services.note_indexing import enqueue_note_reindex
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_items import surfaces, versions
+from nexus.services.resource_items import items, versions
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
     lookup_replay,
@@ -61,7 +61,7 @@ def update_title(
             raise AssertionError("database clock returned no timestamp")
         response = ResourceTitleMutationOut(
             client_mutation_id=request.client_mutation_id,
-            item=surfaces.resource_item_out(db, viewer_id=viewer_id, ref=ref),
+            item=items.resource_item_out(db, viewer_id=viewer_id, ref=ref),
             versions={ref.uri: versions.versions_for_ref(db, viewer_id=viewer_id, ref=ref)},
             updated_at=updated_at,
         )
@@ -119,7 +119,7 @@ def update_body(
             raise AssertionError("database clock returned no timestamp")
         response = ResourceBodyMutationOut(
             client_mutation_id=request.client_mutation_id,
-            item=surfaces.resource_item_out(db, viewer_id=viewer_id, ref=ref),
+            item=items.resource_item_out(db, viewer_id=viewer_id, ref=ref),
             body_pm_json=block.body_pm_json,
             body_text=block.body_text,
             versions={ref.uri: versions.versions_for_ref(db, viewer_id=viewer_id, ref=ref)},
@@ -153,7 +153,7 @@ def _require_base_version(
             ApiErrorCode.E_RESOURCE_CONFLICT,
             "Resource version base is required",
             details={
-                "current": surfaces.resource_item_out(db, viewer_id=viewer_id, ref=ref).model_dump(
+                "current": items.resource_item_out(db, viewer_id=viewer_id, ref=ref).model_dump(
                     mode="json"
                 )
             },
@@ -164,7 +164,7 @@ def _require_base_version(
             ApiErrorCode.E_RESOURCE_CONFLICT,
             "Resource version is stale",
             details={
-                "current": surfaces.resource_item_out(db, viewer_id=viewer_id, ref=ref).model_dump(
+                "current": items.resource_item_out(db, viewer_id=viewer_id, ref=ref).model_dump(
                     mode="json"
                 )
             },

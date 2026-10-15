@@ -34,7 +34,7 @@ from nexus.services.library_governance import library_out, lock_library_for_memb
 from nexus.services.locator_resolver import resolve_highlight_reader_target
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.resolve import resolve_refs
-from nexus.services.resource_items.capabilities import capability_for_ref
+from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.routing import route_for_ref
 from nexus.services.sealed_handles import (
     InvalidSealedHandle,
@@ -67,7 +67,7 @@ def _unavailable(
     db: Session, viewer_id: UUID, subject: ResourceRef, *, lock: bool
 ) -> AudienceUnavailableReason | None:
     """Why the viewer may not grant the subject to anyone now, or None."""
-    if capability_for_ref(subject).sharing not in {"ResourceGrants", "HighlightGrants"}:
+    if capability(subject.scheme).sharing not in {"ResourceGrants", "HighlightGrants"}:
         return "UnsupportedSubject"
     if lock:
         resource_grants.lock_subject(db, subject)
@@ -99,7 +99,7 @@ def get_share_snapshot(
         route = route_for_ref(db, viewer_id=viewer_user_id, ref=subject, missing=False)
     if route is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
-    mode = capability_for_ref(subject).sharing
+    mode = capability(subject.scheme).sharing
     user = _unavailable(db, viewer_user_id, subject, lock=False)
     link = user or public_resource_sharing.link_readiness(db, subject)
     members = None

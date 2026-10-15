@@ -1,13 +1,14 @@
-"""Closed resource item capability policy.
+"""What each kind of resource can take part in: one row per scheme.
 
-`resource_graph.refs` owns identity grammar. This module owns item-level route,
-read, search, citation, prompt, attachment, and expansion policy.
+`resource_graph.refs` owns identity grammar. This table owns link, share, read,
+search, citation, prompt, embed, attach, adjacency, expansion and inspector
+policy. Rows list only what differs from the defaults. Change a row, run
+`make generate-resource-capabilities`, and python and the web agree.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Literal, assert_never
 from uuid import UUID
 
@@ -16,681 +17,221 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import highlight_visibility_filter
 from nexus.db.models import Highlight
-from nexus.services.resource_graph.refs import RESOURCE_SCHEMES, ResourceRef, ResourceScheme
+from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 
-ResourceChatSubjectMode = Literal["none", "label", "scope", "readable", "quote", "generated_output"]
-ResourceReadMode = Literal["none", "scope", "body", "media"]
-ResourceInspectMode = Literal["none", "media_document_map"]
-ResourcePromptRenderMode = Literal["none", "label", "inline_body", "quote"]
-ResourceExpansionPolicy = Literal[
-    "none",
-    "media_owned_reader_children",
-    "page_note_blocks",
-    "note_block_owned_evidence",
-    "artifact_revisions",
-]
-ResourceLinkMode = Literal["none", "direct", "materialize_passage"]
-ShareMode = Literal[
-    "None",
-    "CopyOnly",
-    "ResourceGrants",
-    "HighlightGrants",
-    "LibraryMembership",
-]
-LibraryPlacementMode = Literal["None", "ManageEntries"]
-
-
-class ResourceInspectorSurfaceRole(StrEnum):
-    Contents = "Contents"
-    LinkedItems = "LinkedItems"
-    Forks = "Forks"
-    Dossier = "Dossier"
-
-
-ResourceInspectorLinkedItemsSurface = Literal["MediaEvidence", "ResourceConnections"]
-ResourceInspectorForksSurface = Literal["ConversationForks"]
+ShareMode = Literal["None", "CopyOnly", "ResourceGrants", "HighlightGrants", "LibraryMembership"]
+LinkMode = Literal["none", "direct", "materialize_passage"]
+InspectorRole = Literal["Contents", "LinkedItems", "Forks", "Dossier"]
 
 
 @dataclass(frozen=True, slots=True)
-class ResourceInspectorResourcePolicy:
-    linked_items: ResourceInspectorLinkedItemsSurface
-    forks: ResourceInspectorForksSurface | None
-    default_surface_order: tuple[ResourceInspectorSurfaceRole, ...]
+class InspectorPolicy:
+    linked_items: Literal["MediaEvidence", "ResourceConnections"]
+    forks: Literal["ConversationForks"] | None
+    # Fallback preference, not tab order; ends in the always-published Dossier.
+    default_surface_order: tuple[InspectorRole, ...]
 
 
-ResourceInspectorPolicy = ResourceInspectorResourcePolicy | None
+_CONNECTIONS = InspectorPolicy("ResourceConnections", None, ("Dossier",))
 
 
 @dataclass(frozen=True, slots=True)
-class ResourceItemCapability:
-    sharing: ShareMode
-    library_placement: LibraryPlacementMode
-    link_mode: ResourceLinkMode
-    attachable: bool
-    chat_subject: ResourceChatSubjectMode
-    readable: ResourceReadMode
-    inspectable: ResourceInspectMode
-    inspector_policy: ResourceInspectorPolicy
-    citable_result_type: str | None
-    app_search_scope: bool
-    conversation_search_scope: bool
-    citation_output_source: bool
-    prompt_render: ResourcePromptRenderMode
-    expansion_policy: ResourceExpansionPolicy
-    adjacency_source: bool
-    adjacency_target: bool
+class Capability:
+    sharing: ShareMode = "None"
+    link_mode: LinkMode = "direct"
+    attachable: bool = True
+    embeddable: bool = True
+    chat_subject: Literal["none", "label", "scope", "readable", "quote", "generated_output"] = (
+        "readable"
+    )
+    readable: Literal["none", "scope", "body", "media"] = "body"
+    inspectable: Literal["none", "media_document_map"] = "none"
+    inspector: InspectorPolicy | None = None
+    citable_result_type: str | None = None
+    app_search_scope: bool = False
+    citation_output_source: bool = False
+    prompt_render: Literal["none", "label", "inline_body", "quote"] = "inline_body"
+    expansion: Literal[
+        "none",
+        "media_owned_reader_children",
+        "page_note_blocks",
+        "note_block_owned_evidence",
+        "artifact_revisions",
+    ] = "none"
+    adjacency_source: bool = False
 
-    @property
-    def expandable(self) -> bool:
-        return self.expansion_policy != "none"
 
-
-RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
-    "media": ResourceItemCapability(
+CAPABILITIES: dict[ResourceScheme, Capability] = {
+    "media": Capability(
         sharing="ResourceGrants",
-        library_placement="ManageEntries",
-        link_mode="direct",
-        attachable=True,
-        chat_subject="readable",
         readable="media",
         inspectable="media_document_map",
-        inspector_policy=ResourceInspectorResourcePolicy(
-            linked_items="MediaEvidence",
-            forks=None,
-            default_surface_order=(
-                ResourceInspectorSurfaceRole.Contents,
-                ResourceInspectorSurfaceRole.LinkedItems,
-                ResourceInspectorSurfaceRole.Dossier,
-            ),
-        ),
+        inspector=InspectorPolicy("MediaEvidence", None, ("Contents", "LinkedItems", "Dossier")),
         citable_result_type="media",
         app_search_scope=True,
-        conversation_search_scope=False,
-        citation_output_source=False,
         prompt_render="label",
-        expansion_policy="media_owned_reader_children",
-        adjacency_source=False,
-        adjacency_target=True,
+        expansion="media_owned_reader_children",
     ),
-    "library": ResourceItemCapability(
+    "library": Capability(
         sharing="LibraryMembership",
-        library_placement="None",
-        link_mode="direct",
-        attachable=True,
         chat_subject="scope",
         readable="scope",
-        inspectable="none",
-        inspector_policy=ResourceInspectorResourcePolicy(
-            linked_items="ResourceConnections",
-            forks=None,
-            default_surface_order=(ResourceInspectorSurfaceRole.Dossier,),
-        ),
-        citable_result_type=None,
+        inspector=_CONNECTIONS,
         app_search_scope=True,
-        conversation_search_scope=False,
-        citation_output_source=False,
         prompt_render="label",
-        expansion_policy="none",
-        adjacency_source=False,
-        adjacency_target=True,
     ),
-    "evidence_span": ResourceItemCapability(
-        sharing="None",
-        library_placement="None",
-        link_mode="materialize_passage",
-        attachable=True,
-        chat_subject="readable",
-        readable="body",
-        inspectable="none",
-        inspector_policy=None,
-        citable_result_type="evidence_span",
-        app_search_scope=False,
-        conversation_search_scope=False,
-        citation_output_source=False,
-        prompt_render="inline_body",
-        expansion_policy="none",
-        adjacency_source=False,
-        adjacency_target=True,
+    "evidence_span": Capability(
+        link_mode="materialize_passage", embeddable=False, citable_result_type="evidence_span"
     ),
-    "content_chunk": ResourceItemCapability(
-        sharing="None",
-        library_placement="None",
-        link_mode="materialize_passage",
-        attachable=True,
-        chat_subject="readable",
-        readable="body",
-        inspectable="none",
-        inspector_policy=None,
-        citable_result_type="content_chunk",
-        app_search_scope=False,
-        conversation_search_scope=False,
-        citation_output_source=False,
-        prompt_render="inline_body",
-        expansion_policy="none",
-        adjacency_source=False,
-        adjacency_target=True,
+    "content_chunk": Capability(
+        link_mode="materialize_passage", embeddable=False, citable_result_type="content_chunk"
     ),
-    "highlight": ResourceItemCapability(
+    "highlight": Capability(
         sharing="HighlightGrants",
-        library_placement="None",
-        link_mode="direct",
-        attachable=True,
         chat_subject="quote",
-        readable="body",
-        inspectable="none",
-        inspector_policy=None,
         citable_result_type="highlight",
-        app_search_scope=False,
-        conversation_search_scope=True,
-        citation_output_source=False,
         prompt_render="quote",
-        expansion_policy="none",
-        adjacency_source=False,
-        adjacency_target=True,
     ),
-    "page": ResourceItemCapability(
+    "page": Capability(
         sharing="CopyOnly",
-        library_placement="None",
-        link_mode="direct",
-        attachable=True,
-        chat_subject="readable",
-        readable="body",
-        inspectable="none",
-        inspector_policy=ResourceInspectorResourcePolicy(
-            linked_items="ResourceConnections",
-            forks=None,
-            default_surface_order=(ResourceInspectorSurfaceRole.Dossier,),
-        ),
+        inspector=_CONNECTIONS,
         citable_result_type="page",
-        app_search_scope=False,
-        conversation_search_scope=True,
-        citation_output_source=False,
-        prompt_render="inline_body",
-        expansion_policy="page_note_blocks",
+        expansion="page_note_blocks",
         adjacency_source=True,
-        adjacency_target=True,
     ),
-    "note_block": ResourceItemCapability(
+    "note_block": Capability(
         sharing="CopyOnly",
-        library_placement="None",
-        link_mode="direct",
-        attachable=True,
-        chat_subject="readable",
-        readable="body",
-        inspectable="none",
-        inspector_policy=ResourceInspectorResourcePolicy(
-            linked_items="ResourceConnections",
-            forks=None,
-            default_surface_order=(ResourceInspectorSurfaceRole.Dossier,),
-        ),
+        inspector=_CONNECTIONS,
         citable_result_type="note_block",
-        app_search_scope=False,
-        conversation_search_scope=True,
-        citation_output_source=False,
-        prompt_render="inline_body",
-        expansion_policy="note_block_owned_evidence",
+        expansion="note_block_owned_evidence",
         adjacency_source=True,
-        adjacency_target=True,
     ),
-    "fragment": ResourceItemCapability(
-        sharing="None",
-        library_placement="None",
-        link_mode="materialize_passage",
-        attachable=True,
-        chat_subject="readable",
-        readable="body",
-        inspectable="none",
-        inspector_policy=None,
-        citable_result_type="fragment",
-        app_search_scope=False,
-        conversation_search_scope=False,
-        citation_output_source=False,
-        prompt_render="inline_body",
-        expansion_policy="none",
-        adjacency_source=False,
-        adjacency_target=True,
+    "fragment": Capability(
+        link_mode="materialize_passage", embeddable=False, citable_result_type="fragment"
     ),
-    "conversation": ResourceItemCapability(
+    "conversation": Capability(
         sharing="CopyOnly",
-        library_placement="None",
-        link_mode="direct",
-        attachable=True,
         chat_subject="label",
-        readable="body",
-        inspectable="none",
-        inspector_policy=ResourceInspectorResourcePolicy(
-            linked_items="ResourceConnections",
-            forks="ConversationForks",
-            default_surface_order=(
-                ResourceInspectorSurfaceRole.LinkedItems,
-                ResourceInspectorSurfaceRole.Forks,
-                ResourceInspectorSurfaceRole.Dossier,
-            ),
+        inspector=InspectorPolicy(
+            "ResourceConnections", "ConversationForks", ("LinkedItems", "Forks", "Dossier")
         ),
-        citable_result_type=None,
-        app_search_scope=False,
-        conversation_search_scope=False,
-        citation_output_source=False,
         prompt_render="label",
-        expansion_policy="none",
-        adjacency_source=False,
-        adjacency_target=True,
     ),
-    "message": ResourceItemCapability(
-        sharing="None",
-        library_placement="None",
-        link_mode="direct",
-        attachable=True,
-        chat_subject="readable",
-        readable="body",
-        inspectable="none",
-        inspector_policy=None,
-        citable_result_type="message",
-        app_search_scope=False,
-        conversation_search_scope=False,
-        citation_output_source=True,
-        prompt_render="inline_body",
-        expansion_policy="none",
-        adjacency_source=False,
-        adjacency_target=True,
+    "message": Capability(citable_result_type="message", citation_output_source=True),
+    "oracle_reading": Capability(
+        sharing="CopyOnly", chat_subject="generated_output", citation_output_source=True
     ),
-    "oracle_reading": ResourceItemCapability(
-        sharing="CopyOnly",
-        library_placement="None",
-        link_mode="direct",
-        attachable=True,
-        chat_subject="generated_output",
-        readable="body",
-        inspectable="none",
-        inspector_policy=None,
-        citable_result_type=None,
-        app_search_scope=False,
-        conversation_search_scope=False,
-        citation_output_source=True,
-        prompt_render="inline_body",
-        expansion_policy="none",
-        adjacency_source=False,
-        adjacency_target=True,
+    "oracle_passage_anchor": Capability(
+        link_mode="materialize_passage", attachable=False, embeddable=False, chat_subject="none"
     ),
-    "oracle_passage_anchor": ResourceItemCapability(
-        sharing="None",
-        library_placement="None",
-        link_mode="materialize_passage",
-        attachable=False,
-        chat_subject="none",
-        readable="body",
-        inspectable="none",
-        inspector_policy=None,
-        citable_result_type=None,
-        app_search_scope=False,
-        conversation_search_scope=False,
-        citation_output_source=False,
-        prompt_render="inline_body",
-        expansion_policy="none",
-        adjacency_source=False,
-        adjacency_target=True,
+    "artifact": Capability(
+        sharing="CopyOnly", chat_subject="generated_output", expansion="artifact_revisions"
     ),
-    "artifact": ResourceItemCapability(
-        sharing="CopyOnly",
-        library_placement="None",
-        link_mode="direct",
-        attachable=True,
-        chat_subject="generated_output",
-        readable="body",
-        inspectable="none",
-        inspector_policy=None,
-        citable_result_type=None,
-        app_search_scope=False,
-        conversation_search_scope=False,
-        citation_output_source=False,
-        prompt_render="inline_body",
-        expansion_policy="artifact_revisions",
-        adjacency_source=False,
-        adjacency_target=True,
+    "artifact_revision": Capability(
+        link_mode="none", chat_subject="generated_output", citation_output_source=True
     ),
-    "artifact_revision": ResourceItemCapability(
-        sharing="None",
-        library_placement="None",
-        link_mode="none",
-        attachable=True,
-        chat_subject="generated_output",
-        readable="body",
-        inspectable="none",
-        inspector_policy=None,
-        citable_result_type=None,
-        app_search_scope=False,
-        conversation_search_scope=False,
-        citation_output_source=True,
-        prompt_render="inline_body",
-        expansion_policy="none",
-        adjacency_source=False,
-        adjacency_target=True,
-    ),
-    "external_snapshot": ResourceItemCapability(
-        sharing="None",
-        library_placement="None",
+    "external_snapshot": Capability(
         link_mode="none",
         attachable=False,
+        embeddable=False,
         chat_subject="none",
         readable="none",
-        inspectable="none",
-        inspector_policy=None,
         citable_result_type="web_result",
-        app_search_scope=False,
-        conversation_search_scope=False,
-        citation_output_source=False,
         prompt_render="none",
-        expansion_policy="none",
-        adjacency_source=False,
-        adjacency_target=False,
     ),
-    "contributor": ResourceItemCapability(
+    "contributor": Capability(
         sharing="CopyOnly",
-        library_placement="None",
-        link_mode="direct",
-        attachable=True,
         chat_subject="label",
         readable="none",
-        inspectable="none",
-        inspector_policy=ResourceInspectorResourcePolicy(
-            linked_items="ResourceConnections",
-            forks=None,
-            default_surface_order=(ResourceInspectorSurfaceRole.Dossier,),
-        ),
-        citable_result_type=None,
-        app_search_scope=False,
-        conversation_search_scope=False,
-        citation_output_source=False,
+        inspector=_CONNECTIONS,
         prompt_render="label",
-        expansion_policy="none",
-        adjacency_source=False,
-        adjacency_target=True,
     ),
-    "podcast": ResourceItemCapability(
+    "podcast": Capability(
         sharing="CopyOnly",
-        library_placement="ManageEntries",
-        link_mode="direct",
-        attachable=True,
         chat_subject="label",
         readable="none",
-        inspectable="none",
-        inspector_policy=ResourceInspectorResourcePolicy(
-            linked_items="ResourceConnections",
-            forks=None,
-            default_surface_order=(ResourceInspectorSurfaceRole.Dossier,),
-        ),
-        citable_result_type=None,
-        app_search_scope=False,
-        conversation_search_scope=False,
-        citation_output_source=False,
+        inspector=_CONNECTIONS,
         prompt_render="label",
-        expansion_policy="none",
-        adjacency_source=False,
-        adjacency_target=True,
     ),
-    "reader_apparatus_item": ResourceItemCapability(
-        sharing="None",
-        library_placement="None",
+    "reader_apparatus_item": Capability(
         link_mode="materialize_passage",
-        attachable=True,
-        chat_subject="readable",
-        readable="body",
-        inspectable="none",
-        inspector_policy=None,
+        embeddable=False,
         citable_result_type="reader_apparatus_item",
-        app_search_scope=False,
-        conversation_search_scope=False,
-        citation_output_source=False,
-        prompt_render="inline_body",
-        expansion_policy="none",
-        adjacency_source=False,
-        adjacency_target=True,
     ),
-    "passage_anchor": ResourceItemCapability(
-        sharing="None",
-        library_placement="None",
-        link_mode="direct",
-        attachable=True,
-        chat_subject="quote",
-        readable="body",
-        inspectable="none",
-        inspector_policy=None,
-        citable_result_type=None,
-        app_search_scope=False,
-        conversation_search_scope=False,
-        citation_output_source=False,
-        prompt_render="quote",
-        expansion_policy="none",
-        adjacency_source=False,
-        adjacency_target=True,
-    ),
+    "passage_anchor": Capability(chat_subject="quote", prompt_render="quote"),
 }
 
-if set(RESOURCE_ITEM_CAPABILITIES) != set(RESOURCE_SCHEMES):
-    raise AssertionError("Every ResourceScheme needs one resource item capability")
 
-_RESOURCE_INSPECTOR_SCHEMES: frozenset[ResourceScheme] = frozenset(
-    {"media", "conversation", "library", "podcast", "contributor", "page", "note_block"}
-)
-if {
-    scheme
-    for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
-    if capability.inspector_policy is not None
-} != _RESOURCE_INSPECTOR_SCHEMES:
-    raise AssertionError("Resource Inspector policy must cover exactly the seven Resource subjects")
-
-for scheme in _RESOURCE_INSPECTOR_SCHEMES:
-    capability = RESOURCE_ITEM_CAPABILITIES[scheme]
-    policy = capability.inspector_policy
-    if policy is None:
-        raise AssertionError(f"{scheme} is missing its Resource Inspector policy")
-    if not policy.default_surface_order:
-        raise AssertionError(f"{scheme} needs a Resource Inspector default surface")
-    if len(policy.default_surface_order) != len(set(policy.default_surface_order)):
-        raise AssertionError(f"{scheme} has duplicate Resource Inspector surfaces")
-    if policy.default_surface_order[-1] != ResourceInspectorSurfaceRole.Dossier:
-        raise AssertionError(f"{scheme} must terminate in the always-published Dossier surface")
-
-if RESOURCE_ITEM_CAPABILITIES["media"].inspector_policy != ResourceInspectorResourcePolicy(
-    linked_items="MediaEvidence",
-    forks=None,
-    default_surface_order=(
-        ResourceInspectorSurfaceRole.Contents,
-        ResourceInspectorSurfaceRole.LinkedItems,
-        ResourceInspectorSurfaceRole.Dossier,
-    ),
-):
-    raise AssertionError("Media Resource Inspector policy drifted")
-
-if RESOURCE_ITEM_CAPABILITIES["conversation"].inspector_policy != (
-    ResourceInspectorResourcePolicy(
-        linked_items="ResourceConnections",
-        forks="ConversationForks",
-        default_surface_order=(
-            ResourceInspectorSurfaceRole.LinkedItems,
-            ResourceInspectorSurfaceRole.Forks,
-            ResourceInspectorSurfaceRole.Dossier,
-        ),
-    )
-):
-    raise AssertionError("Conversation Resource Inspector policy drifted")
-
-for scheme in ("library", "podcast", "contributor", "page", "note_block"):
-    policy = RESOURCE_ITEM_CAPABILITIES[scheme].inspector_policy
-    if policy is None or policy.linked_items != "ResourceConnections" or policy.forks is not None:
-        raise AssertionError(f"{scheme} needs the generic Connections surface")
-
-
-def capability_for_scheme(scheme: ResourceScheme) -> ResourceItemCapability:
-    return RESOURCE_ITEM_CAPABILITIES[scheme]
-
-
-def capability_for_ref(ref: ResourceRef) -> ResourceItemCapability:
-    return capability_for_scheme(ref.scheme)
-
-
-def resource_link_mode(ref: ResourceRef) -> ResourceLinkMode:
-    return capability_for_ref(ref).link_mode
-
-
-NOTE_EMBED_SCHEMES: frozenset[ResourceScheme] = frozenset(
-    {
-        "media",
-        "library",
-        "highlight",
-        "page",
-        "note_block",
-        "conversation",
-        "message",
-        "oracle_reading",
-        "artifact",
-        "artifact_revision",
-        "contributor",
-        "podcast",
-        "passage_anchor",
-    }
-)
-
-
-def resource_can_embed(ref: ResourceRef) -> bool:
-    return ref.scheme in NOTE_EMBED_SCHEMES
-
-
-def resource_can_attach(ref: ResourceRef) -> bool:
-    return capability_for_ref(ref).attachable
-
-
-def resource_can_be_chat_subject(ref: ResourceRef) -> bool:
-    return capability_for_ref(ref).chat_subject != "none"
-
-
-def resource_read_policy(ref: ResourceRef) -> ResourceReadMode:
-    return capability_for_ref(ref).readable
-
-
-def resource_inspect_policy(ref: ResourceRef) -> ResourceInspectMode:
-    return capability_for_ref(ref).inspectable
-
-
-def resource_prompt_render_policy(ref: ResourceRef) -> ResourcePromptRenderMode:
-    return capability_for_ref(ref).prompt_render
-
-
-def resource_citation_result_type(ref: ResourceRef) -> str | None:
-    return capability_for_ref(ref).citable_result_type
-
-
-def resource_can_be_citation_output_source(ref: ResourceRef) -> bool:
-    return capability_for_ref(ref).citation_output_source
-
-
-def resource_can_be_app_search_scope(ref: ResourceRef) -> bool:
-    return capability_for_ref(ref).app_search_scope
-
-
-def resource_can_own_ordered_adjacency(ref: ResourceRef) -> bool:
-    return capability_for_ref(ref).adjacency_source
-
-
-def app_search_scope_schemes() -> tuple[ResourceScheme, ...]:
-    return tuple(
-        scheme
-        for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
-        if capability.app_search_scope
-    )
+def capability(scheme: ResourceScheme) -> Capability:
+    return CAPABILITIES[scheme]
 
 
 def app_search_scope_hint() -> str:
-    return ", ".join(f"{scheme}:UUID" for scheme in app_search_scope_schemes())
+    return ", ".join(f"{s}:UUID" for s, c in CAPABILITIES.items() if c.app_search_scope)
 
 
 def expand_owned_child_refs(
     db: Session, *, viewer_id: UUID, ref: ResourceRef
 ) -> tuple[ResourceRef, ...]:
-    policy = capability_for_ref(ref).expansion_policy
-    if policy == "none":
-        return ()
-    if policy == "media_owned_reader_children":
-        return (
-            *_child_refs(
+    """The refs an owner rolls up (connections, discovery)."""
+    match capability(ref.scheme).expansion:
+        case "none":
+            return ()
+        case "media_owned_reader_children":
+            highlight_ids = db.scalars(
+                select(Highlight.id)
+                .where(Highlight.anchor_media_id == ref.id)
+                .where(highlight_visibility_filter(viewer_id, ref.id))
+                .distinct()
+            )
+            return (
+                *_children(db, "evidence_span", _OWNED.format("evidence_spans", "media"), ref.id),
+                *_children(db, "content_chunk", _OWNED.format("content_chunks", "media"), ref.id),
+                *_children(db, "fragment", "SELECT id FROM fragments WHERE media_id = :id", ref.id),
+                *(ResourceRef(scheme="highlight", id=h) for h in highlight_ids),
+                *_children(
+                    db,
+                    "reader_apparatus_item",
+                    "SELECT id FROM reader_apparatus_items WHERE media_id = :id",
+                    ref.id,
+                ),
+                *_children(db, "passage_anchor", _MEDIA_ANCHORS, ref.id, viewer_id=viewer_id),
+            )
+        case "page_note_blocks":
+            return _children(db, "note_block", _PAGE_NOTE_BLOCKS, ref.id, viewer_id=viewer_id)
+        case "note_block_owned_evidence":
+            return (
+                *_children(
+                    db, "evidence_span", _OWNED.format("evidence_spans", "note_block"), ref.id
+                ),
+                *_children(
+                    db, "content_chunk", _OWNED.format("content_chunks", "note_block"), ref.id
+                ),
+            )
+        case "artifact_revisions":
+            return _children(
                 db,
-                "evidence_span",
-                "SELECT id FROM evidence_spans WHERE owner_kind = 'media' AND owner_id = :id",
+                "artifact_revision",
+                "SELECT revision_id FROM artifacts WHERE id = :id AND revision_id IS NOT NULL",
                 ref.id,
-            ),
-            *_child_refs(
-                db,
-                "content_chunk",
-                "SELECT id FROM content_chunks WHERE owner_kind = 'media' AND owner_id = :id",
-                ref.id,
-            ),
-            *_child_refs(db, "fragment", "SELECT id FROM fragments WHERE media_id = :id", ref.id),
-            *(
-                ResourceRef(scheme="highlight", id=highlight_id)
-                for highlight_id in db.scalars(
-                    select(Highlight.id)
-                    .where(Highlight.anchor_media_id == ref.id)
-                    .where(highlight_visibility_filter(viewer_id, ref.id))
-                    .distinct()
-                )
-            ),
-            *_child_refs(
-                db,
-                "reader_apparatus_item",
-                "SELECT id FROM reader_apparatus_items WHERE media_id = :id",
-                ref.id,
-            ),
-            *_child_refs(
-                db,
-                "passage_anchor",
-                "SELECT id FROM passage_anchors "
-                "WHERE user_id = :viewer_id AND owner_scheme = 'media' AND owner_id = :id",
-                ref.id,
-                viewer_id=viewer_id,
-            ),
-        )
-    if policy == "page_note_blocks":
-        return (*_child_refs(db, "note_block", _PAGE_NOTE_BLOCKS_SQL, ref.id, viewer_id=viewer_id),)
-    if policy == "note_block_owned_evidence":
-        return (
-            *_child_refs(
-                db,
-                "evidence_span",
-                "SELECT id FROM evidence_spans WHERE owner_kind = 'note_block' AND owner_id = :id",
-                ref.id,
-            ),
-            *_child_refs(
-                db,
-                "content_chunk",
-                "SELECT id FROM content_chunks WHERE owner_kind = 'note_block' AND owner_id = :id",
-                ref.id,
-            ),
-        )
-    if policy == "artifact_revisions":
-        return _child_refs(
-            db,
-            "artifact_revision",
-            "SELECT revision_id FROM artifacts WHERE id = :id AND revision_id IS NOT NULL",
-            ref.id,
-        )
-    assert_never(policy)
+            )
+        case _ as unreachable:
+            assert_never(unreachable)
 
 
-def _child_refs(
-    db: Session,
-    scheme: ResourceScheme,
-    sql: str,
-    parent_id: UUID,
-    *,
-    viewer_id: UUID | None = None,
+def _children(
+    db: Session, scheme: ResourceScheme, sql: str, parent_id: UUID, *, viewer_id: UUID | None = None
 ) -> tuple[ResourceRef, ...]:
-    params: dict[str, object] = {"id": parent_id}
-    if viewer_id is not None:
-        params["viewer_id"] = viewer_id
+    params = {"id": parent_id} if viewer_id is None else {"id": parent_id, "viewer_id": viewer_id}
     return tuple(ResourceRef(scheme=scheme, id=row[0]) for row in db.execute(text(sql), params))
 
 
-_PAGE_NOTE_BLOCKS_SQL = """
+_OWNED = "SELECT id FROM {} WHERE owner_kind = '{}' AND owner_id = :id"
+_MEDIA_ANCHORS = (
+    "SELECT id FROM passage_anchors"
+    " WHERE user_id = :viewer_id AND owner_scheme = 'media' AND owner_id = :id"
+)
+_PAGE_NOTE_BLOCKS = """
 WITH RECURSIVE links AS (
     SELECT source_scheme AS a_scheme, source_id AS a_id, target_scheme AS b_scheme, target_id AS b_id
     FROM resource_edges

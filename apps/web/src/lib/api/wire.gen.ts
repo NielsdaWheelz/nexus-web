@@ -2545,40 +2545,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/resource-items/action-snapshots/resolve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Resolve Action Snapshots */
-        post: operations["resolve_action_snapshots_resource_items_action_snapshots_resolve_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/resource-items/locators/resolve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Resolve Resource Locators */
-        post: operations["resolve_resource_locators_resource_items_locators_resolve_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/resource-items/openables/search": {
         parameters: {
             query?: never;
@@ -2607,6 +2573,46 @@ export interface paths {
         put?: never;
         /** Search Resource Targets */
         post: operations["search_resource_targets_resource_items_targets_search_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/resource-items/{resource_ref}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Resource Item
+         * @description An invisible ref answers 200 with ``missing: true``.
+         */
+        get: operations["get_resource_item_resource_items__resource_ref__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/resource-items/{resource_ref}/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Resource Actions
+         * @description The viewer's verbs on one ref now; an invisible ref has none.
+         */
+        get: operations["get_resource_actions_resource_items__resource_ref__actions_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3976,25 +3982,24 @@ export interface components {
             /** Verifier */
             verifier: string;
         };
-        /** ConsumptionOut */
-        ConsumptionOut: {
-            /** Progress */
-            progress: number | null;
-            /**
-             * State
-             * @enum {string}
-             */
-            state: "Unread" | "InProgress" | "Finished";
-        };
-        /** ConsumptionResourceActionCapabilityOut */
-        ConsumptionResourceActionCapabilityOut: {
-            /** Availability */
-            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
+        /** ConsumptionAction */
+        ConsumptionAction: {
+            /** Blocked */
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            /** Episode */
+            episode: boolean;
+            /** Finished */
+            finished: boolean;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "Consumption";
+        };
+        /** ConsumptionOut */
+        ConsumptionOut: {
+            /** Progress */
+            progress: number | null;
             /**
              * State
              * @enum {string}
@@ -4095,16 +4100,6 @@ export interface components {
             href: string;
             /** Other Names */
             other_names: string[];
-        };
-        /** ContributorHandleLocatorIn */
-        ContributorHandleLocatorIn: {
-            /** Handle */
-            handle: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "contributor_handle";
         };
         /** ContributorRoleFactOut */
         ContributorRoleFactOut: {
@@ -4780,17 +4775,17 @@ export interface components {
         Data_ResolvedMediaSummariesOut_: {
             data: components["schemas"]["ResolvedMediaSummariesOut"];
         };
-        /** Data[ResourceActionSnapshotResolveResponse] */
-        Data_ResourceActionSnapshotResolveResponse_: {
-            data: components["schemas"]["ResourceActionSnapshotResolveResponse"];
+        /** Data[ResourceActionsOut] */
+        Data_ResourceActionsOut_: {
+            data: components["schemas"]["ResourceActionsOut"];
         };
         /** Data[ResourceBodyMutationOut] */
         Data_ResourceBodyMutationOut_: {
             data: components["schemas"]["ResourceBodyMutationOut"];
         };
-        /** Data[ResourceLocatorResolveResponse] */
-        Data_ResourceLocatorResolveResponse_: {
-            data: components["schemas"]["ResourceLocatorResolveResponse"];
+        /** Data[ResourceItemOut] */
+        Data_ResourceItemOut_: {
+            data: components["schemas"]["ResourceItemOut"];
         };
         /** Data[ResourceOpenableSearchResponse] */
         Data_ResourceOpenableSearchResponse_: {
@@ -5216,14 +5211,14 @@ export interface components {
             total_tokens: number | null;
         };
         /**
-         * DownloadResourceActionCapabilityOut
-         * @description What Android needs to keep this media offline: an episode's audio or a reading copy.
+         * DownloadAction
+         * @description What android needs to keep this media offline: an episode's audio or a reading copy.
          */
-        DownloadResourceActionCapabilityOut: {
+        DownloadAction: {
             /** Audio Url */
             audio_url: string | null;
-            /** Availability */
-            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
+            /** Blocked */
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -5297,21 +5292,6 @@ export interface components {
              * @enum {string}
              */
             kind: "Ensured";
-        };
-        /** EpisodeConsumptionResourceActionCapabilityOut */
-        EpisodeConsumptionResourceActionCapabilityOut: {
-            /** Availability */
-            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "EpisodeConsumption";
-            /**
-             * State
-             * @enum {string}
-             */
-            state: "Unplayed" | "Played";
         };
         /** EpisodePreview */
         EpisodePreview: {
@@ -5748,44 +5728,18 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
-        /** HighlightNoteAbsentOut */
-        HighlightNoteAbsentOut: {
-            /** Availability */
-            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
-            /**
-             * Kind
-             * @default HighlightNote
-             * @constant
-             */
-            kind: "HighlightNote";
+        /** HighlightNoteAction */
+        HighlightNoteAction: {
+            /** Blocked */
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            state: "Absent";
-        };
-        /** HighlightNotePresentOut */
-        HighlightNotePresentOut: {
-            /** Availability */
-            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
-            /**
-             * Kind
-             * @default HighlightNote
-             * @constant
-             */
             kind: "HighlightNote";
-            /**
-             * Note Block Id
-             * Format: uuid
-             */
-            note_block_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            state: "Present";
+            /** Note Block Id */
+            note_block_id: string | null;
         };
-        HighlightNoteResourceActionCapabilityOut: components["schemas"]["HighlightNoteAbsentOut"] | components["schemas"]["HighlightNotePresentOut"];
         /** HighlightTargetPdfQuadOut */
         HighlightTargetPdfQuadOut: {
             /** X1 */
@@ -6309,46 +6263,18 @@ export interface components {
             item_id: string;
             media_summary: components["schemas"]["MediaSummaryOut"];
         };
-        /** LecternMembershipAbsentOut */
-        LecternMembershipAbsentOut: {
-            /** Availability */
-            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
-            /**
-             * Kind
-             * @default LecternMembership
-             * @constant
-             */
-            kind: "LecternMembership";
+        /** LecternMembershipAction */
+        LecternMembershipAction: {
+            /** Blocked */
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            state: "Absent";
-            /** Title */
-            title: string;
-        };
-        /** LecternMembershipPresentOut */
-        LecternMembershipPresentOut: {
-            /** Availability */
-            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
-            /**
-             * Kind
-             * @default LecternMembership
-             * @constant
-             */
             kind: "LecternMembership";
-            /**
-             * Lectern Item Id
-             * Format: uuid
-             */
-            lectern_item_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            state: "Present";
+            /** Lectern Item Id */
+            lectern_item_id: string | null;
         };
-        LecternMembershipResourceActionCapabilityOut: components["schemas"]["LecternMembershipAbsentOut"] | components["schemas"]["LecternMembershipPresentOut"];
         /** LecternResult */
         LecternResult: {
             lectern: components["schemas"]["LecternSnapshot"];
@@ -7948,10 +7874,10 @@ export interface components {
              */
             kind: "OpenPane";
         };
-        /** OpenSourceResourceActionCapabilityOut */
-        OpenSourceResourceActionCapabilityOut: {
-            /** Availability */
-            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
+        /** OpenSourceAction */
+        OpenSourceAction: {
+            /** Blocked */
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
             /** Href */
             href: string;
             /**
@@ -8417,10 +8343,10 @@ export interface components {
              */
             kind: "Placed";
         };
-        /** PlaybackResourceActionCapabilityOut */
-        PlaybackResourceActionCapabilityOut: {
-            /** Availability */
-            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
+        /** PlaybackAction */
+        PlaybackAction: {
+            /** Blocked */
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -8896,6 +8822,18 @@ export interface components {
             /** Target */
             target: components["schemas"]["PodcastDiscoveryCommitTarget"] | components["schemas"]["PodcastCanonicalCommitTarget"];
         };
+        /** PodcastSubscriptionAction */
+        PodcastSubscriptionAction: {
+            /** Blocked */
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "PodcastSubscription";
+            /** Subscribed */
+            subscribed: boolean;
+        };
         /**
          * PodcastSubscriptionLifecycleSnapshotOut
          * @description One viewer-owned subscription's live sync and backfill state (an SSE frame).
@@ -8931,21 +8869,6 @@ export interface components {
             title: string;
             /** Unplayed Count */
             unplayed_count: number;
-        };
-        /** PodcastSubscriptionResourceActionCapabilityOut */
-        PodcastSubscriptionResourceActionCapabilityOut: {
-            /** Availability */
-            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "PodcastSubscription";
-            /**
-             * State
-             * @enum {string}
-             */
-            state: "Subscribed" | "Unsubscribed";
         };
         /** PodcastSubscriptionSettingsPatchRequest */
         PodcastSubscriptionSettingsPatchRequest: {
@@ -10109,6 +10032,37 @@ export interface components {
             /** Subject */
             subject: string;
         };
+        /**
+         * RecoveryAction
+         * @description One import obligation's offer (source, then search; at most one each), carrying
+         *     the attempt/job/revision the viewer saw.
+         */
+        RecoveryAction: {
+            /** Blocked */
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Recovery";
+            /** Offer */
+            offer: components["schemas"]["RetrySourceOffer"] | components["schemas"]["RepairSourceOffer"] | components["schemas"]["RepairSearchOffer"];
+        };
+        /**
+         * RefreshSourceAction
+         * @description Refresh from the attempt the viewer saw; a refresh admission replays by it.
+         */
+        RefreshSourceAction: {
+            /** Blocked */
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            /** Expected Attempt Id */
+            expected_attempt_id: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "RefreshSource";
+        };
         /** RefreshSourceRequest */
         RefreshSourceRequest: {
             /** Client Mutation Id */
@@ -10118,18 +10072,6 @@ export interface components {
              * Format: uuid
              */
             expected_attempt_id: string;
-        };
-        /** RefreshSourceResourceActionCapabilityOut */
-        RefreshSourceResourceActionCapabilityOut: {
-            /** Availability */
-            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
-            /** Expected Attempt Id */
-            expected_attempt_id: string | null;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "RefreshSource";
         };
         /** RejectedChatAdmission */
         RejectedChatAdmission: {
@@ -10214,59 +10156,13 @@ export interface components {
              */
             input: "PublishedContent";
             /**
-             * Kind
-             * @default RepairSearch
-             * @constant
-             */
-            kind: "RepairSearch";
-        };
-        /** RepairSearchOfferOut */
-        RepairSearchOfferOut: {
-            /**
-             * Expected Job Id
-             * Format: uuid
-             */
-            expected_job_id: string;
-            /** Expected Revision */
-            expected_revision: number;
-            /**
-             * Input
-             * @default PublishedContent
-             * @constant
-             */
-            input: "PublishedContent";
-            /**
-             * Kind
-             * @default RepairSearch
-             * @constant
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
              */
             kind: "RepairSearch";
         };
         /** RepairSourceOffer */
         RepairSourceOffer: {
-            /**
-             * Expected Attempt Id
-             * Format: uuid
-             */
-            expected_attempt_id: string;
-            /**
-             * Expected Job Id
-             * Format: uuid
-             */
-            expected_job_id: string;
-            /**
-             * Input
-             * @enum {string}
-             */
-            input: "StoredSource" | "RefetchSource";
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "RepairSource";
-        };
-        /** RepairSourceOfferOut */
-        RepairSourceOfferOut: {
             /**
              * Expected Attempt Id
              * Format: uuid
@@ -10357,41 +10253,32 @@ export interface components {
             /** Items */
             items: components["schemas"]["MediaSummaryResolutionOut"][];
         };
-        /** ResourceActionSnapshotOut */
-        ResourceActionSnapshotOut: {
+        /** ResourceActionSubjectOut */
+        ResourceActionSubjectOut: {
+            /** Ref */
+            ref: string;
+        };
+        /**
+         * ResourceActionsOut
+         * @description One ref's verbs now. Inapplicable verbs are omitted; forbidden ones carry ``blocked``.
+         *     A missing ref has no verbs and a none activation. ``label`` is the name confirmations
+         *     quote (a media's bare title).
+         */
+        ResourceActionsOut: {
+            /** Actions */
+            actions: (components["schemas"]["SimpleAction"] | components["schemas"]["RefreshSourceAction"] | components["schemas"]["RetryMetadataAction"] | components["schemas"]["ReviewMetadataResultAction"] | components["schemas"]["RecoveryAction"] | components["schemas"]["DownloadAction"] | components["schemas"]["OpenSourceAction"] | components["schemas"]["PlaybackAction"] | components["schemas"]["ConsumptionAction"] | components["schemas"]["PodcastSubscriptionAction"] | components["schemas"]["TranscriptAction"] | components["schemas"]["LecternMembershipAction"] | components["schemas"]["HighlightNoteAction"])[];
             activation: components["schemas"]["ResourceActivationOut"];
-            /** Capabilities */
-            capabilities: (components["schemas"]["SimpleResourceActionCapabilityOut"] | components["schemas"]["RefreshSourceResourceActionCapabilityOut"] | components["schemas"]["RetryMetadataResourceActionCapabilityOut"] | components["schemas"]["ReviewMetadataResultResourceActionCapabilityOut"] | components["schemas"]["SourceRecoveryResourceActionCapabilityOut"] | components["schemas"]["SearchRecoveryResourceActionCapabilityOut"] | components["schemas"]["DownloadResourceActionCapabilityOut"] | components["schemas"]["OpenSourceResourceActionCapabilityOut"] | components["schemas"]["PlaybackResourceActionCapabilityOut"] | components["schemas"]["ConsumptionResourceActionCapabilityOut"] | components["schemas"]["EpisodeConsumptionResourceActionCapabilityOut"] | components["schemas"]["PodcastSubscriptionResourceActionCapabilityOut"] | components["schemas"]["TranscriptResourceActionCapabilityOut"] | components["schemas"]["LecternMembershipResourceActionCapabilityOut"] | components["schemas"]["HighlightNoteResourceActionCapabilityOut"])[];
+            /** Label */
+            label: string;
             /** Missing */
             missing: boolean;
             /** Ref */
             ref: string;
         };
         /**
-         * ResourceActionSnapshotResolveRequest
-         * @description A batch of 1..100 unique resource refs to resolve.
-         *
-         *     ``Field`` bounds the count (1..100) and a single ``model_validator`` adds the
-         *     uniqueness rule pydantic cannot express; both surface as ``E_INVALID_REQUEST``
-         *     via the app's request-validation remap. Ref grammar is parsed exactly once, at
-         *     the route boundary (``api/routes/resource_items.py`` ``_parse_ref``), so an
-         *     unparseable ref is rejected there — this model never re-parses.
+         * ResourceActivationOut
+         * @description Where opening a ref goes; ``href`` is null exactly when ``kind`` is none.
          */
-        ResourceActionSnapshotResolveRequest: {
-            /** Refs */
-            refs: string[];
-        };
-        /** ResourceActionSnapshotResolveResponse */
-        ResourceActionSnapshotResolveResponse: {
-            /** Snapshots */
-            snapshots: components["schemas"]["ResourceActionSnapshotOut"][];
-        };
-        /** ResourceActionSubjectOut */
-        ResourceActionSubjectOut: {
-            /** Ref */
-            ref: string;
-        };
-        /** ResourceActivationOut */
         ResourceActivationOut: {
             /** Href */
             href: string | null;
@@ -10402,8 +10289,6 @@ export interface components {
             kind: "route" | "external" | "none";
             /** Resource Ref */
             resource_ref: string;
-            /** Unresolved Reason */
-            unresolved_reason: string | null;
         };
         /** ResourceBodyMutationOut */
         ResourceBodyMutationOut: {
@@ -10439,69 +10324,9 @@ export interface components {
             /** Client Mutation Id */
             client_mutation_id: string;
         };
-        /** ResourceItemCapabilitiesOut */
-        ResourceItemCapabilitiesOut: {
-            /** Adjacency Source */
-            adjacency_source: boolean;
-            /** Adjacency Target */
-            adjacency_target: boolean;
-            /** App Search Scope */
-            app_search_scope: boolean;
-            /** Attachable */
-            attachable: boolean;
-            /**
-             * Chat Subject
-             * @enum {string}
-             */
-            chat_subject: "none" | "label" | "scope" | "readable" | "quote" | "generated_output";
-            /** Citable Result Type */
-            citable_result_type: string | null;
-            /** Citation Output Source */
-            citation_output_source: boolean;
-            /** Conversation Search Scope */
-            conversation_search_scope: boolean;
-            /** Expandable */
-            expandable: boolean;
-            /**
-             * Expansion Policy
-             * @enum {string}
-             */
-            expansion_policy: "none" | "media_owned_reader_children" | "page_note_blocks" | "note_block_owned_evidence" | "artifact_revisions";
-            /**
-             * Inspectable
-             * @enum {string}
-             */
-            inspectable: "none" | "media_document_map";
-            /**
-             * Library Placement
-             * @enum {string}
-             */
-            library_placement: "None" | "ManageEntries";
-            /**
-             * Link Mode
-             * @enum {string}
-             */
-            link_mode: "none" | "direct" | "materialize_passage";
-            /**
-             * Prompt Render
-             * @enum {string}
-             */
-            prompt_render: "none" | "label" | "inline_body" | "quote";
-            /**
-             * Readable
-             * @enum {string}
-             */
-            readable: "none" | "scope" | "body" | "media";
-            /**
-             * Sharing
-             * @enum {string}
-             */
-            sharing: "None" | "CopyOnly" | "ResourceGrants" | "HighlightGrants" | "LibraryMembership";
-        };
         /** ResourceItemOut */
         ResourceItemOut: {
             activation: components["schemas"]["ResourceActivationOut"];
-            capabilities: components["schemas"]["ResourceItemCapabilitiesOut"];
             /**
              * Id
              * Format: uuid
@@ -10509,15 +10334,10 @@ export interface components {
             id: string;
             /** Label */
             label: string;
-            /**
-             * Missing
-             * @default false
-             */
+            /** Missing */
             missing: boolean;
             /** Ref */
             ref: string;
-            /** Route */
-            route: string | null;
             /**
              * Scheme
              * @enum {string}
@@ -10542,24 +10362,6 @@ export interface components {
             /** Version */
             version: number;
         };
-        /** ResourceLocatorResolutionOut */
-        ResourceLocatorResolutionOut: {
-            /** Canonical Href */
-            canonical_href: string | null;
-            /** Locator */
-            locator: components["schemas"]["ResourceRefLocatorIn"] | components["schemas"]["ContributorHandleLocatorIn"];
-            resource_item: components["schemas"]["ResourceItemOut"];
-        };
-        /** ResourceLocatorResolveRequest */
-        ResourceLocatorResolveRequest: {
-            /** Locators */
-            locators: (components["schemas"]["ResourceRefLocatorIn"] | components["schemas"]["ContributorHandleLocatorIn"])[];
-        };
-        /** ResourceLocatorResolveResponse */
-        ResourceLocatorResolveResponse: {
-            /** Resolutions */
-            resolutions: components["schemas"]["ResourceLocatorResolutionOut"][];
-        };
         /** ResourceOpenableSearchRequest */
         ResourceOpenableSearchRequest: {
             /** Q */
@@ -10571,16 +10373,6 @@ export interface components {
         ResourceOpenableSearchResponse: {
             /** Items */
             items: components["schemas"]["ResourceItemOut"][];
-        };
-        /** ResourceRefLocatorIn */
-        ResourceRefLocatorIn: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "resource_ref";
-            /** Ref */
-            ref: string;
         };
         /** ResourceShareSnapshotOut */
         ResourceShareSnapshotOut: {
@@ -10759,10 +10551,10 @@ export interface components {
             /** Note Blocks */
             note_blocks: number;
         };
-        /** RetryMetadataResourceActionCapabilityOut */
-        RetryMetadataResourceActionCapabilityOut: {
-            /** Availability */
-            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
+        /** RetryMetadataAction */
+        RetryMetadataAction: {
+            /** Blocked */
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -10772,24 +10564,6 @@ export interface components {
         };
         /** RetrySourceOffer */
         RetrySourceOffer: {
-            /**
-             * Expected Attempt Id
-             * Format: uuid
-             */
-            expected_attempt_id: string;
-            /**
-             * Input
-             * @enum {string}
-             */
-            input: "StoredSource" | "RefetchSource";
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "RetrySource";
-        };
-        /** RetrySourceOfferOut */
-        RetrySourceOfferOut: {
             /**
              * Expected Attempt Id
              * Format: uuid
@@ -10876,10 +10650,13 @@ export interface components {
              */
             type: "reverse_edit";
         };
-        /** ReviewMetadataResultResourceActionCapabilityOut */
-        ReviewMetadataResultResourceActionCapabilityOut: {
-            /** Availability */
-            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
+        /**
+         * ReviewMetadataResultAction
+         * @description Acknowledge the exact no-findings metadata job the viewer has not reviewed.
+         */
+        ReviewMetadataResultAction: {
+            /** Blocked */
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
             /**
              * Job Id
              * Format: uuid
@@ -10968,20 +10745,6 @@ export interface components {
             has_more: boolean;
             /** Next Cursor */
             next_cursor: string | null;
-        };
-        /**
-         * SearchRecoveryResourceActionCapabilityOut
-         * @description Recover the exact search obligation independently of source work.
-         */
-        SearchRecoveryResourceActionCapabilityOut: {
-            /** Availability */
-            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "SearchRecovery";
-            offer: components["schemas"]["RepairSearchOfferOut"];
         };
         /** SearchRepairAdmission */
         SearchRepairAdmission: {
@@ -11624,27 +11387,6 @@ export interface components {
             /** Route Label */
             route_label: string;
         };
-        /** ServerActionAvailabilityAvailableOut */
-        ServerActionAvailabilityAvailableOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Available";
-        };
-        /** ServerActionAvailabilityBlockedOut */
-        ServerActionAvailabilityBlockedOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Blocked";
-            /**
-             * Reason
-             * @enum {string}
-             */
-            reason: "PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable";
-        };
         /** SetActivePathRequest */
         SetActivePathRequest: {
             /**
@@ -11740,10 +11482,10 @@ export interface components {
             /** User Handle */
             user_handle: string;
         };
-        /** SimpleResourceActionCapabilityOut */
-        SimpleResourceActionCapabilityOut: {
-            /** Availability */
-            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
+        /** SimpleAction */
+        SimpleAction: {
+            /** Blocked */
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -11922,21 +11664,6 @@ export interface components {
              * Format: uuid
              */
             source_attempt_id: string;
-        };
-        /**
-         * SourceRecoveryResourceActionCapabilityOut
-         * @description Recover the exact source obligation the viewer inspected.
-         */
-        SourceRecoveryResourceActionCapabilityOut: {
-            /** Availability */
-            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "SourceRecovery";
-            /** Offer */
-            offer: components["schemas"]["RetrySourceOfferOut"] | components["schemas"]["RepairSourceOfferOut"];
         };
         /** SourceRefreshAdmission */
         SourceRefreshAdmission: {
@@ -12319,6 +12046,21 @@ export interface components {
          * @enum {string}
          */
         ToolEffect: "Pure" | "Read" | "Write";
+        /** TranscriptAction */
+        TranscriptAction: {
+            /** Blocked */
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Transcript";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "not_requested" | "queued" | "running" | "ready" | "partial" | "unavailable" | "failed_provider";
+        };
         /**
          * TranscriptCoverage
          * @description Coverage quality for transcript artifacts.
@@ -12371,26 +12113,6 @@ export interface components {
              * @enum {string}
              */
             reason: "episode_open" | "search" | "highlight" | "quote" | "background_warming" | "operator_requeue";
-        };
-        /** TranscriptResourceActionCapabilityOut */
-        TranscriptResourceActionCapabilityOut: {
-            /** Availability */
-            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
-            /**
-             * Coverage
-             * @enum {string}
-             */
-            coverage: "None" | "Partial" | "Full";
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Transcript";
-            /**
-             * State
-             * @enum {string}
-             */
-            state: "NotRequested" | "Queued" | "Running" | "Ready" | "Partial" | "Unavailable" | "FailedProvider";
         };
         /**
          * TranscriptState
@@ -18564,72 +18286,6 @@ export interface operations {
             };
         };
     };
-    resolve_action_snapshots_resource_items_action_snapshots_resolve_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResourceActionSnapshotResolveRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_ResourceActionSnapshotResolveResponse_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    resolve_resource_locators_resource_items_locators_resolve_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResourceLocatorResolveRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_ResourceLocatorResolveResponse_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     search_openable_resources_resource_items_openables_search_post: {
         parameters: {
             query?: never;
@@ -18683,6 +18339,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_ResourceTargetSearchResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_resource_item_resource_items__resource_ref__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                resource_ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_ResourceItemOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_resource_actions_resource_items__resource_ref__actions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                resource_ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_ResourceActionsOut_"];
                 };
             };
             /** @description Validation Error */

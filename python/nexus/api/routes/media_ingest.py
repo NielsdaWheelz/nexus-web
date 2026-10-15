@@ -39,7 +39,7 @@ from nexus.services import (
     media_source_ingest,
     media_upload_sessions,
 )
-from nexus.services.capabilities import ViewerRecovery
+from nexus.services.media_source_ingest import ViewerRecovery
 
 router = APIRouter(tags=["media"])
 

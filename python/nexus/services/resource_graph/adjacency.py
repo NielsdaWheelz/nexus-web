@@ -16,7 +16,7 @@ from nexus.services.resource_graph import edges as graph_edges
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_items import versions
-from nexus.services.resource_items.capabilities import resource_can_own_ordered_adjacency
+from nexus.services.resource_items.capabilities import capability
 
 
 @dataclass(slots=True)
@@ -118,7 +118,7 @@ def insert_link(
     db: Session, *, user_id: UUID, source: ResourceRef, target: ResourceRef
 ) -> graph_edges.EdgeWrite:
     assert_ref_visible(db, viewer_id=user_id, ref=source)
-    if not resource_can_own_ordered_adjacency(source):
+    if not capability(source.scheme).adjacency_source:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot own a surface")
     return graph_edges.create_link(db, viewer_id=user_id, source=source, target=target)
 

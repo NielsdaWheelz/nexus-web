@@ -930,7 +930,7 @@ resource activation plus an optional reader-internal focus target.
 
 ### 7.8 Resource Inspector, Universal Dossiers & Media Intelligence
 
-`RESOURCE_ITEM_CAPABILITIES` is the backend authority for Inspector eligibility,
+`CAPABILITIES` (`services/resource_items/capabilities.py`) is the backend authority for Inspector eligibility,
 linked-items policy, Forks, and default surface order; the committed TypeScript
 projection must agree with the backend. Every eligible resource implies Dossier.
 `useResourceInspector` composes one stable publication and inspector action per

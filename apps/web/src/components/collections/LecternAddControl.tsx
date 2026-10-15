@@ -1,14 +1,17 @@
 "use client";
 
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import Button from "@/components/ui/Button";
-import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
+import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
 import type { MediaId } from "@/lib/lectern/contract";
 import { useLectern } from "@/lib/lectern/LecternProvider";
-import { canonicalResourceRef } from "@/lib/sharing/targets";
 import styles from "./LecternAddControl.module.css";
 
-/** An inspected add action, or current membership; an unresolved command wins. */
+/**
+ * An inspected add action, or current membership; an unresolved command wins.
+ * The media's verbs are read on mount and again whenever its lectern
+ * membership changes, so only a fresh read says present or absent.
+ */
 export default function LecternAddControl({
   mediaId, title, returnFocus,
 }: {
@@ -16,12 +19,16 @@ export default function LecternAddControl({
   title: string;
   returnFocus: () => HTMLElement | null;
 }) {
-  const subject = useMemo(
-    () => ({ ref: canonicalResourceRef({ scheme: "media", id: mediaId }) }),
-    [mediaId],
-  );
-  const model = useResourceActionMenuModel(subject);
-  const request = useLectern().ensureRequests.get(mediaId);
+  const { options, onOpenChange } = useResourceActionMenu(`media:${mediaId}`);
+  const { resource, ensureRequests } = useLectern();
+  const request = ensureRequests.get(mediaId);
+  const member =
+    resource.status === "ready" &&
+    resource.data.items.some((item) => item.mediaSummary.media_id === mediaId);
+  useEffect(() => {
+    onOpenChange(true);
+    return () => onOpenChange(false);
+  }, [member, onOpenChange]);
   const returnFocusRef = useRef(returnFocus);
   returnFocusRef.current = returnFocus;
   // Cache updates can remove this leaf's button without rendering its collection.
@@ -62,10 +69,9 @@ export default function LecternAddControl({
       </span>
     );
   }
-  if (model.status === "Loading" || model.status === "Refreshing")
+  if (options[0]?.id === "ResourceActions.Loading")
     return <span className={styles.quiet}>checking lectern…</span>;
-  if (model.status === "Error") {
-    const retry = model.descriptors.find((action) => action.id === "ResourceActionSnapshot.Retry");
+  if (options[0]?.id === "ResourceActions.Failed") {
     return (
       <span className={styles.control}>
         <span className={styles.quiet}>couldn’t check lectern</span>
@@ -75,21 +81,15 @@ export default function LecternAddControl({
           variant="ghost"
           size="sm"
           aria-label={`retry lectern check for ${title}`}
-          aria-disabled={retry?.disabled || undefined}
-          aria-busy={retry?.disabled || undefined}
-          onClick={(event) => {
-            if (retry?.kind === "command" && !retry.disabled)
-              retry.onSelect({ triggerEl: event.currentTarget });
-          }}
+          onClick={() => onOpenChange(true)}
         >retry</Button>
       </span>
     );
   }
-  const membership = model.capabilities.find((capability) => capability.kind === "LecternMembership");
-  if (!membership) return null;
-  if (membership.state === "Present") return <span className={styles.quiet}>on lectern</span>;
-  const action = model.descriptors.find((descriptor) => descriptor.id === "RelationshipAction.LecternMembership");
+  const action = options.find((descriptor) => descriptor.id === "LecternMembership");
   if (action?.kind !== "command") return null;
+  if (action.state?.kind === "toggle" && action.state.pressed)
+    return <span className={styles.quiet}>on lectern</span>;
   return (
     <span className={styles.control}>
       <Button

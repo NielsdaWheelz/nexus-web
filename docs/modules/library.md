@@ -103,10 +103,9 @@ boundary.
 Library entry mutations are commands, not refreshed read models. Media add,
 reorder and media removal are bodyless commands (removal answers 204);
 idempotent Podcast placement add/removal returns its `outcome`. After a
-successful write the placement editor reconciles the subject's action snapshot
-and rereads the placement inventory. Every placement write is idempotent, so a
-transport failure is retried by resending the write; because that write may
-have committed, it also reconciles the snapshot. A refused write rereads the
+successful write the placement editor rereads the placement inventory. Every
+placement write is idempotent, so a transport failure is retried by resending
+the write. A refused write rereads the
 inventory and offers no retry, and a missing target ends the editor. An idle
 editor rereads when `Libraries` or `Entries` moved after its read.
 Agent filing receives only inserted/already-present truth for Undo and never

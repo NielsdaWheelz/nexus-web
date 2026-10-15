@@ -1,4 +1,4 @@
-"""Wire schemas for resource items.
+"""Wire schemas for resource items: identity and actions, then notes' surfaces and edits.
 
 Every key is snake_case on the wire.
 """
@@ -10,14 +10,11 @@ from typing import Annotated, Any, Literal, TypeGuard
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    field_validator,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from nexus.schemas.consumption import PlayerDescriptor
+from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
+from nexus.schemas.metadata_enrichment import MetadataRetry
 from nexus.services.resource_graph.refs import (
     RESOURCE_SCHEMES,
     ResourceRefParseFailure,
@@ -204,100 +201,221 @@ def _validate_pm_attrs(node_type: str, attrs: dict[str, Any] | None, *, path: st
             raise ValueError(f"{path}.title must be a string or null")
 
 
-class ResourceItemCapabilitiesOut(BaseModel):
-    sharing: Literal["None", "CopyOnly", "ResourceGrants", "HighlightGrants", "LibraryMembership"]
-    library_placement: Literal["None", "ManageEntries"]
-    link_mode: Literal["none", "direct", "materialize_passage"]
-    attachable: bool
-    chat_subject: Literal["none", "label", "scope", "readable", "quote", "generated_output"]
-    readable: Literal["none", "scope", "body", "media"]
-    inspectable: Literal["none", "media_document_map"]
-    citable_result_type: str | None
-    citation_output_source: bool
-    app_search_scope: bool
-    conversation_search_scope: bool
-    adjacency_source: bool
-    adjacency_target: bool
-    prompt_render: Literal["none", "label", "inline_body", "quote"]
-    expansion_policy: Literal[
-        "none",
-        "media_owned_reader_children",
-        "page_note_blocks",
-        "note_block_owned_evidence",
-        "artifact_revisions",
-    ]
-    expandable: bool
+# identity and actions (resource actions slice); the surface and mutation models below are notes'.
+_OUT = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
 class ResourceActivationOut(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    """Where opening a ref goes; ``href`` is null exactly when ``kind`` is none."""
+
+    model_config = _OUT
 
     resource_ref: str
     kind: Literal["route", "external", "none"]
     href: str | None
-    unresolved_reason: str | None
-
-    @model_validator(mode="after")
-    def _validate_href(self) -> ResourceActivationOut:
-        if (self.kind == "none") != (self.href is None):
-            raise ValueError("activation href must be absent exactly for none")
-        return self
 
 
 class ResourceItemOut(BaseModel):
+    model_config = _OUT
+
     ref: str
     scheme: ResourceScheme
     id: UUID
     label: str
     summary: str
-    route: str | None
     activation: ResourceActivationOut
-    missing: bool = False
-    capabilities: ResourceItemCapabilitiesOut
+    missing: bool
     version_by_lane: dict[str, int]
 
 
-class ResourceRefLocatorIn(BaseModel):
-    kind: Literal["resource_ref"]
-    ref: str = Field(min_length=1)
+BlockReason = Literal["PermissionDenied", "Locked", "Processing", "TemporarilyUnavailable"]
+TranscriptState = Literal[
+    "not_requested", "queued", "running", "ready", "partial", "unavailable", "failed_provider"
+]
+DownloadKind = Literal["podcast_episode", "pdf", "epub", "web_article"]
 
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+SimpleActionKind = Literal[
+    "Open",
+    "OpenInNewPane",
+    "MediaMetadata",
+    "Share",
+    "Chat",
+    "LinkResource",
+    "PlayNext",
+    "DownloadOriginal",
+    "EditAuthors",
+    "ResetProgress",
+    "RemoveMedia",
+    "LibraryPlacement",
+    "LibrarySettings",
+    "DeleteLibrary",
+    "PodcastSettings",
+    "RefreshPodcast",
+    "RetryPodcastBackfill",
+    "DeleteConversation",
+    "ForkMessage",
+    "WalkMessageSources",
+    "RerunMessage",
+    "RegenerateMessage",
+    "DeleteMessage",
+    "EditHighlight",
+    "LearnHighlight",
+    "EditHighlightBounds",
+    "DeleteHighlight",
+    "EditPageTitle",
+    "DeletePage",
+    "EditNoteBody",
+    "RegenerateArtifact",
+]
 
-    @field_validator("ref")
-    @classmethod
-    def validate_ref(cls, value: str) -> str:
-        if isinstance(parse_resource_ref(value), ResourceRefParseFailure):
-            raise ValueError("ref must be a canonical ResourceRef")
-        return value
+
+class SimpleAction(BaseModel):
+    model_config = _OUT
+
+    kind: SimpleActionKind
+    blocked: BlockReason | None
 
 
-class ContributorHandleLocatorIn(BaseModel):
-    kind: Literal["contributor_handle"]
-    handle: str = Field(min_length=1, max_length=200)
+class RetryMetadataAction(BaseModel):
+    model_config = _OUT
 
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    kind: Literal["RetryMetadata"] = "RetryMetadata"
+    blocked: BlockReason | None
+    retry: MetadataRetry
 
 
-ResourceLocatorIn = Annotated[
-    ResourceRefLocatorIn | ContributorHandleLocatorIn,
+class RefreshSourceAction(BaseModel):
+    """Refresh from the attempt the viewer saw; a refresh admission replays by it."""
+
+    model_config = _OUT
+
+    kind: Literal["RefreshSource"] = "RefreshSource"
+    blocked: BlockReason | None
+    expected_attempt_id: UUID | None
+
+
+class ReviewMetadataResultAction(BaseModel):
+    """Acknowledge the exact no-findings metadata job the viewer has not reviewed."""
+
+    model_config = _OUT
+
+    kind: Literal["ReviewMetadataResult"] = "ReviewMetadataResult"
+    blocked: BlockReason | None
+    job_id: UUID
+
+
+class RecoveryAction(BaseModel):
+    """One import obligation's offer (source, then search; at most one each), carrying
+    the attempt/job/revision the viewer saw."""
+
+    model_config = _OUT
+
+    kind: Literal["Recovery"] = "Recovery"
+    blocked: BlockReason | None
+    offer: Annotated[
+        RetrySourceOffer | RepairSourceOffer | RepairSearchOffer, Field(discriminator="kind")
+    ]
+
+
+class DownloadAction(BaseModel):
+    """What android needs to keep this media offline: an episode's audio or a reading copy."""
+
+    model_config = _OUT
+
+    kind: Literal["Download"] = "Download"
+    blocked: BlockReason | None
+    media_kind: DownloadKind
+    title: str
+    audio_url: str | None
+
+
+class OpenSourceAction(BaseModel):
+    model_config = _OUT
+
+    kind: Literal["OpenSource"] = "OpenSource"
+    blocked: BlockReason | None
+    href: str
+
+
+class PlaybackAction(BaseModel):
+    model_config = _OUT
+
+    kind: Literal["Playback"] = "Playback"
+    blocked: BlockReason | None
+    player_descriptor: PlayerDescriptor
+
+
+class ConsumptionAction(BaseModel):
+    model_config = _OUT
+
+    kind: Literal["Consumption"] = "Consumption"
+    blocked: BlockReason | None
+    finished: bool
+    episode: bool
+
+
+class PodcastSubscriptionAction(BaseModel):
+    model_config = _OUT
+
+    kind: Literal["PodcastSubscription"] = "PodcastSubscription"
+    blocked: BlockReason | None
+    subscribed: bool
+
+
+class TranscriptAction(BaseModel):
+    model_config = _OUT
+
+    kind: Literal["Transcript"] = "Transcript"
+    blocked: BlockReason | None
+    state: TranscriptState
+
+
+class LecternMembershipAction(BaseModel):
+    model_config = _OUT
+
+    kind: Literal["LecternMembership"] = "LecternMembership"
+    blocked: BlockReason | None
+    lectern_item_id: UUID | None
+
+
+class HighlightNoteAction(BaseModel):
+    model_config = _OUT
+
+    kind: Literal["HighlightNote"] = "HighlightNote"
+    blocked: BlockReason | None
+    note_block_id: UUID | None
+
+
+ResourceActionOut = Annotated[
+    SimpleAction
+    | RefreshSourceAction
+    | RetryMetadataAction
+    | ReviewMetadataResultAction
+    | RecoveryAction
+    | DownloadAction
+    | OpenSourceAction
+    | PlaybackAction
+    | ConsumptionAction
+    | PodcastSubscriptionAction
+    | TranscriptAction
+    | LecternMembershipAction
+    | HighlightNoteAction,
     Field(discriminator="kind"),
 ]
 
 
-class ResourceLocatorResolveRequest(BaseModel):
-    locators: list[ResourceLocatorIn] = Field(min_length=1, max_length=50)
+class ResourceActionsOut(BaseModel):
+    """One ref's verbs now. Inapplicable verbs are omitted; forbidden ones carry ``blocked``.
+    A missing ref has no verbs and a none activation. ``label`` is the name confirmations
+    quote (a media's bare title)."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = _OUT
 
-
-class ResourceLocatorResolutionOut(BaseModel):
-    locator: ResourceLocatorIn
-    resource_item: ResourceItemOut
-    canonical_href: str | None
-
-
-class ResourceLocatorResolveResponse(BaseModel):
-    resolutions: list[ResourceLocatorResolutionOut]
+    ref: str
+    label: str
+    activation: ResourceActivationOut
+    missing: bool
+    actions: list[ResourceActionOut]
 
 
 class PageTitleSurfaceContent(BaseModel):

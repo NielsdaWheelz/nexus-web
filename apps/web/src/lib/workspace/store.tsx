@@ -523,13 +523,15 @@ function createWorkspaceStore(
       );
       if (pages) set({ dailyPageByPaneId: pages });
     },
-    acknowledgePaneEntryDelivery(delivery: PaneEntryDelivery): void {
+    /** Removes a pending delivery; true only for the one call that removed it. */
+    claimPaneEntryDelivery(delivery: PaneEntryDelivery): boolean {
       const deliveries = data.pendingPaneEntryDeliveryByPaneId;
       const pending = deliveries.get(delivery.paneId);
-      if (pending?.activationId !== delivery.activationId) return;
+      if (pending?.activationId !== delivery.activationId) return false;
       const next = new Map(deliveries);
       next.delete(delivery.paneId);
       set({ pendingPaneEntryDeliveryByPaneId: next });
+      return true;
     },
   };
 
@@ -621,6 +623,14 @@ export function useWorkspaceStore(): WorkspaceStoreValue {
   const store = useContext(StoreContext);
   if (!store) throw new Error("useWorkspaceStore requires WorkspaceStoreProvider");
   return useSyncExternalStore(store.subscribe, store.value, store.value);
+}
+
+/** The workspace as it is when called, without re-rendering on its changes: for code
+ *  that acts on the workspace, not code that renders it. */
+export function useLatestWorkspace(): () => WorkspaceStoreValue {
+  const store = useContext(StoreContext);
+  if (!store) throw new Error("useLatestWorkspace requires WorkspaceStoreProvider");
+  return store.value;
 }
 
 export interface WorkspacePaneLabelDescriptor {

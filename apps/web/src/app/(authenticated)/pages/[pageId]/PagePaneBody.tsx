@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import ResourceSurfaceEditor from "@/components/resource-surface/ResourceSurfaceEditor";
 import {
@@ -8,7 +8,7 @@ import {
   useFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneChrome, type PaneQuery } from "@/lib/panes/paneChrome";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
@@ -34,16 +34,6 @@ import type { ResourceSurface } from "@/lib/resources/resourceItems";
 import { useResourceSurfaceFilterRows } from "@/components/resource-surface/useResourceSurfaceFilterRows";
 import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
-import {
-  notifyPageActionIntentOwnerReady,
-  usePageActionIntentOwner,
-  type PageActionIntent,
-} from "@/lib/notes/actionIntents";
-import {
-  createMountedEditorIntentController,
-  executeCommittingMountedMutation,
-  type MountedEditorIntentController,
-} from "@/lib/actions/mountedActionHandoff";
 
 export type PagePaneSource =
   | { kind: "PageRef"; pageId: string }
@@ -81,30 +71,6 @@ function pageLoadErrorMessage(error: unknown): FeedbackContent {
   }
 }
 
-function pageDeleteErrorMessage(error: unknown): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  switch (error.code) {
-    case "E_NETWORK":
-    case "E_UPSTREAM":
-    case "E_UPSTREAM_TIMEOUT":
-      return {
-        tone: "Danger",
-        title: "Page wasn’t deleted",
-        message:
-          "The page is still available. Check your connection and retry.",
-        requestId: error.requestId,
-      };
-    case "E_NOT_FOUND":
-      return {
-        tone: "Danger",
-        title: "This page is no longer available",
-        requestId: error.requestId,
-      };
-    default:
-      throw error;
-  }
-}
-
 export default function PagePaneBody({
   pageIdOverride,
   initialPage,
@@ -133,7 +99,7 @@ export default function PagePaneBody({
     usePaneRuntime(),
     "PagePaneBody",
   ).activateTarget;
-  const { delivery, acknowledge } = usePaneEntryDelivery();
+  const { delivery, claim } = usePaneEntryDelivery();
   const sourceKey =
     source.kind === "PageRef"
       ? `page:${source.pageId}`
@@ -194,85 +160,20 @@ export default function PagePaneBody({
       : null;
   const dailyLocalDate = dailySourceDate ?? pageDailyLocalDate;
   const pageId = page?.id ?? (source.kind === "PageRef" ? source.pageId : null);
-  type TitleIntent = Extract<PageActionIntent, { kind: "EditPageTitle" }>;
-  const titleIntentControllerRef =
-    useRef<MountedEditorIntentController<TitleIntent> | null>(null);
-  if (titleIntentControllerRef.current === null) {
-    titleIntentControllerRef.current = createMountedEditorIntentController(
-      notifyPageActionIntentOwnerReady,
-    );
-  }
-  const titleIntentController = titleIntentControllerRef.current;
-  const deleteIntentRef = useRef<Extract<
-    PageActionIntent,
-    { kind: "DeletePage" }
-  > | null>(null);
-  const acceptPageActionIntent = useCallback(
-    (intent: PageActionIntent) => {
-      if (
-        !page ||
-        titleIntentController.occupied() ||
-        deleteIntentRef.current
-      ) {
-        return false;
-      }
-      if (intent.kind === "EditPageTitle") {
-        if (!titleIntentController.accept(intent)) return false;
-        setFocusMastheadSerial((current) => current + 1);
-        return true;
-      }
-      deleteIntentRef.current = intent;
-      void (async () => {
-        let deleted = false;
-        try {
-          await executeCommittingMountedMutation(
-            intent,
-            () => apiFetch(`/api/notes/pages/${page.id}`, { method: "DELETE" }),
-            () => setPage(null),
-          );
-          deleted = true;
-          activateTarget({
-            target: { href: "/notes", labelHint: "Notes" },
-            disposition: { kind: "Adopt" },
-          });
-        } catch (error: unknown) {
-          if (handleUnauthenticatedApiError(error)) return;
-          try {
-            feedbackController.publish({
-              kind: "Hud",
-              content: pageDeleteErrorMessage(error),
-            });
-          } catch (caughtDefect) {
-            setDefect({ error: caughtDefect });
-          }
-        } finally {
-          if (deleteIntentRef.current === intent) {
-            deleteIntentRef.current = null;
-          }
-          if (!deleted) notifyPageActionIntentOwnerReady(intent.ref);
-        }
-      })();
-      return true;
-    },
-    [activateTarget, feedbackController, page, titleIntentController],
-  );
-  usePageActionIntentOwner(
-    page?.actionSubject.ref ?? null,
-    acceptPageActionIntent,
-  );
-  const beginTitleIntentMutation = useCallback(
-    () => titleIntentController.beginMutation(),
-    [titleIntentController],
-  );
-  const abortTitleIntent = useCallback(() => {
-    titleIntentController.abortEditing();
-  }, [titleIntentController]);
-  useEffect(
-    () => () => {
-      titleIntentController.releaseOwner();
-    },
-    [titleIntentController],
-  );
+  // Edit title… from a resource menu: focus the title once the page is loaded.
+  useEffect(() => {
+    if (delivery?.entry.kind !== "EditPageTitle" || !ready || !page) return;
+    if (!claim(delivery)) return;
+    if (delivery.entry.pageId !== page.id) {
+      feedbackController.publish({
+        kind: "Hud",
+        content: { tone: "Neutral", title: "This page is no longer available." },
+      });
+      return;
+    }
+    setFocusMastheadSerial((current) => current + 1);
+  }, [claim, delivery, feedbackController, page, ready]);
+  const dailyDelivery = delivery?.entry.kind === "AppendNote" ? delivery : null;
   usePaneDailyPage(dailyLocalDate ? { localDate: dailyLocalDate, pageId } : null);
   const openDatedPage = useCallback(
     (localDate: string) => {
@@ -375,8 +276,8 @@ export default function PagePaneBody({
                 ...(source.kind === "PageRef"
                   ? { materializedSourceRef: `page:${source.pageId}` }
                   : {}),
-                delivery,
-                onDeliveryClaimed: acknowledge,
+                delivery: dailyDelivery,
+                onDeliveryClaimed: claim,
               },
             }
           : source.kind === "PageRef"
@@ -385,8 +286,8 @@ export default function PagePaneBody({
                 daily: {
                   accountId: source.accountId,
                   localDate: source.localDate,
-                  delivery,
-                  onDeliveryClaimed: acknowledge,
+                  delivery: dailyDelivery,
+                  onDeliveryClaimed: claim,
                 },
               })}
         rowFilterQuery={filterQuery}
@@ -396,8 +297,6 @@ export default function PagePaneBody({
         onDailyTitleChange={
           source.kind === "DailyDate" ? handleDailyTitleChange : undefined
         }
-        onTitleMutationStarted={beginTitleIntentMutation}
-        onTitleEditAborted={abortTitleIntent}
         activateTarget={activateTarget}
       />
     </>

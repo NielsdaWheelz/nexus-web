@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import ResourceSurfaceEditor from "@/components/resource-surface/ResourceSurfaceEditor";
+import { useFeedback } from "@/components/feedback/Feedback";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { consumePendingNoteActivation } from "@/lib/reader/pendingNoteActivation";
@@ -14,6 +15,7 @@ import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ResourceSurface } from "@/lib/resources/resourceItems";
 import {
   requirePaneRuntime,
+  usePaneEntryDelivery,
   usePaneHash,
   usePaneParam,
   usePaneRuntime,
@@ -22,15 +24,6 @@ import {
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { usePassageResolution } from "@/lib/reader/passageResolution";
 import { useResourceSurfaceFilterRows } from "@/components/resource-surface/useResourceSurfaceFilterRows";
-import {
-  notifyNoteBlockActionIntentOwnerReady,
-  useNoteBlockActionIntentOwner,
-  type NoteBlockActionIntent,
-} from "@/lib/notes/actionIntents";
-import {
-  createMountedEditorIntentController,
-  type MountedEditorIntentController,
-} from "@/lib/actions/mountedActionHandoff";
 
 export default function NotePaneBody() {
   const blockId = usePaneParam("blockId");
@@ -55,48 +48,26 @@ export default function NotePaneBody() {
   } = useResourceSurfaceFilterRows(sourceRef, "Filter note items");
   const [label, setLabel] = useState<string | null>(null);
   const [focusBodySerial, setFocusBodySerial] = useState(0);
-  const editBodyIntentControllerRef = useRef<
-    MountedEditorIntentController<NoteBlockActionIntent> | null
-  >(null);
-  if (editBodyIntentControllerRef.current === null) {
-    editBodyIntentControllerRef.current = createMountedEditorIntentController(
-      notifyNoteBlockActionIntentOwnerReady,
-    );
-  }
-  const editBodyIntentController = editBodyIntentControllerRef.current;
   const [pulse, setPulse] = useState<
     (NotePulseTarget & { pulseId: number }) | null
   >(null);
   const pulseIdRef = useRef(0);
   usePaneReturnReady(ready);
   useSetPaneLabel(label);
-  const acceptEditBodyIntent = useCallback(
-    (intent: NoteBlockActionIntent) => {
-      if (!ready || !editBodyIntentController.accept(intent)) return false;
+  // Edit note from a resource menu: focus the body once the note is loaded.
+  const { delivery, claim } = usePaneEntryDelivery();
+  const feedback = useFeedback();
+  useEffect(() => {
+    if (delivery?.entry.kind !== "EditNoteBody" || !ready) return;
+    if (!claim(delivery)) return;
+    if (delivery.entry.noteBlockId === blockId)
       setFocusBodySerial((current) => current + 1);
-      return true;
-    },
-    [editBodyIntentController, ready],
-  );
-  useNoteBlockActionIntentOwner(
-    ready
-      ? canonicalResourceRef({ scheme: "note_block", id: blockId })
-      : null,
-    acceptEditBodyIntent,
-  );
-  const beginBodyIntentMutation = useCallback(
-    () => editBodyIntentController.beginMutation(),
-    [editBodyIntentController],
-  );
-  const abortBodyIntent = useCallback(() => {
-    editBodyIntentController.abortEditing();
-  }, [editBodyIntentController]);
-  useEffect(
-    () => () => {
-      editBodyIntentController.releaseOwner();
-    },
-    [editBodyIntentController],
-  );
+    else
+      feedback.publish({
+        kind: "Hud",
+        content: { tone: "Neutral", title: "This note is no longer available." },
+      });
+  }, [blockId, claim, delivery, feedback, ready]);
   const setPulseTarget = useCallback((target: NotePulseTarget) => {
     const next = pulseIdRef.current + 1;
     pulseIdRef.current = next;
@@ -174,8 +145,6 @@ export default function NotePaneBody() {
         rowFilterQuery={filterQuery}
         onSurfaceChange={handleSurfaceChange}
         focusBodySerial={focusBodySerial}
-        onSourceBodyMutationStarted={beginBodyIntentMutation}
-        onSourceBodyEditAborted={abortBodyIntent}
         activateTarget={activateTarget}
         notePulseTarget={pulse?.blockId === blockId ? pulse : null}
       />

@@ -60,7 +60,7 @@ from the subscriptions list (podcasts disabled) shows the failure notice.
 
 Manual episode downloads are a device capability, not Podcast domain state
 ([offline](offline.md)). An episode whose `external_playback_url` is HTTPS
-gets a `Download{mediaKind, title, audioUrl}` resource-action capability;
+gets a `Download {media_kind, title, audio_url}` resource action;
 episode DTOs carry no download fact. Android's `OfflineStore` owns the bytes
 and their state.
 
@@ -135,9 +135,9 @@ viewer's sole-owned placements and keeps shared ones; episodes resurface in All
 with their progress.
 
 - **Subscription-settings UI — `PodcastSubscriptionSettingsOverlay`.** The
-  app-level resource overlay is the only load/draft/save/reconcile lifecycle
-  owner: it loads the subscription, saves one PATCH through `lib/podcasts/api.ts`
-  and reconciles the resource-action snapshot. The save (and the player's
+  app-level resource overlay is the only load/draft/save lifecycle owner: it
+  loads the subscription and saves one PATCH through `lib/podcasts/api.ts`. The
+  save (and the player's
   remember-speed) publishes `Podcasts`, so open podcast panes reread; the
   Library pane rereads on its own topics. There is no install publisher or
   mutation tail.

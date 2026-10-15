@@ -22,6 +22,7 @@ import Companion, {
 import PaneRouteBoundary from "@/components/workspace/PaneRouteBoundary";
 import ResizeHandle from "@/components/workspace/ResizeHandle";
 import { usePaneRefresh } from "@/components/workspace/usePaneRefresh";
+import { useThrowLater } from "@/lib/api/serverState";
 import {
   useMobileChrome,
   useMobileChromeHold,
@@ -310,6 +311,7 @@ function PaneView({
   const hasVisibleControls = Boolean(
     body?.navigation || query?.kind === "Controls" || findVisible,
   );
+  const onDefect = useThrowLater();
   usePublishMobilePaneChrome(
     isMobile
       ? {
@@ -323,6 +325,7 @@ function PaneView({
           paneActions,
           menuActions: body?.menuActions ?? [],
           actionSubject: body?.actionSubject,
+          onDefect,
         }
       : null,
   );

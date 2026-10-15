@@ -41,6 +41,8 @@ export interface MobilePaneChrome {
   readonly paneActions: readonly ActionDescriptor[];
   readonly menuActions: readonly ActionDescriptor[];
   readonly actionSubject?: ResourceActionSubject;
+  /** Breaks this pane at its own boundary; the bar renders outside it. */
+  readonly onDefect: (defect: { readonly error: unknown }) => void;
 }
 
 export interface MobileChrome {

@@ -75,14 +75,6 @@ class BuildFacts:
     instruction: str | None
 
 
-@dataclass(frozen=True, slots=True)
-class ArtifactActionCandidate:
-    """An audience-visible head's lifecycle fact and the subject still needing authz."""
-
-    has_active_build: bool
-    subject_ref: ResourceRef | None
-
-
 def read_subject_head(db: Session, *, scheme: str, handle: str, viewer_id: UUID) -> DossierHeadOut:
     """A routable subject's dossier for this viewer; never inserts a head."""
     subject_id = subjects.resolve(db, scheme, handle, viewer_id)
@@ -102,33 +94,10 @@ def build_state(db: Session, *, build_id: UUID, viewer_id: UUID) -> DossierBuild
     return _build_out(db, _visible_build(db, build_id, viewer_id))
 
 
-def action_candidates(
-    db: Session, *, viewer_id: UUID, artifact_ids: Sequence[UUID], revision_ids: Sequence[UUID]
-) -> tuple[dict[UUID, ArtifactActionCandidate], dict[UUID, ResourceRef | None]]:
-    """Audience-visible heads and revisions; the subject's own visibility is the caller's."""
-    audience = subjects.audience_sql("a")
-    heads: dict[UUID, ArtifactActionCandidate] = {}
-    revisions: dict[UUID, ResourceRef | None] = {}
-    if artifact_ids:
-        rows = _sql(
-            db,
-            "SELECT a.id, a.subject_scheme, a.subject_id, EXISTS (SELECT 1 FROM artifact_builds "
-            "b WHERE b.artifact_id = a.id AND b.status = 'active') AS active FROM artifacts a "
-            f"WHERE a.id = ANY(:ids) AND {audience}",
-            ids=list(artifact_ids),
-            viewer_id=viewer_id,
-        )
-        heads = {row.id: ArtifactActionCandidate(row.active, _subject_ref(row)) for row in rows}
-    if revision_ids:
-        rows = _sql(
-            db,
-            "SELECT a.revision_id AS id, a.subject_scheme, a.subject_id FROM artifacts a "
-            f"WHERE a.revision_id = ANY(:ids) AND {audience}",
-            ids=list(revision_ids),
-            viewer_id=viewer_id,
-        )
-        revisions = {row.id: _subject_ref(row) for row in rows}
-    return heads, revisions
+def has_active_build(db: Session, *, artifact_id: UUID) -> bool:
+    """Whether a build of this artifact is running; visibility is the caller's."""
+    sql = "SELECT 1 FROM artifact_builds WHERE artifact_id = :id AND status = 'active'"
+    return _sql(db, sql, id=artifact_id).first() is not None
 
 
 def start_build(
@@ -587,11 +556,6 @@ def _require_web_research() -> None:
             ApiErrorCode.E_DOSSIER_WEB_RESEARCH_NOT_CONFIGURED,
             "Dossier web research is not configured",
         )
-
-
-def _subject_ref(row: Any) -> ResourceRef | None:
-    scheme = cast(ResourceScheme, row.subject_scheme)
-    return None if row.subject_scheme == "idea" else ResourceRef(scheme, row.subject_id)
 
 
 def _job_key(build_id: UUID) -> str:

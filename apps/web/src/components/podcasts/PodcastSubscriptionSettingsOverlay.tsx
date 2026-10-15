@@ -6,7 +6,6 @@ import { PlaybackRateEditor } from "@/components/player/PlayerPlaybackControls";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Select from "@/components/ui/Select";
-import type { ResourceActionMutationBoundary } from "@/lib/actions/resourceActionMutation";
 import type { ApiError } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
@@ -22,12 +21,10 @@ import {
 import {
   podcastErrorMessage,
 } from "@/lib/podcasts/paneState";
-import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import styles from "./PodcastSubscriptionSettingsOverlay.module.css";
 
 interface Props {
   readonly podcastId: string;
-  readonly mutation: ResourceActionMutationBoundary;
   readonly onClose: () => void;
 }
 
@@ -58,7 +55,6 @@ export default function PodcastSubscriptionSettingsOverlay(props: Props) {
 
 function SettingsForm({
   podcastId,
-  mutation,
   onClose,
   source,
 }: Props & { readonly source: PodcastSubscription }) {
@@ -69,8 +65,6 @@ function SettingsForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const save = async () => {
-    const lease = mutation.begin();
-    if (lease === null) return;
     setBusy(true);
     setError(null);
     try {
@@ -79,12 +73,8 @@ function SettingsForm({
         pause_shortening_mode: pauses,
         auto_queue: autoQueue,
       });
-      const ref = assumeCanonicalResourceRef(`podcast:${podcastId}`);
-      await lease.reconcile({ kind: "Subjects", refs: [ref] });
-      await lease.commit();
       onClose();
     } catch (caught) {
-      lease.abort();
       setError(modeledApiError(caught, fail));
     } finally {
       setBusy(false);

@@ -1,4 +1,5 @@
 import { apiFetch, decodeApiPayload } from "@/lib/api/client";
+import { publishChange } from "@/lib/api/changes";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { withNotePageActionSubject, type NotePage } from "@/lib/notes/pageContract";
 import { isLocalDate } from "@/lib/localDate";
@@ -96,4 +97,12 @@ export async function fetchNotePage(pageId: string): Promise<NotePage> {
     { cache: "no-store" },
   );
   return withNotePageActionSubject(data);
+}
+
+/** Deletes the page; its note blocks are kept. Publishes "Notes". */
+export async function deletePage(pageId: string): Promise<void> {
+  await apiFetch(`/api/notes/pages/${encodeURIComponent(pageId)}`, {
+    method: "DELETE",
+  });
+  publishChange("Notes");
 }

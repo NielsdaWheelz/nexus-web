@@ -20,7 +20,7 @@ import {
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
-import { executeResourceChat } from "@/lib/resources/resourceActionExecution";
+import { createConversationAbout } from "@/lib/chat/conversationIndex";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
@@ -168,11 +168,9 @@ export function useReaderChrome(input: {
     const region = paneSecondaryRegionId(paneId);
     let pending: number | null = null;
     const chat = () =>
-      void executeResourceChat({
-        ref: canonicalResourceRef({ scheme: "media", id }),
-        openConversation: (conversationId) => {
-          activateTarget({ target: { href: `/conversations/${conversationId}`, labelHint: "Chat" }, disposition: { kind: "Adopt" } });
-        },
+      void createConversationAbout(canonicalResourceRef({ scheme: "media", id })).then((conversationId) => {
+        if (conversationId === null) return;
+        activateTarget({ target: { href: `/conversations/${conversationId}`, labelHint: "Chat" }, disposition: { kind: "Adopt" } });
       });
     const keydown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || isEditableTarget(event.target)) return;

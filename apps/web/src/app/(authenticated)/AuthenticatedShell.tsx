@@ -16,7 +16,7 @@ import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import type { AuthenticatedAccount } from "@/lib/account/contract";
-import { ResourceActionRuntimeProvider } from "@/lib/actions/resourceActionRuntime";
+import ResourceActionsProvider from "@/lib/actions/ResourceActionsProvider";
 import {
   ResourceCacheProvider,
   type DehydratedResources,
@@ -39,10 +39,6 @@ import {
 } from "@/lib/reader/ReaderContext";
 import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
-import {
-  ResourceActionOverlays,
-  ResourceOverlaysProvider,
-} from "@/lib/resources/resourceOverlaysController";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import type { WorkspaceState } from "@/lib/workspace/model";
 import {
@@ -124,28 +120,25 @@ function Workspace(props: {
           <MobileChromeProvider>
             {/* One Lectern owner wraps the workspace leaves and the player
                 runtime. The resource-action runtime reads every provider
-                above it; its overlays render inside the player runtime. */}
+                above it and renders the overlays its verbs open. */}
             <MediaSummaryProvider key={accountId}>
               <LecternProvider>
                 <LibraryPlacementControllerProvider>
                   <ShareControllerProvider>
-                    <ResourceOverlaysProvider>
-                      <GlobalPlayerProvider accountId={accountId}>
-                        <ResourceActionRuntimeProvider>
-                          <ImportsProvider>
-                            <Nexus />
-                            <ResourceActionOverlays />
-                            <div className={styles.layout}>
-                              <AppNav />
-                              <main className={styles.main}>
-                                <WorkspaceHost />
-                                <GlobalPlayerSurfaces />
-                              </main>
-                            </div>
-                          </ImportsProvider>
-                        </ResourceActionRuntimeProvider>
-                      </GlobalPlayerProvider>
-                    </ResourceOverlaysProvider>
+                    <GlobalPlayerProvider accountId={accountId}>
+                      <ResourceActionsProvider>
+                        <ImportsProvider>
+                          <Nexus />
+                          <div className={styles.layout}>
+                            <AppNav />
+                            <main className={styles.main}>
+                              <WorkspaceHost />
+                              <GlobalPlayerSurfaces />
+                            </main>
+                          </div>
+                        </ImportsProvider>
+                      </ResourceActionsProvider>
+                    </GlobalPlayerProvider>
                   </ShareControllerProvider>
                 </LibraryPlacementControllerProvider>
               </LecternProvider>

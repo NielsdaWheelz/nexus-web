@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { NoteBodyEdit, NoteBodySelection } from "@/components/notes/NoteBodyEditor";
-import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 import type { NoteBodyValue } from "@/lib/notes/prosemirror/schema";
 import {
   getWritingSession,
@@ -24,7 +23,6 @@ export interface UseNoteEditorSessionOptions {
   adapter: BodyAdapter | null;
   awaitExternalCreation?: boolean;
   onError?: (error: unknown) => void;
-  onMutationStarted?: () => MountedEditorMutationLease | null;
 }
 
 export interface NoteEditorSession extends WritingSnapshot {

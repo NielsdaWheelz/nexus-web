@@ -1,7 +1,7 @@
 import type { Schema } from "@/lib/api/wire";
 import { decodeNoteBodyValue, type NoteBodyValue } from "@/lib/notes/prosemirror/schema";
+import type { ResourceItem } from "@/lib/resources/items";
 
-export type ResourceItem = Schema<"ResourceItemOut">;
 
 export type ResourceSurfaceContent =
   | Schema<"PageTitleSurfaceContent">

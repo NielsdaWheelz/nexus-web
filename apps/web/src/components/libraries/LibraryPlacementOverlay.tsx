@@ -51,10 +51,10 @@ export default function LibraryPlacementOverlay({
 
 /**
  * One target's placement inventory. It runs one step at a time (a read, a toggle's write, or
- * create-and-add) and shows the rows of the last successful read. A write that succeeded, or
- * whose outcome is unknown, reconciles the subject's action snapshot.
+ * create-and-add) and shows the rows of the last successful read; a write that succeeded, or
+ * was refused, rereads it.
  */
-function PlacementEditor({ session: { target, options } }: { session: LibraryPlacementSession }) {
+function PlacementEditor({ session: { target } }: { session: LibraryPlacementSession }) {
   const [rows, setRows] = useState<LibraryPlacementOption[] | null>(null);
   const [pending, setPending] = useState<
     "Load" | "Create" | LibraryPlacementDestinationKey | null
@@ -153,17 +153,13 @@ function PlacementEditor({ session: { target, options } }: { session: LibraryPla
       const title =
         op === "Add" ? "Item wasn’t added to the library" : "Item wasn’t removed from the library";
       const outcome = fail(error, title, "PlacementMutation", () => void command(op, destination));
-      if (outcome === "Transport") {
-        // The write may have committed, and the subject's actions depend on its placements.
-        void options.reconcileActions().catch((error: unknown) => setDefect({ error }));
-      } else if (outcome === "Refused") {
+      if (outcome === "Refused") {
         // A refusal can come from stale rows: a deleted library, a changed role or subscription.
         setPending("Load");
         await reread();
       }
       return;
     }
-    void options.reconcileActions().catch((error: unknown) => setDefect({ error }));
     await reread();
   }
 

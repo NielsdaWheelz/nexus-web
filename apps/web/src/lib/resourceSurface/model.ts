@@ -1,4 +1,5 @@
-import type { ResourceItem, ResourceSurface, ResourceSurfaceNode, ResourceSurfaceOccurrence, SurfacePosition } from "@/lib/resources/resourceItems";
+import type { ResourceItem } from "@/lib/resources/items";
+import type { ResourceSurface, ResourceSurfaceNode, ResourceSurfaceOccurrence, SurfacePosition } from "@/lib/resources/resourceItems";
 import type { ResourceSurfaceDraftIntent, ResourceSurfacePendingBody } from "./draftStore";
 
 export type SurfaceContext = { rootRef: string; linkPath: string[] };
@@ -50,7 +51,7 @@ function requireLink(surface: ResourceSurface, linkId: string): ResourceSurfaceO
 function createdNode(surface: ResourceSurface, noteId: string, bodyPmJson: Record<string, unknown>): ResourceSurfaceNode {
   const ref = `note_block:${noteId}`;
   return {
-    item: { ...surface.source.item, ref, scheme: "note_block", id: noteId, label: "", summary: "", route: `/notes/${noteId}`, activation: { resource_ref: ref, kind: "route", href: `/notes/${noteId}`, unresolved_reason: null }, version_by_lane: { body: 0, links: 0 } },
+    item: { ...surface.source.item, ref, scheme: "note_block", id: noteId, label: "", summary: "", activation: { resource_ref: ref, kind: "route", href: `/notes/${noteId}` }, version_by_lane: { body: 0, links: 0 } },
     content: { kind: "note_body", bodyPmJson, bodyText: "" },
   };
 }

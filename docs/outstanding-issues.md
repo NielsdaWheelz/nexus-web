@@ -136,7 +136,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] docs/rules subtree · 2026-10-09 docs-history purge · the subtree was hand-edited and never pulled; it documents absent subsystems and a test doctrine local rules override: [ticket](tickets/rules-subtree-is-stale-and-partly-inapplicable.md).
 - [deferred] notes / web · 2026-10-04 source audit · a delayed accepted attachment can resume against its destroyed editor view: [ticket](tickets/note-attachment-can-resume-into-destroyed-editor.md).
 - [deferred] notes / daily input · 2026-10-04 independent source review · raw handoff offsets and trimmed canonical text coordinates can disagree; the daily input/merge owner must qualify their contract: [ticket](tickets/daily-handoff-raw-and-canonical-text-coordinates-diverge.md).
-- [deferred] resource actions / web · 2026-10-04 source audit · a caught action-snapshot 401 shows generic retry without the existing auth handoff: [ticket](tickets/resource-action-snapshot-unauthorized-skips-auth-handoff.md).
 - [open] wikisource / article apparatus · 2026-10-04 native baseline · `On Liberty/Chapter 2` retains note links but yields zero bound note items; the exact loss point needs qualification: [ticket](tickets/wikisource-note-links-unbound-after-extraction.md).
 - [open] epub / apparatus extraction · 2026-10-04 native baseline · official gutenberg 34901's plain inline footnote anchors yield zero reader apparatus items: [ticket](tickets/gutenberg-inline-footnotes-not-classified.md).
 - [open] epub / apparatus extraction · 2026-10-04 native baseline · official idpf wasteland's declared `rearnote` bodies yield zero reader apparatus items: [ticket](tickets/epub-rearnote-bodies-not-classified.md).
@@ -261,7 +260,6 @@ unexpected timeouts. See
 - [open] oi-085 · epub extraction · 2026-09-12 memory review · utf-8 output caps do not bound retained unicode string memory: [ticket](tickets/epub-utf8-output-cap-does-not-bound-resident-text.md).
 - [open] oi-087 · ci actions · 2026-09-12 reader publication · the pinned buildx action targets a deprecated node runtime: [ticket](tickets/ci-buildx-action-deprecated-node-runtime.md).
 
-- [open] resource actions · 2026-09-14 highlight popup verification · manual follow-up must distinguish a mobile navigation defect from the removed journey's readiness race: [ticket](tickets/resource-action-parity-mobile-pane-readiness.md).
 - [open] agent tools · 2026-09-14 pr #246 memory review · resource reads load full bodies before enforcing their output limit: [ticket](tickets/resource-reader-loads-full-body-before-limit.md).
 - [open] oi-109 · local s3 development · 2026-09-15 pr #255 qualification · p2 · the pinned minio image pull failed on the devbox; establish supported access and prove a fresh pull: [ticket](tickets/local-minio-image-pull-fails-on-devbox.md).
 - [open] oi-111 · reader publication · 2026-09-15 restoration rehearsal · p2 · web replacement can retain a cursor for a deleted fragment: [ticket](tickets/web-publication-invalidates-saved-reader-cursors.md).
@@ -363,7 +361,6 @@ unexpected timeouts. See
 - [deferred] contributors · 2026-10-14 release r4 · ce72 belongs to another viewer's visible library; credit incorrectness unproved and verified source preview owner-deferred: [ticket](tickets/legacy-epub-credit-outside-owner-scope.md).
 - [open] metadata production admission · 2026-10-01 investigation · catalog cause and three reviewed retry dispositions await runtime repair; an unavailable catalog is now a terminal `model_unavailable`: [ticket](tickets/metadata-production-catalog-refresh-fails.md).
 - [open] atlas / production migration · 2026-10-04 current-main composition · bcb86e actual0241→0257 retains all atlas identities/non-timestamp fields; 502 timestamp losses still need approval and final backup/restore: [ticket](tickets/atlas-0254-production-timestamp-loss.md).
-- [deferred] resource activation / native output · 2026-10-04 chat read review · shared output validates href relation but not canonical resource_ref, and no browser path checks it: [ticket](tickets/resource-activation-output-canonical-ref-contract.md).
 - [open] library members / confirmation focus · 2026-10-04 mounted controls · canceling a revoke confirmation focuses an adjacent row while the target row still exists; qualify keyboard behavior: [ticket](tickets/library-confirmation-cancel-focuses-adjacent-row.md).
 
 - [open] web / navigation hydration · 2026-10-09 media-row integration · one initial library reload warned beneath AppNav/NavRail; subsequent reloads (and six cold loads on the reauthored rail) were clear, differing attribute unrecorded: [ticket](tickets/app-nav-intermittent-hydration-warning.md).
@@ -379,7 +376,6 @@ unexpected timeouts. See
 - [open] oracle / corpus · 2026-10-04 oracle rewrite · a reindexed work's chips stay typographic until the next reading heals its anchors: [ticket](tickets/oracle-anchor-chips-typographic-after-corpus-reindex.md).
 - [deferred] daily / prepend scroll · 2026-10-04 source review · dead anchor wiring removed 2026-10-09; whether a daily prepend keeps the visible row in place is unverified in a browser: [ticket](tickets/daily-prepend-scroll-anchoring-is-unverified.md).
 - [deferred] shared media / success contract · 2026-10-09 cutover recheck · native duration modality relationship remains implicit; sole producer verified and duplicate browser conversion removed: [ticket](tickets/media-summary-native-duration-modality-relation-is-implicit.md).
-- [deferred] resource surface / mounted title actions · 2026-10-04 source review · mounted title retry loses its mutation lease: [ticket](tickets/mounted-title-retry-loses-mutation-lease.md).
 - [deferred] resource surface / retained body recovery · 2026-10-04 source review · shared body recovery rejects a secondary surface: [ticket](tickets/shared-body-recovery-rejects-secondary-surface.md).
 - [deferred] daily / handoff ownership · 2026-10-04 source review · daily seedless handoff can reappend after remount: [ticket](tickets/daily-seedless-handoff-can-reappend-after-remount.md).
 - [deferred] library / web output aliases · 2026-10-05 source census · two exported entry aliases have no caller; native output remains live: [ticket](tickets/library-entry-unused-export-aliases.md).
@@ -397,7 +393,6 @@ unexpected timeouts. See
 - [open] web / workspace · 2026-10-10 nav harness X1 · the stats pane re-activates itself after its in-place address rewrite, so a quick fork lands behind it: [ticket](tickets/stats-pane-reactivates-after-address-rewrite.md).
 - [open] add content / libraries · 2026-10-10 imports reauthor · Add keeps its own multi-target placement machine beside the shared placement overlay; unify in the libraries rewrite: [ticket](tickets/add-placement-duplicates-library-placement-overlay.md).
 - [open] imports / verification · 2026-10-10 imports reauthor · the imports harness does not drive browse preview Add or note-body attachments: [ticket](tickets/imports-harness-lacks-browse-and-note-attachment-journeys.md).
-- [open] resource actions / web · 2026-10-10 workspace host reauthor · a resource's More menu opens with every canonical action blocked ("Actions are refreshing.") for one snapshot round trip: [ticket](tickets/resource-menu-opens-with-actions-blocked.md).
 - [open] workspace / pane return · 2026-10-10 authors reauthor · p3 · the quick-Back anchor fix landed (route content is the anchor root); acceptance waits on authors harness X8: [ticket](tickets/pane-return-anchor-searches-the-collection-bar.md).
 - [open] workspace / verification · 2026-10-10 workspace host reauthor · artifact find results and the podcast Inspector are not driven live (no fixtures): [ticket](tickets/host-companion-artifact-and-podcast-unverified.md).
 - [deferred] web / overlays · 2026-10-10 overlay kernel reauthor · page-level menus, floating surfaces and citation cards on a phone do not own Back (the history entry exists only while a modal is open); product call pending: [ticket](tickets/mobile-page-menus-ignore-back.md).
@@ -406,7 +401,6 @@ unexpected timeouts. See
 - [open] web / reader · 2026-10-10 overlay kernel reauthor (harness D9) · on firefox the dock's More menu taking focus collapses the selection and the dock closes: [ticket](tickets/firefox-selection-dock-closes-when-its-menu-takes-focus.md).
 
 - [open] api / memory · 2026-10-14 release acceptance · 58c r2 reader/search passed under 384 mib; representative whole-host capacity remains open: [ticket](tickets/api-keats-reader-search-memory-limit.md).
-- [open] notes / resource actions · 2026-10-14 release review · page-delete confirmation promises note-block deletion although independent notes survive: [ticket](tickets/page-delete-confirmation-misstates-note-lifetime.md).
 
 # post-release handoff
 
@@ -432,6 +426,9 @@ unexpected timeouts. See
 - [open] web / keyboard verification · 2026-10-14 shortcut removal · fixed shortcuts passed static checks; authenticated browser journeys remain unverified: [ticket](tickets/fixed-shortcuts-browser-verification.md).
 - [open] web / icon · 2026-10-15 final consumer qualification · isolated firefox favicon request reported 500 then fetch error; cause unassigned: [ticket](tickets/final-firefox-favicon-request-failed.md).
 - [open] browser / replay · 2026-10-14 review · unresolved intents survive mounted runtime only, not navigation/login: [ticket](tickets/admission-intents-do-not-survive-navigation.md).
+- [open] resource actions / web transport · 2026-10-14 session entry qualification · action reads waited 57–105 s before or after send in production; fetch-on-open menus show "Loading actions…" that long: [ticket](tickets/resource-action-reads-wait-before-send.md).
+- [open] web / bff, middleware · 2026-10-14 stack replay · node-runtime middleware leaves an unhandled rejection when a client aborts a request body: [ticket](tickets/node-middleware-aborted-body-rejection.md).
+- [open] web / workspace canvas · 2026-10-14 stack replay · the first click on an inactive pane's header control is lost to the instant activation scroll: [ticket](tickets/inactive-pane-header-click-lost-to-activation-scroll.md).
 - [open] reader / embeds · 2026-10-14 review · mounted parent cards do not refresh another media's changed label: [ticket](tickets/reader-embed-target-metadata-stays-stale.md).
 - [open] generation / queue locks · 2026-10-14 recovery review · tool generation→job order opposes dead-letter job→generation: [ticket](tickets/generation-dead-letter-inverts-tool-lock-order.md).
 - [unverified] x / provider contract · 2026-10-14 review · legitimate omission of requested media expansion objects is not established: [ticket](tickets/x-media-expansion-absence-unqualified.md).

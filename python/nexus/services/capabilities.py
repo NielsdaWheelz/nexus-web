@@ -5,9 +5,7 @@ mutation, so the advertised action and the enforced rule cannot diverge. Recover
 capabilities are read, not decided: the source and search owners make the offer.
 """
 
-from dataclasses import dataclass
 from typing import Literal
-from uuid import UUID
 
 from nexus.db.models import MediaKind, ProcessingStatus, TranscriptCoverage, TranscriptState
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
@@ -19,22 +17,6 @@ from nexus.services.reader_publication import ready_publication_rows_sql
 SourceRecoveryRestriction = Literal["NotOwner", "SameSourceTerminal", "SourceNotReacquirable"]
 type SourceRecoveryAnswer = RetrySourceOffer | RepairSourceOffer | SourceRecoveryRestriction | None
 type SearchRecoveryAnswer = RepairSearchOffer | Literal["NotOwner"] | None
-
-
-@dataclass(frozen=True, slots=True)
-class ViewerRecovery:
-    """A viewer's recovery command, replayed by their ``client_mutation_id``."""
-
-    viewer_id: UUID
-    client_mutation_id: str
-
-
-@dataclass(frozen=True, slots=True)
-class OperatorRecovery:
-    """An internal operator route: operator authority, no viewer, no replay ledger."""
-
-
-type RecoveryActor = ViewerRecovery | OperatorRecovery
 
 _REFRESHABLE_PROCESSING_STATUSES = {
     ProcessingStatus.ready_for_reading.value,
@@ -136,7 +118,6 @@ def derive_capabilities(
     transcript_state: str | None = None,
     transcript_coverage: str | None = None,
     retrieval_status: str | None = None,
-    retrieval_active_ready: bool | None = None,
     can_delete: bool = False,
     is_creator: bool = False,
     source_refresh_available: bool = False,
@@ -171,16 +152,13 @@ def derive_capabilities(
     else:
         can_read = can_highlight = can_quote = transcript_ready
 
-    retrieval_ready = (
-        retrieval_status == "ready" if retrieval_active_ready is None else retrieval_active_ready
-    )
     source_suspended = isinstance(source_recovery, RepairSourceOffer)
 
     return CapabilitiesOut(
         can_read=can_read,
         can_highlight=can_highlight,
         can_quote=can_quote,
-        can_search=can_quote and retrieval_ready,
+        can_search=can_quote and retrieval_status == "ready",
         can_play=external_playback_url_exists
         and (is_transcript_media or status_ready or transcript_unavailable),
         can_download_file=media_file_exists,

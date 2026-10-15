@@ -1,7 +1,7 @@
 """Resource-item routes: parse the ref, delegate, envelope the result.
 
-The static paths are registered before ``/{resource_ref}/…`` so they are not swallowed
-by the ref parameter.
+The static paths are registered before ``/{resource_ref}…`` so the ref parameter does
+not swallow them.
 """
 
 from typing import Annotated
@@ -12,15 +12,11 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
-from nexus.schemas.resource_action_snapshots import (
-    ResourceActionSnapshotResolveRequest,
-    ResourceActionSnapshotResolveResponse,
-)
 from nexus.schemas.resource_items import (
+    ResourceActionsOut,
     ResourceBodyMutationOut,
     ResourceBodyMutationRequest,
-    ResourceLocatorResolveRequest,
-    ResourceLocatorResolveResponse,
+    ResourceItemOut,
     ResourceSurfaceCommandOut,
     ResourceSurfaceCommandRequest,
     ResourceSurfaceOut,
@@ -38,8 +34,7 @@ from nexus.services.resource_graph.refs import (
     ResourceRefParseFailure,
     parse_resource_ref,
 )
-from nexus.services.resource_items import action_snapshots, mutations, surfaces
-from nexus.services.resource_items import locators as locator_service
+from nexus.services.resource_items import actions, items, mutations, surfaces
 from nexus.services.search import pickers
 
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
@@ -57,30 +52,6 @@ def _parse_ref(raw: str) -> ResourceRef:
     return parsed
 
 
-@router.post("/action-snapshots/resolve")
-def resolve_action_snapshots(
-    request: ResourceActionSnapshotResolveRequest, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[ResourceActionSnapshotResolveResponse]:
-    return Data(
-        data=action_snapshots.resolve_action_snapshots(
-            db, viewer_id=viewer.user_id, refs=[_parse_ref(raw) for raw in request.refs]
-        ),
-    )
-
-
-@router.post("/locators/resolve")
-def resolve_resource_locators(
-    request: ResourceLocatorResolveRequest, viewer: ViewerDep, db: DbSession
-) -> Data[ResourceLocatorResolveResponse]:
-    return Data(
-        data=ResourceLocatorResolveResponse(
-            resolutions=locator_service.resolve_resource_locators(
-                db, viewer_id=viewer.user_id, locators=request.locators
-            )
-        ),
-    )
-
-
 @router.post("/targets/search")
 def search_resource_targets(
     request: ResourceTargetSearchRequest, viewer: ViewerDep, db: DbSession
@@ -93,6 +64,22 @@ def search_openable_resources(
     request: ResourceOpenableSearchRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[ResourceOpenableSearchResponse]:
     return Data(data=pickers.search_openables(db, viewer_id=viewer.user_id, request=request))
+
+
+@router.get("/{resource_ref}")
+def get_resource_item(resource_ref: str, viewer: ViewerDep, db: DbSession) -> Data[ResourceItemOut]:
+    """An invisible ref answers 200 with ``missing: true``."""
+    ref = _parse_ref(resource_ref)
+    return Data(data=items.resource_item_out(db, viewer_id=viewer.user_id, ref=ref))
+
+
+@router.get("/{resource_ref}/actions")
+def get_resource_actions(
+    resource_ref: str, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[ResourceActionsOut]:
+    """The viewer's verbs on one ref now; an invisible ref has none."""
+    ref = _parse_ref(resource_ref)
+    return Data(data=actions.resource_actions(db, viewer_id=viewer.user_id, ref=ref))
 
 
 @router.get("/{resource_ref}/surface")
