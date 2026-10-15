@@ -27,6 +27,19 @@
   bff). handed-out links (`nxshr1_` tokens) are untouched and keep working.
 - share asset fetches no longer depend on `NEXUS_HANDLE_KEY` (release-edge's key carry-over
   is still needed for the other sealed handles).
+- vercel WAF (cleanup/share-bytes-waf-limit, commit "give share byte reads their own rate
+  limit"): byte reads (`/file`, `/assets/{n}`) get their own 600-a-minute rule; the existing
+  120 rule now excludes them. apply before or with the deploy (the paths do not change).
+  the project must allow two rate-limit rules (hobby allows one, pro forty). from
+  `apps/web` (linked project, authenticated cli), stage both, then publish once, so byte
+  reads are never unlimited between the two changes:
+  - `vercel firewall rules add --json "$(cat ../../deploy/vercel/firewall/resource-sharing-bytes.json)" --yes`
+  - `vercel firewall rules edit "Nexus public resource sharing" --json "$(cat ../../deploy/vercel/firewall/resource-sharing.json)" --yes`
+  - `vercel firewall diff` (one rule added, one gaining the negated byte-path condition and
+    the new description), then `vercel firewall publish --yes`.
+  - check: `vercel firewall rules list --expand` shows both active with the files'
+    conditions and limits (120, 600; fixed window 60 s, ip, deny), and the smoke below
+    opens the large pdf and every epub image with no 403.
 - gate changes (every one loosens but the vacuous `video_transcript` arm): publisher-
   transcribed podcast episodes become link-shareable; an epub needs a fragment instead of
   an `epub_fragment_sources` section.
