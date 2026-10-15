@@ -1,8 +1,8 @@
 # libraries creation
 
-status: implemented; current-main browser/static qualification passed; physical keyboard check deferred by owner. 2026-10-15.
+status: implemented; browser/static qualification passed on `447ecd11c`; final peer composition recorded separately; physical keyboard check deferred by owner. 2026-10-15.
 baseline reviewed: `367da80e0c1beb1c426f6d2d72201b0733809b50`.
-integration target: current main `7bc7c8a13`; current library owners below supersede the baseline paths.
+integration target: main `4d5abbf4c0792e97fd75b15c6305dbcfb2cbb8f4`, including inspector617 and toolbar628. browser qualification used main `7bc7c8a13`; current library owners below supersede the baseline paths.
 
 ## outcome and scope
 
@@ -24,6 +24,7 @@ excluded: nexus launcher changes, destination picker, batch creation, fab, inlin
 | no global lock | separate panes and existing launcher/picker creation remain independent |
 | icon-only at narrow widths | saves title space; the full accessible name remains available |
 | disposable live tests | proves this implementation, then removes maintenance cost; later regressions have no retained automated journey coverage |
+| compose peer controls after runtime disposal | retain the tested source and qualify the final composition by independent source review and static checks; no claim of a final composed browser run |
 
 ## interaction and content
 
@@ -85,6 +86,8 @@ the feature's single transition function updates its authoritative ref, writes t
 
 retain filter text separately under `Libraries.Filter` with the existing capture hook. replace only libraries' `usePaneFilterRows` call with feature-owned restored state; reuse `truncatePaneSearchQuery`, `matchesPaneFilterQuery` and `listRowStatus`. sort remains in the existing url view owner; list snapshots and scroll remain in their current owners. a new visit starts empty; back returns to its own filter.
 
+toolbar composition preserves mandatory `status.visible`. derive one `headerMeta` for the header and status identity count; one `canReset` includes raw filter text and sort. pass `paneFilterRowsStatusVisible({ status: rowStatus, identityCount, atDefaultView: !canReset })`. toolbar presentation must not acquire filter, creation or visit ownership.
+
 ## command and failure contracts
 
 the shell accepts exactly one optional primary command; absence means unsupported:
@@ -128,7 +131,7 @@ paths below are relative to `apps/web/src/` unless prefixed `docs/`. owners may 
 
 remove `.createForm`, `.inputField`, `.createHint` and their obsolete responsive rules after checking usages. replace the extracted invitation component's repeated literal heading id with `useId`; the deleted reserved-name id gets generated replacements in the dialog. retain existing query/header generated ids. do not refactor invitations or other filter consumers.
 
-update the workspace header contract that currently calls inspector the sole promoted action, plus the matching mobile comment. keep historical completed plans intact. the client already accepts `signal`, and shared response-body transport classification already exists; do not implement either again.
+update the workspace header contract and matching mobile comment for the primary command before more and inspector. preserve inspector's independent coarse-pointer sizing and tooltip/native trigger. keep historical completed plans intact. forward the client signal and reuse shared response-body transport classification.
 
 ## verification and cutover
 

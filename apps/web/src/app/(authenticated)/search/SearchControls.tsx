@@ -230,6 +230,7 @@ export default function SearchControls(props: {
       }}
       status={{
         id: statusId,
+        visible: true,
         content: (
           <>
             <span>Order: relevance</span>

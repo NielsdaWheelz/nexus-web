@@ -89,7 +89,7 @@ export function useOutlineFilter(outline: Outline, sourceKey: string, inputLabel
         <PaneQueryToolbar
           inputRef={inputRef}
           input={{ label: inputLabel, placeholder: "Filter items", value: query, appliedValue: query, onChange: onQueryChange, onClear: clearQuery }}
-          status={{ id: statusId, content: <PaneFilterRowsStatus id={statusId} status={rowStatus} query={query} /> }}
+          status={{ id: statusId, visible: true, content: <PaneFilterRowsStatus id={statusId} status={rowStatus} query={query} /> }}
           onReset={query ? clearQuery : undefined}
         />
       ),

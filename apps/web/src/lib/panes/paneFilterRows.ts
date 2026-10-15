@@ -33,6 +33,25 @@ export type PaneFilterRowsStatus =
       readonly cause: "Updating" | "Failed";
     };
 
+/** The default view needs no repeated count when its header describes the same committed rows. */
+export function paneFilterRowsStatusVisible({
+  status,
+  identityCount,
+  atDefaultView,
+}: {
+  readonly status: PaneFilterRowsStatus;
+  readonly identityCount: number | null;
+  readonly atDefaultView: boolean;
+}): boolean {
+  return (
+    status.kind !== "Complete" ||
+    !atDefaultView ||
+    identityCount === null ||
+    status.visibleCount !== status.totalCount ||
+    status.totalCount !== identityCount
+  );
+}
+
 /** The spoken status: full sentences. */
 export function paneFilterRowsStatusMessage(
   status: PaneFilterRowsStatus,
