@@ -1,6 +1,6 @@
 # an unmatched heading range crosses later publisher divisions
 
-status: open; two whole-book repairs unsafe, neither applied
+status: open; three whole-book repairs unsafe, none applied
 origin: 2026-10-15 book-repair original/retained-source review, operator `150328b65`
 area: epub semantic extents
 
@@ -21,6 +21,16 @@ differs from its publisher label, so it remains unmatched while the six later
 headings coalesce. those later publisher children cannot close the unrelated
 root under the depth-only rule. their inherited missing extents are separate
 from this newly expanded essay range.
+
+media `9edf7d20-68e3-406c-8af3-6b9f1056b262` repeats the failure within notes.
+four original documents separately name combray i, combray ii, swann in love,
+and place-names: the name, containing 88, 155, 202, and 57 notes respectively.
+the unmatched combray i heading changes from `20:0–21:0` to `20:0–23:16787`,
+covering all four divisions. the later three publisher sections remain
+children of the separate footnotes aggregate. this is false scope for a
+specifically named note division, not an objection to a flat outline or to
+the aggregate spanning all notes. the 502 note bodies have a separate,
+successful original-source proof; that does not authorize the range change.
 
 `python/nexus/services/epub_structure.py:276` coalesces matching later
 headings into their publisher sections; the unmatched epigraph heading stays
@@ -59,9 +69,19 @@ the full proposal is
 `d9c0a0ed042e15c8d462f29b7114d1a6fb0e60f6150ca60ad9a6d957765cf5a3`.
 other changed fields remain unadjudicated.
 
+the note-division evidence is
+`b-reader/note-division-boundary-review-v1.json`, sha256
+`f891dc42b7383debe9183e7bc0b3627d53b2069b28fcfc78ebd2138b80714ada`.
+it binds the four original members, exact retained rows and complete proposal.
+independent review: `c-sources/9edf-note-division-independent-review.json`,
+sha256 `ab68551cee9cbe72ebfea749a15ee67ff0689f08c720e8f4c6e8390ed0b911ae`.
+unrelated changed fields remain unadjudicated; no stored-text loss or reader
+consumer failure is claimed.
+
 acceptance: the real-source epigraph ends at the introduction's authored
-boundary, and the first essay ends at the next separately titled essay;
-unrelated publisher ancestry cannot hide either boundary. also
+boundary, the first essay ends at the next separately titled essay, and
+combray i ends at combray ii; unrelated publisher ancestry cannot hide those
+boundaries. also
 qualify a genuine multi-document division and installed reader extents before
 applying these books. this shared range fix is outside the bounded campaign,
 separate from both publisher-root reassignment and title-container clipping.
