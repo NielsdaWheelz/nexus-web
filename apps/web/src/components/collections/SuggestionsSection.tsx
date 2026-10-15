@@ -8,8 +8,7 @@ import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { lecternSuggestionsResource, librarySuggestionsResource } from "@/lib/api/resource";
-import { useResource } from "@/lib/api/useResource";
+import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import {
@@ -60,13 +59,10 @@ export default function SuggestionsSection({
   const lectern = destination.kind === "Lectern";
   const { ensureRequests, resource: lecternResource } = useLectern();
   const atCapacity = lectern && lecternResource.status === "ready" && lecternResource.data.atCapacity;
-  const load = (signal?: AbortSignal) =>
-    getSuggestions(
-      lectern
-        ? "/api/lectern/suggestions"
-        : `/api/libraries/${encodeURIComponent(destination.id)}/suggestions`,
-      signal,
-    );
+  const path: `/${string}` = lectern
+    ? "/lectern/suggestions"
+    : `/libraries/${encodeURIComponent(destination.id)}/suggestions`;
+  const load = (signal?: AbortSignal) => getSuggestions(`/api${path}`, signal);
   const [version, setVersion] = useState(0);
   const [rows, setRows] = useState<SuggestionItem[] | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
@@ -78,14 +74,13 @@ export default function SuggestionsSection({
     if (isActive && !wasActive.current) setVersion((value) => value + 1);
     wasActive.current = isActive;
   }, [isActive]);
-  const resourceKey = lectern
-    ? lecternSuggestionsResource.cacheKey({ refreshVersion: version })
-    : librarySuggestionsResource.cacheKey({ id: destination.id, refreshVersion: version });
-  const resource = useResource<Suggestions>({
-    cacheKey: adding !== null || (!isActive && rows === null) ? null
-      : factsKey === "0:0:0" ? resourceKey : `${resourceKey}:facts:${factsKey}`,
+  // An activation or a change of facts rereads; the first read may be the server's seed.
+  const resource = usePaneFreeServerValue<Suggestions>({
+    key: adding !== null || (!isActive && rows === null) ? null : path,
+    stale: `${version}:${factsKey}`,
     load,
   });
+  const failure = resource.status === "loading" ? null : resource.error;
 
   // Rows follow each fresh read; an Add edits them locally until the next one.
   const [read, setRead] = useState<Suggestions | null>(null);
@@ -127,7 +122,7 @@ export default function SuggestionsSection({
   // The root always commits: pane return needs it even while the section hides.
   usePaneReturnDescendantReady({
     rootRef,
-    ready: rows !== null || resource.status === "error",
+    ready: rows !== null || failure !== null,
   });
 
   useLayoutEffect(() => {
@@ -186,9 +181,8 @@ export default function SuggestionsSection({
     setRows(next);
   }
 
-  const failed = resource.status === "error" ? resource : null;
-  const hidden = rows === null ? !failed : rows.length === 0;
-  const status = failed
+  const hidden = rows === null ? failure === null : rows.length === 0;
+  const status = failure
     ? {
         text: rows
           ? "Couldn’t refresh suggestions."
@@ -205,7 +199,10 @@ export default function SuggestionsSection({
           tabIndex={-1}
           title={title}
           aria-busy={
-            adding !== null || resource.status === "loading" || undefined
+            adding !== null ||
+            resource.status === "loading" ||
+            (resource.status === "ready" && resource.refreshing) ||
+            undefined
           }
         >
           <CollectionView
@@ -221,8 +218,8 @@ export default function SuggestionsSection({
                   role={status.alert ? "alert" : undefined}
                 >
                   <span>{status.text}</span>
-                  {failed ? (
-                    <Button variant="ghost" size="sm" onClick={failed.retry}>
+                  {failure ? (
+                    <Button variant="ghost" size="sm" onClick={resource.refetch}>
                       Retry
                     </Button>
                   ) : null}

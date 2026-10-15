@@ -16,7 +16,7 @@ import Button from "@/components/ui/Button";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
-import { useResource } from "@/lib/api/useResource";
+import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import { memberLibraries } from "@/lib/libraries/api";
 import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
@@ -99,8 +99,9 @@ export default function PodcastsPaneBody() {
     fetchPage: (cursor, limit, signal) =>
       listSubscriptions(pageQuery(key, cursor, limit), signal),
   });
-  const libraries = useResource({
-    cacheKey: "podcasts:member-libraries",
+  const libraries = usePaneFreeServerValue({
+    key: "podcasts:member-libraries",
+    stale: "",
     load: memberLibraries,
   });
   const rows = list.status === "ready" ? list.items : null;
@@ -239,14 +240,14 @@ export default function PodcastsPaneBody() {
             announcement="Polite"
             actions={[{ label: "Retry", onClick: list.retry }]}
           />
-        ) : libraries.status === "error" ? (
+        ) : libraries.status === "failed" ? (
           <FeedbackNotice
             content={podcastErrorMessage(
               libraries.error,
               "Podcast libraries couldn’t be loaded",
             )}
             announcement="Polite"
-            actions={[{ label: "Retry", onClick: libraries.retry }]}
+            actions={[{ label: "Retry", onClick: libraries.refetch }]}
           />
         ) : undefined
       }

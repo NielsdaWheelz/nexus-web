@@ -21,10 +21,12 @@ bff_upstream_failed [Error: aborted] { code: 'ECONNRESET' }
 
 evidence: edge harness run `2026-10-14/replay2/runs/tip1-edge.txt`, E26 (two such lines in
 the web server log); the edge-runtime middleware before #607 never cloned bodies and E26
-passed on the previous replay (absorb tip2-edge.txt).
+passed on the previous replay (absorb tip2-edge.txt). `g3-tip2-edge.txt` (stack 11) logged
+three: two `unhandledRejection` and one `⨯ uncaughtException:  [Error: aborted] { code:
+'ECONNRESET' }`, the same abort surfacing as an unhandled stream error.
 
 what to do: keep the middleware off paths whose handlers own their bodies (`/api/*`; the
 middleware already passes them through), or await-and-catch upstream once next fixes it.
 
-acceptance: edge E26 passes with clients aborting mid-body; no `unhandledRejection` in the
-web server log.
+acceptance: edge E26 passes with clients aborting mid-body; no `unhandledRejection` or
+`uncaughtException` in the web server log.

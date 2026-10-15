@@ -11,7 +11,6 @@
 
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import {
-  apiCommand204,
   apiFetch,
   isApiError,
   isSameSystemApiDefect,
@@ -212,7 +211,7 @@ async function putAndConfirm(
   const startedAt = performance.now();
   const report = async (reason: TransportFailure) => {
     await call("TransportFailure", () =>
-      apiCommand204(uploadPath(handle, "/transport-failure"), {
+      apiFetch<void>(uploadPath(handle, "/transport-failure"), {
         method: "POST",
         body: JSON.stringify({
           ...reason,
@@ -383,7 +382,7 @@ export async function removeUploadSession(
 ): Promise<void> {
   try {
     await call("Remove", () =>
-      apiCommand204(uploadPath(sessionHandle), { method: "DELETE" }),
+      apiFetch<void>(uploadPath(sessionHandle), { method: "DELETE" }),
     );
   } catch (error) {
     if (

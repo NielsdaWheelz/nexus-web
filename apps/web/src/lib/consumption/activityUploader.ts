@@ -1,4 +1,4 @@
-import { apiCommand204, apiKeepaliveJson, isApiError } from "@/lib/api/client";
+import { apiFetch, isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ActivityRequest, ClosedActivitySpan } from "./activityContract";
 
@@ -52,7 +52,7 @@ async function send(): Promise<void> {
   try {
     for (let request = take(); request !== null; request = take()) {
       try {
-        await apiCommand204(PATH, {
+        await apiFetch<void>(PATH, {
           method: "POST",
           body: JSON.stringify(request),
         });
@@ -100,7 +100,11 @@ const uploader = {
   flush(options: { keepalive?: boolean } = {}): void {
     if (!options.keepalive) return schedule(0);
     for (let request = take(); request !== null; request = take()) {
-      void apiKeepaliveJson(PATH, request, "POST").catch(() => undefined);
+      void apiFetch<void>(PATH, {
+        method: "POST",
+        keepalive: true,
+        body: JSON.stringify(request),
+      }).catch(() => undefined);
     }
   },
 };

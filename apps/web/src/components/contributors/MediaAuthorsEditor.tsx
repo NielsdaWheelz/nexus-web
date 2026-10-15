@@ -19,8 +19,7 @@ import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import MobileSheet from "@/components/ui/MobileSheet";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { useThrowLater } from "@/lib/api/serverState";
-import { useResource } from "@/lib/api/useResource";
+import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -106,23 +105,25 @@ export default function MediaAuthorsEditor({
   readonly onClose: () => void;
 }) {
   const feedback = useFeedback();
-  const source = useResource({
-    cacheKey: `media-authors:${mediaId}`,
+  const source = usePaneFreeServerValue({
+    key: `media-authors:${mediaId}`,
+    stale: "",
     load: (signal) => getMediaAuthors(mediaId, signal),
   });
+  const failure = source.status === "failed" ? source.error : null;
   useEffect(() => {
-    if (source.status !== "error") return;
+    if (failure === null) return;
     feedback.publish({
       kind: "Hud",
       key: `media-authors:${mediaId}`,
       content: {
         tone: "Danger",
         title: "Authors couldn’t be loaded",
-        requestId: source.error.requestId,
+        requestId: failure.requestId,
       },
     });
     onClose();
-  }, [feedback, mediaId, onClose, source]);
+  }, [failure, feedback, mediaId, onClose]);
   if (source.status !== "ready") return null;
   const loaded = source.data.authors.map((credit): Bound => ({
     id: createRandomId("author-row"),

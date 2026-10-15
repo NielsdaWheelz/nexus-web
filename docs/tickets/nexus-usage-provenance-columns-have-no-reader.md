@@ -14,7 +14,7 @@ policy (`apps/web/src/components/nexus/useNexusController.ts:268,376`); `Ask` an
 are deliberately excluded despite being internal routes. proposed `rememberable?: true`
 expresses that existing concept.
 if adopted, retire stored/request/history source, stored updated-at and unused wire
-data; the existing `apiCommand204` contract suffices. preserve every replay id/hash/payload.
+data; the existing `apiFetch<void>` contract suffices. preserve every replay id/hash/payload.
 new empty-object memos require `is not None`
 (`python/nexus/services/resource_mutation_replay.py:40–98`).
 deleting memos would permit duplicate increments.

@@ -63,7 +63,7 @@ All breakdowns, sessions, streaks, and Year presentation derive from effective
 | Browser delivery | `activityUploader.ts` (in memory) |
 | Android listening capture | `playback/ListeningRecorder.kt` |
 | Android listening durability | `playback/ActivityOutbox.kt` |
-| Presentation | authenticated Stats pane; shared manual continuation lifecycle in `apps/web/src/lib/api/useCursorPagination.ts` |
+| Presentation | authenticated Stats pane; session continuations on the shared list owner `apps/web/src/lib/api/useServerList.ts` |
 
 ## Boundaries
 

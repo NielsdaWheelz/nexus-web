@@ -15,7 +15,7 @@
  * The device that hears an end settles it; the server picks what plays next.
  */
 
-import { apiFetch, apiKeepaliveJson, isApiError } from "@/lib/api/client";
+import { apiFetch, isApiError } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -446,10 +446,11 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
   }, WRITE_EVERY_MS);
   const onPageHide = () => {
     if (episode === null || episode.stopped || episode.fenced || !episode.active || !news(episode)) return;
-    void apiKeepaliveJson(
-      path(episode.descriptor.media_id),
-      listening(episode),
-    ).catch(() => undefined);
+    void apiFetch<void>(path(episode.descriptor.media_id), {
+      method: "PUT",
+      keepalive: true,
+      body: JSON.stringify(listening(episode)),
+    }).catch(() => undefined);
   };
   const onOnline = () => void write();
   window.addEventListener("pagehide", onPageHide);

@@ -7,7 +7,7 @@ import ImportsList, {
   type MatchedImportEvidence,
 } from "@/components/imports/ImportsList";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
+import { usePaneUrlState } from "@/lib/panes/usePaneUrlState";
 import type { ImportsView } from "@/lib/imports/api";
 import { loadFailure } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";

@@ -3,10 +3,8 @@
 // publish "Notes".
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
-import { notePagesResource } from "@/lib/api/resource";
 import type { ListPage } from "@/lib/api/useServerList";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import type { UpdatedTitleIndexView } from "@/lib/collections/updatedTitleIndexView";
 import { formatLocalDateInTimeZone, isLocalDate } from "@/lib/localDate";
 
 export type NotePageSummary = Schema<"NotePageSummaryOut">;
@@ -29,16 +27,13 @@ export async function deletePage(pageId: string): Promise<void> {
   publishChange("Notes");
 }
 
-/** One keyset page of the viewer's pages in `view`. */
-export async function fetchNotePages(input: {
-  view: UpdatedTitleIndexView;
-  cursor?: string;
-  limit?: number;
-  signal?: AbortSignal;
-}): Promise<ListPage<NotePageSummary>> {
-  const { signal, ...params } = input;
+/** One keyset page of the viewer's pages; `query` holds the view's keys, `limit` and `cursor`. */
+export async function fetchNotePages(
+  query: URLSearchParams,
+  signal: AbortSignal,
+): Promise<ListPage<NotePageSummary>> {
   const { data } = await apiFetch<ApiJson<"/notes/pages", "get">>(
-    notePagesResource.clientPath(params),
+    `/api/notes/pages?${query}`,
     { cache: "no-store", signal },
   );
   return data;

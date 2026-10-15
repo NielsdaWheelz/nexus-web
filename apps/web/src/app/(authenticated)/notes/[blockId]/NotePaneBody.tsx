@@ -106,7 +106,7 @@ export default function NotePaneBody() {
       {passage.status === "ready" && passage.data === null ? (
         <p role="status">This passage is no longer available.</p>
       ) : null}
-      {passage.status === "error" ? <p role="alert">The passage could not be opened.</p> : null}
+      {passage.status === "failed" ? <p role="alert">The passage could not be opened.</p> : null}
       <OutlineEditor
         outline={outline}
         filter={query}

@@ -91,7 +91,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] chat tool runtime / codex · 2026-10-10 model tools rewrite · p2 · a codex call to an unpublished tool ends the answer `policy_violation` (provider-runtime + kernel containment; T4e): [ticket](tickets/codex-unpublished-tool-call-ends-the-answer.md).
 - [open] chat wire · 2026-10-10 model tools rewrite · p3 · `tool_call_done` repeats `tool_call_start` plus an `input` no client reads: [ticket](tickets/tool-call-done-frame-duplicates-start.md).
 - [open] chat tool runtime · 2026-10-10 model tools rewrite · p3 · `tool_calls.arguments` is written and never read: [ticket](tickets/tool-call-arguments-unread.md).
-- [open] web server state · 2026-10-10 model tools rewrite · p3 · a server value keyed `""` loads once and never refetches: [ticket](tickets/server-state-empty-key-never-refetches.md).
 - [open] ingest / egress · 2026-10-10 url acquisition reauthor · `getaddrinfo` runs with no timeout, so resolver limits, not the fetch deadline, bound resolution: [ticket](tickets/egress-dns-resolution-outside-the-deadline.md).
 - [open] ingest / web articles · 2026-10-10 url acquisition reauthor · servers that send brotli regardless of `Accept-Encoding` now read as unreadable: [ticket](tickets/egress-brotli-only-servers-read-as-unreadable.md).
 - [open] ingest / web articles · 2026-10-10 url acquisition reauthor · final urls are httpx-serialized, so a pre-cutover article whose url holds `|`/`^` may not dedupe: [ticket](tickets/fetched-final-url-serialization-differs-from-whatwg.md).

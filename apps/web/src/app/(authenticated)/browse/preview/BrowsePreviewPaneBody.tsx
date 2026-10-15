@@ -4,7 +4,7 @@
 // playing and leaving write nothing. Only AcquisitionControl acquires. A
 // target already in Nexus redirects to its owned pane.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import AcquisitionControl, {
   type AcquisitionCommand,
   type AcquisitionSuccess,
@@ -24,8 +24,8 @@ import PaneSurface from "@/components/ui/PaneSurface";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { ApiError } from "@/lib/api/client";
-import { useCursorPagination } from "@/lib/api/useCursorPagination";
-import { useResource } from "@/lib/api/useResource";
+import { usePaneFreeServerValue } from "@/lib/api/serverState";
+import { usePaneFreeServerList } from "@/lib/api/useServerList";
 import {
   browsePreviewHref,
   fetchBrowsePreview,
@@ -103,18 +103,22 @@ function previewErrorMessage(error: ApiError): Failure {
   }
 }
 
+/** The preview carries the first page; Load more continues from its cursor. */
 function PreviewEpisodes({
   preview,
 }: {
   readonly preview: Extract<BrowsePreview, { kind: "Podcast" }>;
 }) {
-  const pagination = useCursorPagination({
-    firstPage: useMemo(
-      () => ({ status: "ready" as const, data: preview.episodes }),
-      [preview.episodes],
-    ),
-    initialMoreError: null,
-    loadMorePage: async (cursor, signal) => {
+  const first = preview.episodes;
+  const list = usePaneFreeServerList<(typeof first.items)[number]>({
+    key: `browse-preview-episodes:${preview.target}`,
+    stale: "",
+    pageSize: 20,
+    drain: false,
+    active: true,
+    id: (episode) => episode.target,
+    fetchPage: async (cursor, _limit, signal) => {
+      if (cursor === null) return first;
       const next = await fetchBrowsePreview(preview.target, cursor, signal);
       if (next.kind !== "Podcast") {
         // justify-defect: a podcast target always previews as a podcast.
@@ -123,29 +127,31 @@ function PreviewEpisodes({
       return next.episodes;
     },
   });
+  // Until the list takes up the first page, it is the preview's own.
+  const items = list.current ? list.items : first.items;
   return (
     <PaneSection title="Episodes">
       <CollectionView
         returnScope="Browse.Preview.PodcastEpisodes"
-        rows={pagination.items.map(presentPreviewEpisode)}
+        rows={items.map(presentPreviewEpisode)}
         status="ready"
         ariaLabel="Podcast episodes"
         empty={<p className={styles.statusRow}>No episodes available</p>}
         surface={false}
         rowActionsAvailable={false}
       />
-      {pagination.error ? (
+      {list.failure ? (
         <div className={styles.statusRow}>
           <span>Couldn’t load more episodes.</span>
-          <Button size="sm" variant="secondary" onClick={pagination.retry}>
+          <Button size="sm" variant="secondary" onClick={list.retry}>
             Retry
           </Button>
         </div>
       ) : null}
       <LoadMoreFooter
-        hasMore={pagination.hasMore}
-        loading={pagination.loadingMore}
-        onLoadMore={pagination.loadMore}
+        hasMore={list.current ? !list.complete : first.next_cursor !== null}
+        loading={list.running === "More"}
+        onLoadMore={list.more}
       />
     </PaneSection>
   );
@@ -154,9 +160,10 @@ function PreviewEpisodes({
 export default function BrowsePreviewPaneBody() {
   const router = usePaneRouter();
   const target = usePaneSearchParams().get("target");
-  const resource = useResource<BrowsePreview>({
-    cacheKey: target === null ? null : `browse-preview:${target}`,
-    // justify-type-assertion: useResource loads only for a non-null cacheKey.
+  const resource = usePaneFreeServerValue<BrowsePreview>({
+    key: target === null ? null : `browse-preview:${target}`,
+    stale: "",
+    // justify-type-assertion: the read runs only for a non-null key.
     load: (signal) => fetchBrowsePreview(target as string, null, signal),
   });
   const [videoLoaded, setVideoLoaded] = useState(false);
@@ -172,7 +179,7 @@ export default function BrowsePreviewPaneBody() {
   const failure =
     target === null
       ? INVALID
-      : resource.status === "error"
+      : resource.status === "failed"
         ? previewErrorMessage(resource.error)
         : null;
   useSetPaneLabel(preview?.title ?? null);
@@ -212,8 +219,8 @@ export default function BrowsePreviewPaneBody() {
           <FeedbackNotice content={failure.content} announcement="Assertive" />
         }
       >
-        {failure.retryable && resource.status === "error" ? (
-          <Button onClick={resource.retry}>Retry</Button>
+        {failure.retryable && resource.status === "failed" ? (
+          <Button onClick={resource.refetch}>Retry</Button>
         ) : (
           <Button onClick={back}>Back to Browse</Button>
         )}

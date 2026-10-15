@@ -5,7 +5,7 @@ import CollectionView from "@/components/collections/CollectionView";
 import LecternAddControl from "@/components/collections/LecternAddControl";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import PaneSection from "@/components/ui/PaneSection";
-import { useResource } from "@/lib/api/useResource";
+import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { useChangeStamp } from "@/lib/api/changes";
 import { useMediaQueryRevision, useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import MediaSummaryNotice from "./MediaSummaryNotice";
@@ -23,17 +23,19 @@ export default function QuickReadsSection({ isActive }: { isActive: boolean }) {
   const queryRevision = useMediaQueryRevision();
   const [retained, setRetained] = useState<Suggestions | null>(null);
   const factsRevision = `${changes}:${queryRevision}`;
-  const resource = useResource<{ snapshot: Suggestions; factsRevision: string }>({
-    cacheKey: isActive ? `lectern:quick-reads:${factsRevision}` : null,
+  const resource = usePaneFreeServerValue<{ snapshot: Suggestions; factsRevision: string }>({
+    key: isActive ? `lectern:quick-reads:${factsRevision}` : null,
+    stale: "",
     load: async (signal) => ({ snapshot: await getSuggestions("/api/lectern/quick-reads", signal), factsRevision }),
   });
+  const read = resource.status === "ready" ? resource.data : null;
   useEffect(() => {
-    if (resource.status === "ready" && resource.data.factsRevision === factsRevision) {
-      setRetained(resource.data.snapshot);
+    if (read !== null && read.factsRevision === factsRevision) {
+      setRetained(read.snapshot);
     }
-  }, [resource, factsRevision]);
-  const loaded = resource.status === "ready" && resource.data.factsRevision === factsRevision
-    ? resource.data.snapshot : retained;
+  }, [read, factsRevision]);
+  const loaded = read !== null && read.factsRevision === factsRevision
+    ? read.snapshot : retained;
   const summaries = useMediaSummaries(loaded?.items.flatMap((item) =>
     item.target.kind === "Media" ? [item.target.media_summary] : []) ?? []);
   const rows = loaded?.items.flatMap((item) => {
@@ -53,7 +55,7 @@ export default function QuickReadsSection({ isActive }: { isActive: boolean }) {
         returnScope="Lectern.QuickReads"
         ariaLabel="Quick reads"
         rows={rows}
-        status={loaded !== null ? "ready" : resource.status === "idle" ? "loading" : resource.status}
+        status={loaded !== null ? "ready" : resource.status === "failed" ? "error" : resource.status}
         rowControls={Object.fromEntries(rows.filter((row) => row.id.startsWith("media:")).map((row) => [row.id,
           <LecternAddControl key={row.id} mediaId={parseMediaId(row.id.slice("media:".length))}
             title={row.title.text} returnFocus={() => findPaneCollectionRowFocusTarget(paneId, row.id)} />,
@@ -62,12 +64,12 @@ export default function QuickReadsSection({ isActive }: { isActive: boolean }) {
           {lectern.resource.status === "ready" && lectern.resource.data.atCapacity ? <FeedbackNotice
             content={{ tone: "Neutral", title: "lectern is full", message: "remove an item to add another." }}
             announcement="None" /> : null}
-          {resource.status === "error" && loaded !== null ? <FeedbackNotice
+          {resource.status === "failed" && loaded !== null ? <FeedbackNotice
             content={{ tone: "Danger", title: "couldn’t refresh quick reads", message: "showing the last loaded items.", requestId: resource.error.requestId }}
-            announcement="Polite" actions={[{ label: "retry", onClick: resource.retry }]} /> : null}
+            announcement="Polite" actions={[{ label: "retry", onClick: resource.refetch }]} /> : null}
           <MediaSummaryNotice error={summaries.error} retry={summaries.retry} />
         </>}
-        error={resource.status === "error" ? (
+        error={resource.status === "failed" ? (
           <FeedbackNotice
             content={{
               tone: "Danger",
@@ -75,7 +77,7 @@ export default function QuickReadsSection({ isActive }: { isActive: boolean }) {
               requestId: resource.error.requestId,
             }}
             announcement="Polite"
-            actions={[{ label: "retry", onClick: resource.retry }]}
+            actions={[{ label: "retry", onClick: resource.refetch }]}
           />
         ) : undefined}
         empty={<p>No quick reads.</p>}

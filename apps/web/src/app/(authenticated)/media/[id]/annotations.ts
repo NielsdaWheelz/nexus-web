@@ -5,7 +5,7 @@
 // acknowledgement through a pending ledger, which a map read issued after the
 // write settles (created, recoloured, rebounded and deleted alike). The map is
 // read while someone subscribes: a remounted subscriber reads it again.
-import { apiFetch, apiCommand204, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { RailMarker } from "@/lib/documentReader/chrome/MapRail";
@@ -231,7 +231,7 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
       settle(id, painted && { id, color: data.color, anchor: painted });
     },
     async remove(id) {
-      await apiCommand204(`/api/highlights/${id}`, { method: "DELETE" });
+      await apiFetch<void>(`/api/highlights/${id}`, { method: "DELETE" });
       settle(id, null);
     },
     highlight,

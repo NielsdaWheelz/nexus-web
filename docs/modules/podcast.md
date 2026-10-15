@@ -20,7 +20,7 @@ Backend owners live under `python/nexus/services/podcasts/*` (`feed`, `provider`
 `podcasts/transcription_failure.py`, which does not import the provider adapter
 on the background supervisor path. Frontend pane composition lives under
 `apps/web/src/app/(authenticated)/podcasts/*`. `lib/podcasts/api.ts` owns the
-podcast http and its types; `lib/api/serverState.ts` (one resource) and
+podcast http and its types; `lib/api/serverState.tsx` (one resource) and
 `lib/api/useServerList.ts` (one list, architecture §8.12) own the panes' server
 state (shared with the author pane and the metadata overlay);
 `lib/podcasts/paneState.ts` owns the podcast failure copy, command runner and

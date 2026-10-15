@@ -1618,7 +1618,7 @@ otherwise queries only while its pane is active. It delegates Add to the
 existing Lectern or library mutation owner and owns local removal/refill, not
 destination state. its known focus/refill defects remain tracked in the
 [connections module](modules/connections.md). the lectern section order is queue, quick reads,
-then suggestions. `QuickReadsSection` uses an independent client `useResource` read,
+then suggestions. `QuickReadsSection` uses an independent client `usePaneFreeServerValue` read,
 refreshing on active mount, reactivation and the Consumption and Entries
 change topics (§8.12).
 its shared `LecternAddControl` offers add/check/on-lectern; opening navigates
@@ -1659,17 +1659,11 @@ and a deterministic Year in Reading view. Exact session Exclude/Restore is the
 only correction lifecycle. Accepted writes publish the
 Consumption change topic (§8.12); focus, activation, visibility, pageshow,
 and online transitions revalidate cross-process state without polling. The
-committed Stats response owns its session-continuation state: the pane delegates
-manual cursor lifecycle to `lib/api/useCursorPagination.ts` and builds
-continuation requests from the committed decoded view. the shared manual owner
-accepts one `CursorPage<T, Cursor extends string>` contract:
-`{items: readonly T[], next_cursor: Cursor | null}`. first-page object identity
-owns appended rows and continuation; a replacement first page aborts the old
-request and immediately projects its own rows and tail. one continuation runs at
-a time, supplied rows append in order including duplicates, and retryable
-failures retain rows and tail. a `null` cursor ends the list; no empty-string
-cursor stands in for it. imports, browse, stats, and the conversation picker consume this
-same contract. stats' full contract is
+committed Stats response owns its session-continuation state: each committed
+result starts a manual `useServerList` (`drain: false`) whose first page is the
+result's own and whose continuations reuse the committed query, so a cursor's
+snapshot and scope always match. a `null` cursor ends the list; no empty-string
+cursor stands in for it. stats' full contract is
 [`modules/consumption-activity.md`](modules/consumption-activity.md).
 
 ### 8.10 Search, Browse, desktop Nexus, and mobile Nexus
@@ -1979,14 +1973,18 @@ open over Resume and never become panes.
   under a streaming suspense skeleton and workspace error boundary. auth can gate
   ttfb; data and the active seed gate first shell mount. `loadWorkspaceBootstrap`
   concurrently loads required account, reader profile and saved sessions on the
-  30 s server deadline, then awaits only the active pane's registered loader with
-  the existing 500 ms per-request budget. zero/one successful seed uses the existing
-  consume-once cache. named transport/resource misses leave normal pane reads in
-  charge; internal defects, malformed json, unknown codes and bootstrap 401 terminate.
+  30 s server deadline, then awaits only the active pane's first-paint reads
+  (`paneSeeds`, `lib/panes/paneResourceLoaders.ts`) with the existing 500 ms
+  per-request budget, returning `{ account, readerProfile, initialState, seeds }`.
+  `seeds` holds them by the active pane's id, under the key of the
+  `useServerValue`/`useServerList` hook that reads them (the api path); the pane
+  body's first commit paints and spends them, so a later mount reads. named
+  transport/resource misses leave normal pane reads in charge; internal defects,
+  malformed json, unknown codes and bootstrap 401 terminate.
   only `E_NETWORK`, `E_UPSTREAM`, `E_UPSTREAM_TIMEOUT`, `E_AUTH_UNAVAILABLE` produce
   cold retry; a cold failure mounts no store. `WorkspaceEntry` retains the first
   successful initializer for its verified viewer. later modeled data reread failure
-  preserves that exact shell/store/cache and publishes one refresh notice; later
+  preserves that exact shell and store and publishes one refresh notice; later
   success clears it without replacing live work. viewer identity keys the subtree.
 - **Server-side restore (no round-trip, no flash).** Device identity is a server-owned
   httpOnly `nx_device` cookie minted in middleware (`lib/auth/deviceCookie.ts`) —

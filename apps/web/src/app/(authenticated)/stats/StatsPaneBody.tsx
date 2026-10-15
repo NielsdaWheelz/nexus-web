@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Chip from "@/components/ui/Chip";
@@ -10,9 +10,9 @@ import PaneSection from "@/components/ui/PaneSection";
 import SelectField from "@/components/ui/SelectField";
 import { useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { useCursorPagination } from "@/lib/api/useCursorPagination";
-import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
-import { useResource, type AsyncResource } from "@/lib/api/useResource";
+import { usePaneFreeServerValue } from "@/lib/api/serverState";
+import { usePaneFreeServerList, type ServerList } from "@/lib/api/useServerList";
+import { usePaneUrlState } from "@/lib/panes/usePaneUrlState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { publishChange, useChangeStamp } from "@/lib/api/changes";
@@ -34,7 +34,7 @@ import styles from "./StatsPaneBody.module.css";
 type Stats = Schema<"ConsumptionStatsOut">;
 type Session = Schema<"ActivitySessionOut">;
 type Exclusion = Schema<"ActiveExclusionOut">;
-type Committed = { query: string; state: StatsUrlState; data: Stats };
+type Committed = { query: string; read: string; state: StatsUrlState; data: Stats };
 type Correction =
   | Omit<Schema<"ExcludeActivityIn">, "client_mutation_id">
   | Omit<Schema<"RestoreActivityExclusionIn">, "client_mutation_id">;
@@ -368,12 +368,15 @@ function Breakdowns({ data, onFilter }: { data: Stats; onFilter?: OnFilter }) {
 
 function Sessions(props: {
   data: Stats;
-  sessions: ReturnType<typeof useCursorPagination<Session>>;
+  sessions: ServerList<Session>;
   more: boolean;
   correcting: boolean;
   onExclude: (row: Session) => void;
 }) {
   const { sessions, correcting } = props;
+  // Until the list takes up a new result, it shows that result's own first page.
+  const first = props.data.activity.sessions;
+  const rows = sessions.current ? sessions.items : first.items;
   const exclude = (row: Session) =>
     row.continues_before_range || row.continues_after_range ? null : (
       <ActionMenu
@@ -398,7 +401,7 @@ function Sessions(props: {
     >
       <Table
         head={["Session", "Active time", "Movement"]}
-        rows={sessions.items.map((row) => [
+        rows={rows.map((row) => [
           [row.media_ref, row.modality, row.device.device_handle, row.started_at].join(),
           <SessionCell
             key="session"
@@ -410,7 +413,7 @@ function Sessions(props: {
           movement(row.forward_word_position, row.forward_media_position_ms),
         ])}
       />
-      {sessions.error !== null ? (
+      {sessions.failure !== null ? (
         <div className={styles.sessionLoadFailure} role="alert">
           <span>Sessions couldn’t load</span>
           <Button size="sm" variant="secondary" onClick={sessions.retry}>
@@ -419,9 +422,12 @@ function Sessions(props: {
         </div>
       ) : (
         <LoadMoreFooter
-          hasMore={props.more && sessions.hasMore}
-          loading={sessions.loadingMore}
-          onLoadMore={sessions.loadMore}
+          hasMore={
+            props.more &&
+            (sessions.current ? !sessions.complete : first.next_cursor !== null)
+          }
+          loading={sessions.running === "More"}
+          onLoadMore={sessions.more}
           label="Load more sessions"
         />
       )}
@@ -752,12 +758,14 @@ export default function StatsPaneBody() {
   }, [timeZone, state, setState]);
 
   const query = timeZone && canonical ? statsQuery(state, timeZone).toString() : null;
-  const resource = useResource<Committed>({
-    cacheKey: query === null ? null : `${query}\u0000${projection}\u0000${lifecycle}`,
+  const read = query === null ? null : `${query}\u0000${projection}\u0000${lifecycle}`;
+  const resource = usePaneFreeServerValue<Committed>({
+    key: read,
+    stale: "",
     load: async (signal) => {
       const url = `/api/consumption/stats?${query}` as const;
       const body = await apiFetch<ApiJson<"/consumption/stats", "get">>(url, { signal });
-      return { query: query!, state, data: body.data };
+      return { query: query!, read: read!, state, data: body.data };
     },
   });
   // The prior result stays on screen while a new query or a revalidation loads.
@@ -771,17 +779,19 @@ export default function StatsPaneBody() {
   const updating = fetching && data !== null;
   usePaneReturnReady(!initialLoading);
 
-  const firstPage = useMemo<AsyncResource<Schema<"ActivitySessionPageOut">>>(() => {
-    if (data === null) return { status: "loading" };
-    return { status: "ready", data: data.activity.sessions };
-  }, [data]);
-  // Continuations reuse the committed query, so the cursor's snapshot and scope always match.
-  const sessions = useCursorPagination<Session>({
-    firstPage,
-    initialMoreError: null,
-    loadMorePage: async (cursor, signal) => {
+  // A committed result carries the first page of its sessions and starts the list again;
+  // continuations reuse its query, so the cursor's snapshot and scope always match.
+  const sessions = usePaneFreeServerList<Session>({
+    key: committed && `stats-sessions:${committed.read}`,
+    stale: "",
+    pageSize: 50,
+    drain: false,
+    active: true,
+    id: (row) => [row.media_ref, row.modality, row.device.device_handle, row.started_at].join(),
+    fetchPage: async (cursor, limit, signal) => {
+      if (cursor === null) return committed!.data.activity.sessions;
       const params = new URLSearchParams(committed!.query);
-      params.set("limit", "50");
+      params.set("limit", String(limit));
       params.set("cursor", cursor);
       const url = `/api/consumption/sessions?${params}` as const;
       const body = await apiFetch<ApiJson<"/consumption/sessions", "get">>(url, { signal });
@@ -868,8 +878,8 @@ export default function StatsPaneBody() {
     data.completion.total === 0 &&
     kept!.highlights + kept!.note_blocks + kept!.neutral_links === 0 &&
     data.activity.active_exclusions.length === 0;
-  const retry = resource.status === "error" && (
-    <Button size="sm" variant="secondary" onClick={resource.retry}>
+  const retry = resource.status === "failed" && (
+    <Button size="sm" variant="secondary" onClick={resource.refetch}>
       Retry
     </Button>
   );

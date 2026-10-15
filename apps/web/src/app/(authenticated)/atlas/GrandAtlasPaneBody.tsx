@@ -5,7 +5,8 @@ import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import { useResource } from "@/lib/api/useResource";
+import { apiFetch } from "@/lib/api/client";
+import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import { failureCopy } from "@/lib/oracle/oracle";
 import {
@@ -39,20 +40,29 @@ export default function GrandAtlasPaneBody() {
   const [hovered, setHovered] = useState<Star | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
 
-  const atlas = useResource<ApiJson<"/atlas", "get">>({
-    cacheKey: "atlas",
-    path: () => "/api/atlas",
+  const atlas = usePaneFreeServerValue({
+    key: "atlas",
+    stale: "",
+    load: (signal) =>
+      apiFetch<ApiJson<"/atlas", "get">>("/api/atlas", { signal }),
   });
   // The readings layer loads when first shown; a folio's first tap loads its peers.
-  const readings = useResource<ApiJson<"/oracle/readings", "get">>({
-    cacheKey: layers.readings ? "oracle-readings" : null,
-    path: () => "/api/oracle/readings",
+  const readings = usePaneFreeServerValue({
+    key: layers.readings ? "oracle-readings" : null,
+    stale: "",
+    load: (signal) =>
+      apiFetch<ApiJson<"/oracle/readings", "get">>("/api/oracle/readings", {
+        signal,
+      }),
   });
-  const concordance = useResource<
-    ApiJson<"/oracle/readings/{reading_id}/concordance", "get">
-  >({
-    cacheKey: selected === null ? null : `concordance:${selected}`,
-    path: () => `/api/oracle/readings/${selected}/concordance`,
+  const concordance = usePaneFreeServerValue({
+    key: selected === null ? null : `concordance:${selected}`,
+    stale: "",
+    load: (signal) =>
+      apiFetch<ApiJson<"/oracle/readings/{reading_id}/concordance", "get">>(
+        `/api/oracle/readings/${selected}/concordance`,
+        { signal },
+      ),
   });
   const sky = atlas.status === "ready" ? atlas.data.data : null;
   const peers =
@@ -61,11 +71,8 @@ export default function GrandAtlasPaneBody() {
       : [];
 
   const corpus = useMemo(() => sky?.stars.map(corpusStar) ?? [], [sky]);
-  const folios = useMemo(
-    () =>
-      readings.status === "ready" ? readings.data.data.map(folioStar) : [],
-    [readings],
-  );
+  const read = readings.status === "ready" ? readings.data.data : null;
+  const folios = useMemo(() => read?.map(folioStar) ?? [], [read]);
   const tree = useMemo(() => {
     const at = new Map(
       corpus.filter((star) => !star.nebula).map((star) => [star.id, star.at]),
@@ -163,9 +170,9 @@ export default function GrandAtlasPaneBody() {
   };
 
   const errors = [
-    atlas.status === "error" &&
+    atlas.status === "failed" &&
       failureCopy(atlas.error, "The Atlas couldn’t be loaded"),
-    readings.status === "error" &&
+    readings.status === "failed" &&
       failureCopy(readings.error, "The readings layer couldn’t be loaded"),
   ].filter((error): error is FeedbackContent => error !== false);
   const count = corpus.length;
@@ -177,7 +184,7 @@ export default function GrandAtlasPaneBody() {
           <span className={styles.title}>The Atlas</span>
           <span className={styles.gold}>·</span>
           <span className={styles.subtitle}>
-            {sky === null && atlas.status !== "error"
+            {sky === null && atlas.status !== "failed"
               ? "charting the corpus…"
               : `${count} ${count === 1 ? "star" : "stars"}`}
           </span>

@@ -10,8 +10,9 @@ still mint their own cursors:
 - `services/resource_graph/connections.py`: a plain `"<created_at iso>|<edge id>"`.
 - `services/consumption/stats.py` `_next_cursor`/`_decode`.
 - `services/tools/assistant_writes.py`: a bare row id `before`.
-- web `lib/api/useCursorPagination.ts` and `lib/api/pagePrefix.ts` are two more
-  client page owners beside `useServerList`.
+- web `lib/api/pagePrefix.ts` is one more client page owner beside
+  `useServerList`: a composition over `usePaneFreeServerValue` whose pages
+  carry page-level fields `ImportsList` reads.
 
 envelopes: `{items, next_cursor}` for the collection lists and, since the
 libraries reauthor, the library index, entries and destinations (web and

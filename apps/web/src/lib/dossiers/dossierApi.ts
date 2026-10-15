@@ -1,6 +1,6 @@
 // The dossier transport: typed head, build, learn and cancel calls through the
 // BFF proxy, and the build-status snapshot stream.
-import { apiCommand204, apiFetch, type ApiPath } from "@/lib/api/client";
+import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 
@@ -74,7 +74,7 @@ export async function learnDossier(
 }
 
 export async function cancelDossierBuild(buildHandle: string): Promise<void> {
-  await apiCommand204(
+  await apiFetch<void>(
     `/api/artifact-builds/${encodeURIComponent(buildHandle)}/cancel`,
     { method: "POST" },
   );

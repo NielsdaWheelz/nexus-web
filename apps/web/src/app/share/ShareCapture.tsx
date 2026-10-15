@@ -5,11 +5,12 @@ import DestinationField from "@/components/libraries/DestinationField";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { ApiJson } from "@/lib/api/wire";
 import {
+  apiFetch,
   apiTransportFeedback,
   isApiError,
   isUnauthenticatedApiError,
 } from "@/lib/api/client";
-import { useResource } from "@/lib/api/useResource";
+import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { createRandomId } from "@/lib/createRandomId";
 import { extractUrls } from "@/lib/extractUrls";
@@ -87,9 +88,10 @@ export default function ShareCapture({
   const [selectedDestinations, setSelectedDestinations] = useState<
     readonly LibraryDestination[]
   >([]);
-  const accountResource = useResource<ApiJson<"/me", "get">>({
-    cacheKey: trimmed && urls.length === 0 ? "share-capture:account" : null,
-    path: () => "/api/me",
+  const accountResource = usePaneFreeServerValue({
+    key: trimmed && urls.length === 0 ? "share-capture:account" : null,
+    stale: "",
+    load: (signal) => apiFetch<ApiJson<"/me", "get">>("/api/me", { signal }),
   });
   const calendarTimeZone =
     accountResource.status === "ready"
@@ -294,7 +296,7 @@ export default function ShareCapture({
 
   const visibleResults: CaptureResult[] | null =
     results ??
-    (accountResource.status === "error"
+    (accountResource.status === "failed"
       ? [failedCaptureResult(trimmed, accountResource.error)]
       : null);
 
@@ -378,8 +380,8 @@ export default function ShareCapture({
                 runSaveUrls(failedUrls);
                 return;
               }
-              if (accountResource.status === "error") {
-                accountResource.retry();
+              if (accountResource.status === "failed") {
+                accountResource.refetch();
                 return;
               }
               setAttempt((value) => value + 1);

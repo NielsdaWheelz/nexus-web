@@ -8,7 +8,8 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import MediaImage from "@/components/ui/MediaImage";
-import { useResource } from "@/lib/api/useResource";
+import { apiFetch } from "@/lib/api/client";
+import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -40,9 +41,13 @@ export default function OracleLandingPaneBody() {
   // until this instance is mounted, so a typed value cannot land on a discarded one.
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-  const readings = useResource<ApiJson<"/oracle/readings", "get">>({
-    cacheKey: "oracle-readings",
-    path: () => "/api/oracle/readings",
+  const readings = usePaneFreeServerValue({
+    key: "oracle-readings",
+    stale: "",
+    load: (signal) =>
+      apiFetch<ApiJson<"/oracle/readings", "get">>("/api/oracle/readings", {
+        signal,
+      }),
   });
 
   const length = questionLength(question);
@@ -109,7 +114,7 @@ export default function OracleLandingPaneBody() {
             <FieldFeedback id={errorId} content={submitError} />
           </form>
 
-          {readings.status === "error" ? (
+          {readings.status === "failed" ? (
             <FeedbackNotice
               content={failureCopy(
                 readings.error,

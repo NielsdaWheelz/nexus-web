@@ -59,11 +59,12 @@ merges a deep link: `/` and non-canonical request paths resume; bare `/daily` is
 today in the account zone; any other path reuses the pane on its routeKey or
 resource (keeping its visit id, width and inspector) or is appended, keeping the
 newest 11 at the cap. entry awaits only the guaranteed visible active pane's
-registered loader, with the existing 500 ms per-request deadline and zero/one seed
-in the consume-once cache. named transport failures and route-specific missing
-resources use normal client reads; other seed errors terminate. inactive panes
-load through their existing owners. the authenticated group has one optional
-catch-all page (`[[...path]]/page.tsx`), so unknown paths render unsupported panes.
+first-paint reads (`paneSeeds`), with the existing 500 ms per-request deadline,
+seeded by that pane's id under the api paths its hooks read. named transport
+failures and route-specific missing resources use normal client reads; other seed
+errors terminate. inactive panes load through their existing owners. the
+authenticated group has one optional catch-all page (`[[...path]]/page.tsx`), so
+unknown paths render unsupported panes.
 
 required-data transport failures (`E_NETWORK`, `E_UPSTREAM`,
 `E_UPSTREAM_TIMEOUT`, `E_AUTH_UNAVAILABLE`) are classified before react serializes
@@ -73,7 +74,7 @@ containment without retry. only a missing stored row is null; invalid state retu
 `500 E_INTERNAL` without modifying its row or timestamp.
 
 `WorkspaceEntry` captures the first successful initializer for one verified viewer.
-a modeled later data reread failure retains the exact shell/store/reader/cache and
+a modeled later data reread failure retains the exact shell/store/reader/seeds and
 publishes "workspace update wasn’t confirmed" with one guarded `router.refresh()`
 action. success clears the notice without replacing live state; its focused action
 hands focus to the current pane before removal. viewer change discards the subtree.
