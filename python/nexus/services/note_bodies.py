@@ -1,8 +1,16 @@
-"""The note body grammar: markdown projection, text projection, persistence, edges.
+"""The note row: its text projection, persistence, embed facts and teardown.
 
-``text_from_pm_json`` is a cross-language contract: the browser reimplements the
-identical projection and compares offsets against it, and ``body_text`` is the
-tsvector/trgm index basis and the offset basis for note passage anchors.
+I1: ``body_text == text_from_pm_json(body_pm_json)``. The browser mirrors the projection
+byte for byte (``lib/notes/noteBody.ts``) for offsets; ``body_text`` is the search,
+passage-anchor and content-index basis.
+I3: every body change (create or write) bumps the ``body`` lane, replaces the note's
+``note_body`` embed edges and enqueues ``note_reindex_job``.
+I9: a missing version row reads as 1; ``bump_version`` creates it first.
+
+Retry rules: ``ensure_note`` creates under the client id, an existing own note is reused
+unchanged and another owner's id is 409; ``write_body`` is absolute (current == desired
+succeeds whatever the version, else the expected version must match: 409 with the
+current note); ``delete_note`` is idempotent.
 """
 
 from __future__ import annotations
@@ -14,31 +22,33 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock
-from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
-from nexus.schemas.resource_items import ExpectedNoteBody, validate_note_body_pm_json
+from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
+from nexus.schemas.notes import NoteBlockOut
+from nexus.services.content_indexing import IndexOwner, delete_content_index
+from nexus.services.note_indexing import enqueue_note_reindex
+from nexus.services.resource_graph.cleanup import (
+    delete_edges_for_deleted_resource,
+    delete_resource_protocol_state,
+)
 from nexus.services.resource_graph.edges import EdgeCreate, replace_edges_for_origin
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items import versions
 from nexus.services.resource_items.capabilities import capability
 
 
-def note_ref(block_id: UUID) -> ResourceRef:
-    return ResourceRef(scheme="note_block", id=block_id)
+def note_ref(note_id: UUID) -> ResourceRef:
+    return ResourceRef(scheme="note_block", id=note_id)
 
 
 def pm_doc_from_markdown_projection(markdown: str) -> dict[str, Any]:
-    """Project plain markdown text into one body, retaining literal brackets."""
+    """Plain text as one paragraph; newlines become hard breaks, brackets stay literal."""
     content: list[dict[str, Any]] = []
-    _append_text(content, markdown)
-    return {"type": "paragraph", "content": content} if content else {"type": "paragraph"}
-
-
-def _append_text(content: list[dict[str, Any]], text_value: str) -> None:
-    for index, line in enumerate(text_value.split("\n")):
-        if index > 0:
+    for index, line in enumerate(markdown.split("\n")):
+        if index:
             content.append({"type": "hard_break"})
         if line:
             content.append({"type": "text", "text": line})
+    return {"type": "paragraph", "content": content} if content else {"type": "paragraph"}
 
 
 def text_from_pm_json(value: object) -> str:
@@ -51,85 +61,124 @@ def text_from_pm_json(value: object) -> str:
             return
         if not isinstance(node, dict):
             return
-        node_type = node.get("type")
-        if node_type == "text" and isinstance(node.get("text"), str):
-            parts.append(str(node["text"]))
-        elif node_type == "object_embed" and isinstance(node.get("attrs"), dict):
-            attrs = node["attrs"]
+        kind, attrs = node.get("type"), node.get("attrs")
+        if kind == "text" and isinstance(node.get("text"), str):
+            parts.append(node["text"])
+        elif kind == "object_embed" and isinstance(attrs, dict):
             label = attrs.get("label") or f"{attrs.get('objectType')}:{attrs.get('objectId')}"
             if isinstance(label, str):
                 parts.append(label)
-        elif node_type == "image" and isinstance(node.get("attrs"), dict):
-            alt = node["attrs"].get("alt")
-            if isinstance(alt, str):
-                parts.append(alt)
-        elif node_type == "hard_break":
+        elif kind == "image" and isinstance(attrs, dict) and isinstance(attrs.get("alt"), str):
+            parts.append(attrs["alt"])
+        elif kind == "hard_break":
             parts.append("\n")
         visit(node.get("content"))
-        if node_type in {"paragraph", "code_block"}:
+        if kind in ("paragraph", "code_block"):
             parts.append("\n")
 
     visit(value)
     return "\n".join(line.rstrip() for line in "".join(parts).splitlines()).strip()
 
 
-def get_note_block_for_owner_or_404(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlock:
-    block = db.get(NoteBlock, block_id)
+def note_exists(db: Session, *, viewer_id: UUID, note_id: UUID) -> bool:
+    """Whether the viewer has this note; another owner's id is 409."""
+    block = db.get(NoteBlock, note_id)
+    if block is not None and block.user_id != viewer_id:
+        raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note id is taken")
+    return block is not None
+
+
+def owned_note(db: Session, *, viewer_id: UUID, note_id: UUID) -> NoteBlock:
+    block = db.get(NoteBlock, note_id)
     if block is None or block.user_id != viewer_id:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note not found")
     return block
 
 
-def require_expected_body(
-    db: Session, *, viewer_id: UUID, block_id: UUID, expected_body: ExpectedNoteBody
+def read_note(db: Session, *, viewer_id: UUID, note_id: UUID) -> NoteBlockOut:
+    block = owned_note(db, viewer_id=viewer_id, note_id=note_id)
+    return NoteBlockOut(
+        id=block.id,
+        body_pm_json=block.body_pm_json,
+        body_text=block.body_text,
+        body_version=_version(db, viewer_id, note_id),
+    )
+
+
+def ensure_note(
+    db: Session, *, viewer_id: UUID, note_id: UUID, body_pm_json: dict[str, Any], reason: str
 ) -> None:
-    """Check the same canonical body lane used by ordinary note mutations."""
-    block = db.get(NoteBlock, block_id)
-    if expected_body.kind == "absent":
-        if block is not None:
-            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Note body already exists")
+    """Create the note under its client id; an existing own note is reused unchanged."""
+    if note_exists(db, viewer_id=viewer_id, note_id=note_id):
         return
-    if block is None or block.user_id != viewer_id:
-        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Note body does not exist")
-    current = versions.ensure_version(db, viewer_id=viewer_id, ref=note_ref(block_id), lane="body")
-    if current.version != expected_body.version:
-        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Note body version is stale")
+    block = NoteBlock(
+        id=note_id,
+        user_id=viewer_id,
+        body_pm_json=body_pm_json,
+        body_text=text_from_pm_json(body_pm_json),
+    )
+    db.add(block)
+    db.flush()
+    for lane in ("body", "links"):
+        versions.ensure_version(db, viewer_id=viewer_id, ref=note_ref(note_id), lane=lane)
+    _changed(db, viewer_id, block, reason)
 
 
-def upsert_note_body(
-    db: Session, *, viewer_id: UUID, block_id: UUID, body_pm_json: dict[str, Any]
-) -> NoteBlock:
-    try:
-        validate_note_body_pm_json(body_pm_json)
-    except ValueError as exc:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, str(exc)) from exc
-    block = db.get(NoteBlock, block_id)
-    if block is None:
-        block = NoteBlock(
-            id=block_id,
-            user_id=viewer_id,
-            body_pm_json=body_pm_json,
-            body_text=text_from_pm_json(body_pm_json),
+def write_body(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    note_id: UUID,
+    body_pm_json: dict[str, Any],
+    expected_version: int,
+    reason: str,
+) -> None:
+    block = owned_note(db, viewer_id=viewer_id, note_id=note_id)
+    if block.body_pm_json == body_pm_json:
+        return
+    require_version(db, viewer_id=viewer_id, note_id=note_id, version=expected_version)
+    block.body_pm_json = body_pm_json
+    block.body_text = text_from_pm_json(body_pm_json)
+    block.updated_at = func.now()
+    versions.bump_version(db, viewer_id=viewer_id, ref=note_ref(note_id), lane="body")
+    _changed(db, viewer_id, block, reason)
+
+
+def require_version(db: Session, *, viewer_id: UUID, note_id: UUID, version: int) -> None:
+    """409 E_NOTE_CONFLICT with ``details.current`` (a NoteBlockOut) unless it matches."""
+    if _version(db, viewer_id, note_id) != version:
+        current = read_note(db, viewer_id=viewer_id, note_id=note_id)
+        raise ConflictError(
+            ApiErrorCode.E_NOTE_CONFLICT,
+            "Note changed elsewhere",
+            details={"current": current.model_dump(mode="json")},
         )
-        db.add(block)
-        db.flush()
-        for lane in ("body", "links"):
-            versions.ensure_version(db, viewer_id=viewer_id, ref=note_ref(block.id), lane=lane)
-        sync_note_body_edges(db, viewer_id=viewer_id, block=block)
-        return block
-    if block.user_id != viewer_id:
-        raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block id already exists")
-    if block.body_pm_json != body_pm_json:
-        block.body_pm_json = body_pm_json
-        block.body_text = text_from_pm_json(body_pm_json)
-        block.updated_at = func.now()
-        versions.bump_version(db, viewer_id=viewer_id, ref=note_ref(block.id), lane="body")
-        sync_note_body_edges(db, viewer_id=viewer_id, block=block)
-    return block
 
 
-def sync_note_body_edges(db: Session, *, viewer_id: UUID, block: NoteBlock) -> None:
-    """Replace the block's owned embed facts; ordinary text creates no edges."""
+def delete_note(db: Session, *, viewer_id: UUID, note_id: UUID) -> None:
+    """The one teardown: subject state, edges, anchors, index, protocol state, row."""
+    from nexus.services import passage_anchors
+    from nexus.services.dossier import engine as dossier_engine
+
+    block = db.get(NoteBlock, note_id)
+    if block is None or block.user_id != viewer_id:
+        return
+    ref = note_ref(note_id)
+    dossier_engine.on_subject_deleted(db, ref)
+    delete_edges_for_deleted_resource(db, ref=ref)
+    passage_anchors.delete_for_owner(db, owner_scheme="note_block", owner_id=note_id)
+    delete_content_index(db, owner=IndexOwner("note_block", note_id))
+    delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
+    db.delete(block)
+    db.flush()
+
+
+def _version(db: Session, viewer_id: UUID, note_id: UUID) -> int:
+    lanes = versions.versions_for_ref(db, viewer_id=viewer_id, ref=note_ref(note_id))
+    return lanes.get("body", 1)
+
+
+def _changed(db: Session, viewer_id: UUID, block: NoteBlock, reason: str) -> None:
     source = note_ref(block.id)
     replace_edges_for_origin(
         db,
@@ -138,32 +187,27 @@ def sync_note_body_edges(db: Session, *, viewer_id: UUID, block: NoteBlock) -> N
         origin="note_body",
         edges=[
             EdgeCreate(source=source, target=target, kind="context", origin="note_body")
-            for target in _body_target_refs(block.body_pm_json)
+            for target in _embeds(block.body_pm_json)
             if target != source and capability(target.scheme).embeddable
         ],
     )
+    enqueue_note_reindex(db, note_block_id=block.id, reason=reason)
 
 
-def _body_target_refs(value: object) -> list[ResourceRef]:
-    refs: list[ResourceRef] = []
-    seen: set[str] = set()
+def _embeds(value: object) -> list[ResourceRef]:
+    found: dict[str, ResourceRef] = {}
 
     def visit(node: object) -> None:
         if isinstance(node, list):
             for child in node:
                 visit(child)
-            return
-        if not isinstance(node, dict):
-            return
-        if node.get("type") == "object_embed" and isinstance(node.get("attrs"), dict):
-            object_type = node["attrs"].get("objectType")
-            object_id = node["attrs"].get("objectId")
-            if isinstance(object_type, str) and isinstance(object_id, str):
-                ref = ResourceRef(scheme=cast(ResourceScheme, object_type), id=UUID(object_id))
-                if ref.uri not in seen:
-                    seen.add(ref.uri)
-                    refs.append(ref)
-        visit(node.get("content"))
+        elif isinstance(node, dict):
+            attrs = node.get("attrs")
+            if node.get("type") == "object_embed" and isinstance(attrs, dict):
+                scheme = cast(ResourceScheme, attrs["objectType"])
+                ref = ResourceRef(scheme=scheme, id=UUID(attrs["objectId"]))
+                found.setdefault(ref.uri, ref)
+            visit(node.get("content"))
 
     visit(value)
-    return refs
+    return list(found.values())

@@ -4,7 +4,6 @@
 // one activation core every row, choice, keybinding, open request and workflow goes through.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import type { MobileQuickNoteHandoffHandle } from "@/components/switchboard/MobileQuickNoteHandoff";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { apiTransportFeedback, isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -21,28 +20,21 @@ import {
   type NexusTarget,
   type NexusTargetActivation,
   type Retained,
-  type TodayAppend,
 } from "@/lib/nexus/model";
 import { NEXUS_COMMANDS, parseNexusQuery } from "@/lib/nexus/query";
 import { candidateRows, choiceRows, EMPTY_LIST, mergeResults, nexusGroups, playbackRow } from "@/lib/nexus/rows";
 import { TRANSPORT_CODES, useNexusFind } from "@/lib/nexus/useNexusFind";
-import { createPage as createNotePage } from "@/lib/notes/api";
-import { DailyDraftStorageError, readDailyDraft, subscribeDailyDraft } from "@/lib/notes/dailyDraftStore";
-import { resolveDailyLocalDate, useOpenDailyPage } from "@/lib/notes/openDailyPage";
-import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
+import { captureToday, createPage as createNotePage, dailyDateFor } from "@/lib/notes/api";
 import { playingEpisode, usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import { useRenderEnvironment, useViewportState } from "@/lib/renderEnvironment/provider";
 import { formatShortcut, matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import { hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
-import { dailyDraftAcceptsText } from "@/lib/resourceSurface/dailySurfacePersistence";
 import type { DismissDecision } from "@/lib/ui/overlay";
 import { resolveWorkspacePaneLabel, useWorkspaceStore } from "@/lib/workspace/store";
 import { resolveAddPanelInitialFocus, type AddDismissalConfirmation } from "./AddPanel";
 import { useAddContentSession } from "./useAddContentSession";
 
 const ADOPT: NexusTargetActivation = { disposition: { kind: "Adopt" } };
-const TODAY_DRAFT_OPEN = "Open Today to finish the current embedded draft";
-const STORAGE_UNAVAILABLE = "Device storage is unavailable. Open Today to review any unsaved text.";
 const CREATE_CODES = [...TRANSPORT_CODES, "E_FORBIDDEN", "E_LIBRARY_FORBIDDEN", "E_INVALID_REQUEST", "E_RESOURCE_CONFLICT"];
 const FORBIDDEN = "This account can’t make that change.";
 const CREATE_FAILURE_COPY: Record<string, string | undefined> = {
@@ -62,24 +54,14 @@ type Exit =
   | { readonly kind: "Replace"; readonly intent: NexusOpenIntent }
   | { readonly kind: "Navigate"; readonly target: NexusTarget; readonly activation: NexusTargetActivation; readonly completion: Completion };
 
-function readToday(accountId: string, localDate: string) {
-  try {
-    return { draft: readDailyDraft(accountId, localDate), storageUnavailable: false };
-  } catch (error) {
-    if (!(error instanceof DailyDraftStorageError)) throw error;
-    return { draft: null, storageUnavailable: true };
-  }
-}
-
 export type NexusController = ReturnType<typeof useNexusController>;
 
 export function useNexusController() {
-  const { accountId, calendarTimeZone } = useAuthenticatedAccount();
+  const { calendarTimeZone } = useAuthenticatedAccount();
   const viewport = useViewportState();
   const { platform } = useRenderEnvironment();
   const player = usePlayerSession();
   const playerCommands = usePlayerCommands();
-  const openDailyPage = useOpenDailyPage();
   const addSession = useAddContentSession();
   const workspace = useWorkspaceStore();
   const { state, runtimeLabelByPaneId } = workspace;
@@ -93,10 +75,7 @@ export function useNexusController() {
   const [pendingExit, setPendingExit] = useState<{ readonly confirmation: NonNullable<AddDismissalConfirmation>["kind"]; readonly exit: Exit } | null>(null);
   const [addDefect, setAddDefect] = useState<{ readonly sessionId: string; readonly error: unknown } | null>(null);
   const [defect, setDefect] = useState<{ readonly error: unknown } | null>(null);
-  const todayDate = resolveDailyLocalDate({ kind: "Today" }, calendarTimeZone);
-  const [today, setToday] = useState(() => readToday(accountId, todayDate));
   const suppressReturnFocus = useRef(false);
-  const handoff = useRef<MobileQuickNoteHandoffHandle>(null);
 
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
   const listIdentity = parsed.norm ? `${parsed.intent.kind}:${parsed.norm}` : "";
@@ -117,16 +96,6 @@ export function useNexusController() {
     [find.frecency, find.openables, find.search, panes, parsed],
   );
   useLayoutEffect(() => setList((previous) => mergeResults(previous, listIdentity, candidates)), [candidates, listIdentity]);
-
-  useEffect(() => {
-    setToday(readToday(accountId, todayDate));
-    return subscribeDailyDraft(accountId, todayDate, (draft, storageUnavailable) => setToday({ draft, storageUnavailable }));
-  }, [accountId, open, todayDate]);
-  const todayAppend: TodayAppend = today.storageUnavailable
-    ? { kind: "Unavailable", reason: STORAGE_UNAVAILABLE }
-    : today.draft === null || dailyDraftAcceptsText(today.draft)
-      ? { kind: "Available" }
-      : { kind: "Unavailable", reason: TODAY_DRAFT_OPEN };
 
   // A navigation that lands while the Nexus is open (a resource menu's Open or Chat, closing
   // the current tab) must not sit behind it: close, and let focus follow the new pane.
@@ -150,17 +119,20 @@ export function useNexusController() {
     playback: playback && playbackRow(playback.title, playback.subtitle !== null ? playback.subtitle : undefined),
     recent: find.recent,
     frecency: find.frecency,
-    todayAppend,
   });
   const rows = groups.flatMap((group) => group.rows);
   const activeKey = rows.some((row) => row.key === list.active) ? list.active : (rows[0]?.key ?? null);
 
   function dispatch(target: Dispatchable, activation: NexusTargetActivation): NexusDispatchOutcome {
     if (target.kind === "OpenDailyPage") {
-      const opened = openDailyPage(target, activation);
-      return opened.activation.kind === "Rejected"
-        ? { kind: "Rejected", target }
-        : { kind: "DailyPageAccepted", activationId: opened.activationId, localDate: opened.localDate };
+      const { entry } = target;
+      const result = workspace.activateWorkspaceTarget({
+        originPaneId: state.active_primary_pane_id,
+        target: { href: `/daily/${target.date.value}` },
+        disposition: activation.disposition,
+        ...(entry.kind === "View" ? {} : { entry }),
+      });
+      return result.kind === "Rejected" ? { kind: "Rejected", target } : { kind: "Accepted" };
     }
     if (target.kind === "PaneOpen") {
       const pane = panes.find((candidate) => candidate.id === target.paneId)!;
@@ -175,13 +147,14 @@ export function useNexusController() {
       originPaneId: state.active_primary_pane_id,
       target: { href: target.href, labelHint: target.labelHint, secondaryActivation: target.secondaryActivation },
       disposition: activation.disposition,
+      entry: target.entry,
     });
     return result.kind === "Rejected" ? { kind: "Rejected", target } : { kind: "Accepted" };
   }
 
   /** Close on acceptance; keep a tab-limit refusal as the Blocked page; open the Nexus for any page. */
   function settle(outcome: NexusDispatchOutcome, activation: NexusTargetActivation, completion: Completion): boolean {
-    if (outcome.kind === "Accepted" || outcome.kind === "DailyPageAccepted") {
+    if (outcome.kind === "Accepted") {
       suppressReturnFocus.current = true;
       addSession.discard();
       setPage({ kind: "Root" });
@@ -193,13 +166,8 @@ export function useNexusController() {
     return false;
   }
 
-  /**
-   * The one activation core. On a mobile gesture that appends to Today, focusing the hidden
-   * handoff input is the first side effect, so the soft keyboard survives into the Today editor.
-   */
-  function run(target: NexusTarget, activation: NexusTargetActivation, origin: HTMLElement | null, row?: NexusRow, completion: Completion = "Destination") {
-    const note = origin && target.kind === "OpenDailyPage" && target.entry.kind === "AppendNote" ? handoff.current : null;
-    note?.focus();
+  /** The one activation core. */
+  function run(target: NexusTarget, activation: NexusTargetActivation, row?: NexusRow, completion: Completion = "Destination") {
     setAnnouncement("");
     switch (target.kind) {
       case "OpenAdd":
@@ -224,41 +192,44 @@ export function useNexusController() {
         playerCommands.resume();
         return setOpen(false);
     }
-    let materialized: Dispatchable;
-    try {
-      materialized = target.kind === "OpenDailyPage" ? materializeDaily(target) : target;
-    } catch (error) {
-      if (!(error instanceof DailyDraftStorageError)) throw error;
-      setAnnouncement(STORAGE_UNAVAILABLE);
-      note?.cancel(origin);
-      return;
+    const text = target.kind === "OpenDailyPage" && target.entry.kind === "AppendNote" ? target.entry.initialText.trim() : "";
+    if (target.kind === "OpenDailyPage" && text) {
+      const localDate = dailyDateFor(target.date, calendarTimeZone);
+      // the launcher waits on the capture; the query and its search are done with.
+      setQueryState("");
+      setList(EMPTY_LIST);
+      capture({ kind: "CaptureToday", text, noteId: crypto.randomUUID(), localDate, activation, submit: { kind: "Running" } });
+      return setOpen(true);
     }
-    const append = materialized.kind === "OpenDailyPage" && materialized.entry.kind === "AppendNote" ? { ...materialized, entry: materialized.entry } : null;
-    if (note && append) note.prepare(append);
+    const materialized: Dispatchable =
+      target.kind === "OpenDailyPage"
+        ? {
+            kind: "OpenDailyPage",
+            date: { kind: "LocalDate", value: dailyDateFor(target.date, calendarTimeZone) },
+            entry: target.entry.kind === "View" ? target.entry : { kind: "AppendNote" },
+          }
+        : target;
     const outcome = dispatch(materialized, activation);
-    if (note && append) {
-      if (outcome.kind === "DailyPageAccepted") note.accept(append, outcome);
-      else note.cancel(origin);
-    }
     if (!settle(outcome, activation, completion) || !row?.source) return;
     const href = materialized.kind === "InternalHref" ? materialized.href : materialized.kind === "PaneOpen" ? panes.find((pane) => pane.id === materialized.paneId)!.href : null;
     if (href) find.remember({ query: parsed.text || null, target_href: href, label_snapshot: row.label, source: row.source });
   }
 
-  function materializeDaily(target: Extract<NexusTarget, { kind: "OpenDailyPage" }>): MaterializedOpenDailyPageTarget {
-    const date = { kind: "LocalDate", value: resolveDailyLocalDate(target.date, calendarTimeZone) } as const;
-    if (target.entry.kind === "View") return { kind: "OpenDailyPage", date, entry: { kind: "View" } };
-    const draft = readDailyDraft(accountId, date.value);
-    return {
-      kind: "OpenDailyPage",
-      date,
-      entry: {
-        kind: "AppendNote",
-        initialText: target.entry.initialText,
-        noteId: draft?.noteId ?? crypto.randomUUID(),
-        clientMutationId: draft?.clientMutationId ?? crypto.randomUUID(),
+  /** Quick note with text: one append to the day, then the day at that note (the
+   * launcher keeps the text with Retry, under the same note id, when it fails). */
+  function capture(running: Extract<NexusPage, { kind: "CaptureToday" }>) {
+    setPage(running);
+    captureToday(running.localDate, running.noteId, running.text).then(
+      () => {
+        const date = { kind: "LocalDate", value: running.localDate } as const;
+        const entry = { kind: "FocusNote", noteBlockId: running.noteId } as const;
+        settle(dispatch({ kind: "OpenDailyPage", date, entry }, running.activation), running.activation, "Destination");
       },
-    };
+      (error: unknown) => {
+        const content = createFailure(error, "Note wasn’t added to Today", CREATE_CODES);
+        if (content) setPage({ ...running, submit: { kind: "Retryable", content } });
+      },
+    );
   }
 
   /** Nexus copy for an expected create failure; anything else becomes a workspace defect. */
@@ -280,8 +251,8 @@ export function useNexusController() {
     setPage({ kind: "CreatePage", pageId, title, activation, submit: { kind: "Running" } });
     createNotePage(pageId, title).then(
       (created) => {
-        setPendingNoteFocus(created.id, "title");
-        run({ kind: "InternalHref", href: `/pages/${created.id}`, labelHint: created.title }, activation, null, undefined, "Page");
+        const entry = { kind: "EditPageTitle", pageId: created.id } as const;
+        run({ kind: "InternalHref", href: `/pages/${created.id}`, labelHint: created.title, entry }, activation, undefined, "Page");
       },
       (error: unknown) => {
         const content = createFailure(error, "Page couldn’t be created", CREATE_CODES);
@@ -296,7 +267,7 @@ export function useNexusController() {
     setPage(running);
     createLibrary({ libraryId: running.libraryId, name: running.name }).then(
       (library) =>
-        run({ kind: "InternalHref", href: `/libraries/${library.id}`, labelHint: library.name }, running.activation, null, undefined, "Library"),
+        run({ kind: "InternalHref", href: `/libraries/${library.id}`, labelHint: library.name }, running.activation, undefined, "Library"),
       (error: unknown) => {
         const content = createFailure(error, "Library couldn’t be created", [...CREATE_CODES, "E_NAME_INVALID"]);
         if (content) setPage({ ...running, submit: { kind: "Retryable", content } });
@@ -316,7 +287,7 @@ export function useNexusController() {
   function performExit(exit: Exit) {
     setPendingExit(null);
     setAnnouncement("");
-    if (exit.kind === "Navigate") return run(exit.target, exit.activation, null, undefined, exit.completion);
+    if (exit.kind === "Navigate") return run(exit.target, exit.activation, undefined, exit.completion);
     if (exit.kind === "Replace") return openIntent(exit.intent);
     addSession.discard();
     if (exit.kind === "Root") setPage({ kind: "Root" });
@@ -338,7 +309,7 @@ export function useNexusController() {
     setList(EMPTY_LIST);
     setPage(nextPage);
     setOpen(true);
-    if (intent.kind === "QuickAction") run(NEXUS_COMMANDS[intent.actionId].target(""), ADOPT, null);
+    if (intent.kind === "QuickAction") run(NEXUS_COMMANDS[intent.actionId].target(""), ADOPT);
   }
 
   function setQuery(next: string) {
@@ -413,7 +384,7 @@ export function useNexusController() {
     groups,
     activeKey,
     menuRequest,
-    choices: choiceRows(page, todayAppend),
+    choices: choiceRows(page),
     failures: find.failures,
     busy: find.busy,
     pending: find.pending,
@@ -421,7 +392,6 @@ export function useNexusController() {
     dialogLabel: page.kind === "Add" ? "Add content" : "Nexus",
     focusKey: page.kind === "Add" ? addSession.state.sessionId : page.kind,
     openShortcut: formatShortcut(SHORTCUTS["Nexus.Open"], platform),
-    handoff,
     addSession,
     addDefect: addDefect?.sessionId === addSession.state.sessionId,
     dismissalConfirmation: (pendingExit && {
@@ -446,9 +416,9 @@ export function useNexusController() {
     setActive,
     openMenu,
     retry: find.retry,
-    activate(action: NexusAction, activation: NexusTargetActivation, origin: HTMLElement | null, row?: NexusRow) {
+    activate(action: NexusAction, activation: NexusTargetActivation, row?: NexusRow) {
       if (action.kind === "Unavailable") setAnnouncement(action.reason);
-      else run(action.target, activation, origin, row);
+      else run(action.target, activation, row);
     },
     /** The mobile account menu: adopt a destination, through the Add guard. */
     openTarget: (target: NexusTarget) => requestExit({ kind: "Navigate", target, activation: addActivation, completion: "Destination" }),
@@ -507,6 +477,7 @@ export function useNexusController() {
     },
     submitLibrary,
     retryPage: () => page.kind === "CreatePage" && createPage(page.pageId, page.title, page.activation),
+    retryCapture: () => page.kind === "CaptureToday" && capture({ ...page, submit: { kind: "Running" } }),
     reportAddDefect(error: unknown) {
       console.error("Add content contract failed:", error);
       setAddDefect({ sessionId: addSession.state.sessionId, error });

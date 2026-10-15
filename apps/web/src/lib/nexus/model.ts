@@ -6,7 +6,10 @@ import type { LibraryDestinationSelection } from "@/lib/libraries/destinationCon
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
-import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
+import type {
+  WorkspacePaneEntry,
+  WorkspaceTargetDisposition,
+} from "@/lib/workspace/targetActivation";
 
 export type NexusIcon = ComponentType<{ size?: number; "aria-hidden"?: boolean | "true" | "false" }>;
 export type NexusCommandId = `Nexus.Quick.${"Note" | "Page" | "Chat" | "Library" | "Import"}`;
@@ -22,17 +25,14 @@ export interface AddSeed {
 
 export type DailyPageLocator = { readonly kind: "Today" } | { readonly kind: "LocalDate"; readonly value: string };
 
+/** A day opened as is, with a new empty row, or at the note a capture just added. */
 export type MaterializedOpenDailyPageTarget = {
   readonly kind: "OpenDailyPage";
   readonly date: { readonly kind: "LocalDate"; readonly value: string };
   readonly entry:
     | { readonly kind: "View" }
-    | {
-        readonly kind: "AppendNote";
-        readonly initialText: string;
-        readonly noteId: string;
-        readonly clientMutationId: string;
-      };
+    | { readonly kind: "AppendNote" }
+    | { readonly kind: "FocusNote"; readonly noteBlockId: string };
 };
 
 /** Every navigation is an InternalHref; the rest open a tab, Today, the player, or a page. */
@@ -42,6 +42,7 @@ export type NexusTarget =
       readonly href: string;
       readonly labelHint?: string;
       readonly secondaryActivation?: WorkspaceSecondaryActivation;
+      readonly entry?: WorkspacePaneEntry;
     }
   | { readonly kind: "PaneOpen"; readonly paneId: string }
   | {
@@ -75,7 +76,6 @@ export type RetainedTarget = Extract<MaterializedNexusTarget, { kind: "InternalH
 
 export type NexusDispatchOutcome =
   | { readonly kind: "Accepted" }
-  | { readonly kind: "DailyPageAccepted"; readonly activationId: string; readonly localDate: string }
   | { readonly kind: "Rejected"; readonly target: RetainedTarget };
 
 export type NexusAction =
@@ -124,8 +124,6 @@ export type ReplayableSubmitState =
   | { readonly kind: "Running" }
   | { readonly kind: "Retryable"; readonly content: FeedbackContent };
 
-export type TodayAppend = { readonly kind: "Available" } | { readonly kind: "Unavailable"; readonly reason: string };
-
 /** A navigation the tab limit refused, kept so the user can make room and retry it. */
 export interface Retained {
   readonly target: RetainedTarget;
@@ -148,6 +146,14 @@ export type NexusPage =
       readonly kind: "CreateLibrary";
       readonly libraryId: string;
       readonly name: string;
+      readonly activation: NexusTargetActivation;
+      readonly submit: ReplayableSubmitState;
+    }
+  | {
+      readonly kind: "CaptureToday";
+      readonly text: string;
+      readonly noteId: string;
+      readonly localDate: string;
       readonly activation: NexusTargetActivation;
       readonly submit: ReplayableSubmitState;
     }

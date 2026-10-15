@@ -80,7 +80,6 @@ interface Data {
   runtimeLabelByPaneId: ReadonlyMap<string, Published<WorkspacePaneLabel>>;
   dailyPageByPaneId: ReadonlyMap<string, Published<PaneDailyPage>>;
   pendingPaneEntryDeliveryByPaneId: ReadonlyMap<string, PaneEntryDelivery>;
-  cancelledPaneEntryActivationIds: ReadonlySet<string>;
 }
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
 export type WorkspaceStoreValue = Data & WorkspaceStore["commands"];
@@ -138,7 +137,6 @@ function createWorkspaceStore(
     runtimeLabelByPaneId: new Map(),
     dailyPageByPaneId: new Map(),
     pendingPaneEntryDeliveryByPaneId: new Map(),
-    cancelledPaneEntryActivationIds: new Set(),
   };
   let value: Data & typeof commands;
 
@@ -178,14 +176,8 @@ function createWorkspaceStore(
       patch.pendingPaneEntryDeliveryByPaneId ??
         data.pendingPaneEntryDeliveryByPaneId,
     );
-    const cancelled = new Set(
-      patch.cancelledPaneEntryActivationIds ??
-        data.cancelledPaneEntryActivationIds,
-    );
     for (const [paneId, delivery] of deliveries) {
-      if (visitOf.get(paneId) === delivery.visitId) continue;
-      deliveries.delete(paneId);
-      cancelled.add(delivery.activationId);
+      if (visitOf.get(paneId) !== delivery.visitId) deliveries.delete(paneId);
     }
     const labels = patch.runtimeLabelByPaneId ?? data.runtimeLabelByPaneId;
     memento.forget(
@@ -206,7 +198,6 @@ function createWorkspaceStore(
       runtimeLabelByPaneId: pruneRouteKeyedRecords(labels, routeKeys),
       dailyPageByPaneId: pruneRouteKeyedRecords(data.dailyPageByPaneId, routeKeys),
       pendingPaneEntryDeliveryByPaneId: deliveries,
-      cancelledPaneEntryActivationIds: cancelled,
     });
     if (mounted) project();
   }
@@ -339,12 +330,7 @@ function createWorkspaceStore(
         data.dailyPageByPaneId,
         request,
       );
-      const activation = request.paneEntryActivation;
       if (plan.kind === "Rejected") {
-        if (activation?.entry) {
-          const cancelled = new Set(data.cancelledPaneEntryActivationIds);
-          set({ cancelledPaneEntryActivationIds: cancelled.add(activation.activationId) });
-        }
         onPaneLimit();
         return plan;
       }
@@ -365,19 +351,16 @@ function createWorkspaceStore(
       const surface = request.target.secondaryActivation?.surfaceId;
       if (surface) state = withSecondary(state, paneId, surface);
       const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
-      const cancelled = new Set(data.cancelledPaneEntryActivationIds);
-      if (activation) {
-        const previous = deliveries.get(paneId);
-        if (previous) cancelled.add(previous.activationId);
-        deliveries.delete(paneId);
+      const { entry } = request;
+      if (entry) {
+        // a newer delivery to a pane supersedes its pending one.
         const visitId = state.panes.find((p) => p.id === paneId)!.current_visit.id;
-        const { activationId, entry } = activation;
-        if (entry) deliveries.set(paneId, { activationId, paneId, visitId, entry });
+        const activationId = crypto.randomUUID();
+        deliveries.set(paneId, { activationId, paneId, visitId, entry });
       }
       commit(state, {
         runtimeLabelByPaneId: hinted(paneId, plan.href, request.target.labelHint),
         pendingPaneEntryDeliveryByPaneId: deliveries,
-        cancelledPaneEntryActivationIds: cancelled,
       });
       return { kind: plan.kind, paneId };
     },

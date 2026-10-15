@@ -31,7 +31,6 @@ import type {
   NexusRankTier,
   NexusRecent,
   NexusRow,
-  TodayAppend,
 } from "./model";
 import { chatHref, NEXUS_COMMANDS, type BrowseKind, type NexusQuery } from "./query";
 
@@ -170,13 +169,11 @@ function askRow(key: string, text: string, detail: string | undefined, tier: Nex
   };
 }
 
-function appendToToday(text: string, todayAppend: TodayAppend): NexusAction {
-  return todayAppend.kind === "Available"
-    ? {
-        kind: "Available",
-        target: { kind: "OpenDailyPage", date: { kind: "Today" }, entry: { kind: "AppendNote", initialText: text } },
-      }
-    : todayAppend;
+function appendToToday(text: string): NexusAction {
+  return {
+    kind: "Available",
+    target: { kind: "OpenDailyPage", date: { kind: "Today" }, entry: { kind: "AppendNote", initialText: text } },
+  };
 }
 
 function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Frecency): NexusRow[] {
@@ -383,7 +380,7 @@ export function playbackRow(title: string, subtitle: string | undefined): NexusR
   };
 }
 
-function queryActions(query: NexusQuery, desktop: boolean, todayAppend: TodayAppend): NexusRow[] {
+function queryActions(query: NexusQuery, desktop: boolean): NexusRow[] {
   const q = query.text;
   const row = (id: string, label: string, icon: NexusRow["icon"], type: string | undefined, detail: string | undefined, action: NexusAction): NexusRow => ({
     key: `Continuation:${id}`,
@@ -396,7 +393,7 @@ function queryActions(query: NexusQuery, desktop: boolean, todayAppend: TodayApp
   });
   return [
     askRow("Continuation:Ask", q, desktop ? "Ask Nexus" : undefined, "CurrentContext"),
-    row("AddToToday", `Add “${q}” to Today`, FileText, desktop ? "Today" : undefined, "Append note", appendToToday(q, todayAppend)),
+    row("AddToToday", `Add “${q}” to Today`, FileText, desktop ? "Today" : undefined, "Append note", appendToToday(q)),
     row("Browse", `Browse for “${q}”…`, Globe, desktop ? "Browse" : undefined, "Choose a kind", {
       kind: "Available",
       target: { kind: "ChooseBrowse", query: q },
@@ -424,7 +421,6 @@ export function nexusGroups(input: {
   readonly playback: NexusRow | null;
   readonly recent: readonly NexusRecent[];
   readonly frecency: Frecency;
-  readonly todayAppend: TodayAppend;
 }): NexusGroup[] {
   const { desktop, query, panes, frecency } = input;
   const group = (id: NexusGroup["id"], label: string, rows: readonly NexusRow[]): NexusGroup[] =>
@@ -432,7 +428,7 @@ export function nexusGroups(input: {
   if (query.text) {
     return [
       ...group("Results", "Results", input.list.rows),
-      ...group("QuickActions", "Do with query", query.intent.kind === "ImportUrl" ? [] : queryActions(query, desktop, input.todayAppend)),
+      ...group("QuickActions", "Do with query", query.intent.kind === "ImportUrl" ? [] : queryActions(query, desktop)),
     ];
   }
   const plain = (row: NexusRow): NexusRow => (desktop ? row : { ...row, type: undefined });
@@ -488,7 +484,7 @@ export function nexusGroups(input: {
 }
 
 /** The rows of a choice page: what to create from a draft, or which kind to browse. */
-export function choiceRows(page: NexusPage, todayAppend: TodayAppend): NexusRow[] {
+export function choiceRows(page: NexusPage): NexusRow[] {
   const choice = (label: string, icon: NexusRow["icon"], action: NexusAction): NexusRow => ({
     key: `Choice:${label}`,
     label,
@@ -499,7 +495,7 @@ export function choiceRows(page: NexusPage, todayAppend: TodayAppend): NexusRow[
   if (page.kind === "ChooseCreate") {
     const target = (id: NexusCommandId): NexusAction => ({ kind: "Available", target: NEXUS_COMMANDS[id].target(page.draft) });
     return [
-      choice("Today Note", FileText, appendToToday(page.draft, todayAppend)),
+      choice("Today Note", FileText, appendToToday(page.draft)),
       choice("Page", FilePlus2, target("Nexus.Quick.Page")),
       choice("Chat", MessageSquarePlus, target("Nexus.Quick.Chat")),
       choice("Library", Library, target("Nexus.Quick.Library")),

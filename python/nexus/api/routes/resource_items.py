@@ -12,17 +12,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
-from nexus.schemas.resource_items import (
-    ResourceActionsOut,
-    ResourceBodyMutationOut,
-    ResourceBodyMutationRequest,
-    ResourceItemOut,
-    ResourceSurfaceCommandOut,
-    ResourceSurfaceCommandRequest,
-    ResourceSurfaceOut,
-    ResourceTitleMutationOut,
-    ResourceTitleMutationRequest,
-)
+from nexus.schemas.resource_items import ResourceActionsOut, ResourceItemOut
 from nexus.schemas.resource_search import (
     ResourceOpenableSearchRequest,
     ResourceOpenableSearchResponse,
@@ -34,7 +24,7 @@ from nexus.services.resource_graph.refs import (
     ResourceRefParseFailure,
     parse_resource_ref,
 )
-from nexus.services.resource_items import actions, items, mutations, surfaces
+from nexus.services.resource_items import actions, items
 from nexus.services.search import pickers
 
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
@@ -80,45 +70,3 @@ def get_resource_actions(
     """The viewer's verbs on one ref now; an invisible ref has none."""
     ref = _parse_ref(resource_ref)
     return Data(data=actions.resource_actions(db, viewer_id=viewer.user_id, ref=ref))
-
-
-@router.get("/{resource_ref}/surface")
-def get_resource_surface(
-    resource_ref: str, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[ResourceSurfaceOut]:
-    return Data(
-        data=surfaces.get_surface(db, viewer_id=viewer.user_id, source=_parse_ref(resource_ref)),
-    )
-
-
-@router.post("/{resource_ref}/surface/commands")
-def execute_resource_surface_command(
-    resource_ref: str, request: ResourceSurfaceCommandRequest, viewer: ViewerDep, db: DbSession
-) -> Data[ResourceSurfaceCommandOut]:
-    return Data(
-        data=surfaces.execute_surface_command(
-            db, viewer_id=viewer.user_id, source=_parse_ref(resource_ref), request=request
-        )
-    )
-
-
-@router.patch("/{resource_ref}/title")
-def update_resource_title(
-    resource_ref: str, request: ResourceTitleMutationRequest, viewer: ViewerDep, db: DbSession
-) -> Data[ResourceTitleMutationOut]:
-    return Data(
-        data=mutations.update_title(
-            db, viewer_id=viewer.user_id, ref=_parse_ref(resource_ref), request=request
-        )
-    )
-
-
-@router.patch("/{resource_ref}/body")
-def update_resource_body(
-    resource_ref: str, request: ResourceBodyMutationRequest, viewer: ViewerDep, db: DbSession
-) -> Data[ResourceBodyMutationOut]:
-    return Data(
-        data=mutations.update_body(
-            db, viewer_id=viewer.user_id, ref=_parse_ref(resource_ref), request=request
-        ),
-    )

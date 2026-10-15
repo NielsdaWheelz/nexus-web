@@ -119,7 +119,6 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                 controller.activate(
                   active.action,
                   { disposition: { kind: event.shiftKey ? "Fork" : "Follow" } },
-                  null,
                   active,
                 );
               }
@@ -176,7 +175,6 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                       controller.activate(
                         row.action,
                         { disposition: { kind: event.shiftKey ? "Fork" : "Follow" } },
-                        null,
                         row,
                       );
                     }}

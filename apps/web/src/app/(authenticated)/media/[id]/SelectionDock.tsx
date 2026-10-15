@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { Ellipsis, Highlighter, Link2, MessageCircleQuestion, NotebookPen } from "lucide-react";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
-import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
+import AnnotationNoteEditor from "@/components/notes/AnnotationNoteEditor";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
@@ -135,12 +135,12 @@ export default function SelectionDock({
   const editor = composer ? (
     <div className={styles.quickNote}>
       <blockquote>{composer.quote}</blockquote>
-      <HighlightNoteEditor
+      <AnnotationNoteEditor
         key={composer.key}
         target={
           composer.highlightId
-            ? { kind: "highlight", id: composer.highlightId, ownerKey: `highlight:${composer.highlightId}` }
-            : { kind: "highlight", id: null, ownerKey: `highlight-selection:${composer.key}`, creation: composer.creation ?? undefined }
+            ? { kind: "highlight", id: composer.highlightId }
+            : { kind: "highlight", id: null, creation: composer.creation ?? undefined }
         }
         note={null}
         editable

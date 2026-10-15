@@ -21,10 +21,14 @@ from nexus.schemas.resource_search import (
 )
 from nexus.services import locator_resolver, passage_anchors
 from nexus.services.resource_graph.edges import existing_link_pair
-from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, parse_resource_ref
+from nexus.services.resource_graph.refs import (
+    ResourceRef,
+    ResourceScheme,
+    parse_resource_ref,
+    require_ref,
+)
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.items import resource_items_out
-from nexus.services.resource_items.surfaces import _parse_ref_or_error
 from nexus.services.search.project import SCHEMES, snippet
 from nexus.services.search.query import MIN_QUERY_LENGTH, decode_offset, encode_cursor, is_offset
 from nexus.services.search.semantic import Embedding, embed_text
@@ -87,8 +91,8 @@ def _targets(
     exact: ResourceRef | None,
     embedding: Embedding | None,
 ) -> ResourceTargetSearchResponse:
-    source = _parse_ref_or_error(request.source_ref) if request.source_ref else None
-    excluded = {_parse_ref_or_error(raw).uri for raw in request.exclude_refs}
+    source = require_ref(request.source_ref) if request.source_ref else None
+    excluded = {require_ref(raw).uri for raw in request.exclude_refs}
     offset = decode_offset(request.cursor)
     link_source = None
     if source is not None:

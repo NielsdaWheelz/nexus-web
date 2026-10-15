@@ -185,10 +185,7 @@ export function projectResourceActions(
       activate({
         target: { href: activation.href },
         disposition: { kind: "Follow" },
-        paneEntryActivation: {
-          activationId: crypto.randomUUID(),
-          entry: paneEntry,
-        },
+        entry: paneEntry,
       }),
     { tracked: false },
   ];

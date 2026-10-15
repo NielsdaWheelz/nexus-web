@@ -30,6 +30,7 @@ import type {
   WorkspaceTarget,
   WorkspaceTargetActivationResult,
   WorkspaceTargetDisposition,
+  WorkspacePaneEntry,
 } from "@/lib/workspace/targetActivation";
 import {
   normalizeWorkspaceHref,
@@ -80,6 +81,7 @@ interface PaneRuntimeCommands {
   activateTarget(input: {
     target: WorkspaceTarget;
     disposition: WorkspaceTargetDisposition;
+    entry?: WorkspacePaneEntry;
   }): WorkspaceTargetActivationResult;
   setPaneLabel(label: string | null): void;
   setPaneDailyPage(page: PaneDailyPage | null): void;

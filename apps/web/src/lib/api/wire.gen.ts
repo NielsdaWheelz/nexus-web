@@ -735,11 +735,35 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Set Highlight Note */
-        put: operations["set_highlight_note_highlights__highlight_id__note_put"];
+        /**
+         * Put Highlight Note
+         * @description Create the highlight's one note and attach it. That note already attached has
+         *     landed; another note attached is 409 E_NOTE_CONFLICT. Later edits are outline
+         *     ``set_body`` commands.
+         */
+        put: operations["put_highlight_note_highlights__highlight_id__note_put"];
         post?: never;
-        /** Delete Highlight Note */
-        delete: operations["delete_highlight_note_highlights__highlight_id__note_delete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/highlights/{highlight_id}/note/{note_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Highlight Note
+         * @description Detach the note (idempotent); the note stays.
+         */
+        delete: operations["delete_highlight_note_highlights__highlight_id__note__note_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2056,15 +2080,15 @@ export interface paths {
         patch: operations["rename_fork_messages__message_id__fork_title_patch"];
         trace?: never;
     };
-    "/notes/blocks/{block_id}": {
+    "/notes/blocks/{note_id}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Note Block */
-        get: operations["get_note_block_notes_blocks__block_id__get"];
+        /** Read Note */
+        get: operations["read_note_notes_blocks__note_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2080,7 +2104,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read Daily Page */
+        /**
+         * Read Daily Page
+         * @description The day's page outline, or a latent one; writes nothing.
+         */
         get: operations["read_daily_page_notes_daily__local_date__get"];
         put?: never;
         post?: never;
@@ -2099,8 +2126,59 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Capture Daily Page Note */
-        post: operations["capture_daily_page_note_notes_daily__local_date__captures_post"];
+        /**
+         * Capture
+         * @description Append the text last on the day's page. A retry with the same note id has landed.
+         *
+         *     Errors: E_EMPTY_NOTE_BODY (400) for blank text; E_NOTE_CONFLICT (409) for another
+         *     owner's note id.
+         */
+        post: operations["capture_notes_daily__local_date__captures_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notes/outline/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Outline Commands
+         * @description Idempotent primitives applied in order in one transaction (services/outline.py).
+         *
+         *     Errors: E_INVALID_REQUEST (400) for a position outside the outline, a self-link or an
+         *     endpoint that is not a page or note; E_NOT_FOUND (404) for a move or relink of a link
+         *     not at the endpoint; E_NOTE_CONFLICT / E_RESOURCE_CONFLICT (409) for a stale text, a
+         *     taken id, an existing pair or a link that carries a note.
+         */
+        post: operations["outline_commands_notes_outline_commands_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notes/outline/{ref}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Outline
+         * @description A page's or note's links in its own order.
+         */
+        get: operations["read_outline_notes_outline__ref__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2116,7 +2194,7 @@ export interface paths {
         };
         /**
          * List Pages
-         * @description Keyset pages of the viewer's pages in the shared updated/title views.
+         * @description Keyset pages of the viewer's pages in the chats index's four views.
          */
         get: operations["list_pages_notes_pages_get"];
         put?: never;
@@ -2138,19 +2216,17 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Page */
-        get: operations["get_page_notes_pages__page_id__get"];
+        get?: never;
         put?: never;
         post?: never;
         /**
          * Delete Page
-         * @description Idempotent: a missing page is 204; the page's notes stay.
+         * @description Idempotent: a missing page is 204. The page's notes stay.
          */
         delete: operations["delete_page_notes_pages__page_id__delete"];
         options?: never;
         head?: never;
-        /** Update Page */
-        patch: operations["update_page_notes_pages__page_id__patch"];
+        patch?: never;
         trace?: never;
     };
     "/oracle/readings": {
@@ -2544,11 +2620,34 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Put Link Note */
+        /**
+         * Put Link Note
+         * @description Create the link's one note and attach it to both ends. That note already attached
+         *     has landed; another note attached is 409 E_NOTE_CONFLICT.
+         */
         put: operations["put_link_note_resource_graph_links__link_id__note_put"];
         post?: never;
-        /** Delete Link Note */
-        delete: operations["delete_link_note_resource_graph_links__link_id__note_delete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/resource-graph/links/{link_id}/note/{note_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Link Note
+         * @description Detach the note from the link (idempotent); the note and the link stay.
+         */
+        delete: operations["delete_link_note_resource_graph_links__link_id__note__note_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2628,23 +2727,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/resource-items/{resource_ref}/body": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** Update Resource Body */
-        patch: operations["update_resource_body_resource_items__resource_ref__body_patch"];
-        trace?: never;
-    };
     "/resource-items/{resource_ref}/shares": {
         parameters: {
             query?: never;
@@ -2661,57 +2743,6 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
-        trace?: never;
-    };
-    "/resource-items/{resource_ref}/surface": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Resource Surface */
-        get: operations["get_resource_surface_resource_items__resource_ref__surface_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/resource-items/{resource_ref}/surface/commands": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Execute Resource Surface Command */
-        post: operations["execute_resource_surface_command_resource_items__resource_ref__surface_commands_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/resource-items/{resource_ref}/title": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** Update Resource Title */
-        patch: operations["update_resource_title_resource_items__resource_ref__title_patch"];
         trace?: never;
     };
     "/resource-shares/{resource_grant_handle}": {
@@ -2942,14 +2973,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** AbsentExpectedBody */
-        AbsentExpectedBody: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "absent";
-        };
         /** AbsentLibraryPlacementRelationOut */
         AbsentLibraryPlacementRelationOut: {
             /**
@@ -3148,6 +3171,21 @@ export interface components {
              * @enum {string}
              */
             kind: "After";
+        };
+        /**
+         * AnnotationNoteRequest
+         * @description Create the one note of a highlight or link and attach it.
+         */
+        AnnotationNoteRequest: {
+            /** Body Pm Json */
+            body_pm_json: {
+                [key: string]: unknown;
+            };
+            /**
+             * Note Id
+             * Format: uuid
+             */
+            note_id: string;
         };
         /** AssistantMessageBranchAnchorRequest */
         AssistantMessageBranchAnchorRequest: {
@@ -4392,43 +4430,37 @@ export interface components {
             /** Locator */
             locator: components["schemas"]["PdfReaderResumeState"] | components["schemas"]["WebReaderResumeState"] | components["schemas"]["TranscriptReaderResumeState"] | components["schemas"]["EpubReaderResumeState"];
         };
-        /** DailyCaptureRequest */
-        DailyCaptureRequest: {
-            /** Body Pm Json */
-            body_pm_json: {
-                [key: string]: unknown;
-            };
-            /** Client Mutation Id */
-            client_mutation_id: string;
-            /**
-             * Note Id
-             * Format: uuid
-             */
-            note_id: string;
-        };
-        /** DailyCaptureResult */
-        DailyCaptureResult: {
-            /** Client Mutation Id */
-            client_mutation_id: string;
-            /**
-             * Local Date
-             * Format: date
-             */
-            local_date: string;
+        /** DailyCaptureOut */
+        DailyCaptureOut: {
             /**
              * Page Id
              * Format: uuid
              */
             page_id: string;
-            surface: components["schemas"]["ResourceSurfaceOut"];
         };
-        /** DailyPageSummaryOut */
-        DailyPageSummaryOut: {
+        /** DailyCaptureRequest */
+        DailyCaptureRequest: {
+            /**
+             * Note Id
+             * Format: uuid
+             */
+            note_id: string;
+            /** Text */
+            text: string;
+        };
+        /**
+         * DailyPageOut
+         * @description A latent day carries its page's future id and default title, and no links.
+         */
+        DailyPageOut: {
             /**
              * Local Date
              * Format: date
              */
             local_date: string;
+            /** Materialized */
+            materialized: boolean;
+            outline: components["schemas"]["OutlineOut"];
         };
         /** DataPage[LibraryDestinationOut, LibraryPageInfo] */
         DataPage_LibraryDestinationOut_LibraryPageInfo_: {
@@ -4459,11 +4491,6 @@ export interface components {
         /** Data[ActivitySessionPageOut] */
         Data_ActivitySessionPageOut_: {
             data: components["schemas"]["ActivitySessionPageOut"];
-        };
-        /** Data[Annotated[Union[LatentDailyPageDescriptor, MaterializedDailyPageDescriptor], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
-        Data_Annotated_Union_LatentDailyPageDescriptor__MaterializedDailyPageDescriptor___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
-            /** Data */
-            data: components["schemas"]["LatentDailyPageDescriptor"] | components["schemas"]["MaterializedDailyPageDescriptor"];
         };
         /** Data[Annotated[Union[LearnDossierOpenedOut, LearnDossierBuildAcceptedOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         Data_Annotated_Union_LearnDossierOpenedOut__LearnDossierBuildAcceptedOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
@@ -4587,9 +4614,13 @@ export interface components {
         Data_CreateResourceShareOut_: {
             data: components["schemas"]["CreateResourceShareOut"];
         };
-        /** Data[DailyCaptureResult] */
-        Data_DailyCaptureResult_: {
-            data: components["schemas"]["DailyCaptureResult"];
+        /** Data[DailyCaptureOut] */
+        Data_DailyCaptureOut_: {
+            data: components["schemas"]["DailyCaptureOut"];
+        };
+        /** Data[DailyPageOut] */
+        Data_DailyPageOut_: {
+            data: components["schemas"]["DailyPageOut"];
         };
         /** Data[DeclineLibraryInviteResponse] */
         Data_DeclineLibraryInviteResponse_: {
@@ -4695,10 +4726,6 @@ export interface components {
         Data_NoteBlockOut_: {
             data: components["schemas"]["NoteBlockOut"];
         };
-        /** Data[NotePageOut] */
-        Data_NotePageOut_: {
-            data: components["schemas"]["NotePageOut"];
-        };
         /** Data[NotePageSummaryOut] */
         Data_NotePageSummaryOut_: {
             data: components["schemas"]["NotePageSummaryOut"];
@@ -4710,6 +4737,14 @@ export interface components {
         /** Data[OracleReadingOut] */
         Data_OracleReadingOut_: {
             data: components["schemas"]["OracleReadingOut"];
+        };
+        /** Data[OutlineCommandsOut] */
+        Data_OutlineCommandsOut_: {
+            data: components["schemas"]["OutlineCommandsOut"];
+        };
+        /** Data[OutlineOut] */
+        Data_OutlineOut_: {
+            data: components["schemas"]["OutlineOut"];
         };
         /** Data[PlayerDescriptor] */
         Data_PlayerDescriptor_: {
@@ -4799,10 +4834,6 @@ export interface components {
         Data_ResourceActionsOut_: {
             data: components["schemas"]["ResourceActionsOut"];
         };
-        /** Data[ResourceBodyMutationOut] */
-        Data_ResourceBodyMutationOut_: {
-            data: components["schemas"]["ResourceBodyMutationOut"];
-        };
         /** Data[ResourceItemOut] */
         Data_ResourceItemOut_: {
             data: components["schemas"]["ResourceItemOut"];
@@ -4815,21 +4846,9 @@ export interface components {
         Data_ResourceShareSnapshotOut_: {
             data: components["schemas"]["ResourceShareSnapshotOut"];
         };
-        /** Data[ResourceSurfaceCommandOut] */
-        Data_ResourceSurfaceCommandOut_: {
-            data: components["schemas"]["ResourceSurfaceCommandOut"];
-        };
-        /** Data[ResourceSurfaceOut] */
-        Data_ResourceSurfaceOut_: {
-            data: components["schemas"]["ResourceSurfaceOut"];
-        };
         /** Data[ResourceTargetSearchResponse] */
         Data_ResourceTargetSearchResponse_: {
             data: components["schemas"]["ResourceTargetSearchResponse"];
-        };
-        /** Data[ResourceTitleMutationOut] */
-        Data_ResourceTitleMutationOut_: {
-            data: components["schemas"]["ResourceTitleMutationOut"];
         };
         /** Data[SourceRefreshAdmission] */
         Data_SourceRefreshAdmission_: {
@@ -5268,6 +5287,19 @@ export interface components {
              * @enum {string}
              */
             kind: "Empty";
+        };
+        /** EnsureDaily */
+        EnsureDaily: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ensure_daily";
+            /**
+             * Local Date
+             * Format: date
+             */
+            local_date: string;
         };
         /** EnsureItemCommand */
         EnsureItemCommand: {
@@ -6141,36 +6173,50 @@ export interface components {
             /** Provenance */
             provenance: components["schemas"]["LibraryIdentityOut"][];
         };
-        /** InsertNoteSurfaceCommand */
-        InsertNoteSurfaceCommand: {
+        /** InsertNote */
+        InsertNote: {
+            /** After */
+            after: string | null;
             /** Body Pm Json */
             body_pm_json: {
                 [key: string]: unknown;
             };
+            /** Endpoint */
+            endpoint: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "insert_note";
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
             /**
              * Note Id
              * Format: uuid
              */
             note_id: string;
-            /** Position */
-            position: components["schemas"]["SurfaceStartPosition"] | components["schemas"]["SurfaceAfterPosition"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "insert_note";
         };
-        /** InsertResourceSurfaceCommand */
-        InsertResourceSurfaceCommand: {
-            /** Position */
-            position: components["schemas"]["SurfaceStartPosition"] | components["schemas"]["SurfaceAfterPosition"];
-            /** Target Ref */
-            target_ref: string;
+        /** InsertResource */
+        InsertResource: {
+            /** After */
+            after: string | null;
+            /** Endpoint */
+            endpoint: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            type: "insert_resource";
+            kind: "insert_resource";
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
+            /** Target */
+            target: string;
         };
         /** InvalidOutputChatFailure */
         InvalidOutputChatFailure: {
@@ -6200,43 +6246,6 @@ export interface components {
             role: "admin" | "member";
             /** User Handle */
             user_handle: string;
-        };
-        /** JoinNotesSurfaceCommand */
-        JoinNotesSurfaceCommand: {
-            /** Body Pm Json */
-            body_pm_json: {
-                [key: string]: unknown;
-            };
-            /**
-             * Earlier Link Id
-             * Format: uuid
-             */
-            earlier_link_id: string;
-            /**
-             * Later Link Id
-             * Format: uuid
-             */
-            later_link_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "join_notes";
-        };
-        /** LatentDailyPageDescriptor */
-        LatentDailyPageDescriptor: {
-            /** Default Title */
-            default_title: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Latent";
-            /**
-             * Local Date
-             * Format: date
-             */
-            local_date: string;
         };
         /** LearnDossierBuildAcceptedOut */
         LearnDossierBuildAcceptedOut: {
@@ -6632,13 +6641,14 @@ export interface components {
             };
             /** Body Text */
             body_text: string;
+            /** Body Version */
+            body_version: number;
             connection: components["schemas"]["ConnectionOut"];
             /**
              * Note Block Id
              * Format: uuid
              */
             note_block_id: string;
-            version_by_lane: components["schemas"]["NoteBodyVersionsOut"];
         };
         /**
          * LinkPassageEndpoint
@@ -6728,12 +6738,13 @@ export interface components {
             };
             /** Body Text */
             body_text: string;
+            /** Body Version */
+            body_version: number;
             /**
              * Note Block Id
              * Format: uuid
              */
             note_block_id: string;
-            version_by_lane: components["schemas"]["NoteBodyVersionsOut"];
         };
         /** ListeningActivityBatchIn */
         ListeningActivityBatchIn: {
@@ -6872,21 +6883,6 @@ export interface components {
              * @enum {string}
              */
             mode: "manual";
-        };
-        /** MaterializedDailyPageDescriptor */
-        MaterializedDailyPageDescriptor: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Materialized";
-            /**
-             * Local Date
-             * Format: date
-             */
-            local_date: string;
-            page: components["schemas"]["NotePageOut"];
-            surface: components["schemas"]["ResourceSurfaceOut"];
         };
         /** MediaAbstractOut */
         MediaAbstractOut: {
@@ -7661,20 +7657,22 @@ export interface components {
             /** Resource Path */
             resource_path: string;
         };
-        /** MoveOccurrenceSurfaceCommand */
-        MoveOccurrenceSurfaceCommand: {
+        /** Move */
+        Move: {
+            /** After */
+            after: string | null;
+            /** Endpoint */
+            endpoint: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "move";
             /**
              * Link Id
              * Format: uuid
              */
             link_id: string;
-            /** Position */
-            position: components["schemas"]["SurfaceStartPosition"] | components["schemas"]["SurfaceAfterPosition"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "move_occurrence";
         };
         /** NeedsAttention */
         NeedsAttention: {
@@ -7797,62 +7795,34 @@ export interface components {
             };
             /** Body Text */
             body_text: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
+            /** Body Version */
+            body_version: number;
             /**
              * Id
              * Format: uuid
              */
             id: string;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-            /** Version By Lane */
-            version_by_lane: {
-                [key: string]: number;
-            };
         };
-        /** NoteBodySurfaceContent */
-        NoteBodySurfaceContent: {
+        /**
+         * NoteContentOut
+         * @description ``places``: the note's user links, annotations, link notes and citations.
+         */
+        NoteContentOut: {
             /** Body Pm Json */
             body_pm_json: {
                 [key: string]: unknown;
             };
             /** Body Text */
             body_text: string;
+            /** Body Version */
+            body_version: number;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "note_body";
-        };
-        /** NoteBodyVersionsOut */
-        NoteBodyVersionsOut: {
-            /** Body */
-            body: number;
-            /** Links */
-            links: number;
-        };
-        /** NotePageOut */
-        NotePageOut: {
-            daily_page: components["schemas"]["DailyPageSummaryOut"] | null;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Title */
-            title: string;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
+            kind: "note";
+            /** Places */
+            places: number;
         };
         /** NotePageSummaryOut */
         NotePageSummaryOut: {
@@ -8078,36 +8048,56 @@ export interface components {
              */
             kind: "Ordered";
         };
-        /** OutlineNote */
-        OutlineNote: {
-            /** Body Pm Json */
-            body_pm_json: {
-                [key: string]: unknown;
-            };
+        /**
+         * OutlineCommandsOut
+         * @description The outlines whose links changed, the nodes whose text was written, the notes deleted.
+         */
+        OutlineCommandsOut: {
+            /** Deleted */
+            deleted: string[];
+            /** Nodes */
+            nodes: components["schemas"]["OutlineNodeOut"][];
+            /** Outlines */
+            outlines: components["schemas"]["OutlineOut"][];
+        };
+        /** OutlineCommandsRequest */
+        OutlineCommandsRequest: {
+            /** Commands */
+            commands: (components["schemas"]["SetBody"] | components["schemas"]["SetTitle"] | components["schemas"]["EnsureDaily"] | components["schemas"]["InsertNote"] | components["schemas"]["InsertResource"] | components["schemas"]["Move"] | components["schemas"]["Relink"] | components["schemas"]["Remove"])[];
+        };
+        /** OutlineLinkOut */
+        OutlineLinkOut: {
+            /** Has Link Note */
+            has_link_note: boolean;
             /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "note";
-            /**
-             * Note Id
+             * Link Id
              * Format: uuid
              */
-            note_id: string;
-            /** Parent Index */
-            parent_index?: number | null;
+            link_id: string;
+            target: components["schemas"]["OutlineNodeOut"];
         };
-        /** OutlineResource */
-        OutlineResource: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "resource";
-            /** Parent Index */
-            parent_index?: number | null;
-            /** Target Ref */
-            target_ref: string;
+        /** OutlineNodeOut */
+        OutlineNodeOut: {
+            activation: components["schemas"]["ResourceActivationOut"];
+            /** Content */
+            content: components["schemas"]["PageContentOut"] | components["schemas"]["NoteContentOut"] | components["schemas"]["ResourceContentOut"];
+            /** Label */
+            label: string;
+            /** Missing */
+            missing: boolean;
+            /** Ref */
+            ref: string;
+            /** Summary */
+            summary: string;
+        };
+        /**
+         * OutlineOut
+         * @description A page's or note's user links in that endpoint's own order.
+         */
+        OutlineOut: {
+            /** Links */
+            links: components["schemas"]["OutlineLinkOut"][];
+            source: components["schemas"]["OutlineNodeOut"];
         };
         /** OwnedMediaCandidate */
         OwnedMediaCandidate: {
@@ -8128,15 +8118,19 @@ export interface components {
              */
             source: "Nexus";
         };
-        /** PageTitleSurfaceContent */
-        PageTitleSurfaceContent: {
+        /** PageContentOut */
+        PageContentOut: {
+            /** Daily Date */
+            daily_date: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "page_title";
+            kind: "page";
             /** Title */
             title: string;
+            /** Title Version */
+            title_version: number;
         };
         /** PaneHistory */
         PaneHistory: {
@@ -8167,18 +8161,6 @@ export interface components {
              * Format: date-time
              */
             recorded_since: string;
-        };
-        /** PasteOutlineSurfaceCommand */
-        PasteOutlineSurfaceCommand: {
-            /** Items */
-            items: (components["schemas"]["OutlineNote"] | components["schemas"]["OutlineResource"])[];
-            /** Position */
-            position: components["schemas"]["SurfaceStartPosition"] | components["schemas"]["SurfaceAfterPosition"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "paste_outline";
         };
         /** PdfAnchorOut */
         PdfAnchorOut: {
@@ -9116,22 +9098,6 @@ export interface components {
              * Format: uuid
              */
             source_attempt_id: string;
-        };
-        /** PutLinkNoteRequest */
-        PutLinkNoteRequest: {
-            /** Body Pm Json */
-            body_pm_json: {
-                [key: string]: unknown;
-            };
-            /** Client Mutation Id */
-            client_mutation_id: string;
-            /** Expected Body */
-            expected_body: components["schemas"]["AbsentExpectedBody"] | components["schemas"]["VersionExpectedBody"];
-            /**
-             * Note Block Id
-             * Format: uuid
-             */
-            note_block_id: string;
         };
         /** QuickReadsOut */
         QuickReadsOut: {
@@ -10097,22 +10063,46 @@ export interface components {
             kind: "Rejected";
             reason: components["schemas"]["ChatAdmissionRejection"];
         };
-        /** RelinkSurfaceCommand */
-        RelinkSurfaceCommand: {
-            /** Destination Ref */
-            destination_ref: string;
+        /** Relink */
+        Relink: {
+            /** After */
+            after: string | null;
+            /** Destination */
+            destination: string;
+            /** Endpoint */
+            endpoint: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "relink";
             /**
              * Link Id
              * Format: uuid
              */
             link_id: string;
-            /** Position */
-            position: components["schemas"]["SurfaceStartPosition"] | components["schemas"]["SurfaceAfterPosition"];
+            /**
+             * New Link Id
+             * Format: uuid
+             */
+            new_link_id: string;
+        };
+        /** Remove */
+        Remove: {
+            /** Endpoint */
+            endpoint: string;
+            /** Expected Body Version */
+            expected_body_version: number | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            type: "relink";
+            kind: "remove";
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
         };
         /** RemoveItemCommand */
         RemoveItemCommand: {
@@ -10131,16 +10121,6 @@ export interface components {
              * @enum {string}
              */
             kind: "RemoveItem";
-        };
-        /** RemoveOccurrenceSurfaceCommand */
-        RemoveOccurrenceSurfaceCommand: {
-            /** Entries */
-            entries: components["schemas"]["SurfaceRemoval"][];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "remove_occurrence";
         };
         /** RemovedOutcome */
         RemovedOutcome: {
@@ -10305,39 +10285,13 @@ export interface components {
             /** Resource Ref */
             resource_ref: string;
         };
-        /** ResourceBodyMutationOut */
-        ResourceBodyMutationOut: {
-            /** Body Pm Json */
-            body_pm_json: {
-                [key: string]: unknown;
-            };
-            /** Body Text */
-            body_text: string;
-            /** Client Mutation Id */
-            client_mutation_id: string;
-            item: components["schemas"]["ResourceItemOut"];
+        /** ResourceContentOut */
+        ResourceContentOut: {
             /**
-             * Updated At
-             * Format: date-time
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
              */
-            updated_at: string;
-            /** Versions */
-            versions: {
-                [key: string]: {
-                    [key: string]: number;
-                };
-            };
-        };
-        /** ResourceBodyMutationRequest */
-        ResourceBodyMutationRequest: {
-            /** Base Versions */
-            base_versions?: components["schemas"]["ResourceLaneVersionIn"][];
-            /** Body Pm Json */
-            body_pm_json: {
-                [key: string]: unknown;
-            };
-            /** Client Mutation Id */
-            client_mutation_id: string;
+            kind: "resource";
         };
         /** ResourceItemOut */
         ResourceItemOut: {
@@ -10360,22 +10314,6 @@ export interface components {
             scheme: "media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor";
             /** Summary */
             summary: string;
-            /** Version By Lane */
-            version_by_lane: {
-                [key: string]: number;
-            };
-        };
-        /** ResourceLaneVersionIn */
-        ResourceLaneVersionIn: {
-            /**
-             * Lane
-             * @enum {string}
-             */
-            lane: "title" | "body" | "links";
-            /** Ref */
-            ref: string;
-            /** Version */
-            version: number;
         };
         /** ResourceOpenableSearchRequest */
         ResourceOpenableSearchRequest: {
@@ -10404,67 +10342,6 @@ export interface components {
              * @enum {string}
              */
             sharing: "None" | "CopyOnly" | "ResourceGrants" | "HighlightGrants" | "LibraryMembership";
-        };
-        /** ResourceSummarySurfaceContent */
-        ResourceSummarySurfaceContent: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "resource_summary";
-        };
-        /** ResourceSurfaceCommandOut */
-        ResourceSurfaceCommandOut: {
-            /** Client Mutation Id */
-            client_mutation_id: string;
-            /** Nodes */
-            nodes: components["schemas"]["ResourceSurfaceNode"][];
-            /**
-             * Receipt Id
-             * Format: uuid
-             */
-            receipt_id: string;
-            /** Reverse Versions */
-            reverse_versions: components["schemas"]["ResourceLaneVersionIn"][];
-            /** Surfaces */
-            surfaces: components["schemas"]["ResourceSurfaceOut"][];
-        };
-        /** ResourceSurfaceCommandRequest */
-        ResourceSurfaceCommandRequest: {
-            /** Base Versions */
-            base_versions: components["schemas"]["ResourceLaneVersionIn"][];
-            /** Body Edits */
-            body_edits: components["schemas"]["SurfaceBodyEdit"][];
-            /** Client Mutation Id */
-            client_mutation_id: string;
-            /** Command */
-            command: components["schemas"]["InsertNoteSurfaceCommand"] | components["schemas"]["SplitNoteSurfaceCommand"] | components["schemas"]["InsertResourceSurfaceCommand"] | components["schemas"]["MoveOccurrenceSurfaceCommand"] | components["schemas"]["RemoveOccurrenceSurfaceCommand"] | components["schemas"]["RelinkSurfaceCommand"] | components["schemas"]["JoinNotesSurfaceCommand"] | components["schemas"]["PasteOutlineSurfaceCommand"] | components["schemas"]["ReverseEditSurfaceCommand"];
-            context: components["schemas"]["SurfaceContext"];
-        };
-        /** ResourceSurfaceNode */
-        ResourceSurfaceNode: {
-            /** Content */
-            content: components["schemas"]["PageTitleSurfaceContent"] | components["schemas"]["NoteBodySurfaceContent"] | components["schemas"]["ResourceSummarySurfaceContent"];
-            item: components["schemas"]["ResourceItemOut"];
-        };
-        /** ResourceSurfaceOccurrence */
-        ResourceSurfaceOccurrence: {
-            /** Collapsed */
-            collapsed: boolean;
-            /** Has Link Note */
-            has_link_note: boolean;
-            /**
-             * Link Id
-             * Format: uuid
-             */
-            link_id: string;
-            target: components["schemas"]["ResourceSurfaceNode"];
-        };
-        /** ResourceSurfaceOut */
-        ResourceSurfaceOut: {
-            /** Ordered Items */
-            ordered_items: components["schemas"]["ResourceSurfaceOccurrence"][];
-            source: components["schemas"]["ResourceSurfaceNode"];
         };
         /** ResourceTargetPassageOut */
         ResourceTargetPassageOut: {
@@ -10511,32 +10388,6 @@ export interface components {
             next_cursor: string | null;
             /** Targets */
             targets: (components["schemas"]["ResourceTargetResourceOut"] | components["schemas"]["ResourceTargetPassageOut"])[];
-        };
-        /** ResourceTitleMutationOut */
-        ResourceTitleMutationOut: {
-            /** Client Mutation Id */
-            client_mutation_id: string;
-            item: components["schemas"]["ResourceItemOut"];
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-            /** Versions */
-            versions: {
-                [key: string]: {
-                    [key: string]: number;
-                };
-            };
-        };
-        /** ResourceTitleMutationRequest */
-        ResourceTitleMutationRequest: {
-            /** Base Versions */
-            base_versions?: components["schemas"]["ResourceLaneVersionIn"][];
-            /** Client Mutation Id */
-            client_mutation_id: string;
-            /** Title */
-            title: string;
         };
         /** RestoreActivityExclusionIn */
         RestoreActivityExclusionIn: {
@@ -10651,19 +10502,6 @@ export interface components {
             filename: string;
             /** Size Bytes */
             size_bytes: number;
-        };
-        /** ReverseEditSurfaceCommand */
-        ReverseEditSurfaceCommand: {
-            /**
-             * Receipt Id
-             * Format: uuid
-             */
-            receipt_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "reverse_edit";
         };
         /**
          * ReviewMetadataResultAction
@@ -11410,21 +11248,24 @@ export interface components {
              */
             active_leaf_message_id: string;
         };
-        /** SetHighlightNoteRequest */
-        SetHighlightNoteRequest: {
+        /** SetBody */
+        SetBody: {
             /** Body Pm Json */
             body_pm_json: {
                 [key: string]: unknown;
             };
-            /** Client Mutation Id */
-            client_mutation_id: string;
-            /** Expected Body */
-            expected_body: components["schemas"]["AbsentExpectedBody"] | components["schemas"]["VersionExpectedBody"];
+            /** Expected Version */
+            expected_version: number;
             /**
-             * Note Block Id
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "set_body";
+            /**
+             * Note Id
              * Format: uuid
              */
-            note_block_id: string;
+            note_id: string;
         };
         /** SetOrderCommand */
         SetOrderCommand: {
@@ -11440,6 +11281,23 @@ export interface components {
              * @enum {string}
              */
             kind: "SetOrder";
+        };
+        /** SetTitle */
+        SetTitle: {
+            /** Expected Version */
+            expected_version: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "set_title";
+            /**
+             * Page Id
+             * Format: uuid
+             */
+            page_id: string;
+            /** Title */
+            title: string;
         };
         /** SetUnreadCommand */
         SetUnreadCommand: {
@@ -11867,32 +11725,6 @@ export interface components {
              */
             winner_media_id: string;
         };
-        /** SplitNoteSurfaceCommand */
-        SplitNoteSurfaceCommand: {
-            /** Left Body Pm Json */
-            left_body_pm_json: {
-                [key: string]: unknown;
-            };
-            /**
-             * Link Id
-             * Format: uuid
-             */
-            link_id: string;
-            /**
-             * Note Id
-             * Format: uuid
-             */
-            note_id: string;
-            /** Right Body Pm Json */
-            right_body_pm_json: {
-                [key: string]: unknown;
-            };
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "split_note";
-        };
         /** StarOut */
         StarOut: {
             /** Kind */
@@ -11942,54 +11774,6 @@ export interface components {
         SuggestionsOut: {
             /** Items */
             items: components["schemas"]["SuggestionItemOut"][];
-        };
-        /** SurfaceAfterPosition */
-        SurfaceAfterPosition: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "after";
-            /**
-             * Link Id
-             * Format: uuid
-             */
-            link_id: string;
-        };
-        /** SurfaceBodyEdit */
-        SurfaceBodyEdit: {
-            /** Body Pm Json */
-            body_pm_json: {
-                [key: string]: unknown;
-            };
-            /** Ref */
-            ref: string;
-        };
-        /** SurfaceContext */
-        SurfaceContext: {
-            /** Link Path */
-            link_path: string[];
-            /** Root Ref */
-            root_ref: string;
-        };
-        /** SurfaceRemoval */
-        SurfaceRemoval: {
-            context: components["schemas"]["SurfaceContext"];
-            /** Endpoint Ref */
-            endpoint_ref: string;
-            /**
-             * Link Id
-             * Format: uuid
-             */
-            link_id: string;
-        };
-        /** SurfaceStartPosition */
-        SurfaceStartPosition: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "start";
         };
         /** TemporarilyUnavailable */
         TemporarilyUnavailable: {
@@ -12426,11 +12210,6 @@ export interface components {
              */
             name: string;
         };
-        /** UpdatePageRequest */
-        UpdatePageRequest: {
-            /** Title */
-            title: string;
-        };
         /**
          * UpdateProfileRequest
          * @description Request body for PATCH /me.
@@ -12748,16 +12527,6 @@ export interface components {
              * @enum {string}
              */
             kind: "VerificationFailed";
-        };
-        /** VersionExpectedBody */
-        VersionExpectedBody: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "version";
-            /** Version */
-            version: number;
         };
         /** VideoCandidate */
         VideoCandidate: {
@@ -14595,7 +14364,7 @@ export interface operations {
             };
         };
     };
-    set_highlight_note_highlights__highlight_id__note_put: {
+    put_highlight_note_highlights__highlight_id__note_put: {
         parameters: {
             query?: never;
             header?: never;
@@ -14606,7 +14375,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SetHighlightNoteRequest"];
+                "application/json": components["schemas"]["AnnotationNoteRequest"];
             };
         };
         responses: {
@@ -14630,15 +14399,13 @@ export interface operations {
             };
         };
     };
-    delete_highlight_note_highlights__highlight_id__note_delete: {
+    delete_highlight_note_highlights__highlight_id__note__note_id__delete: {
         parameters: {
-            query: {
-                client_mutation_id: string;
-                note_block_id: string;
-            };
+            query?: never;
             header?: never;
             path: {
                 highlight_id: string;
+                note_id: string;
             };
             cookie?: never;
         };
@@ -17222,12 +16989,12 @@ export interface operations {
             };
         };
     };
-    get_note_block_notes_blocks__block_id__get: {
+    read_note_notes_blocks__note_id__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                block_id: string;
+                note_id: string;
             };
             cookie?: never;
         };
@@ -17270,7 +17037,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_Annotated_Union_LatentDailyPageDescriptor__MaterializedDailyPageDescriptor___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+                    "application/json": components["schemas"]["Data_DailyPageOut_"];
                 };
             };
             /** @description Validation Error */
@@ -17284,7 +17051,7 @@ export interface operations {
             };
         };
     };
-    capture_daily_page_note_notes_daily__local_date__captures_post: {
+    capture_notes_daily__local_date__captures_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -17300,12 +17067,76 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            201: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_DailyCaptureResult_"];
+                    "application/json": components["schemas"]["Data_DailyCaptureOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    outline_commands_notes_outline_commands_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OutlineCommandsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_OutlineCommandsOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_outline_notes_outline__ref__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_OutlineOut_"];
                 };
             };
             /** @description Validation Error */
@@ -17372,37 +17203,6 @@ export interface operations {
             };
         };
     };
-    get_page_notes_pages__page_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                page_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_NotePageOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     delete_page_notes_pages__page_id__delete: {
         parameters: {
             query?: never;
@@ -17420,41 +17220,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_page_notes_pages__page_id__patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                page_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdatePageRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_NotePageOut_"];
-                };
             };
             /** @description Validation Error */
             422: {
@@ -18245,7 +18010,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PutLinkNoteRequest"];
+                "application/json": components["schemas"]["AnnotationNoteRequest"];
             };
         };
         responses: {
@@ -18269,15 +18034,13 @@ export interface operations {
             };
         };
     };
-    delete_link_note_resource_graph_links__link_id__note_delete: {
+    delete_link_note_resource_graph_links__link_id__note__note_id__delete: {
         parameters: {
-            query: {
-                note_block_id: string;
-                client_mutation_id: string;
-            };
+            query?: never;
             header?: never;
             path: {
                 link_id: string;
+                note_id: string;
             };
             cookie?: never;
         };
@@ -18429,41 +18192,6 @@ export interface operations {
             };
         };
     };
-    update_resource_body_resource_items__resource_ref__body_patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                resource_ref: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResourceBodyMutationRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_ResourceBodyMutationOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_resource_shares_resource_items__resource_ref__shares_get: {
         parameters: {
             query?: never;
@@ -18517,107 +18245,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_CreateResourceShareOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_resource_surface_resource_items__resource_ref__surface_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                resource_ref: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_ResourceSurfaceOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    execute_resource_surface_command_resource_items__resource_ref__surface_commands_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                resource_ref: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResourceSurfaceCommandRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_ResourceSurfaceCommandOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_resource_title_resource_items__resource_ref__title_patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                resource_ref: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResourceTitleMutationRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_ResourceTitleMutationOut_"];
                 };
             };
             /** @description Validation Error */

@@ -491,16 +491,16 @@ that date, a `/pages/{id}` target one naming that page. Today, quick note and
 add to Today therefore reuse an open daily pane under either href.
 
 Accepted activation may carry one pane-entry delivery addressed to the chosen
-pane and the exact visit the target lands on (`WorkspacePaneEntry`: the quick
-note's text, or a resource menu's edit: page title, note body, highlight colour,
-note, bounds or delete, message fork, walk, rerun, regenerate or delete). The
+pane and the exact visit the target lands on (`WorkspacePaneEntry`: a page's new
+empty row or one of its notes, or a resource menu's edit: page title, note body,
+highlight colour, note, bounds or delete, message fork, walk, rerun, regenerate or
+delete); the store mints its activation id. The
 pane body reads it through `usePaneEntryDelivery` and acts only once ready: it
 claims first and acts only when `claim` returned true (the one call that
 removed it); ready but unable to serve it (the subject is gone), it claims and
 says so in a hud; it owns every outcome. A newer entry supersedes (cancels) the
-pane's previous delivery, a View cancels it, a rejected activation cancels
-itself, and a commit that changes the pane's visit cancels it; nothing expires
-otherwise. `MobileQuickNoteHandoff` watches `cancelledPaneEntryActivationIds`.
+pane's previous delivery, a rejected activation drops it, and a commit that changes
+the pane's visit drops it; nothing expires otherwise.
 
 Learn is one of the named Adopt workflows. It preserves the source reader and
 opens `/artifacts/artifact:<id>` as a standalone resource pane after its durable

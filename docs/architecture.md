@@ -1170,10 +1170,10 @@ selection becomes a stored highlight with a precomputed
 the canonical quote shown to chat. PDF highlights may have empty `exact` (no
 text-layer match) — a first-class geometry-only state that Evidence
 renders with an explicit placeholder. The current highlight
-contract lives in [`modules/highlight.md`](modules/highlight.md). Highlight-note
-persistence has one strict request wire: `note_block_id`,
-`client_mutation_id`, and `body_pm_json`. Camel-case spellings and the generic
-`id` alias are not accepted or emitted.
+contract lives in [`modules/highlight.md`](modules/highlight.md). A highlight's
+note is created and attached by `PUT /highlights/{id}/note {note_id, body_pm_json}`
+(idempotent by the client's note id) and edited like any note
+([`modules/notes.md`](modules/notes.md)).
 
 The hosted pane reads every visible highlight once, through the document map,
 and paints them as css custom highlights over the untouched dom (PDF: overlay
@@ -1441,57 +1441,26 @@ directory or root Authors pane; author search lives in desktop Nexus at
 
 ### 8.7 Notes and pages
 
-Pages and notes are resource surfaces, not documents or trees. A `page` owns
-only its title; a `note_block` owns only its ProseMirror body. Their pane bodies
-are the same flat, one-hop projection of explicit outgoing `resource_edges`
-where `kind='context'`, `origin='user'`, `source_order_key IS NOT NULL`,
-`ordinal IS NULL`, and `snapshot IS NULL`. The edge id is the stable occurrence
-id and the dense order key is its rank. A move changes rank without replacing
-the edge; unlink removes only the edge, never its target.
+Pages and notes are resources, not documents or trees. A `page` owns its title, a
+`note_block` one ProseMirror block; an outline is a page's or note's neutral user links
+(`origin = 'user'`, undirected) in that endpoint's own rank order, so a note can sit in
+many outlines and a row is a link, not containment. `services/outline.py` reads
+outlines and applies the idempotent outline commands (insert, move, relink, remove, body
+and title writes, ensure-daily) in one SERIALIZABLE transaction; a removed note with no
+other place (link, annotation, link note, citation) is deleted. `services/notes.py` owns
+pages, the keyset index, the daily page (latent until its first write, its id derived
+from the date) and quick capture; `services/note_bodies.py` the note row, its text
+projection and reindexing. Note prose has no inline resource references; whole-block
+`object_embed` nodes keep `origin='note_body'` facts; highlight and link notes are
+ordinary notes on `highlight_note` / `link_note` edges.
 
-`services/resource_items/surfaces.py` owns the batched read projection and the
-atomic `insert_note`, `split_note`, `insert_resource`, `move`, and `remove`
-commands. Commands use resource versions, durable mutation replay, and one
-SERIALIZABLE transaction. Surface activation uses the bounded batch router, so
-heterogeneous rows add no per-occurrence query loop. Intrinsic page-title and
-note-body edits use the resource-item mutation owner. `services/notes.py`
-remains the notes collection, daily-page, and dated-capture facade.
-A Page list row is exactly `{id,title,updated_at}`; Page detail adds required
-`daily_page: {local_date} | null`. `schemas/notes.py` and
-`services/notes.py` own those typed backend shapes. On the frontend,
-`lib/notes/pageContract.ts` is the sole exact Page list/detail decoder and owns
-`loadNotePages`; server seed, intent prefetch, and Notes-pane replacement all
-call that same loader. Missing, extra, aliased, or malformed fields are defects,
-not empty-state fallbacks.
-A daily date is a latent non-mutating locator until its first meaningful Note.
-That first capture creates the ordinary Page, binding, Note, ordered
-occurrence, required versions, and replay receipt in one serializable
-transaction. Later edits use the ordinary resource-surface mutation owners.
-Amanuensis composes the surface owner's insert-note capability and does not own
-a second surface-write protocol.
-
-note prose has no inline resource references or resource autocomplete. ordinary
-hyperlinks remain clickable without graph writes. whole-block `object_embed`
-nodes retain `origin='note_body'` facts. ordinary links are authored through
-the shared picker and appear in connections and eligible writing outlines. Highlight notes remain ordinary notes linked by an
-`origin='highlight_note'` edge. Note bodies retain direct indexing through
-`note_indexing.enqueue_note_reindex`. Backlinks, citations, and inferred
-relations remain Inspector concerns rather than editor rows.
-
-Frontend composition is one `PagePaneBody`, one `ResourceSurfaceEditor`, and
-one `useResourceSurfaceSession` for ordinary Page refs and dated daily
-locators, with `NoteBodyEditor` as the sole prose primitive. Pane visit/session
-identity remains stable while a latent date hydrates or adopts `page:{id}`.
-Page and Note body hydration flows through this ResourceSurface owner; no
-frontend Notes block-response client is a competing read path.
-Quick Note adds one provisional final Note immediately; persisted hydration
-merges before it, and acknowledgement cannot erase later local keystrokes.
-`ResourceSurfaceBodyEditor` is a React-owned flat occurrence list, not a second
-serialized ProseMirror document; each inline note owns one independent editor
-keyed by stable resource identity. Enter in a surface note splits to a new
-note; Shift+Enter adds a line break. Page-title Enter focuses or inserts the
-first note. The editor does not expose hierarchy, collapse, cross-note merge,
-or full-list replacement semantics.
+The web writes online only (owner decision): `lib/notes/texts.ts` holds unsaved text in
+memory and saves 1.5 s after typing stops or at once when the tab hides;
+`lib/notes/writes.ts` sends one request at a time and retries transport failures; one
+`useOutline` session per pane applies structure edits optimistically and keeps one undo
+history over text and structure. `PagePaneBody` (pages and days) and `NotePaneBody`
+render `OutlineEditor`; `NoteEditor` is the one prose editor. Contracts and invariants:
+[`modules/notes.md`](modules/notes.md).
 
 ### 8.8 Lectern & podcast playback
 
