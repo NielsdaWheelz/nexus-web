@@ -1,6 +1,6 @@
 # x title production cutover
 
-status: in progress; source/content qualification blockers
+status: in progress; two residual content qualification blockers
 origin: 2026-10-14 x title implementation
 area: release / existing x sources
 
@@ -10,7 +10,11 @@ with two saved-position refusals. accounting is complete; content qualification
 is not. full-archive search omitted its historical lower bound and truncated 28
 thread captures. five english inputs received spanish/french titles, and one
 received the literal title `null`. forward correction and ordinary reacquisition
-are required before handoff. the owner approved preserving the inline-quote
+were completed in `3a80349b8`: all 30 recovery requests and two new child titles
+settled successfully. actual source/cursor review passed. complete review of the
+64 current titles then found two untouched labels reversing speaker/listener
+roles; the generic attribution prompt correction and their ordinary repair remain
+required. the owner approved preserving the inline-quote
 position conflict as an explicit exception; keep its old copy and coordinate.
 
 the original release prerequisite remains: `deploy/hetzner/deploy.sh:53–63` requires a clean checkout at exact
