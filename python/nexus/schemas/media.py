@@ -549,10 +549,6 @@ class FromUrlResponse(BaseModel):
     ingest_enqueued: bool
 
 
-class MediaLibrariesRequest(BaseModel):
-    library_ids: list[UUID] = Field(default_factory=list)
-
-
 class MediaFileOut(_Strict):
     """A short-lived signed url of the media's file; ``expires_at`` is ISO 8601."""
 

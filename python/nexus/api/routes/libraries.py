@@ -19,18 +19,17 @@ from nexus.schemas.library import (
     CreateLibraryInviteRequest,
     CreateLibraryRequest,
     DeclineLibraryInviteResponse,
-    LibraryDestinationOut,
     LibraryEntryListItemOut,
     LibraryEntryOrderRequest,
     LibraryGovernancePageInfo,
+    LibraryIdentityOut,
     LibraryInvitationOut,
     LibraryInvitationStatusValue,
     LibraryMemberOut,
     LibraryOut,
-    LibraryPageInfo,
+    LibraryPlacementCommand,
+    LibraryPlacementCommandOut,
     LibraryPlacementOptionOut,
-    PodcastPlacementAdditionOut,
-    PodcastPlacementRemovalOut,
     TransferLibraryOwnershipRequest,
     UpdateLibraryMemberRequest,
     UpdateLibraryRequest,
@@ -41,6 +40,7 @@ from nexus.services import (
     library_entries,
     library_entry_listing,
     library_governance,
+    library_placement_commands,
     library_sharing,
 )
 from nexus.services import suggestions as suggestions_service
@@ -125,18 +125,29 @@ def list_libraries(
 
 @router.get("/libraries/writable-destinations")
 def list_writable_library_destinations(
+    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-    q: str | None = Query(default=None, max_length=100, description="Name search query"),
-    cursor: Annotated[str | None, _CURSOR_QUERY] = None,
-    limit: int = Query(default=25, ge=1, le=50, description="Maximum results"),
-) -> DataPage[LibraryDestinationOut, LibraryPageInfo]:
-    """Rank the named libraries the viewer may file into."""
-    result, next_cursor = library_governance.list_writable_library_destinations(
-        db, viewer.user_id, q=(q or "").strip().lower(), cursor=cursor, limit=limit
-    )
-    return DataPage(
-        data=result, page=LibraryPageInfo(has_more=next_cursor is not None, next_cursor=next_cursor)
+) -> Data[list[LibraryIdentityOut]]:
+    """Read the complete named-library destination catalog."""
+    if request.query_params:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Library destinations do not accept query parameters"
+        )
+    return Data(data=library_governance.list_writable_library_destinations(db, viewer.user_id))
+
+
+@router.post("/library-placement-commands")
+def execute_library_placement_command(
+    body: LibraryPlacementCommand,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: DbSession,
+) -> Data[LibraryPlacementCommandOut]:
+    """Confirm one explicit placement intent, or return its terminal refusal."""
+    return Data(
+        data=library_placement_commands.execute_library_placement_command(
+            db, viewer_id=viewer.user_id, command=body
+        )
     )
 
 
@@ -330,29 +341,3 @@ def patch_library_entry_order(
     """Replace the full entry ordering for a library."""
     library_entries.reorder_entries(db, viewer.user_id, library_id, body)
     return Response(status_code=204)
-
-
-@router.delete("/libraries/{library_id}/podcasts/{podcast_id}")
-def remove_podcast_from_library(
-    library_id: UUID,
-    podcast_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Data[PodcastPlacementRemovalOut]:
-    """Remove a podcast reference from one non-default library."""
-    result = library_entries.remove_podcast_from_library(db, viewer.user_id, library_id, podcast_id)
-    return Data(data=result)
-
-
-@router.put("/libraries/{library_id}/podcasts/{podcast_id}")
-def add_subscribed_podcast_to_library(
-    library_id: UUID,
-    podcast_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Data[PodcastPlacementAdditionOut]:
-    """Place an existing active podcast subscription in one named library."""
-    result = library_entries.place_subscribed_podcast_in_named_library(
-        db, viewer.user_id, library_id, podcast_id
-    )
-    return Data(data=result)

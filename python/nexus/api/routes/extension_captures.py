@@ -6,14 +6,15 @@ service refuses any other session as not found.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 
 from nexus.auth.extension import get_extension_viewer
 from nexus.auth.middleware import Viewer
 from nexus.db.session import DbSession
-from nexus.responses import ok, ok_page
+from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.responses import Data, ok
 from nexus.schemas.extension_capture import BrowserCapture, BrowserCaptureIntent
-from nexus.schemas.library import LibraryPageInfo
+from nexus.schemas.library import LibraryIdentityOut
 from nexus.schemas.media import (
     ConfirmUploadSessionRequest,
     RetryUploadSessionRequest,
@@ -30,19 +31,16 @@ def _request_id(request: Request) -> str | None:
 
 @router.get("/library-destinations")
 def list_library_destinations(
+    request: Request,
     viewer: Annotated[Viewer, Depends(get_extension_viewer)],
     db: DbSession,
-    q: str | None = Query(default=None, max_length=100),
-    cursor: str | None = Query(default=None),
-    limit: int = Query(default=25, ge=1, le=50),
-) -> dict:
+) -> Data[list[LibraryIdentityOut]]:
     """The viewer's writable named libraries; the extension cannot create one."""
-    result, next_cursor = library_governance.list_writable_library_destinations(
-        db, viewer.user_id, q=(q or "").strip().lower(), cursor=cursor, limit=limit
-    )
-    return ok_page(
-        result, LibraryPageInfo(has_more=next_cursor is not None, next_cursor=next_cursor)
-    )
+    if request.query_params:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Library destinations do not accept query parameters"
+        )
+    return Data(data=library_governance.list_writable_library_destinations(db, viewer.user_id))
 
 
 @router.post("/captures")

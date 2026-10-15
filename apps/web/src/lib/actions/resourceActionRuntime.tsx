@@ -175,7 +175,7 @@ export function ResourceActionRuntimeProvider({
   const workspaceRef = useRef(workspace);
   workspaceRef.current = workspace;
   const { openShare } = useShareController();
-  const { openLibraryPlacement } = useLibraryPlacementController();
+  const { openLibraryPlacement, subscribeAcknowledgements } = useLibraryPlacementController();
   const {
     linkComposer,
     openAuthorsEditor,
@@ -322,6 +322,12 @@ export function ResourceActionRuntimeProvider({
       pending.submitting = false;
     }
   }, [sourceRefreshIntents, feedback, openMediaMetadata, cache]);
+  useEffect(() => subscribeAcknowledgements((target) => {
+    const scope = target.kind === "Podcast"
+      ? { kind: "AllRetained" as const }
+      : { kind: "Subjects" as const, refs: [canonicalResourceRef({ scheme: "media", id: target.id })] };
+    void cache.reconcile(scope).catch((error) => setDefect({ error }));
+  }), [subscribeAcknowledgements, cache]);
   useEffect(() => subscribeMetadataOperationChanges((mediaId) => {
     void cache.reconcile({ kind: "Subjects", refs: [canonicalResourceRef({ scheme: "media", id: mediaId })] }).catch((error) => setDefect({ error }));
   }), [cache]);

@@ -47,13 +47,19 @@
   padding: var(--space-1);
 }
 
-.groupHeader {
-  padding: var(--space-2) var(--space-2) var(--space-1);
+.summary,
+.status {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
   color: var(--ink-faint);
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-semibold);
-  letter-spacing: var(--tracking-wider);
-  text-transform: uppercase;
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.summary {
+  max-height: calc(var(--size-xl) * 2);
+  overflow-y: auto;
 }
 
 .option {
@@ -62,7 +68,7 @@
   align-items: center;
   gap: var(--space-2);
   min-height: var(--size-lg);
-  padding-inline: var(--space-2);
+  padding: var(--space-2);
   border-radius: var(--radius-sm);
   color: var(--ink);
   cursor: pointer;
@@ -88,10 +94,8 @@
 
 .optionName {
   min-width: 0;
-  overflow: hidden;
   font-size: var(--text-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .optionText {
@@ -103,24 +107,14 @@
 
 .optionDescription {
   min-width: 0;
-  overflow: hidden;
   color: var(--ink-faint);
   font-size: var(--text-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .check {
   display: flex;
   color: var(--accent);
-}
-
-.readOnly {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
 }
 
 .spinner {
@@ -151,35 +145,6 @@
   to {
     transform: rotate(360deg);
   }
-}
-
-.actionRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: var(--size-lg);
-  padding-inline: var(--space-2);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
-  cursor: pointer;
-}
-
-@media (any-pointer: coarse) {
-  .actionRow {
-    min-height: var(--size-xl);
-  }
-}
-
-.actionRow[data-active="true"] {
-  background: var(--accent-muted);
-}
-
-.createRow {
-  color: var(--accent);
-}
-
-.loadMoreRow {
-  color: var(--ink-muted);
 }
 
 .empty {

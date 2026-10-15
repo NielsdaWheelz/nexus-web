@@ -13,7 +13,8 @@ import { useResource } from "@/lib/api/useResource";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { createRandomId } from "@/lib/createRandomId";
 import { extractUrls } from "@/lib/extractUrls";
-import { createLibrary } from "@/lib/libraries/client";
+import { useDraftLibraryCreation } from "@/lib/libraries/useDraftLibraryCreation";
+import { setLibraryDestination } from "@/lib/libraries/destinationSelection";
 import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
 import { captureSourceUrl } from "@/lib/imports/ingest";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
@@ -71,7 +72,8 @@ export default function ShareCapture({
   const urls = useMemo(() => extractUrls(trimmed), [trimmed]);
   const [results, setResults] = useState<CaptureResult[] | null>(null);
   const [saving, setSaving] = useState(false);
-  const [creatingDestination, setCreatingDestination] = useState(false);
+  const creation = useDraftLibraryCreation(trimmed);
+  const creatingDestination = creation.creating;
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [attempt, setAttempt] = useState(0);
   // Capture fires once per attempt. The guard survives React's mount-effect
@@ -86,7 +88,6 @@ export default function ShareCapture({
     clientMutationId: string;
   } | null>(null);
   const urlIdempotencyKeys = useRef<Map<string, string>>(new Map());
-  const destinationCreateIds = useRef<Map<string, string>>(new Map());
   const [selectedDestinations, setSelectedDestinations] = useState<
     readonly LibraryDestinationSelection[]
   >([]);
@@ -265,32 +266,16 @@ export default function ShareCapture({
           label="Library destinations"
           emptyLabel="No additional libraries"
           selected={selectedDestinations}
-          onChange={setSelectedDestinations}
-          interaction={
-            creatingDestination
-              ? { kind: "Creating" }
-              : saving
-                ? { kind: "Disabled" }
-                : { kind: "Enabled" }
-          }
-          onCreateDestination={async (name) => {
-            setCreatingDestination(true);
-            const normalizedName = name.trim();
-            const libraryId =
-              destinationCreateIds.current.get(normalizedName) ??
-              crypto.randomUUID();
-            destinationCreateIds.current.set(normalizedName, libraryId);
-            try {
-              const library = await createLibrary({
-                libraryId,
-                name: normalizedName,
-              });
-              destinationCreateIds.current.delete(normalizedName);
-              return library;
-            } finally {
-              setCreatingDestination(false);
-            }
+          onSet={(change) => {
+            if (saving) return "Rejected";
+            setSelectedDestinations((current) => setLibraryDestination(current, change));
+            return "Accepted";
           }}
+          interaction={saving ? { kind: "Disabled" } : { kind: "Enabled" }}
+          onCreateDestination={(name) => creation.admit({ name, scope: trimmed, onCreated: (destination) => setSelectedDestinations((current) => setLibraryDestination(current, { destination, included: true })) })}
+          pendingCreateNames={creation.pendingNames}
+          error={creation.error}
+          status={creation.status}
         />
         <div className={styles.actions}>
           <button

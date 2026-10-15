@@ -17,7 +17,7 @@ import {
 } from "@/lib/libraries/contract";
 import {
   LibraryDestinationContractDefect,
-  type LibraryDestinationPage,
+  type LibraryDestinationSelection,
 } from "@/lib/libraries/destinationContract";
 import {
   CANONICAL_LIBRARIES_INDEX_VIEW,
@@ -75,33 +75,16 @@ export async function fetchLibrariesPage({
   return response.data;
 }
 
-export async function searchWritableLibraryDestinations({
-  q = "",
-  cursor,
-  limit = 25,
+export async function listWritableLibraryDestinations({
   signal,
 }: {
-  q?: string;
-  cursor?: string | null;
-  limit?: number;
   signal?: AbortSignal;
-} = {}): Promise<LibraryDestinationPage> {
-  const params = new URLSearchParams();
-  const query = q.trim();
-  if (query) params.set("q", query);
-  if (cursor) params.set("cursor", cursor);
-  params.set("limit", String(limit));
-  const suffix = params.toString();
+} = {}): Promise<LibraryDestinationSelection[]> {
   const response = await apiFetch<ApiJson<"/libraries/writable-destinations", "get">>(
-    `/api/libraries/writable-destinations${suffix ? `?${suffix}` : ""}`,
+    "/api/libraries/writable-destinations",
     { signal },
   );
-  if (response.page.has_more !== (response.page.next_cursor !== null)) {
-    throw new LibraryDestinationContractDefect(
-      "Invalid library destination response: page.has_more must agree with page.next_cursor.",
-    );
-  }
-  return response;
+  return response.data;
 }
 
 export async function createLibrary({
@@ -121,8 +104,9 @@ export async function createLibrary({
       signal,
     },
   );
+  const library = libraryOutForId(response.data, libraryId, "create Library response.data");
   publishChange("Libraries");
-  return response.data;
+  return library;
 }
 
 export async function getMemberLibrary(

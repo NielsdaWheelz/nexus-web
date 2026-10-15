@@ -1042,7 +1042,7 @@ export interface paths {
         };
         /**
          * List Writable Library Destinations
-         * @description Rank the named libraries the viewer may file into.
+         * @description Read the complete named-library destination catalog.
          */
         get: operations["list_writable_library_destinations_libraries_writable_destinations_get"];
         put?: never;
@@ -1189,30 +1189,6 @@ export interface paths {
         patch: operations["update_library_member_role_libraries__library_id__members__user_handle__patch"];
         trace?: never;
     };
-    "/libraries/{library_id}/podcasts/{podcast_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Add Subscribed Podcast To Library
-         * @description Place an existing active podcast subscription in one named library.
-         */
-        put: operations["add_subscribed_podcast_to_library_libraries__library_id__podcasts__podcast_id__put"];
-        post?: never;
-        /**
-         * Remove Podcast From Library
-         * @description Remove a podcast reference from one non-default library.
-         */
-        delete: operations["remove_podcast_from_library_libraries__library_id__podcasts__podcast_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/libraries/{library_id}/suggestions": {
         parameters: {
             query?: never;
@@ -1247,6 +1223,26 @@ export interface paths {
          * @description Transfer ownership to another member. Owner-only.
          */
         post: operations["transfer_library_ownership_libraries__library_id__transfer_ownership_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/library-placement-commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Execute Library Placement Command
+         * @description Confirm one explicit placement intent, or return its terminal refusal.
+         */
+        post: operations["execute_library_placement_command_library_placement_commands_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1727,26 +1723,8 @@ export interface paths {
         /** Get Media Libraries */
         get: operations["get_media_libraries_media__media_id__libraries_get"];
         put?: never;
-        /** Add Media Libraries */
-        post: operations["add_media_libraries_media__media_id__libraries_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/media/{media_id}/libraries/{library_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
         post?: never;
-        /** Remove Media Library */
-        delete: operations["remove_media_library_media__media_id__libraries__library_id__delete"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1947,24 +1925,6 @@ export interface paths {
          */
         post: operations["retry_ingest_media__media_id__retry_post"];
         delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/media/{media_id}/saved-in-nexus": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Add Media Saved In Nexus */
-        put: operations["add_media_saved_in_nexus_media__media_id__saved_in_nexus_put"];
-        post?: never;
-        /** Remove Media Saved In Nexus */
-        delete: operations["remove_media_saved_in_nexus_media__media_id__saved_in_nexus_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3845,6 +3805,14 @@ export interface components {
             /** Generation */
             generation: number;
         };
+        /** ConfirmedLibraryPlacementOut */
+        ConfirmedLibraryPlacementOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Confirmed";
+        };
         /**
          * ConnectionCreationOut
          * @description Who created an assistant link: its tool call, and the answer while the chat exists.
@@ -4449,12 +4417,6 @@ export interface components {
              */
             localDate: string;
         };
-        /** DataPage[LibraryDestinationOut, LibraryPageInfo] */
-        DataPage_LibraryDestinationOut_LibraryPageInfo_: {
-            /** Data */
-            data: components["schemas"]["LibraryDestinationOut"][];
-            page: components["schemas"]["LibraryPageInfo"];
-        };
         /** DataPage[LibraryInvitationOut, LibraryGovernancePageInfo] */
         DataPage_LibraryInvitationOut_LibraryGovernancePageInfo_: {
             /** Data */
@@ -4662,6 +4624,10 @@ export interface components {
         Data_LibraryOut_: {
             data: components["schemas"]["LibraryOut"];
         };
+        /** Data[LibraryPlacementCommandOut] */
+        Data_LibraryPlacementCommandOut_: {
+            data: components["schemas"]["LibraryPlacementCommandOut"];
+        };
         /** Data[LinkNoteOut] */
         Data_LinkNoteOut_: {
             data: components["schemas"]["LinkNoteOut"];
@@ -4753,14 +4719,6 @@ export interface components {
         /** Data[PodcastEpisodeQueryTranscriptRequestOut] */
         Data_PodcastEpisodeQueryTranscriptRequestOut_: {
             data: components["schemas"]["PodcastEpisodeQueryTranscriptRequestOut"];
-        };
-        /** Data[PodcastPlacementAdditionOut] */
-        Data_PodcastPlacementAdditionOut_: {
-            data: components["schemas"]["PodcastPlacementAdditionOut"];
-        };
-        /** Data[PodcastPlacementRemovalOut] */
-        Data_PodcastPlacementRemovalOut_: {
-            data: components["schemas"]["PodcastPlacementRemovalOut"];
         };
         /** Data[PodcastRefreshAcceptedOut] */
         Data_PodcastRefreshAcceptedOut_: {
@@ -4883,6 +4841,11 @@ export interface components {
         /** Data[WorkspaceSessionsOut] */
         Data_WorkspaceSessionsOut_: {
             data: components["schemas"]["WorkspaceSessionsOut"];
+        };
+        /** Data[list[LibraryIdentityOut]] */
+        Data_list_LibraryIdentityOut__: {
+            /** Data */
+            data: components["schemas"]["LibraryIdentityOut"][];
         };
         /** Data[list[LibraryPlacementOptionOut]] */
         Data_list_LibraryPlacementOptionOut__: {
@@ -6367,26 +6330,6 @@ export interface components {
             /** Items */
             items: components["schemas"]["LecternItemOut"][];
         };
-        /** LibraryDestinationOut */
-        LibraryDestinationOut: {
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Name */
-            name: string;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-        };
         /** LibraryEntryMediaCapabilitiesOut */
         LibraryEntryMediaCapabilitiesOut: {
             /** Can Delete */
@@ -6600,15 +6543,15 @@ export interface components {
              */
             updatedAt: string;
         };
-        /** LibraryPageInfo */
-        LibraryPageInfo: {
+        /** LibraryPlacementCommandOut */
+        LibraryPlacementCommandOut: {
             /**
-             * Has More
-             * @default false
+             * Clientmutationid
+             * Format: uuid
              */
-            has_more: boolean;
-            /** Next Cursor */
-            next_cursor: string | null;
+            clientMutationId: string;
+            /** Outcome */
+            outcome: components["schemas"]["ConfirmedLibraryPlacementOut"] | components["schemas"]["RefusedLibraryPlacementOut"];
         };
         /** LibraryPlacementOptionOut */
         LibraryPlacementOptionOut: {
@@ -7036,10 +6979,25 @@ export interface components {
          * @enum {string}
          */
         MediaKind: "web_article" | "epub" | "pdf" | "video" | "podcast_episode";
-        /** MediaLibrariesRequest */
-        MediaLibrariesRequest: {
-            /** Library Ids */
-            library_ids?: string[];
+        /** MediaLibraryPlacementCommand */
+        MediaLibraryPlacementCommand: {
+            /**
+             * Clientmutationid
+             * Format: uuid
+             */
+            clientMutationId: string;
+            /** Destination */
+            destination: components["schemas"]["SavedInNexusPlacementDestination"] | components["schemas"]["NamedLibraryPlacementDestination"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "AddMedia" | "RemoveMedia";
+            /**
+             * Mediaid
+             * Format: uuid
+             */
+            mediaId: string;
         };
         /**
          * MediaOut
@@ -7686,6 +7644,19 @@ export interface components {
              * @enum {string}
              */
             type: "move_occurrence";
+        };
+        /** NamedLibraryPlacementDestination */
+        NamedLibraryPlacementDestination: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Library";
+            /**
+             * Libraryid
+             * Format: uuid
+             */
+            libraryId: string;
         };
         /** NeedsAttention */
         NeedsAttention: {
@@ -8659,6 +8630,29 @@ export interface components {
             /** Podcastref */
             podcastRef: string;
         };
+        /** PodcastLibraryPlacementCommand */
+        PodcastLibraryPlacementCommand: {
+            /**
+             * Clientmutationid
+             * Format: uuid
+             */
+            clientMutationId: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "AddPodcast" | "RemovePodcast";
+            /**
+             * Libraryid
+             * Format: uuid
+             */
+            libraryId: string;
+            /**
+             * Podcastid
+             * Format: uuid
+             */
+            podcastId: string;
+        };
         /** PodcastListItemOut */
         PodcastListItemOut: {
             /** Contributors */
@@ -8692,22 +8686,6 @@ export interface components {
             updated_at: string;
             /** Website Url */
             website_url: string | null;
-        };
-        /** PodcastPlacementAdditionOut */
-        PodcastPlacementAdditionOut: {
-            /**
-             * Outcome
-             * @enum {string}
-             */
-            outcome: "Added" | "AlreadyPresent";
-        };
-        /** PodcastPlacementRemovalOut */
-        PodcastPlacementRemovalOut: {
-            /**
-             * Outcome
-             * @enum {string}
-             */
-            outcome: "Removed" | "AlreadyAbsent";
         };
         /** PodcastPreview */
         PodcastPreview: {
@@ -10837,6 +10815,19 @@ export interface components {
              */
             kind: "RefreshSource";
         };
+        /** RefusedLibraryPlacementOut */
+        RefusedLibraryPlacementOut: {
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "E_MEDIA_NOT_FOUND" | "E_NOT_FOUND" | "E_LIBRARY_NOT_FOUND" | "E_FORBIDDEN" | "E_LIBRARY_FORBIDDEN" | "E_DEFAULT_LIBRARY_FORBIDDEN" | "E_INVALID_REQUEST" | "E_MEDIA_DELETING" | "E_MEDIA_LAST_REFERENCE" | "E_PODCAST_SUBSCRIPTION_REQUIRED" | "E_PODCAST_REPLACES_EPISODES";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Refused";
+        };
         /** RejectedChatAdmission */
         RejectedChatAdmission: {
             /**
@@ -11609,6 +11600,14 @@ export interface components {
         };
         /** SavedInNexusLibraryPlacementDestinationOut */
         SavedInNexusLibraryPlacementDestinationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SavedInNexus";
+        };
+        /** SavedInNexusPlacementDestination */
+        SavedInNexusPlacementDestination: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -15399,11 +15398,7 @@ export interface operations {
     };
     list_library_destinations_extension_library_destinations_get: {
         parameters: {
-            query?: {
-                q?: string | null;
-                cursor?: string | null;
-                limit?: number;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -15416,18 +15411,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["Data_list_LibraryIdentityOut__"];
                 };
             };
         };
@@ -16047,14 +16031,7 @@ export interface operations {
     };
     list_writable_library_destinations_libraries_writable_destinations_get: {
         parameters: {
-            query?: {
-                /** @description Name search query */
-                q?: string | null;
-                /** @description Pagination cursor */
-                cursor?: string | null;
-                /** @description Maximum results */
-                limit?: number;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -16067,16 +16044,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DataPage_LibraryDestinationOut_LibraryPageInfo_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["Data_list_LibraryIdentityOut__"];
                 };
             };
         };
@@ -16415,70 +16383,6 @@ export interface operations {
             };
         };
     };
-    add_subscribed_podcast_to_library_libraries__library_id__podcasts__podcast_id__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                library_id: string;
-                podcast_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_PodcastPlacementAdditionOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    remove_podcast_from_library_libraries__library_id__podcasts__podcast_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                library_id: string;
-                podcast_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_PodcastPlacementRemovalOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_library_suggestions_libraries__library_id__suggestions_get: {
         parameters: {
             query?: never;
@@ -16532,6 +16436,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_LibraryOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    execute_library_placement_command_library_placement_commands_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MediaLibraryPlacementCommand"] | components["schemas"]["PodcastLibraryPlacementCommand"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_LibraryPlacementCommandOut_"];
                 };
             };
             /** @description Validation Error */
@@ -17446,69 +17383,6 @@ export interface operations {
             };
         };
     };
-    add_media_libraries_media__media_id__libraries_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["MediaLibrariesRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    remove_media_library_media__media_id__libraries__library_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-                library_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     put_listening_state_media__media_id__listening_state_put: {
         parameters: {
             query?: never;
@@ -17902,64 +17776,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Data_SourceRetryAdmission_"];
                 };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    add_media_saved_in_nexus_media__media_id__saved_in_nexus_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    remove_media_saved_in_nexus_media__media_id__saved_in_nexus_delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Validation Error */
             422: {

@@ -6,8 +6,8 @@
 
 import { isAbortError } from "@/lib/errors";
 import {
-  decodeWritableLibraryDestinationPage,
-  type LibraryDestinationPage,
+  decodeWritableLibraryDestinationCatalog,
+  type LibraryDestinationCatalog,
 } from "@/lib/libraries/destinationContract";
 import {
   decodeUploadResponse,
@@ -57,7 +57,7 @@ export interface CaptureClient {
   session(signal?: AbortSignal): Promise<ExtensionSession>;
   /** resolves on 204, and on 401: a token nexus no longer honours is revoked */
   revokeSession(signal?: AbortSignal): Promise<void>;
-  searchDestinations(q: string, cursor: string | null, signal?: AbortSignal): Promise<LibraryDestinationPage>;
+  listDestinations(signal?: AbortSignal): Promise<LibraryDestinationCatalog>;
   createCapture(intent: CaptureIntent, operationKey: string, signal?: AbortSignal): Promise<UploadResponse>;
   captureStatus(handle: string, signal?: AbortSignal): Promise<UploadResponse>;
   confirmCapture(handle: string, generation: number, signal?: AbortSignal): Promise<PublishedUpload>;
@@ -165,16 +165,10 @@ export function captureClient(token: string): CaptureClient {
       }
     },
 
-    searchDestinations: async (q, cursor, signal) => {
-      const query = new URLSearchParams();
-      if (q !== "") query.set("q", q);
-      if (cursor !== null) query.set("cursor", cursor);
-      const suffix = query.size === 0 ? "" : `?${query}`;
-      return decoded(
-        await call("GET", `/library-destinations${suffix}`, { signal }),
-        decodeWritableLibraryDestinationPage,
-      );
-    },
+    listDestinations: async (signal) => decoded(
+      await call("GET", "/library-destinations", { signal }),
+      decodeWritableLibraryDestinationCatalog,
+    ),
 
     createCapture: async (intent, operationKey, signal) =>
       decoded(

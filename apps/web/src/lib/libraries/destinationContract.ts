@@ -5,9 +5,8 @@ import type { ApiJson, Schema } from "@/lib/api/wire";
 
 import {
   expectArray,
-  expectBoolean,
+  expectCanonicalRfcUuid,
   expectExactRecord,
-  expectIsoInstant,
   expectNonemptyString,
 } from "@/lib/validation";
 
@@ -20,9 +19,7 @@ export class LibraryDestinationContractDefect extends Error {
   }
 }
 
-export type LibraryDestination = Schema<"LibraryDestinationOut">;
-
-export type LibraryDestinationSelection = Pick<LibraryDestination, "id" | "name">;
+export type LibraryDestinationSelection = Schema<"LibraryIdentityOut">;
 
 /** Decodes a selection that crossed a boundary as exactly `{id, name}`. Like
     the validation primitives it raises TypeError, which the caller owns. */
@@ -32,54 +29,27 @@ export function decodeLibraryDestinationSelection(
 ): LibraryDestinationSelection {
   const selection = expectExactRecord(raw, ["id", "name"], name);
   return {
-    id: expectNonemptyString(selection.id, `${name}.id`),
+    id: expectCanonicalRfcUuid(selection.id, `${name}.id`),
     name: expectNonemptyString(selection.name, `${name}.name`),
   };
 }
 
-export type LibraryDestinationPage = ApiJson<"/libraries/writable-destinations", "get">;
+export type LibraryDestinationCatalog = ApiJson<"/libraries/writable-destinations", "get">;
 
-export function decodeWritableLibraryDestinationPage(
+export function decodeWritableLibraryDestinationCatalog(
   raw: unknown,
-): LibraryDestinationPage {
+): LibraryDestinationCatalog {
   // The validation primitives raise TypeError, which isLibraryDestinationDefect
   // reads as a network failure; every decode failure here is a same-system
   // contract defect instead.
   try {
-    const envelope = expectExactRecord(raw, ["data", "page"], "search payload");
-    const page = expectExactRecord(
-      envelope.page,
-      ["has_more", "next_cursor"],
-      "page",
-    );
-    const hasMore = expectBoolean(page.has_more, "page.has_more");
-    const nextCursor =
-      page.next_cursor === null
-        ? null
-        : expectNonemptyString(page.next_cursor, "page.next_cursor");
-    if (hasMore !== (nextCursor !== null)) {
-      throw new TypeError("page.has_more must agree with page.next_cursor");
-    }
+    const envelope = expectExactRecord(raw, ["data"], "catalog payload");
     return {
       data: expectArray(
         envelope.data,
-        (value, index) => {
-          const field = `data[${index}]`;
-          const row = expectExactRecord(
-            value,
-            ["id", "name", "created_at", "updated_at"],
-            field,
-          );
-          return {
-            id: expectNonemptyString(row.id, `${field}.id`),
-            name: expectNonemptyString(row.name, `${field}.name`),
-            created_at: expectIsoInstant(row.created_at, `${field}.created_at`),
-            updated_at: expectIsoInstant(row.updated_at, `${field}.updated_at`),
-          };
-        },
+        (value, index) => decodeLibraryDestinationSelection(value, `data[${index}]`),
         "data",
       ),
-      page: { has_more: hasMore, next_cursor: nextCursor },
     };
   } catch (error) {
     if (!(error instanceof TypeError)) throw error;

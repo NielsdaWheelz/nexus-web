@@ -24,7 +24,6 @@ from nexus.auth.permissions import (
     visible_podcast_ids_cte_sql,
 )
 from nexus.db.errors import TransactionRestart
-from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.library import (
@@ -40,8 +39,6 @@ from nexus.schemas.library import (
     LibraryPlacementAvailabilityOut,
     LibraryPlacementOptionOut,
     LibraryPlacementRelationOut,
-    PodcastPlacementAdditionOut,
-    PodcastPlacementRemovalOut,
     SavedInNexusLibraryPlacementDestinationOut,
 )
 from nexus.services import library_governance as governance
@@ -665,7 +662,8 @@ def ensure_media_in_library_in_current_transaction(
     Admin-only on the target, refusing system libraries. An episode filed into a
     named library that already holds its parent show is included through that
     show and inserts nothing. A Default target always inserts a real row. Every
-    outcome clears the viewer's media tombstone.
+    outcome clears the viewer's media tombstone. All business refusals precede
+    the first write; direct placement receipts rely on this boundary.
     """
     from nexus.services.media_deletion import clear_user_media_deletion
 
@@ -694,41 +692,14 @@ def ensure_media_in_library_in_current_transaction(
     return inserted
 
 
-def ensure_media_saved_in_nexus_for_viewer(db: Session, *, viewer_id: UUID, media_id: UUID) -> bool:
-    """Idempotently create the identity-free `SavedInNexus` relation."""
-    with transaction(db):
-        return ensure_media_in_library_in_current_transaction(
-            db,
-            viewer_id=viewer_id,
-            library_id=governance.default_library_id_for_user(db, viewer_id),
-            media_id=media_id,
-        )
-
-
-def remove_media_from_library(
-    db: Session, viewer_id: UUID, media_id: UUID, library_id: UUID, *, allow_default: bool = False
-) -> None:
-    """Idempotently remove one media from a library the viewer admins.
-
-    Convergent: an already-absent media succeeds without revealing whether it
-    exists, and the last physical reference in existence is refused with
-    E_MEDIA_LAST_REFERENCE. `allow_default` is for the Default-backed
-    commands (Saved in Nexus, agent undo) that may unfile from All.
-    """
-
-    def attempt() -> None:
-        with transaction(db):
-            remove_media_from_library_in_current_transaction(
-                db, viewer_id, media_id, library_id, allow_default=allow_default
-            )
-
-    retry_read_committed(db, "remove_media_from_library", attempt)
-
-
 def remove_media_from_library_in_current_transaction(
     db: Session, viewer_id: UUID, media_id: UUID, library_id: UUID, *, allow_default: bool = False
 ) -> None:
-    """Perform actor-gated unfiling inside the caller's transaction."""
+    """Unfile inside the caller's transaction, refusing before the first write.
+
+    Already-absent succeeds without revealing media existence. The last physical
+    reference is refused. `allow_default` is for SavedInNexus and agent undo.
+    """
 
     def authorize(*, lock: bool) -> None:
         ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=lock)
@@ -757,19 +728,6 @@ def remove_media_from_library_in_current_transaction(
         )
     delete_entry(db, library_id, target)
     normalize_positions(db, library_id)
-
-
-def ensure_media_absent_from_saved_in_nexus_for_viewer(
-    db: Session, *, viewer_id: UUID, media_id: UUID
-) -> None:
-    """Idempotently remove `SavedInNexus` while preserving lifetime safety."""
-    remove_media_from_library(
-        db,
-        viewer_id,
-        media_id,
-        governance.default_library_id_for_user(db, viewer_id),
-        allow_default=True,
-    )
 
 
 def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) -> bool:
@@ -827,27 +785,6 @@ def _add_media_to_resolved_libraries(
             continue
         ensure_entry(db, library_id, target)
     clear_user_media_deletion(db, viewer_id, media_id)
-
-
-def ensure_media_in_libraries_for_viewer(
-    db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
-) -> None:
-    """Additively file one media into the viewer's selected named destinations."""
-    with transaction(db):
-        exists = db.execute(
-            text("SELECT 1 FROM media WHERE id = :media_id"), {"media_id": media_id}
-        ).fetchone()
-        if exists is None or not _can_file_media(db, viewer_id, media_id):
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        parent_podcast_id = _lock_parent_podcast_for_media(db, media_id)
-        _lock_authorized_media_for_filing(db, viewer_id, media_id)
-        _add_media_to_resolved_libraries(
-            db,
-            viewer_id,
-            media_id,
-            governance.resolve_writable_non_default_library_ids(db, viewer_id, library_ids),
-            parent_podcast_id=parent_podcast_id,
-        )
 
 
 def assign_libraries_for_media_in_current_transaction(
@@ -1022,7 +959,12 @@ def place_podcast_in_named_libraries_in_current_transaction(
 def place_subscribed_podcast_in_named_library_in_current_transaction(
     db: Session, *, viewer_id: UUID, library_id: UUID, podcast_id: UUID
 ) -> bool:
-    """File one already-active subscription; never subscribe as a side effect."""
+    """File one active subscription, refusing before the first write.
+
+    No replacement confirmation is admitted here: a child conflict refuses before
+    show insertion, and the successful path has no child media to ensure. Direct
+    placement receipts rely on this prewrite-refusal boundary.
+    """
     subscription = db.execute(
         text("""
             SELECT id FROM podcast_subscriptions
@@ -1046,25 +988,10 @@ def place_subscribed_podcast_in_named_library_in_current_transaction(
     return bool(added)
 
 
-def place_subscribed_podcast_in_named_library(
-    db: Session, viewer_id: UUID, library_id: UUID, podcast_id: UUID
-) -> PodcastPlacementAdditionOut:
-    """Idempotently place, but never create, an active podcast subscription."""
-
-    def attempt() -> PodcastPlacementAdditionOut:
-        with transaction(db):
-            added = place_subscribed_podcast_in_named_library_in_current_transaction(
-                db, viewer_id=viewer_id, library_id=library_id, podcast_id=podcast_id
-            )
-            return PodcastPlacementAdditionOut(outcome="Added" if added else "AlreadyPresent")
-
-    return retry_read_committed(db, "place_subscribed_podcast_in_named_library", attempt)
-
-
 def undo_podcast_filing_for_viewer_in_current_transaction(
     db: Session, *, viewer_id: UUID, library_id: UUID, podcast_id: UUID
-) -> PodcastPlacementRemovalOut:
-    """Remove one podcast from a named library; never recreates child entries."""
+) -> None:
+    """Remove one show, refusing before writes; never recreate child entries."""
     db.execute(
         text("SELECT id FROM podcasts WHERE id = :podcast_id FOR UPDATE"),
         {"podcast_id": podcast_id},
@@ -1076,21 +1003,6 @@ def undo_podcast_filing_for_viewer_in_current_transaction(
     removed = delete_entry(db, library_id, podcast_target(podcast_id))
     if removed:
         normalize_positions(db, library_id)
-    return PodcastPlacementRemovalOut(outcome="Removed" if removed else "AlreadyAbsent")
-
-
-def remove_podcast_from_library(
-    db: Session, viewer_id: UUID, library_id: UUID, podcast_id: UUID
-) -> PodcastPlacementRemovalOut:
-    """Remove a podcast reference from one non-default library. Admin-only."""
-
-    def attempt() -> PodcastPlacementRemovalOut:
-        with transaction(db):
-            return undo_podcast_filing_for_viewer_in_current_transaction(
-                db, viewer_id=viewer_id, library_id=library_id, podcast_id=podcast_id
-            )
-
-    return retry_read_committed(db, "remove_podcast_from_library", attempt)
 
 
 def remove_unsubscribed_podcast_placements(

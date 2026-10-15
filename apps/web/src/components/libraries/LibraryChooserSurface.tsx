@@ -8,6 +8,7 @@ import MobileSheet from "@/components/ui/MobileSheet";
 import {
   useOverlay,
   useOverlayContainer,
+  wasOverlayInvokedByTouch,
   type ReturnFocusTarget,
 } from "@/lib/ui/overlay";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
@@ -18,8 +19,7 @@ export interface LibraryChooserSurfaceProps {
   /** Render/behaviour gate. */
   active: boolean;
   presentation: "Responsive" | "Inline";
-  /** null locks dismissal while the caller completes creation. */
-  onClose: (() => void) | null;
+  onClose: () => void;
   /** Anchor element for positioning AND primary return focus. */
   anchor: ReturnFocusTarget;
   returnFocusFallback?: ReturnFocusTarget;
@@ -66,12 +66,13 @@ export default function LibraryChooserSurface({
   const container = useOverlayContainer();
   useOverlay(desktop || inline, {
     kind: "transient",
-    onDismiss: () => onClose?.(),
+    onDismiss: onClose,
     inside: inline ? undefined : () => [panel.ref.current, anchorEl],
     returnFocus: true,
     returnFocusTo: anchor,
     returnFocusFallback,
     skipReturnFocus,
+    tabContinuation: () => inline ? inlineRef.current : panel.ref.current,
   });
 
   // Focus the search once placed.
@@ -87,8 +88,11 @@ export default function LibraryChooserSurface({
 
   useEffect(() => {
     if (!inline) return;
-    // Opening a region should not summon the phone's keyboard unasked.
-    const frame = requestAnimationFrame(() => inlineRef.current?.focus());
+    const focusSearch = !wasOverlayInvokedByTouch();
+    const frame = requestAnimationFrame(() => {
+      const region = inlineRef.current;
+      (focusSearch ? region?.querySelector<HTMLInputElement>("input") ?? region : region)?.focus();
+    });
     return () => cancelAnimationFrame(frame);
   }, [inline, focusKey]);
 
@@ -108,9 +112,8 @@ export default function LibraryChooserSurface({
             variant="ghost"
             iconOnly
             className={styles.close}
-            aria-label={`Close ${title}`}
-            disabled={onClose === null}
-            onClick={() => onClose?.()}
+            aria-label={`close ${title}`}
+            onClick={onClose}
           >
             <X size={16} aria-hidden="true" />
           </Button>
@@ -139,12 +142,11 @@ export default function LibraryChooserSurface({
         : null}
       <MobileSheet
         active={active && presentation === "Responsive" && isMobile}
-        onDismiss={() => onClose?.()}
-        onDismissRequest={() => onClose === null ? "blocked" : "accepted"}
+        onDismiss={onClose}
         ariaLabel={title}
         focusKey={focusKey}
         panelId={panelId}
-        initialFocus={(sheet) => sheet}
+        initialFocus={(sheet) => wasOverlayInvokedByTouch() ? sheet : sheet.querySelector<HTMLInputElement>("input") ?? sheet}
         returnFocusTo={anchor}
         returnFocusFallback={returnFocusFallback}
         skipReturnFocus={skipReturnFocus}

@@ -3,6 +3,7 @@
 import { forwardRef, type MouseEventHandler } from "react";
 import { ChevronDown } from "lucide-react";
 import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
+import { compareLibraryNames } from "@/lib/libraries/presentation";
 import styles from "./LibraryDestinationTrigger.module.css";
 
 export interface LibraryDestinationTriggerProps {
@@ -32,8 +33,8 @@ const LibraryDestinationTrigger = forwardRef<
   ref,
 ) {
   const names = selected
-    .map((destination) => destination.name)
-    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    .toSorted(compareLibraryNames)
+    .map((destination) => destination.name);
   const summary =
     names.length === 0
       ? emptyLabel

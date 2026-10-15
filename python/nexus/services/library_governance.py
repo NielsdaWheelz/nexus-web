@@ -23,15 +23,19 @@ from nexus.errors import (
 from nexus.schemas.collection_page import CollectionPage, CollectionQuery, parse_collection_query
 from nexus.schemas.library import (
     CreateLibraryRequest,
-    LibraryDestinationOut,
+    LibraryIdentityOut,
     LibraryOut,
     LibraryRole,
 )
 from nexus.schemas.presence import presence_from_nullable
 from nexus.services.collection_keyset import Direction, KeysetValueKind, SortKey, keyset_page
+from nexus.services.resource_mutation_replay import (
+    canonical_json_bytes,
+    lookup_replay,
+    record_replay,
+)
 from nexus.services.sealed_handles import seal_user
 from nexus.storage.client import StorageError, get_storage_client
-from nexus.text import escape_like
 
 logger = logging.getLogger(__name__)
 
@@ -172,38 +176,30 @@ def _validate_library_name(name: str) -> str:
 
 
 def create_library(db: Session, viewer_id: UUID, request: CreateLibraryRequest) -> LibraryOut:
-    """Create a non-default library with the creator as owner-admin, idempotent by id."""
-    name = _validate_library_name(request.name)
+    """Create once by id; exact replay returns the original success after rename/deletion."""
+    request_bytes = canonical_json_bytes(request.model_dump(mode="json"))
 
-    def attempt() -> LibraryMembershipContext:
+    def attempt() -> LibraryOut:
         with transaction(db):
-            existing = (
-                db.execute(
-                    text(f"""
-                        SELECT {_LIBRARY_COLUMNS}
-                        FROM libraries l
-                        LEFT JOIN memberships m
-                          ON m.library_id = l.id AND m.user_id = :viewer_id
-                        WHERE l.id = :library_id
-                    """),
-                    {"library_id": request.library_id, "viewer_id": viewer_id},
-                )
-                .mappings()
-                .fetchone()
+            replay = lookup_replay(
+                db,
+                viewer_id=viewer_id,
+                scope="Library.Create",
+                client_mutation_id=str(request.library_id),
+                request_bytes=request_bytes,
             )
+            if replay is not None:
+                return LibraryOut.model_validate(replay)
+            name = _validate_library_name(request.name)
+            existing = db.execute(
+                text("SELECT 1 FROM libraries WHERE id = :library_id"),
+                {"library_id": request.library_id},
+            ).fetchone()
             if existing is not None:
-                if (
-                    existing["owner_user_id"] != viewer_id
-                    or existing["name"] != name
-                    or existing["is_default"]
-                    or existing["system_key"] is not None
-                    or existing["role"] != "admin"
-                ):
-                    raise ConflictError(
-                        ApiErrorCode.E_RESOURCE_CONFLICT,
-                        "Library create id is already bound to a different resource",
-                    )
-                return membership_context(existing)
+                raise ConflictError(
+                    ApiErrorCode.E_RESOURCE_CONFLICT,
+                    "Library create id is already bound without a creation receipt",
+                )
 
             created = (
                 db.execute(
@@ -225,9 +221,20 @@ def create_library(db: Session, viewer_id: UUID, request: CreateLibraryRequest) 
                 """),
                 {"library_id": request.library_id, "user_id": viewer_id},
             )
-            return membership_context({**created, "role": "admin"})
+            result = library_out(
+                membership_context({**created, "role": "admin"}), viewer_id=viewer_id
+            )
+            record_replay(
+                db,
+                viewer_id=viewer_id,
+                scope="Library.Create",
+                client_mutation_id=str(request.library_id),
+                request_bytes=request_bytes,
+                response_json=result.model_dump(mode="json", by_alias=True),
+            )
+            return result
 
-    return library_out(retry_serializable(db, "create_library", attempt), viewer_id=viewer_id)
+    return retry_serializable(db, "create_library", attempt)
 
 
 def ensure_system_library(db: Session, *, system_key: str, name: str, owner_user_id: UUID) -> UUID:
@@ -464,72 +471,25 @@ def list_libraries(
     )
 
 
-_DESTINATIONS_PLAN = (
-    SortKey("match_rank", "asc", KeysetValueKind.Int),
-    SortKey("normalized_name", "asc", KeysetValueKind.Text),
-    SortKey("name", "asc", KeysetValueKind.Text),
-    SortKey("id", "asc", KeysetValueKind.Uuid),
-)
-
-
-def list_writable_library_destinations(
-    db: Session,
-    viewer_id: UUID,
-    *,
-    q: str | None = None,
-    cursor: str | None = None,
-    limit: int = 25,
-) -> tuple[list[LibraryDestinationOut], str | None]:
-    """Rank the viewer's writable named libraries exact → prefix → contains → name."""
-    if limit <= 0:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
-    limit = min(limit, 50)
-    query = q or ""
-    page_rows, next_cursor = keyset_page(
-        db,
-        binding={"list": "LibraryDestinations", "viewer": viewer_id, "q": query},
-        plan=_DESTINATIONS_PLAN,
-        alias="ranked",
-        cursor=cursor,
-        limit=limit,
-        params={
-            "viewer_id": viewer_id,
-            "q": query,
-            "prefix_q": f"{escape_like(query)}%",
-            "contains_q": f"%{escape_like(query)}%",
-        },
-        sql=lambda keyset, order: f"""
-            WITH ranked AS (
-                SELECT
-                    l.id, l.name, l.created_at, l.updated_at,
-                    lower(l.name) AS normalized_name,
-                    CASE
-                        WHEN :q = '' THEN 3
-                        WHEN lower(l.name) = :q THEN 0
-                        WHEN lower(l.name) LIKE :prefix_q ESCAPE '\\' THEN 1
-                        ELSE 2
-                    END AS match_rank
+def list_writable_library_destinations(db: Session, viewer_id: UUID) -> list[LibraryIdentityOut]:
+    """Read the complete writable named catalog; chooser query/ranking is local."""
+    rows = (
+        db.execute(
+            text("""
+                SELECT l.id, l.name
                 FROM libraries l
                 LEFT JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
                 WHERE l.is_default = false
                   AND l.system_key IS NULL
                   AND (l.owner_user_id = :viewer_id OR m.role = 'admin')
-                  AND (:q = '' OR lower(l.name) LIKE :contains_q ESCAPE '\\')
-            )
-            SELECT * FROM ranked WHERE 1 = 1 {keyset}
-            ORDER BY {order}
-            LIMIT :limit
-        """,
-    )
-    return [
-        LibraryDestinationOut(
-            id=row["id"],
-            name=row["name"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
+                ORDER BY lower(l.name), l.name, l.id
+            """),
+            {"viewer_id": viewer_id},
         )
-        for row in page_rows
-    ], next_cursor
+        .mappings()
+        .all()
+    )
+    return [LibraryIdentityOut(id=row["id"], name=row["name"]) for row in rows]
 
 
 @dataclass(frozen=True, slots=True)

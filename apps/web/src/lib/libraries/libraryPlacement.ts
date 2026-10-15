@@ -1,6 +1,6 @@
-import { apiCommand204, apiFetch } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { publishChange } from "@/lib/api/changes";
+import { LibraryContractDefect } from "@/lib/libraries/contract";
 
 export type LibraryPlacementTarget =
   | { readonly kind: "Media"; readonly id: string }
@@ -36,67 +36,44 @@ export async function listLibraryPlacements(
   return response.data;
 }
 
-interface PlacementWrite {
-  readonly target: LibraryPlacementTarget;
-  readonly destination: LibraryPlacementDestination;
-  readonly signal?: AbortSignal;
-}
+export type PlacementCommand =
+  | Schema<"MediaLibraryPlacementCommand">
+  | Schema<"PodcastLibraryPlacementCommand">;
+export type PlacementReceipt = Schema<"LibraryPlacementCommandOut">;
+export type PlacementRefusalCode = Extract<PlacementReceipt["outcome"], { kind: "Refused" }>["code"];
 
-// Every placement write is idempotent, so a write that failed in transport is
-// retried by resending it. A write publishes "Entries" once it succeeds.
+const PLACEMENT_REFUSAL_CODES = {
+  E_MEDIA_NOT_FOUND: true,
+  E_NOT_FOUND: true,
+  E_LIBRARY_NOT_FOUND: true,
+  E_FORBIDDEN: true,
+  E_LIBRARY_FORBIDDEN: true,
+  E_DEFAULT_LIBRARY_FORBIDDEN: true,
+  E_INVALID_REQUEST: true,
+  E_MEDIA_DELETING: true,
+  E_MEDIA_LAST_REFERENCE: true,
+  E_PODCAST_SUBSCRIPTION_REQUIRED: true,
+  E_PODCAST_REPLACES_EPISODES: true,
+} satisfies Record<PlacementRefusalCode, true>;
 
-export async function addLibraryPlacement({
-  target,
-  destination,
-  signal,
-}: PlacementWrite): Promise<void> {
-  if (destination.kind === "SavedInNexus") {
-    await apiCommand204(`/api/media/${target.id}/saved-in-nexus`, { method: "PUT", signal });
-    publishChange("Entries");
-    return;
-  }
-  const libraryId = destination.library.id;
-  if (target.kind === "Media") {
-    await apiCommand204(`/api/media/${target.id}/libraries`, {
-      method: "POST",
-      body: JSON.stringify({ library_ids: [libraryId] }),
-      signal,
-    });
-  } else {
-    await apiFetch(`/api/libraries/${libraryId}/podcasts/${target.id}`, { method: "PUT", signal });
-  }
-  publishChange("Entries");
-}
-
-export async function removeLibraryPlacement({
-  target,
-  destination,
-  signal,
-}: PlacementWrite): Promise<void> {
-  if (destination.kind === "SavedInNexus") {
-    await apiCommand204(`/api/media/${target.id}/saved-in-nexus`, { method: "DELETE", signal });
-    publishChange("Entries");
-    return;
-  }
-  const libraryId = destination.library.id;
-  if (target.kind === "Media") {
-    await apiCommand204(`/api/media/${target.id}/libraries/${libraryId}`, { method: "DELETE", signal });
-  } else {
-    await apiFetch(`/api/libraries/${libraryId}/podcasts/${target.id}`, { method: "DELETE", signal });
-  }
-  publishChange("Entries");
-}
-
-/** Add Content patches its local copy of an inventory after a confirmed write. */
-export function projectLibraryPlacement(
-  placements: readonly LibraryPlacementOption[],
-  destination: LibraryPlacementDestination,
-  relation: Extract<LibraryPlacementOption["relation"], { kind: "Absent" | "Direct" }>,
-): LibraryPlacementOption[] {
-  const key = libraryPlacementDestinationKey(destination);
-  return placements.map((placement) =>
-    libraryPlacementDestinationKey(placement.destination) === key
-      ? { ...placement, relation }
-      : placement,
+/** The owner supplies one fetch/body deadline and settles the durable journal before successors. */
+export async function sendLibraryPlacementCommand(
+  command: PlacementCommand,
+  { signal }: { signal?: AbortSignal } = {},
+): Promise<PlacementReceipt> {
+  const { data } = await apiFetch<ApiJson<"/library-placement-commands", "post">>(
+    "/api/library-placement-commands",
+    { method: "POST", body: JSON.stringify(command), signal },
   );
+  if (data?.clientMutationId !== command.clientMutationId) {
+    throw new LibraryContractDefect("Library placement receipt does not match its command identity.");
+  }
+  const outcome = data.outcome;
+  // This terminal result authorizes durable journal retirement. An unknown
+  // outcome must retain the sent identity even when the reply id matches.
+  if (outcome?.kind !== "Confirmed" && (outcome?.kind !== "Refused"
+    || typeof outcome.code !== "string" || !Object.hasOwn(PLACEMENT_REFUSAL_CODES, outcome.code))) {
+    throw new LibraryContractDefect("Library placement receipt has no recognized terminal outcome.");
+  }
+  return data;
 }

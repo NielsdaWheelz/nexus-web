@@ -117,12 +117,67 @@ class LibraryOut(_CamelRow):
     updated_at: datetime
 
 
-class PodcastPlacementRemovalOut(_Camel):
-    outcome: Literal["Removed", "AlreadyAbsent"]
+class SavedInNexusPlacementDestination(_CamelIn):
+    kind: Literal["SavedInNexus"]
 
 
-class PodcastPlacementAdditionOut(_Camel):
-    outcome: Literal["Added", "AlreadyPresent"]
+class NamedLibraryPlacementDestination(_CamelIn):
+    kind: Literal["Library"]
+    library_id: UUID
+
+
+class MediaLibraryPlacementCommand(_CamelIn):
+    kind: Literal["AddMedia", "RemoveMedia"]
+    client_mutation_id: UUID
+    media_id: UUID
+    destination: Annotated[
+        SavedInNexusPlacementDestination | NamedLibraryPlacementDestination,
+        Field(discriminator="kind"),
+    ]
+
+
+class PodcastLibraryPlacementCommand(_CamelIn):
+    kind: Literal["AddPodcast", "RemovePodcast"]
+    client_mutation_id: UUID
+    podcast_id: UUID
+    library_id: UUID
+
+
+LibraryPlacementCommand = Annotated[
+    MediaLibraryPlacementCommand | PodcastLibraryPlacementCommand,
+    Field(discriminator="kind"),
+]
+
+LibraryPlacementRefusalCode = Literal[
+    "E_MEDIA_NOT_FOUND",
+    "E_NOT_FOUND",
+    "E_LIBRARY_NOT_FOUND",
+    "E_FORBIDDEN",
+    "E_LIBRARY_FORBIDDEN",
+    "E_DEFAULT_LIBRARY_FORBIDDEN",
+    "E_INVALID_REQUEST",
+    "E_MEDIA_DELETING",
+    "E_MEDIA_LAST_REFERENCE",
+    "E_PODCAST_SUBSCRIPTION_REQUIRED",
+    "E_PODCAST_REPLACES_EPISODES",
+]
+
+
+class ConfirmedLibraryPlacementOut(_Camel):
+    kind: Literal["Confirmed"] = "Confirmed"
+
+
+class RefusedLibraryPlacementOut(_Camel):
+    kind: Literal["Refused"] = "Refused"
+    code: LibraryPlacementRefusalCode
+
+
+class LibraryPlacementCommandOut(_Camel):
+    client_mutation_id: UUID
+    outcome: Annotated[
+        ConfirmedLibraryPlacementOut | RefusedLibraryPlacementOut,
+        Field(discriminator="kind"),
+    ]
 
 
 class LibraryIdentityOut(_Camel):
@@ -187,26 +242,8 @@ class LibraryPlacementOptionOut(_Camel):
     availability: LibraryPlacementAvailabilityOut
 
 
-class LibraryPageInfo(BaseModel):
-    # `has_more` is derived from `next_cursor`, but `client.ts` requires the field
-    # and asserts the two agree, so it stays on the wire.
-    has_more: bool = False
-    next_cursor: str | None = None
-
-    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
-
-
 class LibraryGovernancePageInfo(_Camel):
     next_cursor: Presence[LibraryGovernanceCursor]
-
-
-class LibraryDestinationOut(BaseModel):
-    id: UUID
-    name: str
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 class LibraryEntryPodcastOut(_Camel):

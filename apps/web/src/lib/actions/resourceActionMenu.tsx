@@ -636,7 +636,6 @@ export function resourceActionDescriptors({
                 returnFocusFallback: present(() =>
                   findPaneLandmarkFocusTarget(ports.activePaneId),
                 ),
-                reconcileActions: () => ports.reconcile(subjectScope),
               },
             });
           },

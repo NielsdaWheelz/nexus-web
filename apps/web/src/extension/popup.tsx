@@ -4,9 +4,9 @@
 // popup renders the CaptureViewState the background pushes on the
 // "nexus-capture-view" port -- the sole source of view state, because Firefox
 // does not order a sendMessage reply against port messages -- and sends
-// CaptureCommand messages whose replies it reads only for a destination page
-// or a failure. It owns nothing but presentation: the open chooser, its search
-// results, and the notice of its last command.
+// CaptureCommand messages whose replies it reads only for the catalog or a
+// failure. Posted edit deltas remain provisional until their acknowledged
+// pushed revision arrives; no accepted edit waits here before being posted.
 //
 // Import order is load order: the token owner and the packaged font families
 // precede every component module, so popup.module.css is emitted last and owns
@@ -14,13 +14,13 @@
 import "@/app/globals.css";
 import "@/app/packagedFonts.css";
 
-import { StrictMode, useEffect, useId, useRef, useState } from "react";
+import { StrictMode, useCallback, useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import LibraryChooser from "@/components/libraries/LibraryChooser";
+import LibraryChooser, { type LibraryChooserAdmission } from "@/components/libraries/LibraryChooser";
 import LibraryDestinationTrigger from "@/components/libraries/LibraryDestinationTrigger";
 import Button from "@/components/ui/Button";
 import {
@@ -32,15 +32,17 @@ import {
   type CapturePhase,
   type CaptureTargetView,
   type CaptureViewMessage,
+  type CaptureViewCommand,
   type CaptureViewState,
   type CommandResult,
 } from "@/extension/captureContract";
-import { useLibraryDestinationSearch } from "@/components/libraries/useLibraryDestinationSearch";
+import { useLibraryDestinationCatalog } from "@/components/libraries/useLibraryDestinationCatalog";
 import {
   decodeLibraryDestinationSelection,
-  decodeWritableLibraryDestinationPage,
+  decodeWritableLibraryDestinationCatalog,
   type LibraryDestinationSelection,
 } from "@/lib/libraries/destinationContract";
+import { setLibraryDestination } from "@/lib/libraries/destinationSelection";
 import {
   expectArray,
   expectBoolean,
@@ -48,29 +50,110 @@ import {
   expectNonemptyString,
   expectNullableString,
   expectOneOf,
+  expectPositiveInteger,
   expectRecord,
   expectString,
 } from "@/lib/validation";
 import styles from "./popup.module.css";
 
+type PostedCommand = { command: CaptureViewCommand; revision: number | null };
+type ViewConnection = {
+  port: browser.runtime.Port;
+  sequence: number;
+  revision: number;
+  state: CaptureViewState | null;
+  posted: PostedCommand[];
+};
+
 function Popup() {
   const [state, setState] = useState<CaptureViewState | null>(null);
   const [notice, setNotice] = useState<FeedbackContent | null>(null);
+  const connectionRef = useRef<ViewConnection | null>(null);
+
+  function renderView(connection: ViewConnection) {
+    for (;;) {
+      const first = connection.posted[0];
+      if (first === undefined || first.revision === null || first.revision > connection.revision) break;
+      connection.posted.shift();
+    }
+    const current = connection.state;
+    if (current?.view.kind !== "draft") {
+      setState(current);
+      return;
+    }
+    const draft = current.view.draft;
+    let selected = draft.intendedDestinations;
+    let saving = false;
+    for (const { command } of connection.posted) {
+      if (command.draftId !== draft.id) continue;
+      if (command.kind === "save") saving = true;
+      else selected = setLibraryDestination(selected, command);
+    }
+    setState({ ...current, view: { kind: "draft", draft: {
+      ...draft, intendedDestinations: selected,
+      destinationsEditable: draft.destinationsEditable && !saving,
+    } } });
+  }
 
   useEffect(() => {
     const port = browser.runtime.connect({ name: VIEW_PORT });
+    const connection: ViewConnection = { port, sequence: 0, revision: 0, state: null, posted: [] };
+    connectionRef.current = connection;
     port.onMessage.addListener((message: unknown) => {
+      if (connectionRef.current !== connection) return;
       try {
-        setState(decodeViewMessage(message).state);
+        const decoded = decodeViewMessage(message);
+        if (decoded.kind === "state") {
+          if (decoded.revision <= connection.revision) return;
+          connection.revision = decoded.revision;
+          connection.state = decoded.state;
+        } else {
+          const index = connection.posted.findIndex((entry) => entry.command.sequence === decoded.sequence);
+          if (index < 0) throw new Error("Background acknowledged an unknown command");
+          if (decoded.outcome.kind === "Rejected") {
+            connection.posted.splice(index, 1);
+            setNotice(failureContent(decoded.outcome.failure));
+          } else {
+            connection.posted[index].revision = decoded.revision;
+          }
+        }
+        renderView(connection);
       } catch (error) {
         setNotice(failureContent(popupFailure(error)));
       }
     });
-    void command({ kind: "activate" }).then((result) => {
-      if (result.kind === "failure") setNotice(failureContent(result.failure));
+    port.onDisconnect.addListener(() => {
+      if (connectionRef.current !== connection) return;
+      connectionRef.current = null;
+      setNotice(failureContent(popupFailure(new Error("Capture connection closed. Reopen the popup."))));
     });
-    return () => port.disconnect();
+    void command({ kind: "activate" }).then((result) => {
+      if (connectionRef.current === connection && result.kind === "failure") setNotice(failureContent(result.failure));
+    });
+    return () => {
+      if (connectionRef.current === connection) connectionRef.current = null;
+      port.disconnect();
+    };
   }, []);
+
+  function post(sent: Omit<Extract<CaptureViewCommand, { kind: "set_destination" }>, "sequence"> | Omit<Extract<CaptureViewCommand, { kind: "save" }>, "sequence">): LibraryChooserAdmission {
+    const connection = connectionRef.current;
+    if (connection === null || connection.state?.view.kind !== "draft" || connection.state.view.draft.id !== sent.draftId) return "Rejected";
+    if (sent.kind === "set_destination" && (!connection.state.view.draft.destinationsEditable || connection.posted.some((entry) => entry.command.kind === "save"))) return "Rejected";
+    if (sent.kind === "save" && (connection.state.view.draft.phase.kind !== "draft" || connection.state.view.draft.resumable)) return "Rejected";
+    const command: CaptureViewCommand = { ...sent, sequence: connection.sequence + 1 };
+    try {
+      connection.port.postMessage(command);
+    } catch (error) {
+      setNotice(failureContent(popupFailure(error)));
+      return "Rejected";
+    }
+    connection.sequence = command.sequence;
+    connection.posted.push({ command, revision: null });
+    setNotice(null);
+    renderView(connection);
+    return "Accepted";
+  }
 
   function send(sent: CaptureCommand) {
     setNotice(null);
@@ -85,11 +168,13 @@ function Popup() {
   // is observed by the background (permissions.onAdded), which waits for it
   // and then continues without us. A denial fires nothing there and keeps
   // the draft; the `false` here is its only notice.
-  function sendWithOrigins(sent: Exclude<CaptureCommand, { kind: "activate" | "set_destinations" | "search_destinations" }>) {
+  function sendWithOrigins(sent: Exclude<CaptureCommand, { kind: "activate" | "list_destinations" | "retry_destinations" }> | { kind: "save" }) {
     if (state === null) return;
     const origins = [...state.requiredOrigins];
     const hasDraft = state.view.kind === "draft";
-    send(sent);
+    if (sent.kind === "save") {
+      if (state.view.kind !== "draft" || post({ kind: "save", draftId: state.view.draft.id }) === "Rejected") return;
+    } else send(sent);
     if (origins.length === 0) return;
     void browser.permissions.request({ origins }).then(
       (granted) => {
@@ -180,9 +265,11 @@ function Popup() {
 
       {draft !== null ? (
         <Destinations
-          selected={draft.destinations}
-          enabled={connected && phase?.kind === "draft" && !draft.resumable}
-          onFailure={(failure) => setNotice(failureContent(failure))}
+          key={draft.id}
+          draft={draft}
+          accountStamp={connection.kind === "connected" ? connection.account.userHandle : connection.kind}
+          onCommit={(destination, included) => post({ kind: "set_destination", draftId: draft.id, destination, included })}
+          onRetry={() => send({ kind: "retry_destinations" })}
         />
       ) : null}
 
@@ -273,80 +360,59 @@ function Popup() {
   );
 }
 
-/**
- * The additional-library trigger and its inline chooser. It runs the shared
- * destination search over the background (sendMessage cannot be aborted; the
- * search's generation drops stale replies) and turns a toggle into the whole
- * next selection for the background. Toggles are serialized: each is computed
- * from the selection the background last pushed, so the chooser stays busy
- * from a toggle until the next pushed selection arrives (every push decodes
- * into a fresh array) or the command fails.
- */
+/** The inline draft adapter. The background owns accepted deltas and storage;
+    this surface owns disclosure and the shared chooser owns query/focus. */
 function Destinations({
-  selected,
-  enabled,
-  onFailure,
+  draft,
+  accountStamp,
+  onCommit,
+  onRetry,
 }: {
-  selected: readonly LibraryDestinationSelection[];
-  enabled: boolean;
-  onFailure: (failure: CaptureFailure) => void;
+  draft: CaptureDraftView;
+  accountStamp: string;
+  onCommit: (destination: LibraryDestinationSelection, included: boolean) => LibraryChooserAdmission;
+  onRetry: () => void;
 }) {
   const regionId = useId();
   const regionRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const [toggledFrom, setToggledFrom] = useState<
-    readonly LibraryDestinationSelection[] | null
-  >(null);
-  const search = useLibraryDestinationSearch<CaptureFailure>({
+  const read = useCallback(async () => {
+    const result = await command({ kind: "list_destinations" });
+    if (result.kind === "failure") return result;
+    if (result.kind === "catalog") return { kind: "catalog" as const, destinations: result.catalog.data };
+    return { kind: "failure" as const, failure: popupFailure(new Error("library list answered without a catalog")) };
+  }, []);
+  const catalog = useLibraryDestinationCatalog<CaptureFailure>({
     active: open,
-    search: ({ q, cursor }) =>
-      command({ kind: "search_destinations", q, cursor }).then((result) =>
-        result.kind === "state"
-          ? { kind: "failure", failure: popupFailure(new Error("search answered without a page")) }
-          : result,
-      ),
+    changeStamp: accountStamp,
+    read,
   });
+  const enabled = draft.destinationsEditable;
+  const selected = draft.intendedDestinations;
 
-  // A chooser that loses its enablement closes for good: it never reopens
-  // unasked. Focus it held is not moved; the trigger is disabled with it.
   useEffect(() => {
-    if (enabled) return;
-    setOpen(false);
+    if (!enabled) setOpen(false);
   }, [enabled]);
 
   useEffect(() => {
     if (open) regionRef.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
   }, [open]);
 
-  function toggle(id: string) {
-    const added = search.results.find((destination) => destination.id === id);
-    const destinations = selected.some((destination) => destination.id === id)
-      ? selected.filter((destination) => destination.id !== id)
-      : added === undefined
-        ? null
-        : [...selected, { id: added.id, name: added.name }];
-    if (destinations === null) return;
-    setToggledFrom(selected);
-    void command({ kind: "set_destinations", destinations }).then((result) => {
-      if (result.kind !== "failure") return;
-      setToggledFrom(null);
-      onFailure(result.failure);
-    });
-  }
-
-  const selectedIds = new Set(selected.map((destination) => destination.id));
-  const others = search.results.filter((destination) => !selectedIds.has(destination.id));
-  const count = selected.length + others.length;
+  const availableIds = new Set(catalog.destinations?.map((destination) => destination.id));
+  const destinations = catalog.destinations === null ? [] : [
+    ...catalog.destinations,
+    ...selected.filter((destination) => !availableIds.has(destination.id)),
+  ];
+  const confirmedIds = new Set(draft.destinations.map((destination) => destination.id));
+  const intendedIds = new Set(selected.map((destination) => destination.id));
 
   return (
     <section className={styles.destinations}>
-      {/* The chooser closes through its trigger only: Firefox closes a
-          browser-action popup on Escape at the chrome level, before any key
-          event reaches this document. */}
+      {/* Firefox owns Escape for a browser-action popup, before content sees it. */}
       <LibraryDestinationTrigger
-        label="Libraries"
-        accessibleLabel="Libraries"
-        emptyLabel="No additional libraries"
+        label="libraries"
+        accessibleLabel="libraries"
+        emptyLabel="none"
         selected={selected}
         expanded={open}
         disabled={!enabled}
@@ -356,61 +422,38 @@ function Destinations({
       {open ? (
         <div id={regionId} ref={regionRef} className={styles.chooser}>
           <LibraryChooser
-            query={search.query}
-            onQueryChange={search.setQuery}
-            searchPlaceholder="Search libraries"
-            searchLabel="Search libraries"
-            listLabel="Library options"
-            selectedGroup={{
-              label: "Selected",
-              items: selected.map((destination) => ({
-                id: destination.id,
-                name: destination.name,
-                selected: true,
-                interaction: { kind: "Enabled" },
-              })),
+            items={destinations.map((destination) => {
+              const confirmed = confirmedIds.has(destination.id);
+              const intended = intendedIds.has(destination.id);
+              return {
+                ...destination,
+                confirmed: { included: confirmed ? 1 : 0, total: 1 },
+                intended: { included: intended ? 1 : 0, total: 1 },
+                progress: confirmed === intended ? "Settled" : "Pending",
+                exclusions: [],
+                provenance: [],
+                note: availableIds.has(destination.id) ? undefined : "unavailable",
+                action: { kind: "Set", included: !intended, targetCount: 1 },
+              };
+            })}
+            onCommit={({ choiceId, included }) => {
+              const destination = destinations.find((entry) => entry.id === choiceId);
+              return destination === undefined ? "Rejected" : onCommit(destination, included);
             }}
-            otherGroup={{
-              label: "Other libraries",
-              items: others.map((destination) => ({
-                id: destination.id,
-                name: destination.name,
-                selected: false,
-                interaction: { kind: "Enabled" },
-              })),
-            }}
-            onToggle={toggle}
-            busy={toggledFrom === selected}
-            loading={search.loading}
-            status={
-              search.loading
-                ? "Loading libraries…"
-                : search.loadingMore
-                  ? "Loading more libraries…"
-                  : count === 1
-                    ? "1 library"
-                    : `${count} libraries`
-            }
-            emptyState={
-              search.loading || count > 0
-                ? null
-                : search.normalizedQuery === ""
-                  ? "No other libraries you can add to."
-                  : "No libraries match your search."
-            }
-            error={
-              search.failure === null
-                ? null
-                : { content: failureContent(search.failure), onRetry: search.retry }
-            }
-            create={null}
-            loadMore={
-              search.nextCursor === null
-                ? null
-                : { pending: search.loadingMore, onLoadMore: search.loadMore }
-            }
+            loading={catalog.loading}
+            summary={`selected libraries: ${selected.length === 0 ? "none" : selected.map((destination) => destination.name).join(", ")}`}
+            emptyInventory="no libraries yet"
+            error={catalog.failure === null ? null : { content: failureContent(catalog.failure), onRetry: catalog.retry }}
+            creation={null}
           />
         </div>
+      ) : null}
+      {draft.destinationFailure !== null ? (
+        <FeedbackNotice
+          content={failureContent(draft.destinationFailure, "couldn’t store library choices")}
+          announcement="Assertive"
+          actions={[{ label: "retry", onClick: onRetry }]}
+        />
       ) : null}
       <p className={styles.fine}>Members of selected libraries can read this item.</p>
     </section>
@@ -477,9 +520,22 @@ function patternHost(pattern: string): string {
 // variants are contract failures; the destination page reuses its one decoder.
 
 function decodeViewMessage(raw: unknown): CaptureViewMessage {
-  const push = expectExactRecord(raw, ["kind", "state"], "view message");
+  const kind = expectOneOf(expectRecord(raw, "view message").kind, ["state", "acknowledgement"], "view message.kind");
+  if (kind === "acknowledgement") {
+    const message = expectExactRecord(raw, ["kind", "sequence", "revision", "outcome"], "acknowledgement");
+    const outcome = expectOneOf(expectRecord(message.outcome, "outcome").kind, ["Accepted", "Rejected"], "outcome.kind");
+    const result = expectExactRecord(message.outcome, outcome === "Accepted" ? ["kind"] : ["kind", "failure"], "outcome");
+    return {
+      kind,
+      sequence: expectPositiveInteger(message.sequence, "acknowledgement.sequence"),
+      revision: expectPositiveInteger(message.revision, "acknowledgement.revision"),
+      outcome: outcome === "Accepted" ? { kind: outcome } : { kind: outcome, failure: decodeFailure(result.failure, "outcome.failure") },
+    };
+  }
+  const push = expectExactRecord(raw, ["kind", "revision", "state"], "view message");
   return {
-    kind: expectOneOf(push.kind, ["state"], "view message.kind"),
+    kind,
+    revision: expectPositiveInteger(push.revision, "view message.revision"),
     state: decodeViewState(push.state),
   };
 }
@@ -487,7 +543,7 @@ function decodeViewMessage(raw: unknown): CaptureViewMessage {
 function decodeCommandResult(raw: unknown): CommandResult {
   const kind = expectOneOf(
     expectRecord(raw, "command result").kind,
-    ["state", "page", "failure"],
+    ["state", "catalog", "failure"],
     "command result.kind",
   );
   switch (kind) {
@@ -495,12 +551,12 @@ function decodeCommandResult(raw: unknown): CommandResult {
       const result = expectExactRecord(raw, ["kind", "state"], "command result");
       return { kind, state: decodeViewState(result.state) };
     }
-    case "page": {
-      const result = expectExactRecord(raw, ["kind", "state", "page"], "command result");
+    case "catalog": {
+      const result = expectExactRecord(raw, ["kind", "state", "catalog"], "command result");
       return {
         kind,
         state: decodeViewState(result.state),
-        page: decodeWritableLibraryDestinationPage(result.page),
+        catalog: decodeWritableLibraryDestinationCatalog(result.catalog),
       };
     }
     case "failure": {
@@ -582,7 +638,7 @@ function decodeView(raw: unknown): CaptureViewState["view"] {
 }
 
 function decodeDraft(raw: unknown): CaptureDraftView {
-  const draft = expectExactRecord(raw, ["id", "target", "phase", "destinations", "resumable"], "draft");
+  const draft = expectExactRecord(raw, ["id", "target", "phase", "destinations", "intendedDestinations", "destinationsEditable", "destinationFailure", "resumable"], "draft");
   return {
     id: expectNonemptyString(draft.id, "draft.id"),
     target: decodeTarget(draft.target),
@@ -592,6 +648,13 @@ function decodeDraft(raw: unknown): CaptureDraftView {
       (value, index) => decodeLibraryDestinationSelection(value, `draft.destinations[${index}]`),
       "draft.destinations",
     ),
+    intendedDestinations: expectArray(
+      draft.intendedDestinations,
+      (value, index) => decodeLibraryDestinationSelection(value, `draft.intendedDestinations[${index}]`),
+      "draft.intendedDestinations",
+    ),
+    destinationsEditable: expectBoolean(draft.destinationsEditable, "draft.destinationsEditable"),
+    destinationFailure: draft.destinationFailure === null ? null : decodeFailure(draft.destinationFailure, "draft.destinationFailure"),
     resumable: expectBoolean(draft.resumable, "draft.resumable"),
   };
 }

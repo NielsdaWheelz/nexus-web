@@ -9,6 +9,7 @@ import { listRowStatus } from "@/lib/api/useServerList";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   FeedbackNotice,
+  useFeedback,
   type FeedbackAnnouncement,
   type FeedbackActions,
   type FeedbackContent,
@@ -16,7 +17,7 @@ import {
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
-import { addLibraryPlacement } from "@/lib/libraries/libraryPlacement";
+import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import Button from "@/components/ui/Button";
 import type { AppliedFilterChip } from "@/components/ui/AppliedFilters";
 import RadioGroup from "@/components/ui/RadioGroup";
@@ -122,6 +123,8 @@ export default function LibraryPaneBody() {
 }
 
 function LibraryPane({ id }: { readonly id: string }) {
+  const placementOwner = useLibraryPlacementController();
+  const feedback = useFeedback();
   const paneRuntime = usePaneRuntime();
   const isPaneActive = usePaneIsActive();
   const paneId = paneRuntime?.paneId ?? `library-${id}`;
@@ -803,14 +806,25 @@ function LibraryPane({ id }: { readonly id: string }) {
             paneId={paneId}
             isActive={isPaneActive}
             accept={async (target) => {
-              await addLibraryPlacement({
-                target: { kind: target.kind, id: suggestionTargetId(target) },
-                destination: {
-                  kind: "Library",
-                  library: { id: currentLibrary.id, name: currentLibrary.name },
-                },
-              });
-              return "Accepted";
+              const targets = [{ kind: target.kind, id: suggestionTargetId(target) }];
+              const release = await placementOwner.ensurePlacements(targets);
+              try {
+                const admission = placementOwner.admitPlacement({
+                  targets,
+                  operation: "Add",
+                  destination: {
+                    kind: "Library",
+                    library: { id: currentLibrary.id, name: currentLibrary.name },
+                  },
+                });
+                if (admission.kind === "Rejected") {
+                  feedback.publish({ kind: "Hud", content: admission.feedback });
+                  return "Retained";
+                }
+                return await admission.completion ? "Accepted" : "Retained";
+              } finally {
+                release();
+              }
             }}
           />
         ) : null}

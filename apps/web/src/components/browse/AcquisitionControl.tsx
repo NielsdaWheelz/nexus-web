@@ -16,10 +16,11 @@ import { apiCommand204 } from "@/lib/api/client";
 import { absent, present, type Presence } from "@/lib/api/presence";
 import { isAbortError } from "@/lib/errors";
 import {
-  createLibrary,
-  searchWritableLibraryDestinations,
+  listWritableLibraryDestinations,
 } from "@/lib/libraries/client";
 import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
+import { setLibraryDestination } from "@/lib/libraries/destinationSelection";
+import { useDraftLibraryCreation } from "@/lib/libraries/useDraftLibraryCreation";
 import { usePlayerCommands } from "@/lib/player/playerRuntime";
 import {
   modeledApiError,
@@ -88,50 +89,27 @@ export default function AcquisitionControl({
   const { stopPreviewAudio } = usePlayerCommands();
   const panelId = useId();
   const chevronRef = useRef<HTMLButtonElement>(null);
-  const createIds = useRef(new Map<string, string>());
   const [pickerOpen, setPickerOpen] = useState(false);
   const [selected, setSelected] = useState<
     readonly LibraryDestinationSelection[]
   >([]);
-  const [creating, setCreating] = useState(false);
+  const creation = useDraftLibraryCreation(previewTarget ?? panelId);
+  const creating = creation.creating;
   const [busy, setBusy] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [frozen, setFrozen] = useState<FrozenCommand | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [conflict, setConflict] = useState<Conflict | null>(null);
 
-  // A retried create reuses the library id minted for that name.
-  const createDestination = async (name: string) => {
-    setCreating(true);
-    const normalized = name.trim();
-    const id = createIds.current.get(normalized) ?? crypto.randomUUID();
-    createIds.current.set(normalized, id);
-    try {
-      const library = await createLibrary({ libraryId: id, name: normalized });
-      createIds.current.delete(normalized);
-      return library;
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  // Library access changed: keep only still-writable destinations, reopen.
+  // Refresh names and access; unavailable choices remain explicitly removable.
   const reviewDestinations = async (requestId?: string) => {
     setReviewing(true);
     setFailure(null);
     try {
       const writable = new Map<string, LibraryDestinationSelection>();
-      let cursor: string | null = null;
-      do {
-        const page = await searchWritableLibraryDestinations({
-          cursor,
-          limit: 50,
-        });
-        for (const library of page.data) writable.set(library.id, library);
-        cursor = page.page.next_cursor;
-      } while (cursor !== null);
+      for (const library of await listWritableLibraryDestinations()) writable.set(library.id, library);
       setSelected((current) =>
-        current.flatMap((library) => writable.get(library.id) ?? []),
+        current.map((library) => writable.get(library.id) ?? library),
       );
       setPickerOpen(true);
       setFailure({ kind: "Permission", requestId });
@@ -337,7 +315,7 @@ export default function AcquisitionControl({
           aria-expanded={pickerOpen}
           aria-controls={panelId}
           disabled={
-            busy || creating || reviewing || frozen !== null || unavailable
+            busy || reviewing || frozen !== null || unavailable
           }
           onClick={() => setPickerOpen((open) => !open)}
         >
@@ -351,18 +329,20 @@ export default function AcquisitionControl({
         onClose={() => setPickerOpen(false)}
         anchor={() => chevronRef.current}
         title="Also add to"
-        selectedGroupLabel="Selected"
-        selection={{ kind: "Item", selected, onChange: setSelected }}
-        interaction={
-          creating
-            ? { kind: "Creating" }
-            : busy || frozen !== null
-              ? { kind: "Disabled" }
-              : { kind: "Enabled" }
-        }
-        onCreateDestination={createDestination}
+        selection={{ kind: "Item", selected, onSet: (change) => {
+          if (busy || frozen !== null) return "Rejected";
+          setSelected((current) => setLibraryDestination(current, change));
+          return "Accepted";
+        } }}
+        interaction={busy || frozen !== null ? { kind: "Disabled" } : { kind: "Enabled" }}
+        onCreateDestination={(name) => creation.admit({ name, scope: panelId, onCreated: (destination) => setSelected((current) => setLibraryDestination(current, { destination, included: true })) })}
+        pendingCreateNames={creation.pendingNames}
+        error={creation.error}
+        status={creation.status}
         panelId={panelId}
       />
+      {!pickerOpen && creation.status ? <p role="status">{creation.status}</p> : null}
+      {!pickerOpen && creation.error ? <FeedbackNotice content={creation.error.content} actions={creation.error.onRetry ? [{ label: "retry", onClick: creation.error.onRetry }] : undefined} announcement="Polite" /> : null}
       {failure ? (
         <FeedbackNotice
           content={{

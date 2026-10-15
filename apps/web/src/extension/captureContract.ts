@@ -10,7 +10,7 @@
 
 import { decodePresence, presenceValueOr, type Presence } from "@/lib/api/presence";
 import type {
-  LibraryDestinationPage,
+  LibraryDestinationCatalog,
   LibraryDestinationSelection,
 } from "@/lib/libraries/destinationContract";
 import {
@@ -58,6 +58,10 @@ export interface CaptureDraftView {
   phase: CapturePhase;
   /** selected additional libraries; empty is valid */
   destinations: readonly LibraryDestinationSelection[];
+  /** stored selection with every admitted, not-yet-stored delta applied */
+  intendedDestinations: readonly LibraryDestinationSelection[];
+  destinationsEditable: boolean;
+  destinationFailure: CaptureFailure | null;
   /** true after browser restart: the popup shows explicit "resume" before any network work */
   resumable: boolean;
 }
@@ -83,21 +87,30 @@ export type CaptureViewState = {
 export type CaptureCommand =
   | { kind: "activate" }                       // popup opened by toolbar: pin active tab if no draft is active
   | { kind: "resume" }                         // explicit resume of a restart-recovered draft
-  | { kind: "set_destinations"; destinations: readonly LibraryDestinationSelection[] }
-  | { kind: "search_destinations"; q: string; cursor: string | null }
+  | { kind: "list_destinations" }
   | { kind: "login" }                          // hosted login; background refocuses window and reopens the popup
-  | { kind: "save" }                           // popup has already requested `requiredOrigins`
+  | { kind: "retry_destinations" }
   | { kind: "retry" }                          // same operation key; no new identity
   | { kind: "discard" }
   | { kind: "disconnect" };                    // confirmed revocation only forgets the credential
 
 export type CommandResult =
   | { kind: "state"; state: CaptureViewState }
-  | { kind: "page"; state: CaptureViewState; page: LibraryDestinationPage }   // search_destinations only
+  | { kind: "catalog"; state: CaptureViewState; catalog: LibraryDestinationCatalog }
   | { kind: "failure"; failure: CaptureFailure; state: CaptureViewState };
 
-/** background → popup push over `runtime.connect({ name: "nexus-capture-view" })` */
-export type CaptureViewMessage = { kind: "state"; state: CaptureViewState };
+/** Edits and their save barrier share this ordered port. Every post consumes
+    the next sequence, including a refusal. No edit waits in the popup. */
+export type CaptureViewCommand =
+  | { kind: "set_destination"; draftId: string; sequence: number;
+      destination: LibraryDestinationSelection; included: boolean }
+  | { kind: "save"; draftId: string; sequence: number };
+
+/** Acknowledgements retire popup projection only once their snapshot is installed. */
+export type CaptureViewMessage =
+  | { kind: "state"; revision: number; state: CaptureViewState }
+  | { kind: "acknowledgement"; sequence: number; revision: number;
+      outcome: { kind: "Accepted" } | { kind: "Rejected"; failure: CaptureFailure } };
 
 /** the port the popup connects for view-state pushes */
 export const VIEW_PORT = "nexus-capture-view";

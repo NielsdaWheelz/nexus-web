@@ -4,6 +4,47 @@ import {
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
+import type { LibraryPlacementBlockedReason, PlacementRefusalCode } from "@/lib/libraries/libraryPlacement";
+
+export function libraryPlacementBlockedReasonMessage(reason: LibraryPlacementBlockedReason): string {
+  switch (reason) {
+    case "RequiresAdmin": return "only a library admin can change this placement";
+    case "RequiresSubscription": return "subscribe to this podcast before adding it to a library";
+    case "SystemManaged": return "this system library is managed automatically";
+    case "Inherited": return "this placement is inherited and cannot be removed here";
+  }
+}
+
+export function libraryCreateRefusalMessage(
+  code: "E_NAME_INVALID" | "E_INVALID_REQUEST" | "E_FORBIDDEN",
+  title: string,
+): FeedbackContent {
+  switch (code) {
+    case "E_NAME_INVALID":
+    case "E_INVALID_REQUEST":
+      return { tone: "Warning", title, message: "use a non-reserved library name between 1 and 100 characters." };
+    case "E_FORBIDDEN":
+      return { tone: "Warning", title, message: "your access changed. sign in and review your libraries." };
+  }
+}
+
+export function libraryPlacementRefusalMessage(code: PlacementRefusalCode): FeedbackContent {
+  let message: string;
+  switch (code) {
+    case "E_MEDIA_NOT_FOUND":
+    case "E_NOT_FOUND": message = "this item is no longer available."; break;
+    case "E_LIBRARY_NOT_FOUND": message = "this library is no longer available."; break;
+    case "E_FORBIDDEN":
+    case "E_LIBRARY_FORBIDDEN":
+    case "E_DEFAULT_LIBRARY_FORBIDDEN":
+    case "E_INVALID_REQUEST": message = "library access changed. review the current libraries."; break;
+    case "E_MEDIA_DELETING": message = "this item is being removed and cannot be changed right now."; break;
+    case "E_MEDIA_LAST_REFERENCE": message = "this item must remain in at least one library."; break;
+    case "E_PODCAST_SUBSCRIPTION_REQUIRED": message = "subscribe to this podcast before adding it to a library."; break;
+    case "E_PODCAST_REPLACES_EPISODES": message = "remove individually filed episodes before adding this podcast to the library."; break;
+  }
+  return { tone: "Warning", title: "library change refused", message };
+}
 
 export type LibraryRequest =
   | "LibraryCollectionRead"
@@ -14,8 +55,6 @@ export type LibraryRequest =
   | "LibraryMutation"
   | "InvitationMutation"
   | "EntryMutation"
-  | "PlacementMutation"
-  | "LecternMutation"
   | "PodcastMutation";
 
 const MUTATIONS: Record<LibraryRequest, boolean> = {
@@ -27,8 +66,6 @@ const MUTATIONS: Record<LibraryRequest, boolean> = {
   LibraryMutation: true,
   InvitationMutation: true,
   EntryMutation: true,
-  PlacementMutation: true,
-  LecternMutation: true,
   PodcastMutation: true,
 };
 
@@ -41,8 +78,6 @@ const ENTRY_REQUESTS: Record<LibraryRequest, boolean> = {
   LibraryMutation: false,
   InvitationMutation: false,
   EntryMutation: true,
-  PlacementMutation: true,
-  LecternMutation: true,
   PodcastMutation: true,
 };
 
@@ -55,8 +90,6 @@ const LIBRARY_SCOPED_MUTATIONS: Record<LibraryRequest, boolean> = {
   LibraryMutation: true,
   InvitationMutation: true,
   EntryMutation: true,
-  PlacementMutation: true,
-  LecternMutation: false,
   PodcastMutation: true,
 };
 
@@ -72,6 +105,13 @@ export function libraryRequestErrorMessage(
   const transport = apiTransportFeedback(error, title);
   if (transport) return transport;
   switch (error.code) {
+    case "E_UNAUTHENTICATED":
+      return {
+        tone: "Warning",
+        title: "sign in to choose libraries",
+        message: "open nexus, sign in, then share again.",
+        requestId,
+      };
     case "E_LIBRARY_NOT_FOUND":
       if (request === "LibraryCreate") throw error;
       return {
@@ -150,61 +190,8 @@ export function libraryRequestErrorMessage(
         message: "This invitation is no longer pending. Refresh invitations and try again.",
         requestId,
       };
-    case "E_MEDIA_LAST_REFERENCE":
-      if (request !== "EntryMutation" && request !== "PlacementMutation") {
-        throw error;
-      }
-      return {
-        tone: "Danger",
-        title,
-        message: "This item must remain in at least one library.",
-        requestId,
-      };
-    case "E_PODCAST_REPLACES_EPISODES":
-      if (request !== "PlacementMutation") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message:
-          "Remove individually filed episodes before adding this podcast to the library.",
-        requestId,
-      };
-    case "E_PODCAST_SUBSCRIPTION_REQUIRED":
-      if (request !== "PlacementMutation") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "Subscribe to this podcast before adding it to a library.",
-        requestId,
-      };
-    case "E_MEDIA_DELETING":
-      if (!ENTRY_REQUESTS[request] || request === "EntryRead") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "This item is being removed and can’t be changed right now.",
-        requestId,
-      };
-    case "E_MEDIA_NOT_READY":
-      if (!ENTRY_REQUESTS[request] || request === "EntryRead") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "This item is still preparing. Wait for it to settle, then try again.",
-        requestId,
-      };
-    case "E_LIMIT":
-      if (request !== "LecternMutation") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "Lectern is full. Remove an item, then try again.",
-        requestId,
-      };
     case "E_TIMEOUT":
-      if (request !== "LecternMutation" && request !== "PodcastMutation") {
-        throw error;
-      }
+      if (request !== "PodcastMutation") throw error;
       return {
         tone: "Danger",
         title,
@@ -212,6 +199,7 @@ export function libraryRequestErrorMessage(
         requestId,
       };
     case "E_INVALID_REQUEST":
+      if (request === "LibraryCreate") return libraryCreateRefusalMessage(error.code, title);
       if (!MUTATIONS[request]) throw error;
       return {
         tone: "Danger",

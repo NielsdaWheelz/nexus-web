@@ -7,7 +7,7 @@ route that serializes one dumps ``by_alias=True``.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
@@ -17,7 +17,6 @@ from nexus.schemas.contributors import MediaAuthorsOut, MediaAuthorsPutRequest
 from nexus.schemas.library import LibraryPlacementOptionOut
 from nexus.schemas.media import (
     MediaDeleteResult,
-    MediaLibrariesRequest,
     MediaOut,
     RefreshSourceRequest,
     SourceRefreshAdmission,
@@ -156,40 +155,6 @@ def get_media_libraries(
         db, viewer_id=viewer.user_id, target=library_entries.media_target(media_id)
     )
     return Data(data=rows)
-
-
-@router.post("/media/{media_id}/libraries", status_code=204)
-def add_media_libraries(
-    media_id: UUID, body: MediaLibrariesRequest, viewer: ViewerDep, db: DbSession
-) -> Response:
-    library_entries.ensure_media_in_libraries_for_viewer(
-        db, viewer.user_id, media_id, body.library_ids
-    )
-    return Response(status_code=204)
-
-
-@router.put("/media/{media_id}/saved-in-nexus", status_code=204)
-def add_media_saved_in_nexus(media_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
-    library_entries.ensure_media_saved_in_nexus_for_viewer(
-        db, viewer_id=viewer.user_id, media_id=media_id
-    )
-    return Response(status_code=204)
-
-
-@router.delete("/media/{media_id}/saved-in-nexus", status_code=204)
-def remove_media_saved_in_nexus(media_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
-    library_entries.ensure_media_absent_from_saved_in_nexus_for_viewer(
-        db, viewer_id=viewer.user_id, media_id=media_id
-    )
-    return Response(status_code=204)
-
-
-@router.delete("/media/{media_id}/libraries/{library_id}", status_code=204)
-def remove_media_library(
-    media_id: UUID, library_id: UUID, viewer: ViewerDep, db: DbSession
-) -> Response:
-    library_entries.remove_media_from_library(db, viewer.user_id, media_id, library_id)
-    return Response(status_code=204)
 
 
 @router.post("/media/{media_id}/refresh", status_code=202)

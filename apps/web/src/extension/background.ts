@@ -34,20 +34,20 @@
 import { isAbortError } from "@/lib/errors";
 import {
   decodeLibraryDestinationSelection,
-  type LibraryDestinationSelection,
 } from "@/lib/libraries/destinationContract";
+import { setLibraryDestination } from "@/lib/libraries/destinationSelection";
 import {
   UPLOAD_VERIFICATION_CODES,
   type PublishedUpload,
   type UploadResponse,
 } from "@/extension/uploadSessionContract";
 import {
-  expectArray,
+  expectBoolean,
   expectExactRecord,
-  expectNullableString,
+  expectNonemptyString,
   expectOneOf,
+  expectPositiveInteger,
   expectRecord,
-  expectString,
 } from "@/lib/validation";
 import { captureClient, isFailureCode, putCaptureBytes, type CaptureClient } from "@/extension/captureClient";
 import {
@@ -68,6 +68,8 @@ import {
   type CapturePhase,
   type CaptureTargetView,
   type CaptureViewState,
+  type CaptureViewCommand,
+  type CaptureViewMessage,
   type CommandResult,
   type DocumentKind,
   type DocumentRead,
@@ -133,6 +135,13 @@ let contentWaiter: {
   resolve: (port: browser.runtime.Port) => void;
 } | null = null;
 const viewPorts = new Set<browser.runtime.Port>();
+let viewRevision = 0;
+type DestinationEdit = Extract<CaptureViewCommand, { kind: "set_destination" }>;
+const destinationEdits: DestinationEdit[] = [];
+let destinationWrite: Promise<void> | null = null;
+let destinationFailure: CaptureFailure | null = null;
+let destinationsClosed = false;
+let abandoningDestinations = false;
 
 // Firefox never persists menu items of a persistent background page: create on
 // every load, unconditionally.
@@ -196,12 +205,53 @@ async function attachView(port: browser.runtime.Port): Promise<void> {
   viewPorts.add(port);
   port.onDisconnect.addListener(() => viewPorts.delete(port));
   await ready;
-  try {
-    await ensureSession();
-  } catch (error) {
-    // the popup shows signed-out; the next open tries again
-    await recordFailure(error);
-  }
+  let sequence = 0;
+  port.onMessage.addListener((raw: unknown) => {
+    let sent: CaptureViewCommand;
+    try {
+      sent = decodeViewCommand(raw);
+    } catch {
+      // A malformed port has no trustworthy sequence to acknowledge.
+      port.disconnect();
+      return;
+    }
+    let result: Promise<void>;
+    try {
+      if (sent.sequence !== sequence + 1) throw failure("E_CAPTURE_SEQUENCE", "Library choices arrived out of order. Reopen the popup.");
+      sequence = sent.sequence;
+      const current = requireDraft();
+      if (sent.draftId !== current.id) throw failure("E_CAPTURE_DRAFT_CHANGED", "This capture changed. Reopen the popup.");
+      requireSession();
+      if (current.phase.kind !== "draft" || resumable || abandoningDestinations) {
+        throw failure("E_CAPTURE_FROZEN", "Libraries cannot change once saving starts.");
+      }
+      if (sent.kind === "set_destination") {
+        if (destinationsClosed || active !== null) throw failure("E_CAPTURE_FROZEN", "Libraries cannot change once saving starts.");
+        destinationEdits.push(sent);
+        // Admission and its snapshot precede the first asynchronous store write.
+        result = Promise.resolve();
+        if (destinationFailure === null) void writeDestinationEdits();
+      } else {
+        if (destinationsClosed && !awaitingGrant) throw failure("E_CAPTURE_BUSY", "Nexus is still working on this capture.");
+        destinationsClosed = true;
+        result = exclusive(async (signal) => {
+          await writeDestinationEdits();
+          signal.throwIfAborted();
+          if (destinationFailure !== null) throw new CaptureFailureError(destinationFailure);
+          await save(signal);
+        }, true).finally(() => {
+          if (active === null && !abandoningDestinations) destinationsClosed = false;
+        });
+      }
+    } catch (error) {
+      result = Promise.reject(error);
+    }
+    void pushState();
+    void result.then(
+      () => acknowledge(port, sent.sequence, { kind: "Accepted" }),
+      async (error: unknown) => acknowledge(port, sent.sequence, { kind: "Rejected", failure: await recordFailure(error) }),
+    );
+  });
   await pushState();
 }
 
@@ -222,20 +272,20 @@ async function command(sent: CaptureCommand): Promise<CommandResult> {
     case "resume":
       await exclusive(resume, true);
       break;
-    case "set_destinations":
-      await setDestinations(sent.destinations);
-      break;
-    case "search_destinations":
+    case "list_destinations":
       return {
-        kind: "page",
-        page: await requireClient().searchDestinations(sent.q, sent.cursor),
+        kind: "catalog",
+        catalog: await requireClient().listDestinations(),
         state: await viewState(),
       };
     case "login":
       await login();
       break;
-    case "save":
-      await exclusive(save, true);
+    case "retry_destinations":
+      requireSession();
+      if (requireDraft().phase.kind !== "draft" || destinationsClosed) throw failure("E_CAPTURE_FROZEN", "Libraries cannot change once saving starts.");
+      destinationFailure = null;
+      await writeDestinationEdits();
       break;
     case "retry":
       await exclusive(retry, true);
@@ -253,33 +303,34 @@ async function command(sent: CaptureCommand): Promise<CommandResult> {
 function decodeCommand(raw: unknown): CaptureCommand {
   const kind = expectOneOf(
     expectRecord(raw, "command").kind,
-    ["activate", "resume", "set_destinations", "search_destinations", "login", "save", "retry", "discard", "disconnect"],
+    ["activate", "resume", "list_destinations", "retry_destinations", "login", "retry", "discard", "disconnect"],
     "command.kind",
   );
-  switch (kind) {
-    case "set_destinations": {
-      const sent = expectExactRecord(raw, ["kind", "destinations"], "command");
-      return {
-        kind,
-        destinations: expectArray(
-          sent.destinations,
-          (value, index) => decodeLibraryDestinationSelection(value, `command.destinations[${index}]`),
-          "command.destinations",
-        ),
-      };
-    }
-    case "search_destinations": {
-      const sent = expectExactRecord(raw, ["kind", "q", "cursor"], "command");
-      return {
-        kind,
-        q: expectString(sent.q, "command.q"),
-        cursor: expectNullableString(sent.cursor, "command.cursor"),
-      };
-    }
-    default:
-      expectExactRecord(raw, ["kind"], "command");
-      return { kind };
-  }
+  expectExactRecord(raw, ["kind"], "command");
+  return { kind };
+}
+
+function decodeViewCommand(raw: unknown): CaptureViewCommand {
+  const kind = expectOneOf(expectRecord(raw, "view command").kind, ["set_destination", "save"], "view command.kind");
+  const sent = expectExactRecord(raw, kind === "save"
+    ? ["kind", "draftId", "sequence"]
+    : ["kind", "draftId", "sequence", "destination", "included"], "view command");
+  const draftId = expectNonemptyString(sent.draftId, "view command.draftId");
+  const sequence = expectPositiveInteger(sent.sequence, "view command.sequence");
+  return kind === "save" ? { kind, draftId, sequence } : {
+    kind, draftId, sequence,
+    destination: decodeLibraryDestinationSelection(sent.destination, "view command.destination"),
+    included: expectBoolean(sent.included, "view command.included"),
+  };
+}
+
+async function acknowledge(
+  port: browser.runtime.Port,
+  sequence: number,
+  outcome: Extract<CaptureViewMessage, { kind: "acknowledgement" }>["outcome"],
+): Promise<void> {
+  const revision = await pushState();
+  postView(port, { kind: "acknowledgement", sequence, revision, outcome });
 }
 
 /** Runs one long command; a second one while it runs is refused. A command
@@ -289,70 +340,90 @@ function decodeCommand(raw: unknown): CaptureCommand {
 async function exclusive(run: (signal: AbortSignal) => Promise<void>, awaitsOrigins = false): Promise<void> {
   if (active !== null) {
     if (!awaitingGrant || !awaitsOrigins) throw failure("E_CAPTURE_BUSY", "Nexus is still working on this capture.");
-    active.controller.abort();
-    await active.settled;
-    active = null;
+    const previous = active;
+    previous.controller.abort();
+    await previous.settled;
+    if (active !== null && active !== previous) throw failure("E_CAPTURE_BUSY", "Nexus is still working on this capture.");
   }
   const controller = new AbortController();
-  const settled = run(controller.signal).catch((error: unknown) => {
+  const settled = Promise.resolve().then(() => run(controller.signal)).catch((error: unknown) => {
     if (!isAbortError(error)) throw error;
   });
-  active = { controller, settled };
+  const operation = { controller, settled };
+  active = operation;
   try {
     await settled;
   } finally {
-    active = null;
+    if (active === operation) {
+      active = null;
+      await pushState();
+    }
   }
 }
 
 /** Aborts the running command, waits for it to settle, records that nothing
     runs for the draft any more, then runs `run`. */
 async function interrupting(run: (signal: AbortSignal) => Promise<void>): Promise<void> {
+  destinationsClosed = true;
+  abandoningDestinations = true;
   if (active !== null) {
-    active.controller.abort();
-    await active.settled.catch(() => undefined);
-    active = null;
-    await recover();
+    const previous = active;
+    previous.controller.abort();
+    await previous.settled.catch(() => undefined);
+    if (active === previous) active = null;
   }
-  await exclusive(run);
+  await abandonDestinationEdits();
+  await recover();
+  try {
+    await exclusive(run);
+  } finally {
+    destinationsClosed = false;
+    await pushState();
+  }
 }
 
 // --- view state -------------------------------------------------------------
 
 async function viewState(): Promise<CaptureViewState> {
-  return {
+  // Capture every fact before the permission read: an older read must not
+  // acquire newer state under an older pushed revision.
+  const current = draft;
+  const state = {
     connection:
       session !== null
-        ? { kind: "connected", account: session.account }
+        ? { kind: "connected" as const, account: session.account }
         : revocationFailure !== null
-          ? { kind: "revocation_failed", failure: revocationFailure }
-          : { kind: "signed_out" },
-    requiredOrigins: await requiredOrigins(),
+          ? { kind: "revocation_failed" as const, failure: revocationFailure }
+          : { kind: "signed_out" as const },
     view:
-      draft !== null
+      current !== null
         ? {
-            kind: "draft",
+            kind: "draft" as const,
             draft: {
-              id: draft.id,
-              target: draft.view,
-              phase: draft.phase,
-              destinations: draft.destinations,
+              id: current.id,
+              target: current.view,
+              phase: current.phase,
+              destinations: current.destinations,
+              intendedDestinations: destinationEdits.reduce(setLibraryDestination, current.destinations),
+              destinationsEditable: session !== null && (current.account === null || current.account.userHandle === session.account.userHandle) && current.phase.kind === "draft" && !resumable && !destinationsClosed && active === null,
+              destinationFailure,
               resumable,
             },
           }
         : unsupported !== null
-          ? { kind: "unsupported", reason: unsupported }
-          : { kind: "empty" },
+          ? { kind: "unsupported" as const, reason: unsupported }
+          : { kind: "empty" as const },
   };
+  return { ...state, requiredOrigins: await requiredOrigins(current) };
 }
 
 /** nexus and storage always; the target origin while the background itself
     still has to download the document (frozen bytes need no publisher);
     minus what Firefox already granted */
-async function requiredOrigins(): Promise<string[]> {
+async function requiredOrigins(current: CaptureDraftRecord | null): Promise<string[]> {
   const patterns = [originPattern(NEXUS_ORIGIN), originPattern(STORAGE_ORIGIN)];
-  if (draft?.target.kind === "document" && draft.intent === null && downloadsInBackground(draft.target.source)) {
-    patterns.push(originPattern(draft.target.url));
+  if (current?.target.kind === "document" && current.intent === null && downloadsInBackground(current.target.source)) {
+    patterns.push(originPattern(current.target.url));
   }
   const missing: string[] = [];
   for (const pattern of patterns) {
@@ -388,7 +459,7 @@ async function awaitOrigins(signal: AbortSignal): Promise<void> {
     browser.permissions.onAdded.addListener(settled);
     signal.addEventListener("abort", settled, { once: true });
     try {
-      if ((await requiredOrigins()).length === 0) return;
+      if ((await requiredOrigins(draft)).length === 0) return;
       awaitingGrant = true;
       await outcome;
     } finally {
@@ -401,17 +472,60 @@ async function awaitOrigins(signal: AbortSignal): Promise<void> {
 
 /** Best effort: a popup that closed is dropped, never a reason for a lifecycle
     step to fail; the durable record carries the state for its next connect. */
-async function pushState(): Promise<void> {
+async function pushState(): Promise<number> {
+  const revision = ++viewRevision;
   const state = await viewState();
-  for (const port of viewPorts) {
-    try {
-      port.postMessage({ kind: "state", state });
-    } catch {
-      // justify-ignore-error: Firefox marks a port disconnected before it
-      // delivers onDisconnect, so a dead port can still sit in the set.
-      viewPorts.delete(port);
-    }
+  for (const port of viewPorts) postView(port, { kind: "state", revision, state });
+  return revision;
+}
+
+function postView(port: browser.runtime.Port, message: CaptureViewMessage): void {
+  try {
+    port.postMessage(message);
+  } catch {
+    // justify-ignore-error: Firefox marks a port disconnected before it
+    // delivers onDisconnect, so a dead port can still sit in the set.
+    viewPorts.delete(port);
   }
+}
+
+/** The only destination writer. A failed head remains queued until explicit
+    retry; save awaits this same drain before it freezes the capture. */
+function writeDestinationEdits(): Promise<void> {
+  if (destinationWrite !== null) return destinationWrite;
+  if (destinationFailure !== null || abandoningDestinations) return Promise.resolve();
+  destinationWrite = (async () => {
+    while (destinationEdits.length > 0 && !abandoningDestinations) {
+      const edit = destinationEdits[0];
+      const current = requireDraft();
+      if (current.id !== edit.draftId) throw new Error("Destination edit outlived its draft");
+      const next = { ...current, destinations: setLibraryDestination(current.destinations, edit) };
+      try {
+        await captureStore.draft.write(next);
+      } catch (error) {
+        destinationFailure = await recordFailure(error);
+        break;
+      }
+      draft = next;
+      destinationEdits.shift();
+      await pushState();
+    }
+  })().finally(async () => {
+    destinationWrite = null;
+    await pushState();
+  });
+  return destinationWrite;
+}
+
+/** A native transaction cannot be canceled by popup closure or draft teardown.
+    Settle the in-flight write, then abandon the unsent suffix before clearing. */
+async function abandonDestinationEdits(): Promise<void> {
+  destinationsClosed = true;
+  abandoningDestinations = true;
+  await destinationWrite;
+  destinationEdits.length = 0;
+  destinationFailure = null;
+  abandoningDestinations = false;
 }
 
 async function setDraft(next: CaptureDraftRecord): Promise<void> {
@@ -427,6 +541,7 @@ async function setPhase(phase: CapturePhase): Promise<void> {
 /** A new draft replaces whatever the slot held (a receipt, or nothing);
     memory never outruns the store, so a failed write leaves an empty slot. */
 async function replaceDraft(next: CaptureDraftRecord, nextBytes: CaptureBytes | null): Promise<void> {
+  await abandonDestinationEdits();
   await captureStore.draft.clear();
   draft = null;
   bytes = null;
@@ -434,17 +549,20 @@ async function replaceDraft(next: CaptureDraftRecord, nextBytes: CaptureBytes | 
   resumable = false;
   if (nextBytes !== null) await captureStore.bytes.write(nextBytes);
   bytes = nextBytes;
+  destinationsClosed = false;
   await setDraft(next);
 }
 
 /** Empties the slot; `reason` is why nothing could be pinned in its place,
     shown while no draft exists. */
 async function clearDraft(reason: string | null = null): Promise<void> {
+  await abandonDestinationEdits();
   await captureStore.draft.clear();
   draft = null;
   bytes = null;
   unsupported = reason;
   resumable = false;
+  destinationsClosed = false;
   await pushState();
 }
 
@@ -526,9 +644,13 @@ function requireClient(): CaptureClient {
 /** The first successful identity lookup binds an unbound draft to its account. */
 async function ensureSession(signal?: AbortSignal): Promise<void> {
   if (session !== null || credential === null) return;
-  const client = captureClient(credential.token);
-  session = { ...(await client.session(signal)), client };
-  if (draft !== null && draft.account === null) await setDraft({ ...draft, account: session.account });
+  const current = credential;
+  const client = captureClient(current.token);
+  const connected = { ...(await client.session(signal)), client };
+  signal?.throwIfAborted();
+  if (credential !== current) return;
+  if (draft !== null && draft.account === null) await setDraft({ ...draft, account: connected.account });
+  if (credential === current) session = connected;
 }
 
 /** The credential leaves (confirmed revocation, or a 401). A frozen draft is
@@ -536,10 +658,12 @@ async function ensureSession(signal?: AbortSignal): Promise<void> {
     account gone no work can run for it: it is normalized as after any
     interruption and waits, resumable, for the sign-in. */
 async function forgetCredential(): Promise<void> {
+  await abandonDestinationEdits();
   await captureStore.credential.clear();
   credential = null;
   session = null;
   revocationFailure = null;
+  destinationsClosed = false;
   await recover();
 }
 
@@ -628,22 +752,34 @@ async function activate(): Promise<void> {
   // running work (a login awaiting its grant, a pin) is never pre-empted:
   // the popup renders what the port pushes
   if (active !== null) return;
-  if (draft !== null && draft.phase.kind !== "saved") return;
-  const tab = await activeTab();
-  if (typeof tab === "string") {
-    // a receipt outlives an unsupported tab; an empty popup learns the reason
-    if (draft === null) {
-      unsupported = tab;
-      await pushState();
+  await exclusive(async (signal) => {
+    // Identity can bind the whole stored draft. Keep that write under the
+    // same owner as pin/save so destination edits never overlap it.
+    try {
+      await ensureSession(signal);
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      // An unreachable identity leaves the capture available for sign-in.
+      await recordFailure(error);
     }
-    return;
-  }
-  // the receipt for this very page stays until the user leaves it
-  if (draft !== null) {
-    const page = draft.target.kind === "document" && draft.target.source.kind === "page" ? draft.target.source.pageUrl : draft.target.url;
-    if (page === tab.url) return;
-  }
-  await exclusive((signal) => pinTab(tab, signal));
+    signal.throwIfAborted();
+    if (draft !== null && draft.phase.kind !== "saved") return;
+    const tab = await activeTab();
+    if (typeof tab === "string") {
+      // a receipt outlives an unsupported tab; an empty popup learns the reason
+      if (draft === null) {
+        unsupported = tab;
+        await pushState();
+      }
+      return;
+    }
+    // the receipt for this very page stays until the user leaves it
+    if (draft !== null) {
+      const page = draft.target.kind === "document" && draft.target.source.kind === "page" ? draft.target.source.pageUrl : draft.target.url;
+      if (page === tab.url) return;
+    }
+    await pinTab(tab, signal);
+  });
 }
 
 interface ActiveTab {
@@ -828,12 +964,6 @@ async function inject(
 }
 
 // --- save / transfer --------------------------------------------------------
-
-async function setDestinations(destinations: readonly LibraryDestinationSelection[]): Promise<void> {
-  const current = requireDraft();
-  if (current.phase.kind !== "draft") throw failure("E_CAPTURE_FROZEN", "Libraries cannot change once a capture is saved.");
-  await setDraft({ ...current, destinations });
-}
 
 async function save(signal: AbortSignal): Promise<void> {
   const current = requireDraft();

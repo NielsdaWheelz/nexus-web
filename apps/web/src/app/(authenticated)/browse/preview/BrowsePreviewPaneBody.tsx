@@ -269,6 +269,7 @@ export default function BrowsePreviewPaneBody() {
   };
   const acquisition = (
     <AcquisitionControl
+      key={preview.target}
       kind={preview.kind === "Podcast" ? "Subscribe" : "Add"}
       previewTarget={preview.target}
       commit={commit}

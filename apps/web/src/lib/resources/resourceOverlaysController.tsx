@@ -492,6 +492,7 @@ function SubscribeOverlay({
       >
         <p>Subscribe to this podcast and choose where to file it.</p>
         <AcquisitionControl
+          key={podcastId}
           kind="Subscribe"
           subscribed={false}
           commit={async (command) => {
