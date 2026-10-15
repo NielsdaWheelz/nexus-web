@@ -1,54 +1,35 @@
 # libraries creation verification
 
-status: browser qualification passed; physical keyboard acceptance pending. 2026-10-15.
+status: browser qualification passed; disposable stack/tests removed; physical keyboard proof deferred by owner. 2026-10-15.
+pr: [629](https://github.com/NielsdaWheelz/nexus-web/pull/629).
 
-this records evidence for the [creation specification](libraries-creation-plan.md), not full completion. qualification used isolated accounts and real browser → bff → api → database writes and public reads. creation response faults followed real commits; refused commands received real bff/api refusals. no production test seam was added.
+## source and method
 
-the baseline is `367da80e0c1beb1c426f6d2d72201b0733809b50`. [the main receipt][main] records hashes of all twelve changed/new application files; those hashes still match the reviewed source. the unchanged `./scripts/test` [passed][gate], including migration head `0278`. this gate establishes static consistency, not user behavior.
+four [behavioral baseline reds](assets/libraries-creation/baseline/results.json) on `367da80e0` proved the permanent row, lost filter, changed uncertain identity and duplicate creation after mobile departure. missing future selectors were not counted as reds.
 
-## evidence
+current-main qualification used `447ecd11c43cac99e3a4f0b234ea386881f19ec1`, integrated with main `7bc7c8a13`. ordinary browser auth → bff → api → isolated postgres writes and public reads passed. the current api uses `{id,name}` and generated snake_case types; the retired client/codecs were not restored. [start](assets/libraries-creation/integrated/qualification-start.json) and [end](assets/libraries-creation/integrated/qualification-end.json) snapshots match across 24 source files. unchanged `./scripts/test` [passed](assets/libraries-creation/static.log), migration head `0286`.
 
-[four baseline behavioral reds][baseline] proved the permanent form row, lost filter after back, replacement of an unconfirmed request with another id/name, and duplicate creation after mobile departure/back. these were observable failures of the old behavior, not missing future selectors.
+## observed behavior
 
-fourteen candidate cases passed. case ids below identify the exact records; screenshots accompany the main and surface receipts.
+all fourteen [live cases](assets/libraries-creation/integrated/qualification.json) passed:
 
-| acceptance | evidence |
+| cases | proof |
 |---|---|
-| entry, dismissal and validation | [c1][candidate]: no inline form, one header command, keyboard entry, name focus, tab containment, escape/cancel, return focus, draft discard and local blank/reserved/overlong validation. [s1][entry]: creation remains available while loading, after list failure and with an invalid view. |
-| foreground creation and return | [c2][sort]: trimmed 100-code-point name accepted by the real server, rapid submits produce one delivery, same-pane navigation, filter/sort restoration and the same visible row at its retained offset. |
-| relinquished ownership | [c3][candidate]: close/reopen pending, immutable name, retained focused action and receipt without automatic navigation. [c6][sort]: hidden success neither reopens nor steals focus; changing sort preserves the latest visit. [e2][extra]: hidden definite refusal stays hidden, preserves outside focus and permits correction. |
-| uncertainty, identity and stale completion | [c4, c5, c7][candidate]: lost acknowledgement, real refusal after uncertainty, identical replay and one resulting library; mobile unmount/back, overlapping same-id deliveries and inert old completion; mismatched acknowledgement reaches the defect boundary and preserves the attempt for replay. successful back starts a fresh draft. |
-| response deadline and authoritative validation | [e1–e3][extra]: a [real committed response body][stall] was stalled; uncertainty appeared after 30,134ms and identical replay yielded one library. initial permission/name refusals created nothing; correction succeeded, with the server name error associated with and focused on the field. |
-| pane isolation and geometry | [s2–s4][surfaces]: 320px desktop pane, 32px command before more, 400px dialog cap, scrim dismissal; 390×844 mobile viewport, 48px command and browser-back dismissal; independent index tasks and unique field/error/invitation references across two panes. |
-| native zoom | [firefox geometry and screenshots][zoom]: normal, actual 200% full zoom and 200% text zoom pass entry, blank validation and close checks, with no internal header/dialog overflow. text zoom widens the existing horizontal workspace canvas; the command stays inside its pane. this does not claim that the whole canvas fits the viewport. |
+| [c1–c3](assets/libraries-creation/integrated-candidate/results.json) | entry, validation, focus/tab/dismissal, unicode100 boundary, one delivery, same-pane open/back with retained filter/sort/row anchor; pending close/reopen retains name and focus without re-arming navigation |
+| [c4–c7](assets/libraries-creation/integrated-candidate/results.json) | real committed lost acknowledgement, identical replay/cardinality1, refusal after uncertainty, mobile unmount/back, overlapping old/new deliveries, hidden success after sort, and mismatched acknowledgement through the defect boundary |
+| [s1](assets/libraries-creation/integrated-surfaces-entry-qualified/results.json), [s2–s4](assets/libraries-creation/integrated-surfaces/results.json) | creation during loading/read failure/invalid view; 320px desktop command32/dialog≤400; 390×844 mobile command48/back; independent visits and unique dialog/invitation references |
+| [e1–e3](assets/libraries-creation/integrated-extra/results.json) | stalled real committed response reaches uncertainty after30,372ms and identical replay resolves one library; actual initial403/name400 create nothing, then corrections succeed with field semantics |
 
-main browser: chromium `147.0.7727.15`, headless, at 1440×900 and 390×844. zoom browser: firefox `158.0`, with native full/text factors recorded. composing enter/escape checks used synthetic composition/key events; they prove the event guards, not a native ime session. mobile emulation does not prove physical touch or keyboard clearance.
+[stock firefox158 native zoom](assets/libraries-creation/native-zoom/integrated-zoom.json) passes entry, blank validation and dismissal at normal, full200% and text200%. no internal header/dialog overflow; text zoom widens the existing horizontal workspace canvas. [narrow dialog](assets/libraries-creation/integrated-surfaces/s2-320px-pane-header-and-dialog.png), [mobile](assets/libraries-creation/integrated-surfaces/s3-mobile-portrait-geometry.png), [text200 error](assets/libraries-creation/native-zoom/integrated-text-invalid.png).
 
-## corrections and remaining work
+chromium147.0.7727.15 was headless. composing enter/escape checks used synthetic events, not a native ime. emulation does not establish physical keyboard clearance.
 
-earlier candidate failures were harness errors: label lookup included select options; raw scroll offsets ignored row anchoring; a sort url was read before commit; one dropped get was recovered by the existing three-attempt retry. corrected semantic/settled assertions passed. native zoom setup also needed auth readiness and fresh element lookup after responsive remount. the docker read-only incident interrupted setup before candidate assertions and was not counted as a product failure.
+## limits, corrections and disposal
 
-the [physical handset check](tickets/libraries-dialog-physical-keyboard-unverified.md) remains open: the owner confirmed device unavailability until morning. verify the field, validation error, submit and close with the actual keyboard shown, then correction and a real creation. there is no full-green or completion claim. source/content review found no additional product blocker; native composition remains an explicit coverage limit.
+four [integration harness corrections](assets/libraries-creation/integrated/harness-corrections.json) are retained: remove a read fault before server sort validation, use the dedicated invalid-view title, settle the held read before the next sort, and scope the deep-linked command to its active pane. failed attempts are retained as harness failures, not product reds or green evidence. source reviews by independent implementers found no remaining feature defect.
 
-all libraries created by the completed cases were deleted successfully; the isolated invitation fixture remains for the remaining check. [interim cleanup][cleanup] stopped the baseline runtime and removed its source archive. the candidate runtime, disposable runners, fixtures and private state remain outside the checkout until the physical check and any affected rechecks finish. then remove task-owned runners, dependencies, profiles, credentials, services and data, retaining receipts and screenshots. no permanent test suite, ci job or alternate gate remains.
+the owner subsequently instructed `pr, merge, clean everything up`; the [handset check](tickets/libraries-dialog-physical-keyboard-unverified.md) remains explicitly deferred, not passed. no device mutation occurred.
 
-toolbar `225830792` introduces a required `status.visible` field. the
-[integration record](tickets/libraries-toolbar-contract-integration.md) specifies
-how to compose its adapter with this branch's visit-owned filter. these
-independent qualifications do not establish a combined-source pass.
-inspector `764b01b63` ([draft pr 617](https://github.com/NielsdaWheelz/nexus-web/pull/617))
-preserves the action order and interfaces. independent source review found a
-[header sizing merge requirement](tickets/libraries-inspector-header-integration.md):
-keep primary's fixed height separate from inspector's coarse-pointer sizing.
+all case-created libraries were deleted successfully. [cleanup](assets/libraries-creation/cleanup.json) records six task-owned containers, three fixture volumes, two networks and all server/proxy groups removed; task ports closed. other task resources were preserved. disposable runners, profiles, credentials, setup and external proof/cache roots are deleted; implementation worktree cleanup follows merge; only inert receipts/screenshots remain in this directory. no permanent suite, ci job or production failpoint was added.
 
-[main]: ../../nexus-web-campaign-artifacts/2026-10-14/libraries-creation/receipts/qualification-main.json
-[gate]: ../../nexus-web-campaign-artifacts/2026-10-14/libraries-creation/receipts/static.log
-[baseline]: ../../nexus-web-campaign-artifacts/2026-10-14/libraries-creation/receipts/baseline/results.json
-[candidate]: ../../nexus-web-campaign-artifacts/2026-10-14/libraries-creation/receipts/candidate/results.json
-[sort]: ../../nexus-web-campaign-artifacts/2026-10-14/libraries-creation/receipts/candidate-sort-settled/results.json
-[entry]: ../../nexus-web-campaign-artifacts/2026-10-14/libraries-creation/receipts/surfaces-entry/results.json
-[surfaces]: ../../nexus-web-campaign-artifacts/2026-10-14/libraries-creation/receipts/surfaces/results.json
-[extra]: ../../nexus-web-campaign-artifacts/2026-10-14/libraries-creation/receipts/extra/results.json
-[stall]: ../../nexus-web-campaign-artifacts/2026-10-14/libraries-creation/receipts/body-stall-proxy.jsonl
-[zoom]: ../../nexus-web-campaign-artifacts/2026-10-14/libraries-creation/receipts/native-zoom/final-zoom.json
-[cleanup]: ../../nexus-web-campaign-artifacts/2026-10-14/libraries-creation/receipts/interim-cleanup.json
+toolbar628 composition is coordinated before merging629: preserve its mandatory `status.visible`/`headerMeta`/`canReset` contract and this feature's visit-owned filter/task. inspector617 remains a separate candidate; primary sizing is deliberately separate from the companion rule so its future coarse target is not clamped. peer qualification alone is not a combined-source claim.

@@ -30,6 +30,8 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [open] local verification / docker · 2026-10-14 · runtime recovered after read-only filesystem; broader host cause remains unverified: [ticket](tickets/docker-desktop-read-only-filesystem-blocks-qualification.md).
+
 - [deferred] libraries / mobile presentation · 2026-10-15 · owner requested merge/cleanup before physical keyboard proof; follow-up remains: [ticket](tickets/libraries-dialog-physical-keyboard-unverified.md).
 - [pending] libraries / toolbar integration · 2026-10-15 · toolbar candidate remains outside main; preserve visit-owned filtering when adopting mandatory status visibility: [ticket](tickets/libraries-toolbar-contract-integration.md).
 - [pending] libraries / inspector integration · 2026-10-15 · inspector candidate remains outside main; preserve coarse sizing when composing header rules: [ticket](tickets/libraries-inspector-header-integration.md).

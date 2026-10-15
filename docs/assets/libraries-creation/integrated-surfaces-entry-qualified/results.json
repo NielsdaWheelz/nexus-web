@@ -1,0 +1,13 @@
+[
+  {
+    "id": "s1-loading-failure-invalid-entry",
+    "status": "pass",
+    "evidence": {
+      "loading": true,
+      "networkFailure": true,
+      "invalidView": true,
+      "droppedReads": 3
+    },
+    "ms": 3589
+  }
+]

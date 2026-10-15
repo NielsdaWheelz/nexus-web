@@ -1,6 +1,6 @@
 # libraries creation
 
-status: implemented; current-main qualification in progress; physical keyboard check deferred by owner. 2026-10-15.
+status: implemented; current-main browser/static qualification passed; physical keyboard check deferred by owner. 2026-10-15.
 baseline reviewed: `367da80e0c1beb1c426f6d2d72201b0733809b50`.
 integration target: current main `7bc7c8a13`; current library owners below supersede the baseline paths.
 
@@ -153,8 +153,8 @@ this task explicitly authorizes temporary live/integration tests; it does not ch
 
 mobile keyboard clearance is [unverified](tickets/libraries-dialog-physical-keyboard-unverified.md). after confirming device unavailability, the owner instructed `pr, merge, clean everything up` on 2026-10-15. merge and disposal proceed with this check explicitly deferred; it is not passed. if the new form is obstructed, repair the demonstrated geometry at the existing dialog/viewport owner using its existing keyboard mechanism, then check affected dialog consumers. no overlay rewrite or global style sweep. report an unavailable physical check as unverified, never passed; unrelated pre-existing tickets do not silently expand this feature.
 
-completion requires all applicable acceptance evidence, resolved review findings, deletion of the replaced path and disposable tests, and accurate docs. only then remove the resolved [creation row](tickets/libraries-creation-reserves-a-permanent-row.md), [filter retention](tickets/libraries-filter-is-not-retained-for-pane-return.md), [duplicate ids](tickets/libraries-pane-repeats-accessibility-ids.md) and [acknowledgement identity](tickets/library-create-response-identity-is-unchecked.md) tickets/register entries. keep launcher defects and unrelated work open. new unresolved findings receive their own ticket immediately.
+cutover requires the browser/static evidence, resolved review findings, deletion of the replaced path and disposable tests, and accurate docs. the owner's later merge/cleanup instruction defers only the physical keyboard check to its ticket. remove the resolved creation-row, filter-retention, duplicate-id and acknowledgement-identity records after the remaining cutover checks pass. keep launcher defects and unrelated work open. new unresolved findings receive their own ticket immediately.
 
 current evidence and remaining physical acceptance are recorded in the
 [verification receipt](libraries-creation-verification.md). application source
-is frozen at its twelve recorded hashes; no permanent tests were added.
+is identified by the recorded source hashes; no permanent tests were added.

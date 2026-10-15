@@ -1,0 +1,53 @@
+{
+  "project": "nexus-libraries-creation-20261014",
+  "sourceHashesPreserved": true,
+  "stoppedProcessGroups": [
+    {
+      "name": "web",
+      "group": 88023,
+      "alreadyStopped": true
+    },
+    {
+      "name": "api",
+      "group": 88022,
+      "alreadyStopped": true
+    },
+    {
+      "name": "proxy",
+      "group": 49309
+    }
+  ],
+  "proxyOwnership": "verified exact task-owned executable/script and listening port; original cwd manifest entry was inaccurate",
+  "removedContainers": [
+    "supabase_inbucket_nexus-libraries-creation-20261014",
+    "supabase_auth_nexus-libraries-creation-20261014",
+    "supabase_kong_nexus-libraries-creation-20261014",
+    "supabase_db_nexus-libraries-creation-20261014",
+    "nexus-libraries-creation-20261014-postgres-1",
+    "nexus-libraries-creation-20261014-minio-1"
+  ],
+  "removedVolumes": [
+    "nexus-libraries-creation-20261014_minio-data",
+    "nexus-libraries-creation-20261014_postgres-data",
+    "supabase_db_nexus-libraries-creation-20261014"
+  ],
+  "removedNetworkCount": 2,
+  "taskPortsClosed": [
+    3291,
+    3292,
+    8291,
+    59510,
+    59520,
+    59511,
+    59512,
+    59514,
+    8292,
+    59531
+  ],
+  "otherTaskResourcesTouched": false,
+  "deviceMutations": false,
+  "filesDisposal": "complete: disposable runners, profiles, credentials, logs, setup and external proof/cache roots removed",
+  "runtimeRootRemoved": true,
+  "externalCampaignRootRemoved": true,
+  "implementationWorktree": "pending merge, then removal"
+}
