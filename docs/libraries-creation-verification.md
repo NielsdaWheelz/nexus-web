@@ -30,7 +30,7 @@ four [integration harness corrections](assets/libraries-creation/integrated/harn
 
 the owner subsequently instructed `pr, merge, clean everything up`; the [handset check](tickets/libraries-dialog-physical-keyboard-unverified.md) remains explicitly deferred, not passed. no device mutation occurred.
 
-all case-created libraries were deleted successfully. [cleanup](assets/libraries-creation/cleanup.json) records six task-owned containers, three fixture volumes, two networks and all server/proxy groups removed; task ports closed. other task resources were preserved. disposable runners, profiles, credentials, setup and external proof/cache roots are deleted; implementation worktree cleanup follows merge; only inert receipts/screenshots remain in this directory. no permanent suite, ci job or production failpoint was added.
+all case-created libraries were deleted successfully. [cleanup](assets/libraries-creation/cleanup.json) records six task-owned containers, three fixture volumes, two networks and all server/proxy groups removed; task ports closed. other task resources were preserved. disposable runners, profiles, credentials, setup and external proof/cache roots are deleted; subsequent local worktree disposal is recorded in pr629 closeout. only inert receipts/screenshots remain in this directory. no permanent suite, ci job or production failpoint was added.
 
 ## final peer composition
 

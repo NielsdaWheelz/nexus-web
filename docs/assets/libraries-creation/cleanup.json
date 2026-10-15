@@ -49,5 +49,5 @@
   "filesDisposal": "complete: disposable runners, profiles, credentials, logs, setup and external proof/cache roots removed",
   "runtimeRootRemoved": true,
   "externalCampaignRootRemoved": true,
-  "implementationWorktree": "pending merge, then removal"
+  "implementationWorktree": "retained when this runtime-disposal receipt was captured; subsequent local disposal is recorded in pr629 closeout"
 }
