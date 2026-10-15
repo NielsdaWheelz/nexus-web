@@ -342,7 +342,7 @@ class Settings(BaseSettings):
 
     # Grand atlas projection: the nightly PCA re-projection cadence. 0 (default)
     # leaves atlas_project_job unregistered as periodic; the deploy env sets a
-    # positive cadence (prod: 86400). The on-demand trigger still fires on ingest.
+    # positive cadence (prod: 86400). Nothing enqueues it on demand.
     atlas_project_schedule_seconds: int = Field(
         default=0, alias="ATLAS_PROJECT_SCHEDULE_SECONDS", ge=0
     )

@@ -19,6 +19,7 @@ dependencies = [
     "universal-memory==0.1.0",
     "structlog>=24.1.0",
     "lxml>=5.0.0",
+    "numpy>=2.5.3",
     "defusedxml>=0.7.1",
     "pillow>=10.0.0",
     "PyMuPDF>=1.24.0",
