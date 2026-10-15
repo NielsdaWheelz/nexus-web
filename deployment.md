@@ -351,8 +351,7 @@ census hashes, both identities, revisions reached, unconverted browser captures,
 row counts before and after per table) and `reviewed.json`: the draft with the
 restored identity and the receipt hash filled in. review that file and the
 receipt's losses; it is the release's `--model-cutover-snapshot` input. the
-release itself still runs the browser-capture conversion and the health
-checks.
+release itself still runs the health checks.
 
 ## Codex agent host isolation
 

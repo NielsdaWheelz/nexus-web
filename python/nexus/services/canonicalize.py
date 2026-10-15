@@ -24,8 +24,6 @@ from dataclasses import dataclass
 import regex
 from lxml.etree import HTMLParser
 
-from nexus.schemas.presence import Presence, Present, absent, present
-
 HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 STRUCTURAL_TAGS = frozenset({"section", "article"})
 BLOCK_ELEMENTS = frozenset(
@@ -44,8 +42,8 @@ class CanonicalElement:
     tag: str
     start_offset: int
     end_offset: int
-    parent_container: Presence[int]
-    parent_element: Presence[int]
+    parent_container: int | None
+    parent_element: int | None
     labelled_by: tuple[str, ...]
     numbering_allowed: bool
 
@@ -73,7 +71,7 @@ class _CanonicalTextTarget:
         self._tag_stack: list[str] = []
         self._ambiguous_anchors: set[str] = set()
         self._ambiguous_apparatus_items: set[str] = set()
-        self._element_stack: list[Presence[int]] = []
+        self._element_stack: list[int | None] = []
         self._container_stack: list[int] = []
         self._numbering_stack: list[bool] = []
         self._captured_stack: list[int] = []
@@ -97,7 +95,7 @@ class _CanonicalTextTarget:
         self._visible_stack.append(visible)
         self._tag_stack.append(normalized_tag)
         if self.capture_structure:
-            self._element_stack.append(absent())
+            self._element_stack.append(None)
             self._numbering_stack.append(
                 (self._numbering_stack[-1] if self._numbering_stack else True)
                 and normalized_tag not in {"aside", "li", "ol", "ul", "blockquote"}
@@ -118,13 +116,13 @@ class _CanonicalTextTarget:
                     normalized_tag,
                     self.length,
                     self.length,
-                    present(self._container_stack[-1]) if self._container_stack else absent(),
-                    present(self._captured_stack[-1]) if self._captured_stack else absent(),
+                    self._container_stack[-1] if self._container_stack else None,
+                    self._captured_stack[-1] if self._captured_stack else None,
                     tuple(attributes.get("aria-labelledby", "").split()),
                     self._numbering_stack[-1],
                 )
             )
-            self._element_stack[-1] = present(index)
+            self._element_stack[-1] = index
             self._captured_stack.append(index)
             for attribute, identities, ambiguous in (
                 ("id", self.anchors, self._ambiguous_anchors),
@@ -160,9 +158,9 @@ class _CanonicalTextTarget:
         if self.capture_structure:
             element = self._element_stack.pop()
             self._numbering_stack.pop()
-            if isinstance(element, Present):
+            if element is not None:
                 self._captured_stack.pop()
-                self.elements[element.value].end_offset = self.length
+                self.elements[element].end_offset = self.length
                 if normalized_tag in STRUCTURAL_TAGS:
                     self._container_stack.pop()
         if visible and normalized_tag in BLOCK_ELEMENTS and self.length and self.last_char != "\n":

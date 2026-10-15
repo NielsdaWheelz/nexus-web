@@ -4,13 +4,11 @@ import { useEffect, useId, useRef, useState } from "react";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import MobileSheet from "@/components/ui/MobileSheet";
-import { conversationsInitialResource } from "@/lib/api/resource";
-import { useResource } from "@/lib/api/useResource";
+import { usePaneFreeServerValue, useSettled } from "@/lib/api/serverState";
 import {
   fetchConversationIndex,
   presentConversationListItem,
 } from "@/lib/chat/conversationIndex";
-import { CANONICAL_UPDATED_TITLE_INDEX_VIEW } from "@/lib/collections/updatedTitleIndexView";
 import { formatDisplayNumber } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -63,27 +61,23 @@ function Picker({ onSelect }: { onSelect: (conversationId: string) => void }) {
   const env = useRenderEnvironment();
   const id = useId();
   const [query, setQuery] = useState("");
-  const [search, setSearch] = useState("");
   const [active, setActive] = useState<string | null>(null);
-  useEffect(() => {
-    const timer = setTimeout(() => setSearch(query.trim()), 200);
-    return () => clearTimeout(timer);
-  }, [query]);
-  const params = {
-    view: CANONICAL_UPDATED_TITLE_INDEX_VIEW,
-    titleSearch: search,
-    limit: 25,
-  };
-  const page = useResource({
-    cacheKey: `conversation-destination:${conversationsInitialResource.cacheKey(params)}`,
-    load: (signal) => fetchConversationIndex({ ...params, signal }),
+  const search = useSettled(query.trim(), 200);
+  const page = usePaneFreeServerValue({
+    key: `conversation-destination:${search}`,
+    stale: "",
+    load: (signal) => {
+      const params = new URLSearchParams({ limit: "25" });
+      if (search) params.set("title_search", search);
+      return fetchConversationIndex(params, signal);
+    },
   });
   const items = page.status === "ready" ? page.data.items : [];
   const current = items.some((item) => item.id === active)
     ? active
     : (items[0]?.id ?? null);
   const status =
-    page.status === "error"
+    page.status === "failed"
       ? "Couldn’t load chats."
       : page.status !== "ready"
         ? "Searching…"
@@ -118,7 +112,7 @@ function Picker({ onSelect }: { onSelect: (conversationId: string) => void }) {
           };
           if (event.key === "Enter") {
             event.preventDefault();
-            if (page.status === "error") page.retry();
+            if (page.status === "failed") page.refetch();
             else if (current) onSelect(current);
           } else if (event.key in moves && items.length) {
             event.preventDefault();

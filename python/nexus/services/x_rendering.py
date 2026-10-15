@@ -5,7 +5,6 @@ from __future__ import annotations
 import html as html_lib
 from dataclasses import dataclass
 
-from nexus.schemas.presence import Present
 from nexus.schemas.x_source import XSourcePost, XSourceSnapshot
 from nexus.services.x_identity import canonical_x_post_url
 from nexus.services.x_source import authored_text
@@ -98,8 +97,8 @@ def _byline(post: XSourcePost) -> str:
         f"<p><strong>{_esc(author.name)}</strong>" if author.name else "<p>",
         f' <a href="https://x.com/{_attr(author.username)}">@{_esc(author.username)}</a>',
     ]
-    if isinstance(post.created_at, Present):
-        timestamp = post.created_at.value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    if post.created_at is not None:
+        timestamp = post.created_at.isoformat(timespec="milliseconds").replace("+00:00", "Z")
         parts.append(f" - {_esc(timestamp)}")
     parts.append(f' - <a href="{_attr(canonical_x_post_url(post.id))}">Open on X</a></p>')
     return "".join(parts)
@@ -113,21 +112,21 @@ def _body(post: XSourcePost) -> str:
     for entity in post.urls:
         if entity.url not in retained:
             continue
-        href = entity.expanded_url.value if isinstance(entity.expanded_url, Present) else entity.url
+        href = entity.expanded_url if entity.expanded_url is not None else entity.url
         label = (
-            entity.display_url.value
-            if isinstance(entity.display_url, Present)
-            else entity.title.value
-            if isinstance(entity.title, Present)
+            entity.display_url
+            if entity.display_url is not None
+            else entity.title
+            if entity.title is not None
             else href
         )
         parts.append(f'<p><a href="{_attr(href)}">{_esc(label)}</a></p>')
     for item in post.attachments:
-        image = item.url if isinstance(item.url, Present) else item.preview_image_url
-        if isinstance(image, Present):
-            alt = item.alt_text.value if isinstance(item.alt_text, Present) else item.type
+        image = item.url if item.url is not None else item.preview_image_url
+        if image is not None:
+            alt = item.alt_text if item.alt_text is not None else item.type
             parts.append(
-                f'<figure><img src="{_attr(image.value)}" alt="{_attr(alt)}">'
+                f'<figure><img src="{_attr(image)}" alt="{_attr(alt)}">'
                 f"<figcaption>{_esc(item.type)}</figcaption></figure>"
             )
     return "".join(parts)

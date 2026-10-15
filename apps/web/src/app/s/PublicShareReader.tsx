@@ -2,8 +2,18 @@
 
 // The anonymous reader for `/s#share=<token>`: the share's title, source and
 // quote over the whole shared document, read-only, opened at the shared
-// highlight. A hash change opens the new link in place.
-import { useEffect, useMemo, useState } from "react";
+// highlight. Another `#share=` hash opens in place; any other hash change (an
+// in-document link) leaves the reading alone.
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  FeedbackNotice,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
+import {
+  apiTransportFeedback,
+  isApiError,
+  readResponse,
+} from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { Contents } from "@/lib/documentReader/chrome/Contents";
 import DocumentReaderView, {
@@ -13,11 +23,18 @@ import DocumentReaderView, {
   type Mark,
 } from "@/lib/documentReader/DocumentReader";
 import type { ReaderTarget } from "@/lib/documentReader/model";
+import { isAbortError } from "@/lib/errors";
 import { publicFetch, publicSource } from "./publicSource";
 import styles from "./publicShare.module.css";
 
 type Share = Schema<"PublicShareOut">;
+type State =
+  | "Resolving"
+  | "Unavailable"
+  | { readonly failure: FeedbackContent }
+  | { readonly token: string; readonly share: Share };
 
+const TOKEN = /^#share=(nxshr1_[A-Za-z0-9_-]{43})$/;
 const PUBLIC_PROFILE: Schema<"ReaderProfileOut"> = {
   theme: "light",
   font_family: "serif",
@@ -29,9 +46,9 @@ const PUBLIC_PROFILE: Schema<"ReaderProfileOut"> = {
 };
 
 export default function PublicShareReader() {
-  const [state, setState] = useState<
-    "Resolving" | "Unavailable" | { token: string; share: Share }
-  >("Resolving");
+  const [state, setState] = useState<State>("Resolving");
+  const [attempt, setAttempt] = useState(0);
+  const status = useRef<HTMLElement>(null);
 
   useEffect(() => {
     let controller = new AbortController();
@@ -39,40 +56,48 @@ export default function PublicShareReader() {
       controller.abort();
       controller = new AbortController();
       const { signal } = controller;
-      const token = /^#share=(nxshr1_[A-Za-z0-9_-]{43})$/.exec(
-        window.location.hash,
-      )?.[1];
+      const token = TOKEN.exec(window.location.hash)?.[1];
       setState(token ? "Resolving" : "Unavailable");
       if (!token) return;
       try {
-        const response = await publicFetch("", token, signal);
-        if (!response.ok)
-          throw new Error(`public share responded ${response.status}`);
-        const body = (await response.json()) as ApiJson<
-          "/public/resource-share",
-          "get"
-        >;
+        const body = await readResponse<
+          ApiJson<"/public/resource-share", "get">
+        >(await publicFetch("", token, signal));
         if (!signal.aborted) setState({ token, share: body.data });
       } catch (error) {
-        if (signal.aborted) return;
-        console.error("public_share_resolution_failed", {
-          reason: error instanceof Error ? error.name : "UnknownError",
-        });
-        setState("Unavailable");
+        if (signal.aborted || isAbortError(error)) return;
+        // Only the server's masked 404 means the link is dead.
+        if (!isApiError(error) || error.status === 404) setState("Unavailable");
+        else {
+          const title = "This shared reading couldn’t be opened";
+          setState({
+            failure: apiTransportFeedback(error, title) ?? {
+              tone: "Danger",
+              title,
+              message: "Something went wrong. Try again.",
+              requestId: error.requestId,
+            },
+          });
+        }
       }
     };
     void resolve();
-    window.addEventListener("hashchange", resolve);
+    const changed = () => {
+      if (window.location.hash.startsWith("#share=")) void resolve();
+    };
+    window.addEventListener("hashchange", changed);
     return () => {
       controller.abort();
-      window.removeEventListener("hashchange", resolve);
+      window.removeEventListener("hashchange", changed);
     };
-  }, []);
+  }, [attempt]);
 
-  const ready = typeof state === "object" ? state : null;
+  const ready = typeof state === "object" && "share" in state ? state : null;
+  const failure =
+    typeof state === "object" && "failure" in state ? state.failure : null;
   const title =
     ready?.share.title ??
-    (state === "Resolving" ? "Shared reading" : "Share unavailable");
+    (state === "Unavailable" ? "Share unavailable" : "Shared reading");
   return (
     <div className={styles.shell}>
       {/* The route emits no metadata title, so this is the document's only one. */}
@@ -84,16 +109,37 @@ export default function PublicShareReader() {
           share={ready.share}
         />
       ) : (
-        <main className={styles.header} role="status">
+        // The failure notice is its own alert (live regions must not nest);
+        // Retry drops it, so focus waits on this region.
+        <main
+          className={styles.header}
+          role={failure ? undefined : "status"}
+          ref={status}
+          tabIndex={-1}
+        >
           <div className={styles.brand}>Nexus</div>
           {state === "Resolving" ? (
             <p>Opening shared reading…</p>
-          ) : (
+          ) : state === "Unavailable" ? (
             <>
               <h1>Share unavailable</h1>
               <p>This link is invalid, revoked, or no longer readable.</p>
             </>
-          )}
+          ) : failure ? (
+            <FeedbackNotice
+              content={failure}
+              announcement="Assertive"
+              actions={[
+                {
+                  label: "Retry",
+                  onClick: () => {
+                    status.current?.focus();
+                    setAttempt((n) => n + 1);
+                  },
+                },
+              ]}
+            />
+          ) : null}
         </main>
       )}
     </div>
@@ -102,8 +148,8 @@ export default function PublicShareReader() {
 
 /** The shared highlight as the reader's one mark, addressed by unit ordinal. */
 function sharedMark(share: Share): Mark | null {
-  if (share.highlight.kind !== "Present") return null;
-  const { color, anchor } = share.highlight.value;
+  if (share.highlight === null) return null;
+  const { color, anchor } = share.highlight;
   return {
     id: "shared",
     color,
@@ -126,8 +172,7 @@ function SharedDocument({
   readonly token: string;
   readonly share: Share;
 }) {
-  const highlight =
-    share.highlight.kind === "Present" ? share.highlight.value : null;
+  const highlight = share.highlight;
   const mark = useMemo(() => sharedMark(share), [share]);
   const options = useMemo(() => {
     const target: ReaderTarget | null =
@@ -184,9 +229,9 @@ function SharedDocument({
         <div className={styles.brand}>Nexus</div>
         <h1>{share.title}</h1>
         {share.bylines.length > 0 ? <p>{share.bylines.join(", ")}</p> : null}
-        {share.source_url.kind === "Present" ? (
+        {share.source_url !== null ? (
           <a
-            href={share.source_url.value}
+            href={share.source_url}
             target="_blank"
             rel="noopener noreferrer"
             referrerPolicy="no-referrer"
@@ -198,8 +243,8 @@ function SharedDocument({
       {highlight ? (
         <aside className={styles.callout} aria-label="Shared highlight">
           <span>Shared highlight</span>
-          {highlight.quote.kind === "Present" ? (
-            <blockquote>{highlight.quote.value}</blockquote>
+          {highlight.quote !== null ? (
+            <blockquote>{highlight.quote}</blockquote>
           ) : (
             <p>The highlighted area is shown in the document below.</p>
           )}

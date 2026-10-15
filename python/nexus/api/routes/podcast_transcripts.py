@@ -9,7 +9,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession
 from nexus.responses import Data
 from nexus.schemas import podcast as wire
-from nexus.schemas.media import TranscriptRequestOut, TranscriptRequestRequest
+from nexus.schemas.podcast import TranscriptRequestOut, TranscriptRequestRequest
 from nexus.services.podcasts import transcription
 
 router = APIRouter(tags=["media"])

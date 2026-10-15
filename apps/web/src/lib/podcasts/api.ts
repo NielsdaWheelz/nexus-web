@@ -2,13 +2,14 @@
 
 // Podcast http for the web (docs/modules/podcast.md). Every podcast write
 // here publishes "Podcasts" after success (lib/api/changes); podcast panes put
-// its stamp in their refetch token.
+// its stamp in their refetch token. A transcript batch queues source attempts,
+// so it also invalidates Imports (open media panes follow theirs again).
 
 import { apiFetch } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
-import type { Presence } from "@/lib/api/presence";
-import { sseClientDirect } from "@/lib/api/sse-client";
+import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import { publishImportsInvalidation } from "@/lib/imports/api";
 
 export type PodcastDetail = Schema<"PodcastDetailOut">;
 export type PodcastSubscription = Schema<"PodcastSubscriptionStatusOut">;
@@ -72,8 +73,8 @@ export function observeSubscription(
   onLost: (error: Error) => void,
 ): void {
   type Frame = { readonly type: string; readonly data: PodcastLifecycle };
-  sseClientDirect<Frame, PodcastLifecycle>({
-    path: `/stream/podcast-subscriptions/${podcastId}/events`,
+  openStream<Frame, PodcastLifecycle>({
+    path: `/api/stream/podcast-subscriptions/${encodeURIComponent(podcastId)}/events`,
     signal,
     decode: (type, data) => ({ type, data }),
     isTerminal: (frame) => frame.type === "done",
@@ -85,15 +86,18 @@ export function observeSubscription(
 export async function subscribeToPodcast(input: {
   readonly target: Schema<"PodcastSubscribeRequest">["target"];
   readonly namedLibraryIds: readonly string[];
-  readonly replacementConfirmation: Presence<{
-    readonly conflictFingerprint: string;
-  }>;
+  /** Confirms that the show replaces episodes a destination files directly. */
+  readonly replaceEpisodes: boolean;
 }): Promise<ApiJson<"/podcasts/subscriptions", "post">["data"]> {
-  const { target, namedLibraryIds, replacementConfirmation } = input;
+  const { target, namedLibraryIds, replaceEpisodes } = input;
   type Body = ApiJson<"/podcasts/subscriptions", "post">;
   const response = await apiFetch<Body>("/api/podcasts/subscriptions", {
     method: "POST",
-    body: JSON.stringify({ target, namedLibraryIds, replacementConfirmation }),
+    body: JSON.stringify({
+      target,
+      named_library_ids: namedLibraryIds,
+      replace_episodes: replaceEpisodes,
+    }),
   });
   publishChange("Podcasts", "Entries");
   return response.data;
@@ -109,7 +113,7 @@ export async function addEpisodeFromDiscovery(input: {
     "/api/podcast-episodes/from-discovery",
     {
       method: "POST",
-      body: JSON.stringify({ target, namedLibraryIds }),
+      body: JSON.stringify({ target, named_library_ids: namedLibraryIds }),
     },
   );
   publishChange("Entries");
@@ -155,7 +159,7 @@ export async function requestPodcastRefresh(
     signal,
   });
   publishChange("Podcasts");
-  return response.data.requestedCount;
+  return response.data.requested_count;
 }
 
 export function podcastRefreshRequestAnnouncement(count: number): string {
@@ -177,7 +181,7 @@ export async function markEpisodesPlayed(
 
 const transcriptTarget = (podcastId: string, state: EpisodeState) => ({
   kind: "PodcastEpisodeQuery",
-  podcastId,
+  podcast_id: podcastId,
   selection: { state },
   reason: "search",
 });
@@ -203,8 +207,9 @@ export async function requestEpisodeTranscripts(
   type Body = ApiJson<"/media/transcript/request/batch", "post">;
   const response = await apiFetch<Body>("/api/media/transcript/request/batch", {
     method: "POST",
-    body: JSON.stringify({ target, selectionFingerprint }),
+    body: JSON.stringify({ target, selection_fingerprint: selectionFingerprint }),
   });
   publishChange("Podcasts");
+  publishImportsInvalidation();
   return response.data;
 }

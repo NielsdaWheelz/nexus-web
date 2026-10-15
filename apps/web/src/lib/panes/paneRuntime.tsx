@@ -30,6 +30,7 @@ import type {
   WorkspaceTarget,
   WorkspaceTargetActivationResult,
   WorkspaceTargetDisposition,
+  WorkspacePaneEntry,
 } from "@/lib/workspace/targetActivation";
 import {
   normalizeWorkspaceHref,
@@ -80,10 +81,11 @@ interface PaneRuntimeCommands {
   activateTarget(input: {
     target: WorkspaceTarget;
     disposition: WorkspaceTargetDisposition;
+    entry?: WorkspacePaneEntry;
   }): WorkspaceTargetActivationResult;
   setPaneLabel(label: string | null): void;
   setPaneDailyPage(page: PaneDailyPage | null): void;
-  acknowledgePaneEntryDelivery(delivery: PaneEntryDelivery): void;
+  claimPaneEntryDelivery(delivery: PaneEntryDelivery): boolean;
   // the pane shell's Companion commands; null opens the remembered tab while
   // published, else the default.
   requestSecondarySurface(
@@ -110,7 +112,7 @@ export function PaneRuntimeProvider(props: {
 }) {
   const { pane, host } = props;
   const store = useWorkspaceStore();
-  const { href, id: visitId } = pane.currentVisit;
+  const { href, id: visitId } = pane.current_visit;
   const route = useMemo(() => resolvePaneRouteModel(href), [href]);
   const url = parseWorkspaceHref(href);
   const search = url?.search ?? "";
@@ -152,8 +154,8 @@ export function PaneRuntimeProvider(props: {
         now().store.publishPaneLabel(pane.id, routeKey(), label),
       setPaneDailyPage: (page) =>
         now().store.publishPaneDailyPage(pane.id, routeKey(), page),
-      acknowledgePaneEntryDelivery: (delivery) =>
-        now().store.acknowledgePaneEntryDelivery(delivery),
+      claimPaneEntryDelivery: (delivery) =>
+        now().store.claimPaneEntryDelivery(delivery),
       requestSecondarySurface: (surfaceId, options) =>
         now().host.requestSecondarySurface(surfaceId, options),
       closeSecondaryPane: (options) => now().host.closeSecondaryPane(options),
@@ -266,13 +268,17 @@ export function usePaneDailyPage(page: PaneDailyPage | null): void {
   }, [setPaneDailyPage, routeKey, localDate, pageId]);
 }
 
+/**
+ * The entry handed to this pane's current visit. A consumer acts only when
+ * ready, claims first, and acts only when `claim` returned true.
+ */
 export function usePaneEntryDelivery(): {
   delivery: PaneEntryDelivery | null;
-  acknowledge: (delivery: PaneEntryDelivery) => void;
+  claim: (delivery: PaneEntryDelivery) => boolean;
 } {
   const runtime = requirePaneRuntime(usePaneRuntime(), "usePaneEntryDelivery");
   return {
     delivery: runtime.paneEntryDelivery,
-    acknowledge: runtime.acknowledgePaneEntryDelivery,
+    claim: runtime.claimPaneEntryDelivery,
   };
 }

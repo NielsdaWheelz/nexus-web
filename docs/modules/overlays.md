@@ -40,8 +40,8 @@ dispatch (the author search owns keys only while focus is inside it).
 `hasActiveInteractionOwner()` and `isTopmostInteractionOwner(scope)` read the
 same rule; a sheet's scope is its `panelId`.
 
-every dismissal is `onDismiss(reason)` with reason `escape`, `back`, `outside`
-or `tab`; the feature closes by changing its state. a modal asks its
+every dismissal is `onDismiss(reason)` with reason `escape`, `back` or
+`outside`; the feature closes by changing its state. a modal asks its
 `onDismissRequest()` first: `"blocked"` keeps it open (the feature shows its
 confirmation) and Back re-arms. Escape, Back, the scrim, the frame's close
 button and the sheet's drag all take that path.
@@ -68,14 +68,6 @@ wraps inside the top modal's panel (a handler that prevented Tab keeps it;
 `contenteditable` counts as focusable). a frame focuses `initialFocus(panel)`,
 else its first focusable, else the panel, one frame after it becomes topmost,
 once per open and `focusKey`.
-
-a transient may provide `tabContinuation()` naming its focus region. auxiliary
-controls remain reachable there. tabbing past that region closes it and continues
-the logical page/modal order from its trigger; it suppresses return focus for that
-close. the kernel owns this key path, including modal wrap. no second feature
-listener or focus trap is added. invocation capture also exposes
-`wasOverlayInvokedByTouch()` so responsive choosers focus search for keyboard
-invocation at every width while touch may focus the sheet/region itself.
 
 **return focus.** at open a layer records its trigger: `returnFocusTo()`, else
 the focused element, else (safari never focuses a clicked button) the focusable

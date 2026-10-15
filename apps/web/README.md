@@ -9,13 +9,13 @@ This app owns:
 - Browser UI and workspace shell
 - Next.js `/api/*` BFF proxy routes
 - Session-aware request forwarding to FastAPI
-- Stream token flow for direct SSE to FastAPI
+- Live streams (SSE) proxied through the BFF
 - Browser extension capture routes for article, PDF/EPUB, and supported video ingestion
 
 ## Request Topology
 
 - Default: Browser -> Next.js (`/api/*`) -> FastAPI.
-- Streaming: Browser -> FastAPI stream endpoints with short-lived stream token minted via BFF.
+- Streaming: Browser -> Next.js (`/api/stream/*`) -> FastAPI `/stream/*`; the BFF ends each stream cleanly at 280 s and the client resumes from its cursor.
 - Extension capture: Firefox extension -> Next.js `/api/extension/*` -> FastAPI `/extension/*` and `/auth/extension-sessions/current` with scoped, revocable extension auth; capture bytes go directly to the signed storage capability.
 
 BFF routes are transport-only. Business logic lives in FastAPI services.
@@ -46,7 +46,6 @@ Primary variables for this app:
 
 - `FASTAPI_BASE_URL` (required outside local/test)
 - `R2_S3_API_ORIGIN` (required outside local/test for CSP connect-src)
-- `CSP_MEDIA_ORIGINS` (optional comma-separated media origins; HTTPS-only when deployed)
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `APP_PUBLIC_URL` (the one public origin; required outside local/test, default `http://localhost:3000`)

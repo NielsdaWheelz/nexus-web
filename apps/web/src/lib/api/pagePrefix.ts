@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import type { Presence } from "@/lib/api/presence";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 
 /**
@@ -10,7 +9,7 @@ import { usePaneFreeServerValue } from "@/lib/api/serverState";
  * new `key` starts again at one page. `short` holds while the longer read is
  * running or failed; a failed read keeps the shorter prefix.
  */
-export function usePagePrefix<P extends { next_cursor: Presence<string> }>(
+export function usePagePrefix<P extends { next_cursor: string | null }>(
   key: string,
   stale: string,
   fetchPage: (cursor: string | null, signal: AbortSignal) => Promise<P>,
@@ -27,8 +26,7 @@ export function usePagePrefix<P extends { next_cursor: Presence<string> }>(
       do {
         const page = await fetchPage(cursor, signal);
         loaded.push(page);
-        cursor =
-          page.next_cursor.kind === "Present" ? page.next_cursor.value : null;
+        cursor = page.next_cursor;
       } while (cursor !== null && loaded.length < pages);
       return { pages: loaded, asked: pages, more: cursor !== null };
     },

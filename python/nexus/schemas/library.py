@@ -1,350 +1,106 @@
-"""Library-related request and response schemas."""
+"""Library wire: collections, their entries and where an item is filed.
+
+Snake keys and plain nullable values; requests forbid unknown keys. Membership and
+invitation models live in `schemas/library_members.py`.
+"""
 
 from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-from pydantic.alias_generators import to_camel
+from pydantic import BaseModel, ConfigDict, Field
 
-from nexus.schemas.consumption import PauseShorteningMode, PlaybackRate
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.podcast import PodcastSyncStatus
-from nexus.schemas.presence import Presence
-from nexus.schemas.reading_time import ReadingTimeEstimateOut
-from nexus.services.sealed_handles import LibraryInvitationHandle, UserHandle
 
 LibraryRole = Literal["admin", "member"]
-LibraryInvitationStatusValue = Literal["pending", "accepted", "declined", "revoked"]
-LibraryGovernanceCursor = Annotated[str, Field(min_length=1)]
-LibraryEntryKind = Literal["media", "podcast"]
+LibraryName = Annotated[str, Field(min_length=1, max_length=100)]
 
 
-class _Camel(BaseModel):
-    """camelCase output model with every serialized field declared."""
-
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="forbid",
-        json_schema_serialization_defaults_required=True,
-    )
+class _In(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
-class _CamelRow(_Camel):
-    """camelCase wire model built straight from a DB row or context object."""
+class CreateLibraryRequest(_In):
+    """Retry: resend the same client-minted id."""
 
-    model_config = ConfigDict(
-        from_attributes=True, alias_generator=to_camel, populate_by_name=True, extra="forbid"
-    )
-
-
-class _CamelIn(BaseModel):
-    """camelCase request model: aliases only, never the python field name."""
-
-    model_config = ConfigDict(
-        alias_generator=to_camel, validate_by_alias=True, validate_by_name=False, extra="forbid"
-    )
+    id: UUID
+    name: LibraryName
 
 
-class _Snake(BaseModel):
-    """snake_case wire model nested inside a camelCase envelope."""
+class RenameLibraryRequest(_In):
+    """`expected_name` is the name the client last read (the expected version)."""
 
-    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
-
-
-class CreateLibraryRequest(BaseModel):
-    library_id: UUID
-    name: str = Field(..., min_length=1, max_length=100, description="Library name (1-100 chars)")
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    name: LibraryName
+    expected_name: str
 
 
-class UpdateLibraryRequest(BaseModel):
-    name: str = Field(
-        ..., min_length=1, max_length=100, description="New library name (1-100 chars)"
-    )
+class MoveEntryRequest(_In):
+    """Put the entry immediately before `before_entry_id`; null puts it last."""
+
+    before_entry_id: UUID | None
 
 
-class UpdateLibraryMemberRequest(BaseModel):
-    role: LibraryRole = Field(..., description="New role for the member ('admin' or 'member')")
+class PlaceItemRequest(_In):
+    """`replace_episodes` confirms that a show replaces its directly filed episodes."""
+
+    replace_episodes: bool
 
 
-class TransferLibraryOwnershipRequest(_CamelIn):
-    new_owner_user_handle: UserHandle
-
-
-class LibraryEntryOrderRequest(BaseModel):
-    entry_ids: list[UUID] = Field(min_length=1, max_length=500)
-
-    model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="after")
-    def validate_entry_ids(self) -> "LibraryEntryOrderRequest":
-        if len(set(self.entry_ids)) != len(self.entry_ids):
-            raise ValueError("entry_ids must not contain duplicates")
-        return self
-
-
-class UserLibraryInvitee(_CamelIn):
-    kind: Literal["User"]
-    user_handle: UserHandle
-
-
-class CreateLibraryInviteRequest(BaseModel):
-    invitee: UserLibraryInvitee
-    role: LibraryRole = Field(
-        ..., description="Role to assign to the invitee ('admin' or 'member')"
-    )
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class LibraryOut(_CamelRow):
+class LibraryOut(BaseModel):
     id: UUID
     name: str
-    owner_user_handle: UserHandle
     is_default: bool
-    role: LibraryRole
     system_key: str | None
-    can_rename: bool
+    role: LibraryRole
+    # rename, file, reorder and manage members: an admin of a named, non-system library.
+    can_manage: bool
+    # delete and transfer: its owner.
     can_delete: bool
-    can_edit_entries: bool
-    can_manage_members: bool
     can_transfer_ownership: bool
+    # leave: any member of a mutable library but its owner.
+    can_leave: bool
     created_at: datetime
     updated_at: datetime
 
 
-class SavedInNexusPlacementDestination(_CamelIn):
-    kind: Literal["SavedInNexus"]
-
-
-class NamedLibraryPlacementDestination(_CamelIn):
-    kind: Literal["Library"]
-    library_id: UUID
-
-
-class MediaLibraryPlacementCommand(_CamelIn):
-    kind: Literal["AddMedia", "RemoveMedia"]
-    client_mutation_id: UUID
-    media_id: UUID
-    destination: Annotated[
-        SavedInNexusPlacementDestination | NamedLibraryPlacementDestination,
-        Field(discriminator="kind"),
-    ]
-
-
-class PodcastLibraryPlacementCommand(_CamelIn):
-    kind: Literal["AddPodcast", "RemovePodcast"]
-    client_mutation_id: UUID
-    podcast_id: UUID
-    library_id: UUID
-
-
-LibraryPlacementCommand = Annotated[
-    MediaLibraryPlacementCommand | PodcastLibraryPlacementCommand,
-    Field(discriminator="kind"),
-]
-
-LibraryPlacementRefusalCode = Literal[
-    "E_MEDIA_NOT_FOUND",
-    "E_NOT_FOUND",
-    "E_LIBRARY_NOT_FOUND",
-    "E_FORBIDDEN",
-    "E_LIBRARY_FORBIDDEN",
-    "E_DEFAULT_LIBRARY_FORBIDDEN",
-    "E_INVALID_REQUEST",
-    "E_MEDIA_DELETING",
-    "E_MEDIA_LAST_REFERENCE",
-    "E_PODCAST_SUBSCRIPTION_REQUIRED",
-    "E_PODCAST_REPLACES_EPISODES",
-]
-
-
-class ConfirmedLibraryPlacementOut(_Camel):
-    kind: Literal["Confirmed"] = "Confirmed"
-
-
-class RefusedLibraryPlacementOut(_Camel):
-    kind: Literal["Refused"] = "Refused"
-    code: LibraryPlacementRefusalCode
-
-
-class LibraryPlacementCommandOut(_Camel):
-    client_mutation_id: UUID
-    outcome: Annotated[
-        ConfirmedLibraryPlacementOut | RefusedLibraryPlacementOut,
-        Field(discriminator="kind"),
-    ]
-
-
-class LibraryIdentityOut(_Camel):
+class LibraryDestinationOut(BaseModel):
     id: UUID
     name: str
 
 
-class SavedInNexusLibraryPlacementDestinationOut(_Camel):
-    kind: Literal["SavedInNexus"] = "SavedInNexus"
+class LibraryMediaEntryOut(BaseModel):
+    kind: Literal["media"]
+    # null on All, whose rows are a live union rather than stored entries.
+    entry_id: UUID | None
+    added_at: datetime
+    media_summary: MediaSummaryOut
 
 
-class LibraryLibraryPlacementDestinationOut(_Camel):
-    kind: Literal["Library"] = "Library"
-    library: LibraryIdentityOut
-
-
-LibraryPlacementDestinationOut = Annotated[
-    SavedInNexusLibraryPlacementDestinationOut | LibraryLibraryPlacementDestinationOut,
-    Field(discriminator="kind"),
-]
-
-
-class AbsentLibraryPlacementRelationOut(_Camel):
-    kind: Literal["Absent"] = "Absent"
-
-
-class DirectLibraryPlacementRelationOut(_Camel):
-    kind: Literal["Direct"] = "Direct"
-
-
-class InheritedLibraryPlacementRelationOut(_Camel):
-    kind: Literal["Inherited"] = "Inherited"
-    provenance: list[LibraryIdentityOut] = Field(min_length=1)
-
-
-LibraryPlacementRelationOut = Annotated[
-    AbsentLibraryPlacementRelationOut
-    | DirectLibraryPlacementRelationOut
-    | InheritedLibraryPlacementRelationOut,
-    Field(discriminator="kind"),
-]
-
-
-class AvailableLibraryPlacementAvailabilityOut(_Camel):
-    kind: Literal["Available"] = "Available"
-
-
-class BlockedLibraryPlacementAvailabilityOut(_Camel):
-    kind: Literal["Blocked"] = "Blocked"
-    reason: Literal["RequiresAdmin", "RequiresSubscription", "SystemManaged", "Inherited"]
-
-
-LibraryPlacementAvailabilityOut = Annotated[
-    AvailableLibraryPlacementAvailabilityOut | BlockedLibraryPlacementAvailabilityOut,
-    Field(discriminator="kind"),
-]
-
-
-class LibraryPlacementOptionOut(_Camel):
-    destination: LibraryPlacementDestinationOut
-    relation: LibraryPlacementRelationOut
-    availability: LibraryPlacementAvailabilityOut
-
-
-class LibraryGovernancePageInfo(_Camel):
-    next_cursor: Presence[LibraryGovernanceCursor]
-
-
-class LibraryEntryPodcastOut(_Camel):
-    id: UUID
+class LibraryPodcastEntryOut(BaseModel):
+    kind: Literal["podcast"]
+    entry_id: UUID | None
+    added_at: datetime
+    podcast_id: UUID
     title: str
     contributors: list[ContributorCreditOut]
-    unplayed_count: int = Field(ge=0, default=0)
-    published_date: Presence[datetime]
+    unplayed_count: int = Field(ge=0)
+    published_date: datetime | None
+    sync_status: PodcastSyncStatus | None
 
 
-class LibraryEntryPodcastSubscriptionOut(_Camel):
-    default_playback_speed: Presence[PlaybackRate]
-    pause_shortening_mode: Presence[PauseShorteningMode]
-    auto_queue: bool = False
-    sync_status: PodcastSyncStatus
-
-
-class LibraryEntryMediaCapabilitiesOut(_Snake):
-    can_quote: bool
-    can_retry: bool
-    can_refresh_source: bool
-    can_retry_metadata: bool
-    can_edit_authors: bool
-    can_delete: bool
-
-
-class LibraryEntryMediaOut(_Snake):
-    id: UUID
-    created_at: datetime
-    author_mode: Literal["automatic", "manual"]
-    canonical_source_url: str | None
-    last_engaged_at: datetime | None
-    capabilities: LibraryEntryMediaCapabilitiesOut
-
-
-class LibraryEntryPlacementOut(_Camel):
-    library_entry_id: UUID
-    position: int = Field(ge=0)
-
-
-class LibraryMediaListItemOut(_Camel):
-    kind: Literal["media"]
-    media_summary: MediaSummaryOut
-    placement: Presence[LibraryEntryPlacementOut]
-    added_at: datetime
-    media: LibraryEntryMediaOut
-
-
-class LibraryPodcastListItemOut(_Camel):
-    kind: Literal["podcast"]
-    placement: Presence[LibraryEntryPlacementOut]
-    added_at: datetime
-    podcast: LibraryEntryPodcastOut
-    subscription: Presence[LibraryEntryPodcastSubscriptionOut]
-    reading_time_estimate: Presence[ReadingTimeEstimateOut]
-
-
-LibraryEntryListItemOut = Annotated[
-    LibraryMediaListItemOut | LibraryPodcastListItemOut,
-    Field(discriminator="kind"),
+LibraryEntryOut = Annotated[
+    LibraryMediaEntryOut | LibraryPodcastEntryOut, Field(discriminator="kind")
 ]
 
 
-class LibraryMemberOut(_CamelRow):
-    user_handle: UserHandle
-    role: LibraryRole
-    is_owner: bool
-    email: Presence[str]
-    display_name: Presence[str]
-    created_at: datetime
+class LibraryPlacementOut(BaseModel):
+    """One library the item could sit in; `is_default` is the viewer's All (Saved in
+    Nexus). Inherited: an episode included through its filed show."""
 
-
-class LibraryInvitationOut(_CamelRow):
-    invitation_handle: LibraryInvitationHandle
     library_id: UUID
-    inviter_user_handle: UserHandle
-    invitee_user_handle: UserHandle
-    role: LibraryRole
-    status: LibraryInvitationStatusValue
-    invitee_email: Presence[str]
-    invitee_display_name: Presence[str]
-    created_at: datetime
-    responded_at: Presence[datetime]
-
-
-class ViewerLibraryInvitationOut(LibraryInvitationOut):
-    library_name: str
-
-
-class InviteAcceptMembershipOut(_CamelRow):
-    library_id: UUID
-    user_handle: UserHandle
-    role: LibraryRole
-
-
-class AcceptLibraryInviteResponse(_CamelRow):
-    invite: LibraryInvitationOut
-    membership: InviteAcceptMembershipOut
-    idempotent: bool
-
-
-class DeclineLibraryInviteResponse(_CamelRow):
-    invite: LibraryInvitationOut
-    idempotent: bool
+    name: str
+    is_default: bool
+    relation: Literal["Absent", "Direct", "Inherited"]
+    blocked: Literal["RequiresAdmin", "RequiresSubscription", "SystemManaged"] | None

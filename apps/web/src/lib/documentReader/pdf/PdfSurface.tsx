@@ -3,9 +3,12 @@
 // One pdf in pdf.js's viewer. Positions are page-relative (page, y down the
 // page), so they survive zoom. Links and destinations inside the pdf become
 // reader jumps. A failed open refreshes the file once and reopens at the
-// last placement. Marks are page-space quads drawn under the text layer.
+// last placement; a host's range read that fails later ends the open with
+// Retry. Marks are page-space quads drawn under the text layer.
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
+import type * as PdfJs from "pdfjs-dist";
 import type {
+  PDFDataRangeTransport,
   PDFDocumentLoadingTask,
   PDFDocumentProxy,
   PageViewport,
@@ -48,6 +51,55 @@ function hashTarget(hash: string): ReaderTarget | null {
   return hash && !hash.includes("=")
     ? { kind: "pdfDest", dest: decodeURIComponent(hash) }
     : null;
+}
+
+/**
+ * A host's own range reads as pdf.js's transport, read as pdf.js reads a url:
+ * `bytes=0-` streams the whole file in, and a chunk needed before the stream
+ * reaches it is read by range. A failed range read goes to `fail`: pdf.js
+ * would wait for it forever.
+ */
+async function hostRanges(
+  pdfjs: typeof PdfJs,
+  ranges: (range: string, signal: AbortSignal) => Promise<Response>,
+  signal: AbortSignal,
+  fail: (error: unknown) => void,
+): Promise<PDFDataRangeTransport> {
+  // pdf.js aborts the transport when it drops the document.
+  const dropped = new AbortController();
+  const live = AbortSignal.any([signal, dropped.signal]);
+  const read = async (range: string) => {
+    const response = await ranges(range, live);
+    const size = /\/(\d+)$/.exec(response.headers.get("content-range") ?? "");
+    if (response.status !== 206 || size === null)
+      throw new Error(`pdf range answered ${response.status}`);
+    return { response, size: Number(size[1]) };
+  };
+  const whole = await read("bytes=0-");
+  const transport = new pdfjs.PDFDataRangeTransport(whole.size, null);
+  transport.abort = () => dropped.abort();
+  transport.requestDataRange = (begin, end) =>
+    void read(`bytes=${begin}-${end - 1}`)
+      .then(async ({ response }) => {
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        transport.onDataRange(begin, bytes);
+      })
+      .catch((error: unknown) => {
+        if (!live.aborted) fail(error);
+      });
+  const pump = async () => {
+    const stream = whole.response.body!.getReader();
+    let part = await stream.read();
+    while (!part.done) {
+      transport.onDataProgressiveRead(part.value);
+      part = await stream.read();
+    }
+    transport.onDataProgressiveDone();
+  };
+  // justify-ignore-error: a stream cut short leaves the rest to range reads,
+  // as pdf.js's own whole-file read does.
+  void pump().catch(() => undefined);
+  return transport;
 }
 
 const pageOf = (target: EventTarget | null) =>
@@ -286,17 +338,17 @@ export default function PdfSurface({
         enableAutoLinking: false,
       });
       links.setViewer(viewer);
-      task = pdfjs.getDocument({
-        url: file.url,
-        httpHeaders: { ...file.headers },
-        withCredentials: false,
-        // Fetching ahead only outruns an expiring url (d15); a share or a copy
-        // loads what is read.
-        disableAutoFetch: file.expiresAtMs === null,
-        ...PDF_ASSETS,
-      });
       let pdf: PDFDocumentProxy;
       try {
+        task = pdfjs.getDocument({
+          ...("ranges" in file
+            ? { range: await hostRanges(pdfjs, file.ranges, signal, fail) }
+            : { url: file.url, withCredentials: false }),
+          // Fetching ahead only outruns an expiring url (d15); a copy loads what
+          // is read, and a share's stream reads its whole file.
+          disableAutoFetch: "ranges" in file || file.expiresAtMs === null,
+          ...PDF_ASSETS,
+        });
         pdf = await task.promise;
         if (signal.aborted) return;
         const initialized = new Promise<void>((resolve) =>
@@ -308,7 +360,7 @@ export default function PdfSurface({
       } catch (error) {
         if (signal.aborted) return;
         if (refreshed) throw error;
-        void task.destroy();
+        void task?.destroy();
         // An expired or revoked file url: one fresh file, then give up.
         return open(await runtime.source.refreshPdf(signal), true);
       }
@@ -465,12 +517,15 @@ export default function PdfSurface({
       },
     };
 
-    setStatus("opening");
-    open(doc.file, false).catch((error: unknown) => {
+    /** Ends this open: Retry shows, and every read stops. */
+    const fail = (error: unknown) => {
       if (signal.aborted) return;
       console.error("pdf_open_failed", error);
       setStatus("failed");
-    });
+      controller.abort();
+    };
+    setStatus("opening");
+    open(doc.file, false).catch(fail);
     return () => {
       controller.abort();
       refit?.disconnect();

@@ -1,11 +1,9 @@
 "use client";
 
-import { apiCommand204, apiFetch, type ApiPath } from "@/lib/api/client";
+import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
-import { conversationsInitialResource } from "@/lib/api/resource";
 import type { ListPage } from "@/lib/api/useServerList";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import type { UpdatedTitleIndexView } from "@/lib/collections/updatedTitleIndexView";
 import { formatDisplayNumber, formatRelativeTime } from "@/lib/display/format";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 
@@ -13,16 +11,13 @@ import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 
 export type ConversationListItem = Schema<"ConversationListItemOut">;
 
-export async function fetchConversationIndex(options: {
-  view: UpdatedTitleIndexView;
-  titleSearch?: string;
-  limit?: number;
-  cursor?: string;
-  signal?: AbortSignal;
-}): Promise<ListPage<ConversationListItem>> {
-  const { signal, ...params } = options;
+/** One keyset page; `query` holds the view's keys, `limit` and `cursor`. */
+export async function fetchConversationIndex(
+  query: URLSearchParams,
+  signal: AbortSignal,
+): Promise<ListPage<ConversationListItem>> {
   const response = await apiFetch<ApiJson<"/conversations", "get">>(
-    conversationsInitialResource.clientPath(params),
+    `/api/conversations?${query}`,
     { cache: "no-store", signal },
   );
   return response.data;
@@ -31,13 +26,39 @@ export async function fetchConversationIndex(options: {
 export async function deleteConversation(
   conversationId: string,
 ): Promise<void> {
-  await apiCommand204(
+  await apiFetch<void>(
     `/api/conversations/${encodeURIComponent(conversationId)}` as ApiPath,
     {
       method: "DELETE",
     },
   );
   publishChange("Chats");
+}
+
+const chatsAboutInFlight = new Set<string>();
+
+/**
+ * A new chat seeded with `ref`; resolves its id. A second request for the same
+ * ref while one is in flight resolves null. No client id yet: a retry after an
+ * unknown outcome can leave an extra empty chat (docs/issues/conversation-create-has-no-client-id.md).
+ */
+export async function createConversationAbout(
+  ref: string,
+): Promise<string | null> {
+  if (chatsAboutInFlight.has(ref)) return null;
+  chatsAboutInFlight.add(ref);
+  try {
+    const response = await apiFetch<ApiJson<"/conversations", "post">>(
+      "/api/conversations",
+      {
+        method: "POST",
+        body: JSON.stringify({ initial_context_refs: [ref] }),
+      },
+    );
+    return response.data.id;
+  } finally {
+    chatsAboutInFlight.delete(ref);
+  }
 }
 
 export function presentConversationListItem(

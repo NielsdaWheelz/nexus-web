@@ -1,7 +1,8 @@
-"""Freeze and refresh the existing X census through ordinary replayable source admission.
+"""Freeze and refresh the existing X census through ordinary source admission.
 
 python -m nexus.ops.refresh_x_sources plan|apply --manifest /path/to/receipts.json
 Run apply again to observe settlement; workers and exact-job repair remain ordinary owners.
+A resent refresh names the same expected attempt, so it answers the refresh that landed.
 """
 
 from __future__ import annotations
@@ -11,25 +12,24 @@ import json
 import os
 from collections import Counter
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, JsonValue
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.db.models import Media, MediaSourceAttempt, MediaSourceAttemptStatus
+from nexus.db.models import Media, MediaSourceAttempt
 from nexus.db.models import XSourceSnapshot as StoredXSourceSnapshot
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.jobs.queue import get_job, jobs_for_payload
-from nexus.schemas.media import SourceRefreshAdmission
+from nexus.schemas.media_sources import SourceAdmission
 from nexus.schemas.metadata_enrichment import MetadataOperationOut, TitleMetadataJobPayload
-from nexus.schemas.presence import Presence, Present, absent, presence_from_nullable, present
-from nexus.services.media import get_media_for_viewer
-from nexus.services.media_source_ingest import refresh_source_for_viewer
-from nexus.services.media_source_types import X_POST
+from nexus.services.media import media_facts
+from nexus.services.media_source_ingest import refresh_source
 from nexus.services.metadata_operations import metadata_operations_for_jobs
-from nexus.services.source_publication import latest_source_attempt_id
+from nexus.services.source_attempts import latest_attempt
+from nexus.services.source_types import FAILED, SUCCEEDED, X_POST
 from nexus.services.x_source import has_retained_x_publication
 
 
@@ -44,11 +44,11 @@ class Refusal(_Record):
 
 class SourceReceipt(_Record):
     source_attempt_id: UUID
-    job_id: Presence[UUID]
-    attempt_status: MediaSourceAttemptStatus
-    job_status: Presence[str]
-    error_code: Presence[str]
-    result: Presence[dict[str, JsonValue]]
+    job_id: UUID | None
+    attempt_status: str
+    job_status: str | None
+    error_code: str | None
+    result: dict[str, JsonValue] | None
     saved_copy_kept: bool
 
 
@@ -60,15 +60,14 @@ class TitleReceipt(_Record):
 
 class RefreshTarget(_Record):
     media_id: UUID
-    creator_id: Presence[UUID]
-    expected_attempt_id: Presence[UUID]
-    client_mutation_id: UUID
-    preview_refusal: Presence[Refusal]
-    admission: Presence[SourceRefreshAdmission]
-    inline_parent_attempt_id: Presence[UUID]
-    refusal: Presence[Refusal]
-    source: Presence[SourceReceipt]
-    title: Presence[TitleReceipt]
+    creator_id: UUID | None
+    expected_attempt_id: UUID | None
+    preview_refusal: Refusal | None
+    admission: SourceAdmission | None
+    inline_parent_attempt_id: UUID | None
+    refusal: Refusal | None
+    source: SourceReceipt | None
+    title: TitleReceipt | None
 
 
 class RefreshManifest(_Record):
@@ -89,41 +88,36 @@ def plan_manifest(*, session_factory: sessionmaker[Session]) -> RefreshManifest:
             .where(Media.kind == "web_article", Media.provider == "x")
             .order_by(Media.id)
         ):
-            creator = presence_from_nullable(media.created_by_user_id)
-            attempt = presence_from_nullable(latest_source_attempt_id(db, media.id))
-            refusal: Presence[Refusal] = absent()
-            if not isinstance(creator, Present):
-                refusal = present(Refusal(code="missing_creator", message="media has no creator"))
-            elif not isinstance(attempt, Present):
-                refusal = present(
-                    Refusal(code="missing_attempt", message="media has no source attempt")
-                )
+            creator = media.created_by_user_id
+            latest = latest_attempt(db, media.id, lock=False)
+            attempt = None if latest is None else latest.id
+            refusal: Refusal | None = None
+            if creator is None:
+                refusal = Refusal(code="missing_creator", message="media has no creator")
+            elif attempt is None:
+                refusal = Refusal(code="missing_attempt", message="media has no source attempt")
             else:
-                try:
-                    detail = get_media_for_viewer(db, creator.value, media.id)
-                    if not detail.capabilities.can_refresh_source:
-                        refusal = present(
-                            Refusal(
-                                code="refresh_unavailable",
-                                message="ordinary source refresh is unavailable",
-                            )
-                        )
-                except ApiError as exc:
-                    if exc.code == ApiErrorCode.E_INTERNAL:
-                        raise
-                    refusal = present(Refusal(code=exc.code.value, message=exc.message))
+                facts = media_facts(db, viewer_id=creator, media_ids=[media.id]).get(media.id)
+                if facts is None:
+                    refusal = Refusal(
+                        code=ApiErrorCode.E_MEDIA_NOT_FOUND.value, message="Media not found"
+                    )
+                elif not facts.refreshable:
+                    refusal = Refusal(
+                        code="refresh_unavailable",
+                        message="ordinary source refresh is unavailable",
+                    )
             targets.append(
                 RefreshTarget(
                     media_id=media.id,
                     creator_id=creator,
                     expected_attempt_id=attempt,
-                    client_mutation_id=uuid4(),
                     preview_refusal=refusal,
-                    admission=absent(),
-                    inline_parent_attempt_id=absent(),
-                    refusal=absent(),
-                    source=absent(),
-                    title=absent(),
+                    admission=None,
+                    inline_parent_attempt_id=None,
+                    refusal=None,
+                    source=None,
+                    title=None,
                 )
             )
     return RefreshManifest(created_at=created_at, targets=tuple(targets), child_titles=())
@@ -152,22 +146,22 @@ def apply_manifest(path: Path, *, session_factory: sessionmaker[Session]) -> Ref
     children = {(item.media_id, item.source_attempt_id): item for item in manifest.child_titles}
     for index, target in enumerate(targets):
         inspected = target.expected_attempt_id
-        if isinstance(target.admission, Present):
-            inspected = present(target.admission.value.source_attempt_id)
-        elif isinstance(target.inline_parent_attempt_id, Present):
+        if target.admission is not None:
+            inspected = target.admission.source_attempt_id
+        elif target.inline_parent_attempt_id is not None:
             # justify-defect: an observed inline completion retains its exact source receipt.
-            assert isinstance(target.source, Present)
-            inspected = present(target.source.value.source_attempt_id)
+            assert target.source is not None
+            inspected = target.source.source_attempt_id
         else:
             parent_attempt_ids = {
-                str(item.admission.value.source_attempt_id): item.admission.value.source_attempt_id
+                str(item.admission.source_attempt_id): item.admission.source_attempt_id
                 for item in targets
-                if isinstance(item.admission, Present)
+                if item.admission is not None
             }
             if (
                 parent_attempt_ids
-                and isinstance(target.creator_id, Present)
-                and isinstance(target.expected_attempt_id, Present)
+                and target.creator_id is not None
+                and target.expected_attempt_id is not None
             ):
                 with session_factory() as db:
                     db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
@@ -182,89 +176,77 @@ def apply_manifest(path: Path, *, session_factory: sessionmaker[Session]) -> Ref
                         .where(
                             MediaSourceAttempt.media_id == target.media_id,
                             MediaSourceAttempt.source_type == X_POST,
-                            MediaSourceAttempt.status == MediaSourceAttemptStatus.succeeded,
+                            MediaSourceAttempt.status == SUCCEEDED,
                             StoredXSourceSnapshot.published_at >= manifest.created_at,
                             MediaSourceAttempt.source_payload[
                                 "parent_source_attempt_id"
                             ].astext.in_(parent_attempt_ids.keys()),
                         )
                     )
-                    if (
-                        inline is not None
-                        and latest_source_attempt_id(db, target.media_id) == inline.id
-                    ):
+                    latest = latest_attempt(db, target.media_id, lock=False)
+                    if inline is not None and latest is not None and latest.id == inline.id:
                         parent_id = inline.source_payload["parent_source_attempt_id"]
                         # justify-defect: the query matched a recorded parent attempt's UUID text.
                         assert isinstance(parent_id, str)
-                        inspected = present(inline.id)
+                        inspected = inline.id
                         target = target.model_copy(
                             update={
-                                "inline_parent_attempt_id": present(parent_attempt_ids[parent_id]),
-                                "refusal": absent(),
+                                "inline_parent_attempt_id": parent_attempt_ids[parent_id],
+                                "refusal": None,
                             }
                         )
-        if not isinstance(target.admission, Present) and not isinstance(
-            target.inline_parent_attempt_id, Present
-        ):
-            if not isinstance(target.creator_id, Present) or not isinstance(
-                target.expected_attempt_id, Present
-            ):
+        if target.admission is None and target.inline_parent_attempt_id is None:
+            if target.creator_id is None or target.expected_attempt_id is None:
                 target = target.model_copy(update={"refusal": target.preview_refusal})
             else:
                 try:
                     with session_factory() as db:
-                        admission = refresh_source_for_viewer(
-                            db=db,
-                            viewer_id=target.creator_id.value,
+                        admission = refresh_source(
+                            db,
+                            viewer_id=target.creator_id,
                             media_id=target.media_id,
-                            client_mutation_id=str(target.client_mutation_id),
-                            expected_attempt_id=target.expected_attempt_id.value,
+                            expected_attempt_id=target.expected_attempt_id,
                             request_id=None,
                         )
-                    target = target.model_copy(
-                        update={"admission": present(admission), "refusal": absent()}
-                    )
-                    inspected = present(admission.source_attempt_id)
+                    target = target.model_copy(update={"admission": admission, "refusal": None})
+                    inspected = admission.source_attempt_id
                 except ApiError as exc:
                     if exc.code == ApiErrorCode.E_INTERNAL:
                         raise
                     target = target.model_copy(
-                        update={
-                            "refusal": present(Refusal(code=exc.code.value, message=exc.message))
-                        }
+                        update={"refusal": Refusal(code=exc.code.value, message=exc.message)}
                     )
-        if isinstance(inspected, Present):
+        if inspected is not None:
             with session_factory() as db:
                 db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
                 db.execute(text("SET TRANSACTION READ ONLY"))
-                attempt = db.get(MediaSourceAttempt, inspected.value)
-                if isinstance(target.admission, Present):
+                attempt = db.get(MediaSourceAttempt, inspected)
+                if target.admission is not None:
                     # justify-defect: an admitted source and its retained job identity must exist.
-                    assert attempt is not None and attempt.job_id == target.admission.value.job_id
+                    assert attempt is not None and attempt.job_id == target.admission.job_id
                 if attempt is not None:
                     job = get_job(db, attempt.job_id) if attempt.job_id is not None else None
                     # justify-defect: a source attempt's retained queue identity must resolve.
                     assert attempt.job_id is None or job is not None
                     source = SourceReceipt(
                         source_attempt_id=attempt.id,
-                        job_id=presence_from_nullable(attempt.job_id),
-                        attempt_status=MediaSourceAttemptStatus(attempt.status),
-                        job_status=absent() if job is None else present(job.status),
-                        error_code=presence_from_nullable(attempt.error_code),
-                        result=absent() if job is None else presence_from_nullable(job.result),
+                        job_id=attempt.job_id,
+                        attempt_status=attempt.status,
+                        job_status=None if job is None else job.status,
+                        error_code=attempt.error_code,
+                        result=None if job is None else job.result,
                         saved_copy_kept=has_retained_x_publication(db, media_id=target.media_id),
                     )
-                    target = target.model_copy(update={"source": present(source)})
+                    target = target.model_copy(update={"source": source})
                     if (
-                        isinstance(target.admission, Present)
-                        or isinstance(target.inline_parent_attempt_id, Present)
-                    ) and source.attempt_status == MediaSourceAttemptStatus.succeeded:
-                        assert isinstance(target.creator_id, Present)
+                        target.admission is not None or target.inline_parent_attempt_id is not None
+                    ) and source.attempt_status == SUCCEEDED:
+                        assert target.creator_id is not None
                         title = _title_receipt(
                             db,
-                            viewer_id=target.creator_id.value,
+                            viewer_id=target.creator_id,
                             media_id=target.media_id,
-                            source_attempt_id=inspected.value,
+                            source_attempt_id=inspected,
                         )
                         target = target.model_copy(update={"title": title})
         targets[index] = target
@@ -284,18 +266,20 @@ def apply_manifest(path: Path, *, session_factory: sessionmaker[Session]) -> Ref
             WHERE job.kind = 'enrich_metadata' AND job.payload->>'purpose' = 'title'
               AND job.created_at >= :created_at
               AND (source.media_id = ANY(:media_ids)
-                   OR source.source_payload->>'parent_media_id' = ANY(:parent_ids))
+                   OR source.source_payload->>'parent_source_attempt_id' = ANY(:parent_ids))
             ORDER BY source.media_id, source.id, job.created_at, job.id
         """),
             {
                 "created_at": manifest.created_at,
                 "media_ids": [item.media_id for item in targets],
-                "parent_ids": [str(item.media_id) for item in targets],
+                "parent_ids": [
+                    str(item.admission.source_attempt_id)
+                    for item in targets
+                    if item.admission is not None
+                ],
             },
         ).all()
-        parent_jobs = {
-            item.title.value.operation.job_id for item in targets if isinstance(item.title, Present)
-        }
+        parent_jobs = {item.title.operation.job_id for item in targets if item.title is not None}
         for row in rows:
             if row.id in parent_jobs:
                 continue
@@ -319,7 +303,7 @@ def apply_manifest(path: Path, *, session_factory: sessionmaker[Session]) -> Ref
 
 def _title_receipt(
     db: Session, *, viewer_id: UUID, media_id: UUID, source_attempt_id: UUID
-) -> Presence[TitleReceipt]:
+) -> TitleReceipt | None:
     jobs = jobs_for_payload(
         db,
         kind="enrich_metadata",
@@ -330,12 +314,10 @@ def _title_receipt(
         },
     )
     if not jobs:
-        return absent()
+        return None
     first = jobs[0]
     operation = metadata_operations_for_jobs(db, viewer_id=viewer_id, job_ids=[first.id])[first.id]
-    return present(
-        TitleReceipt(media_id=media_id, source_attempt_id=source_attempt_id, operation=operation)
-    )
+    return TitleReceipt(media_id=media_id, source_attempt_id=source_attempt_id, operation=operation)
 
 
 def report(manifest: RefreshManifest) -> dict[str, int | bool]:
@@ -352,38 +334,32 @@ def report(manifest: RefreshManifest) -> dict[str, int | bool]:
         }
     )
     for target in manifest.targets:
-        if isinstance(target.source, Present) and (
-            target.source.value.attempt_status
-            not in {MediaSourceAttemptStatus.succeeded, MediaSourceAttemptStatus.failed}
+        if target.source is not None and (
+            target.source.attempt_status not in {SUCCEEDED, FAILED}
             or (
-                isinstance(target.source.value.job_status, Present)
-                and target.source.value.job_status.value not in {"succeeded", "dead"}
+                target.source.job_status is not None
+                and target.source.job_status not in {"succeeded", "dead"}
             )
         ):
             counts["unfinished"] += 1
-        elif not isinstance(target.admission, Present) and not isinstance(
-            target.inline_parent_attempt_id, Present
-        ):
-            counts[
-                "blocked_or_failed" if isinstance(target.refusal, Present) else "unaccounted"
-            ] += 1
-        elif not isinstance(target.source, Present):
+        elif target.admission is None and target.inline_parent_attempt_id is None:
+            counts["blocked_or_failed" if target.refusal is not None else "unaccounted"] += 1
+        elif target.source is None:
             counts["unaccounted"] += 1
-        elif target.source.value.attempt_status == MediaSourceAttemptStatus.failed:
-            source = target.source.value
+        elif target.source.attempt_status == FAILED:
+            source = target.source
             unavailable = (
-                isinstance(source.error_code, Present)
-                and source.error_code.value == ApiErrorCode.E_X_POST_UNAVAILABLE.value
+                source.error_code == ApiErrorCode.E_X_POST_UNAVAILABLE.value
                 and source.saved_copy_kept
             )
             counts["unavailable_preserved" if unavailable else "blocked_or_failed"] += 1
-        elif not isinstance(target.title, Present):
+        elif target.title is None:
             counts["unaccounted"] += 1
-        elif target.title.value.operation.status not in {"completed", "failed"}:
+        elif target.title.operation.status not in {"completed", "failed"}:
             counts["unfinished"] += 1
         else:
             counts["refreshed"] += 1
-            counts["title_failed"] += target.title.value.operation.status == "failed"
+            counts["title_failed"] += target.title.operation.status == "failed"
     for receipt in manifest.child_titles:
         if receipt.operation.status not in {"completed", "failed"}:
             counts["unfinished"] += 1
@@ -404,9 +380,9 @@ def main() -> None:
             "targets": len(manifest.targets),
             "preview_refusals": dict(
                 Counter(
-                    item.preview_refusal.value.code
+                    item.preview_refusal.code
                     for item in manifest.targets
-                    if isinstance(item.preview_refusal, Present)
+                    if item.preview_refusal is not None
                 )
             ),
         }

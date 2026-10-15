@@ -311,6 +311,12 @@
   scroll-padding-top: var(--space-4);
 }
 
+/* The open's notes sit above that container, so a pointer reaches Retry. */
+.pdfFrame > .note {
+  position: relative;
+  z-index: 1;
+}
+
 /* pdf.js sizes its canvas and text layer from the page's content box. */
 .pdfScrollport :global(.pdfViewer .page) {
   box-sizing: content-box;

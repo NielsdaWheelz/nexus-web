@@ -2,18 +2,18 @@
 
 import { useEffect, useId, useRef, useState, type Ref } from "react";
 import { ChevronDown, FileText, Link, Upload, X } from "lucide-react";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
-import LibraryChooserSurface from "@/components/libraries/LibraryChooserSurface";
-import LibraryDestinationPicker from "@/components/libraries/LibraryDestinationPicker";
-import LibraryDestinationTrigger from "@/components/libraries/LibraryDestinationTrigger";
-import LibraryChooser from "@/components/libraries/LibraryChooser";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
+import ChooserSurface from "@/components/libraries/ChooserSurface";
+import DestinationChooser, { DestinationTrigger } from "@/components/libraries/DestinationChooser";
+import { useApiDestinations } from "@/components/libraries/DestinationField";
+import PlacementOverlay from "@/components/libraries/PlacementOverlay";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import { getFileUploadKind } from "@/lib/imports/ingest";
 import { encodeImportsUrl } from "@/lib/imports/query";
-import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
-import { useLibraryPlacements } from "@/lib/libraries/placementController";
+import type { LibraryDestination } from "@/lib/libraries/api";
+import type { LibraryPlacementSession } from "@/lib/libraries/placementController";
 import type { NexusTarget } from "@/lib/nexus/model";
 import { pluralize } from "@/lib/text/pluralize";
 import { findAmbiguousUrlSplit, validateDraftSource } from "./addInput";
@@ -24,7 +24,6 @@ import {
   type AddItem,
   type AddLeaveReason,
   type AddSessionState,
-  type DraftLibraryScope,
 } from "./useAddContentSession";
 import styles from "./AddPanel.module.css";
 
@@ -90,11 +89,13 @@ export function AddDismissalDialog({
   );
 }
 
+// Accepted items are filed through the shared "Libraries…" overlay: one row's,
+// or every saved item's at once.
 type Editor = (
   | { kind: "NewItems" | "DraftBulk" }
   | { kind: "Draft"; itemId: string }
-  | { kind: "Row"; itemId: string; mediaIds: readonly string[] }
-  | { kind: "BulkAdd" | "BulkRemove"; mediaIds: readonly string[] }
+  | { kind: "Row"; itemId: string; placement: LibraryPlacementSession }
+  | { kind: "Saved"; placement: LibraryPlacementSession }
 ) & { anchorEl: HTMLElement };
 
 type ContentItem = Exclude<AddItem, { kind: "Insertion" }>;
@@ -138,6 +139,7 @@ function mutationLabel({ operation, items }: {
   switch (operation.kind) {
     case "Submit": return `adding ${pluralize(operation.itemIds.length, "item")}…`;
     case "ReconcileAcceptance": return "checking…";
+    case "CreateDestination": return "creating library…";
   }
 }
 
@@ -150,7 +152,7 @@ function isFileDrag(event: React.DragEvent): boolean {
   return Array.from(event.dataTransfer.types).includes("Files");
 }
 
-/** The session owns drafts and import receipts; the account owns live placements. */
+/** One list owns preparation and receipts; all mutations belong to the session. */
 export default function AddPanel({
   session,
   mobile,
@@ -174,7 +176,7 @@ export default function AddPanel({
   const id = useId();
   const operation = state.mutation.kind === "Running" ? state.mutation.operation : null;
   const busy = operation !== null;
-  const creation = session.creation;
+  const creatingDestination = operation?.kind === "CreateDestination";
   const drafts = state.items.filter((item) => item.kind === "Draft");
   const validations = new Map(drafts.map((item) => [item.id, validateDraftSource(item.source)]));
   const populatedDrafts = drafts.filter(isPopulatedAddItem);
@@ -186,18 +188,19 @@ export default function AddPanel({
     + state.items.filter((item) => item.kind === "Rejected" || item.kind === "AcceptanceUnresolved").length;
   const acceptedMediaIds = [...new Set(accepted.map((item) => item.result.mediaId))];
   const done = accepted.length > 0 && accepted.length === populatedCount && session.leaveReason === null;
-  const destinationSets = populatedDrafts.map((item) => item.destinations);
-  const coverage = new Map<string, { destination: LibraryDestinationSelection; count: number }>();
+  const destinationSets = populatedDrafts.length > 0
+    ? populatedDrafts.map((item) => item.destinations)
+    : [state.newItemDestinations];
+  const coverage = new Map<string, { destination: LibraryDestination; count: number }>();
   for (const destinations of destinationSets) {
     for (const destination of destinations) {
       coverage.set(destination.id, { destination, count: (coverage.get(destination.id)?.count ?? 0) + 1 });
     }
   }
-  const bulkEntries = [...coverage.values()].map(({ destination, count }) => ({
-    destination,
-    included: count,
-  }));
-  const varies = bulkEntries.some((entry) => entry.included < destinationSets.length);
+  // Libraries every editable item is in, and those only some are in.
+  const inAll = [...coverage.values()].filter(({ count }) => count === destinationSets.length).map(({ destination }) => destination);
+  const inSome = [...coverage.values()].filter(({ count }) => count < destinationSets.length).map(({ destination }) => destination);
+  const varies = inSome.length > 0;
   const [dragActive, setDragActive] = useState(false);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [announcement, setAnnouncement] = useState<string | null>(null);
@@ -210,9 +213,9 @@ export default function AddPanel({
   // A close restores its trigger; a retarget or source command owns focus instead.
   const returnFocusAnchor = useRef<HTMLElement | null>(null);
   const panelId = `${id}-libraries`;
-  const presentation = mobile ? "Inline" : "Responsive";
   const discloses = mobile ? { kind: "region" as const, id: panelId } : { kind: "dialog" as const };
-  const interaction = busy ? { kind: "Disabled" as const } : { kind: "Enabled" as const };
+  const destinations = useApiDestinations();
+  const placementKey = useRef(0);
 
   useEffect(() => {
     if (dismissalConfirmation) requestAnimationFrame(() => keepWorkingRef.current?.focus());
@@ -223,6 +226,7 @@ export default function AddPanel({
     void command().catch(onDefect);
   }
   function closeEditor() {
+    if (creatingDestination) return;
     setEditor(null);
   }
   function closeEditorForSource() {
@@ -230,10 +234,20 @@ export default function AddPanel({
     closeEditor();
   }
   function toggleEditor(next: Editor) {
+    if (creatingDestination) return;
     if (editor?.anchorEl === next.anchorEl) return closeEditor();
-    if (busy && !("mediaIds" in next)) return;
+    if (busy) return;
     returnFocusAnchor.current = next.anchorEl;
     setEditor(next);
+  }
+  /** A "Libraries…" session for some accepted media, anchored to its button. */
+  function placement(mediaIds: readonly string[], anchorEl: HTMLElement): LibraryPlacementSession {
+    placementKey.current += 1;
+    return {
+      key: placementKey.current,
+      targets: mediaIds.map((mediaId) => ({ kind: "Media", id: mediaId })),
+      options: { anchor: () => anchorEl, returnFocusFallback: () => headingRef.current },
+    };
   }
   function focusSource(itemId: string) {
     requestAnimationFrame(() => {
@@ -264,11 +278,11 @@ export default function AddPanel({
       setAnnouncement(`${pluralize(files.length, "file")} added to the list.`);
     }
   }
-  const placementEditor = editor && "mediaIds" in editor ? editor : null;
-  const placement = useLibraryPlacements(
-    placementEditor?.mediaIds.map((id) => ({ kind: "Media" as const, id })) ?? [],
-    placementEditor?.kind === "BulkAdd" ? "Add" : placementEditor?.kind === "BulkRemove" ? "Remove" : null,
-  );
+  function createDestination(name: string): Promise<LibraryDestination> {
+    setAnnouncement(null);
+    return session.createDestination(name);
+  }
+  const placementEditor = editor && "placement" in editor ? editor : null;
 
   function editorContent() {
     if (!editor) return null;
@@ -279,75 +293,51 @@ export default function AddPanel({
       if (!owner || owner.kind === "Insertion") return null;
       title = `libraries for item ${ownerIndex + 1}`;
     } else {
-      title = editor.kind === "NewItems" ? "libraries for new items"
-        : editor.kind === "DraftBulk" ? "libraries for editable items"
-          : editor.kind === "BulkAdd" ? "add saved items to libraries"
-            : "remove saved items from libraries";
+      title = editor.kind === "NewItems" ? "libraries for new items" : "libraries for editable items";
     }
     if (placementEditor) {
       return (
-        <LibraryChooserSurface
-          key={placementEditor.kind === "Row" ? placementEditor.itemId : placementEditor.kind}
-          active
-          presentation={presentation}
+        <PlacementOverlay
+          session={placementEditor.placement}
           onClose={closeEditor}
-          anchor={() => placementEditor.anchorEl}
-          returnFocusFallback={() => headingRef.current}
-          skipReturnFocus={() => returnFocusAnchor.current !== placementEditor.anchorEl}
-          title={title}
+          inline={mobile}
           panelId={panelId}
-          focusKey={placementEditor.anchorEl}
-        >
-          <LibraryChooser
-            items={placement.items}
-            loading={placement.loading}
-            summary={placement.summary}
-            status={placement.status}
-            error={placement.error}
-            onCommit={placement.onCommit}
-            creation={placementEditor.kind === "BulkRemove" ? null : {
-              available: placement.creationAvailable,
-              pendingNames: placement.pendingNames,
-              onCreate: placement.onCreate,
-            }}
-            emptyInventory="no eligible libraries"
-          />
-        </LibraryChooserSurface>
+          skipReturnFocus={() => returnFocusAnchor.current !== placementEditor.anchorEl}
+        />
       );
     }
     const draft = editor.kind === "Draft" ? drafts.find((item) => item.id === editor.itemId) : null;
     if (editor.kind === "Draft" && !draft) return null;
-    const scope: DraftLibraryScope = {
-      sessionId: state.sessionId,
-      itemIds: editor.kind === "DraftBulk" ? [...new Set(populatedDrafts.map((item) => item.id))]
-        : draft ? [draft.id] : [],
-      includeNewItems: editor.kind === "NewItems",
+    // The editable items' header edits one library at a time across them.
+    const setAll = (next: readonly LibraryDestination[]) => {
+      const added = next.find((destination) => !inAll.some(({ id }) => id === destination.id));
+      const removed = inAll.find((destination) => !next.some(({ id }) => id === destination.id));
+      const destination = added ?? removed;
+      if (destination) session.setDraftLibrary({ destination, included: destination === added });
     };
     return (
-      <LibraryDestinationPicker
+      <ChooserSurface
         key={editor.kind === "Draft" ? editor.itemId : editor.kind}
-        open
-        presentation={presentation}
-        onClose={closeEditor}
+        active
+        inline={mobile}
+        onClose={creatingDestination ? null : closeEditor}
         anchor={() => editor.anchorEl}
         skipReturnFocus={() => returnFocusAnchor.current !== editor.anchorEl}
         title={title}
         panelId={panelId}
-        interaction={interaction}
-        pendingCreateNames={creation.pendingNames}
-        error={creation.error}
-        status={creation.status}
-        onCreateDestination={(name) => creation.admit({
-          name,
-          scope: JSON.stringify({ ...scope, itemIds: scope.itemIds.toSorted() }),
-          onCreated: (destination) => { session.setLibrary({ scope, destination, included: true }); },
-        })}
-        selection={editor.kind === "DraftBulk"
-          ? { kind: "Bulk", total: populatedDrafts.length, entries: bulkEntries,
-              onSet: (change) => session.setLibrary({ scope, ...change }) }
-          : { kind: "Item", selected: draft ? draft.destinations : state.newItemDestinations,
-              onSet: (change) => session.setLibrary({ scope, ...change }) }}
-      />
+      >
+        <DestinationChooser
+          chosen={editor.kind === "DraftBulk" ? inAll : draft ? draft.destinations : state.newItemDestinations}
+          partial={editor.kind === "DraftBulk" ? inSome : undefined}
+          onChange={editor.kind === "DraftBulk" ? setAll : (next) => draft
+            ? session.setItemDestinations({ itemId: draft.id, destinations: next })
+            : session.setNewItemDestinations({ destinations: next })}
+          source={destinations}
+          onCreate={createDestination}
+          disabled={busy}
+          emptyLabel="No libraries yet. Type a name to create one."
+        />
+      </ChooserSurface>
     );
   }
 
@@ -502,14 +492,14 @@ export default function AddPanel({
         </div>
         <div className={styles.rowLibraries}>
           {item.kind === "Draft" || item.kind === "Insertion" ? (
-            <LibraryDestinationTrigger
+            <DestinationTrigger
               label={item.kind === "Insertion" ? "for new items" : "libraries"}
               accessibleLabel={item.kind === "Insertion" ? "libraries for new items" : `libraries for ${label.trim() || `item ${index + 1}`}`}
               emptyLabel="choose"
-              selected={item.kind === "Insertion" ? state.newItemDestinations : item.destinations}
+              chosen={item.kind === "Insertion" ? state.newItemDestinations : item.destinations}
               expanded={Boolean(rowEditor || seedEditor)}
-              disabled={busy && !rowEditor && !seedEditor}
-              discloses={discloses}
+              disabled={creatingDestination || (busy && !rowEditor && !seedEditor)}
+              controls={discloses}
               onToggle={(event) => toggleEditor(item.kind === "Insertion"
                 ? { kind: "NewItems", anchorEl: event.currentTarget }
                 : { kind: "Draft", itemId: item.id, anchorEl: event.currentTarget })}
@@ -519,11 +509,12 @@ export default function AddPanel({
               variant="ghost"
               size="sm"
               className={styles.libraryButton}
+              disabled={creatingDestination || (busy && !rowEditor)}
               aria-label={`libraries for ${label}`}
               aria-expanded={Boolean(rowEditor)}
               aria-haspopup={mobile ? undefined : "dialog"}
               aria-controls={mobile ? panelId : undefined}
-              onClick={(event) => toggleEditor({ kind: "Row", itemId: item.id, mediaIds: [mediaId], anchorEl: event.currentTarget })}
+              onClick={(event) => toggleEditor({ kind: "Row", itemId: item.id, placement: placement([mediaId], event.currentTarget), anchorEl: event.currentTarget })}
             >libraries…</Button>
           ) : <span className={styles.frozenLibraries} title={destinations?.map((destination) => destination.name).join(", ")}>{destinations?.map((destination) => destination.name).join(", ") || "—"}</span>}
         </div>
@@ -613,17 +604,15 @@ export default function AddPanel({
         {accepted.length > 0 ? (
           <div className={styles.savedTools} aria-label="saved items">
             <span>saved items</span>
-            {(["BulkAdd", "BulkRemove"] as const).map((kind) => (
-              <Button
-                key={kind}
-                variant="ghost"
-                size="sm"
-                aria-expanded={editor?.kind === kind}
-                aria-haspopup={mobile ? undefined : "dialog"}
-                aria-controls={mobile ? panelId : undefined}
-                onClick={(event) => toggleEditor({ kind, mediaIds: acceptedMediaIds, anchorEl: event.currentTarget })}
-              >{kind === "BulkAdd" ? "add to library…" : "remove from library…"}</Button>
-            ))}
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={creatingDestination || (busy && editor?.kind !== "Saved")}
+              aria-expanded={editor?.kind === "Saved"}
+              aria-haspopup={mobile ? undefined : "dialog"}
+              aria-controls={mobile ? panelId : undefined}
+              onClick={(event) => toggleEditor({ kind: "Saved", placement: placement(acceptedMediaIds, event.currentTarget), anchorEl: event.currentTarget })}
+            >libraries for all…</Button>
           </div>
         ) : null}
         <div className={styles.columnHeaders}>
@@ -632,7 +621,7 @@ export default function AddPanel({
             variant="ghost"
             size="sm"
             className={styles.libraryButton}
-            disabled={(busy || populatedDrafts.length === 0) && editor?.kind !== "DraftBulk"}
+            disabled={creatingDestination || (busy && editor?.kind !== "DraftBulk")}
             aria-label="libraries for editable items"
             aria-describedby={`${id}-bulk-help`}
             aria-expanded={editor?.kind === "DraftBulk"}
@@ -641,15 +630,10 @@ export default function AddPanel({
             onClick={(event) => toggleEditor({ kind: "DraftBulk", anchorEl: event.currentTarget })}
           ><span className={styles.libraryButtonLabel}>{varies ? "varies by item" : "libraries"}<ChevronDown size={14} aria-hidden="true" /></span></Button>
         </div>
-        <span className={styles.visuallyHidden} id={`${id}-bulk-help`}>applies to the current unsubmitted items; use for new items to change defaults</span>
+        <span className={styles.visuallyHidden} id={`${id}-bulk-help`}>applies to unsubmitted items and new items</span>
       </header>
-      {!editor || placementEditor ? <>
-        {creation.status ? <p role="status">{creation.status}</p> : null}
-        {creation.error ? <FeedbackNotice content={creation.error.content} announcement="Assertive"
-          actions={creation.error.onRetry ? [{ label: "retry", onClick: creation.error.onRetry }] : undefined} /> : null}
-      </> : null}
       <div ref={listRef} className={`${styles.body}${dragActive ? ` ${styles.dragActive}` : ""}`}>
-        {editor?.kind === "DraftBulk" || editor?.kind === "BulkAdd" || editor?.kind === "BulkRemove" ? <div className={styles.headerEditor}>{editorContent()}</div> : null}
+        {editor?.kind === "DraftBulk" || editor?.kind === "Saved" ? <div className={styles.headerEditor}>{editorContent()}</div> : null}
         {state.intakeFeedback ? <p className={styles.intakeFeedback} data-tone={state.intakeFeedback.tone}>{feedbackStatus(state.intakeFeedback)}</p> : null}
         {state.items.map(row)}
       </div>
@@ -660,7 +644,7 @@ export default function AddPanel({
           variant="primary"
           size="md"
           loading={busy}
-          disabled={creation.creating || (!busy && readyCount === 0 && !done)}
+          disabled={!busy && readyCount === 0 && !done}
           onClick={() => {
             if (busy) return;
             if (done) return onClose();

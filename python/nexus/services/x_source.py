@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 from nexus.db.models import XSourceSnapshot as StoredXSourceSnapshot
 from nexus.ids import new_uuid7
 from nexus.schemas.media import XSourceContext
-from nexus.schemas.presence import Presence, Present, absent, present
 from nexus.schemas.x_source import XSourcePost, XSourceSnapshot
 from nexus.services.x_identity import classify_x_url
 
@@ -25,14 +24,12 @@ class PublishedXSource:
     snapshot: XSourceSnapshot
 
 
-def load_x_source(db: Session, *, media_id: UUID) -> Presence[PublishedXSource]:
+def load_x_source(db: Session, *, media_id: UUID) -> PublishedXSource | None:
     row = db.scalar(select(StoredXSourceSnapshot).where(StoredXSourceSnapshot.media_id == media_id))
     if row is None:
-        return absent()
-    return present(
-        PublishedXSource(
-            row.source_attempt_id, XSourceSnapshot.model_validate_json(json.dumps(row.payload))
-        )
+        return None
+    return PublishedXSource(
+        row.source_attempt_id, XSourceSnapshot.model_validate_json(json.dumps(row.payload))
     )
 
 
@@ -99,10 +96,10 @@ def authored_text(post: XSourcePost, *, remove_attachment_urls: bool = True) -> 
             (identity := classify_x_url(url)) is not None and identity.provider_id in quotes
             for url in (
                 entity.url,
-                entity.expanded_url.value if isinstance(entity.expanded_url, Present) else "",
+                entity.expanded_url or "",
             )
         )
-        if quote or (remove_attachment_urls and isinstance(entity.attachment_media_key, Present)):
+        if quote or (remove_attachment_urls and entity.attachment_media_key is not None):
             value = value.replace(entity.url, "")
     return value.strip()
 

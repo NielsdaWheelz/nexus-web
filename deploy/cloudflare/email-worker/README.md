@@ -49,7 +49,6 @@ wrangler secret put EMAIL_INGEST_API_URL
 In `deploy/env/env-prod-backend` (from `.example`):
 
 ```env
-EMAIL_INGEST_ENABLED=true
 EMAIL_INGEST_HMAC_SECRET=<same secret as above>
 EMAIL_INGEST_ADDRESS_SLUG=<local-part, e.g. letters-abc123>
 EMAIL_INGEST_DOMAIN=<mail.example.com>

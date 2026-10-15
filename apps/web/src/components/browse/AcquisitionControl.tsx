@@ -2,25 +2,25 @@
 
 // The one acquisition owner (browse preview, podcast detail, the Subscribe
 // overlay): a split Add/Subscribe button whose chevron stages named library
-// destinations. One logical command carries one Idempotency-Key: a delivery
-// that may have landed replays it, and confirming a placement conflict mints
-// one fresh key for the confirmed command.
+// destinations. One logical command carries one key (a url Add's attempt id): a
+// delivery that may have landed replays it, and confirming that a show replaces
+// filed episodes mints one fresh key for the confirmed command.
 
 import { useId, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
-import LibraryDestinationPicker from "@/components/libraries/LibraryDestinationPicker";
+import ChooserSurface from "@/components/libraries/ChooserSurface";
+import DestinationChooser from "@/components/libraries/DestinationChooser";
+import { useApiDestinations } from "@/components/libraries/DestinationField";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
-import { apiCommand204 } from "@/lib/api/client";
-import { absent, present, type Presence } from "@/lib/api/presence";
+import { apiFetch } from "@/lib/api/client";
 import { isAbortError } from "@/lib/errors";
 import {
-  listWritableLibraryDestinations,
-} from "@/lib/libraries/client";
-import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
-import { setLibraryDestination } from "@/lib/libraries/destinationSelection";
-import { useDraftLibraryCreation } from "@/lib/libraries/useDraftLibraryCreation";
+  createLibrary,
+  destinationsPage,
+  type LibraryDestination,
+} from "@/lib/libraries/api";
 import { usePlayerCommands } from "@/lib/player/playerRuntime";
 import {
   modeledApiError,
@@ -31,9 +31,8 @@ import styles from "./AcquisitionControl.module.css";
 export interface AcquisitionCommand {
   readonly namedLibraryIds: readonly string[];
   readonly idempotencyKey: string;
-  readonly replacementConfirmation: Presence<{
-    readonly conflictFingerprint: string;
-  }>;
+  /** Confirms that the show replaces episodes a destination files directly. */
+  readonly replaceEpisodes: boolean;
 }
 
 export interface AcquisitionSuccess {
@@ -43,18 +42,17 @@ export interface AcquisitionSuccess {
 
 interface FrozenCommand extends AcquisitionCommand {
   readonly previewPosition: {
-    readonly positionMs: number;
-    readonly durationMs: Presence<number>;
+    readonly position_ms: number;
+    readonly duration_ms: number | null;
   } | null;
 }
 
 interface Conflict {
   readonly conflicts: readonly {
-    readonly libraryId: string;
-    readonly libraryName: string;
-    readonly episodeCount: number;
+    readonly library_id: string;
+    readonly library_name: string;
+    readonly episode_count: number;
   }[];
-  readonly conflictFingerprint: string;
 }
 
 const FAILURES = {
@@ -86,30 +84,49 @@ export default function AcquisitionControl({
 }) {
   const fail = useThrowLater();
   const feedback = useFeedback();
+  const destinations = useApiDestinations();
   const { stopPreviewAudio } = usePlayerCommands();
   const panelId = useId();
   const chevronRef = useRef<HTMLButtonElement>(null);
+  const createIds = useRef(new Map<string, string>());
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [selected, setSelected] = useState<
-    readonly LibraryDestinationSelection[]
-  >([]);
-  const creation = useDraftLibraryCreation(previewTarget ?? panelId);
-  const creating = creation.creating;
+  const [selected, setSelected] = useState<readonly LibraryDestination[]>([]);
+  const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [frozen, setFrozen] = useState<FrozenCommand | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [conflict, setConflict] = useState<Conflict | null>(null);
 
-  // Refresh names and access; unavailable choices remain explicitly removable.
+  // A retried create reuses the library id minted for that name.
+  const createDestination = async (name: string) => {
+    setCreating(true);
+    const normalized = name.trim();
+    const id = createIds.current.get(normalized) ?? crypto.randomUUID();
+    createIds.current.set(normalized, id);
+    try {
+      const library = await createLibrary({ id, name: normalized });
+      createIds.current.delete(normalized);
+      return library;
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  // Library access changed: keep only still-writable destinations, reopen.
   const reviewDestinations = async (requestId?: string) => {
     setReviewing(true);
     setFailure(null);
     try {
-      const writable = new Map<string, LibraryDestinationSelection>();
-      for (const library of await listWritableLibraryDestinations()) writable.set(library.id, library);
+      const writable = new Map<string, LibraryDestination>();
+      let cursor: string | null = null;
+      do {
+        const page = await destinationsPage("", cursor);
+        for (const library of page.items) writable.set(library.id, library);
+        cursor = page.next_cursor;
+      } while (cursor !== null);
       setSelected((current) =>
-        current.map((library) => writable.get(library.id) ?? library),
+        current.flatMap((library) => writable.get(library.id) ?? []),
       );
       setPickerOpen(true);
       setFailure({ kind: "Permission", requestId });
@@ -130,7 +147,7 @@ export default function AcquisitionControl({
     position: NonNullable<FrozenCommand["previewPosition"]>,
   ) => {
     try {
-      await apiCommand204(`/api/media/${mediaId}/preview-position`, {
+      await apiFetch<void>(`/api/media/${mediaId}/preview-position`, {
         method: "POST",
         body: JSON.stringify(position),
       });
@@ -218,12 +235,12 @@ export default function AcquisitionControl({
     return {
       namedLibraryIds: selected.map((library) => library.id),
       idempotencyKey: crypto.randomUUID(),
-      replacementConfirmation: absent(),
+      replaceEpisodes: false,
       previewPosition:
         stopped !== null && stopped.positionMs > 0
           ? {
-              positionMs: Math.floor(stopped.positionMs),
-              durationMs: stopped.durationMs,
+              position_ms: Math.floor(stopped.positionMs),
+              duration_ms: stopped.durationMs,
             }
           : null,
     };
@@ -232,21 +249,10 @@ export default function AcquisitionControl({
   // Confirming mints one fresh key; retrying that confirmation reuses it.
   const confirmReplacement = () => {
     if (conflict === null || frozen === null) return;
-    const fingerprint = conflict.conflictFingerprint;
-    const confirmation = frozen.replacementConfirmation;
-    const confirmed =
-      confirmation.kind === "Present" &&
-      confirmation.value.conflictFingerprint === fingerprint;
     void run(
-      confirmed
+      frozen.replaceEpisodes
         ? frozen
-        : {
-            ...frozen,
-            idempotencyKey: crypto.randomUUID(),
-            replacementConfirmation: present({
-              conflictFingerprint: fingerprint,
-            }),
-          },
+        : { ...frozen, idempotencyKey: crypto.randomUUID(), replaceEpisodes: true },
     );
   };
 
@@ -276,7 +282,7 @@ export default function AcquisitionControl({
   const spoken = unknown ? label : action;
   const unavailable = failure?.kind === "Unavailable";
   const conflictEpisodes =
-    conflict?.conflicts.reduce((total, row) => total + row.episodeCount, 0) ??
+    conflict?.conflicts.reduce((total, row) => total + row.episode_count, 0) ??
     0;
   const cautious =
     failure?.kind === "Unavailable" || failure?.kind === "Permission";
@@ -315,7 +321,7 @@ export default function AcquisitionControl({
           aria-expanded={pickerOpen}
           aria-controls={panelId}
           disabled={
-            busy || reviewing || frozen !== null || unavailable
+            busy || creating || reviewing || frozen !== null || unavailable
           }
           onClick={() => setPickerOpen((open) => !open)}
         >
@@ -323,26 +329,22 @@ export default function AcquisitionControl({
           {staged > 0 ? <span>+{staged}</span> : null}
         </button>
       </div>
-      <LibraryDestinationPicker
-        open={pickerOpen}
-        presentation="Responsive"
-        onClose={() => setPickerOpen(false)}
+      <ChooserSurface
+        active={pickerOpen}
+        onClose={creating ? null : () => setPickerOpen(false)}
         anchor={() => chevronRef.current}
         title="Also add to"
-        selection={{ kind: "Item", selected, onSet: (change) => {
-          if (busy || frozen !== null) return "Rejected";
-          setSelected((current) => setLibraryDestination(current, change));
-          return "Accepted";
-        } }}
-        interaction={busy || frozen !== null ? { kind: "Disabled" } : { kind: "Enabled" }}
-        onCreateDestination={(name) => creation.admit({ name, scope: panelId, onCreated: (destination) => setSelected((current) => setLibraryDestination(current, { destination, included: true })) })}
-        pendingCreateNames={creation.pendingNames}
-        error={creation.error}
-        status={creation.status}
         panelId={panelId}
-      />
-      {!pickerOpen && creation.status ? <p role="status">{creation.status}</p> : null}
-      {!pickerOpen && creation.error ? <FeedbackNotice content={creation.error.content} actions={creation.error.onRetry ? [{ label: "retry", onClick: creation.error.onRetry }] : undefined} announcement="Polite" /> : null}
+      >
+        <DestinationChooser
+          chosen={selected}
+          onChange={setSelected}
+          source={destinations}
+          onCreate={createDestination}
+          disabled={busy || frozen !== null}
+          emptyLabel="No libraries yet. Type a name to create one."
+        />
+      </ChooserSurface>
       {failure ? (
         <FeedbackNotice
           content={{
@@ -375,9 +377,9 @@ export default function AcquisitionControl({
         </p>
         <ul>
           {conflict?.conflicts.map((row) => (
-            <li key={row.libraryId}>
-              {row.libraryName} · {row.episodeCount}{" "}
-              {row.episodeCount === 1 ? "episode" : "episodes"}
+            <li key={row.library_id}>
+              {row.library_name} · {row.episode_count}{" "}
+              {row.episode_count === 1 ? "episode" : "episodes"}
             </li>
           ))}
         </ul>

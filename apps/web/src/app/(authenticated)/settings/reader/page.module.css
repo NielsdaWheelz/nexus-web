@@ -1,52 +1,66 @@
 .form {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: var(--space-4);
 }
 
-.formRow {
+.pair {
   display: flex;
-  gap: var(--space-4);
-  align-items: flex-end;
   flex-wrap: wrap;
+  gap: var(--space-4);
 }
 
-.formField {
+.field {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
   min-width: 140px;
 }
 
-.formLabel {
-  font-size: var(--text-xs);
+.label {
+  padding: 0;
   color: var(--ink-muted);
+  font-size: var(--text-xs);
   font-weight: var(--weight-medium);
 }
 
 .range {
-  width: 100%;
-  min-width: 120px;
-  max-width: 200px;
+  width: min(100%, 200px);
 }
 
-.savingHint {
-  font-size: var(--text-xs);
-  color: var(--ink-faint);
+/* one of four as a segmented row; native radios keep radiogroup semantics */
+.segments {
+  display: flex;
+  flex-wrap: wrap;
   margin: 0;
+  padding: 0;
+  border: 0;
 }
 
-@media (max-width: 600px) {
-  .formRow {
-    flex-direction: column;
-    align-items: stretch;
-  }
+/* positioned: the hidden radio is placed in its label and scrolls with it */
+.segments > label {
+  position: relative;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--edge-subtle);
+  font-size: var(--text-sm);
+}
 
-  .formField {
-    min-width: 0;
-  }
+.segments > label:has(:checked) {
+  border-color: var(--ring);
+}
 
-  .range {
-    max-width: none;
-  }
+.segments > label:has(:focus-visible) {
+  outline: var(--focus-ring-width) solid var(--ring);
+}
+
+.segments input {
+  position: absolute;
+  opacity: 0;
+}
+
+.saving {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
 }

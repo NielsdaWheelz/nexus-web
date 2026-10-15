@@ -1,64 +1,63 @@
 "use client";
 
+// The Android share sheet's capture card (`/share?text=`). Links get their list,
+// a destination field (create allowed) and Save; each link is saved under its
+// own id, kept for the page's life, so Retry resends the same acceptance. Plain
+// text is appended to today's daily note once per attempt, under a date and a
+// note id fixed on first send. Results offer Open (in the shell, through
+// `nexus-share://open`) and Done.
+
 import { useEffect, useMemo, useRef, useState } from "react";
-import LibraryDestinationField from "@/components/libraries/LibraryDestinationField";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import type { ApiJson } from "@/lib/api/wire";
+import DestinationField from "@/components/libraries/DestinationField";
 import {
+  apiFetch,
   apiTransportFeedback,
   isApiError,
   isUnauthenticatedApiError,
 } from "@/lib/api/client";
-import { useResource } from "@/lib/api/useResource";
+import { usePaneFreeServerValue } from "@/lib/api/serverState";
+import type { ApiJson } from "@/lib/api/wire";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
-import { createRandomId } from "@/lib/createRandomId";
 import { extractUrls } from "@/lib/extractUrls";
-import { useDraftLibraryCreation } from "@/lib/libraries/useDraftLibraryCreation";
-import { setLibraryDestination } from "@/lib/libraries/destinationSelection";
-import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
-import { captureSourceUrl } from "@/lib/imports/ingest";
+import { captureErrorFeedback, captureStatusLine } from "@/lib/imports/copy";
+import { addMediaFromUrl } from "@/lib/imports/ingest";
+import { createLibrary, type LibraryDestination } from "@/lib/libraries/api";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
-import { captureDailyPageNote } from "@/lib/notes/api";
+import { captureToday } from "@/lib/notes/api";
 import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
 import styles from "./share.module.css";
 
-// One captured item. A failed capture carries no destination; a successful one
-// carries the in-app `path` its "Open" action targets.
-type CaptureResult =
-  | {
-      label: string;
-      ok: true;
-      status: string;
-      path: string;
-    }
-  | {
-      label: string;
-      ok: false;
-      reason: "Capture" | "Unauthenticated";
-      feedback: FeedbackContent;
-    };
+type Result =
+  | { label: string; ok: true; status: string; path: string }
+  | { label: string; ok: false; retryable: boolean; feedback: FeedbackContent };
 
-function failedCaptureResult(
+/** A refusal as a result row: sign-out is final for this share; anything the
+    surface does not model throws. */
+function failed(
   label: string,
   error: unknown,
-): Extract<CaptureResult, { ok: false }> {
+  describe: () => FeedbackContent | null,
+): Result {
   if (isUnauthenticatedApiError(error)) {
-    return {
-      label,
-      ok: false,
-      reason: "Unauthenticated",
-      feedback: {
-        tone: "Danger",
-        title: "Sign in to save this",
-        message: "Open Nexus, sign in, then share again.",
-        requestId: error.requestId,
-      },
+    const feedback: FeedbackContent = {
+      tone: "Danger",
+      title: "Sign in to save this",
+      message: "Open Nexus, sign in, then share again.",
+      requestId: error.requestId,
     };
+    return { label, ok: false, retryable: false, feedback };
   }
-  if (!isApiError(error) || error.code !== "E_NETWORK") throw error;
-  const feedback = apiTransportFeedback(error, "Couldn’t save");
+  const feedback = describe();
   if (feedback === null) throw error;
-  return { label, ok: false, reason: "Capture", feedback };
+  return { label, ok: false, retryable: true, feedback };
+}
+
+/** The account read and the plain-text append model only a lost connection. */
+function networkOnly(error: unknown): FeedbackContent | null {
+  return isApiError(error) && error.code === "E_NETWORK"
+    ? apiTransportFeedback(error, "Couldn’t save")
+    : null;
 }
 
 export default function ShareCapture({
@@ -70,170 +69,126 @@ export default function ShareCapture({
 }) {
   const trimmed = text.trim();
   const urls = useMemo(() => extractUrls(trimmed), [trimmed]);
-  const [results, setResults] = useState<CaptureResult[] | null>(null);
+  const [results, setResults] = useState<Result[] | null>(null);
   const [saving, setSaving] = useState(false);
-  const creation = useDraftLibraryCreation(trimmed);
-  const creatingDestination = creation.creating;
-  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const [attempt, setAttempt] = useState(0);
-  // Capture fires once per attempt. The guard survives React's mount-effect
-  // double-invoke. Once the profile read succeeds, the account-local date and
-  // both replay identities stay frozen across retries and midnight.
-  const capturedAttempt = useRef<number | null>(null);
-  const noteId = useRef(createRandomId());
-  const noteMutationId = useRef(createRandomId("share-note-mutation"));
-  const plainTextAttempt = useRef<{
-    localDate: string;
-    noteId: string;
-    clientMutationId: string;
-  } | null>(null);
-  const urlIdempotencyKeys = useRef<Map<string, string>>(new Map());
-  const [selectedDestinations, setSelectedDestinations] = useState<
-    readonly LibraryDestinationSelection[]
+  const [creating, setCreating] = useState(false);
+  const [destinations, setDestinations] = useState<
+    readonly LibraryDestination[]
   >([]);
-  const accountResource = useResource<ApiJson<"/me", "get">>({
-    cacheKey: trimmed && urls.length === 0 ? "share-capture:account" : null,
-    path: () => "/api/me",
+  const [attempt, setAttempt] = useState(0);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const urlIds = useRef(new Map<string, string>());
+  const createIds = useRef(new Map<string, string>());
+  const note = useRef<{ localDate: string; noteId: string } | null>(null);
+  const sentAttempt = useRef<number | null>(null);
+  const plainText = trimmed !== "" && urls.length === 0;
+  const account = usePaneFreeServerValue({
+    key: plainText ? "/me" : null,
+    stale: "",
+    load: (signal) =>
+      apiFetch<ApiJson<"/me", "get">>("/api/me", { signal }).then(
+        (body) => body.data,
+      ),
   });
-  const calendarTimeZone =
-    accountResource.status === "ready"
-      ? accountResource.data.data.calendar_time_zone
-      : null;
+  const timeZone =
+    account.status === "ready" ? account.data.calendar_time_zone : null;
 
+  // plain text: one append per attempt (the effect runs twice in development);
+  // the date and note id are fixed on first send, so a retry lands once
   useEffect(() => {
-    if (
-      !trimmed ||
-      urls.length > 0 ||
-      calendarTimeZone === null ||
-      capturedAttempt.current === attempt
-    ) {
+    if (!plainText || timeZone === null || sentAttempt.current === attempt) {
       return;
     }
-    capturedAttempt.current = attempt;
+    sentAttempt.current = attempt;
+    note.current ??= {
+      localDate: formatLocalDateInTimeZone(new Date(), timeZone),
+      noteId: crypto.randomUUID(),
+    };
+    const { localDate, noteId } = note.current;
     setResults(null);
-
-    void (async () => {
-      try {
-        let frozen = plainTextAttempt.current;
-        if (frozen === null) {
-          frozen = {
-            localDate: formatLocalDateInTimeZone(
-              new Date(),
-              calendarTimeZone,
-            ),
-            noteId: noteId.current,
-            clientMutationId: noteMutationId.current,
-          };
-          plainTextAttempt.current = frozen;
-        }
-        await captureDailyPageNote(frozen.localDate, {
-          noteId: frozen.noteId,
-          clientMutationId: frozen.clientMutationId,
-          bodyPmJson: {
-            type: "paragraph",
-            content: [{ type: "text", text: trimmed }],
-          },
-        });
+    captureToday(localDate, noteId, trimmed).then(
+      () =>
         setResults([
           {
             label: trimmed,
             ok: true,
             status: "Added to today",
-            path: `/daily/${frozen.localDate}`,
+            path: `/daily/${localDate}`,
           },
-        ]);
-      } catch (error) {
+        ]),
+      (error: unknown) => {
         try {
-          setResults([failedCaptureResult(trimmed, error)]);
-        } catch (captureDefect) {
-          setDefect({ error: captureDefect });
+          setResults([failed(trimmed, error, () => networkOnly(error))]);
+        } catch (thrown) {
+          setDefect({ error: thrown });
         }
-      }
-    })();
-  }, [trimmed, urls.length, calendarTimeZone, attempt]);
+      },
+    );
+  }, [plainText, timeZone, attempt, trimmed]);
 
-  const doneHref = isShell ? "nexus-share://done" : APP_AUTHENTICATED_HOME_HREF;
-  const cancelHref = isShell
-    ? "nexus-share://dismiss"
-    : APP_AUTHENTICATED_HOME_HREF;
+  if (defect !== null) throw defect.error;
 
-  async function saveUrls(targetUrls: string[]) {
-    if (saving || creatingDestination) return;
-    setSaving(true);
+  async function saveUrl(url: string): Promise<Result> {
+    let id = urlIds.current.get(url);
+    if (id === undefined) urlIds.current.set(url, (id = crypto.randomUUID()));
     try {
-      const outcomes = await runBoundedTasks({
-        items: targetUrls,
-        concurrency: 2,
-        run: saveUrl,
-      });
-      const settled: CaptureResult[] = [];
-      const defects: unknown[] = [];
-      outcomes.forEach((outcome, index) => {
-        const label = targetUrls[index];
-        if (label === undefined) {
-          defects.push(
-            new Error("Share outcome did not match its source URL."),
-          );
-          return;
-        }
-        switch (outcome.kind) {
-          case "Fulfilled":
-            settled.push(outcome.value);
-            return;
-          case "Rejected":
-            if (isUnauthenticatedApiError(outcome.error)) {
-              settled.push({
-                label,
-                ok: false,
-                reason: "Unauthenticated",
-                feedback: {
-                  tone: "Danger",
-                  title: "Sign in to save this",
-                  message: "Open Nexus, sign in, then share again.",
-                },
-              });
-              return;
-            }
-            defects.push(outcome.error);
-        }
-      });
-      setResults((current) => {
-        if (!current) return settled;
-        const replacements = new Map(
-          settled.map((result) => [result.label, result]),
+      const libraryIds = destinations.map((library) => library.id);
+      const accepted = await addMediaFromUrl({ url, libraryIds, id });
+      const path = `/media/${accepted.mediaId}`;
+      return {
+        label: url,
+        ok: true,
+        status: captureStatusLine(accepted),
+        path,
+      };
+    } catch (error) {
+      return failed(url, error, () =>
+        captureErrorFeedback(error, "SaveSource"),
+      );
+    }
+  }
+
+  function save(targets: string[]): void {
+    setSaving(true);
+    runBoundedTasks({ items: targets, concurrency: 2, run: saveUrl })
+      .then((outcomes) => {
+        const settled = outcomes.map((outcome) => {
+          if (outcome.kind === "Rejected") throw outcome.error;
+          return outcome.value;
+        });
+        setResults((current) =>
+          current === null
+            ? settled
+            : current.map(
+                (result) =>
+                  settled.find((next) => next.label === result.label) ?? result,
+              ),
         );
-        return current.map(
-          (result) => replacements.get(result.label) ?? result,
-        );
-      });
-      if (defects.length > 0) throw defects[0];
+      })
+      .catch((error: unknown) => setDefect({ error }))
+      .finally(() => setSaving(false));
+  }
+
+  /** One id per name for the page's life: a create whose answer was lost
+      resends it and lands once. */
+  async function createDestination(name: string): Promise<LibraryDestination> {
+    const clean = name.trim();
+    let id = createIds.current.get(clean);
+    if (id === undefined)
+      createIds.current.set(clean, (id = crypto.randomUUID()));
+    setCreating(true);
+    try {
+      return await createLibrary({ id, name: clean });
     } finally {
-      setSaving(false);
+      setCreating(false);
     }
   }
 
-  async function saveUrl(url: string): Promise<CaptureResult> {
-    let idempotencyKey = urlIdempotencyKeys.current.get(url);
-    if (!idempotencyKey) {
-      idempotencyKey = createRandomId("share-url");
-      urlIdempotencyKeys.current.set(url, idempotencyKey);
-    }
-    const result = await captureSourceUrl({
-      url,
-      libraryIds: selectedDestinations.map((destination) => destination.id),
-      idempotencyKey,
-      operation: "SaveSource",
-    });
-    return result.ok ? result : { ...result, reason: "Capture" };
-  }
+  const done = isShell ? "nexus-share://done" : APP_AUTHENTICATED_HOME_HREF;
+  const open = (path: string) =>
+    isShell ? `nexus-share://open?path=${encodeURIComponent(path)}` : path;
 
-  function runSaveUrls(targetUrls: string[]): void {
-    void saveUrls(targetUrls).catch((error) => setDefect({ error }));
-  }
-
-  if (defect) throw defect.error;
-
-  if (!trimmed) {
+  if (trimmed === "") {
     return (
       <>
         <h1 className={styles.heading}>Nothing to share</h1>
@@ -241,7 +196,7 @@ export default function ShareCapture({
           The shared text was empty, so there was nothing to save.
         </p>
         <div className={styles.actions}>
-          <a className={styles.actionPrimary} href={doneHref}>
+          <a className={styles.actionPrimary} href={done}>
             Done
           </a>
         </div>
@@ -249,7 +204,7 @@ export default function ShareCapture({
     );
   }
 
-  if (urls.length > 0 && results === null) {
+  if (urls.length > 0 && results === null && !saving) {
     return (
       <>
         <h1 className={styles.heading}>Save to Nexus</h1>
@@ -262,31 +217,29 @@ export default function ShareCapture({
             </div>
           ))}
         </div>
-        <LibraryDestinationField
+        <DestinationField
           label="Library destinations"
           emptyLabel="No additional libraries"
-          selected={selectedDestinations}
-          onSet={(change) => {
-            if (saving) return "Rejected";
-            setSelectedDestinations((current) => setLibraryDestination(current, change));
-            return "Accepted";
-          }}
-          interaction={saving ? { kind: "Disabled" } : { kind: "Enabled" }}
-          onCreateDestination={(name) => creation.admit({ name, scope: trimmed, onCreated: (destination) => setSelectedDestinations((current) => setLibraryDestination(current, { destination, included: true })) })}
-          pendingCreateNames={creation.pendingNames}
-          error={creation.error}
-          status={creation.status}
+          chosen={destinations}
+          onChange={setDestinations}
+          disabled={creating}
+          onCreate={createDestination}
         />
         <div className={styles.actions}>
           <button
             type="button"
             className={styles.actionPrimary}
-            disabled={saving || creatingDestination}
-            onClick={() => runSaveUrls(urls)}
+            disabled={creating}
+            onClick={() => save(urls)}
           >
-            {saving ? "Saving…" : "Save"}
+            Save
           </button>
-          <a className={styles.action} href={cancelHref}>
+          <a
+            className={styles.action}
+            href={
+              isShell ? "nexus-share://dismiss" : APP_AUTHENTICATED_HOME_HREF
+            }
+          >
             Cancel
           </a>
         </div>
@@ -294,13 +247,12 @@ export default function ShareCapture({
     );
   }
 
-  const visibleResults: CaptureResult[] | null =
+  const shown =
     results ??
-    (accountResource.status === "error"
-      ? [failedCaptureResult(trimmed, accountResource.error)]
+    (account.status === "failed"
+      ? [failed(trimmed, account.error, () => networkOnly(account.error))]
       : null);
-
-  if (visibleResults === null || saving) {
+  if (shown === null || saving) {
     return (
       <>
         <h1 className={styles.heading}>Saving to Nexus…</h1>
@@ -309,27 +261,23 @@ export default function ShareCapture({
     );
   }
 
-  const anyFailed = visibleResults.some((result) => !result.ok);
-  const retryableFailures = visibleResults.filter(
-    (result) => !result.ok && result.reason === "Capture",
-  );
-  const failedUrls = retryableFailures.map((result) => result.label);
-  const authRequired = visibleResults.some(
-    (result) => !result.ok && result.reason === "Unauthenticated",
-  );
-
+  const retry = shown
+    .filter((result) => !result.ok && result.retryable)
+    .map((result) => result.label);
+  const anySaved = shown.some((result) => result.ok);
+  const signedOut = shown.some((result) => !result.ok && !result.retryable);
   return (
     <>
       <h1 className={styles.heading}>
-        {visibleResults.some((result) => result.ok)
+        {anySaved
           ? "Saved to Nexus"
-          : authRequired
+          : signedOut
             ? "Sign in to save this"
             : "Couldn’t save"}
       </h1>
       <div className={styles.results}>
-        {visibleResults.map((result, index) => (
-          <div key={index} className={styles.resultItem}>
+        {shown.map((result) => (
+          <div key={result.label} className={styles.resultItem}>
             <span className={styles.resultLabel} title={result.label}>
               {result.label}
             </span>
@@ -337,14 +285,7 @@ export default function ShareCapture({
               <>
                 <span className={styles.resultStatus}>{result.status}</span>
                 <div className={styles.actions}>
-                  <a
-                    className={styles.action}
-                    href={
-                      isShell
-                        ? `nexus-share://open?path=${encodeURIComponent(result.path)}`
-                        : result.path
-                    }
-                  >
+                  <a className={styles.action} href={open(result.path)}>
                     {result.path.startsWith("/daily/")
                       ? "Open"
                       : "Open in Nexus"}
@@ -370,29 +311,26 @@ export default function ShareCapture({
         ))}
       </div>
       <div className={styles.actions}>
-        {retryableFailures.length > 0 && (
+        {retry.length > 0 ? (
           <button
             type="button"
             className={styles.actionPrimary}
-            disabled={saving || creatingDestination}
-            onClick={() => {
-              if (urls.length > 0) {
-                runSaveUrls(failedUrls);
-                return;
-              }
-              if (accountResource.status === "error") {
-                accountResource.retry();
-                return;
-              }
-              setAttempt((value) => value + 1);
-            }}
+            onClick={() =>
+              urls.length > 0
+                ? save(retry)
+                : account.status === "failed"
+                  ? account.refetch()
+                  : setAttempt((n) => n + 1)
+            }
           >
             Retry
           </button>
-        )}
+        ) : null}
         <a
-          className={anyFailed ? styles.action : styles.actionPrimary}
-          href={doneHref}
+          className={
+            retry.length > 0 || !anySaved ? styles.action : styles.actionPrimary
+          }
+          href={done}
         >
           Done
         </a>

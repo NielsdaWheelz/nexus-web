@@ -1,5 +1,5 @@
-// Frontend mirror of the backend search kind taxonomy.
-// The six user-facing kinds + the format vocab + implied-kind compatibility.
+// The search vocabulary the server names (python services/search/query.py):
+// six kinds, six media formats, and the kinds a format or credit filter leaves.
 
 export const SEARCH_KINDS = [
   "documents",
@@ -9,7 +9,6 @@ export const SEARCH_KINDS = [
   "people",
   "web",
 ] as const;
-
 export type SearchKind = (typeof SEARCH_KINDS)[number];
 
 export const SEARCH_KIND_LABELS: Record<SearchKind, string> = {
@@ -29,7 +28,6 @@ export const MEDIA_FORMATS = [
   "episode",
   "podcast",
 ] as const;
-
 export type MediaFormat = (typeof MEDIA_FORMATS)[number];
 
 export const MEDIA_FORMAT_LABELS: Record<MediaFormat, string> = {
@@ -41,8 +39,8 @@ export const MEDIA_FORMAT_LABELS: Record<MediaFormat, string> = {
   podcast: "Podcasts",
 };
 
-// Operator/alias → canonical kind. No "author" alias (author: is an operator).
-export const KIND_ALIASES: Record<string, SearchKind> = {
+// `kind:` values. author is an operator, never a kind.
+const KIND_ALIASES: Record<string, SearchKind> = {
   documents: "documents",
   document: "documents",
   doc: "documents",
@@ -60,45 +58,31 @@ export const KIND_ALIASES: Record<string, SearchKind> = {
   web: "web",
 };
 
-// Implied-kind: which kinds can honor a media-format vs an author/role filter (§4.5).
-const FORMAT_KINDS: ReadonlySet<SearchKind> = new Set(["documents"]);
-const CREDIT_KINDS: ReadonlySet<SearchKind> = new Set(["documents", "people"]);
-
 export function normalizeKind(token: string): SearchKind | null {
   return KIND_ALIASES[token.trim().toLowerCase()] ?? null;
 }
 
 export function normalizeFormat(token: string): MediaFormat | null {
   const value = token.trim().toLowerCase();
-  return (MEDIA_FORMATS as readonly string[]).includes(value)
-    ? (value as MediaFormat)
-    : null;
+  return MEDIA_FORMATS.find((format) => format === value) ?? null;
 }
 
-// Kinds disabled by the currently-active filters (mirrors server-side implied-kind).
-// A media-format filter disables non-Document kinds; an author/role filter disables
-// everything but Documents and People. Returns the set of disabled kinds + a reason.
-export function disabledKinds(options: {
+/** The kinds the server drops under these filters (SearchQuery.effective_kinds), and why. */
+export function disabledKinds(filters: {
   hasFormatFilter: boolean;
   hasCreditFilter: boolean;
 }): { kinds: ReadonlySet<SearchKind>; reason: string | null } {
-  let allowed: ReadonlySet<SearchKind> | null = null;
-  let reason: string | null = null;
-  if (options.hasFormatFilter) {
-    allowed = FORMAT_KINDS;
-    reason = "Formats apply to documents";
-  }
-  if (options.hasCreditFilter) {
-    allowed = allowed
-      ? new Set([...allowed].filter((kind) => CREDIT_KINDS.has(kind)))
-      : CREDIT_KINDS;
-    reason = options.hasFormatFilter
-      ? "Formats apply to documents"
-      : "Authors and roles apply to documents and people";
-  }
-  if (!allowed) {
-    return { kinds: new Set(), reason: null };
-  }
-  const disabled = new Set(SEARCH_KINDS.filter((kind) => !allowed.has(kind)));
-  return { kinds: disabled, reason };
+  const [allowed, reason]: [readonly SearchKind[], string | null] =
+    filters.hasFormatFilter
+      ? [["documents"], "Formats apply to documents"]
+      : filters.hasCreditFilter
+        ? [
+            ["documents", "people"],
+            "Authors and roles apply to documents and people",
+          ]
+        : [SEARCH_KINDS, null];
+  return {
+    kinds: new Set(SEARCH_KINDS.filter((kind) => !allowed.includes(kind))),
+    reason,
+  };
 }

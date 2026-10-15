@@ -262,11 +262,14 @@ for the extension. preserve current paging, ranking and create eligibility.
 `LibraryChooser` owns keeping keyboard-active options visible in its own
 scrollport without scrolling the import list or moving dom focus.
 
-the [library chooser cutover](library-chooser-plan.md) supersedes saved placement
-ownership here. saved row/bulk editors use the shared account owner and canonical
-inventory, never submitted destinations. admission keeps the chooser open;
-per-target ordering and exact recovery survive dismissal. draft bulk and future
-defaults have separate scopes; draft selection never becomes a durable write.
+admission/check closes saved-item editors so reopening reads current inventory.
+accepted-row editing uses current inventory and `LibraryEntryEditor`, never
+submitted destinations as a substitute for inventory. retain lazy reads,
+media-id deduplication, eligibility checks and exact uncertain placement retries.
+keep existing saved-item bulk add/remove in an explicitly labelled secondary
+header control; the draft header never becomes a durable write. retain the
+current placement controller; consolidation remains separate (since done by the
+libraries reauthor: [saved placement](modules/add-content.md#saved-placement)).
 
 ## submission and leaving
 
@@ -419,11 +422,9 @@ the unchanged `./scripts/test` passed after final cleanup. no deployment or
 production writes occurred.
 
 residual work: [shared prose extraction](tickets/add-link-paste-mutates-url-input.md),
-[backend replay outcome](tickets/source-replay-is-reported-as-content-duplicate.md),
-[joined replay](tickets/joined-url-admission-does-not-record-its-replay-key.md),
-[replay after access loss](tickets/url-replay-requires-current-destination-write-access.md),
-[canonical replay lifetime](tickets/canonical-source-teardown-deletes-admission-replay.md)
+placement consolidation (since done: [saved placement](modules/add-content.md#saved-placement)),
+backend replay outcome, joined replay and replay after access loss (since resolved
+by the ingest slice),
+canonical replay lifetime (now [redirected url adds](issues/redirected-url-add-answers-a-superseded-media.md))
 and the newly observed [workspace teardown body](tickets/workspace-session-unload-can-send-empty-body.md).
 these remain with their responsible owners; no in-scope acceptance was waived.
-library placement consolidation was subsequently implemented and
-[qualified separately](library-chooser-verification.md).

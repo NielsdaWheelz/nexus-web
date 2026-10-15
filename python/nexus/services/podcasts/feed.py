@@ -15,7 +15,7 @@ from urllib.parse import urljoin
 
 import lxml.etree as etree
 
-from nexus.coerce import coerce_positive_int
+from nexus.coerce import coerce_int
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.logging import get_logger
 from nexus.services.net.safe_fetch import safe_get
@@ -300,7 +300,7 @@ def _clock_ms(raw: Any) -> int | None:
 def _duration(raw: Any) -> int | None:
     value = text_or_none(raw)
     if value is None or ":" not in value:
-        return coerce_positive_int(value)
+        return coerce_int(value, minimum=1)
     try:
         parts = [int(part) for part in value.split(":")]
     except ValueError:

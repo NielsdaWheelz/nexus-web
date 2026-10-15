@@ -1,66 +1,23 @@
-/**
- * Single source of truth for the deployment environment (NEXUS_ENV) and every value that
- * depends on it: the CSP connect origins and the internal-API (BFF) config. Resolved and
- * validated once per process, then frozen — the frontend mirror of the
- * backend's python/nexus/config.py (Environment enum + validate-once `get_settings()`).
- *
- * SERVER / DEPLOY ONLY. This module owns NEXUS_INTERNAL_SECRET; import it from middleware,
- * server components, server actions, route handlers, and next.config.ts — never from a Client
- * Component, which would bundle the secret-owning module. The NODE_ENV build-mode predicate
- * lives in the client-safe ./build-mode.
- * env.ts is not marked `import "server-only"` because next.config.ts imports it (a Node build
- * context, where server-only throws).
- *
- * Two orthogonal axes, never conflated:
- *   - Deployment env (NEXUS_ENV):  local | test | staging | prod
- *   - Build/run mode (NODE_ENV):   isDevBuild — `next start` forces production
- */
-import { parseWebOrigin, parseWebOriginList } from "./security/origin";
+// the web process's one validated configuration (the mirror of python's
+// get_settings()). server and build only: it owns NEXUS_INTERNAL_SECRET, so
+// never import it from a client component. next.config.ts resolves it, so a
+// deployed build with missing or invalid env fails `next build`, and any env
+// fails `next start`. not marked server-only because next.config.ts imports it.
 
-type NexusEnv = "local" | "test" | "staging" | "prod";
-const SOURCE_SHA_PATTERN = /^[0-9a-f]{40}$/;
-
-/** Exact immutable identity of the Vercel deployment serving this process. */
-export function vercelSourceSha(): string {
-  const sourceSha = process.env.VERCEL_GIT_COMMIT_SHA ?? "";
-  if (!SOURCE_SHA_PATTERN.test(sourceSha)) {
-    throw new Error("VERCEL_GIT_COMMIT_SHA must be exactly 40 lowercase hex characters");
-  }
-  return sourceSha;
+interface WebOrigin {
+  readonly origin: string;
+  readonly protocol: "http:" | "https:";
+  readonly hostname: string;
+  readonly isLocalhost: boolean;
 }
-
-/** The deployment env from NEXUS_ENV. Unset → "local" (backend default). Unknown → throws. */
-function nexusEnv(): NexusEnv {
-  const raw = process.env.NEXUS_ENV?.trim();
-  if (!raw) return "local";
-  if (raw === "local" || raw === "test" || raw === "staging" || raw === "prod") {
-    return raw;
-  }
-  throw new Error(`Invalid NEXUS_ENV: "${raw}" (expected local | test | staging | prod)`);
-}
-
-/** staging || prod — the strict-env / served-over-HTTPS gate (mirrors the backend). */
-export const isDeployed = (): boolean => {
-  const env = nexusEnv();
-  return env === "staging" || env === "prod";
-};
 
 interface ResolvedEnv {
-  /** Supabase project the server-side auth clients talk to. */
-  readonly supabase: {
-    readonly url: string;
-    readonly anonKey: string;
-  };
-  /**
-   * The one browser origin (APP_PUBLIC_URL): every absolute auth redirect, every
-   * Origin check, the auth cookies' Secure flag and absolute metadata URLs.
-   */
+  readonly supabase: { readonly url: string; readonly anonKey: string };
+  /** APP_PUBLIC_URL: every absolute redirect, Origin check, Secure cookie and metadata url. */
   readonly appPublicOrigin: string;
-  /** FastAPI/SSE origin + presigned R2 origin. Origin-only, deduped, validated. */
+  /** the presigned storage origin the browser PUTs and GETs (CSP connect-src). */
   readonly connectOrigins: readonly string[];
-  /** Explicit browser media origins beyond the default same-origin/HTTPS policy. */
-  readonly mediaOrigins: readonly string[];
-  /** The firefox extension's identity redirect origin; null disables connect. */
+  /** the extension's identity redirect origin; null disables connect. */
   readonly extensionRedirectOrigin: string | null;
   readonly internalApi: {
     readonly fastApiBaseUrl: string;
@@ -70,138 +27,121 @@ interface ResolvedEnv {
 
 let resolved: ResolvedEnv | null = null;
 
-/**
- * Resolve + validate the deployment env once, then return the frozen result (mirrors
- * `get_settings()`). In a deployed env (staging|prod) a missing/invalid FASTAPI_BASE_URL,
- * R2_S3_API_ORIGIN, or NEXUS_INTERNAL_SECRET throws. `next.config.ts` calls this during config
- * evaluation, so a bad deployed env fails `next build` before promotion.
- */
+/** staging or prod: strict env, served over https (mirrors Settings.deployed). */
+export function isDeployed(): boolean {
+  const env = process.env.NEXUS_ENV?.trim() || "local";
+  if (!["local", "test", "staging", "prod"].includes(env))
+    throw new Error(
+      `Invalid NEXUS_ENV: "${env}" (expected local | test | staging | prod)`,
+    );
+  return env === "staging" || env === "prod";
+}
+
+/** The exact commit this deployment serves (the Makefile sets it locally). */
+export function vercelSourceSha(): string {
+  const sha = process.env.VERCEL_GIT_COMMIT_SHA ?? "";
+  if (!/^[0-9a-f]{40}$/.test(sha))
+    throw new Error(
+      "VERCEL_GIT_COMMIT_SHA must be exactly 40 lowercase hex characters",
+    );
+  return sha;
+}
+
+// a bare http(s) origin: no credentials, path, query or fragment.
+function parseOrigin(value: string): WebOrigin | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  if (url.username || url.password) return null;
+  if (url.pathname !== "/" || url.search || url.hash) return null;
+  const hostname = url.hostname.toLowerCase();
+  return {
+    origin: url.origin,
+    protocol: url.protocol,
+    hostname,
+    isLocalhost: ["localhost", "127.0.0.1", "[::1]"].includes(hostname),
+  };
+}
+
+// one optional origin key: unset is null (or the local default), anything set
+// must parse, and a deployed one must be https (or localhost where allowed). the
+// value is read by the caller: middleware runs on the edge, where only static
+// `process.env.KEY` reads are dependable.
+function origin(
+  name: string,
+  value: string | undefined,
+  deployed: boolean,
+  options: { localDefault?: string; localhost?: boolean } = {},
+): WebOrigin | null {
+  const raw = value?.trim() || (deployed ? "" : options.localDefault);
+  if (!raw) return null;
+  const parsed = parseOrigin(raw);
+  const secure =
+    parsed?.protocol === "https:" || (options.localhost && parsed?.isLocalhost);
+  if (!parsed || (deployed && !secure))
+    throw new Error(
+      `${name} must be ${deployed ? "an https" : "an"} origin: ${raw}`,
+    );
+  return parsed;
+}
+
+/** Resolve and validate once, then return the frozen result. */
 export function getEnv(): ResolvedEnv {
   if (resolved) return resolved;
-  const env = nexusEnv();
-  const deployed = env === "staging" || env === "prod";
-
-  const connectOrigins = resolveConnectOrigins(deployed);
-  const mediaOrigins = resolveMediaOrigins(deployed);
-  const extensionRedirectOrigin = resolveExtensionRedirectOrigin(deployed);
-
-  const internalSecret = process.env.NEXUS_INTERNAL_SECRET?.trim() ?? "";
-  if (deployed && !internalSecret) {
-    throw new Error("NEXUS_INTERNAL_SECRET is required in staging/prod");
-  }
-  const fastApiBaseUrl =
-    process.env.FASTAPI_BASE_URL?.trim() || (deployed ? "" : "http://localhost:8000");
-  const appPublicOrigin = resolveAppPublicOrigin(deployed);
-
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "";
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ?? "";
-  if (deployed && (!supabaseUrl || !supabaseAnonKey)) {
+  const deployed = isDeployed();
+  const required = (name: string, value: unknown) => {
+    if (deployed && !value)
+      throw new Error(`${name} is required in staging/prod`);
+  };
+  const fastApi = origin(
+    "FASTAPI_BASE_URL",
+    process.env.FASTAPI_BASE_URL,
+    deployed,
+    { localDefault: "http://localhost:8000", localhost: true },
+  );
+  const app = origin("APP_PUBLIC_URL", process.env.APP_PUBLIC_URL, deployed, {
+    localDefault: "http://localhost:3000",
+  });
+  const storage = origin(
+    "R2_S3_API_ORIGIN",
+    process.env.R2_S3_API_ORIGIN,
+    deployed,
+  );
+  if (
+    storage &&
+    deployed &&
+    !storage.hostname.endsWith(".r2.cloudflarestorage.com")
+  )
     throw new Error(
-      "NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are required in staging/prod",
+      `R2_S3_API_ORIGIN must be the Cloudflare R2 origin: ${storage.origin}`,
     );
-  }
-
+  const extension = origin(
+    "NEXUS_EXTENSION_REDIRECT_ORIGINS",
+    process.env.NEXUS_EXTENSION_REDIRECT_ORIGINS,
+    deployed,
+  );
+  const internalSecret = process.env.NEXUS_INTERNAL_SECRET?.trim() ?? "";
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "";
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ?? "";
+  required("FASTAPI_BASE_URL", fastApi);
+  required("APP_PUBLIC_URL", app);
+  required("R2_S3_API_ORIGIN", storage);
+  required("NEXUS_INTERNAL_SECRET", internalSecret);
+  required("NEXT_PUBLIC_SUPABASE_URL", supabaseUrl);
+  required("NEXT_PUBLIC_SUPABASE_ANON_KEY", anonKey);
   resolved = Object.freeze({
-    supabase: Object.freeze({ url: supabaseUrl, anonKey: supabaseAnonKey }),
-    appPublicOrigin,
-    connectOrigins,
-    mediaOrigins,
-    extensionRedirectOrigin,
-    internalApi: Object.freeze({ fastApiBaseUrl, internalSecret }),
+    supabase: Object.freeze({ url: supabaseUrl, anonKey }),
+    appPublicOrigin: app!.origin,
+    connectOrigins: Object.freeze(storage ? [storage.origin] : []),
+    extensionRedirectOrigin: extension?.origin ?? null,
+    internalApi: Object.freeze({
+      fastApiBaseUrl: fastApi!.origin,
+      internalSecret,
+    }),
   });
   return resolved;
-}
-
-function resolveMediaOrigins(deployed: boolean): readonly string[] {
-  const { origins, invalidValues } = parseWebOriginList(
-    process.env.CSP_MEDIA_ORIGINS,
-  );
-  if (invalidValues.length > 0) {
-    throw new Error(`Invalid CSP_MEDIA_ORIGINS: ${invalidValues.join(", ")}`);
-  }
-  const insecure = origins.find((origin) => origin.protocol !== "https:");
-  if (deployed && insecure) {
-    throw new Error(
-      `CSP_MEDIA_ORIGINS must use HTTPS in staging/prod: ${insecure.origin}`,
-    );
-  }
-  return origins.map((origin) => origin.origin);
-}
-
-function resolveAppPublicOrigin(deployed: boolean): string {
-  const rawValue = process.env.APP_PUBLIC_URL?.trim();
-  if (!rawValue) {
-    if (deployed) {
-      throw new Error("APP_PUBLIC_URL is required in staging/prod");
-    }
-    return "http://localhost:3000";
-  }
-
-  const origin = parseWebOrigin(rawValue);
-  if (!origin) {
-    throw new Error(`Invalid APP_PUBLIC_URL: ${rawValue}`);
-  }
-  if (deployed && origin.protocol !== "https:") {
-    throw new Error(`APP_PUBLIC_URL must use HTTPS in staging/prod: ${rawValue}`);
-  }
-  return origin.origin;
-}
-
-/**
- * External browser-connect origins: the FASTAPI_BASE_URL origin plus the shared
- * R2_S3_API_ORIGIN origin for presigned storage. In a deployed env both are required,
- * origin-only, HTTPS, and R2 must be the Cloudflare R2 host — otherwise this throws (a
- * misconfiguration is a hard error, never a silent `connect-src 'self'` fallback).
- */
-function resolveConnectOrigins(deployed: boolean): readonly string[] {
-  const origins = new Set<string>();
-
-  const fastApiBaseUrl = process.env.FASTAPI_BASE_URL?.trim();
-  if (fastApiBaseUrl) {
-    const origin = parseWebOrigin(fastApiBaseUrl);
-    if (origin) {
-      if (deployed && origin.protocol !== "https:" && !origin.isLocalhost) {
-        throw new Error(`Invalid FASTAPI_BASE_URL for CSP connect-src: ${fastApiBaseUrl}`);
-      }
-      origins.add(origin.origin);
-    } else if (deployed) {
-      throw new Error(`Invalid FASTAPI_BASE_URL for CSP connect-src: ${fastApiBaseUrl}`);
-    }
-  } else if (deployed) {
-    throw new Error("FASTAPI_BASE_URL is required in staging/prod for CSP connect-src");
-  }
-
-  const r2S3ApiOrigin = process.env.R2_S3_API_ORIGIN?.trim();
-  if (r2S3ApiOrigin) {
-    const origin = parseWebOrigin(r2S3ApiOrigin);
-    if (origin) {
-      if (deployed && origin.protocol !== "https:" && !origin.isLocalhost) {
-        throw new Error(`Invalid R2_S3_API_ORIGIN for CSP connect-src: ${r2S3ApiOrigin}`);
-      }
-      if (deployed && !origin.hostname.endsWith(".r2.cloudflarestorage.com")) {
-        throw new Error(`Invalid R2_S3_API_ORIGIN for CSP connect-src: ${r2S3ApiOrigin}`);
-      }
-      origins.add(origin.origin);
-    } else if (deployed) {
-      throw new Error(`Invalid R2_S3_API_ORIGIN for CSP connect-src: ${r2S3ApiOrigin}`);
-    }
-  } else if (deployed) {
-    throw new Error("R2_S3_API_ORIGIN is required in staging/prod for CSP connect-src");
-  }
-
-  return [...origins];
-}
-
-// NEXUS_EXTENSION_REDIRECT_ORIGINS keeps its plural name and holds exactly one
-// origin (browser.identity.getRedirectURL()'s), https when deployed.
-function resolveExtensionRedirectOrigin(deployed: boolean): string | null {
-  const rawValue = process.env.NEXUS_EXTENSION_REDIRECT_ORIGINS?.trim();
-  if (!rawValue) return null;
-  const origin = parseWebOrigin(rawValue);
-  if (!origin || (deployed && origin.protocol !== "https:")) {
-    throw new Error(
-      `NEXUS_EXTENSION_REDIRECT_ORIGINS must be one ${deployed ? "https " : ""}origin: ${rawValue}`,
-    );
-  }
-  return origin.origin;
 }

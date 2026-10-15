@@ -13,15 +13,12 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import TranscriptState
-from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas import podcast as wire
 from nexus.schemas.collection_page import CollectionPage
-from nexus.schemas.presence import presence_from_nullable
 from nexus.services import media as media_service
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
-from nexus.services.consumption import projection
-from nexus.services.consumption import service as consumption
+from nexus.services.consumption import projection, state, viewer_txn
 
 EpisodeSort = Literal["newest", "oldest", "duration_asc", "duration_desc"]
 _TRANSCRIBABLE = (
@@ -72,14 +69,19 @@ def selection_fingerprint(media_ids: list[UUID]) -> str:
 
 
 def mark_played(
-    db: Session, viewer_id: UUID, podcast_id: UUID, state: str
+    viewer_id: UUID, podcast_id: UUID, selection: str
 ) -> wire.PodcastEpisodeMarkPlayedOut:
-    with transaction(db):
-        media_ids = selection_ids(db, viewer_id, podcast_id, state)
-        changed = consumption.set_podcast_episode_states_in_txn(
+    """Finish every episode of the selection under the viewer lock (I10)."""
+
+    def run(db: Session) -> wire.PodcastEpisodeMarkPlayedOut:
+        media_ids = selection_ids(db, viewer_id, podcast_id, selection)
+        changed = state.set_episode_states_in_txn(
             db, viewer_id=viewer_id, media_ids=media_ids, state="Finished"
         )
+        db.commit()
         return wire.PodcastEpisodeMarkPlayedOut(matched_count=len(media_ids), changed_count=changed)
+
+    return viewer_txn("mark_played", viewer_id, run)
 
 
 def _plan(sort: EpisodeSort) -> list[SortKey]:
@@ -114,7 +116,8 @@ def list_episodes(
     columns = """, pe.published_at, COALESCE(pe.duration_seconds, 0) AS duration_sort,
         (pe.published_at IS NULL)::int AS published_missing,
         (pe.duration_seconds IS NULL)::int AS duration_missing,
-        NULLIF(BTRIM(pe.description_text), '') IS NOT NULL AS has_show_notes"""
+        NULLIF(BTRIM(pe.description_text), '') IS NOT NULL AS has_show_notes,
+        mts.transcript_state"""
     rows, next_cursor = keyset_page(
         db,
         binding={
@@ -135,18 +138,18 @@ def list_episodes(
         """,
     )
     page = {row["media_id"]: row for row in rows}
-    media = media_service.list_collection_media_for_viewer_by_ids(
-        db, viewer_id=viewer_id, media_ids=list(page)
-    )
+    summaries = media_service.media_summaries(db, viewer_id=viewer_id, media_ids=list(page))
     return CollectionPage(
         items=[
             wire.PodcastEpisodeListItemOut(
-                id=episode.id,
-                mediaSummary=episode.summary,
-                transcript_state=TranscriptState(episode.transcript_state or "not_requested"),
-                has_show_notes=page[episode.id]["has_show_notes"],
+                id=media_id,
+                media_summary=summary,
+                transcript_state=TranscriptState(
+                    page[media_id]["transcript_state"] or "not_requested"
+                ),
+                has_show_notes=page[media_id]["has_show_notes"],
             )
-            for episode in media
+            for media_id, summary in summaries.items()
         ],
-        nextCursor=presence_from_nullable(next_cursor),
+        next_cursor=next_cursor,
     )

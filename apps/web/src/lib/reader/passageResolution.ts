@@ -1,7 +1,10 @@
 "use client";
 
 import { apiFetch } from "@/lib/api/client";
-import { useResource, type AsyncResource } from "@/lib/api/useResource";
+import {
+  usePaneFreeServerValue,
+  type ServerValue,
+} from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import { isCanonicalUuid } from "@/lib/validation";
 
@@ -20,12 +23,13 @@ export function usePassageResolution(input: {
   hash: string;
   ownerScheme: "media" | "note_block";
   ownerId: string;
-}): AsyncResource<PassageResolution> {
+}): ServerValue<PassageResolution> {
   const anchorId = passageAnchorIdFromHash(input.hash);
   const ownerRef = `${input.ownerScheme}:${input.ownerId}`;
-  return useResource({
-    cacheKey: anchorId ? `${anchorId}:${ownerRef}` : null,
-    load: async (signal: AbortSignal) => {
+  return usePaneFreeServerValue({
+    key: anchorId ? `${anchorId}:${ownerRef}` : null,
+    stale: "",
+    load: async (signal) => {
       if (!anchorId) throw new Error("Cannot resolve a missing passage anchor");
       const { data } = await apiFetch<
         ApiJson<"/passage-anchors/{anchor_id}/resolution", "get">

@@ -1,7 +1,8 @@
-"""Library routes: transport only.
+"""Library routes: libraries, their entries and placements. Transport only.
 
-Static `/libraries/invites*` routes MUST stay registered before
-`/libraries/{library_id}` or FastAPI captures `invites` as a UUID path param.
+The static `/libraries/destinations` and `/libraries/placements/{ref}` register before
+`/libraries/{library_id}…`, whose uuid parameter would refuse them. `{ref}` is a
+canonical resource ref, `media:<uuid>` or `podcast:<uuid>`.
 """
 
 from typing import Annotated
@@ -11,333 +12,146 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
-from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.responses import Data, DataPage
+from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.responses import Data
 from nexus.schemas.collection_page import CollectionPage
 from nexus.schemas.library import (
-    AcceptLibraryInviteResponse,
-    CreateLibraryInviteRequest,
     CreateLibraryRequest,
-    DeclineLibraryInviteResponse,
-    LibraryEntryListItemOut,
-    LibraryEntryOrderRequest,
-    LibraryGovernancePageInfo,
-    LibraryIdentityOut,
-    LibraryInvitationOut,
-    LibraryInvitationStatusValue,
-    LibraryMemberOut,
+    LibraryDestinationOut,
+    LibraryEntryOut,
     LibraryOut,
-    LibraryPlacementCommand,
-    LibraryPlacementCommandOut,
-    LibraryPlacementOptionOut,
-    TransferLibraryOwnershipRequest,
-    UpdateLibraryMemberRequest,
-    UpdateLibraryRequest,
-    ViewerLibraryInvitationOut,
+    LibraryPlacementOut,
+    MoveEntryRequest,
+    PlaceItemRequest,
+    RenameLibraryRequest,
 )
 from nexus.schemas.suggestions import SuggestionsOut
-from nexus.services import (
-    library_entries,
-    library_entry_listing,
-    library_governance,
-    library_placement_commands,
-    library_sharing,
-)
+from nexus.services import libraries, library_entries, library_listing
 from nexus.services import suggestions as suggestions_service
-from nexus.services.sealed_handles import InvalidSealedHandle, unseal_user
+from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 
 router = APIRouter(tags=["libraries"])
-
-_STATUS_QUERY = Query(description="Filter by invite status")
-_CURSOR_QUERY = Query(description="Pagination cursor")
-_LIMIT_QUERY = Query(ge=1, description="Maximum results (clamped to 200)")
+ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 
 
-def _user_id(user_handle: str) -> UUID:
-    try:
-        return unseal_user(user_handle)
-    except InvalidSealedHandle as exc:
-        raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found") from exc
-
-
-@router.get("/libraries/invites")
-def list_viewer_invites(
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-    status: Annotated[LibraryInvitationStatusValue, _STATUS_QUERY] = "pending",
-    limit: Annotated[int, _LIMIT_QUERY] = 100,
-) -> Data[list[ViewerLibraryInvitationOut]]:
-    """List invitations addressed to the current viewer."""
-    result = library_sharing.list_viewer_invites(db, viewer.user_id, status=status, limit=limit)
-    return Data(data=result)
-
-
-@router.post("/libraries/invites/{invitation_handle}/accept")
-def accept_library_invite(
-    invitation_handle: str,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Data[AcceptLibraryInviteResponse]:
-    """Accept a library invitation. Invitee-only; idempotent when already accepted."""
-    result = library_sharing.accept_library_invite(db, viewer.user_id, invitation_handle)
-    return Data(data=result)
-
-
-@router.post("/libraries/invites/{invitation_handle}/decline")
-def decline_library_invite(
-    invitation_handle: str,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Data[DeclineLibraryInviteResponse]:
-    """Decline a library invitation. Invitee-only; idempotent when already declined."""
-    result = library_sharing.decline_library_invite(db, viewer.user_id, invitation_handle)
-    return Data(data=result)
-
-
-@router.delete("/libraries/invites/{invitation_handle}", status_code=204)
-def revoke_library_invite(
-    invitation_handle: str,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Response:
-    """Revoke a pending invitation. Admin-only; idempotent when already revoked."""
-    library_sharing.revoke_library_invite(db, viewer.user_id, invitation_handle)
-    return Response(status_code=204)
+def _target(ref: str) -> library_entries.EntryTarget:
+    parsed = parse_resource_ref(ref)
+    if isinstance(parsed, ResourceRefParseFailure) or parsed.scheme not in ("media", "podcast"):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Expected media:<id> or podcast:<id>"
+        )
+    return library_entries.EntryTarget(parsed.scheme, parsed.id)
 
 
 @router.get("/libraries")
 def list_libraries(
-    request: Request,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: RepeatableReadDbSession,
+    request: Request, viewer: ViewerDep, db: RepeatableReadDbSession
 ) -> Data[CollectionPage[LibraryOut]]:
-    """List the viewer's libraries in the requested view."""
-    view, query = library_governance.parse_libraries_index_query(request.query_params.multi_items())
-    page = library_governance.list_libraries(
-        db,
-        viewer.user_id,
-        view=view,
-        cursor=query.cursor,
-        limit=query.limit,
-    )
-    return Data(data=page)
-
-
-@router.get("/libraries/writable-destinations")
-def list_writable_library_destinations(
-    request: Request,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Data[list[LibraryIdentityOut]]:
-    """Read the complete named-library destination catalog."""
-    if request.query_params:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, "Library destinations do not accept query parameters"
-        )
-    return Data(data=library_governance.list_writable_library_destinations(db, viewer.user_id))
-
-
-@router.post("/library-placement-commands")
-def execute_library_placement_command(
-    body: LibraryPlacementCommand,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Data[LibraryPlacementCommandOut]:
-    """Confirm one explicit placement intent, or return its terminal refusal."""
+    """`sort` = created_desc | name_asc | name_desc; absent is oldest created."""
     return Data(
-        data=library_placement_commands.execute_library_placement_command(
-            db, viewer_id=viewer.user_id, command=body
+        data=libraries.list_libraries(db, viewer.user_id, request.query_params.multi_items())
+    )
+
+
+@router.get("/libraries/destinations")
+def list_destinations(
+    viewer: ViewerDep,
+    db: DbSession,
+    q: Annotated[str, Query(max_length=100)] = "",
+    cursor: Annotated[str | None, Query(min_length=1)] = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 25,
+) -> Data[CollectionPage[LibraryDestinationOut]]:
+    """The named libraries the viewer may file into, best match first."""
+    return Data(
+        data=libraries.list_writable_library_destinations(
+            db, viewer.user_id, q=q, cursor=cursor, limit=limit
         )
     )
 
 
-@router.get("/podcasts/{podcast_id}/libraries")
-def get_podcast_libraries(
-    podcast_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Data[list[LibraryPlacementOptionOut]]:
-    """Read the canonical library placement inventory for one podcast."""
-    rows = library_entries.list_item_libraries(
-        db, viewer_id=viewer.user_id, target=library_entries.podcast_target(podcast_id)
+@router.get("/libraries/placements/{ref}")
+def list_placements(ref: str, viewer: ViewerDep, db: DbSession) -> Data[list[LibraryPlacementOut]]:
+    """Where one media or show sits among the viewer's libraries."""
+    return Data(
+        data=library_entries.list_item_libraries(db, viewer_id=viewer.user_id, target=_target(ref))
     )
-    return Data(data=rows)
 
 
 @router.post("/libraries", status_code=201)
 def create_library(
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    body: CreateLibraryRequest,
-    db: DbSession,
+    body: CreateLibraryRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[LibraryOut]:
-    """Create a non-default library owned and admin'd by the caller."""
-    return Data(data=library_governance.create_library(db, viewer.user_id, body))
+    return Data(data=libraries.create_library(db, viewer.user_id, body))
 
 
 @router.get("/libraries/{library_id}")
-def get_library(
-    library_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Data[LibraryOut]:
-    """Read one library. Non-members get a masked 404."""
-    return Data(data=library_governance.get_library(db, viewer.user_id, library_id))
+def get_library(library_id: UUID, viewer: ViewerDep, db: DbSession) -> Data[LibraryOut]:
+    """Members only; anyone else gets 404."""
+    library = libraries.access(db, viewer.user_id, library_id, lock=False)
+    return Data(data=library.out(viewer.user_id))
 
 
 @router.patch("/libraries/{library_id}")
 def rename_library(
-    library_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    body: UpdateLibraryRequest,
-    db: DbSession,
+    library_id: UUID, body: RenameLibraryRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[LibraryOut]:
-    """Rename a library. Admin-only; not the default or a system library."""
-    result = library_governance.rename_library(db, viewer.user_id, library_id, body.name)
-    return Data(data=result)
+    return Data(data=libraries.rename_library(db, viewer.user_id, library_id, body))
 
 
 @router.delete("/libraries/{library_id}", status_code=204)
-def delete_library(
-    library_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Response:
-    """Delete a library. Owner-only; a non-owner admin gets E_OWNER_REQUIRED."""
-    library_governance.delete_library(db, viewer.user_id, library_id)
+def delete_library(library_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
+    libraries.delete_library(db, viewer.user_id, library_id)
     return Response(status_code=204)
-
-
-@router.post("/libraries/{library_id}/invites", status_code=201)
-def create_library_invite(
-    library_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    body: CreateLibraryInviteRequest,
-    db: DbSession,
-) -> Data[LibraryInvitationOut]:
-    """Invite an existing user to a library. Admin-only."""
-    result = library_sharing.create_library_invite(
-        db, viewer.user_id, library_id, body.invitee, body.role
-    )
-    return Data(data=result)
-
-
-@router.get("/libraries/{library_id}/invites")
-def list_library_invites(
-    library_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-    status: Annotated[LibraryInvitationStatusValue, _STATUS_QUERY] = "pending",
-    cursor: Annotated[str | None, _CURSOR_QUERY] = None,
-    limit: Annotated[int, _LIMIT_QUERY] = 100,
-) -> DataPage[LibraryInvitationOut, LibraryGovernancePageInfo]:
-    """List a library's invitations, newest first. Admin-only."""
-    result, page = library_sharing.list_library_invites(
-        db, viewer.user_id, library_id, status=status, cursor=cursor, limit=limit
-    )
-    return DataPage(data=result, page=page)
-
-
-@router.get("/libraries/{library_id}/members")
-def list_library_members(
-    library_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-    cursor: Annotated[str | None, _CURSOR_QUERY] = None,
-    limit: Annotated[int, _LIMIT_QUERY] = 100,
-) -> DataPage[LibraryMemberOut, LibraryGovernancePageInfo]:
-    """List a library's members by immutable member identity. Admin-only."""
-    result, page = library_sharing.list_library_members(
-        db, viewer.user_id, library_id, cursor=cursor, limit=limit
-    )
-    return DataPage(data=result, page=page)
-
-
-@router.patch("/libraries/{library_id}/members/{user_handle}")
-def update_library_member_role(
-    library_id: UUID,
-    user_handle: str,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    body: UpdateLibraryMemberRequest,
-    db: DbSession,
-) -> Data[LibraryMemberOut]:
-    """Set a member's role. Admin-only; the owner's role is fixed."""
-    result = library_sharing.update_library_member_role(
-        db, viewer.user_id, library_id, _user_id(user_handle), body.role
-    )
-    return Data(data=result)
-
-
-@router.delete("/libraries/{library_id}/members/{user_handle}", status_code=204)
-def remove_library_member(
-    library_id: UUID,
-    user_handle: str,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Response:
-    """Remove a member. Admin-only; idempotent for an absent target."""
-    library_sharing.remove_library_member(db, viewer.user_id, library_id, _user_id(user_handle))
-    return Response(status_code=204)
-
-
-@router.post("/libraries/{library_id}/transfer-ownership")
-def transfer_library_ownership(
-    library_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    body: TransferLibraryOwnershipRequest,
-    db: DbSession,
-) -> Data[LibraryOut]:
-    """Transfer ownership to another member. Owner-only."""
-    result = library_sharing.transfer_library_ownership(
-        db, viewer.user_id, library_id, _user_id(body.new_owner_user_handle)
-    )
-    return Data(data=result)
 
 
 @router.get("/libraries/{library_id}/entries")
-def list_library_entries(
-    request: Request,
-    library_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: RepeatableReadDbSession,
-) -> Data[CollectionPage[LibraryEntryListItemOut]]:
-    """List a library's entries under a view lens (see `parse_entries_query`)."""
-    view, query = library_entry_listing.parse_entries_query(request.query_params.multi_items())
-    page = library_entry_listing.list_library_entries(
-        db,
-        viewer.user_id,
-        library_id,
-        view=view,
-        limit=query.limit,
-        cursor=query.cursor,
+def list_entries(
+    request: Request, library_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[CollectionPage[LibraryEntryOut]]:
+    """`sort`, `entry_type`, `projection`, `completion`: see `library_listing`."""
+    view, query = library_listing.parse_entries_query(request.query_params.multi_items())
+    return Data(
+        data=library_listing.list_library_entries(
+            db, viewer.user_id, library_id, view=view, cursor=query.cursor, limit=query.limit
+        )
     )
-    return Data(data=page)
+
+
+@router.put("/libraries/{library_id}/entries/{entry_id}/position", status_code=204)
+def move_entry(
+    library_id: UUID, entry_id: UUID, body: MoveEntryRequest, viewer: ViewerDep, db: DbSession
+) -> Response:
+    library_entries.move_entry(db, viewer.user_id, library_id, entry_id, body.before_entry_id)
+    return Response(status_code=204)
 
 
 @router.get("/libraries/{library_id}/suggestions")
-def get_library_suggestions(
-    request: Request,
-    library_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: RepeatableReadDbSession,
+def get_suggestions(
+    request: Request, library_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
 ) -> Data[SuggestionsOut]:
-    """Read the library's Reading Slate."""
+    """The library's Reading Slate."""
     if request.query_params:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "Reading Slate does not accept query parameters"
         )
-    slate = suggestions_service.build_library_suggestions(
-        db, viewer_id=viewer.user_id, library_id=library_id
+    return Data(
+        data=suggestions_service.build_library_suggestions(
+            db, viewer_id=viewer.user_id, library_id=library_id
+        )
     )
-    return Data(data=slate)
 
 
-@router.patch("/libraries/{library_id}/entries/reorder", status_code=204)
-def patch_library_entry_order(
-    library_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    body: LibraryEntryOrderRequest,
-    db: DbSession,
+@router.put("/libraries/{library_id}/items/{ref}", status_code=204)
+def place_item(
+    library_id: UUID, ref: str, body: PlaceItemRequest, viewer: ViewerDep, db: DbSession
 ) -> Response:
-    """Replace the full entry ordering for a library."""
-    library_entries.reorder_entries(db, viewer.user_id, library_id, body)
+    library_entries.place_item(
+        db, viewer.user_id, library_id, _target(ref), replace_episodes=body.replace_episodes
+    )
+    return Response(status_code=204)
+
+
+@router.delete("/libraries/{library_id}/items/{ref}", status_code=204)
+def unplace_item(library_id: UUID, ref: str, viewer: ViewerDep, db: DbSession) -> Response:
+    library_entries.unplace_item(db, viewer.user_id, library_id, _target(ref))
     return Response(status_code=204)

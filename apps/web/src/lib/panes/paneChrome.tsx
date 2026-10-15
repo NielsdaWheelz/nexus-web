@@ -20,7 +20,7 @@ import type {
   WorkspaceSecondaryGroupId,
   WorkspaceSecondarySurfaceIdOf,
 } from "@/lib/panes/paneSecondaryModel";
-import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
 /** Why a pane command holds its place while the fact deciding it loads. */
@@ -83,7 +83,7 @@ export interface PaneChrome {
   readonly navigation?: { readonly label: string; readonly content: ReactNode };
   readonly query?: PaneQuery;
   /** The pane's resource; its canonical actions end the More menu. */
-  readonly actionSubject?: ResourceActionSubject;
+  readonly resourceRef?: CanonicalResourceRef;
   readonly menuActions?: readonly ActionDescriptor[];
   readonly refresh?: PaneRefresh;
 }

@@ -164,13 +164,17 @@ export default function ActionMenu({
   }, [direct, menu.ref]);
 
   // Focus the first (or last) item once, after the first placement: a moving
-  // anchor never resets the keyboard position.
+  // anchor never resets the keyboard position. Options that arrive while focus
+  // is still on the list (a loading row replaced) take it to their first item.
   const edge = expanded ?? "first";
   const hasOptions = options.length > 0;
+  const firstOption = options[0]?.id;
   useEffect(() => {
     const list = menu.ref.current;
     if (!open || !menu.placed || !list) return;
     const frame = requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active !== list && list.contains(active)) return;
       const items = [...list.querySelectorAll<HTMLElement>(ITEMS)];
       const enabled = items.some(
         (item) => item.getAttribute("aria-disabled") !== "true",
@@ -180,7 +184,7 @@ export default function ActionMenu({
       target.focus({ preventScroll: direct });
     });
     return () => cancelAnimationFrame(frame);
-  }, [open, menu.placed, menu.ref, edge, direct, hasOptions]);
+  }, [open, menu.placed, menu.ref, edge, direct, firstOption]);
 
   const onMenuKeyDown = (event: KeyboardEvent<HTMLUListElement>) => {
     // Menu keys never reach the page's handlers: React bubbles a portaled

@@ -6,10 +6,7 @@ import { PlaybackRateEditor } from "@/components/player/PlayerPlaybackControls";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Select from "@/components/ui/Select";
-import type { ResourceActionMutationBoundary } from "@/lib/actions/resourceActionMutation";
 import type { ApiError } from "@/lib/api/client";
-import { absent, presenceValueOr, present } from "@/lib/api/presence";
-import { useResource } from "@/lib/api/useResource";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import {
   getSubscription,
@@ -18,17 +15,16 @@ import {
 } from "@/lib/podcasts/api";
 import {
   modeledApiError,
+  usePaneFreeServerValue,
   useThrowLater,
 } from "@/lib/api/serverState";
 import {
   podcastErrorMessage,
 } from "@/lib/podcasts/paneState";
-import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import styles from "./PodcastSubscriptionSettingsOverlay.module.css";
 
 interface Props {
   readonly podcastId: string;
-  readonly mutation: ResourceActionMutationBoundary;
   readonly onClose: () => void;
 }
 
@@ -36,22 +32,24 @@ interface Props {
 export default function PodcastSubscriptionSettingsOverlay(props: Props) {
   const { podcastId, onClose } = props;
   const feedback = useFeedback();
-  const source = useResource({
-    cacheKey: `podcast-subscription:${podcastId}`,
+  const source = usePaneFreeServerValue({
+    key: `podcast-subscription:${podcastId}`,
+    stale: "",
     load: (signal) => getSubscription(podcastId, signal),
   });
+  const failure = source.status === "failed" ? source.error : null;
   useEffect(() => {
-    if (source.status !== "error") return;
+    if (failure === null) return;
     feedback.publish({
       kind: "Hud",
       content: {
         tone: "Danger",
         title: "Subscription settings couldn’t be loaded",
-        requestId: source.error.requestId,
+        requestId: failure.requestId,
       },
     });
     onClose();
-  }, [feedback, onClose, source]);
+  }, [failure, feedback, onClose]);
   return source.status === "ready" ? (
     <SettingsForm {...props} source={source.data} />
   ) : null;
@@ -59,7 +57,6 @@ export default function PodcastSubscriptionSettingsOverlay(props: Props) {
 
 function SettingsForm({
   podcastId,
-  mutation,
   onClose,
   source,
 }: Props & { readonly source: PodcastSubscription }) {
@@ -70,8 +67,6 @@ function SettingsForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const save = async () => {
-    const lease = mutation.begin();
-    if (lease === null) return;
     setBusy(true);
     setError(null);
     try {
@@ -80,12 +75,8 @@ function SettingsForm({
         pause_shortening_mode: pauses,
         auto_queue: autoQueue,
       });
-      const ref = assumeCanonicalResourceRef(`podcast:${podcastId}`);
-      await lease.reconcile({ kind: "Subjects", refs: [ref] });
-      await lease.commit();
       onClose();
     } catch (caught) {
-      lease.abort();
       setError(modeledApiError(caught, fail));
     } finally {
       setBusy(false);
@@ -107,22 +98,22 @@ function SettingsForm({
         </p>
         <div className={styles.field}>
           <PlaybackRateEditor
-            value={presenceValueOr(speed, 1)}
-            onChange={(rate) => setSpeed(present(rate))}
+            value={speed ?? 1}
+            onChange={(rate) => setSpeed(rate)}
             label="Default playback speed"
           />
           <Button
             variant="secondary"
             size="lg"
-            aria-pressed={speed.kind === "Absent"}
-            onClick={() => setSpeed(absent())}
+            aria-pressed={speed === null}
+            onClick={() => setSpeed(null)}
           >
             Use app default (1x)
           </Button>
           <span className={styles.note}>
-            {speed.kind === "Absent"
+            {speed === null
               ? "New episodes use the app default, 1x."
-              : `New episodes start at ${formatPlaybackRate(speed.value)}.`}
+              : `New episodes start at ${formatPlaybackRate(speed)}.`}
           </span>
         </div>
         <label className={styles.field}>
@@ -130,11 +121,11 @@ function SettingsForm({
           <Select
             size="lg"
             aria-label="Shorten pauses"
-            value={pauses.kind === "Present" ? pauses.value : "Device"}
+            value={pauses !== null ? pauses : "Device"}
             onChange={(event) => {
               const mode = event.currentTarget.value;
               setPauses(
-                mode === "Off" || mode === "Natural" ? present(mode) : absent(),
+                mode === "Off" || mode === "Natural" ? mode : null,
               );
             }}
           >

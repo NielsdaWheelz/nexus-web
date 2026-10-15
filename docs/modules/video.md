@@ -28,7 +28,7 @@ Preview, proxies remote artwork, and exposes the official allowlisted YouTube
 iframe only after explicit click-to-load. Browse and Preview create no Media,
 source attempt, transcript state, playback progress, or activity fact.
 
-Add passes the server-resolved canonical YouTube URL to `/media/from_url`, which
+Add passes the server-resolved canonical YouTube URL to `/media/from-url`, which
 reuses the normal source-attempt owner above. `youtube.py` materializes
 playable metadata only (data api through `net/http_retry`; a video the api
 answers with no item fails as `E_SOURCE_GONE`; the title replaces only the

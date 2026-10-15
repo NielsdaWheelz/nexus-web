@@ -21,10 +21,10 @@ from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundEr
 from nexus.jobs.queue import revoke_jobs_by_dedupe_keys
 from nexus.schemas.collection_page import CollectionPage, parse_collection_query
 from nexus.schemas.conversation import ConversationListItemOut, ConversationOut, MessageDeleteOut
-from nexus.schemas.presence import presence_from_nullable
 from nexus.schemas.resource_graph import LinkPassageEndpoint, LinkResourceEndpoint
 from nexus.services.chat import quotes, reads
 from nexus.services.collection_keyset import (
+    UPDATED_TITLE_PLANS,
     KeysetValueKind,
     SortKey,
     decode_keyset_cursor,
@@ -42,30 +42,10 @@ from nexus.services.resource_graph.refs import (
     ResourceRefParseFailure,
     parse_resource_ref,
 )
-from nexus.services.resource_items.capabilities import resource_link_mode
+from nexus.services.resource_items.capabilities import capability
 
 DEFAULT_TITLE = "Chat"
-_DATE, _ID, _TEXT, _INT = (
-    KeysetValueKind.DateTime,
-    KeysetValueKind.Uuid,
-    KeysetValueKind.Text,
-    KeysetValueKind.Int,
-)
-# Each view's total order (``sort``, ``direction``): the canonical newest-first view
-# has no keys, so it keeps one URL; equal titles read newest first in both directions.
-_VIEWS: dict[tuple[str | None, str | None], list[SortKey]] = {
-    (None, None): [SortKey("updated_at", "desc", _DATE), SortKey("id", "desc", _ID)],
-    ("updated", "asc"): [SortKey("updated_at", "asc", _DATE), SortKey("id", "asc", _ID)],
-    **{
-        ("title", direction): [
-            SortKey("title_key", direction, _TEXT),
-            SortKey("presented_title", direction, _TEXT),
-            SortKey("updated_at", "desc", _DATE),
-            SortKey("id", "desc", _ID),
-        ]
-        for direction in ("asc", "desc")
-    },
-}
+_ID, _TEXT, _INT = KeysetValueKind.Uuid, KeysetValueKind.Text, KeysetValueKind.Int
 
 
 def create(
@@ -85,7 +65,7 @@ def create(
             )
         endpoint = (
             LinkPassageEndpoint(candidate_ref=ref.uri)
-            if resource_link_mode(ref) == "materialize_passage"
+            if capability(ref.scheme).link_mode == "materialize_passage"
             else LinkResourceEndpoint(ref=ref.uri)
         )
         create_link(
@@ -108,7 +88,9 @@ def index(
 
     query = parse_collection_query(items, domain_keys={"sort", "direction", "title_search"})
     search = query.parameters.get("title_search", "").strip()
-    plan = _VIEWS.get((query.parameters.get("sort"), query.parameters.get("direction")))
+    plan = UPDATED_TITLE_PLANS.get(
+        (query.parameters.get("sort"), query.parameters.get("direction"))
+    )
     if plan is None or len(search) > 200:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
@@ -147,7 +129,7 @@ def index(
             )
             for row in rows
         ],
-        nextCursor=presence_from_nullable(cursor),
+        next_cursor=cursor,
     )
 
 
@@ -222,7 +204,7 @@ def delete_message(db: Session, *, viewer_id: UUID, message_id: UUID) -> Message
             raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
         deleted = _delete(db, conversation_id, message_id)
         db.commit()
-        return MessageDeleteOut(conversationId=conversation_id, conversationDeleted=deleted)
+        return MessageDeleteOut(conversation_id=conversation_id, conversation_deleted=deleted)
 
     return retry_read_committed(db, "delete_message", attempt)
 
@@ -299,25 +281,10 @@ def _lock_owned(db: Session, viewer_id: UUID, conversation_id: UUID) -> None:
         raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
 
 
-def owned_conversation_ids(
-    db: Session, *, viewer_id: UUID, conversation_ids: list[UUID]
-) -> set[UUID]:
-    """The ids the viewer owns: chats are owner-only, so this is also visibility."""
-
-    return set(
-        db.scalars(
-            select(Conversation.id).where(
-                Conversation.owner_user_id == viewer_id, Conversation.id.in_(conversation_ids)
-            )
-        )
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class MessageActionFacts:
     """Closed facts needed to plan one visible message's resource actions."""
 
-    is_owner: bool
     fork_applicable: bool
     walk_sources_applicable: bool
     rerun_applicable: bool
@@ -351,7 +318,6 @@ def message_action_facts(
         answer = row.role == "assistant" and row.status == "complete"
         run = runs.get(row.id)
         facts[row.id] = MessageActionFacts(
-            is_owner=True,
             fork_applicable=answer,
             walk_sources_applicable=answer and counts.get(row.id, 0) >= 2,
             rerun_applicable=run is not None and reads.can_rerun(run),

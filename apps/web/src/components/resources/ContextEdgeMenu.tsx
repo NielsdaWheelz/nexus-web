@@ -1,28 +1,18 @@
 "use client";
 
-import { useRef, useState, type ComponentProps } from "react";
+import { useRef, useState } from "react";
 import { ListMinus } from "lucide-react";
-import ActionMenu from "@/components/ui/ActionMenu";
 import {
   FeedbackNotice,
-  type FeedbackActions,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import ActionMenu from "@/components/ui/ActionMenu";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ConnectionMutation } from "@/lib/resourceGraph/links";
 
-type ActionMenuProps = ComponentProps<typeof ActionMenu>;
-
-const UNDO_ASSISTANT = {
-  id: "ContextEdgeAction.Assistant.Undo",
-  label: "Undo assistant link",
-  busyLabel: "Undoing…",
-};
-
-/** Menu item copy per server-named edge mutation. */
 const EDGE_ACTIONS: Record<
   ConnectionMutation["kind"],
-  { id: string; label: string; busyLabel: string }
+  { readonly id: string; readonly label: string; readonly busyLabel: string }
 > = {
   unlink: {
     id: "ContextEdgeAction.Connection.Unlink",
@@ -39,18 +29,18 @@ const EDGE_ACTIONS: Record<
     label: "Remove from chat",
     busyLabel: "Removing...",
   },
-  undo_assistant_write: UNDO_ASSISTANT,
+  undo_assistant_write: {
+    id: "ContextEdgeAction.Assistant.Undo",
+    label: "Undo assistant link",
+    busyLabel: "Undoing…",
+  },
 };
 
 /**
- * The separate control that owns context-edge commands — remove from
- * conversation context, unlink a connection edge, or dismiss a discovery edge.
- * These are edge mutations, NOT resource-snapshot facts, so they never enter the
- * canonical `ResourceActionMenu`: they publish through this dedicated,
- * distinctly-labelled trigger + one-item menu. Busy and expected-error feedback
- * are local to the edge mutation. The control holds its own in-flight lock,
- * maps a failure to feedback through the caller's domain adapter, and propagates
- * any same-system defect (via `presentFailure` throwing) to the nearest boundary.
+ * The one-item menu for an edge mutation the server named on a row (unlink,
+ * dismiss, remove from chat, undo an assistant link). It is not a resource
+ * verb: it holds its own busy lock and failure notice; `presentFailure` maps
+ * an expected failure to copy and throws a defect to the nearest boundary.
  */
 export default function ContextEdgeMenu({
   mutationKind,
@@ -60,19 +50,10 @@ export default function ContextEdgeMenu({
   retryable = false,
 }: {
   readonly mutationKind: ConnectionMutation["kind"];
-  /**
-   * Runs the server-declared owning mutation. Any post-mutation reload is the
-   * caller's own — this control never touches the resource snapshot cache.
-   */
+  /** The mutation; any reload afterwards is the caller's. */
   readonly execute: () => Promise<void>;
-  /**
-   * Map an expected failure to feedback copy for THIS surface's domain; THROW to
-   * escalate a same-system defect / unknown error to the nearest error boundary.
-   */
   readonly presentFailure: (error: unknown) => FeedbackContent;
-  /** Trigger accessible label. */
   readonly label: string;
-  /** Offer a Retry affordance on the failure notice. */
   readonly retryable?: boolean;
 }) {
   const busyRef = useRef(false);
@@ -83,8 +64,7 @@ export default function ContextEdgeMenu({
 
   async function run() {
     if (busyRef.current) return;
-    // Both menu selection and Retry return to the trigger before the feedback
-    // or row can disappear. The row owner moves focus when removal succeeds.
+    // Back to the trigger before the notice or the row can disappear.
     triggerRef.current?.focus();
     busyRef.current = true;
     setBusy(true);
@@ -105,20 +85,7 @@ export default function ContextEdgeMenu({
   }
 
   if (defect !== null) throw defect.error;
-
   const entry = EDGE_ACTIONS[mutationKind];
-  const retryActions: FeedbackActions | undefined = retryable
-    ? [{ label: "Retry", onClick: () => void run() }]
-    : undefined;
-
-  // The action's own icon (not the "…" overflow glyph) keeps this edge control
-  // visually distinct from the adjacent canonical resource menu.
-  const iconTrigger: ActionMenuProps["renderTrigger"] = (triggerProps) => (
-    <button {...triggerProps}>
-      <ListMinus size={16} aria-hidden="true" />
-    </button>
-  );
-
   return (
     <>
       <ActionMenu
@@ -135,14 +102,23 @@ export default function ContextEdgeMenu({
           },
         ]}
         label={label}
-        renderTrigger={iconTrigger}
-        triggerRef={(node) => { triggerRef.current = node; }}
+        // Its own icon, not "…": distinct from the resource menu beside it.
+        renderTrigger={(props) => (
+          <button {...props}>
+            <ListMinus size={16} aria-hidden="true" />
+          </button>
+        )}
+        triggerRef={(node) => {
+          triggerRef.current = node;
+        }}
       />
       {feedback ? (
         <FeedbackNotice
           content={feedback}
           announcement="Assertive"
-          actions={retryActions}
+          actions={
+            retryable ? [{ label: "Retry", onClick: () => void run() }] : undefined
+          }
         />
       ) : null}
     </>

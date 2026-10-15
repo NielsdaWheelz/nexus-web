@@ -10,9 +10,6 @@ PARSER_TEMP_ROOT=/var/lib/nexus/parser-tmp
 # Grand atlas nightly re-projection (0 disables the periodic sweep).
 ATLAS_PROJECT_SCHEDULE_SECONDS=86400
 
-# Reconciliation is production background work.
-INGEST_RECONCILE_SCHEDULE_SECONDS=600
-
 # Podcast freshness is ordinary background-lane work.
 PODCAST_REFRESH_DUE_SCHEDULE_SECONDS=900
 PODCAST_REFRESH_DUE_LIMIT=100

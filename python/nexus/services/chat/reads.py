@@ -51,7 +51,6 @@ from nexus.schemas.llm import (
     OperatorDefectChatFailure,
     RunSelectionOut,
 )
-from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
 from nexus.services.chat import events, quotes
 from nexus.services.generation.contract import GenerationSpec
 from nexus.services.resource_graph.citations import build_citation_outs_for_sources
@@ -76,7 +75,7 @@ FAILURES = {
 # Transient or chosen outcomes; a deterministic or operator-owned one never reruns.
 RERUNNABLE = (CancelledChatFailure, IncompleteChatFailure, AssistantUnavailableChatFailure)
 
-type Execution = Present[ChatRunExecutionOut] | Absent
+type Execution = ChatRunExecutionOut | None
 
 
 def failure(run: ChatRun) -> ExpectedChatFailure | None:
@@ -127,8 +126,7 @@ def advisory(db: Session, *, run_id: UUID) -> ChatRunExecutionOut | None:
     """The stream's unsequenced liveness frame; None once the run is over."""
 
     run = db.get(ChatRun, run_id)
-    execution = _executions(db, [run])[run.id] if run is not None else absent()
-    return execution.value if isinstance(execution, Present) else None
+    return _executions(db, [run])[run.id] if run is not None else None
 
 
 def run_response(db: Session, *, viewer_id: UUID, run_id: UUID) -> ChatRunResponse:
@@ -179,7 +177,7 @@ def _executions(db: Session, runs: list[ChatRun]) -> dict[UUID, Execution]:
     """A live run projects its one ``chat_run:{id}`` job's phase and the stop intent."""
 
     live = {f"chat_run:{run.id}": run for run in runs if run.status not in events.TERMINAL}
-    out: dict[UUID, Execution] = {run.id: absent() for run in runs}
+    out: dict[UUID, Execution] = {run.id: None for run in runs}
     if not live:
         return out
     jobs = {
@@ -200,7 +198,7 @@ def _executions(db: Session, runs: list[ChatRun]) -> dict[UUID, Execution]:
         execution = ChatRunExecutionOut(
             phase=phase, cancel_requested=run.cancel_requested_at is not None
         )
-        out[run.id] = present(execution)
+        out[run.id] = execution
     return out
 
 
@@ -213,9 +211,9 @@ def _message_outs(db: Session, viewer_id: UUID, messages: list[Message]) -> list
         trail, rerun = trails.get(message.id, (None, False))
         snapshot = message.reader_selection_snapshot
         reader_selection = (
-            present(quotes.selection_out(db, viewer_id=viewer_id, snapshot=quotes.decode(snapshot)))
+            quotes.selection_out(db, viewer_id=viewer_id, snapshot=quotes.decode(snapshot))
             if snapshot is not None
-            else absent()
+            else None
         )
         outs.append(
             MessageOut(
@@ -361,7 +359,7 @@ def _trails(
 
 
 def _trust_run(run: ChatRun, usage: Any, execution: Execution) -> TrustRunOut:
-    warning = present(ChatPublicationWarning()) if run.publication_warning_code else absent()
+    warning = ChatPublicationWarning() if run.publication_warning_code else None
     return TrustRunOut.model_validate(
         {
             "run_id": run.id,
@@ -369,7 +367,7 @@ def _trust_run(run: ChatRun, usage: Any, execution: Execution) -> TrustRunOut:
             "status": "pending" if run.status == "queued" else run.status,
             "usage": usage,
             "error_code": run.error_code,
-            "support_id": presence_from_nullable(run.support_id),
+            "support_id": run.support_id,
             "publication_warning": warning,
             "failure": failure(run),
             "execution": execution,

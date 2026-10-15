@@ -1,17 +1,16 @@
 "use client";
 
 /**
- * The Add session (docs/modules/add-content.md): stage links and files, send
- * them two at a time and reconcile unknown acceptance outcomes. What was sent
- * is frozen: an unknown outcome keeps its intent for exact replay; a new
- * attempt gets a key at submission.
- * At most one import operation runs; stop and reset fence older completions.
- * Live library placement belongs to the account owner, outside this session.
+ * The Add session (docs/modules/add-content.md): stage links and files with
+ * their libraries, send them two at a time and reconcile unknown outcomes, all
+ * browser-local. What was sent is frozen: an unknown outcome keeps its intent
+ * for exact replay; a new attempt gets a key at submission. At most one
+ * mutation runs; stop and reset fence every older completion. Accepted items
+ * are filed afterwards through the shared "Libraries…" overlay.
  */
 
 import { useEffect, useRef, useState } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import type { LibraryChooserAdmission } from "@/components/libraries/LibraryChooser";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
@@ -28,9 +27,7 @@ import {
   type UploadFileKind,
   type UploadPhase,
 } from "@/lib/imports/ingest";
-import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
-import { setLibraryDestination } from "@/lib/libraries/destinationSelection";
-import { useDraftLibraryCreation } from "@/lib/libraries/useDraftLibraryCreation";
+import { createLibrary, type LibraryDestination } from "@/lib/libraries/api";
 import type { AddSeed } from "@/lib/nexus/model";
 import {
   findAmbiguousUrlSplit,
@@ -56,8 +53,9 @@ type FileSummary = {
 };
 type AcceptanceIntent = Readonly<{
   source: AddSource;
-  destinations: readonly LibraryDestinationSelection[];
-  idempotencyKey: string;
+  destinations: readonly LibraryDestination[];
+  /** Minted once per frozen intent: every resend carries it (a url's attempt id). */
+  id: string;
 }>;
 type FileIntent = AcceptanceIntent & {
   source: Extract<AddSource, { kind: "File" }>;
@@ -72,7 +70,7 @@ export type AddItem =
       readonly kind: "Draft";
       readonly id: string;
       readonly source: DraftSource;
-      readonly destinations: readonly LibraryDestinationSelection[];
+      readonly destinations: readonly LibraryDestination[];
       readonly showFeedback: boolean;
     }
   | { kind: "Queued"; id: string; intent: AcceptanceIntent }
@@ -112,26 +110,21 @@ export type AddItem =
       result: AcceptedIngest;
     };
 
-export type DraftLibraryScope = {
-  sessionId: string;
-  itemIds: readonly string[];
-  includeNewItems: boolean;
-};
-
 type Mutation =
   | { kind: "Idle" }
   | {
       kind: "Running";
       operation:
         | { kind: "Submit"; itemIds: readonly string[] }
-        | { kind: "ReconcileAcceptance"; itemId: string };
+        | { kind: "ReconcileAcceptance"; itemId: string }
+        | { kind: "CreateDestination" };
     };
 
 export type AddSessionState = Readonly<{
   sessionId: string;
   intakeFeedback?: FeedbackContent;
   items: readonly AddItem[];
-  newItemDestinations: readonly LibraryDestinationSelection[];
+  newItemDestinations: readonly LibraryDestination[];
   mutation: Mutation;
 }>;
 
@@ -164,14 +157,20 @@ export interface AddContentSessionController {
   stageFiles(input: { files: readonly File[] }): boolean;
   removeItem(itemId: string): void;
   restageItem(itemId: string): void;
-  setLibrary(input: {
-    scope: DraftLibraryScope;
-    destination: LibraryDestinationSelection;
+  setNewItemDestinations(input: {
+    destinations: readonly LibraryDestination[];
+  }): void;
+  setItemDestinations(input: {
+    itemId: string;
+    destinations: readonly LibraryDestination[];
+  }): void;
+  setDraftLibrary(input: {
+    destination: LibraryDestination;
     included: boolean;
-  }): LibraryChooserAdmission;
-  readonly creation: ReturnType<typeof useDraftLibraryCreation>;
+  }): void;
   submit(): Promise<void>;
   reconcileAcceptance(itemId: string): Promise<void>;
+  createDestination(name: string): Promise<LibraryDestination>;
   stop(): void;
   discard(): void;
 }
@@ -239,7 +238,7 @@ export function useAddContentSession(): AddContentSessionController {
   const [state, setState] = useState(() => initialState(EMPTY_SEED));
   const current = useRef(state);
   const abort = useRef(new AbortController());
-  const creation = useDraftLibraryCreation(state.sessionId);
+  const createIds = useRef(new Map<string, string>());
 
   function update(change: (snapshot: AddSessionState) => AddSessionState) {
     current.current = change(current.current);
@@ -299,12 +298,13 @@ export function useAddContentSession(): AddContentSessionController {
     const next = initialState(seed);
     abort.current.abort();
     abort.current = new AbortController();
+    createIds.current.clear();
     update(() => next);
     return next.sessionId;
   }
   /**
    * Fence everything in flight: unsent rows return to draft, a sent link's
-   * acceptance is unknown, and a sent file's upload stopped.
+   * acceptance is unknown and a sent file's upload stopped.
    */
   function stop() {
     abort.current.abort();
@@ -581,24 +581,58 @@ export function useAddContentSession(): AddContentSessionController {
       items: snapshot.items.map((next) => (next.id === row.id ? draft : next)),
     }));
   }
-  function setLibrary({ scope, destination, included }: {
-    scope: DraftLibraryScope;
-    destination: LibraryDestinationSelection;
-    included: boolean;
-  }): LibraryChooserAdmission {
-    const snapshot = current.current;
-    if (snapshot.sessionId !== scope.sessionId || snapshot.mutation.kind !== "Idle") return "Rejected";
-    const ids = new Set(scope.itemIds);
-    const targets = snapshot.items.filter((row) => row.kind === "Draft" && ids.has(row.id));
-    if (!scope.includeNewItems && targets.length === 0) return "Rejected";
-    update((next) => ({
-      ...next,
-      newItemDestinations: scope.includeNewItems
-        ? setLibraryDestination(next.newItemDestinations, { destination, included }) : next.newItemDestinations,
-      items: next.items.map((row) => row.kind === "Draft" && ids.has(row.id)
-        ? { ...row, destinations: setLibraryDestination(row.destinations, { destination, included }) } : row),
+  function setNewItemDestinations({
+    destinations,
+  }: {
+    destinations: readonly LibraryDestination[];
+  }) {
+    if (current.current.mutation.kind !== "Idle") return;
+    update((snapshot) => ({
+      ...snapshot,
+      newItemDestinations: [...destinations],
     }));
-    return "Accepted";
+  }
+  function setItemDestinations({
+    itemId,
+    destinations,
+  }: {
+    itemId: string;
+    destinations: readonly LibraryDestination[];
+  }) {
+    if (current.current.mutation.kind !== "Idle") return;
+    const row = current.current.items.find((next) => next.id === itemId);
+    if (row?.kind === "Draft") {
+      item({
+        ...row,
+        destinations: [...destinations],
+      });
+    }
+  }
+  function setDraftLibrary({
+    destination,
+    included,
+  }: {
+    destination: LibraryDestination;
+    included: boolean;
+  }) {
+    if (current.current.mutation.kind !== "Idle") return;
+    const change = (destinations: readonly LibraryDestination[]) => {
+      if (!included) {
+        return destinations.filter((next) => next.id !== destination.id);
+      }
+      return destinations.some((next) => next.id === destination.id)
+        ? destinations
+        : [...destinations, destination];
+    };
+    update((snapshot) => ({
+      ...snapshot,
+      newItemDestinations: change(snapshot.newItemDestinations),
+      items: snapshot.items.map((row) =>
+        row.kind === "Draft" && isPopulatedAddItem(row)
+          ? { ...row, destinations: change(row.destinations) }
+          : row,
+      ),
+    }));
   }
 
   /** Sends one frozen intent; an unknown outcome keeps it for exact replay. */
@@ -610,7 +644,6 @@ export function useAddContentSession(): AddContentSessionController {
     const { id, intent } = row;
     let importRef = row.kind === "AcceptanceUnresolved" ? row.importRef : null;
     const libraryIds = intent.destinations.map((destination) => destination.id);
-    const idempotencyKey = intent.idempotencyKey;
     try {
       let result: AcceptedIngest;
       const source = intent.source;
@@ -621,7 +654,7 @@ export function useAddContentSession(): AddContentSessionController {
         result = await addMediaFromUrl({
           url: source.url,
           libraryIds,
-          idempotencyKey,
+          id: intent.id,
           signal,
         });
       } else {
@@ -634,7 +667,7 @@ export function useAddContentSession(): AddContentSessionController {
         result = await uploadIngestFile({
           file: source.file,
           libraryIds,
-          idempotencyKey,
+          id: intent.id,
           signal,
           onPhaseChange,
           onImportRef: (ref) => {
@@ -696,7 +729,7 @@ export function useAddContentSession(): AddContentSessionController {
   }
   async function submit() {
     const snapshot = current.current;
-    if (snapshot.mutation.kind !== "Idle" || creation.creating) return;
+    if (snapshot.mutation.kind !== "Idle") return;
     const rows: Extract<AddItem, { kind: "Queued" }>[] = [];
     const items = snapshot.items.map((row): AddItem => {
       if (row.kind !== "Draft") return row;
@@ -708,7 +741,7 @@ export function useAddContentSession(): AddContentSessionController {
         intent: {
           source: validation.source,
           destinations: [...row.destinations],
-          idempotencyKey: createRandomId("media-add"),
+          id: crypto.randomUUID(),
         },
       };
       rows.push(queued);
@@ -738,10 +771,40 @@ export function useAddContentSession(): AddContentSessionController {
     await batch([row], signal, (next) => accept(next, signal));
   }
 
+  /** One library per normalized name, however often its creation is retried. */
+  async function createDestination(
+    name: string,
+  ): Promise<LibraryDestination> {
+    if (current.current.mutation.kind !== "Idle") {
+      throw new Error("Another Add operation is already running.");
+    }
+    const signal = abort.current.signal;
+    const normalized = name.trim();
+    const libraryId = createIds.current.get(normalized) ?? crypto.randomUUID();
+    createIds.current.set(normalized, libraryId);
+    running({ kind: "CreateDestination" });
+    try {
+      const destination = await createLibrary({ id: libraryId, name: normalized });
+      if (!active(signal)) {
+        throw new DOMException(
+          "Destination creation no longer belongs to the active Add session.",
+          "AbortError",
+        );
+      }
+      createIds.current.delete(normalized);
+      return { id: destination.id, name: destination.name };
+    } finally {
+      if (active(signal)) {
+        update((next) => ({ ...next, mutation: { kind: "Idle" } }));
+      }
+    }
+  }
   let leaveReason: AddLeaveReason = null;
   if (state.mutation.kind === "Running") {
     leaveReason = "Stop";
-  } else if (creation.creating || state.items.some((row) => row.kind === "AcceptanceUnresolved")) {
+  } else if (
+    state.items.some((row) => row.kind === "AcceptanceUnresolved")
+  ) {
     leaveReason = "Unconfirmed";
   } else if (
     state.items.some(
@@ -764,10 +827,12 @@ export function useAddContentSession(): AddContentSessionController {
     stageFiles,
     removeItem,
     restageItem,
-    setLibrary,
-    creation,
+    setNewItemDestinations,
+    setItemDestinations,
+    setDraftLibrary,
     submit,
     reconcileAcceptance,
+    createDestination,
     stop,
     discard: () => {
       start(EMPTY_SEED);

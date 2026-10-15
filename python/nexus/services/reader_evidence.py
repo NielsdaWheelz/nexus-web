@@ -11,9 +11,8 @@ from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.schemas.document_embeds import DocumentEmbedOut
 from nexus.schemas.highlights import HIGHLIGHT_COLORS, FragmentAnchorOut, TypedHighlightOut
-from nexus.schemas.media import DocumentEmbedOut
-from nexus.schemas.presence import Presence, absent, present
 from nexus.schemas.reader_apparatus import (
     ReaderApparatusConfidence,
     ReaderApparatusItemKind,
@@ -227,7 +226,7 @@ def _add_highlight_facts(
             associations=[],
             id=locus_ref,
             label=highlight.exact or "Highlight",
-            excerpt=present(highlight.exact) if highlight.exact else absent(),
+            excerpt=highlight.exact if highlight.exact else None,
             highlight_id=highlight.id,
             quote=highlight.exact,
             prefix=highlight.prefix,
@@ -304,7 +303,7 @@ def _compose_apparatus(ctx: _Projection, *, apparatus: ReaderApparatusResponse) 
                 ref=target.resource_ref,
                 stable_key=target.stable_key,
                 apparatus_kind=target.kind,
-                label=present(target.label) if target.label else absent(),
+                label=target.label if target.label else None,
                 content=content,
                 activation=_apparatus_activation(ctx, target, resolution=resolution),
                 resolution=resolution,
@@ -328,14 +327,14 @@ def _compose_apparatus(ctx: _Projection, *, apparatus: ReaderApparatusResponse) 
             label=owner.label
             or next((target.label for target in targets if target.label), None)
             or "Source reference",
-            excerpt=present(excerpt) if excerpt else absent(),
+            excerpt=excerpt if excerpt else None,
             stable_key=owner.stable_key,
             apparatus_kind=cast(ReaderApparatusItemKind, owner.kind),
             confidence=cast(ReaderApparatusConfidence, owner.confidence),
             target_refs=[target.resource_ref for target in targets],
-            marker_anchor_id=present(marker_anchor_id)
+            marker_anchor_id=marker_anchor_id
             if isinstance(marker_anchor_id, str) and marker_anchor_id.strip()
-            else absent(),
+            else None,
         )
         _place_item(ctx, owner.resource_ref, _apparatus_resolution(ctx, owner), item)
         ctx.represented_facts[owner.resource_ref].append(item)
@@ -355,15 +354,8 @@ def _apparatus_activation(
         locator_status=target.locator_status,
         locator_current=isinstance(resolution, ReaderEvidenceResolvedOut),
     )
-    if href is None:
-        return ResourceActivationOut(
-            resource_ref=target.resource_ref,
-            kind="none",
-            href=None,
-            unresolved_reason="not_routeable",
-        )
     return ResourceActivationOut(
-        resource_ref=target.resource_ref, kind="route", href=href, unresolved_reason=None
+        resource_ref=target.resource_ref, kind="none" if href is None else "route", href=href
     )
 
 
@@ -405,7 +397,7 @@ def _add_generated_citations(
         item = ReaderEvidenceGeneratedCitationOut(
             id=f"generated-citation:{row.connection.edge_id}",
             label=title or f"Cited by {source_object.label}",
-            excerpt=present(excerpt) if excerpt else absent(),
+            excerpt=excerpt if excerpt else None,
             associations=[ReaderEvidenceAuthoredInOut(object=source_object)],
             edge_id=row.connection.edge_id,
             creation=row.connection.creation,
@@ -442,7 +434,7 @@ def _add_machine_links(
                 associations=[],
                 id=f"machine_link:{row.connection.edge_id}",
                 label=row.title or related.label,
-                excerpt=present(row.excerpt) if row.excerpt else absent(),
+                excerpt=row.excerpt if row.excerpt else None,
                 edge_id=row.connection.edge_id,
                 creation=row.connection.creation,
                 mutation=row.connection.mutation,
@@ -499,7 +491,7 @@ def _add_remaining_connections(
                 # anchored locus keys each so the two rows never collide on id.
                 id=f"link:{row.connection.edge_id}:anchor:{locus_ref}",
                 label=row.title or related.label,
-                excerpt=present(row.excerpt) if row.excerpt else absent(),
+                excerpt=row.excerpt if row.excerpt else None,
                 edge_id=row.connection.edge_id,
                 creation=row.connection.creation,
                 mutation=row.connection.mutation,
@@ -574,7 +566,7 @@ def _object_for_endpoint(
         return None
     ref = assert_resource_ref(endpoint.ref)
     label = endpoint.label or endpoint.ref
-    excerpt = present(endpoint.description) if endpoint.description else absent()
+    excerpt = endpoint.description if endpoint.description else None
     activation = endpoint.activation
     if ref.scheme == "message":
         meta = ctx.message_meta.get(ref.id)
@@ -583,10 +575,10 @@ def _object_for_endpoint(
         return ReaderEvidenceChatObjectOut(
             ref=endpoint.ref,
             label=meta.conversation_title,
-            excerpt=absent(),
+            excerpt=None,
             activation=activation,
             conversation_id=meta.conversation_id,
-            message_ref=present(endpoint.ref),
+            message_ref=endpoint.ref,
         )
     if ref.scheme == "conversation":
         return ReaderEvidenceChatObjectOut(
@@ -595,7 +587,7 @@ def _object_for_endpoint(
             excerpt=excerpt,
             activation=activation,
             conversation_id=ref.id,
-            message_ref=absent(),
+            message_ref=None,
         )
     if ref.scheme == "note_block":
         meta = ctx.note_meta.get(ref.id)
@@ -604,7 +596,7 @@ def _object_for_endpoint(
         return ReaderEvidenceNoteObjectOut(
             ref=endpoint.ref,
             label=meta.body_text or label,
-            excerpt=present(meta.body_text) if meta.body_text else excerpt,
+            excerpt=meta.body_text if meta.body_text else excerpt,
             activation=activation,
             note_block_id=ref.id,
             body_pm_json=meta.body_pm_json,
@@ -753,7 +745,7 @@ def _group_sort_key(group: ReaderEvidencePassageGroupOut) -> tuple[int, str, str
     return (2, group.locus_ref, group.locus_ref)
 
 
-def _target_excerpt(group: _PassageAccumulator) -> Presence[str]:
+def _target_excerpt(group: _PassageAccumulator) -> str | None:
     if isinstance(group.resolution, ReaderEvidenceResolvedOut):
         locator = locator_json(group.resolution.anchor.locator) or {}
         selector = locator.get("text_quote_selector")
@@ -761,21 +753,21 @@ def _target_excerpt(group: _PassageAccumulator) -> Presence[str]:
         candidates.append(locator.get("exact"))
         for exact in candidates:
             if isinstance(exact, str) and exact.strip():
-                return present(exact)
+                return exact
     highlight = next(
         (item for item in group.items if isinstance(item, ReaderEvidenceHighlightOut)), None
     )
     if highlight is not None and highlight.quote.strip():
-        return present(highlight.quote)
+        return highlight.quote
     reference = next(
         (item for item in group.items if isinstance(item, ReaderEvidenceSourceReferenceOut)), None
     )
     if reference is not None:
         if reference.apparatus_kind.endswith("_ref") and reference.label.strip():
-            return present(reference.label)
-        if reference.excerpt.kind == "Present" and reference.excerpt.value.strip():
-            return present(reference.excerpt.value)
-    return absent()
+            return reference.label
+        if reference.excerpt is not None and reference.excerpt.strip():
+            return reference.excerpt
+    return None
 
 
 def _item_sort_key(item: ReaderEvidenceItemOut) -> tuple[int, str]:

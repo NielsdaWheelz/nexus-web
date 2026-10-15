@@ -20,7 +20,7 @@ Backend owners live under `python/nexus/services/podcasts/*` (`feed`, `provider`
 `podcasts/transcription_failure.py`, which does not import the provider adapter
 on the background supervisor path. Frontend pane composition lives under
 `apps/web/src/app/(authenticated)/podcasts/*`. `lib/podcasts/api.ts` owns the
-podcast http and its types; `lib/api/serverState.ts` (one resource) and
+podcast http and its types; `lib/api/serverState.tsx` (one resource) and
 `lib/api/useServerList.ts` (one list, architecture §8.12) own the panes' server
 state (shared with the author pane and the metadata overlay);
 `lib/podcasts/paneState.ts` owns the podcast failure copy, command runner and
@@ -60,7 +60,7 @@ from the subscriptions list (podcasts disabled) shows the failure notice.
 
 Manual episode downloads are a device capability, not Podcast domain state
 ([offline](offline.md)). An episode whose `external_playback_url` is HTTPS
-gets a `Download{mediaKind, title, audioUrl}` resource-action capability;
+gets a `Download {media_kind, title, audio_url}` resource action;
 episode DTOs carry no download fact. Android's `OfflineStore` owns the bytes
 and their state.
 
@@ -115,29 +115,29 @@ Four durable facts, every other surface a read model over them:
   the slice never deletes episodes (an episode's aliases cascade with it).
 - **Subscription** (`podcast_subscriptions`) — `subscriptions.py`: a row exists
   iff the viewer follows the show. The row is also the sync's state and owns the
-  playback-rate and pause-shortening defaults (nullable pause shortening
-  projects as `Presence<Off | Natural>`, absent = Android device default) and
+  playback-rate and pause-shortening defaults (pause shortening is
+  `Off | Natural | null`, null = Android device default) and
   auto-queue. Enabling auto-queue starts its watermark at that moment
   (`auto_queue ⇒ auto_queue_watermark_at IS NOT NULL` is a CHECK).
 - **Backfill** (`podcast_subscription_backfills`, one per subscription, deleted
   with it) — `backfill.py`: the pre-subscription history walk.
 
 Named placement is only `library_entries(podcast_id)`, with `library_entries.py`
-as sole writer. `GET /podcasts/{podcastId}/libraries` is registered by the
-always-available Library relationship router. `PUT
-/libraries/{libraryId}/podcasts/{podcastId}` is placement-only and never
-creates a subscription. Default/All stores no Podcast entry: each subscription
-projects one virtual Podcast root and suppresses its child episode roots.
-Subscribe adds named destinations (a Library holding direct episodes of the show
-answers 409 `E_PODCAST_REPLACES_EPISODES` with a fingerprint; resending it
-replaces them); unsubscribe deletes the row (the backfill cascades), removes the
+as sole writer. `GET /libraries/placements/podcast:{podcastId}` lists where a
+show sits; `PUT /libraries/{libraryId}/items/podcast:{podcastId}` is
+placement-only and never creates a subscription. Default/All stores no Podcast
+entry: each subscription projects one virtual Podcast root and suppresses its
+child episode roots. Subscribe adds named destinations (a Library holding direct
+episodes of the show answers 409 `E_PODCAST_REPLACES_EPISODES` with the counts;
+resending with `replace_episodes: true` replaces them; placement through
+Libraries… takes the same flag); unsubscribe deletes the row (the backfill cascades), removes the
 viewer's sole-owned placements and keeps shared ones; episodes resurface in All
 with their progress.
 
 - **Subscription-settings UI — `PodcastSubscriptionSettingsOverlay`.** The
-  app-level resource overlay is the only load/draft/save/reconcile lifecycle
-  owner: it loads the subscription, saves one PATCH through `lib/podcasts/api.ts`
-  and reconciles the resource-action snapshot. The save (and the player's
+  app-level resource overlay is the only load/draft/save lifecycle owner: it
+  loads the subscription and saves one PATCH through `lib/podcasts/api.ts`. The
+  save (and the player's
   remember-speed) publishes `Podcasts`, so open podcast panes reread; the
   Library pane rereads on its own topics. There is no install publisher or
   mutation tail.
@@ -255,11 +255,11 @@ records `Publisher`, `Imported`, or `Generated` while the transcript is
 Ready/Partial.
 
 Failure raises to the source-attempt owner. A terminal code settles the attempt
-through `source_attempt_failures.py`, which publishes Media, job and transcript
+through `source_publication.py`, which publishes Media, job and transcript
 failure through `podcasts/transcription_failure.py` (`unavailable` for
 `E_TRANSCRIPT_UNAVAILABLE`, else `failed_provider`; it imports no provider: the
 supervisor path). A retryable failure (Deepgram 5xx, timeout) retries the job;
-when its retries run out, its `on_dead` hook (`source_attempt_failures.on_dead_letter`) settles a
+when its retries run out, its `on_dead` hook (`source_publication.on_dead_letter`) settles a
 still-running transcript attempt the same way, so a later request can admit a
 new one. Other source types keep their dead job for the source repair offer.
 

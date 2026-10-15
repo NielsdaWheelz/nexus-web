@@ -1,9 +1,10 @@
 """The reader cursor, one ``reader_media_state`` row per viewer and media.
 
 No row reads as Empty at revision 0; a null locator is a revisioned Empty
-tombstone. Changed writes advance the revision; accepted equal saves keep it. Each
-save admits a positioned locator against its own source fragment first, and composes
-inside the caller's transaction.
+tombstone. Changed writes advance the revision; accepted equal saves keep it. A changed
+save from the current base admits its locator against its own source fragment, and every
+write composes inside the caller's transaction; a source replacement remaps saved cursors
+through the plan below.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
-from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError
+from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError
 from nexus.schemas.reader import (
     CursorWrite,
     EpubReaderResumeState,
@@ -32,7 +33,6 @@ from nexus.schemas.reader import (
 )
 from nexus.services.canonicalize import canonicalize_structure
 
-MEDIA_FK = "fk_reader_media_state_media"
 _LOCATOR_KIND = {
     "pdf": "pdf",
     "epub": "epub",
@@ -185,13 +185,11 @@ def current_position_rows_sql() -> str:
     """
 
 
-def supports_media_kind(media_kind: str) -> bool:
-    return media_kind in _LOCATOR_KIND
+def supports(kind: str) -> bool:
+    return kind in _LOCATOR_KIND
 
 
-def load_snapshot(
-    db: Session, *, viewer_id: UUID, media_id: UUID, media_kind: str
-) -> ReaderCursorSnapshot:
+def load(db: Session, *, viewer_id: UUID, media_id: UUID) -> ReaderCursorSnapshot:
     row = db.execute(
         text(
             "SELECT locator, revision FROM reader_media_state"
@@ -199,24 +197,27 @@ def load_snapshot(
         ),
         {"viewer_id": viewer_id, "media_id": media_id},
     ).one_or_none()
-    if row is None:
-        return ReaderCursorEmpty()
-    if row.locator is None:
-        return ReaderCursorEmpty(revision=row.revision)
-    try:
-        locator = _RESUME_STATE.validate_python(row.locator)
-        _check_kind(media_kind, locator)
-    except (ValidationError, InvalidRequestError) as exc:
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Stored reader state is invalid") from exc
-    return ReaderCursorPositioned(revision=row.revision, locator=locator)
+    if row is None or row.locator is None:
+        return ReaderCursorEmpty(revision=row.revision if row else 0)
+    return ReaderCursorPositioned(
+        revision=row.revision, locator=_RESUME_STATE.validate_python(row.locator)
+    )
 
 
-def put_in_txn(
-    db: Session, *, viewer_id: UUID, media_id: UUID, media_kind: str, write: CursorWrite
-) -> ReaderCursorPositioned:
-    """Validate the base revision before accepting even an identical locator."""
-    _check_kind(media_kind, write.locator)
-    current = load_snapshot(db, viewer_id=viewer_id, media_id=media_id, media_kind=media_kind)
+def save(
+    db: Session, *, viewer_id: UUID, media_id: UUID, kind: str, write: CursorWrite
+) -> tuple[ReaderCursorPositioned, bool]:
+    """Equal to the current one -> current (a resend that landed: not accepted again when its
+    base is stale, so a fence still retires it); from a stale base -> 409 with current; else
+    admit the locator and write the next revision (I6). The flag says whether the save was
+    accepted."""
+    if write.locator.kind != _LOCATOR_KIND[kind]:
+        raise InvalidRequestError(
+            message=f"Reader state kind '{write.locator.kind}' does not match media kind '{kind}'"
+        )
+    current = load(db, viewer_id=viewer_id, media_id=media_id)
+    if isinstance(current, ReaderCursorPositioned) and current.locator == write.locator:
+        return current, write.base_revision == current.revision
     if write.base_revision != current.revision:
         raise ConflictError(
             ApiErrorCode.E_READER_STATE_CONFLICT,
@@ -227,28 +228,26 @@ def put_in_txn(
         _admit_epub(db, media_id, write.locator)
     elif isinstance(write.locator, WebReaderResumeState):
         _admit_web(db, media_id, write.locator)
-    if isinstance(current, ReaderCursorPositioned) and current.locator == write.locator:
-        return current
     revision = _write(db, viewer_id, media_id, write.locator.model_dump(mode="json"))
-    return ReaderCursorPositioned(revision=revision, locator=write.locator)
+    return ReaderCursorPositioned(revision=revision, locator=write.locator), True
 
 
-def fence_in_txn(db: Session, *, viewer_id: UUID, media_id: UUID) -> None:
+def fence(db: Session, *, viewer_id: UUID, media_id: UUID) -> None:
     """Retire earlier saves without moving the bookmark."""
     db.execute(
         text("""
             INSERT INTO reader_media_state (user_id, media_id, locator, revision)
             VALUES (:viewer_id, :media_id, NULL, 1)
             ON CONFLICT (user_id, media_id) DO UPDATE
-            SET revision = reader_media_state.revision + 1, updated_at = now()
+            SET revision = reader_media_state.revision + 1
         """),
         {"viewer_id": viewer_id, "media_id": media_id},
     )
 
 
-def reset_in_txn(db: Session, *, viewer_id: UUID, media_id: UUID) -> ReaderCursorEmpty:
+def reset(db: Session, *, viewer_id: UUID, media_id: UUID) -> None:
     """Replace the cursor with a revisioned Empty tombstone."""
-    return ReaderCursorEmpty(revision=_write(db, viewer_id, media_id, None))
+    _write(db, viewer_id, media_id, None)
 
 
 def _write(db: Session, viewer_id: UUID, media_id: UUID, locator: object | None) -> int:
@@ -281,9 +280,9 @@ def _admit_epub(db: Session, media_id: UUID, locator: EpubReaderResumeState) -> 
     if offset is not None:
         if offset > source.char_count:
             raise InvalidRequestError(message="EPUB cursor offset exceeds its source fragment")
-    elif anchor.kind == "Absent":
+    elif anchor is None:
         raise InvalidRequestError(message="EPUB cursor requires an exact offset or source anchor")
-    elif anchor.value not in canonicalize_structure(source.html_sanitized).anchors:
+    elif anchor not in canonicalize_structure(source.html_sanitized).anchors:
         raise InvalidRequestError(message="EPUB cursor anchor must identify one source element")
 
 
@@ -307,10 +306,3 @@ def _admit_web(db: Session, media_id: UUID, locator: WebReaderResumeState) -> No
     offset = locator.locations.text_offset
     if offset is not None and offset > char_count:
         raise InvalidRequestError(message="Web cursor offset exceeds its source fragment")
-
-
-def _check_kind(media_kind: str, locator: ReaderResumeState) -> None:
-    if locator.kind != _LOCATOR_KIND[media_kind]:
-        raise InvalidRequestError(
-            message=f"Reader state kind '{locator.kind}' does not match media kind '{media_kind}'"
-        )

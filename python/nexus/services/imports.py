@@ -17,6 +17,7 @@ per-row defect (OI-035).
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, cast
 from uuid import UUID
@@ -67,8 +68,7 @@ from nexus.schemas.imports import (
     SourceImportObligation,
     WaitingReason,
 )
-from nexus.schemas.media import MediaOut
-from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
+from nexus.schemas.media_sources import SourceProgress
 from nexus.schemas.source_issues import SOURCE_ISSUES
 from nexus.services.collection_keyset import (
     KeysetValueKind,
@@ -84,19 +84,19 @@ from nexus.services.import_history import (
     history_entries,
     read_history_page,
 )
-from nexus.services.media import list_media_for_viewer_by_ids
-from nexus.services.media_source_ingest import (
-    SourceRecoveryFacts,
-    source_recovery,
-    source_repairable_sql,
-)
+from nexus.services.media import MediaFacts, media_facts
 from nexus.services.media_upload_sessions import (
     UPLOAD_SESSION_ATTENTION_STATES,
     UPLOAD_SESSION_DERIVED_STATE_SQL,
 )
 from nexus.services.metadata_operations import metadata_operations_sql
-from nexus.services.sealed_handles import seal_upload_session, unseal_upload_session
-from nexus.services.source_history import COUNTED_PROGRESS_SOURCE_TYPES
+from nexus.services.source_attempts import (
+    SourceRecoveryFacts,
+    source_recovery,
+    source_repairable_sql,
+)
+from nexus.services.source_publication import load_source_progress
+from nexus.services.source_types import COUNTED_PROGRESS_SOURCE_TYPES
 
 _ATTENTION_PLAN = [
     SortKey("stage_rank", "asc", KeysetValueKind.Int),
@@ -252,20 +252,20 @@ WITH visible_media AS (
     SELECT id AS session_id, kind AS upload_kind, filename,
         input_origin->>'kind' AS origin_kind,
         input_origin->>'source_url' AS capture_source_url,
-        upload_generation, published_media_id, created_at AS session_created_at,
+        published_media_id, created_at AS session_created_at,
         updated_at AS session_updated_at, verification_error_code,
-        verification_failed_at, transport_failed_at, upload_url_expires_at,
+        verification_failed_at, upload_url_expires_at,
         {UPLOAD_SESSION_DERIVED_STATE_SQL} AS derived_state
     FROM media_upload_sessions WHERE created_by_user_id = :viewer_id
 ), import_refs AS (
     SELECT 'upload' AS ref_kind, session_id, published_media_id AS media_id,
-        upload_kind, filename, origin_kind, capture_source_url, upload_generation,
-        derived_state, session_created_at, session_updated_at, verification_error_code,
-        verification_failed_at, transport_failed_at, upload_url_expires_at
+        upload_kind, filename, origin_kind, capture_source_url, derived_state,
+        session_created_at, session_updated_at, verification_error_code,
+        verification_failed_at, upload_url_expires_at
     FROM upload_sessions
     UNION ALL
     SELECT 'media', NULL, media_id, NULL, NULL, NULL, NULL, NULL,
-        NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        NULL, NULL, NULL, NULL, NULL
     FROM media_work w WHERE NOT EXISTS (
         SELECT 1 FROM upload_sessions s WHERE s.published_media_id = w.media_id
     )
@@ -273,7 +273,7 @@ WITH visible_media AS (
     SELECT r.ref_kind, r.session_id, r.media_id,
         CASE WHEN r.ref_kind = 'media' THEN 'media:' || r.media_id::text
             ELSE 'upload:' || md5(r.session_id::text) END AS ref_key,
-        r.derived_state, r.origin_kind, r.upload_generation,
+        r.derived_state, r.origin_kind,
         CASE WHEN r.media_id IS NULL THEN r.filename ELSE w.title END AS title,
         r.filename AS original_filename,
         COALESCE(w.media_kind, r.upload_kind) AS media_kind,
@@ -291,7 +291,6 @@ WITH visible_media AS (
             CASE WHEN w.attempt_status = 'failed' THEN w.attempt_error_code
                 ELSE {_catalogued_queue_code("w.source_job_error_code")} END
             WHEN r.derived_state = 'VerificationFailed' THEN r.verification_error_code
-            WHEN r.derived_state = 'TransportFailed' THEN 'E_UPLOAD_TRANSPORT_FAILED'
             WHEN r.derived_state = 'CapabilityExpired' THEN 'E_UPLOAD_CAPABILITY_EXPIRED'
             END AS source_failure_code,
         CASE WHEN r.derived_state IS NULL OR r.derived_state = 'Published' THEN
@@ -299,7 +298,6 @@ WITH visible_media AS (
                 THEN COALESCE(w.source_job_finished_at, w.source_job_updated_at)
                 ELSE COALESCE(w.attempt_finished_at, w.attempt_updated_at) END
             WHEN r.derived_state = 'VerificationFailed' THEN r.verification_failed_at
-            WHEN r.derived_state = 'TransportFailed' THEN r.transport_failed_at
             WHEN r.derived_state = 'CapabilityExpired' THEN r.upload_url_expires_at
             END AS source_failed_at,
         CASE WHEN r.derived_state IS NULL OR r.derived_state = 'Published'
@@ -571,22 +569,22 @@ def read_import_page(db: Session, *, viewer_id: UUID, query: ImportListQuery) ->
                 row,
                 media=_linked_media(row, media),
                 matched_event=(
-                    present(matched[row["matched_id"]])
+                    matched[row["matched_id"]]
                     if query.view == "History" and row["matched_precedes_newest"]
-                    else absent()
+                    else None
                 ),
             )
             for row in page
         ],
-        next_cursor=presence_from_nullable(next_cursor),
+        next_cursor=next_cursor,
     )
 
 
 def _import_row(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) -> RowMapping:
     params = _base_params(viewer_id)
     match ref:
-        case UploadImportRef(session_handle=session_handle):
-            params["session_id"] = unseal_upload_session(session_handle)
+        case UploadImportRef(session_id=session_id):
+            params["session_id"] = session_id
             predicate = "session_id = :session_id"
         case MediaImportRef(media_id=media_id):
             params["media_id"] = media_id
@@ -603,9 +601,7 @@ def _import_row(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) -> RowMap
 
 def _history_owner(row: RowMapping) -> HistoryOwner:
     if row["ref_kind"] == "upload":
-        return UploadHistoryOwner(
-            session_id=row["session_id"], media_id=presence_from_nullable(_media_id(row))
-        )
+        return UploadHistoryOwner(session_id=row["session_id"], media_id=_media_id(row))
     return MediaHistoryOwner(media_id=row["media_id"])
 
 
@@ -614,16 +610,14 @@ def read_import_detail(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) ->
     row = _import_row(db, viewer_id=viewer_id, ref=ref)
     media = _linked_media(row, _hydrate_media(db, viewer_id=viewer_id, rows=[row]))
     return ImportDetail(
-        item=_item(row, media=media, matched_event=absent()),
+        item=_item(row, media=media, matched_event=None),
         history_coverage=history_coverage(db, owner=_history_owner(row)),
         source_issues=(
-            absent()
+            None
             if row["publication_generation"] is None
-            else present(
-                ImportSourceIssues(
-                    generation=int(row["publication_generation"]),
-                    issues=SOURCE_ISSUES.validate_python(row["source_issues"]),
-                )
+            else ImportSourceIssues(
+                generation=int(row["publication_generation"]),
+                issues=SOURCE_ISSUES.validate_python(row["source_issues"]),
             )
         ),
     )
@@ -639,18 +633,18 @@ def read_import_history(
         "viewer": viewer_id,
         "ref": format_import_ref(ref),
     }
-    before: Absent | Present[tuple[datetime, str]] = absent()
+    before: tuple[datetime, str] | None = None
     if cursor is not None:
         occurred_at, event_id = decode_keyset_cursor(cursor, binding, _EVENT_PAGE_PLAN)
-        before = present((cast(datetime, occurred_at), cast(str, event_id)))
+        before = (cast(datetime, occurred_at), cast(str, event_id))
     entries = read_history_page(
         db, viewer_id=viewer_id, owner=_history_owner(row), before=before, limit=limit + 1
     )
     page = entries[:limit]
-    next_cursor: Absent | Present[str] = absent()
+    next_cursor: str | None = None
     if len(entries) > limit and page:
         last = {"occurred_at": page[-1].occurred_at, "id": page[-1].id}
-        next_cursor = present(encode_keyset_cursor(binding, _EVENT_PAGE_PLAN, last))
+        next_cursor = encode_keyset_cursor(binding, _EVENT_PAGE_PLAN, last)
     return HistoryPage(entries=page, next_cursor=next_cursor)
 
 
@@ -658,20 +652,29 @@ def _media_id(row: RowMapping) -> UUID | None:
     return None if row["media_id"] is None else UUID(str(row["media_id"]))
 
 
-def _linked_media(row: RowMapping, media: dict[UUID, MediaOut]) -> MediaOut | None:
+@dataclass(frozen=True, slots=True)
+class _Media:
+    """An import's media: what the menu decides on, and its in-flight source progress."""
+
+    facts: MediaFacts
+    progress: SourceProgress | None
+
+
+def _linked_media(row: RowMapping, media: dict[UUID, _Media]) -> _Media | None:
     media_id = _media_id(row)
     return None if media_id is None else media[media_id]
 
 
 def _hydrate_media(
     db: Session, *, viewer_id: UUID, rows: Sequence[RowMapping]
-) -> dict[UUID, MediaOut]:
+) -> dict[UUID, _Media]:
     media_ids = [media_id for row in rows if (media_id := _media_id(row)) is not None]
-    media = {item.id: item for item in list_media_for_viewer_by_ids(db, viewer_id, media_ids)}
-    if any(media_id not in media for media_id in media_ids):
+    facts = media_facts(db, viewer_id=viewer_id, media_ids=media_ids)
+    if any(media_id not in facts for media_id in media_ids):
         # justify-defect: every media id came from the visible-media CTE above.
         raise AssertionError("Imports media hydration lost viewer-visible rows")
-    return media
+    progress = load_source_progress(db, tuple(facts))
+    return {media_id: _Media(item, progress.get(media_id)) for media_id, item in facts.items()}
 
 
 def _stage(raw: str) -> Stage:
@@ -682,20 +685,20 @@ def _stage(raw: str) -> Stage:
 
 def _waiting_reason(
     row: RowMapping, *, job_prefix: Literal["source_job", "index_job"]
-) -> Absent | Present[WaitingReason]:
+) -> WaitingReason | None:
     job_id = row[f"{job_prefix}_id"]
     status = row[f"{job_prefix}_status"]
     if job_id is None or status not in {"pending", "failed"}:
-        return absent()
+        return None
     if row[f"{job_prefix}_available_at"] > row["database_now"]:
-        return present("RetryBackoff")
+        return "RetryBackoff"
     if row["capacity_job_id"] is not None and row["capacity_job_id"] != job_id:
-        return present("Capacity")
-    return present("Queue")
+        return "Capacity"
+    return "Queue"
 
 
 def _work_state(
-    row: RowMapping, media: MediaOut | None, *, obligation: Literal["source", "search"]
+    row: RowMapping, media: _Media | None, *, obligation: Literal["source", "search"]
 ) -> ImportState:
     classification = row[f"{obligation}_classification"]
     stage = _stage(row["source_stage"]) if obligation == "source" else "Index"
@@ -705,7 +708,7 @@ def _work_state(
         code = row[f"{obligation}_failure_code"]
         return ImportStateNeedsAttention(
             stage=stage,
-            failure_code=absent() if code is None else present(assume_safe_failure_code(code)),
+            failure_code=None if code is None else assume_safe_failure_code(code),
         )
     if classification != "Active":
         raise AssertionError(f"unknown {obligation} classification {classification!r}")
@@ -713,9 +716,9 @@ def _work_state(
         return ImportStateActive(
             status="Queued",
             stage=stage,
-            waiting_reason=present("AwaitingUploadConfirmation"),
-            progress=absent(),
-            next_retry_at=absent(),
+            waiting_reason="AwaitingUploadConfirmation",
+            progress=None,
+            next_retry_at=None,
         )
     prefix = "source_job" if obligation == "source" else "index_job"
     waiting = _waiting_reason(row, job_prefix=prefix)
@@ -723,16 +726,12 @@ def _work_state(
         status="Processing" if row[f"{prefix}_status"] == "running" else "Queued",
         stage=stage,
         waiting_reason=waiting,
-        progress=media.source_progress if obligation == "source" else absent(),
-        next_retry_at=(
-            present(row[f"{prefix}_available_at"])
-            if isinstance(waiting, Present) and waiting.value == "RetryBackoff"
-            else absent()
-        ),
+        progress=media.progress if obligation == "source" else None,
+        next_retry_at=row[f"{prefix}_available_at"] if waiting == "RetryBackoff" else None,
     )
 
 
-def _state(row: RowMapping, media: MediaOut | None) -> ImportState:
+def _state(row: RowMapping, media: _Media | None) -> ImportState:
     if row["classification"] == "Complete":
         return ImportStateComplete()
     key = row.get("view_key", row["primary_key"])
@@ -740,54 +739,46 @@ def _state(row: RowMapping, media: MediaOut | None) -> ImportState:
         return _work_state(row, media, obligation=cast(Literal["source", "search"], key))
     if key != "metadata" or media is None:
         raise AssertionError("current import has no matching obligation")
-    metadata = media.metadata_enrichment
+    metadata = media.facts.metadata
     if row["classification"] == "NeedsAttention":
         operation = metadata.operation
-        if not isinstance(operation, Present):
+        if operation is None:
             raise AssertionError("metadata attention requires a retained operation")
-        match operation.value.status:
+        match operation.status:
             case "failed":
-                return ImportStateNeedsAttention(
-                    stage="Metadata", failure_code=present(operation.value.code)
-                )
+                return ImportStateNeedsAttention(stage="Metadata", failure_code=operation.code)
             case "no_findings":
-                return ImportStateNeedsAttention(stage="Metadata", failure_code=absent())
+                return ImportStateNeedsAttention(stage="Metadata", failure_code=None)
             case _:
                 raise AssertionError("metadata attention disagrees with its operation")
     operation = metadata.unfinished_operation
-    if not isinstance(operation, Present):
+    if operation is None:
         raise AssertionError("active metadata requires an unfinished operation")
-    running = operation.value.status == "running"
-    waiting = operation.value.status == "waiting"
+    running = operation.status == "running"
+    waiting = operation.status == "waiting"
     return ImportStateActive(
         status="Processing" if running else "Queued",
         stage="Metadata",
-        waiting_reason=absent() if running else present("RetryBackoff" if waiting else "Queue"),
-        progress=absent(),
-        next_retry_at=operation.value.until if operation.value.status == "waiting" else absent(),
+        waiting_reason=None if running else ("RetryBackoff" if waiting else "Queue"),
+        progress=None,
+        next_retry_at=operation.until if operation.status == "waiting" else None,
     )
 
 
-def _source_obligation(
-    row: RowMapping, media: MediaOut | None
-) -> Absent | Present[SourceImportObligation]:
+def _source_obligation(row: RowMapping, media: _Media | None) -> SourceImportObligation | None:
     if row["source_classification"] is None:
-        return absent()
+        return None
     state = _work_state(row, media, obligation="source")
     if media is None:
         rejected = row["derived_state"] == "VerificationFailed"
-        return present(
-            SourceImportObligation.model_validate(
-                {
-                    "state": state.model_dump(),
-                    "recovery": absent()
-                    if rejected or row["origin_kind"] == "BrowserCapture"
-                    else present(
-                        RetryUploadOffer(expected_generation=int(row["upload_generation"]))
-                    ),
-                    "unavailable_reason": present("UploadRejected") if rejected else absent(),
-                }
-            )
+        return SourceImportObligation.model_validate(
+            {
+                "state": state.model_dump(),
+                "recovery": None
+                if rejected or row["origin_kind"] == "BrowserCapture"
+                else RetryUploadOffer(),
+                "unavailable_reason": "UploadRejected" if rejected else None,
+            }
         )
     answer = source_recovery(
         SourceRecoveryFacts(
@@ -799,26 +790,21 @@ def _source_obligation(
             job_id=row["attempt_job_id"],
             repairable=bool(row["source_repairable"]),
             is_creator=bool(row["is_creator"]),
-            is_operator=False,
         )
     )
     offered = isinstance(answer, RetrySourceOffer | RepairSourceOffer)
-    return present(
-        SourceImportObligation.model_validate(
-            {
-                "state": state.model_dump(),
-                "recovery": present(answer) if offered else absent(),
-                "unavailable_reason": absent() if offered or answer is None else present(answer),
-            }
-        )
+    return SourceImportObligation.model_validate(
+        {
+            "state": state.model_dump(),
+            "recovery": answer if offered else None,
+            "unavailable_reason": None if offered else answer,
+        }
     )
 
 
-def _search_obligation(
-    row: RowMapping, media: MediaOut | None
-) -> Absent | Present[SearchImportObligation]:
+def _search_obligation(row: RowMapping, media: _Media | None) -> SearchImportObligation | None:
     if row["search_classification"] is None:
-        return absent()
+        return None
     answer = search_recovery(
         SearchRecoveryFacts(
             revision=int(row["index_revision"]),
@@ -827,22 +813,20 @@ def _search_obligation(
             ready_for_reading=row["processing_status"] == "ready_for_reading",
         )
     )
-    return present(
-        SearchImportObligation.model_validate(
-            {
-                "state": _work_state(row, media, obligation="search").model_dump(),
-                "recovery": present(answer) if isinstance(answer, RepairSearchOffer) else absent(),
-                "unavailable_reason": present(answer) if answer == "NotOwner" else absent(),
-            }
-        )
+    return SearchImportObligation.model_validate(
+        {
+            "state": _work_state(row, media, obligation="search").model_dump(),
+            "recovery": answer if isinstance(answer, RepairSearchOffer) else None,
+            "unavailable_reason": answer if answer == "NotOwner" else None,
+        }
     )
 
 
 def _item(
     row: RowMapping,
     *,
-    media: MediaOut | None,
-    matched_event: Absent | Present[HistoryEntry],
+    media: _Media | None,
+    matched_event: HistoryEntry | None,
 ) -> ImportItem:
     if row["source_job_id"] is not None and (
         row["source_job_kind"] != "ingest_media_source" or not row["source_job_exact"]
@@ -856,35 +840,33 @@ def _item(
         # justify-defect: `failed` is a note-index status; no media owner writes it.
         raise AssertionError("media content index reports a status no owner writes")
     if row["ref_kind"] == "upload":
-        ref = format_import_ref(
-            UploadImportRef(session_handle=seal_upload_session(row["session_id"]))
-        )
+        ref = format_import_ref(UploadImportRef(session_id=row["session_id"]))
     else:
         ref = format_import_ref(MediaImportRef(media_id=row["media_id"]))
     host = row["source_host"]
     return ImportItem(
         ref=ref,
         title=row["title"],
-        original_filename=presence_from_nullable(row["original_filename"]),
+        original_filename=row["original_filename"],
         media_kind=MediaKind(row["media_kind"]),
-        source_label=absent() if host is None else present(str(host)),
-        media_ref=absent() if media is None else present(f"media:{media.id}"),
+        source_label=None if host is None else str(host),
+        media_ref=None if media is None else f"media:{media.facts.summary.media_id}",
         readiness=ImportReadiness(
-            can_read=media.capabilities.can_read if media is not None else False,
-            can_search=media.capabilities.can_search if media is not None else False,
-            can_play=media.capabilities.can_play if media is not None else False,
+            can_read=media.facts.can_read if media is not None else False,
+            can_search=media.facts.can_search if media is not None else False,
+            can_play=media.facts.can_play if media is not None else False,
         ),
         state=_state(row, media),
         accepted_at=row["accepted_at"],
         updated_at=row["updated_at"],
         matched_event=matched_event,
         capabilities=Capabilities(
-            can_remove=media.capabilities.can_delete if media is not None else True,
+            can_remove=media.facts.can_delete if media is not None else True,
         ),
         obligations=ImportObligations(
             source=_source_obligation(row, media),
             search=_search_obligation(row, media),
-            metadata=present(media.metadata_enrichment) if media is not None else absent(),
+            metadata=media.facts.metadata if media is not None else None,
         ),
         source_issue_count=int(row["source_issue_count"]),
     )

@@ -14,7 +14,6 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter
 
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.schemas.contributor_credit import ContributorCreditOut
-from nexus.schemas.presence import presence_from_nullable as maybe
 from nexus.services.contributor_taxonomy import ContributorRole
 from nexus.services.sealed_handles import (
     DiscoveryTargetHandle,
@@ -48,14 +47,16 @@ _FAILURE_CODES = {
     BrowseFailureKind.QuotaExhausted: ApiErrorCode.E_BROWSE_PROVIDER_QUOTA_EXHAUSTED,
 }
 
+_INSTANT = TypeAdapter(datetime | None)
+
 
 def provider_api_error(exc: BrowseProviderFailure) -> ApiError:
-    """Details are ``{kind}``, plus ``retryAt`` or ``resetAt`` as a Presence for the limits."""
+    """Details are ``{kind}``, plus ``retry_at`` or ``reset_at`` (iso time or null) for the limits."""
     details: dict[str, object] = {"kind": exc.kind.value}
     if exc.kind is BrowseFailureKind.RateLimited:
-        details["retryAt"] = maybe(exc.retry_at).model_dump(mode="json")
+        details["retry_at"] = _INSTANT.dump_python(exc.retry_at, mode="json")
     if exc.kind is BrowseFailureKind.QuotaExhausted:
-        details["resetAt"] = maybe(exc.reset_at).model_dump(mode="json")
+        details["reset_at"] = _INSTANT.dump_python(exc.reset_at, mode="json")
     return ApiError(_FAILURE_CODES[exc.kind], "Browse provider request failed", details=details)
 
 

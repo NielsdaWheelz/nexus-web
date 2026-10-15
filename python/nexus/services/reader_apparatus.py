@@ -15,9 +15,9 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
+from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.schemas.media import NavigationTextPointOut, NavigationTextRangeOut
+from nexus.schemas.reader import NavigationTextPointOut, NavigationTextRangeOut
 from nexus.schemas.reader_apparatus import (
     NoteBodyRegion,
     NoteGroupRegion,
@@ -155,35 +155,6 @@ def read_note_regions(db: Session, media_id: UUID) -> list[NoteRegion]:
         .all()
     )
     return note_regions_from_publication([dict(row) for row in rows], groups)
-
-
-def visible_reader_apparatus_item_ids(
-    db: Session, *, viewer_id: UUID, item_ids: list[UUID]
-) -> set[UUID]:
-    """The subset of the supplied item ids the viewer can read, in one set query.
-
-    Mirrors the per-ref gate: the item's state must be ``ready`` or ``partial``, it
-    must carry a present, non-missing locator, and its media must be readable.
-    """
-    ordered = list(dict.fromkeys(item_ids))
-    if not ordered:
-        return set()
-    rows = db.execute(
-        text(
-            f"""
-            SELECT rai.id
-            FROM reader_apparatus_items rai
-            JOIN reader_apparatus_states ras ON ras.id = rai.state_id
-            WHERE rai.id = ANY(:item_ids)
-              AND ras.status IN ('ready', 'partial')
-              AND rai.locator IS NOT NULL
-              AND rai.locator_status != 'missing'
-              AND rai.media_id IN ({visible_media_ids_cte_sql()})
-            """
-        ),
-        {"viewer_id": viewer_id, "item_ids": ordered},
-    ).all()
-    return {UUID(str(row[0])) for row in rows}
 
 
 def get_media_apparatus(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderApparatusResponse:

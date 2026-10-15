@@ -58,10 +58,7 @@ function sameLocator(a: Locator, b: Locator): boolean {
       a.zoom === b.zoom
     );
   }
-  const anchor = (l: typeof a) =>
-    l.kind === "epub" && l.target.anchor_id.kind === "Present"
-      ? l.target.anchor_id.value
-      : null;
+  const anchor = (l: typeof a) => (l.kind === "epub" ? l.target.anchor_id : null);
   return (
     a.kind === b.kind &&
     a.target.fragment_id === b.target.fragment_id &&

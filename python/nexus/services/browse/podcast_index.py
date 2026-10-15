@@ -20,8 +20,6 @@ from nexus.schemas.browse import (
     PodcastPreviewFacts,
     PreviewResolution,
 )
-from nexus.schemas.presence import absent
-from nexus.schemas.presence import presence_from_nullable as maybe
 from nexus.services.browse.targets import (
     BrowseFailureKind,
     BrowseProviderFailure,
@@ -121,9 +119,9 @@ def _shown(podcast: ResolvedPodcast) -> dict[str, Any]:
     return {
         "title": podcast.title,
         "contributors": single_credit(podcast.author, "author"),
-        "description": maybe(podcast.description),
-        "published_at": absent(),
-        "image": maybe(proxied_image(podcast.image_url)),
+        "description": podcast.description,
+        "published_at": None,
+        "image": proxied_image(podcast.image_url),
     }
 
 
@@ -222,11 +220,11 @@ def preview_podcast(
         kind_facts=PodcastPreviewFacts(
             podcast_ref=podcast.podcast_ref,
             feed_href=podcast.feed_url,
-            website_href=maybe(podcast.website_url),
+            website_href=podcast.website_url,
         ),
         episodes=PodcastPreviewEpisodePage(
             items=[_episode_item(episode) for episode in episodes[:limit]],
-            next_cursor=maybe(None if position is None else encode_cursor(position)),
+            next_cursor=None if position is None else encode_cursor(position),
         ),
         **_shown(podcast),
     )
@@ -239,14 +237,14 @@ def _episode_shown(episode: ResolvedEpisode) -> dict[str, Any]:
         episode_ref=episode.episode_ref,
         podcast_title=episode.podcast.title,
         audio_href=episode.audio_url,
-        duration_seconds=maybe(episode.duration_seconds),
+        duration_seconds=episode.duration_seconds,
     )
     return {
         "title": episode.title,
         "contributors": single_credit(episode.podcast.author, "author"),
-        "description": maybe(episode.description),
-        "published_at": maybe(episode.published_at),
-        "image": maybe(proxied_image(episode.podcast.image_url)),
+        "description": episode.description,
+        "published_at": episode.published_at,
+        "image": proxied_image(episode.podcast.image_url),
         "kind_facts": facts,
     }
 

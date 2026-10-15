@@ -1,6 +1,7 @@
 """The Share overlay's routes: a resource's sharing snapshot, granting it, and revoking a grant."""
 
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response
 
@@ -42,12 +43,13 @@ def create_resource_share(
     resource_ref: str, body: CreateResourceShareRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[CreateResourceShareOut]:
     created = resource_sharing.create_share(
-        db, viewer_user_id=viewer.user_id, subject=_ref(resource_ref), audience=body.audience
+        db, viewer_user_id=viewer.user_id, subject=_ref(resource_ref), body=body
     )
     return Data(data=created)
 
 
-@router.delete("/resource-shares/{resource_grant_handle}", status_code=204)
-def delete_resource_share(resource_grant_handle: str, viewer: ViewerDep, db: DbSession) -> Response:
-    resource_grants.delete_grant(db, viewer_user_id=viewer.user_id, handle=resource_grant_handle)
+@router.delete("/resource-shares/{grant_id}", status_code=204)
+def delete_resource_share(grant_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
+    """Revoke or decline; absent or not the viewer's is 204 too."""
+    resource_grants.delete_grant(db, viewer_user_id=viewer.user_id, grant_id=grant_id)
     return Response(status_code=204)

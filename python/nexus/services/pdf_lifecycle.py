@@ -15,7 +15,6 @@ from nexus.errors import (
     ResourceLimitError,
 )
 from nexus.logging import get_logger
-from nexus.schemas.presence import present
 from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
 from nexus.services.pdf_ingest import (
     PdfExtractionError,
@@ -114,8 +113,8 @@ def publish_pdf_source(
             observations=source_contributor_observations(
                 media_id=media_id, observation=observation, source="pdf_metadata"
             ),
-            pdf_has_text=present(result.has_text),
-            metadata_enrichment=present(True),
+            pdf_has_text=result.has_text,
+            metadata_enrichment=True,
         )
 
     outcome = replace_reader_publication(

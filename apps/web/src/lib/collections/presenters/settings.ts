@@ -1,6 +1,5 @@
-/** Pure semantic projection for one settings row. */
+/** One settings row: a link to a section, or a static row with its own commands. */
 
-import { absent, present } from "@/lib/api/presence";
 import type { CollectionRowView } from "@/lib/collections/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
@@ -13,11 +12,10 @@ export interface SettingsPresenterItem {
   actions?: readonly ActionDescriptor[];
 }
 
-export function presentSettingsRow(item: SettingsPresenterItem): CollectionRowView {
-  const context = [item.description, item.meta].filter(
-    (value): value is string => value !== undefined && value.length > 0,
-  );
-
+export function presentSettingsRow(
+  item: SettingsPresenterItem,
+): CollectionRowView {
+  const context = [item.description, item.meta].filter(Boolean).join(" · ");
   return {
     id: item.id ?? item.href ?? item.title,
     kind: "settings_row",
@@ -26,16 +24,12 @@ export function presentSettingsRow(item: SettingsPresenterItem): CollectionRowVi
       : { kind: "static" },
     title: { text: item.title },
     contributors: [],
-    publicationDate: absent(),
-    context:
-      context.length > 0
-        ? present({ kind: "Text", text: context.join(" · ") })
-        : absent(),
-    activity: absent(),
-    exceptionalStatus: absent(),
-    // Settings rows are not resources: they carry an explicit, non-resource flat
-    // menu (no snapshot, no canonical resource dropdown).
-    actionSubject: null,
+    publicationDate: null,
+    context: context ? { kind: "Text", text: context } : null,
+    activity: null,
+    exceptionalStatus: null,
+    // not a resource: an explicit flat menu, no action snapshot
+    resourceRef: null,
     flatActions: item.actions,
     selected: false,
   };

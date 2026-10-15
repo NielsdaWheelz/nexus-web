@@ -16,7 +16,7 @@ from collections.abc import Iterable
 from functools import cache
 from pathlib import Path
 from typing import Literal, NamedTuple
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select, text
@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.models import Media, OracleCorpusSource, OraclePassageAnchor, ProcessingStatus
 from nexus.db.session import get_session_factory
-from nexus.services import library_entries, library_governance
+from nexus.services import libraries, library_entries
 from nexus.services.content_indexing import request_stale_media_content_reindex
 from nexus.services.embeddings import EMBEDDING_PROVIDER, embedding_model
 from nexus.services.media_source_ingest import (
@@ -291,7 +291,7 @@ def seed(session_factory: sessionmaker[Session], *, owner_user_id: UUID) -> dict
     """Converge the database on corpus.json, one transaction per work; idempotent and safe
     while the app is live. Workers ingest and index; the next reading resolves anchors."""
     with session_factory() as db:
-        library_id = library_governance.ensure_system_library(
+        library_id = libraries.ensure_system_library(
             db, system_key=SYSTEM_KEY, name="Oracle Corpus", owner_user_id=owner_user_id
         )
     counts: Counter[str] = Counter()
@@ -326,10 +326,10 @@ def _seed_work(db: Session, *, work: Work, library_id: UUID, owner: UUID) -> Cou
         accepted = accept_system_url_source(
             db=db,
             actor_user_id=owner,
+            id=uuid5(NAMESPACE_URL, f"oracle:oracle-corpus-oracle-{work.key}-{digest}"),
             url=work.download_url,
             expected_kind=work.kind,
-            system_source=SYSTEM_KEY,
-            idempotency_key=f"oracle-corpus-oracle-{work.key}-{digest}",
+            request_id=None,
         )
         counts["accepted"] += 1
         if source is None:
@@ -338,11 +338,8 @@ def _seed_work(db: Session, *, work: Work, library_id: UUID, owner: UUID) -> Cou
         elif source.media_id != accepted.media_id:
             superseded = source.media_id
             library_entries.lock_media_rows_in_order(db, [superseded, accepted.media_id])
-            library_governance.lock_library_rows_in_order(db, [library_id])
-            if library_entries.delete_entry(
-                db, library_id, library_entries.media_target(superseded)
-            ):
-                library_entries.normalize_positions(db, library_id)
+            libraries.lock_library_rows_in_order(db, [library_id])
+            library_entries.delete_entry(db, library_id, library_entries.media_target(superseded))
             source.media_id = accepted.media_id
     source.title = work.title
     source.author_text = work.author
@@ -350,7 +347,7 @@ def _seed_work(db: Session, *, work: Work, library_id: UUID, owner: UUID) -> Cou
     source.source_media_kind = work.kind
     db.flush()
     library_entries.seed_media_into_system_library(db, library_id, source.media_id)
-    if accepted is None or accepted.idempotency_outcome != "created":
+    if accepted is None or not accepted.created:
         counts.update(_repair(db, work=work, media_id=source.media_id, owner=owner))
 
     anchors = {
@@ -384,7 +381,6 @@ def _repair(db: Session, *, work: Work, media_id: UUID, owner: UUID) -> Counter[
             actor_user_id=owner,
             media_id=media_id,
             request_id=f"oracle-corpus-seed:{work.key}",
-            reason="oracle_corpus_seed",
         )
         return Counter(repaired=1)
     if request_stale_media_content_reindex(db, media_id=media_id, reason="oracle_corpus_seed"):

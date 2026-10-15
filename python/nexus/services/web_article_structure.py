@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from dataclasses import replace as dataclass_replace
 from typing import assert_never, cast
 from urllib.parse import unquote, urldefrag
@@ -14,7 +14,6 @@ from uuid import UUID
 from lxml.html import HtmlElement, fragment_fromstring
 
 from nexus.logging import get_logger
-from nexus.schemas.presence import Presence, Present, absent, present
 from nexus.schemas.reader_apparatus import NoteRegion
 from nexus.services.canonicalize import (
     HEADING_TAGS,
@@ -57,16 +56,16 @@ class WebArticleIndexBlockSpec:
     end_offset: int
     heading_path: tuple[str, ...]
     owns_container: bool
-    parent_section_id: Presence[str]
+    parent_section_id: str | None
     heading_level: int | None = None
     section_id: str | None = None
     anchor_id: str | None = None
     depth: int | None = None
     ordinal: int | None = None
-    container_end_offset: Presence[int] = field(default_factory=absent)
+    container_end_offset: int | None = None
     heading_label: str | None = None
     heading_id: str | None = None
-    toc_parent_id: Presence[str] = field(default_factory=absent)
+    toc_parent_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -98,9 +97,9 @@ class _Heading:
     section_id: str
     anchor_id: str | None
     ordinal: int
-    container_end_offset: Presence[int]
+    container_end_offset: int | None
     owns_container: bool
-    parent_section_id: Presence[str]
+    parent_section_id: str | None
 
 
 def prepare_web_article_fragment(
@@ -387,7 +386,7 @@ def build_web_article_index_blocks(
                     end_offset=end,
                     heading_path=tuple(label for _level, label in stack),
                     owns_container=False,
-                    parent_section_id=absent(),
+                    parent_section_id=None,
                 )
             )
             continue
@@ -397,8 +396,8 @@ def build_web_article_index_blocks(
         if routine:
             stack.append((heading.level, heading.label))
         parent = heading.parent_section_id
-        while isinstance(parent, Present) and not routine_by_id[parent.value]:
-            parent = parent_by_id[parent.value]
+        while parent is not None and not routine_by_id[parent]:
+            parent = parent_by_id[parent]
         blocks.append(
             WebArticleIndexBlockSpec(
                 block_idx=len(blocks),
@@ -413,7 +412,7 @@ def build_web_article_index_blocks(
                 ordinal=heading.ordinal,
                 container_end_offset=heading.container_end_offset,
                 owns_container=heading.owns_container,
-                parent_section_id=parent if routine else absent(),
+                parent_section_id=parent if routine else None,
                 heading_label=heading.label,
                 heading_id=heading.section_id,
                 toc_parent_id=heading.parent_section_id,
@@ -451,12 +450,12 @@ def _headings(
                     anchor_id=anchors_by_element.get(index),
                     ordinal=ordinal,
                     container_end_offset=(
-                        present(source.elements[element.parent_container.value].end_offset)
-                        if isinstance(element.parent_container, Present)
-                        else absent()
+                        source.elements[element.parent_container].end_offset
+                        if element.parent_container is not None
+                        else None
                     ),
                     owns_container=False,
-                    parent_section_id=absent(),
+                    parent_section_id=None,
                 ),
             )
         )
@@ -472,7 +471,7 @@ def _headings(
         owners = [
             heading.section_id
             for source_index, (_start, heading) in zip(source_indices, headings, strict=True)
-            if source.elements[source_index].parent_container == present(index)
+            if source.elements[source_index].parent_container == index
             and (
                 source_index in labelled
                 if labelled
@@ -489,36 +488,36 @@ def _headings(
         while stack and (
             stack[-1].level >= heading.level
             or (
-                isinstance(stack[-1].container_end_offset, Present)
-                and stack[-1].container_end_offset.value <= start
+                stack[-1].container_end_offset is not None
+                and stack[-1].container_end_offset <= start
             )
         ):
             stack.pop()
-        parent: Presence[str] = absent()
+        parent: str | None = None
         owns_container = False
         container = source.elements[source_index].parent_container
-        while isinstance(container, Present):
-            owner = container_owners.get(container.value)
+        while container is not None:
+            owner = container_owners.get(container)
             if owner == heading.section_id:
                 owns_container = True
             elif owner is not None:
-                parent = present(
+                parent = (
                     stack[-1].section_id
                     if stack and any(ancestor.section_id == owner for ancestor in stack)
                     else owner
                 )
                 break
-            container = source.elements[container.value].parent_container
-        if not isinstance(parent, Present) and stack:
-            parent = present(stack[-1].section_id)
+            container = source.elements[container].parent_container
+        if parent is None and stack:
+            parent = stack[-1].section_id
         heading = dataclass_replace(
             heading, owns_container=owns_container, parent_section_id=parent
         )
         resolved.append((start, heading))
         resolved_by_id[heading.section_id] = heading
         chain = [heading]
-        while isinstance(parent, Present):
-            ancestor = resolved_by_id[parent.value]
+        while parent is not None:
+            ancestor = resolved_by_id[parent]
             chain.append(ancestor)
             parent = ancestor.parent_section_id
         stack = list(reversed(chain))

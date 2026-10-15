@@ -17,8 +17,9 @@ when youtube blocks.
 this is outside the url acquisition slice's call boundary (the transcription
 owner chooses inline import; the slice provides `fetch_youtube_transcript`).
 
-fix, if request latency matters: enqueue a `video_transcript` source attempt
-and answer 202, as podcast episodes do.
+fix, if request latency matters: enqueue the caption import as a job and answer
+202, as podcast episodes do. the `video_transcript` source type is gone (ingest
+0282 refuses it), so this needs a source type of its own or a transcript job.
 
 acceptance: the transcript request answers without waiting on youtube; the
 transcript lands through the source runner.

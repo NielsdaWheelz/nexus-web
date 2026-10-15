@@ -8,9 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from nexus.schemas.document_embeds import DocumentEmbedOut
 from nexus.schemas.highlights import HIGHLIGHT_COLORS
-from nexus.schemas.media import DocumentEmbedOut
-from nexus.schemas.presence import Presence
 from nexus.schemas.reader_apparatus import (
     ReaderApparatusConfidence,
     ReaderApparatusItemKind,
@@ -76,7 +75,7 @@ ReaderEvidenceResolutionOut = Annotated[
 class ReaderEvidenceObjectBaseOut(_ReaderMapOut):
     ref: str
     label: str
-    excerpt: Presence[str]
+    excerpt: str | None
     activation: ResourceActivationOut
 
     @model_validator(mode="after")
@@ -89,7 +88,7 @@ class ReaderEvidenceObjectBaseOut(_ReaderMapOut):
 class ReaderEvidenceChatObjectOut(ReaderEvidenceObjectBaseOut):
     kind: Literal["Chat"] = "Chat"
     conversation_id: UUID
-    message_ref: Presence[str]
+    message_ref: str | None
 
 
 class ReaderEvidenceNoteObjectOut(ReaderEvidenceObjectBaseOut):
@@ -140,7 +139,7 @@ class ReaderEvidenceAlsoReferenceOut(_ReaderMapOut):
 class ReaderEvidenceItemBaseOut(_ReaderMapOut):
     id: str
     label: str
-    excerpt: Presence[str]
+    excerpt: str | None
     associations: list[ReaderEvidenceAssociationOut] = Field(default_factory=list)
 
 
@@ -182,7 +181,7 @@ class ReaderEvidenceSourceTargetOut(_ReaderMapOut):
     ref: str
     stable_key: str
     apparatus_kind: ReaderApparatusItemKind
-    label: Presence[str]
+    label: str | None
     content: SourceContent
     activation: ResourceActivationOut
     resolution: ReaderEvidenceResolutionOut
@@ -200,7 +199,7 @@ class ReaderEvidenceSourceReferenceOut(ReaderEvidenceItemBaseOut):
     apparatus_kind: ReaderApparatusItemKind
     confidence: ReaderApparatusConfidence
     target_refs: list[str]
-    marker_anchor_id: Presence[str]
+    marker_anchor_id: str | None
 
 
 class ReaderEvidenceGeneratedCitationOut(ReaderEvidenceItemBaseOut):
@@ -246,7 +245,7 @@ ReaderEvidenceItemOut = Annotated[
 class ReaderEvidencePassageGroupOut(_ReaderMapOut):
     locus_ref: str
     resolution: ReaderEvidenceResolutionOut
-    target_excerpt: Presence[str]
+    target_excerpt: str | None
     items: list[ReaderEvidenceItemOut]
     also_references: list[ReaderEvidenceAlsoReferenceOut] = Field(default_factory=list)
 
@@ -285,14 +284,14 @@ class ReaderDocumentMapMarkerOut(_ReaderMapOut):
     kind: ReaderDocumentMapMarkerKind
     item_id: str
     position: float = Field(ge=0.0, le=1.0)
-    end_position: Presence[Annotated[float, Field(ge=0.0, le=1.0)]]
+    end_position: Annotated[float, Field(ge=0.0, le=1.0)] | None
     tone: ReaderDocumentMapMarkerTone
     label: str
-    preview: Presence[str]
+    preview: str | None
 
     @model_validator(mode="after")
     def validate_end_position(self) -> ReaderDocumentMapMarkerOut:
-        if self.end_position.kind == "Present" and self.end_position.value < self.position:
+        if self.end_position is not None and self.end_position < self.position:
             raise ValueError("end_position must not precede position")
         return self
 

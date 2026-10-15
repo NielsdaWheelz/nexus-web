@@ -24,9 +24,9 @@ before the readers relied on them.
 | concept | owner | the one rule it enforces |
 |---|---|---|
 | ResourceRef | `services/resource_graph/refs.py` | a string that parses is canonical; `require_ref` is the one 400 for request refs |
-| Hydration | `resolve.py` | one loader per scheme whose SQL selects only rows the viewer may see; missing, forbidden and unknown hydrate as `(resource unavailable)`; writes use `assert_ref_visible` (404) |
+| Hydration | `resolve.py` | one loader per scheme whose SQL selects only rows the viewer may see (a podcast: any persisted show, a public catalog row); missing, forbidden and unknown hydrate as `(resource unavailable)`; writes use `assert_ref_visible` (404) |
 | Edge (fact) | `edges.py` | the shape law per origin (`_ENDPOINTS` + `_validate`), endpoint visibility, bare-pair uniqueness (400); flush-only; the only module that builds rows and, with `cleanup.py`, deletes them |
-| Link | `edges.create_link` / `restore_link` (store), `links.py` (commands) | canonical order, unordered-pair reuse (`created=false`), ranks at chats and outline endpoints, `links` version bumps on both ends |
+| Link | `edges.create_link` (store, under a client link id when given), `links.py` (commands) | canonical order, unordered-pair reuse (`created=false`), ranks at chats and outline endpoints, `links` version bumps on both ends |
 | LinkNote | `edges.detach_link_notes`, `links.put_link_note` | a note attached to both ends of a link; detaching never deletes the note |
 | Citation | `citations.py` | dense 1..N per output; `_citation_outs` is the one hydration (visibility, activation, jump, media abstract) |
 | Jump | `reader_targets.py` | position lives in the target and is recomputed on read; callers pass only visible targets |
@@ -52,7 +52,7 @@ save running, failure placement, undo), `components/resources/LinkTargetDialog.t
 | route | success | errors |
 |---|---|---|
 | `POST /resource-graph/connections/query` | 200 `ConnectionPageOut`; unknown or private refs → empty | 400 bad ref or cursor, schema |
-| `POST /resource-graph/links` | 201 `CreateLinkOut{created, created_source_ref, connection}` | 404 invisible; 422 `E_LINK_SELF`, `E_LINK_CAPABILITY`; 409 `E_LINK_TARGET_STALE`, replay mismatch |
+| `POST /resource-graph/links {link_id, source, target}` | 201 `CreateLinkOut{created, created_source_ref, connection}` | 404 invisible; 422 `E_LINK_SELF`, `E_LINK_CAPABILITY`; 409 `E_LINK_TARGET_STALE`, `E_RESOURCE_CONFLICT` (link id taken) |
 | `DELETE /resource-graph/links/{id}` | 204, also when absent | 403 non-user edge |
 | `PUT /resource-graph/links/{id}/note` | 200 `LinkNoteOut` | 404 not a link; 409 `E_NOTE_CONFLICT` |
 | `DELETE /resource-graph/links/{id}/note` | 204, replayable | 404; 409 |
@@ -61,9 +61,12 @@ save running, failure placement, undo), `components/resources/LinkTargetDialog.t
 `ConnectionOut{edge_id, direction, kind, origin, snapshot: CitationSnapshot|null,
 source_order_key, ordinal, source, target, other, link_note{note_block_id, preview},
 creation, mutation, created_at}`; endpoints are `{ref, label, description, activation,
-missing}`. newest first; cursor `"<iso created_at>|<edge id>"`. the three replayed
-commands (create link, put and detach link note) run SERIALIZABLE and look their memo
-up before anything else, so a replay outlives the link it answered.
+missing}`. newest first; cursor `"<iso created_at>|<edge id>"`. the link commands run
+SERIALIZABLE with retry. create is named by the client's `link_id`: a resend that
+landed answers that link with `created: true` (a minted highlight converges by its
+id, a passage anchor is reused); a resend after the link was deleted creates it
+again; the id held by any other link is 409. the note commands are idempotent by the
+note id.
 
 ## behaviour changes in the 2026-10-10 reauthor
 

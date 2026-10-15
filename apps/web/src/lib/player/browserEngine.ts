@@ -12,27 +12,19 @@
  * "News" is a sample the server may not have: playing, seeking, a write in flight or failed.
  * Without news this device's position is no newer than the server's, so a play asks the server
  * (another device may have moved or reset it) and an unload writes nothing.
- * The device that hears an end settles it; the server picks what plays next.
+ * The device that hears an end settles it and, once the settle lands, plays the Lectern's next
+ * audio row (`deps.next`, read before the settle) from where the server says it stands.
  */
 
-import { apiFetch, apiKeepaliveJson, isApiError } from "@/lib/api/client";
-import type { ApiJson } from "@/lib/api/wire";
-import { absent, present, type Presence } from "@/lib/api/presence";
+import { apiFetch, isApiError } from "@/lib/api/client";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
-  parseMediaRef,
-  type ActivityDeviceClass,
-} from "@/lib/consumption/activityContract";
-import { activityRecorder } from "@/lib/consumption/activityRecorder";
+  registerActivityObserver,
+  type ActivityObservation,
+  type ActivityObserver,
+} from "@/lib/consumption/capture";
 import { publishChange } from "@/lib/api/changes";
-import type {
-  ConsumptionResult,
-  ListeningIn,
-  ListeningPosition,
-  MediaId,
-  NaturalEnd,
-  PlayerDescriptor,
-} from "@/lib/lectern/contract";
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import {
   IDLE_ENGINE_STATE,
@@ -40,16 +32,23 @@ import {
   PLAYER_SKIP_FORWARD_MS,
   type Engine,
   type EngineState,
+  type PlayerDescriptor,
   type PreviewAudioDescriptor,
 } from "@/lib/player/playerRuntime";
 
+type ListeningIn = Schema<"ListeningIn">;
+type ListeningPosition = Schema<"ListeningPositionOut">;
+
 export interface BrowserEngineDeps {
   settle(
-    input: NaturalEnd & { clientMutationId: string },
-  ): Promise<ConsumptionResult>;
+    mediaId: string,
+    body: Schema<"NaturalEndIn">,
+  ): Promise<"Settled" | "Superseded" | "Gone">;
+  /** The audio row after this media's Lectern row; null when it has none. */
+  next(mediaId: string): PlayerDescriptor | null;
   /** The server's descriptor now; null when it does not answer in time. */
-  fresh(mediaId: MediaId): Promise<PlayerDescriptor | null>;
-  deviceClass(): ActivityDeviceClass;
+  fresh(mediaId: string): Promise<PlayerDescriptor | null>;
+  deviceClass(): ActivityObservation["deviceClass"];
   onPrevious(): void;
   onNext(): void;
 }
@@ -68,12 +67,12 @@ const ERRORS: Record<number, string> = {
 interface Episode {
   readonly descriptor: PlayerDescriptor;
   resetEpoch: number;
-  overrideRevision: Presence<number>; // the natural-end fence
+  overrideRevision: number | null; // the natural-end fence
   ratePinned: boolean;
   queued: ListeningIn | null; // the newest sample not yet sent
   writing: Promise<void> | null;
   stopped: boolean; // 404 or a refused body: write no more
-  observer: (() => void) | null;
+  observer: ActivityObserver | null;
   fenced: boolean;
   active: boolean; // a play or explicit seek, never an authority installation
 }
@@ -116,8 +115,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
           : "Playing";
   const durationMs = () =>
     ms(audio.duration) ||
-    (episode?.descriptor.durationMs.kind === "Present"
-      ? episode.descriptor.durationMs.value
+    (episode?.descriptor.duration_ms != null
+      ? episode.descriptor.duration_ms
       : 0);
 
   // ---- listening ----
@@ -126,15 +125,15 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     const duration = durationMs();
     const positionMs = Math.min(ms(audio.currentTime), duration || Infinity);
     return {
-      positionMs,
-      durationMs: duration > 0 ? present(duration) : absent<number>(),
-      episodePlaybackRate: current.ratePinned
-        ? present(audio.playbackRate)
-        : absent<number>(),
-      expectedResetEpoch: current.resetEpoch,
+      position_ms: positionMs,
+      duration_ms: duration > 0 ? duration : null,
+      episode_playback_rate: current.ratePinned
+        ? audio.playbackRate
+        : null,
+      expected_reset_epoch: current.resetEpoch,
     };
   };
-  const path = (mediaId: MediaId) =>
+  const path = (mediaId: string) =>
     `/api/media/${mediaId}/listening-state` as const;
   const news = (current: Episode) =>
     !audio.ended &&
@@ -159,11 +158,11 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       for (let body = current.queued; body !== null; body = current.queued) {
         current.queued = null;
         try {
-          const { data } = await apiFetch<ApiJson<"/media/{media_id}/listening-state", "put">>(path(current.descriptor.mediaId), {
+          const { data } = await apiFetch<ApiJson<"/media/{media_id}/listening-state", "put">>(path(current.descriptor.media_id), {
             method: "PUT",
             body: JSON.stringify(body),
           });
-          current.overrideRevision = data.consumptionOverrideRevision;
+          current.overrideRevision = data.consumption_override_revision;
           if (current === episode) set({ synced: true });
           publishChange("Consumption");
         } catch (error) {
@@ -195,7 +194,11 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     target: Episode,
     position: ListeningPosition,
   ) => {
-    const { positionMs, resetEpoch, consumptionOverrideRevision } = position;
+    const {
+      position_ms: positionMs,
+      reset_epoch: resetEpoch,
+      consumption_override_revision: consumptionOverrideRevision,
+    } = position;
     target.resetEpoch = resetEpoch;
     target.overrideRevision = consumptionOverrideRevision;
     target.active = false;
@@ -214,7 +217,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     episode = null;
     audio.pause();
     if (current === null) return;
-    current.observer?.();
+    current.observer?.close();
     current.observer = null;
     await Promise.race([
       current.writing,
@@ -223,12 +226,10 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
   };
 
   // ---- activity ----
-  const observation = (current: Episode, eligible: boolean) => {
+  const observation = (eligible: boolean): ActivityObservation => {
     const duration = durationMs();
     const positionMs = ms(audio.currentTime);
     return {
-      mediaRef: parseMediaRef(`media:${current.descriptor.mediaId}`),
-      modality: "Listening" as const,
       deviceClass: deps.deviceClass(),
       eligible,
       measurement: {
@@ -237,45 +238,37 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       },
     };
   };
-  const observe = (current: Episode, eligible: boolean) => {
-    if (current.observer !== null) {
-      activityRecorder().observe(
-        `audio:${current.descriptor.mediaId}`,
-        observation(current, eligible),
-      );
-    }
-  };
+  const observe = (current: Episode, eligible: boolean) =>
+    current.observer?.observe(observation(eligible));
 
   // ---- natural end ----
   const settle = async (current: Episode, mine: number) => {
-    const clientMutationId = crypto.randomUUID();
+    const mediaId = current.descriptor.media_id;
+    const next = deps.next(mediaId);
     // Keep the event's epoch even while its own prior heartbeat settles. That acknowledgement
     // may have completed the episode; an intervening unread/reset still supersedes this end.
     const terminalListening = listening(current);
     await current.writing;
     if (!state.synced) {
-      const fresh = await deps.fresh(current.descriptor.mediaId);
-      if (fresh?.resetEpoch === terminalListening.expectedResetEpoch)
-        current.overrideRevision = fresh.consumptionOverrideRevision;
+      const fresh = await deps.fresh(mediaId);
+      if (fresh?.reset_epoch === terminalListening.expected_reset_epoch)
+        current.overrideRevision = fresh.consumption_override_revision;
     }
-    const input = {
-      clientMutationId,
-      mediaId: current.descriptor.mediaId,
-      terminalListening,
-      expectedConsumptionOverrideRevision: current.overrideRevision,
+    const body = {
+      terminal_listening: terminalListening,
+      expected_override_revision: current.overrideRevision,
     };
+    // A resend that already landed answers Settled too (the server recognises it).
     for (let attempt = 0; ; attempt += 1) {
       try {
-        const result = await deps.settle(input);
+        const outcome = await deps.settle(mediaId, body);
         if (mine !== generation) return;
         set({ synced: true });
-        const next =
-          result.nextItem.kind === "Present"
-            ? result.nextItem.value.activation
-            : null;
-        if (result.outcome === "Done" && next?.kind === "FooterAudio") {
-          await engine.load(next.descriptor);
-        }
+        if (outcome !== "Settled" || next === null) return;
+        // The Lectern's copy of the row is as old as its last read: the server decides where
+        // the next episode starts, as for any other play.
+        const fresh = await deps.fresh(next.media_id);
+        if (mine === generation) await engine.load(fresh ?? next);
         return;
       } catch (error) {
         if (handleUnauthenticatedApiError(error) || mine !== generation) return;
@@ -337,14 +330,14 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     const { kind, descriptor } = source;
     const art =
       kind === "Episode"
-        ? descriptor.artworkUrl.kind === "Present" &&
-          buildMediaImageProxySrc(descriptor.artworkUrl.value)
-        : descriptor.imageUrl.kind === "Present" && descriptor.imageUrl.value;
+        ? descriptor.artwork_url !== null &&
+          buildMediaImageProxySrc(descriptor.artwork_url)
+        : descriptor.imageUrl !== null && descriptor.imageUrl;
     const artist =
       kind === "Preview"
         ? descriptor.source
-        : descriptor.subtitle.kind === "Present"
-          ? descriptor.subtitle.value
+        : descriptor.subtitle !== null
+          ? descriptor.subtitle
           : undefined;
     session.metadata = new MediaMetadata({
       title: descriptor.title,
@@ -443,10 +436,11 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
   }, WRITE_EVERY_MS);
   const onPageHide = () => {
     if (episode === null || episode.stopped || episode.fenced || !episode.active || !news(episode)) return;
-    void apiKeepaliveJson(
-      path(episode.descriptor.mediaId),
-      listening(episode),
-    ).catch(() => undefined);
+    void apiFetch<void>(path(episode.descriptor.media_id), {
+      method: "PUT",
+      keepalive: true,
+      body: JSON.stringify(listening(episode)),
+    }).catch(() => undefined);
   };
   const onOnline = () => void write();
   window.addEventListener("pagehide", onPageHide);
@@ -495,12 +489,17 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       return () => listeners.delete(listener);
     },
     async load(descriptor) {
-      const { streamUrl, playbackRate, positionMs, resetEpoch, mediaId } =
-        descriptor;
+      const {
+        stream_url: streamUrl,
+        playback_rate: playbackRate,
+        position_ms: positionMs,
+        reset_epoch: resetEpoch,
+        media_id: mediaId,
+      } = descriptor;
       const next: Episode = {
         descriptor,
         resetEpoch,
-        overrideRevision: descriptor.consumptionOverrideRevision,
+        overrideRevision: descriptor.consumption_override_revision,
         ratePinned: false,
         queued: null,
         writing: null,
@@ -510,9 +509,10 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         active: false,
       };
       if (!(await start(streamUrl, playbackRate, positionMs, next))) return;
-      next.observer = activityRecorder().registerObserver(
-        `audio:${mediaId}`,
-        observation(next, false),
+      next.observer = registerActivityObserver(
+        mediaId,
+        "Listening",
+        observation(false),
       );
       set({ source: { kind: "Episode", descriptor } });
       showSession();
@@ -526,7 +526,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       const current = episode;
       if (current?.fenced) {
         // Retry reads authority only. A subsequent play is the new activity.
-        void engine.reconcileProgressFence(current.descriptor.mediaId).catch(() => undefined);
+        void engine.reconcileProgressFence(current.descriptor.media_id).catch(() => undefined);
         return;
       }
       const mine = ++asked;
@@ -536,21 +536,21 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         seekOnceLoaded(state.positionMs);
         set({ error: null });
       } else if (current !== null && !news(current)) {
-        void deps.fresh(current.descriptor.mediaId).then((fresh) => {
+        void deps.fresh(current.descriptor.media_id).then((fresh) => {
           if (mine !== asked || current !== episode) return;
           const best =
             fresh ??
-            (given && given.resetEpoch > current.resetEpoch ? given : null);
+            (given && given.reset_epoch > current.resetEpoch ? given : null);
           // Moved elsewhere, reset, or ended: play the answer; else resume here under its fence.
           if (
             best !== null &&
             (audio.ended ||
-              best.resetEpoch !== current.resetEpoch ||
-              best.positionMs !== ms(audio.currentTime))
+              best.reset_epoch !== current.resetEpoch ||
+              best.position_ms !== ms(audio.currentTime))
           )
             return void engine.load(best);
           if (best !== null)
-            current.overrideRevision = best.consumptionOverrideRevision;
+            current.overrideRevision = best.consumption_override_revision;
           void audio.play().catch(() => sync());
         });
         return;
@@ -593,7 +593,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     setShortenPausesDefault: () => undefined,
     async prepareProgressFence(mediaId) {
       const current = episode;
-      if (current?.descriptor.mediaId !== mediaId) return;
+      if (current?.descriptor.media_id !== mediaId) return;
       const draining = news(current) ? write(current) : current.writing;
       current.fenced = true;
       asked += 1;
@@ -604,7 +604,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     },
     async reconcileProgressFence(mediaId) {
       const current = episode;
-      if (current?.descriptor.mediaId !== mediaId) return;
+      if (current?.descriptor.media_id !== mediaId) return;
       const fresh = await deps.fresh(mediaId);
       if (current !== episode) return;
       if (fresh === null) {
@@ -613,12 +613,6 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       }
       adoptInto(current, fresh);
       current.fenced = false;
-      set({ error: null });
-    },
-    async adopt(mediaId, position) {
-      if (episode?.descriptor.mediaId !== mediaId) return;
-      adoptInto(episode, position);
-      episode.fenced = false;
       set({ error: null });
     },
     async dismiss() {
@@ -639,7 +633,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       window.removeEventListener("online", onOnline);
       for (const [name, handler] of Object.entries(events))
         audio.removeEventListener(name, handler);
-      episode?.observer?.();
+      episode?.observer?.close();
       audio.pause();
       audio.remove();
       listeners.clear();

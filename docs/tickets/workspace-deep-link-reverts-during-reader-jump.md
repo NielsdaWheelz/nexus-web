@@ -4,14 +4,6 @@ status: open
 origin: 2026-09-25 article-section-navigation live acceptance
 area: workspace deep-link bootstrap
 
-2026-10-15 chooser qualification: ordinary full-page navigation to
-`/podcasts/2732a0bc-f864-4f7f-b4ea-7999412d7af1` restored that podcast pane but
-left the previously opened episode pane active. the requested subscription
-control was visible in the inactive pane, while an active-pane locator timed out.
-an earlier run on the same disposable account passed. the chooser campaign uses
-explicit pane activation for this setup; it does not count this bootstrap failure
-as a chooser red. see [qualification](../library-chooser-verification.md).
-
 in an isolated Chromium probe, a real EPUB chapter X fragment response was
 held after toolbar selection. a full-page `page.goto` to a web article briefly
 rendered its six section options, but the URL sometimes reverted to the EPUB

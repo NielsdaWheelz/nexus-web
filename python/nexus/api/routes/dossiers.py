@@ -16,7 +16,6 @@ from nexus.schemas.dossier import (
     LearnDossierOut,
     LearnDossierRequest,
 )
-from nexus.schemas.presence import nullable_from_presence
 from nexus.services.dossier import engine
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 
@@ -57,7 +56,7 @@ def create_dossier_build(
         handle=subject_handle,
         viewer_id=viewer.user_id,
         key=key,
-        instruction=nullable_from_presence(body.instruction),
+        instruction=body.instruction,
     )
     return Data(data=created)
 
@@ -94,7 +93,7 @@ def regenerate_dossier(
         artifact_id=_ref_id(artifact_ref, "artifact"),
         viewer_id=viewer.user_id,
         key=key,
-        instruction=nullable_from_presence(body.instruction),
+        instruction=body.instruction,
     )
     return Data(data=created)
 

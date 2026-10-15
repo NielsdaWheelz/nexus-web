@@ -155,7 +155,7 @@ use existing `openAddTarget` and guarded leave: cancel preserves rows, files, de
 and frozen intent; confirmation may stop/discard browser work and navigates on acceptance.
 navigation refusal keeps the existing blocked-target flow. no hidden or resumable add session.
 receipt copy says “saved”; do not interpret request replay as content duplication.
-native outcome repair remains [separate work](tickets/source-replay-is-reported-as-content-duplicate.md).
+native outcome repair remains separate work (since done: the ingest reauthor's uploads deleted that ticket).
 
 ## content design contract
 
@@ -266,7 +266,7 @@ and record objections/resolutions. missing runtime access is a blocker, never as
   and no longer advertise read/highlight/quote/search. no synthetic publication repair.
 - temporary-test deletion gives up future automatic regression protection. retained
   acceptance/evidence and the existing static gate remain; live repair stays the operating model.
-- [url source supersession](tickets/readded-url-returns-a-media-id-that-is-then-superseded.md)
+- [url source supersession](issues/redirected-url-add-answers-a-superseded-media.md)
   can later retire an issued media ref; its handoff then shows unavailable. durable source
   identity repair is separate. no redirect workaround. upload refs retain their lifetime identity.
 - native replay/deduplication semantics and other ingestion/history defects remain separately

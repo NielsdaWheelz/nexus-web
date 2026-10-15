@@ -1,14 +1,14 @@
-import { proxyMediaAssetToFastAPI } from "@/lib/api/proxy";
+// Reader epub assets: <img> requests, so the asset lane.
+import { proxySession } from "@/lib/api/proxy";
 
 export const runtime = "nodejs";
 
-type Params = Promise<{ id: string; assetKey: string[] }>;
-
-export async function GET(req: Request, { params }: { params: Params }) {
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ id: string; assetKey: string[] }> },
+): Promise<Response> {
   const { id, assetKey } = await params;
-  const encodedAssetKey = assetKey.map(encodeURIComponent).join("/");
-  return proxyMediaAssetToFastAPI(
-    req,
-    `/media/${id}/assets/${encodedAssetKey}`,
-  );
+  const key = assetKey.map(encodeURIComponent).join("/");
+  const target = `/media/${encodeURIComponent(id)}/assets/${key}`;
+  return proxySession(request, target, "Asset");
 }

@@ -30,8 +30,6 @@ from nexus.schemas.browse import (
     PreviewResolution,
 )
 from nexus.schemas.media_summary import MediaSummaryOut
-from nexus.schemas.presence import absent
-from nexus.schemas.presence import presence_from_nullable as maybe
 from nexus.services.browse import brave, gutenberg, podcast_index, youtube
 from nexus.services.browse.targets import (
     BraveWebArticleTarget,
@@ -47,7 +45,7 @@ from nexus.services.browse.targets import (
     provider_api_error,
     unseal_target,
 )
-from nexus.services.media import list_collection_media_for_viewer_by_ids
+from nexus.services.media import media_summaries
 from nexus.services.podcasts.ingest import select_visible_episode_media_id_by_podcast_index_ref
 from nexus.services.podcasts.subscriptions_query import active_subscription_rows_sql
 from nexus.services.sealed_handles import DiscoveryTargetHandle
@@ -113,9 +111,9 @@ async def search_browse(
         query=query.q,
         kind=query.kind,
         source=query.source,
-        sort=maybe(query.sort),
+        sort=query.sort,
         items=items,
-        next_cursor=maybe(None if after is None else encode_cursor(binding | {"at": after})),
+        next_cursor=None if after is None else encode_cursor(binding | {"at": after}),
     )
 
 
@@ -132,20 +130,20 @@ def _catalogue(
     if family == "gutenberg":
         return gutenberg.candidates(db, viewer_id, ids), after
     descriptions = {row["id"]: row["text"] for row in hydrate(db, viewer_id, "media", ids, "")}
-    media = list_collection_media_for_viewer_by_ids(db, viewer_id=viewer_id, media_ids=ids)
+    summaries = media_summaries(db, viewer_id=viewer_id, media_ids=ids)
     return [
         OwnedMediaCandidate(
-            resolution=_in_nexus(item.id, item.summary),
-            description=maybe(descriptions.get(item.id)),
-            image=absent(),
+            resolution=_in_nexus(media_id, summary),
+            description=descriptions.get(media_id),
+            image=None,
         )
-        for item in media
+        for media_id, summary in summaries.items()
     ], after
 
 
 def _in_nexus(media_id: UUID, summary: MediaSummaryOut) -> InNexusMediaResolution:
     return InNexusMediaResolution(
-        href=f"/media/{media_id}", action_subject_ref=f"media:{media_id}", media_summary=summary
+        href=f"/media/{media_id}", action_ref=f"media:{media_id}", media_summary=summary
     )
 
 
@@ -205,12 +203,7 @@ def _resolve_owned(db: Session, viewer_id: UUID, items: Sequence[Any], url: str 
             if found is not None:
                 owned[item.resolution.target] = found
     media = [resource_id for scheme, resource_id in owned.values() if scheme == "media"]
-    summaries = {
-        item.id: item.summary
-        for item in list_collection_media_for_viewer_by_ids(
-            db, viewer_id=viewer_id, media_ids=media
-        )
-    }
+    summaries = media_summaries(db, viewer_id=viewer_id, media_ids=media)
     out = []
     for item in items:
         found = owned.get(getattr(item.resolution, "target", None))
@@ -220,7 +213,7 @@ def _resolve_owned(db: Session, viewer_id: UUID, items: Sequence[Any], url: str 
                 _in_nexus(resource_id, summaries[resource_id])
                 if scheme == "media"
                 else InNexusPodcastResolution(
-                    href=f"/podcasts/{resource_id}", action_subject_ref=f"podcast:{resource_id}"
+                    href=f"/podcasts/{resource_id}", action_ref=f"podcast:{resource_id}"
                 )
             )
             item = item.model_copy(update={"resolution": resolution})

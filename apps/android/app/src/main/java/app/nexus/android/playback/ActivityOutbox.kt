@@ -14,7 +14,7 @@ import java.time.format.DateTimeFormatterBuilder
 import java.time.temporal.ChronoUnit
 import java.util.UUID
 
-/** Canonical millisecond instants: they sort as strings and the server accepts them as `occurredAt`. */
+/** Canonical millisecond instants: they sort as strings and the server accepts them as `occurred_at`. */
 internal val SPAN_INSTANT: DateTimeFormatter = DateTimeFormatterBuilder().appendInstant(3).toFormatter()
 
 /**
@@ -70,7 +70,7 @@ internal class ActivityOutbox(file: File) {
         if (entries.removeAll { it.getString("accountId") != mine || occurredAt(it) < cutoff }) persist()
     }
 
-    private fun occurredAt(entry: JSONObject): String = entry.getJSONObject("span").getString("occurredAt")
+    private fun occurredAt(entry: JSONObject): String = entry.getJSONObject("span").getString("occurred_at")
 
     private fun persist() {
         var stream: FileOutputStream? = null

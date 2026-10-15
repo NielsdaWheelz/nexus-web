@@ -24,7 +24,6 @@ from pydantic import (
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.schemas.presence import absent, present
 from nexus.schemas.x_source import (
     XSourceAttachment,
     XSourceAuthor,
@@ -243,19 +242,15 @@ def _snapshot(
             id=post.id,
             author=XSourceAuthor(id=author.id, name=author.name, username=author.username),
             text=post.text,
-            created_at=absent() if post.created_at is None else present(post.created_at),
-            language=absent() if post.lang is None else present(post.lang),
+            created_at=post.created_at,
+            language=post.lang,
             urls=tuple(
                 XSourceUrl(
                     url=url.url,
-                    expanded_url=absent()
-                    if url.expanded_url is None
-                    else present(url.expanded_url),
-                    display_url=absent() if url.display_url is None else present(url.display_url),
-                    title=absent() if url.title is None else present(url.title),
-                    attachment_media_key=absent()
-                    if url.media_key is None
-                    else present(url.media_key),
+                    expanded_url=url.expanded_url,
+                    display_url=url.display_url,
+                    title=url.title,
+                    attachment_media_key=url.media_key,
                 )
                 for url in post.urls
             ),
@@ -263,11 +258,9 @@ def _snapshot(
                 XSourceAttachment(
                     media_key=item.media_key,
                     type=item.type,
-                    url=absent() if item.url is None else present(item.url),
-                    preview_image_url=absent()
-                    if item.preview_image_url is None
-                    else present(item.preview_image_url),
-                    alt_text=absent() if item.alt_text is None else present(item.alt_text),
+                    url=item.url,
+                    preview_image_url=item.preview_image_url,
+                    alt_text=item.alt_text,
                 )
                 for key in post.media_keys
                 for item in (seen.media[key],)

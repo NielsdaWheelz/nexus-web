@@ -1,6 +1,5 @@
 /** Pure semantic projections for conversation rows. */
 
-import { absent, present } from "@/lib/api/presence";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import {
   presentConversationListItem,
@@ -24,13 +23,11 @@ export function presentConversation(
     },
     title: { text: presentation.title },
     contributors: [],
-    publicationDate: absent(),
-    context: present({ kind: "Text", text: presentation.metadata }),
-    activity: absent(),
-    exceptionalStatus: absent(),
-    actionSubject: {
-      ref: canonicalResourceRef({ scheme: "conversation", id: item.id }),
-    },
+    publicationDate: null,
+    context: { kind: "Text", text: presentation.metadata },
+    activity: null,
+    exceptionalStatus: null,
+    resourceRef: canonicalResourceRef({ scheme: "conversation", id: item.id }),
     selected: false,
   };
 }

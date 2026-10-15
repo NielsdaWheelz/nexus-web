@@ -108,7 +108,7 @@ export function chooseModel(
   const fallback = model?.source_default_reasoning;
   const choice =
     choices.find(
-      (c) => fallback?.kind === "Present" && c.key === fallback.value,
+      (c) => fallback != null && c.key === fallback,
     ) ?? (choices.length === 1 ? choices[0] : undefined);
   return choice
     ? chooseThinking(route, modelKey, choice.key)
