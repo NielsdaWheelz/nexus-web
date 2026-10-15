@@ -1,11 +1,8 @@
-"""The saved-EPUB contributor repair: plan, preview and apply (``scripts/repair_epub_contributors.py``).
-
-Moved verbatim from ``services/contributors.py``; gated on the pending production run
-(docs/tickets/epub-contributors-production-repair-pending.md).
-"""
+"""Source-matched EPUB credit repair with one reviewed identity plan per apply."""
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -15,26 +12,20 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Contributor, ContributorCredit, Media
+from nexus.db.models import Contributor, ContributorCredit, Media, MediaFile
 from nexus.services.contributor_taxonomy import ContributorHandle, ContributorObservation
 from nexus.services.contributor_writes import (
     NewContributor,
-    ResolvedCredit,
+    ObservationIdentityPlan,
     ensure_alias,
     materialize_observation_credits,
     plan_observation_credits,
     planned_contributor_identity,
 )
+from nexus.services.resource_mutation_replay import canonical_json_bytes
 
 if TYPE_CHECKING:
     from nexus.services.epub_ingest import EpubExtractionResult
-
-
-def resolve_observation_credits(
-    db: Session, credits: Sequence[ContributorObservation]
-) -> list[ResolvedCredit]:
-    """Select and allocate one exact identity batch in the caller's transaction."""
-    return materialize_observation_credits(db, plan=plan_observation_credits(db, credits))
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +33,7 @@ class SourceCreditSnapshot:
     id: UUID
     contributor_id: UUID
     handle: str
+    display_name: str
     credited_name: str
     role: str
     raw_role: str | None
@@ -75,12 +67,20 @@ class EpubContributorRepairReport:
     retained_manual_authors: bool
 
 
+@dataclass(frozen=True, slots=True)
+class EpubContributorRepairPreview:
+    report: EpubContributorRepairReport
+    preview: dict[str, object]
+    preview_digest: str
+
+
 def _source_credit_snapshot(db: Session, media_id: UUID) -> tuple[SourceCreditSnapshot, ...]:
     return tuple(
         SourceCreditSnapshot(
             row.id,
             row.contributor_id,
             handle,
+            display_name,
             row.credited_name,
             row.role,
             row.raw_role,
@@ -89,8 +89,8 @@ def _source_credit_snapshot(db: Session, media_id: UUID) -> tuple[SourceCreditSn
             row.created_at,
             row.updated_at,
         )
-        for row, handle in db.execute(
-            select(ContributorCredit, Contributor.handle)
+        for row, handle, display_name in db.execute(
+            select(ContributorCredit, Contributor.handle, Contributor.display_name)
             .join(Contributor, Contributor.id == ContributorCredit.contributor_id)
             .where(ContributorCredit.media_id == media_id)
             .order_by(ContributorCredit.ordinal)
@@ -268,23 +268,155 @@ def _plan_repair_rows(
     )
 
 
-def preview_epub_contributor_repair(
-    db: Session, *, plan: EpubContributorRepairPlan
-) -> EpubContributorRepairReport | EpubContributorRepairSkipped:
-    """Preview exact aliases without creating contributors or changing source facts."""
+@dataclass(frozen=True, slots=True)
+class _PreparedRepair:
+    preview: EpubContributorRepairPreview
+    rows: list[_RepairCredit]
+    identities: ObservationIdentityPlan
+
+
+def _prepare_reviewed_repair(
+    db: Session, *, plan: EpubContributorRepairPlan, viewer_id: UUID, source: MediaFile
+) -> _PreparedRepair | EpubContributorRepairSkipped:
     proposed = [credit for _, credits in plan.replacements for credit in credits] + list(
         plan.additions
     )
     selected = plan_observation_credits(db, proposed)
     identities = [planned_contributor_identity(identity) for identity in selected.identities]
     planned = _plan_repair_rows(plan, identities)
-    return planned if isinstance(planned, EpubContributorRepairSkipped) else planned[1]
+    if isinstance(planned, EpubContributorRepairSkipped):
+        return planned
+    rows, report = planned
+    # Held authors affect neither allocations nor key/alias publication.
+    effective = [
+        (credit, identity)
+        for credit, identity in zip(selected.credits, selected.identities, strict=True)
+        if not (plan.expected_manual_authors and credit.role == "author")
+    ]
+    effective_keys = {
+        (
+            planned_contributor_identity(identity),
+            credit.identity_key.authority,
+            credit.identity_key.key,
+        )
+        for credit, identity in effective
+        if credit.identity_key is not None
+    }
+    selected = ObservationIdentityPlan(
+        tuple(credit for credit, _ in effective),
+        tuple(identity for _, identity in effective),
+        tuple(
+            (identity, authority, key)
+            for identity, authority, key in selected.new_keys
+            if (planned_contributor_identity(identity), authority, key) in effective_keys
+        ),
+    )
+    people: dict[UUID | NewContributor, dict[str, object]] = {
+        row.contributor_id: {
+            "kind": "existing",
+            "id": str(row.contributor_id),
+            "handle": row.handle,
+            "display_name": row.display_name,
+        }
+        for row in plan.expected_credits
+    }
+    new_ordinal = 0
+    for identity in selected.identities:
+        key = planned_contributor_identity(identity)
+        if isinstance(identity, NewContributor):
+            if key not in people:
+                people[key] = {
+                    "kind": "new",
+                    "ordinal": new_ordinal,
+                    "display_name": identity.display_name,
+                }
+                new_ordinal += 1
+        else:
+            people[key] = {
+                "kind": "existing",
+                "id": str(identity.contributor_id),
+                "handle": identity.handle,
+                "display_name": identity.display_name,
+            }
+    preview: dict[str, object] = {
+        "viewer_id": str(viewer_id),
+        "media_id": str(plan.media_id),
+        "source": {
+            "storage_path": source.storage_path,
+            "source_sha256": source.source_sha256,
+            "size_bytes": source.size_bytes,
+            "content_type": source.content_type,
+        },
+        "authors_manually_managed": plan.expected_manual_authors,
+        "before_credits": [
+            {
+                "credit_id": str(row.id),
+                "person": people[row.contributor_id],
+                "credited_name": row.credited_name,
+                "role": row.role,
+                "raw_role": row.raw_role,
+                "source": row.source,
+                "ordinal": row.ordinal,
+                "created_at": row.created_at.isoformat(),
+                "updated_at": row.updated_at.isoformat(),
+            }
+            for row in plan.expected_credits
+        ],
+        "proposed_credits": [
+            {
+                "credit_id": str(row.row_id) if row.row_id is not None else None,
+                "person": people[row.identity],
+                "credited_name": row.observation.credited_name,
+                "role": row.observation.role,
+                "raw_role": row.observation.raw_role,
+                "source": row.source,
+                "ordinal": ordinal,
+            }
+            for ordinal, row in enumerate(rows)
+        ],
+        "identities": [
+            people[planned_contributor_identity(identity)] for identity in selected.identities
+        ],
+        "new_key_intents": [
+            {
+                "person": people[planned_contributor_identity(identity)],
+                "authority": authority,
+                "key": key,
+            }
+            for identity, authority, key in selected.new_keys
+        ],
+    }
+    return _PreparedRepair(
+        EpubContributorRepairPreview(
+            report, preview, hashlib.sha256(canonical_json_bytes(preview)).hexdigest()
+        ),
+        rows,
+        selected,
+    )
+
+
+def preview_epub_contributor_repair(
+    db: Session, *, plan: EpubContributorRepairPlan, viewer_id: UUID, source: MediaFile
+) -> EpubContributorRepairPreview | EpubContributorRepairSkipped:
+    """Bind the complete source/credit/identity proposal without allocating anything."""
+    prepared = _prepare_reviewed_repair(db, plan=plan, viewer_id=viewer_id, source=source)
+    return prepared if isinstance(prepared, EpubContributorRepairSkipped) else prepared.preview
 
 
 def apply_epub_contributor_repair_in_current_transaction(
-    db: Session, *, media: Media, plan: EpubContributorRepairPlan
-) -> EpubContributorRepairReport | EpubContributorRepairSkipped:
-    """Apply a source-specific repair after the caller locks/fences media and source bytes."""
+    db: Session,
+    *,
+    media: Media,
+    plan: EpubContributorRepairPlan,
+    viewer_id: UUID,
+    source: MediaFile,
+    preview_digest: str,
+) -> EpubContributorRepairPreview | EpubContributorRepairSkipped:
+    """Check then materialize one plan in the caller's locked serializable attempt.
+
+    The caller rechecks access/source and prepares the source match inside every
+    retry. Nothing, including an identity allocation, precedes this digest check.
+    """
     if media.id != plan.media_id:
         raise ValueError("EPUB repair belongs to another media item")
     if (
@@ -292,31 +424,19 @@ def apply_epub_contributor_repair_in_current_transaction(
         or _source_credit_snapshot(db, media.id) != plan.expected_credits
     ):
         return EpubContributorRepairSkipped("credits_changed")
-    preview = preview_epub_contributor_repair(db, plan=plan)
-    if isinstance(preview, EpubContributorRepairSkipped) or not preview.changed:
-        return preview
-    proposed = [credit for _, credits in plan.replacements for credit in credits] + list(
-        plan.additions
-    )
-    # Held author proposals never allocate people or aliases.
-    effective = [
-        credit
-        for credit in proposed
-        if not (plan.expected_manual_authors and credit.role == "author")
-    ]
-    full_plan = plan_observation_credits(db, proposed)
-    resolved = resolve_observation_credits(db, effective)
-    iterator = iter(resolved)
-    identities = [
-        planned_contributor_identity(selected)
-        if plan.expected_manual_authors and credit.role == "author"
-        else next(iterator).contributor_id
-        for credit, selected in zip(proposed, full_plan.identities, strict=True)
-    ]
-    planned = _plan_repair_rows(plan, identities)
-    if isinstance(planned, EpubContributorRepairSkipped):
-        raise ValueError("EPUB repair changed representability after exact identity resolution")
-    rows, report = planned
+    prepared = _prepare_reviewed_repair(db, plan=plan, viewer_id=viewer_id, source=source)
+    if isinstance(prepared, EpubContributorRepairSkipped):
+        return prepared
+    if prepared.preview.preview_digest != preview_digest:
+        return EpubContributorRepairSkipped("preview_changed")
+    if not prepared.preview.report.changed:
+        return prepared.preview
+    resolved = materialize_observation_credits(db, plan=prepared.identities)
+    allocated = {
+        planned_contributor_identity(identity): credit.contributor_id
+        for identity, credit in zip(prepared.identities.identities, resolved, strict=True)
+    }
+    rows = prepared.rows
     current = {
         row.id: row
         for row in db.scalars(
@@ -332,14 +452,16 @@ def apply_epub_contributor_repair_in_current_transaction(
             db.delete(row)
     db.flush()
     for ordinal, planned_row in enumerate(rows):
-        if not isinstance(planned_row.identity, UUID):
-            raise AssertionError("Applied EPUB repair has an unresolved contributor")
         row = (
             current[planned_row.row_id]
             if planned_row.row_id is not None
             else ContributorCredit(media_id=media.id)
         )
-        row.contributor_id = planned_row.identity
+        row.contributor_id = (
+            planned_row.identity
+            if isinstance(planned_row.identity, UUID)
+            else allocated[planned_row.identity]
+        )
         row.credited_name = planned_row.observation.credited_name
         row.role = planned_row.observation.role
         row.raw_role = planned_row.observation.raw_role
@@ -347,7 +469,7 @@ def apply_epub_contributor_repair_in_current_transaction(
         row.ordinal = ordinal
         db.add(row)
     db.flush()
-    for credit, observation in zip(resolved, effective, strict=True):
+    for credit, observation in zip(resolved, prepared.identities.credits, strict=True):
         if observation.contributor_handle is None:
             ensure_alias(
                 db,
@@ -361,4 +483,4 @@ def apply_epub_contributor_repair_in_current_transaction(
             alias=observation.credited_name,
             resolves_identity=False,
         )
-    return report
+    return prepared.preview
