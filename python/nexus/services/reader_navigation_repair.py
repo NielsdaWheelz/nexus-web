@@ -147,6 +147,7 @@ def apply_reader_navigation_repair(
         ) != _web_index_projection(snapshot.fragments, new_regions)
 
     with session_factory() as db:
+        db.execute(text("SET LOCAL lock_timeout = '2s'"))
         media = db.scalar(select(Media).where(Media.id == media_id).with_for_update(key_share=True))
         publication = db.scalar(
             select(ReaderPublication)
@@ -208,6 +209,7 @@ def _read_snapshot(session_factory: sessionmaker[Session], media_id: UUID) -> _S
     with session_factory() as db:
         db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
         db.execute(text("SET TRANSACTION READ ONLY"))
+        db.execute(text("SET LOCAL lock_timeout = '2s'"))
         row = (
             db.execute(
                 text(
@@ -795,6 +797,7 @@ def _check_snapshot_current(session_factory: sessionmaker[Session], snapshot: _S
     with session_factory() as db:
         db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
         db.execute(text("SET TRANSACTION READ ONLY"))
+        db.execute(text("SET LOCAL lock_timeout = '2s'"))
         row = db.execute(
             text(
                 "SELECT rp.generation, mf.source_sha256 FROM reader_publications rp"
