@@ -5,18 +5,19 @@ status: implementation merged in prs [#608](https://github.com/NielsdaWheelz/nex
 [#613](https://github.com/NielsdaWheelz/nexus-web/pull/613) and
 [#619](https://github.com/NielsdaWheelz/nexus-web/pull/619). the native correction
 is merged in [#630](https://github.com/NielsdaWheelz/nexus-web/pull/630).
-the owner requested the remaining feature merges before final qualification.
-the combined release includes migrations through 0287 and wire revision 2;
-bind its final source and canonical artifacts in the private run receipt.
-current qualification is pending. the restored backup passed 0279–0283;
-its 0283 baseline is independently accepted. that candidate completed 241
-contributor inspections and 30 reader inspections; 465 reader inspections were
-held before invocation on discovering the new main. four later deletions are
-accounted separately. the shared read-only bracket closed with exact equality
-across all 96 tables and 3,272,528 rows. old proofs do not qualify the new
-candidate. production repair and consumer acceptance remain NOT_RUN. the separate
-[native consumption cutover](tickets/android-consumption-cutover-mismatch.md)
-still needs actual native/backend and physical-phone verification.
+the [combined usable release](releases/2026-10-15-nexus.md) is live on
+`fdd0a3ecade305082643f6231bbfbcce211b04d7`, schema 0287 and wire 2.
+actual web, phone and provider checks passed; the book campaign does not hold
+normal service or the merge freeze. the original 0278 backup was restored and
+replayed through 0287; its accepted baseline covers all 98 current tables.
+
+repair qualification continues separately. the earlier 0283 candidate completed
+241 contributor inspections and 30 reader inspections; its read-only bracket
+closed with equality across 96 tables and 3,272,528 rows. 465 reader inspections
+never ran. review eligibility for each of those 30 retained observations against
+the final source/input/projection and migration bridge; do not silently carry
+them or unconditionally repeat them. four later deletions remain separate.
+live book applies and repaired-book consumer acceptance remain NOT_RUN.
 owner decisions settled 2026-10-14. planning base: `75b17c0301be59da4a45dec8b35ab97d998e9199`.
 planning-time production: `665e7b3af03282d37ac1a2aac3c6589e2a0f5932`, schema 0277.
 recheck identities before execution. this work does not gate the usable release.
@@ -306,9 +307,9 @@ remains separate.
 | coordinator | this plan, runbook, private scope/receipts, tickets and integration; next canonical rollout, fresh backup and sole book production write owner |
 
 service/ops paths above are under `python/nexus/`. no shared-file parallel edits.
-the source prs are merged. compose the remaining approved release work, then
-qualify its canonical artifacts and matched wire-2 consumers. operator output
-compatibility alone cannot qualify that combined normal-runtime release.
+the source prs and approved release work are merged; canonical artifacts and
+matched wire-2 consumers passed the separate usable-release qualification.
+book operator and repaired-content acceptance still require the proofs below.
 
 before any clone worker runs, isolate database/queue AND output storage. use a
 separate rehearsal r2 bucket via existing `R2_BUCKET`, scoped credentials and

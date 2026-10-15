@@ -81,7 +81,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] reader maintenance · 2026-10-14 plan review · merged #609 adds complete projection evidence; final-artifact publication round-trip qualification remains pending: [ticket](tickets/reader-repair-inspection-lacks-complete-projection-evidence.md).
 - [planned] reader repair · 2026-10-14 plan · merged #608 adds a bounded off-host maintenance budget; final-artifact qualification remains pending and normal import policy stays unchanged: [ticket](tickets/reader-repair-epub-parse-budget.md).
 - [open] epub source apparatus · 2026-10-15 source review · pillow has two unchanged original forward/return mismatches outside the selected 570 notes; explicit source disposition retained: [ticket](tickets/epub-pillow-original-note-links-disagree.md).
-- [open] android / consumption · 2026-10-15 release review · merged #630 corrects consumption forms and persists pending settles; native/backend and phone acceptance still block cutover: [ticket](tickets/android-consumption-cutover-mismatch.md).
 - [open] deployment / postgres maintenance · 2026-10-15 platform restack · the 64 MiB default /dev/shm fails a parallel VACUUM DiskFull under the 512 MiB cap; autovacuum is unaffected: [issue](issues/postgres-shm-blocks-parallel-maintenance.md).
 - [open] local development / storage · 2026-10-15 · macbook storage remains near full after a shared docker outage: [ticket](tickets/macbook-docker-storage-headroom.md).
 - [open] feedback / accessibility · 2026-10-15 toolbar qualification · a failure notice compresses enlarged text into fragments at 320px: [ticket](tickets/feedback-notice-compresses-enlarged-text.md).
@@ -112,7 +111,7 @@ area · opened YYYY-MM-DD by <who> · P2
 
 - [open] android / auth availability · 2026-10-14 release · expired-session restoration needed one ordinary retry; login recovered, initial dependency failure uncaptured: [ticket](tickets/android-expired-session-needed-one-retry.md).
 - [open] deployment / database admission · 2026-10-14 · pool, listener, async and probe connections have no composed budget for the512mib database; the jit fix qualifies the measured workload, not every allowed connection: [ticket](tickets/production-database-connection-budgets-implicit.md).
-- [open] deployment / cgroups · 2026-10-14 release · daemon-reload reset all seven swap limits; proxies reconverged, scope persistence and post-reload/start validation remain for the deployer/runtime follow-up: [ticket](tickets/production-infrastructure-effective-swap-limits-differ.md).
+- [open] deployment / cgroups · 2026-10-15 release · retained postgres and proxies again have unlimited effective swap; scope persistence and post-reload/start validation remain for the deployer/runtime follow-up: [ticket](tickets/production-infrastructure-effective-swap-limits-differ.md).
 - [open] codex host / recovery · 2026-10-14 release · production volume is mounted but its off-host unlock key is unavailable; prove recovery before reboot: [ticket](tickets/production-codex-state-unlock-source-unavailable.md).
 - [open] web / runtime configuration · 2026-10-13 release · local node pin is 22, vercel runs 24, and ci uses its runner path; align the declared runtime owner: [ticket](tickets/node-runtime-pin-differs-from-vercel.md).
 - [open] api / cancellation · 2026-10-13 release · cancelling an asgi task does not stop its synchronous database worker; define single-owner cleanup and qualify active reads and writes: [ticket](tickets/api-sync-work-outlives-request-cancellation.md).
@@ -290,7 +289,6 @@ unexpected timeouts. See
 - [open] oi-113 · interactive worker · 2026-09-15 pr #255 qualification · p2 · exact-image startup is oom-killed at 256 mib; isolate provider imports and qualify real execution demand: [ticket](tickets/interactive-worker-startup-reaches-memory-cap.md).
 
 - [open] oi-125 · epub assets · 2026-09-15 source review · p2 · complete asset bodies, broad media reads and per-request storage clients lack an aggregate allocation budget: [ticket](tickets/epub-asset-response-allocation-and-client-lifetime.md).
-- [open] oi-126 · backend publication · 2026-09-15 restoration release · p2 · disk exhaustion aborts the runner before bundle upload and cleanup: [ticket](tickets/backend-publication-can-exhaust-devbox-disk.md).
 - [open] oi-127 · devbox operations · 2026-09-15 memory diagnosis · p2 · runner stopped and user/docker services restarted during diagnosis; cause remains unresolved: [ticket](tickets/devbox-services-interrupted-memory-diagnosis.md).
 - [open] chat browser · 2026-09-28 pr #412 · run-owned stop passed targeted proof; merged-tree new/existing reply and reload journey remain unverified: [ticket](tickets/chat-composer-loses-durable-stop-state.md).
 - [open] chat release · 2026-09-28 pr #412 · new exact chat decoder requires a matching backend before web promotion; production pairing unverified: [ticket](tickets/chat-contract-release-pairing.md).
@@ -441,3 +439,5 @@ unexpected timeouts. See
 
 - [deferred] release / vercel firewall · 2026-10-15 owner disposition · retain the public-share 120/minute rule; the higher byte allowance needs another plan: [ticket](tickets/public-share-byte-rate-limit-plan.md).
 - [open] email ingest / activation · 2026-10-15 · production post room remains unconfigured; delivery behavior is unqualified: [ticket](tickets/production-post-room-unconfigured.md).
+
+- [open] playback / accessibility · 2026-10-15 physical release check · normal pending saves can announce a false pause and leave stale feedback: [ticket](tickets/player-announces-paused-sync-during-normal-save.md).

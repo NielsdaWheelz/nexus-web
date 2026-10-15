@@ -1,9 +1,9 @@
 # release: ingest (PR1 source lifecycle and the post room)
 
 PR1 changes these contracts at once; the api refuses the old forms and there is no
-compatibility arm. `X-Nexus-Wire` stays 1 (conventions): web and api deploy together
-from the release sha, and a tab open across the deploy fails its url adds and
-recoveries (400 `E_INVALID_REQUEST`) until reloaded.
+compatibility arm. the final combined release uses `X-Nexus-Wire: 2`: web and
+api deploy together from the release sha. old tabs receive 426 until reloaded;
+obsolete request bodies are also refused by the current schema.
 
 | before | after |
 |---|---|
