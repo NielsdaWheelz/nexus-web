@@ -1,6 +1,6 @@
 # heading rank overrides an authored publisher root
 
-status: open; nine whole-book repairs unsafe, not applied
+status: open; fourteen whole-book repairs unsafe, not applied
 origin: 2026-10-15 book-repair original-source review, operator `150328b65`
 area: epub semantic hierarchy
 
@@ -106,6 +106,27 @@ independent `a-maintenance/two-b-navigation-boundaries-independent-review.json`,
 sha256 `1d080de77eb5ea87f1a6c0318ac8ae33af6c63e06240f2acd8c73b7495f30822`.
 both bind the exact original documents and complete proposed metadata.
 
+five further retained sources preserve the same explicit edition-end and
+license boundary: `1c6951c9-b84c-43c9-b952-809316f0df76`,
+`3104a096-5ed6-4cc3-a02f-dd04acfc033d`,
+`44c980bd-ff3c-47c4-8674-df42a9694423`,
+`59584b41-bee7-4722-9c42-04abad92679d`, and
+`66798f2d-60d7-4ece-821f-bc0c52b7c866`. each candidate newly parents the
+license under the literary title and extends that title through the footer.
+the final case's end declaration names the hell translation within its broader
+divine-comedy title; it still explicitly separates the text from the license.
+sanitizer-stripped class/role absence supplies no inference, and these checks
+did not acquire the originals.
+
+all ten exact retained documents and five complete proposals are bound by
+`a-maintenance/navigation5-license-scope-review-v1.json`, sha256
+`4551412c9eae317f54ed1413c850074fa5abc532246576e86303c329c42bd991`;
+independent parse and reconstruction:
+`b-reader/a-five-license-boundaries-independent-review.json`, sha256
+`920f0a37da31d788853775098465f238a6907eaa7f2906e12c6765a572de2992`.
+other fields remain unadjudicated; no stored-text or executed-consumer loss is
+claimed.
+
 media `eef19922-06e4-4d10-bd49-2445057bf4c1` provides a separate concrete
 scope contradiction. its original appendix explicitly describes a dramatis
 personae across both *dust of dreams* and *the crippled god*. the candidate
@@ -128,7 +149,7 @@ and chapter 14's authored scope, and keeps chapter eleven a peer of chapter
 four with four ending at `43:0`. row232 preserves publisher history outside
 chapter 15 and source-proved part/chapter membership; independently justify
 any reading-division regrouping without changing its full publisher outline.
-the five literary-title extents exclude the separately declared licensing
+the ten literary-title extents exclude the separately declared licensing
 footers while preserving their destinations. retain genuine source nesting
 in all cases, and keep eef's cross-book reference appendix outside the last
 part's scope; do not infer a universal flat-outline rule.
