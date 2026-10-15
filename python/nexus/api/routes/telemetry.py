@@ -1,8 +1,7 @@
 """Client-defect ingest.
 
 Logs one bounded browser failure report per request under the request's
-``request_id`` (bound by the request-id middleware). No persistence, no service
-layer.
+``request_id`` (bound by the edge middleware). No persistence, no service layer.
 """
 
 from typing import Annotated
@@ -24,7 +23,7 @@ def post_client_defect(
     body: ClientDefectRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
 ) -> dict:
-    """Log the first client failure with its originating command/read identity."""
+    """Log a client's render failure with the request id it came from, if any."""
     logger.error(
         "rum.client_defect",
         viewer_id=str(viewer.user_id),

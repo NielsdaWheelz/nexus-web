@@ -3,9 +3,6 @@ import { isApiError } from "@/lib/api/client";
 interface ClientDefectReport {
   pane_id: string;
   visit_id: string;
-  phase: "Render";
-  command_id: string | null;
-  run_id: string | null;
   error_code: string;
   request_id: string | null;
   component_stack: string;
@@ -30,9 +27,6 @@ export function reportClientDefect(
   const report: ClientDefectReport = {
     pane_id: view.paneId.slice(0, 128),
     visit_id: view.visitId.slice(0, 128),
-    phase: "Render",
-    command_id: null,
-    run_id: null,
     error_code: code,
     request_id:
       isApiError(error) && error.requestId

@@ -16,8 +16,9 @@ Local/test environments use Supabase local, staging/prod use cloud.
 Supabase service-role keys are not application runtime settings.
 """
 
+import base64
+import binascii
 import os
-from datetime import datetime
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
@@ -151,8 +152,8 @@ class Settings(BaseSettings):
     max_epub_bytes: int = Field(default=50 * 1024 * 1024, alias="MAX_EPUB_BYTES")  # 50 MB
     signed_url_expiry_s: int = Field(default=300, alias="SIGNED_URL_EXPIRY_S")  # 5 minutes
 
-    # Podcast discovery and subscription ingestion policy.
-    podcasts_enabled: bool = Field(default=False, alias="PODCASTS_ENABLED")
+    # Podcast discovery and subscription ingestion; without both keys a call that needs
+    # PodcastIndex answers 503 E_PODCAST_PROVIDER_UNAVAILABLE.
     podcast_index_api_key: str | None = Field(default=None, alias="PODCAST_INDEX_API_KEY")
     podcast_index_api_secret: str | None = Field(default=None, alias="PODCAST_INDEX_API_SECRET")
     podcast_index_base_url: str = Field(
@@ -199,7 +200,7 @@ class Settings(BaseSettings):
     )
     podcast_refresh_due_limit: int = Field(default=100, alias="PODCAST_REFRESH_DUE_LIMIT", ge=1)
 
-    # Public web origin: share links and the stream CORS check.
+    # Public web origin: share links.
     app_public_url: str = Field(default="http://localhost:3000", alias="APP_PUBLIC_URL")
 
     # Ingest recovery guardrails
@@ -302,10 +303,6 @@ class Settings(BaseSettings):
         alias="XAI_GENERATION_API_KEY",
         repr=False,
     )
-    fable_retention_accepted_at: datetime | None = Field(
-        default=None,
-        alias="NEXUS_FABLE_RETENTION_ACCEPTED_AT",
-    )
     # Public web search provider settings.
     # Brave is the first production web-search provider. If no API key is
     # configured, required web-search turns fail closed with a typed tool error.
@@ -351,24 +348,16 @@ class Settings(BaseSettings):
     )
 
     # Post Room: private email ingest address (Cloudflare Email Worker → HMAC-signed POST).
-    # EMAIL_INGEST_ENABLED gates route registration; when false the endpoint is absent
-    # entirely (no live public POST target in CI/local). Required keys are validated
-    # only in staging/prod when the flag is true.
-    email_ingest_enabled: bool = Field(default=False, alias="EMAIL_INGEST_ENABLED")
+    # Unless all four of secret, slug, domain and owner are set, /ingest/email answers 503.
     email_ingest_hmac_secret: str | None = Field(default=None, alias="EMAIL_INGEST_HMAC_SECRET")
     email_ingest_address_slug: str | None = Field(default=None, alias="EMAIL_INGEST_ADDRESS_SLUG")
     email_ingest_domain: str | None = Field(default=None, alias="EMAIL_INGEST_DOMAIN")
     email_ingest_owner_user_id: str | None = Field(default=None, alias="EMAIL_INGEST_OWNER_USER_ID")
     email_ingest_max_bytes: int = Field(default=2_097_152, alias="EMAIL_INGEST_MAX_BYTES")
 
-    # Stream token auth.
-    # HS256 signing key for short-lived stream tokens (base64-encoded 32+ bytes)
-    # Required in staging/prod; auto-generated deterministic key in local/test
-    stream_token_signing_key: str | None = Field(default=None, alias="STREAM_TOKEN_SIGNING_KEY")
-    # Public URL browsers use for direct stream endpoints.
-    stream_base_url: str | None = Field(default=None, alias="STREAM_BASE_URL")
-    # Comma-separated list of allowed CORS origins for direct stream endpoints.
-    stream_cors_origins: str | None = Field(default=None, alias="STREAM_CORS_ORIGINS")
+    # The HMAC root of every sealed handle (share asset, device, entity handles): base64 of
+    # 32+ bytes. Required in staging/prod; local and test use a fixed key.
+    nexus_handle_key: SecretStr | None = Field(default=None, alias="NEXUS_HANDLE_KEY", repr=False)
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
@@ -390,11 +379,9 @@ class Settings(BaseSettings):
         self._validate_database_origin()
         self._validate_deployed_ingest_reconcile()
         self._validate_deployed_storage()
-        self._validate_deployed_stream_cors()
+        self._validate_handle_key()
         self._validate_storage_lifecycle()
         self._validate_transcript_embedding_dimensions()
-        self._validate_email_credentials()
-        self._validate_podcast_credentials()
         self._validate_deployed_browse_provider()
         self._validate_deployed_generation_runtime()
         self._validate_ingest_runtime_and_paths()
@@ -466,23 +453,17 @@ class Settings(BaseSettings):
                 "R2_S3_API_ORIGIN must be the Cloudflare R2 S3 API origin for staging/prod."
             )
 
-    def _validate_deployed_stream_cors(self) -> None:
-        """A cross-origin stream must admit the browser app's origin."""
-        if self.nexus_env not in (Environment.STAGING, Environment.PROD):
+    def _validate_handle_key(self) -> None:
+        if self.nexus_handle_key is None:
+            if self.nexus_env in (Environment.STAGING, Environment.PROD):
+                raise ValueError("NEXUS_HANDLE_KEY is required in staging/prod")
             return
-        app_url = urlparse(self.app_public_url)
-        app_origin = (app_url.scheme, app_url.hostname, app_url.port)
-        stream_url = urlparse(self.effective_stream_base_url)
-        if (stream_url.scheme, stream_url.hostname, stream_url.port) == app_origin:
-            return
-        if not any(
-            (parsed.scheme, parsed.hostname, parsed.port) == app_origin
-            for parsed in map(urlparse, self.stream_cors_origin_list)
-        ):
-            raise ValueError(
-                "STREAM_CORS_ORIGINS must include the APP_PUBLIC_URL origin "
-                f"{self.app_public_url!r} when STREAM_BASE_URL is cross-origin"
-            )
+        try:
+            key = base64.b64decode(self.nexus_handle_key.get_secret_value(), validate=True)
+        except binascii.Error as exc:
+            raise ValueError("NEXUS_HANDLE_KEY must be strict base64") from exc
+        if len(key) < 32:
+            raise ValueError("NEXUS_HANDLE_KEY must decode to at least 32 bytes")
 
     def _validate_storage_lifecycle(self) -> None:
         if self.storage_object_cleanup_write_window_seconds <= self.r2_read_timeout_seconds:
@@ -502,40 +483,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TRANSCRIPT_EMBEDDING_DIMENSIONS must equal "
                 f"{TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS} to match the pgvector schema."
-            )
-
-    def _validate_email_credentials(self) -> None:
-        if self.nexus_env not in (Environment.STAGING, Environment.PROD):
-            return
-        if not self.email_ingest_enabled:
-            return
-        missing_email: list[str] = []
-        if not self.email_ingest_hmac_secret:
-            missing_email.append("EMAIL_INGEST_HMAC_SECRET")
-        if not self.email_ingest_address_slug:
-            missing_email.append("EMAIL_INGEST_ADDRESS_SLUG")
-        if not self.email_ingest_domain:
-            missing_email.append("EMAIL_INGEST_DOMAIN")
-        if not self.email_ingest_owner_user_id:
-            missing_email.append("EMAIL_INGEST_OWNER_USER_ID")
-        if missing_email:
-            raise ValueError(
-                "Email ingest is enabled but required settings are missing: "
-                f"{', '.join(missing_email)}"
-            )
-
-    def _validate_podcast_credentials(self) -> None:
-        if not self.podcasts_enabled:
-            return
-        missing_podcast_provider_settings: list[str] = []
-        if not self.podcast_index_api_key:
-            missing_podcast_provider_settings.append("PODCAST_INDEX_API_KEY")
-        if not self.podcast_index_api_secret:
-            missing_podcast_provider_settings.append("PODCAST_INDEX_API_SECRET")
-        if missing_podcast_provider_settings:
-            raise ValueError(
-                "Podcast features are enabled but provider credentials are missing: "
-                f"{', '.join(missing_podcast_provider_settings)}"
             )
 
     def _validate_deployed_browse_provider(self) -> None:
@@ -582,18 +529,6 @@ class Settings(BaseSettings):
                 "Generation credentials are forbidden for unconfigured provider "
                 + ", ".join(name.removesuffix("_GENERATION_API_KEY").lower() for name in stale)
             )
-        if "anthropic" in configured:
-            if self.fable_retention_accepted_at is None:
-                raise ValueError(
-                    "NEXUS_FABLE_RETENTION_ACCEPTED_AT is required when Anthropic is configured"
-                )
-            if self.fable_retention_accepted_at.utcoffset() is None:
-                raise ValueError("NEXUS_FABLE_RETENTION_ACCEPTED_AT must include a timezone")
-        elif self.fable_retention_accepted_at is not None:
-            raise ValueError(
-                "NEXUS_FABLE_RETENTION_ACCEPTED_AT is forbidden while Anthropic is unconfigured"
-            )
-
         if self.nexus_env not in (Environment.STAGING, Environment.PROD):
             return
         if not configured:
@@ -644,25 +579,11 @@ class Settings(BaseSettings):
         return None
 
     @property
-    def stream_cors_origin_list(self) -> list[str]:
-        """Parse comma-separated CORS origins into a list."""
-        if self.stream_cors_origins:
-            return [o.strip() for o in self.stream_cors_origins.split(",") if o.strip()]
-        return []
-
-    @property
-    def effective_stream_base_url(self) -> str:
-        """Return stream base URL, falling back to FASTAPI_BASE_URL-style default."""
-        return self.stream_base_url or "http://localhost:8000"
-
-    @property
-    def effective_stream_token_signing_key(self) -> str:
-        """Return stream token signing key, using deterministic test key for local/test."""
-        if self.stream_token_signing_key:
-            return self.stream_token_signing_key
-        if self.nexus_env in (Environment.LOCAL, Environment.TEST):
-            return "dGVzdC1zdHJlYW0tdG9rZW4tc2lnbmluZy1rZXktMzJieXRlcw=="  # test key
-        raise ValueError("STREAM_TOKEN_SIGNING_KEY is required in staging/prod")
+    def handle_key(self) -> bytes:
+        """The sealed-handle HMAC root (validated at boot)."""
+        if self.nexus_handle_key is None:
+            return b"test-stream-token-signing-key-32bytes"
+        return base64.b64decode(self.nexus_handle_key.get_secret_value(), validate=True)
 
     @property
     def generation_api_provider_list(self) -> tuple[GenerationApiProvider, ...]:

@@ -91,7 +91,7 @@ POST /consumption/commands          EnsureMediaFinished | Done | SetUnread | Res
 GET  /media/{id}/player             -> PlayerDescriptor (404 when not playable)
 PUT  /media/{id}/listening-state    {positionMs, durationMs, episodePlaybackRate, expectedResetEpoch} -> Data[ListeningPositionOut]
 POST /media/{id}/preview-position   {positionMs, durationMs} -> 204
-POST /consumption/activity          {mediaRef, deviceClass, batch} -> 204 (the BFF adds deviceId)
+POST /consumption/activity          {mediaRef, deviceClass, batch} -> 204 (the bff names the device)
 GET  /lectern/suggestions, /lectern/quick-reads   (suggestions)
 ```
 

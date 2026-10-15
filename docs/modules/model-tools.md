@@ -105,7 +105,7 @@ attempts (result present), newest first, 30 a page, keyed by `(created_at, id)`;
 an unknown cursor is 400 `E_INVALID_CURSOR`. `POST /assistant-writes/{id}/undo`
 answers 204; 404 `E_NOT_FOUND` when the row is not the viewer's write; 409
 `E_RESOURCE_CONFLICT` for a failed write or one that created nothing; domain 409s
-pass through. Neither carries the chat contract headers.
+pass through.
 
 Coordinator defaults the owner may reverse: one undo route (D-T3; reversing
 restores a chat-scoped route), and rows outlive the conversation (D-T4;
@@ -150,7 +150,6 @@ completion and undo cannot reverse a central note.
 
 ## Stale tabs
 
-The browser sends `X-Nexus-Chat-Contract` ("6") and `X-Nexus-Tool-Projection` (the
-generated `contract.PROJECTION_REVISION`, a hash of the effects, error types and
-presentation) on chat paths; a mismatch is 409 "Reload Nexus to continue".
-`scripts/generate_tool_contract_projection.py` writes and checks the revision.
+A change to the tool vocabulary the browser reads (effects, error types,
+presentation) breaks a tab built before it, so it bumps `WIRE_REVISION`
+([api edge](api-edge.md)).

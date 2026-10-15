@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from nexus.auth.extension import get_extension_viewer
 from nexus.auth.middleware import Viewer
 from nexus.db.session import DbSession
+from nexus.logging import get_request_id
 from nexus.responses import ok, ok_page
 from nexus.schemas.extension_capture import BrowserCapture, BrowserCaptureIntent
 from nexus.schemas.library import LibraryPageInfo
@@ -22,10 +23,6 @@ from nexus.schemas.media import (
 from nexus.services import library_governance, media_upload_sessions
 
 router = APIRouter(prefix="/extension", tags=["extension"])
-
-
-def _request_id(request: Request) -> str | None:
-    return getattr(request.state, "request_id", None)
 
 
 @router.get("/library-destinations")
@@ -87,7 +84,6 @@ def confirm_capture(
     request_body: ConfirmUploadSessionRequest,
     viewer: Annotated[Viewer, Depends(get_extension_viewer)],
     db: DbSession,
-    request: Request,
 ) -> dict:
     return ok(
         media_upload_sessions.confirm_upload_session(
@@ -96,7 +92,7 @@ def confirm_capture(
             origin_kind="BrowserCapture",
             session_handle=session_handle,
             generation=request_body.generation,
-            request_id=_request_id(request),
+            request_id=get_request_id(),
         ),
     )
 

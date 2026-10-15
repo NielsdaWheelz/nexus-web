@@ -1,6 +1,8 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
+export const WIRE_REVISION = 1;
+
 export interface paths {
     "/artifact-builds/{artifact_build_id}/cancel": {
         parameters: {
@@ -822,39 +824,9 @@ export interface paths {
         put?: never;
         /**
          * Post Email Ingest
-         * @description Size, then signature, then recipient, then owner — all before any MIME parse.
+         * @description Configuration, size, signature, recipient, owner — all before any MIME parse.
          */
         post: operations["post_email_ingest_ingest_email_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/internal/stream-tokens": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create Stream Token
-         * @description Mint a short-lived stream token for direct browser-to-FastAPI SSE.
-         *
-         *     The BFF proxies to this endpoint with Supabase bearer + X-Nexus-Internal.
-         *     Returns a JWT the browser can use for direct SSE endpoints.
-         *
-         *     Response:
-         *         {
-         *             "token": "<jwt>",
-         *             "stream_base_url": "https://api.nexus.example.com",
-         *             "expires_at": "2026-02-08T21:01:00+00:00"
-         *         }
-         */
-        post: operations["create_stream_token_internal_stream_tokens_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1426,7 +1398,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/media/from_url": {
+    "/media/from-url": {
         parameters: {
             query?: never;
             header?: never;
@@ -1889,6 +1861,29 @@ export interface paths {
         get: operations["get_reader_target_media__media_id__reader_targets__kind___target_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/{media_id}/reading-copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Reading Copy
+         * @description Build the offline reading copy, store it and hand back a signed url.
+         *
+         *     Each call stores a fresh object under the media's prefix that no row owns, so the
+         *     storage orphan sweep reclaims it after its minimum age; a retry builds another.
+         */
+        post: operations["create_reading_copy_media__media_id__reading_copy_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2750,7 +2745,7 @@ export interface paths {
         };
         /**
          * Stream Artifact Build Events
-         * @description The build's ``DossierBuildOut`` on each change; ``done`` once it is not Active.
+         * @description The build on each change; ``done`` once it is not Active.
          */
         get: operations["stream_artifact_build_events_stream_artifact_builds__artifact_build_id__events_get"];
         put?: never;
@@ -2768,7 +2763,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Stream Chat Run Events */
+        /**
+         * Stream Chat Run Events
+         * @description Each committed run event after ``after``, then ``done``; advisories carry no id.
+         *
+         *     Every read re-asserts the viewer's ownership in its own session, so no event crosses
+         *     the stream after ownership or visibility is revoked.
+         */
         get: operations["stream_chat_run_events_stream_chat_runs__run_id__events_get"];
         put?: never;
         post?: never;
@@ -2785,7 +2786,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Stream Media Events */
+        /**
+         * Stream Media Events
+         * @description Processing state until terminal; media the viewer cannot read is E_MEDIA_NOT_FOUND.
+         */
         get: operations["stream_media_events_stream_media__media_id__events_get"];
         put?: never;
         post?: never;
@@ -2802,28 +2806,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Stream Metadata Events */
-        get: operations["stream_metadata_events_stream_media__media_id__metadata_events_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/stream/media/{media_id}/reading-copy": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
         /**
-         * Get Reading Copy
-         * @description The offline reading copy, built synchronously into a temp file that leaves with the response.
+         * Stream Metadata Events
+         * @description Metadata enrichment state; never terminal, so later automatic jobs still show.
          */
-        get: operations["get_reading_copy_stream_media__media_id__reading_copy_get"];
+        get: operations["stream_metadata_events_stream_media__media_id__metadata_events_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2841,7 +2828,7 @@ export interface paths {
         };
         /**
          * Stream Oracle Reading Events
-         * @description The reading's ``OracleReadingOut`` on each change; ``done`` once it is complete or failed.
+         * @description The reading on each change; ``done`` once complete or failed.
          */
         get: operations["stream_oracle_reading_events_stream_oracle_readings__reading_id__events_get"];
         put?: never;
@@ -2861,7 +2848,8 @@ export interface paths {
         };
         /**
          * Stream Podcast Subscription Events
-         * @description Push one viewer-owned subscription until sync and historical backfill settle.
+         * @description One subscription until sync and backfill settle; a deleted or transferred one ends
+         *     silently (each read names the subscription the stream opened on).
          */
         get: operations["stream_podcast_subscription_events_stream_podcast_subscriptions__podcast_id__events_get"];
         put?: never;
@@ -2883,7 +2871,7 @@ export interface paths {
         put?: never;
         /**
          * Post Client Defect
-         * @description Log the first client failure with its originating command/read identity.
+         * @description Log a client's render failure with the request id it came from, if any.
          */
         post: operations["post_client_defect_telemetry_client_defects_post"];
         delete?: never;
@@ -3024,8 +3012,6 @@ export interface components {
              * @enum {string}
              */
             device_class: "Desktop" | "Mobile";
-            /** Device Id */
-            device_id: string;
             /** Media Ref */
             media_ref: string;
         };
@@ -3734,25 +3720,16 @@ export interface components {
          * @description One bounded structural failure report; no exception or request payload.
          */
         ClientDefectRequest: {
-            /** Command Id */
-            command_id: string | null;
             /** Component Stack */
             component_stack: string;
             /** Error Code */
             error_code: string;
             /** Pane Id */
             pane_id: string;
-            /**
-             * Phase
-             * @enum {string}
-             */
-            phase: "Admission" | "Read" | "Render";
             /** Release */
             release: string;
             /** Request Id */
             request_id: string | null;
-            /** Run Id */
-            run_id: string | null;
             /** Visit Id */
             visit_id: string;
         };
@@ -4794,6 +4771,10 @@ export interface components {
         /** Data[ReaderSelectionPreview] */
         Data_ReaderSelectionPreview_: {
             data: components["schemas"]["ReaderSelectionPreview"];
+        };
+        /** Data[ReadingCopyOut] */
+        Data_ReadingCopyOut_: {
+            data: components["schemas"]["ReadingCopyOut"];
         };
         /** Data[ResolvedMediaSummariesOut] */
         Data_ResolvedMediaSummariesOut_: {
@@ -10078,6 +10059,22 @@ export interface components {
             /** Word Start */
             word_start: number | null;
         };
+        /**
+         * ReadingCopyOut
+         * @description An offline reading copy (a zip) in object storage: a signed url to fetch it without
+         *     credentials until ``expires_at``, and the publication generation it was built from.
+         */
+        ReadingCopyOut: {
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Generation */
+            generation: number;
+            /** Url */
+            url: string;
+        };
         /** ReadingTimeEstimateOut */
         ReadingTimeEstimateOut: {
             /** Remaining Minutes */
@@ -13891,8 +13888,6 @@ export interface operations {
             query?: never;
             header?: {
                 "Idempotency-Key"?: string | null;
-                "X-Nexus-Chat-Contract"?: string | null;
-                "X-Nexus-Tool-Projection"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -13926,10 +13921,7 @@ export interface operations {
     get_chat_run_chat_runs__run_id__get: {
         parameters: {
             query?: never;
-            header?: {
-                "X-Nexus-Chat-Contract"?: string | null;
-                "X-Nexus-Tool-Projection"?: string | null;
-            };
+            header?: never;
             path: {
                 run_id: string;
             };
@@ -13960,10 +13952,7 @@ export interface operations {
     cancel_chat_run_chat_runs__run_id__cancel_post: {
         parameters: {
             query?: never;
-            header?: {
-                "X-Nexus-Chat-Contract"?: string | null;
-                "X-Nexus-Tool-Projection"?: string | null;
-            };
+            header?: never;
             path: {
                 run_id: string;
             };
@@ -14087,7 +14076,9 @@ export interface operations {
     post_activity_consumption_activity_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "X-Nexus-Device": string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -14188,14 +14179,15 @@ export interface operations {
                 limit?: number;
                 end: string;
                 time_zone: string;
-                current_device_id: string;
                 start?: string | null;
                 modality?: ("Reading" | "Listening" | "Viewing") | null;
                 media_ref?: string | null;
                 contributor_handle?: string | null;
                 device_handle?: string | null;
             };
-            header?: never;
+            header: {
+                "X-Nexus-Device": string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -14227,14 +14219,15 @@ export interface operations {
                 bucket: "Hour" | "Day" | "Week" | "Month" | "Year";
                 end: string;
                 time_zone: string;
-                current_device_id: string;
                 start?: string | null;
                 modality?: ("Reading" | "Listening" | "Viewing") | null;
                 media_ref?: string | null;
                 contributor_handle?: string | null;
                 device_handle?: string | null;
             };
-            header?: never;
+            header: {
+                "X-Nexus-Device": string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -14440,10 +14433,7 @@ export interface operations {
     set_active_path_conversations__conversation_id__active_path_post: {
         parameters: {
             query?: never;
-            header?: {
-                "X-Nexus-Chat-Contract"?: string | null;
-                "X-Nexus-Tool-Projection"?: string | null;
-            };
+            header?: never;
             path: {
                 conversation_id: string;
             };
@@ -14506,10 +14496,7 @@ export interface operations {
     get_conversation_tree_conversations__conversation_id__tree_get: {
         parameters: {
             query?: never;
-            header?: {
-                "X-Nexus-Chat-Contract"?: string | null;
-                "X-Nexus-Tool-Projection"?: string | null;
-            };
+            header?: never;
             path: {
                 conversation_id: string;
             };
@@ -15092,28 +15079,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_stream_token_internal_stream_tokens_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
                 };
             };
         };
@@ -16103,10 +16068,10 @@ export interface operations {
     };
     get_workspace_session_me_workspace_session_get: {
         parameters: {
-            query: {
-                device_id: string;
+            query?: never;
+            header: {
+                "X-Nexus-Device": string;
             };
-            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -16134,10 +16099,10 @@ export interface operations {
     };
     put_workspace_session_me_workspace_session_put: {
         parameters: {
-            query: {
-                device_id: string;
+            query?: never;
+            header: {
+                "X-Nexus-Device": string;
             };
-            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -17153,6 +17118,37 @@ export interface operations {
             };
         };
     };
+    create_reading_copy_media__media_id__reading_copy_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_ReadingCopyOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     refresh_media_source_media__media_id__refresh_post: {
         parameters: {
             query?: never;
@@ -17356,8 +17352,6 @@ export interface operations {
             query?: never;
             header?: {
                 "Idempotency-Key"?: string | null;
-                "X-Nexus-Chat-Contract"?: string | null;
-                "X-Nexus-Tool-Projection"?: string | null;
             };
             path: {
                 assistant_message_id: string;
@@ -17395,8 +17389,6 @@ export interface operations {
             query?: never;
             header?: {
                 "Idempotency-Key"?: string | null;
-                "X-Nexus-Chat-Contract"?: string | null;
-                "X-Nexus-Tool-Projection"?: string | null;
             };
             path: {
                 assistant_message_id: string;
@@ -19015,14 +19007,9 @@ export interface operations {
     stream_chat_run_events_stream_chat_runs__run_id__events_get: {
         parameters: {
             query?: {
-                after?: number | null;
+                after?: number;
             };
-            header?: {
-                "X-Nexus-Chat-Contract"?: string | null;
-                "X-Nexus-Tool-Projection"?: string | null;
-                "Last-Event-ID"?: string | null;
-                "X-Nexus-SSE-Attempt"?: string | null;
-            };
+            header?: never;
             path: {
                 run_id: string;
             };
@@ -19082,37 +19069,6 @@ export interface operations {
         };
     };
     stream_metadata_events_stream_media__media_id__metadata_events_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_reading_copy_stream_media__media_id__reading_copy_get: {
         parameters: {
             query?: never;
             header?: never;

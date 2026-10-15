@@ -1,7 +1,7 @@
 // The oracle transport: ask, and follow one reading until it leaves pending.
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { sseClientDirect } from "@/lib/api/sse-client";
+import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 
 export type OracleReading = Schema<"OracleReadingOut">;
@@ -47,11 +47,11 @@ export function watchReading(
   onState: (reading: OracleReading) => void,
   onLost: () => void,
 ): () => void {
-  return sseClientDirect<OracleReading, OracleReading>({
-    path: `/stream/oracle-readings/${encodeURIComponent(id)}/events`,
+  return openStream<OracleReading, OracleReading>({
+    path: `/api/stream/oracle-readings/${encodeURIComponent(id)}/events`,
     decode: (type, reading) => {
       if (type !== "state" && type !== "done")
-        throw new Error(`Unknown SSE event type: ${type}`);
+        throw new Error(`Unknown oracle event type: ${type}`);
       return reading;
     },
     isTerminal: (reading) =>

@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Request, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession
+from nexus.logging import get_request_id
 from nexus.responses import Data
 from nexus.schemas.extension_capture import LocalFile
 from nexus.schemas.media import (
@@ -43,11 +44,7 @@ from nexus.services.capabilities import ViewerRecovery
 router = APIRouter(tags=["media"])
 
 
-def _request_id(request: Request) -> str | None:
-    return getattr(request.state, "request_id", None)
-
-
-@router.post("/media/from_url", status_code=202)
+@router.post("/media/from-url", status_code=202)
 def create_from_url(
     request_body: FromUrlRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
@@ -61,7 +58,7 @@ def create_from_url(
             viewer_id=viewer.user_id,
             url=request_body.url,
             library_ids=request_body.library_ids,
-            request_id=_request_id(request),
+            request_id=get_request_id(),
             idempotency_key=request.headers.get("Idempotency-Key"),
         )
     )
@@ -126,7 +123,6 @@ def confirm_upload_session(
     request_body: ConfirmUploadSessionRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-    request: Request,
 ) -> Data[Published]:
     return Data(
         data=media_upload_sessions.confirm_upload_session(
@@ -135,7 +131,7 @@ def confirm_upload_session(
             origin_kind="LocalFile",
             session_handle=session_handle,
             generation=request_body.generation,
-            request_id=_request_id(request),
+            request_id=get_request_id(),
         ),
     )
 
@@ -161,7 +157,6 @@ def retry_ingest(
     body: RetrySourceRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-    request: Request,
 ) -> Data[SourceRetryAdmission]:
     """Admit one source retry; metadata has its own operation contract."""
     return Data(
@@ -171,7 +166,7 @@ def retry_ingest(
             media_id=media_id,
             client_mutation_id=body.client_mutation_id,
             expected_attempt_id=body.expected_attempt_id,
-            request_id=_request_id(request),
+            request_id=get_request_id(),
         )
     )
 

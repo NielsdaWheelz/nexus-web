@@ -1,8 +1,8 @@
 """The anonymous share reader's routes, reachable only through the web BFF.
 
 The token travels only in the X-Nexus-Share-Token header and authorizes before
-any handle or Range is read. app.py's middleware stamps the public security
-headers on every response under this prefix, errors included.
+any handle or Range is read. The bff's share lane stamps the public security
+headers on every answer, errors included.
 """
 
 from collections.abc import Generator

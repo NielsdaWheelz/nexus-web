@@ -1,7 +1,7 @@
 """Sealed outward handles for activity exclusions and devices.
 
 A handle is ``<prefix>.<id>.<tag>`` in canonical base64url, the tag an HMAC
-under a per-kind key derived from ``STREAM_TOKEN_SIGNING_KEY``. A device handle
+under a per-kind key derived from ``NEXUS_HANDLE_KEY``. A device handle
 is the tag alone: a one-way pseudonym, so no raw device id leaves the server.
 """
 
@@ -50,7 +50,7 @@ def seal_device(device_id: str) -> str:
 
 
 def _tag(kind: HandleKind, payload: bytes) -> bytes:
-    root = base64.b64decode(get_settings().effective_stream_token_signing_key, validate=True)
+    root = get_settings().handle_key
     key = hmac.new(root, b"nexus-handle-key\0" + kind.domain, hashlib.sha256).digest()
     return hmac.new(key, b"nexus-handle\0" + kind.domain + payload, hashlib.sha256).digest()[:16]
 

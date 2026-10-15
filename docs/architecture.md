@@ -71,22 +71,22 @@ scaffolding.
    Clients               │                  Browser                     │
    ┌─────────┐           │   React UI (Next.js App Router, apps/web)    │
    │ Android │──WebView──▶│                                              │
-   │  shell  │           └───────┬──────────────────────────┬───────────┘
-   └─────────┘                   │ /api/* product + assets   │ /stream/* (SSE only)
-   ┌─────────┐  bearer token     │ same-origin BFF           │ stream token, direct
-   │Extension│──────────┐        ▼                           │
-   └─────────┘          │  ┌──────────────────────┐          │
-                        └─▶│  Next.js BFF (/api)   │          │
-                           │  proxy.ts: product    │          │
-                           │  auth or public asset │          │
-                           │  proxy, no logic      │          │
-                           └──────────┬────────────┘          │
-                                      │ Bearer + internal, or  │
-                                      │ public internal only    │
-                                      ▼                        ▼
+   │  shell  │           └───────┬──────────────────────────────────────┘
+   └─────────┘                   │ /api/* product, assets, /api/stream/* (SSE)
+   ┌─────────┐  bearer token     │ same-origin BFF, X-Nexus-Wire on every call
+   │Extension│──────────┐        ▼
+   └─────────┘          │  ┌───────────────────────────┐
+                        └─▶│  Next.js BFF (/api)        │
+                           │  proxy.ts: session, asset, │
+                           │  stream, copy, share and   │
+                           │  extension lanes, no logic │
+                           └──────────┬─────────────────┘
+                                      │ Bearer + internal + request id + device,
+                                      │ or the share token and internal only
+                                      ▼
                            ┌─────────────────────────────────────────────┐
                            │            FastAPI  (python/nexus)           │
-                           │  middleware: request-id → CORS → auth        │
+                           │  middleware: edge (request id, wire) → auth  │
                            │  dependency: db-session (function scope)     │
                            │  routes (transport-only) → services (logic)  │
                            └───────┬───────────────────────────┬─────────┘
@@ -115,16 +115,14 @@ scaffolding.
 ```
 
 **The one rule that explains the shape:** the browser holds no tokens and never
-calls FastAPI directly for product data. Product data calls same-origin Next.js
-`/api/*` routes, which proxy to FastAPI with a server-attached bearer and the
-internal secret. Public static assets (the Oracle plates under
-`/oracle-plates/`) are Next.js files, not API data. The **only** direct
-browser-to-FastAPI exception is Server-Sent Events: the browser streams from
-FastAPI `/stream/*` using a short-lived stream token minted through
-the BFF. Android's offline reading-copy download uses the same lane: native
-mints the same stream token through the authenticated BFF and fetches
-`/stream/media/{media_id}/reading-copy` from the `stream_base_url` it returns
-([offline](modules/offline.md)). See [`rules/layers.md`](rules/layers.md) and
+calls FastAPI directly. Product data, private assets and live streams go to
+same-origin Next.js `/api/*` routes, which proxy to FastAPI with a
+server-attached bearer and the internal secret ([api edge](modules/api-edge.md)).
+Public static assets (the Oracle plates under `/oracle-plates/`) are Next.js
+files, not API data. Android's offline reading copy is built by
+`POST /api/media/{media_id}/reading-copy` and downloaded from the signed storage
+url it answers ([offline](modules/offline.md)). See
+[`rules/layers.md`](rules/layers.md) and
 [`rules/modules/transport.md`](rules/modules/transport.md).
 
 ---
@@ -259,8 +257,9 @@ deviation from a rule is explicit, see [`rules/overrides.md`](rules/overrides.md
 ### 5.1 A normal product request (browser → data)
 
 1. A client component calls `apiFetch<T>("/api/...")` (`lib/api/client.ts`). All
-   product reads/writes go to **same-origin** `/api/*`; GETs are de-duplicated
-   in-flight; a `401 E_UNAUTHENTICATED` hard-redirects to `/login`.
+   product reads/writes go to **same-origin** `/api/*` with `X-Nexus-Wire`; a
+   `401 E_UNAUTHENTICATED` hard-redirects to `/login`; a `426` reloads the tab
+   once per build.
 2. **Next middleware** (`middleware.ts`, node runtime) attaches a per-request
    csp nonce. protected GET/HEAD and login, including rsc/prefetch, resolve entry:
    verify an active bearer or refresh once when required, forward successor cookies
@@ -269,12 +268,15 @@ deviation from a rule is explicit, see [`rules/overrides.md`](rules/overrides.md
    go to the manual unavailable surface. `/api/*`, `/auth/*`, extension start and
    other methods keep their own response owners. protected/auth responses are
    private and uncacheable; middleware never resolves a non-GET/HEAD request.
-3. The `/api/*` **route handler** is a one-liner: `return proxyToFastAPI(req, "<path>")`.
-4. **`proxyToFastAPI`** (`lib/api/proxy.ts`) does the real work: enforces a CSRF
+3. The `/api/*` catch-all **route handler** calls
+   `proxySession(request, path, "Json")`; assets, streams, the reading copy,
+   shares and the extension have their own route files and lanes.
+4. **`proxySession`** (`lib/api/proxy.ts`) does the real work: enforces a CSRF
    Origin check on mutations; resolves a refreshable session before consuming a
    request body and turns it into a bearer; forwards an allow-listed set of
    headers plus `Authorization: Bearer <supabase access token>`,
-   `X-Nexus-Internal: <secret>`, and `X-Request-ID`; applies a 30s timeout;
+   `X-Nexus-Internal: <secret>`, `X-Request-ID` and `X-Nexus-Device`; applies a
+   30s timeout;
    strips internal/`set-cookie`/auth headers off the response; and streams an
    authenticated upstream body without first materializing it in the BFF. The
    browser never sees the bearer or the internal secret. Session resolution
@@ -282,12 +284,11 @@ deviation from a rule is explicit, see [`rules/overrides.md`](rules/overrides.md
    outcomes clear cookies. The shared response finalizer owns all cookie effects
    and canonical `private, no-store` headers, including downstream failures.
 5. **FastAPI** receives the request through its middleware stack — executed in this
-   order (`python/nexus/app.py`): RequestID → StreamCORS →
+   order (`python/nexus/app.py`): Edge (request id, wire check) →
    **Auth** → route. `AuthMiddleware` (`auth/middleware.py`) verifies the JWT via
    JWKS (`auth/verifier.py`), resolves first-login **bootstrap** through its bounded
    process-local success cache (threadpool + database only on a miss), and attaches
-   a `Viewer{user_id, default_library_id, email, roles}` to `request.state`. It
-   publishes its measured phase as `nexus_auth`.
+   a `Viewer{user_id, default_library_id, email, roles}` to `request.state`.
 6. The **route handler** (`api/routes/*`) is transport-only: pull the `Viewer` and
    a DB `Session` via `Depends`, call exactly one **service** function, return
    its response model (`Data[XOut]`, per `docs/local-rules/typed-wire.md`) or
@@ -298,12 +299,9 @@ deviation from a rule is explicit, see [`rules/overrides.md`](rules/overrides.md
    connection after returned-value serialization and before body transfer.
    `RepeatableReadDbSession` shares that cleanup owner. rollback and close run in
    a shielded worker; close still runs if rollback fails. session-free error
-   handlers may render after dependency unwind. RequestID then stamps `X-Request-ID`, publishes the complete API
-   header phase as `Server-Timing: nexus_api`, preserves narrower downstream
-   phases such as Openables' `nexus_openables`, and emits the access log. The BFF
-   allow-lists those trusted timing values and appends `nexus_bff`, so same-origin
-   Resource Timing can attribute auth, service, total API, and proxy work without
-   exposing credentials or implementation detail in the response body.
+   handlers may render after dependency unwind. The edge middleware stamps
+   `X-Request-ID` on every answer and logs `http.request.completed` when the
+   request ends (a stream when it closes or its client leaves).
 
 Errors become HTTP via three exception handlers (`responses.py`): `ApiError`
 carries an `ApiErrorCode` enum mapped to a status; unhandled exceptions become a
@@ -316,25 +314,25 @@ named by the plate key the reading carries (`MediaImage kind="static"`). Next Im
 may optimize `/oracle-plates/**`; `/api/media/image` is not in
 `images.localPatterns`. A plate's bytes never change under its key.
 
-### 5.3 The SSE exception (streaming)
+### 5.3 Live streams (SSE)
 
-Streaming bypasses the BFF for data delivery:
+A stream is an ordinary session request through the BFF:
 
-1. The client mints a token: `apiFetch("/api/stream-token", {method:"POST"})` →
-   BFF → FastAPI `/internal/stream-tokens`. The token is an HS256 JWT with a 60s
-   TTL, verified by signature and claims alone (no server-side state).
-2. The client opens a raw `fetch` SSE stream **directly to FastAPI**
-   `{stream_base_url}/...` with `Authorization: Bearer <stream token>` and
-   `Last-Event-ID` (`lib/api/sse-client.ts`). The client mints a **fresh token
-   on every (re)connect**.
-3. FastAPI `/stream/*` (`api/routes/stream.py`) authenticates the stream token,
-   asserts ownership, and **tails persisted events** pushed via Postgres
-   `LISTEN/NOTIFY` — re-reading new rows in a threadpool, never blocking the loop.
-4. The client parses the SSE wire format (`lib/api/sse-stream.ts`), each stream's
-   caller decodes its events, and folds them into UI state.
+1. The client opens `openStream({path: "/api/stream/...", after})`
+   (`lib/api/stream.ts`): a cookie GET with `X-Nexus-Wire`. The BFF's `Stream`
+   lane forwards it with the session bearer and ends the body cleanly at 280 s,
+   before the route's `maxDuration = 300`.
+2. FastAPI `/stream/*` (`api/routes/stream.py`) authenticates like every route,
+   asserts ownership, and **tails committed state** woken by Postgres
+   `LISTEN/NOTIFY` — re-reading in a fresh session in a threadpool, never
+   blocking the loop; at most 64 listeners per process (one more answers 429).
+3. The client parses the SSE framing, each stream's caller decodes its events,
+   and folds them into UI state. After any cut it resumes with `?after=<id>`
+   (cursor streams) or receives the whole snapshot again (snapshot streams); a
+   401 sends the tab to login.
 
 This is used by chat runs, oracle readings, Dossier builds, media processing
-status, and the active Podcast subscription lifecycle.
+status, metadata enrichment, and the active Podcast subscription lifecycle.
 The lifecycle stream is keyed by the subscription epoch UUID while its public
 route remains viewer + Podcast addressed; every snapshot reasserts that exact
 epoch and viewer before it can cross the stream.
@@ -774,8 +772,6 @@ credentials or recovering a consumed code.
 
 Other identity surfaces:
 
-- **Stream tokens** (`services/stream_tokens.py`, route `api/routes/stream_tokens.py`):
-  HS256, 60s, stateless, for SSE.
 - **Extension sessions** (`services/extension_sessions.py`): opaque
   `nx_ext_<...>` bearer; only its sha256 is stored; revocable.
 - **Android handoff codes** (`services/auth_handoff_codes.py`): single-use,
@@ -2032,8 +2028,8 @@ open over Resume and never become panes.
   (`lib/workspace/model.ts`, isomorphic) picks the session and merges the deep link. The
   store is created from that `initialState`, so the first render already shows the
   right panes. `useWorkspaceSession` saves 1 s after a change and flushes with keepalive
-  on page hide; the BFF `PUT /api/me/workspace-session` forwards the body and puts the
-  device id from the cookie in the query — the client never reads or sends it. Column
+  on page hide; the BFF stamps the device id from the cookie as `X-Nexus-Device` — the
+  client never reads or sends it. Column
   **widths** are clamped on the client at render only (`primaryWidth`), never written
   back; a null width is the reader column, whose first-paint estimate
   (`estimatePrimaryWidthPx`) the shell's probe refines. The URL-hash fold navigates the active pane (preserving the
@@ -2042,23 +2038,21 @@ open over Resume and never become panes.
   activates Lectern; it is not a neutral alias for the previously active pane.
 - **Measurement.** The workspace pane boundary emits one bounded, authenticated
   structural failure through `/api/telemetry/client-defects`; the BFF injects the
-  serving release and FastAPI logs `rum.client_defect`. It carries pane/visit,
-  phase, command/run, structural error code, request ID, and React component
-  stack, never exception messages, request bodies, draft text, tokens, or
+  serving release and FastAPI logs `rum.client_defect` (a stale build's 426 is no
+  defect and is not reported). It carries pane/visit, structural error code,
+  request ID, and React component stack, never exception messages, request bodies, draft text, tokens, or
   provider payloads. Kept constraints: nonce-CSP + **streaming only** — no PPR,
   no `next/dynamic`, no server-emitted `modulepreload` (chunk URLs are unknown
   server-side); `React.lazy` stays the splitting mechanism (a lazy body starts
   its import while hydrating; a failed import is forgotten so "Retry pane" imports
-  again). The standard `nexus_auth`,
-  `nexus_openables`, `nexus_api`, and `nexus_bff` Server-Timing phases separate
-  auth, service, remaining API, and BFF time during manual diagnosis.
+  again).
 - **BFF / proxy / auth / SSE** (`lib/api/*`, `lib/auth/*`, `lib/supabase/*`): covered
   in §5. The browser holds **no** Supabase client and no tokens; every
   Supabase call is behind `lib/supabase/` (`cookie.ts` edge-safe, `auth.ts`
   server); `lib/auth/session.ts` `verifySession()` is the one verified-session
   boundary for protected pages, `liveSession()`/`withActionSession()` the one
-  refresh path for response owners; the SSE client mints a fresh stream token
-  per connect.
+  refresh path for response owners; live streams cross the BFF like every
+  request (`lib/api/stream.ts`).
 - **Surfaces** (`components/*`, `app/(authenticated)/**/*PaneBody.tsx`): reader,
   chat, player, notes editor, Nexus, search, contributors, libraries/
   items, settings — all rendered as pane bodies. UI primitives live in
@@ -2086,7 +2080,7 @@ and offline. While the shelf is the main document, `ShelfRouter` serves only
 packaged assets and copy files (PDF byte ranges natively) and answers every
 other subresource with a local 404. `NexusOriginClient` is the one native
 product client: fixed BFF paths for listening state, Consumption activity,
-`me`, stream tokens and reader state, with WebView cookies and the exact pinned
+`me`, reading copies and reader state, with WebView cookies and the exact pinned
 hosted `Origin`; OkHttp does not synthesize browser CSRF headers. No renderer
 supplies a URL, header, cookie or filesystem path; the hosted renderer names
 its account in `hello`, and native checks it against `GET /api/me` before any
@@ -2198,8 +2192,8 @@ The things most likely to bite you, distilled:
 1. **Never call blocking DB on the event loop** — plain `def` handlers or
    `run_in_threadpool`. request sessions are released by the function-scoped
    dependency before body transfer; don't touch the borrowed session while streaming.
-2. **The browser holds no tokens.** Product data goes through `/api/*`; only SSE
-   talks to FastAPI directly, with a short-lived stream token minted per connect.
+2. **The browser holds no tokens.** Product data and live streams go through
+   `/api/*`; nothing in the browser reaches FastAPI.
 3. **Private assets and static assets are different.** `/api/media/image` and EPUB
    assets are viewer-authenticated and unoptimized; the Oracle plates are static
    files under `/oracle-plates/`, named by key, and optimizable.
@@ -2244,7 +2238,7 @@ The things most likely to bite you, distilled:
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Repository rules / boundaries                                     | [`rules/index.md`](rules/index.md)                                                                                                                                                                     |
 | Reader behavior contract                                          | [`modules/reader-implementation.md`](modules/reader-implementation.md), [`modules/reader-design-rationale.md`](modules/reader-design-rationale.md)                                                     |
-| FastAPI bootstrap / middleware / lifecycle                        | `python/nexus/app.py`, `python/nexus/middleware/`, `python/nexus/auth/`                                                                                                                                |
+| FastAPI bootstrap / middleware / lifecycle                        | `python/nexus/app.py`, `python/nexus/api/edge.py`, `python/nexus/auth/`                                                                                                                                |
 | DB layer / sessions / LISTEN-NOTIFY                               | `python/nexus/db/` (`engine.py`, `session.py`, `listen.py`)                                                                                                                                            |
 | The schema                                                        | `migrations/alembic/versions/0236_baseline_schema.sql` (the squashed baseline) + the revisions after it + the live database (`pg_dump --schema-only`); `python/nexus/db/models.py` is the ORM-mapped classes only                                                               |
 | Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
@@ -2261,7 +2255,7 @@ The things most likely to bite you, distilled:
 | Libraries / contributors / notes                                  | `python/nexus/services/{library_governance,library_entries,library_invitations,contributors,notes}.py`                                                                                                 |
 | Resource grants / public sharing                                  | [`modules/resource-sharing.md`](modules/resource-sharing.md), `python/nexus/services/{resource_grants,resource_sharing,public_resource_sharing}.py`, `apps/web/src/{components,lib}/sharing/`, `apps/web/src/app/s/` |
 | Podcasts / playback                                               | `python/nexus/services/podcasts/`, `python/nexus/services/consumption/`, `python/nexus/api/routes/{lectern,listening_state}.py`                                                                        |
-| Auth / stream tokens                                              | `python/nexus/services/stream_tokens.py`                                  , `python/nexus/auth/`                                                                                                          |
+| Auth                                                              | `python/nexus/auth/`                                                                                                                                                                                   |
 | Frontend BFF / auth / SSE                                         | `apps/web/src/lib/{api,auth,supabase}/`                                                                                                                                                                |
 | Workspace / panes / mobile viewport                               | `apps/web/src/lib/{workspace,panes,mobileViewport}/`, `apps/web/src/components/workspace/`                                                                                                             |
 | Desktop Nexus / mobile Nexus task                                 | `apps/web/src/components/{nexus,switchboard}/`, `apps/web/src/lib/{nexus,switchboard}/`                                                                                                                |

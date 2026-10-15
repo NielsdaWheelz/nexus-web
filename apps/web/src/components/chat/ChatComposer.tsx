@@ -56,7 +56,6 @@ export default function ChatComposer(props: {
   onOpenQuote(selection: Schema<"ReaderSelectionOut">): void;
   onAccepted(receipt: AcceptedReceipt): void;
   onRejected(code: RejectionCode): void;
-  reloadRequestId: string | null;
   initialText: string;
   focusKey: string | null;
   isPaneActive: boolean;
@@ -71,10 +70,8 @@ export default function ChatComposer(props: {
   const composing = useRef(false);
   const focused = useRef<string | null>(null);
   const [error, setError] = useState<FeedbackContent | null>(null);
-  const [reload, setReload] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const reloadId = reload ?? props.reloadRequestId;
 
   // An uninitialized draft inherits the answer it replies to, else the seed.
   const fresh = draft.selection.kind === "Uninitialized" && !draft.pending;
@@ -95,7 +92,7 @@ export default function ChatComposer(props: {
   }, [focusKey, isPaneActive]);
 
   const unknown = draft.pending !== null && !sending;
-  const locked = draft.pending !== null || reloadId !== null;
+  const locked = draft.pending !== null;
   const reason = catalog ? unavailability(catalog, draft.selection) : null;
   const quoted = quote?.kind === "Ready" ? quote.selection : null;
   const canSend =
@@ -108,7 +105,6 @@ export default function ChatComposer(props: {
 
   const finish = (outcome: SendOutcome) => {
     const failure = outcome.kind === "Failed" ? outcome.failure : null;
-    if (failure?.kind === "Reload") return setReload(failure.requestId);
     if (failure?.kind === "Defect") return setDefect(failure);
     // an ambiguous failure keeps its command: "Send status unknown"
     if (failure?.kind === "Feedback" && !failure.ambiguous)
@@ -183,24 +179,7 @@ export default function ChatComposer(props: {
         {error ? (
           <FeedbackNotice content={error} announcement="Assertive" />
         ) : null}
-        {reloadId !== null ? (
-          <FeedbackNotice
-            announcement="Assertive"
-            content={{
-              tone: "Warning",
-              title: "Reload Nexus to continue",
-              message:
-                "This tab speaks an older chat contract. Your draft and sent messages are saved.",
-              requestId: reloadId || undefined,
-            }}
-            actions={[
-              {
-                label: "Reload Nexus",
-                onClick: () => window.location.reload(),
-              },
-            ]}
-          />
-        ) : unknown ? (
+        {unknown ? (
           <p className={styles.alert} role="alert">
             Send status unknown. The message and its exact model choice are
             locked for retry.

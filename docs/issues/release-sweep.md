@@ -18,9 +18,9 @@ there is no compatibility arm.
 - **firefox extension**: ship the build from the release sha. The old one decodes
   `GET /session` email/display_name as Presence and rejects the new `null`, so capture refuses
   to start.
-- **web**: Vercel deploys the same sha. A chat tab open across the deploy gets the reload
-  prompt (`X-Nexus-Chat-Contract` 5 → 6); every other tab fails (422 or a decode defect)
-  until reloaded; there is no wire-version header yet (the skew slice adds `X-Nexus-Wire`).
+- **web**: Vercel deploys the same sha. A tab open across the deploy sends no `X-Nexus-Wire`
+  (the edge slice ships in the same release), so the api refuses its every request with 426
+  and the tab fails until reloaded ([release-edge](release-edge.md)).
 
 ## preflight / env
 

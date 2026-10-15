@@ -1,8 +1,8 @@
 """Consumption wire: the closed base, activity capture, the Lectern, the player descriptor,
 listening writes and the consumption commands. Absence is null.
 
-The capture body is posted by the web and the Android app; raw device ids arrive only through
-the BFF.
+The capture body is posted by the web and the Android app; the device is the header the bff
+stamps, never a body field.
 """
 
 from __future__ import annotations
@@ -99,7 +99,6 @@ ActivityBatchIn = Annotated[
 
 class ActivityRecordIn(Closed):
     media_ref: str = Field(min_length=1, max_length=100)
-    device_id: str = Field(min_length=1, max_length=200)
     device_class: ActivityDeviceClass
     batch: ActivityBatchIn
 

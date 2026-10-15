@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.logging import get_request_id
 from nexus.responses import Data, ok
 from nexus.schemas.contributors import MediaAuthorsOut, MediaAuthorsPutRequest
 from nexus.schemas.library import LibraryPlacementOptionOut
@@ -92,7 +93,6 @@ def enrich_media_metadata(
     body: MetadataEnrichmentRequest,
     viewer: ViewerDep,
     db: DbSession,
-    request: Request,
 ) -> Data[MetadataEnrichmentAccepted]:
     return Data(
         data=metadata_dispatch.admit_metadata_enrichment(
@@ -100,7 +100,7 @@ def enrich_media_metadata(
             viewer_id=viewer.user_id,
             media_id=media_id,
             request=body,
-            request_id=getattr(request.state, "request_id", None),
+            request_id=get_request_id(),
         )
     )
 
@@ -189,14 +189,14 @@ def remove_media_library(
 
 @router.post("/media/{media_id}/refresh", status_code=202)
 def refresh_media_source(
-    media_id: UUID, body: RefreshSourceRequest, viewer: ViewerDep, db: DbSession, request: Request
+    media_id: UUID, body: RefreshSourceRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[SourceRefreshAdmission]:
     return Data(
         data=media_source_ingest.refresh_source_for_viewer(
             db=db,
             viewer_id=viewer.user_id,
             media_id=media_id,
-            request_id=getattr(request.state, "request_id", None),
+            request_id=get_request_id(),
             client_mutation_id=body.client_mutation_id,
             expected_attempt_id=body.expected_attempt_id,
         )

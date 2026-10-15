@@ -67,9 +67,10 @@ All breakdowns, sessions, streaks, and Year presentation derive from effective
 
 ## Boundaries
 
-`POST /consumption/activity` is the observation endpoint. The browser BFF
-alone injects the private `nx_device`, overwriting any client value, and bounds a
-batch at 48,000 bytes; FastAPI is the sole validator of the body. Each
+`POST /consumption/activity` is the observation endpoint. The device is the
+private `nx_device`, which only the bff names (`X-Nexus-Device`); a body naming
+one is refused. FastAPI is the sole validator of the body (at most 120 spans).
+Each
 span's `captureKey` provides fact identity, so a retried batch inserts nothing
 and a reused key with different facts conflicts.
 

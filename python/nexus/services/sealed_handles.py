@@ -151,25 +151,10 @@ class DiscoveryTargetHandle(str):
         )
 
 
-def _root_key() -> bytes:
-    encoded = get_settings().effective_stream_token_signing_key
-    try:
-        root = base64.b64decode(encoded, validate=True)
-    except (binascii.Error, ValueError) as exc:
-        # justify-defect: this owner validates the configured signing root at use;
-        # malformed base64 is a configuration defect, not invalid handle input.
-        raise RuntimeError("STREAM_TOKEN_SIGNING_KEY is not strict base64") from exc
-    if len(root) < 32:
-        # justify-defect: a shorter configured root violates the sealed-handle
-        # security contract and cannot be a product-facing validation branch.
-        raise RuntimeError("STREAM_TOKEN_SIGNING_KEY must decode to at least 32 bytes")
-    return root
-
-
 def derive_handle_key(domain: str, version: str) -> bytes:
     """Derive a versioned handle key for trusted ASCII domain and version constants."""
     material = _HANDLE_KEY_INPUT_PREFIX + domain.encode("ascii") + b"\0" + version.encode("ascii")
-    return hmac.new(_root_key(), material, hashlib.sha256).digest()
+    return hmac.new(get_settings().handle_key, material, hashlib.sha256).digest()
 
 
 def _authenticated_input(spec: _EntityHandleSpec, entity_id: UUID) -> bytes:
@@ -241,7 +226,7 @@ def _parse_entity_wire(raw: str, spec: _EntityHandleSpec) -> tuple[UUID, bytes]:
 
 
 def _discovery_target_key() -> bytes:
-    return hmac.new(_root_key(), _DISCOVERY_TARGET_KEY_INPUT, hashlib.sha256).digest()
+    return hmac.new(get_settings().handle_key, _DISCOVERY_TARGET_KEY_INPUT, hashlib.sha256).digest()
 
 
 def _discovery_target_tag(payload: bytes) -> bytes:

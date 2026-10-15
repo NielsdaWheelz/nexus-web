@@ -1,18 +1,15 @@
 """Reader routes: document, deep-link targets, map, state, file, reading copy."""
 
-import os
 import tempfile
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from anyio import CancelScope, to_thread
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import FileResponse
-from starlette.types import Receive, Scope, Send
 
-from nexus.api.deps import get_stream_viewer
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.config import get_settings
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
@@ -22,6 +19,7 @@ from nexus.schemas.reader import (
     ReaderCursorSnapshot,
     ReaderTargetKind,
     ReaderTargetOut,
+    ReadingCopyOut,
 )
 from nexus.schemas.reader_document import ReaderDocumentOut
 from nexus.schemas.reader_document_map import ReaderDocumentMapOut
@@ -33,17 +31,9 @@ from nexus.services import (
 )
 from nexus.services.consumption import service as consumption_service
 from nexus.services.resource_graph import reader_targets
+from nexus.storage.client import get_storage_client
 
 router = APIRouter(tags=["media"])
-
-
-class _ReadingCopyResponse(FileResponse):
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        try:
-            await super().__call__(scope, receive, send)
-        finally:
-            with CancelScope(shield=True):
-                await to_thread.run_sync(os.unlink, self.path)
 
 
 @router.get("/media/{media_id}/reader")
@@ -124,24 +114,31 @@ def get_media_file(
     )
 
 
-@router.get("/stream/media/{media_id}/reading-copy")
-def get_reading_copy(
+@router.post("/media/{media_id}/reading-copy")
+def create_reading_copy(
     media_id: UUID,
-    viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
+    viewer: Annotated[Viewer, Depends(get_viewer)],
     db: RepeatableReadDbSession,
-) -> FileResponse:
-    """The offline reading copy, built synchronously into a temp file that leaves with the response."""
-    descriptor, name = tempfile.mkstemp(prefix="nexus-reading-copy-", suffix=".zip")
-    os.close(descriptor)
-    try:
+) -> Data[ReadingCopyOut]:
+    """Build the offline reading copy, store it and hand back a signed url.
+
+    Each call stores a fresh object under the media's prefix that no row owns, so the
+    storage orphan sweep reclaims it after its minimum age; a retry builds another.
+    """
+    key = f"media/{media_id}/reading-copies/{uuid4()}.zip"
+    storage = get_storage_client()
+    with tempfile.TemporaryDirectory(prefix="nexus-reading-copy-") as directory:
+        path = Path(directory) / "copy.zip"
         generation = reading_copy.build_reading_copy(
-            db, viewer_id=viewer_id, media_id=media_id, path=Path(name)
+            db, viewer_id=viewer.user_id, media_id=media_id, path=path
         )
-    except BaseException:
-        os.unlink(name)
-        raise
-    return _ReadingCopyResponse(
-        name,
-        media_type="application/zip",
-        headers={"Cache-Control": "private, no-store", "Nexus-Reader-Generation": str(generation)},
+        with path.open("rb") as file:
+            storage.put_object_stream(key, file, content_type="application/zip")
+    expiry = get_settings().signed_url_expiry_s
+    return Data(
+        data=ReadingCopyOut(
+            url=storage.sign_download(key, expires_in=expiry),
+            expires_at=datetime.now(UTC) + timedelta(seconds=expiry),
+            generation=generation,
+        )
     )

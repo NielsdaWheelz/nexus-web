@@ -1,7 +1,7 @@
 """Player routes: the fresh descriptor, listening writes, the preview hand-off and activity
 capture. Transport only; the consumption service owns sessions and fences. This router owns
-static ``/media/{id}/<literal>`` paths, so it registers before the ``media`` router. The BFF
-injects ``device_id`` into the capture body from the device cookie.
+static ``/media/{id}/<literal>`` paths, so it registers before the ``media`` router. Activity
+lands on the device the bff names (``X-Nexus-Device``), never one the body names.
 """
 
 from typing import Annotated
@@ -9,6 +9,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response
 
+from nexus.api.deps import DeviceId
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import RepeatableReadDbSession
 from nexus.errors import InvalidRequestError
@@ -51,7 +52,7 @@ def install_preview_position(
 
 @router.post("/consumption/activity", status_code=204, tags=["consumption"])
 def post_activity(
-    body: ActivityRecordIn, viewer: Annotated[Viewer, Depends(get_viewer)]
+    body: ActivityRecordIn, device_id: DeviceId, viewer: Annotated[Viewer, Depends(get_viewer)]
 ) -> Response:
     ref = parse_resource_ref(body.media_ref)
     if isinstance(ref, ResourceRefParseFailure) or ref.scheme != "media":
@@ -59,7 +60,7 @@ def post_activity(
     activity.record_batch(
         viewer.user_id,
         media_id=ref.id,
-        device_id=body.device_id,
+        device_id=device_id,
         device_class=body.device_class,
         batch=body.batch,
     )

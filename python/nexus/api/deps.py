@@ -1,64 +1,21 @@
-"""FastAPI dependencies owned by the API layer."""
+"""FastAPI dependencies owned by the api layer."""
 
 from typing import Annotated
-from uuid import UUID
 
 from fastapi import Header, Request
 
-from nexus.auth.bearer import parse_bearer_token
-from nexus.errors import ApiError, ApiErrorCode
-from nexus.services import stream_tokens
 from nexus.services.generation.catalog import Catalog
-from nexus.services.tools.contract import PROJECTION_REVISION
 
-TOOL_PROJECTION_HEADER = "X-Nexus-Tool-Projection"
-CHAT_CONTRACT_HEADER = "X-Nexus-Chat-Contract"
-CHAT_CONTRACT_REVISION = "6"
-
-
-def require_chat_contract_revision(
-    revision: Annotated[str | None, Header(alias=CHAT_CONTRACT_HEADER)] = None,
-) -> None:
-    if revision != CHAT_CONTRACT_REVISION:
-        raise ApiError(
-            ApiErrorCode.E_CHAT_CONTRACT_RELOAD_REQUIRED,
-            "Reload Nexus to continue",
-        )
-
-
-def require_tool_projection_revision(
-    revision: Annotated[str | None, Header(alias=TOOL_PROJECTION_HEADER)] = None,
-) -> None:
-    """Reject stale tool clients after HTTP middleware authentication."""
-
-    if revision != PROJECTION_REVISION:
-        raise ApiError(
-            ApiErrorCode.E_TOOL_PROJECTION_RELOAD_REQUIRED,
-            "Reload Nexus to continue",
-        )
-
-
-def get_stream_viewer(request: Request) -> UUID:
-    """Authenticate a browser-callable SSE request via its stream-token bearer.
-
-    Shared by the chat-run, oracle, and media event streams, so it lives here
-    rather than in any one route module.
-    """
-    token = parse_bearer_token(request.headers.get("authorization"))
-    if token is None:
-        raise ApiError(
-            ApiErrorCode.E_STREAM_TOKEN_INVALID, "Missing or invalid Authorization header"
-        )
-    return stream_tokens.verify_stream_token(token)
+DeviceId = Annotated[str, Header(alias="X-Nexus-Device", min_length=1, max_length=200)]
+"""The caller's device, named only by the bff from its httpOnly cookie (I7); a request
+without it answers 400 ``E_INVALID_REQUEST``."""
 
 
 def get_generation_catalog(request: Request) -> Catalog:
-    """Return the one process-owned generation catalog."""
-
+    """The one process-owned generation catalog."""
     service = getattr(request.app.state, "generation_catalog", None)
-    # justify-service-invariant-check: Starlette app.state is intentionally
-    # dynamic, so this boundary must turn incomplete composition into one loud
-    # operator defect instead of leaking Any into request handlers.
+    # justify-service-invariant-check: app.state is dynamic; an incomplete composition
+    # is one loud operator defect, not Any leaking into handlers.
     if not isinstance(service, Catalog):
         raise RuntimeError("generation catalog is not initialized")
     return service

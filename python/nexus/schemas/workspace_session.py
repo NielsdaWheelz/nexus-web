@@ -4,7 +4,6 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-DEVICE_ID_MAX_LENGTH = 200
 MAX_PANES = 12
 MAX_PANE_HISTORY = 12
 MAX_TOTAL_HISTORY = 48

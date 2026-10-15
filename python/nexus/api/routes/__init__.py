@@ -1,8 +1,4 @@
-"""API route definitions.
-
-The factory takes its two deployment toggles as arguments: the app passes its
-settings, and ``nexus.wire_schema`` passes True for both to describe every route.
-"""
+"""Every api route, in one router: the app mounts it and ``nexus.wire_schema`` describes it."""
 
 from fastapi import APIRouter
 
@@ -15,6 +11,7 @@ from nexus.api.routes.connection_discovery import router as connection_discovery
 from nexus.api.routes.consumption_activity import router as consumption_activity_router
 from nexus.api.routes.contributors import router as contributors_router
 from nexus.api.routes.dossiers import router as dossiers_router
+from nexus.api.routes.email_ingest import router as email_ingest_router
 from nexus.api.routes.extension_captures import router as extension_captures_router
 from nexus.api.routes.extension_sessions import router as extension_sessions_router
 from nexus.api.routes.highlights import router as highlights_router
@@ -40,13 +37,11 @@ from nexus.api.routes.resource_items import router as resource_items_router
 from nexus.api.routes.resource_shares import router as resource_shares_router
 from nexus.api.routes.search import router as search_router
 from nexus.api.routes.stream import router as stream_router
-from nexus.api.routes.stream_tokens import router as stream_tokens_router
 from nexus.api.routes.telemetry import router as telemetry_router
 from nexus.api.routes.users import router as users_router
 
 
-def create_api_router(*, podcasts: bool, email_ingest: bool) -> APIRouter:
-    """Every API route, with the podcast and email-ingest routers when enabled."""
+def create_api_router() -> APIRouter:
     api_router = APIRouter()
     api_router.include_router(assistant_writes_router)
     api_router.include_router(operational_router)
@@ -89,16 +84,7 @@ def create_api_router(*, podcasts: bool, email_ingest: bool) -> APIRouter:
     # POST /consumption/commands); the player's media paths are on playback_router above.
     api_router.include_router(lectern_router)
     api_router.include_router(consumption_activity_router)
-    if podcasts:
-        api_router.include_router(podcasts_router)
-    if email_ingest:
-        from nexus.api.routes.email_ingest import router as email_ingest_router
-
-        api_router.include_router(email_ingest_router)
-
-    # Browser-callable SSE event streams (all under /stream/) + the BFF
-    # stream-token mint. Tags are self-declared on each router.
+    api_router.include_router(podcasts_router)
+    api_router.include_router(email_ingest_router)
     api_router.include_router(stream_router)
-    api_router.include_router(stream_tokens_router)
-
     return api_router

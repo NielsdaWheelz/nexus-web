@@ -110,9 +110,10 @@ generation.
 
 ## Stream, Reconnect, Recovery
 
-A tail opens `GET /stream/chat-runs/{run_id}/events?after=N` through the shared
-`openGenerationRunStream` (eight automatic reconnects, 1–8 s backoff with
-jitter, `Last-Event-ID` resume inside one tail). A pending answer found on a
+A tail opens `GET /api/stream/chat-runs/{run_id}/events?after=N` through the
+shared `openStream` (eight automatic reconnects, 1–8 s backoff with jitter,
+`?after=` resume inside one tail; the bff's planned cut at 280 s resumes at
+once; [api edge](api-edge.md)). A pending answer found on a
 tree read is tailed from event 0: a reload replays the run's whole durable event
 log, so the overlay rebuilds itself without a server fold. Events at or below
 the overlay's last sequence are ignored.
@@ -125,7 +126,8 @@ shows it or tails it again from the overlay's last sequence; it never calls
 `/rerun`. A modeled read failure during Reconnect shows **Couldn’t reconnect**
 with its request id, and retry only when the failure was ambiguous. The
 browser's `online` event reconnects every `Lost` overlay. A `429` from the
-LISTEN cap is an ordinary lost stream: the answer recovers through Reconnect.
+LISTEN cap backs off and reconnects like a network failure; a `401` is final and
+goes to login.
 
 ## Pane, Inspector And Dossier
 
@@ -164,7 +166,7 @@ conversation via `POST /conversations` and opens it as a `Conversation` pane.
 A missing or foreign conversation is `404 E_CONVERSATION_NOT_FOUND`; the pane
 shows "This chat couldn’t be opened." with the server's copy. `chatFailure`
 (`lib/chat/wire.ts`) is total over `ApiError`: auth goes to the auth boundary,
-a contract mismatch to the reload notice, a same-system defect to the error
+a wire mismatch (426) to the "Nexus was updated" copy, a same-system defect to the error
 boundary, and every other code to quiet feedback from one copy table
 (`failureDetail`), which also words modeled send rejections.
 
@@ -280,8 +282,9 @@ evidence, job and the receipt commit atomically,
 and admission sets the conversation's active leaf to the new assistant. A modeled rejection rolls provisional writes back to a savepoint and
 commits only its closed reason. The response is
 `{data:{idempotency_key,outcome:Accepted|Rejected}}`; it contains no run
-projection. Every chat route requires `X-Nexus-Chat-Contract: 5`; an older tab
-gets `409 E_CHAT_CONTRACT_RELOAD_REQUIRED` and the reload notice.
+projection. A send refused with 426 `E_WIRE_MISMATCH` was never admitted: it is
+a definite failure, so the draft stays a plain unsent draft across the tab's
+reload.
 
 ### Drafts
 

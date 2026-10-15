@@ -65,7 +65,7 @@ through the public allowlist: unit ids are ordinals, html passes `public_html`,
 no embeds and no source issues; a PDF's file is `/api/public/resource-share/file`.
 `/s` mounts it in the shared reader (`lib/documentReader`) read-only, opened at
 the shared highlight. EPUB images are fetched by handles sealed to (grant,
-media, content revision): HMAC under `STREAM_TOKEN_SIGNING_KEY`, byte-stable
+media, content revision): HMAC under `NEXUS_HANDLE_KEY`, byte-stable
 across releases, so a content change fails old handles closed. PDF bytes stream through FastAPI with
 the token reauthorized on every range request; there are no signed storage
 URLs, and uvicorn aborts a body that disagrees with its Content-Length.

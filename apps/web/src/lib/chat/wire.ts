@@ -2,7 +2,6 @@ import type { FeedbackContent } from "@/components/feedback/Feedback";
 import {
   apiTransportFeedback,
   isApiError,
-  isChatReloadRequired,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -33,7 +32,6 @@ export type BranchAnchor =
 /** Where a failed chat call goes. Total over ApiError: nothing here throws. */
 export type ChatFailure =
   | { kind: "Handled" } // the auth boundary took it
-  | { kind: "Reload"; requestId: string } // this tab speaks an old contract
   | { kind: "Defect"; error: unknown } // thrown in render by its owner
   | { kind: "Feedback"; feedback: FeedbackContent; ambiguous: boolean };
 
@@ -74,8 +72,6 @@ export const failureDetail = (code: string) =>
 
 export function chatFailure(error: unknown, title: string): ChatFailure {
   if (handleUnauthenticatedApiError(error)) return { kind: "Handled" };
-  if (isChatReloadRequired(error))
-    return { kind: "Reload", requestId: error.requestId ?? "" };
   if (!isApiError(error) || isSameSystemApiDefect(error))
     return { kind: "Defect", error };
   const feedback = apiTransportFeedback(error, title) ?? {

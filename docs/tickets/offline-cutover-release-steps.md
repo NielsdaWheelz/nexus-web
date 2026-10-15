@@ -60,8 +60,9 @@ do not install the new apk before step 2.
 
 ## build inputs
 
-`NEXUS_ANDROID_RELEASE_API_ORIGIN` is no longer read; the reading-copy origin
-is the `stream_base_url` each stream token carries. passing it is harmless;
+`NEXUS_ANDROID_RELEASE_API_ORIGIN` is no longer read; a reading copy comes from
+`POST /api/media/{id}/reading-copy` on the web origin and the signed storage url
+it answers. passing it is harmless;
 drop it from release notes and the release machine's environment.
 
 ## acceptance
