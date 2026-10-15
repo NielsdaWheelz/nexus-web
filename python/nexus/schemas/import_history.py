@@ -22,10 +22,6 @@ from uuid import UUID
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter
 
 from nexus.schemas.metadata_enrichment import MetadataFailureCode, MetadataOperationOut
-from nexus.schemas.upload_failures import (
-    UploadTransportFailure,
-    UploadVerificationFailureCode,
-)
 
 SourceStage = Literal["Upload", "Validate", "Extract", "Finalize", "SourceProcessing"]
 Stage = SourceStage | Literal["Index", "Metadata"]
@@ -55,6 +51,11 @@ EventType = Literal[
 ]
 
 FailureOrigin = Literal["Execution", "Domain"]
+
+UploadVerificationFailureCode = Literal[
+    "E_SOURCE_INTEGRITY", "E_INVALID_FILE_TYPE", "E_FILE_TOO_LARGE", "E_CAPTURE_TOO_LARGE"
+]
+"""The deterministic upload rejections a session records (``Rejected.code``)."""
 
 _OWNER_FAILURE_CODES = Literal[
     "E_ARCHIVE_UNSAFE",
@@ -165,12 +166,11 @@ class UploadExecutionStarted(_HistoryModel):
 
 
 class UploadFailed(_HistoryModel):
-    """A transport is a client-reported upload failure; null is a
-    server-side verification rejection whose code is on the envelope."""
+    """A failed upload generation; the envelope's code says why (a verification
+    rejection, or ``E_UPLOAD_TRANSPORT_FAILED`` on rows from before 0283)."""
 
     kind: Literal["UploadFailed"] = "UploadFailed"
     generation: int
-    transport: UploadTransportFailure | None
 
 
 class UploadRecoveryAccepted(_HistoryModel):

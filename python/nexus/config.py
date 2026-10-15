@@ -29,9 +29,6 @@ from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
-# Cross-runtime upload safety contract. Keep this equal to
-# `DIRECT_UPLOAD_PUT_TIMEOUT_MS` in `apps/web/src/lib/imports/ingest.ts`.
-DIRECT_UPLOAD_PUT_TIMEOUT_SECONDS = 240
 # The one background-worker memory limit. It is deployment shape, not per-environment
 # configuration, so it is a constant here and `mem_limit: 448m` in
 # `deploy/hetzner/docker-compose.yml`; the cgroup readiness check proves at startup
@@ -130,15 +127,9 @@ class Settings(BaseSettings):
         default=30.0, alias="R2_READ_TIMEOUT_SECONDS", gt=0, le=60
     )
 
-    # Media teardown: durable cleanup timing for the media-deletion job family
-    # (media_teardown, storage_object_cleanup, storage_orphan_sweep).
+    # Storage cleanup timing: the media teardown's grace and the orphan sweep.
     media_teardown_cleanup_grace_seconds: int = Field(
         default=60, alias="MEDIA_TEARDOWN_CLEANUP_GRACE_SECONDS", ge=0
-    )
-    # writeMayLandUntil horizon for a durable final-sweep record. Must exceed
-    # both bounded server writes and the browser's direct-upload PUT deadline.
-    storage_object_cleanup_write_window_seconds: int = Field(
-        default=300, alias="STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS", gt=0
     )
     storage_orphan_sweep_interval_seconds: int = Field(
         default=21600, alias="STORAGE_ORPHAN_SWEEP_INTERVAL_SECONDS", gt=0
@@ -372,7 +363,6 @@ class Settings(BaseSettings):
         self._validate_database_origin()
         self._validate_deployed_storage()
         self._validate_handle_key()
-        self._validate_storage_lifecycle()
         self._validate_transcript_embedding_dimensions()
         self._validate_deployed_browse_provider()
         self._validate_deployed_generation_runtime()
@@ -449,19 +439,6 @@ class Settings(BaseSettings):
             raise ValueError("NEXUS_HANDLE_KEY must be strict base64") from exc
         if len(key) < 32:
             raise ValueError("NEXUS_HANDLE_KEY must decode to at least 32 bytes")
-
-    def _validate_storage_lifecycle(self) -> None:
-        if self.storage_object_cleanup_write_window_seconds <= self.r2_read_timeout_seconds:
-            raise ValueError(
-                "STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS must be greater than "
-                "R2_READ_TIMEOUT_SECONDS so a delayed writer can be aborted before "
-                "its reservation lapses."
-            )
-        if self.storage_object_cleanup_write_window_seconds <= DIRECT_UPLOAD_PUT_TIMEOUT_SECONDS:
-            raise ValueError(
-                "STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS must be greater than the "
-                f"{DIRECT_UPLOAD_PUT_TIMEOUT_SECONDS}-second browser direct-upload PUT timeout."
-            )
 
     def _validate_transcript_embedding_dimensions(self) -> None:
         if self.transcript_embedding_dimensions != TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS:

@@ -35,10 +35,7 @@ export type RecoveryRestriction = NonNullable<
   SourceImportObligation["unavailable_reason"]
 >;
 export type ImportsView = "NeedsAttention" | "InProgress" | "History";
-export type UploadVerificationCode = Extract<
-  Schema<"NeedsAttention">["failure"],
-  { kind: "VerificationFailed" }
->["code"];
+export type UploadVerificationCode = Schema<"Rejected">["code"];
 
 /**
  * The closed set of outcomes the upload-session endpoints declare. Each
@@ -52,21 +49,16 @@ export type UploadSessionOutcome =
       readonly code: UploadVerificationCode;
     }
   | {
-      readonly kind: /** Imports owns an unresolved obligation for this session. */
-      | "NeedsAttention"
-        /** No staged bytes for this generation; send the same file again. */
-        | "BytesMissing"
+      readonly kind: /** The bytes never landed; sending the same id again re-opens the upload. */
+      | "BytesMissing"
         /** This attempt no longer owns the session; Imports is authoritative. */
         | "Superseded"
-        /** The identity this command named is stale. */
-        | "Conflicted"
-        /** Acceptance is unknown; replaying the same intent converges. */
+        /** Acceptance is unknown; sending the same id again converges. */
         | "Unresolved"
         /** Terminal for this intent; only a new import can succeed. */
         | "UnsupportedFileType"
         | "FileTooLarge"
         | "LibraryForbidden"
-        | "IntentChanged"
         | "FileMismatch"
         /** This client composed a request the endpoint forbids: a defect. */
         | "IntentMalformed";

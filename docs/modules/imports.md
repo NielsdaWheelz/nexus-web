@@ -22,7 +22,7 @@ classify before filtering. attention considers only attention obligations; progr
 
 four authenticated repeatable-read routes return their models through `Data`: `/imports/summary` (`ImportSummary`), `/imports` (`ImportPage`), `/imports/{ref}` (`ImportDetail`) and `/imports/{ref}/history` (`HistoryPage`). snake-case json, plain nullable and always-sent fields; the web reads them as generated types (`lib/imports/api.ts`) and decodes nothing by hand. `ImportPage` owns its consistency checks (item count ≤ matched count, unique refs, a continuing page is nonempty); `ImportDetail` owns issue-count equality. pages contain flat server-ordered items, without stage groups or stage totals.
 
-a published upload keeps its `upload:<handle>` identity; the server owns the ref grammar. the url decoder admits a `?selected=` only as `upload:` or `media:` and one path segment (no `/`), so it cannot reach `/imports/summary` or another route; anything else is absent. a ref the server rejects (400 `E_INVALID_REQUEST`) or does not know (404 `E_IMPORT_NOT_FOUND`) reads "This import is no longer available".
+a published upload keeps its `upload:<session id>` identity; the server owns the ref grammar. the url decoder admits a `?selected=` only as `upload:` or `media:` and one path segment (no `/`), so it cannot reach `/imports/summary` or another route; anything else is absent. a ref the server rejects (400 `E_INVALID_REQUEST`) or does not know (404 `E_IMPORT_NOT_FOUND`) reads "This import is no longer available".
 
 every read is a pane-free `usePaneFreeServerValue` (`lib/api/serverState.tsx`): it loads on its key, refetches when its `stale` string changes, keeps its data while it refetches, coalesces (one queued run, never aborting the one in flight), keeps a failed refetch's error beside the last good data, retries transport failures three times, sends 401 to the sign-in handler and throws defects in render.
 
@@ -33,7 +33,7 @@ every read is a pane-free `usePaneFreeServerValue` (`lib/api/serverState.tsx`): 
 - polling: every 5 s while the newest summary read succeeded, `unfinished_work_count > 0`, the document is visible, and the pane is open or a wake happened within the last 15 minutes. this count covers distinct unfinished source/index/metadata jobs across attempts and revisions, plus active uploads or applicable obligations without such a job. attention precedence and inapplicable older work cannot stop observation. a failed summary read stops polling until the next wake or Refresh.
 - invalidation is in-tab only: other tabs catch up on their next wake or poll.
 - metadata admission and personal review invalidate imports on success or replay, so an idle summary wakes. review reconnects the media's metadata observer without a bibliography change event.
-- upload commands (`dispatchUpload`) are pending per `handle|command`, so the row and the inspector both show "Starting…"; a duplicate in flight is ignored and a refusal is the caller's to report.
+- upload commands (`dispatchUpload`) are pending per `session id|command`, so the row and the inspector both show "Starting…"; a duplicate in flight is ignored and a refusal is the caller's to report.
 
 ## lists
 
@@ -65,7 +65,7 @@ the owner of import, upload, and acquisition copy. `FAILURE_COPY` remains exhaus
 
 ## acquisition (`lib/imports/ingest.ts`)
 
-`addMediaFromUrl`, `uploadIngestFile`, `retryUploadSession`, `removeUploadSession` and `captureSourceUrl`; see [add content](add-content.md) for the upload-session protocol. each endpoint's declared codes map to one `UploadSessionOutcome`; the outcomes that change what Imports owes invalidate it. create/attention/publication/replay receipts carry producer-owned exact refs. browser retry keeps basic file validation; the server owns normalized filename, content type, size and generation admission before any signed put.
+`addMediaFromUrl`, `uploadIngestFile` and `removeUploadSession`; see [ingest](ingest.md) for the upload-session protocol. each endpoint's declared codes map to one `UploadSessionOutcome`; the outcomes that change what Imports owes invalidate it. create/publication receipts carry producer-owned exact refs. Retry upload keeps basic file validation and sends the chosen file as `uploadIngestFile({file, libraryIds: [], id: <session id>})`: the server owns normalized filename, content type and size admission (another intent is 409 `E_UPLOAD_INTENT_MISMATCH` before any byte), and the session advances (or answers what it published) under its first destinations; `Superseded` counts as done. an `UploadFailed` history row is narrated from its envelope code.
 
 ## native x sources
 

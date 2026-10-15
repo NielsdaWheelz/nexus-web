@@ -106,8 +106,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] return memento / collections · 2026-10-09 workspace harness · keyboard Back with no dwell focuses the pane landmark, not the activated row: [ticket](tickets/quick-keyboard-back-focuses-the-landmark.md).
 - [open] nexus / mobile focus · 2026-10-09 workspace harness · mobile nexus Places navigates in place and leaves focus on the body: [ticket](tickets/mobile-nexus-places-leaves-focus-on-body.md).
 - [open] workspace / chat · 2026-10-04 mounted old proof · admitted pane/persisted visit and browser address diverged; the 2026-10-09 reauthoring routes the projection through next's router (L2 journeys pass) but the new-chat ordering was not replayed: [ticket](tickets/workspace-url-reverts-after-new-chat-adoption.md).
-- [open] ingest / duplicate feedback · 2026-10-04 source audit · identical command replay is labeled content duplication; qualify the browser marker before changing the public result: [ticket](tickets/source-replay-is-reported-as-content-duplicate.md).
-- [open] media upload retry · 2026-10-04 source audit · the fresh and memo retry paths repeat the same capability generation/expiry in a private result: [ticket](tickets/upload-retry-repeats-capability-result.md).
 
 - [open] operator credentials · 2026-10-02 cleanup workflow · skid's three peer bearer fields were printed into a tool transcript; coordinate rotation with active sessions: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
 - [open] release / vercel candidate · 2026-10-04 pr #524 · exact main merge 031c3c95 vercel candidate build failed at platform quota; green pr preview is a different commit: [ticket](tickets/vercel-main-candidate-build-rate-limited.md).

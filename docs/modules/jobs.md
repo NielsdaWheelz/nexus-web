@@ -44,7 +44,7 @@ The queue is a ledger of attempts; every rule below follows from three facts.
 | lane | kinds |
 |---|---|
 | interactive (in process) | `chat_run`, `dossier_build`, `enrich_metadata`, `oracle_reading_generate`, `podcast_sync_subscription_job` |
-| background (one child per job) | `ingest_media_source`, `media_content_reindex_job` (both Heavy), `note_reindex_job`, `media_unit_build`, `connection_discovery_scan`, `podcast_backfill_subscription`, `media_teardown`, `storage_object_cleanup`, and the periodic `podcast_refresh_due_job`, `atlas_project_job`, `storage_orphan_sweep`, `prune_background_jobs_job`, `purge_expired_auth_handoff_codes` |
+| background (one child per job) | `ingest_media_source`, `media_content_reindex_job` (both Heavy), `note_reindex_job`, `media_unit_build`, `connection_discovery_scan`, `podcast_backfill_subscription`, `media_teardown`, and the periodic `podcast_refresh_due_job`, `atlas_project_job`, `storage_orphan_sweep`, `prune_background_jobs_job`, `purge_expired_auth_handoff_codes` |
 
 A handler is `fn(*, payload, context) -> JobResult` in its owner:
 `JobResult = Mapping | RescheduleRequested(at, payload?) | TerminalJobFailure | None`.

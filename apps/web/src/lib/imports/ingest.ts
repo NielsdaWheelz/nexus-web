@@ -1,35 +1,22 @@
 "use client";
 
 /**
- * Acquisition (docs/modules/add-content.md): links through `from-url`, files
- * through the upload-session protocol, and the Imports upload commands. An
- * upload publishes only after the server verifies the bytes; a PUT never starts
- * without a positive window and stops at min(240 s, capability expiry); every
- * transport failure is reported; a lost acknowledgement is settled by replaying
- * the same idempotency key.
+ * Acquisition from the web (docs/modules/ingest.md): links through `from-url`,
+ * files through upload sessions (create -> PUT the bytes to the signed url ->
+ * confirm). Every call carries the caller's id, so sending it again is the
+ * retry: a link answers its own acceptance; an upload advances its session, or
+ * answers what it published. The server owns every limit; this module refuses
+ * only what it cannot send.
  */
 
-import type { FeedbackContent } from "@/components/feedback/Feedback";
-import {
-  apiFetch,
-  isApiError,
-  isSameSystemApiDefect,
-  isUnauthenticatedApiError,
-} from "@/lib/api/client";
+import { publishChange } from "@/lib/api/changes";
+import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { createRandomId } from "@/lib/createRandomId";
-import { isAbortError } from "@/lib/errors";
 import {
   UploadSessionError,
   publishImportsInvalidation,
   type UploadSessionOutcome,
 } from "@/lib/imports/api";
-import {
-  captureErrorFeedback,
-  captureStatusLine,
-  type CaptureOperation,
-} from "@/lib/imports/copy";
-import { publishChange } from "@/lib/api/changes";
 
 export type UploadFileKind = "Pdf" | "Epub";
 export type UploadPhase = "Preparing" | "Uploading" | "Verifying";
@@ -43,115 +30,64 @@ export interface AcceptedIngest {
   readonly processing: "processing" | "ready" | "failed" | null;
 }
 
-type SourceUrlCaptureResult =
-  | { label: string; ok: true; status: string; path: string }
-  | { label: string; ok: false; feedback: FeedbackContent };
+/** Each upload endpoint's declared refusals and what they mean; anything else
+    stays a plain ApiError for the generic channel. */
+const OUTCOMES: Record<
+  "Create" | "Confirm" | "Remove",
+  Readonly<Record<string, UploadSessionOutcome>>
+> = {
+  Create: {
+    E_INVALID_REQUEST: { kind: "IntentMalformed" },
+    E_INVALID_FILE_TYPE: { kind: "UnsupportedFileType" },
+    E_FILE_TOO_LARGE: { kind: "FileTooLarge" },
+    E_LIBRARY_FORBIDDEN: { kind: "LibraryForbidden" },
+    E_FORBIDDEN: { kind: "LibraryForbidden" },
+    E_UPLOAD_INTENT_MISMATCH: { kind: "FileMismatch" },
+    E_SIGN_UPLOAD_FAILED: { kind: "Unresolved" },
+  },
+  Confirm: {
+    E_LIBRARY_FORBIDDEN: { kind: "LibraryForbidden" },
+    E_UPLOAD_SESSION_NOT_FOUND: { kind: "Superseded" },
+    E_UPLOAD_GENERATION_STALE: { kind: "Superseded" },
+    E_STORAGE_ERROR: { kind: "Unresolved" },
+    E_STORAGE_MISSING: { kind: "BytesMissing" },
+    E_SOURCE_INTEGRITY: {
+      kind: "VerificationRejected",
+      code: "E_SOURCE_INTEGRITY",
+    },
+    E_INVALID_FILE_TYPE: {
+      kind: "VerificationRejected",
+      code: "E_INVALID_FILE_TYPE",
+    },
+    E_FILE_TOO_LARGE: {
+      kind: "VerificationRejected",
+      code: "E_FILE_TOO_LARGE",
+    },
+  },
+  Remove: { E_UPLOAD_ALREADY_PUBLISHED: { kind: "Superseded" } },
+};
 
-// Cross-runtime storage-cleanup contract (python/nexus/config.py): the server
-// rejects a cleanup window not strictly longer than this browser PUT horizon.
-const DIRECT_UPLOAD_PUT_TIMEOUT_MS = 240_000;
-
-type UploadCapability = Schema<"UploadRequired">;
-/** What the browser's PUT did, as `POST …/transport-failure` reports it. */
-type TransportFailure =
-  | { readonly kind: "Network" | "Timeout" | "Aborted" }
-  | { readonly kind: "HttpRejected"; readonly status: number };
-type Endpoint = "Create" | "TransportFailure" | "Retry" | "Confirm" | "Remove";
-type Outcome = UploadSessionOutcome;
-
-/**
- * Each endpoint's declared error codes and the outcome each one means. A code
- * an endpoint does not list stays a plain ApiError for the generic channel.
- */
-const OUTCOMES: Readonly<Record<Endpoint, Readonly<Record<string, Outcome>>>> =
-  {
-    Create: {
-      E_INVALID_REQUEST: { kind: "IntentMalformed" },
-      E_INVALID_FILE_TYPE: { kind: "UnsupportedFileType" },
-      E_FILE_TOO_LARGE: { kind: "FileTooLarge" },
-      E_LIBRARY_FORBIDDEN: { kind: "LibraryForbidden" },
-      E_FORBIDDEN: { kind: "LibraryForbidden" },
-      E_UPLOAD_SESSION_NOT_FOUND: { kind: "Superseded" },
-      E_IDEMPOTENCY_CONFLICT: { kind: "IntentChanged" },
-      E_SIGN_UPLOAD_FAILED: { kind: "Unresolved" },
-    },
-    TransportFailure: {
-      E_INVALID_REQUEST: { kind: "IntentMalformed" },
-      E_UPLOAD_SESSION_NOT_FOUND: { kind: "Superseded" },
-    },
-    Retry: {
-      E_INVALID_REQUEST: { kind: "IntentMalformed" },
-      E_UPLOAD_SESSION_NOT_FOUND: { kind: "Superseded" },
-      E_UPLOAD_ALREADY_PUBLISHED: { kind: "Superseded" },
-      E_UPLOAD_GENERATION_STALE: { kind: "Superseded" },
-      E_UPLOAD_INTENT_MISMATCH: { kind: "FileMismatch" },
-      E_IDEMPOTENCY_KEY_REPLAY_MISMATCH: { kind: "IntentChanged" },
-      E_RESOURCE_CONFLICT: { kind: "Conflicted" },
-      E_SIGN_UPLOAD_FAILED: { kind: "Unresolved" },
-    },
-    Confirm: {
-      E_INVALID_REQUEST: { kind: "IntentMalformed" },
-      E_LIBRARY_FORBIDDEN: { kind: "LibraryForbidden" },
-      E_UPLOAD_SESSION_NOT_FOUND: { kind: "Superseded" },
-      E_UPLOAD_GENERATION_STALE: { kind: "Superseded" },
-      E_STORAGE_ERROR: { kind: "Unresolved" },
-      E_STORAGE_MISSING: { kind: "BytesMissing" },
-      E_SOURCE_INTEGRITY: {
-        kind: "VerificationRejected",
-        code: "E_SOURCE_INTEGRITY",
-      },
-      E_INVALID_FILE_TYPE: {
-        kind: "VerificationRejected",
-        code: "E_INVALID_FILE_TYPE",
-      },
-      E_FILE_TOO_LARGE: {
-        kind: "VerificationRejected",
-        code: "E_FILE_TOO_LARGE",
-      },
-    },
-    Remove: {
-      E_UPLOAD_SESSION_NOT_FOUND: { kind: "Superseded" },
-      E_UPLOAD_ALREADY_PUBLISHED: { kind: "Superseded" },
-    },
-  };
-
-/** An outcome that changed what Imports owes this reader invalidates it. */
-function session(outcome: Outcome, cause?: unknown): UploadSessionError {
-  const kind = outcome.kind;
-  if (
-    kind === "NeedsAttention" ||
-    kind === "VerificationRejected" ||
-    kind === "Superseded" ||
-    kind === "Conflicted"
-  ) {
+/** An outcome after the session exists changes what Imports owes the reader. */
+function outcome(value: UploadSessionOutcome, cause?: unknown) {
+  if (value.kind !== "Unresolved" && value.kind !== "IntentMalformed") {
     publishImportsInvalidation();
   }
-  return new UploadSessionError(outcome, { cause });
+  return new UploadSessionError(value, { cause });
 }
 
-/** Runs one endpoint call, raising its declared codes as session outcomes. */
 async function call<T>(
-  endpoint: Endpoint,
+  endpoint: keyof typeof OUTCOMES,
   request: () => Promise<T>,
 ): Promise<T> {
   try {
     return await request();
   } catch (error) {
-    const outcome =
+    const declared =
       isApiError(error) && !isSameSystemApiDefect(error)
         ? OUTCOMES[endpoint][error.code]
         : undefined;
-    throw outcome === undefined ? error : session(outcome, error);
+    throw declared === undefined ? error : outcome(declared, error);
   }
-}
-
-function attention(response: Schema<"NeedsAttention">): UploadSessionError {
-  const failure = response.failure;
-  return session(
-    failure.kind === "VerificationFailed"
-      ? { kind: "VerificationRejected", code: failure.code }
-      : { kind: "NeedsAttention" },
-  );
 }
 
 export function getFileUploadKind(file: File): UploadFileKind | null {
@@ -163,240 +99,133 @@ export function getFileUploadKind(file: File): UploadFileKind | null {
   return null;
 }
 
+/** What the browser can tell before sending; the size limit is the server's. */
 export function getFileUploadError(file: File): string | null {
   const kind = getFileUploadKind(file);
-  if (!kind) return "Only PDF and EPUB files are supported.";
-  if (file.size === 0) return `${kind.toUpperCase()} files must not be empty.`;
-  const maxMb = kind === "Pdf" ? 100 : 50;
-  return file.size > maxMb * 1024 * 1024
-    ? `${kind.toUpperCase()} files must be ${maxMb} MiB or smaller.`
+  if (kind === null) return "Only PDF and EPUB files are supported.";
+  return file.size === 0
+    ? `${kind.toUpperCase()} files must not be empty.`
     : null;
 }
 
-const contentType = (kind: UploadFileKind) =>
-  kind === "Pdf" ? "application/pdf" : "application/epub+zip";
-
-const uploadPath = (handle: string, verb = "") =>
-  `/api/media/uploads/${encodeURIComponent(handle)}${verb}` as const;
-
-/** Milliseconds of PUT window this capability still authorizes. */
-function putWindowMs(capability: UploadCapability): number {
-  return Math.min(
-    DIRECT_UPLOAD_PUT_TIMEOUT_MS,
-    Date.parse(capability.expires_at) - Date.now(),
-  );
-}
-
-function published(response: Schema<"Published">): AcceptedIngest {
-  return {
-    kind: "Upload",
-    mediaId: response.media_id,
-    importRef: response.import_ref,
-    processing: null,
-  };
-}
-
 /**
- * Send the bytes under the capability's window, report any transport failure,
- * then confirm. A caller's abort is reported and rethrown; every other
- * transport failure leaves the session needing attention in Imports.
+ * Upload one file as session `id`: fresh for a new import, the import's own id
+ * to retry it from Imports. Throws UploadSessionError for every declared outcome.
  */
-async function putAndConfirm(
-  capability: UploadCapability,
-  file: File,
-  signal?: AbortSignal,
-  onPhaseChange?: (phase: UploadPhase) => void,
-): Promise<AcceptedIngest> {
-  const handle = capability.session_handle;
-  const startedAt = performance.now();
-  const report = async (reason: TransportFailure) => {
-    await call("TransportFailure", () =>
-      apiFetch<void>(uploadPath(handle, "/transport-failure"), {
-        method: "POST",
-        body: JSON.stringify({
-          ...reason,
-          generation: capability.generation,
-          duration_ms: Math.max(0, Math.round(performance.now() - startedAt)),
-          request_id: createRandomId("upload-transport"),
-        }),
-      }),
-    );
-    publishImportsInvalidation();
-  };
-  onPhaseChange?.("Uploading");
-  const windowMs = putWindowMs(capability);
-  // A window that closed before a byte moved is no transport fact: nothing
-  // was sent. Replaying the same intent re-signs a live generation.
-  if (windowMs <= 0) throw new UploadSessionError({ kind: "Unresolved" });
-  const deadline = AbortSignal.timeout(windowMs);
-  const put =
-    signal === undefined ? deadline : AbortSignal.any([deadline, signal]);
-  let response: Response;
-  try {
-    response = await fetch(capability.upload_url, {
-      method: "PUT",
-      headers: capability.required_headers,
-      body: file,
-      signal: put,
-    });
-  } catch (error) {
-    if (deadline.aborted) {
-      await report({ kind: "Timeout" });
-    } else if (signal?.aborted || isAbortError(error)) {
-      await report({ kind: "Aborted" });
-      throw error;
-    } else {
-      await report({ kind: "Network" });
-    }
-    throw new UploadSessionError({ kind: "NeedsAttention" });
-  }
-  if (!response.ok) {
-    await report({ kind: "HttpRejected", status: response.status });
-    throw new UploadSessionError({ kind: "NeedsAttention" });
-  }
-  onPhaseChange?.("Verifying");
-  const { data } = await call("Confirm", () =>
-    apiFetch<ApiJson<"/media/uploads/{session_handle}/confirm", "post">>(
-      uploadPath(handle, "/confirm"),
-      {
-        method: "POST",
-        body: JSON.stringify({ generation: capability.generation }),
-        signal,
-      },
-    ),
-  );
-  return published(data);
-}
-
 export async function uploadIngestFile({
   file,
   libraryIds,
-  idempotencyKey = createRandomId("media-upload"),
+  id,
   signal,
   onPhaseChange,
   onImportRef,
 }: {
   file: File;
   libraryIds: readonly string[];
-  idempotencyKey?: string;
+  id: string;
   signal?: AbortSignal;
   onPhaseChange?: (phase: UploadPhase) => void;
+  /** The server's import ref, as soon as the session exists. */
   onImportRef?: (ref: string) => void;
 }): Promise<AcceptedIngest> {
-  const invalid = getFileUploadError(file);
   const kind = getFileUploadKind(file);
-  if (invalid !== null || kind === null) throw new Error(invalid ?? "");
+  if (kind === null || getFileUploadError(file) !== null) {
+    throw outcome({ kind: "UnsupportedFileType" });
+  }
   onPhaseChange?.("Preparing");
-  const create = () =>
-    call("Create", async () => {
-      const { data } = await apiFetch<ApiJson<"/media/uploads", "post">>(
-        "/api/media/uploads",
-        {
-          method: "POST",
-          headers: { "Idempotency-Key": idempotencyKey },
-          body: JSON.stringify({
-            kind,
-            filename: file.name,
-            content_type: contentType(kind),
-            size_bytes: file.size,
-            library_ids: libraryIds,
-          }),
-          signal,
-        },
-      );
-      onImportRef?.(data.import_ref);
-      return data;
-    });
-  let started = await create();
-  // A capability whose window closed during its own signing round trip never
-  // authorized a PUT: replaying the key advances the generation and re-signs.
-  if (started.kind === "UploadRequired" && putWindowMs(started) <= 0) {
-    started = await create();
+  const { data: created } = await call("Create", () =>
+    apiFetch<ApiJson<"/media/uploads", "post">>("/api/media/uploads", {
+      method: "POST",
+      body: JSON.stringify({
+        id,
+        kind: kind === "Pdf" ? "pdf" : "epub",
+        filename: file.name,
+        content_type:
+          kind === "Pdf" ? "application/pdf" : "application/epub+zip",
+        size_bytes: file.size,
+        library_ids: libraryIds,
+      }),
+      signal,
+    }),
+  );
+  onImportRef?.(created.import_ref);
+  if (created.kind === "Rejected") {
+    throw outcome({ kind: "VerificationRejected", code: created.code });
   }
-  if (started.kind === "NeedsAttention") throw attention(started);
-  const result =
-    started.kind === "Published"
-      ? published(started)
-      : await putAndConfirm(started, file, signal, onPhaseChange);
+  const published =
+    created.kind === "Published"
+      ? created
+      : await putAndConfirm(created, file, signal, onPhaseChange);
   publishChange("Entries");
   publishImportsInvalidation();
-  return result;
+  return {
+    kind: "Upload",
+    mediaId: published.media_id,
+    importRef: published.import_ref,
+    processing: null,
+  };
 }
 
-/**
- * Re-admit a failed upload session at the generation the reader's offer named,
- * then send the bytes again. A session already published or gone is the
- * obligation discharged, so Superseded counts as success.
- */
-export async function retryUploadSession({
-  sessionHandle,
-  file,
-  expectedGeneration,
-}: {
-  readonly sessionHandle: string;
-  readonly file: File;
-  readonly expectedGeneration: number;
-}): Promise<void> {
-  const kind = getFileUploadKind(file);
-  // A file this client cannot upload can never match the session's intent.
-  if (!kind || getFileUploadError(file)) {
-    throw new UploadSessionError({ kind: "FileMismatch" });
-  }
+/** The bytes go only to the signed url, before it expires. A PUT that fails
+    leaves the session awaiting bytes, which sending `id` again re-opens. */
+async function putAndConfirm(
+  upload: Schema<"UploadRequired">,
+  file: File,
+  signal: AbortSignal | undefined,
+  onPhaseChange: ((phase: UploadPhase) => void) | undefined,
+): Promise<Schema<"Published">> {
+  onPhaseChange?.("Uploading");
+  const remaining = Date.parse(upload.expires_at) - Date.now();
+  if (remaining <= 0) throw outcome({ kind: "BytesMissing" });
+  const deadline = AbortSignal.timeout(remaining);
+  let response: Response;
   try {
-    const { data: admitted } = await call("Retry", () =>
-      apiFetch<ApiJson<"/media/uploads/{session_handle}/retry", "post">>(
-        uploadPath(sessionHandle, "/retry"),
-        {
-          method: "POST",
-          body: JSON.stringify({
-            filename: file.name,
-            content_type: contentType(kind),
-            size_bytes: file.size,
-            client_mutation_id: crypto.randomUUID(),
-            expected_generation: expectedGeneration,
-          }),
-        },
-      ),
-    );
-    if (admitted.kind === "NeedsAttention") throw attention(admitted);
-    // The server memoizes this generation's expiry, so a closed window cannot
-    // be widened by retrying again: it needs a fresh command.
-    if (putWindowMs(admitted) <= 0) throw session({ kind: "NeedsAttention" });
-    await putAndConfirm(admitted, file);
+    response = await fetch(upload.upload_url, {
+      method: "PUT",
+      headers: { "Content-Type": upload.content_type },
+      body: file,
+      signal:
+        signal === undefined ? deadline : AbortSignal.any([deadline, signal]),
+    });
   } catch (error) {
-    if (
-      error instanceof UploadSessionError &&
-      error.outcome.kind === "Superseded"
-    ) {
-      return;
-    }
-    throw error;
+    if (signal?.aborted) throw error;
+    throw outcome({ kind: "BytesMissing" }, error);
   }
-  publishChange("Entries");
-  publishImportsInvalidation();
+  if (!response.ok) throw outcome({ kind: "BytesMissing" });
+  onPhaseChange?.("Verifying");
+  const { data } = await call("Confirm", () =>
+    apiFetch<ApiJson<"/media/uploads/{session_id}/confirm", "post">>(
+      `/api/media/uploads/${encodeURIComponent(upload.session_id)}/confirm`,
+      {
+        method: "POST",
+        body: JSON.stringify({ generation: upload.generation }),
+        signal,
+      },
+    ),
+  );
+  return data;
 }
 
-/** Removal is idempotent: a session already gone or published is removed. */
-export async function removeUploadSession(
-  sessionHandle: string,
-): Promise<void> {
+/** Removal is idempotent; a session already published counts as removed. */
+export async function removeUploadSession(sessionId: string): Promise<void> {
   try {
     await call("Remove", () =>
-      apiFetch<void>(uploadPath(sessionHandle), { method: "DELETE" }),
+      apiFetch<void>(`/api/media/uploads/${encodeURIComponent(sessionId)}`, {
+        method: "DELETE",
+      }),
     );
   } catch (error) {
     if (
-      error instanceof UploadSessionError &&
-      error.outcome.kind === "Superseded"
+      !(error instanceof UploadSessionError) ||
+      error.outcome.kind !== "Superseded"
     ) {
-      return;
+      throw error;
     }
-    throw error;
   }
   publishImportsInvalidation();
 }
 
-/** `id` is the client-minted attempt id: resending it answers the same acceptance. */
+/** Accept one link as attempt `id`; sending the same id again answers the same acceptance. */
 export async function addMediaFromUrl({
   url,
   libraryIds,
@@ -430,42 +259,4 @@ export async function addMediaFromUrl({
           ? "ready"
           : "processing",
   };
-}
-
-/**
- * Save one link for a capture surface (the share sheet): its status line and
- * reader path, or the refusal's feedback. Sign-in, aborts and defects throw.
- */
-export async function captureSourceUrl({
-  url,
-  libraryIds,
-  id,
-  operation,
-  signal,
-}: {
-  url: string;
-  libraryIds: readonly string[];
-  id: string;
-  operation: CaptureOperation;
-  signal?: AbortSignal;
-}): Promise<SourceUrlCaptureResult> {
-  try {
-    const result = await addMediaFromUrl({ url, libraryIds, id, signal });
-    return {
-      label: url,
-      ok: true,
-      status: captureStatusLine(result),
-      path: `/media/${result.mediaId}`,
-    };
-  } catch (error) {
-    if (
-      isUnauthenticatedApiError(error) ||
-      signal?.aborted ||
-      isAbortError(error)
-    ) {
-      throw error;
-    }
-    const feedback = captureErrorFeedback(error, operation);
-    return { label: url, ok: false, feedback };
-  }
 }

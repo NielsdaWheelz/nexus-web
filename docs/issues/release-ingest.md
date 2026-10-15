@@ -104,3 +104,102 @@ smoke: send one message (accepted), then one with the staging bucket unreachable
 add a url, re-add the same url (answers the same media at once, "Already in your
 library"); retry a failed source from Imports twice (both succeed); refresh an
 email article; send one email to the Post Room.
+
+# release: ingest (PR2 uploads, the firefox capture and the share page)
+
+PR2 changes the upload contract and both its clients at once (hard cutover, wire
+stays 1): web, api and the signed extension come from the same release sha.
+
+| before | after |
+|---|---|
+| `POST /media/uploads {kind: Pdf \| Epub, …}` + `Idempotency-Key` → `UploadRequired{import_ref, session_handle, generation, method, upload_url, required_headers, expires_at, idempotency_outcome}` \| `Published{import_ref, …, source_attempt_id, idempotency_outcome}` \| `NeedsAttention{import_ref, failure, capabilities}` | `{id, kind: pdf \| epub, filename, content_type, size_bytes, library_ids}` → `UploadRequired{import_ref, session_id, generation, upload_url, content_type, expires_at}` \| `Published{import_ref, session_id, media_id, created}` \| `Rejected{import_ref, session_id, code}`; resending the id advances an unpublished session |
+| `POST /media/uploads/{handle}/transport-failure`, `…/retry`; `GET /extension/captures/{handle}`, `POST …/retry`, `…/transport-failure` | gone: a failed PUT is answered by creating again |
+| `…/{handle}/confirm`, `DELETE …/{handle}` (sealed `nup1.` handles; absent 404) | `…/{session_id}/confirm`, `DELETE …/{session_id}` (absent 204) |
+| `POST /extension/captures` `BrowserCaptureIntent` + `Idempotency-Key` | `{id, kind, source_url, filename, content_type, size_bytes, sha256, library_ids}` |
+| Imports `upload:nup1.…` refs, `RetryUploadOffer{expected_generation}`, state `TransportFailed` | `upload:<session id>`, `RetryUploadOffer{input}`, no `TransportFailed` |
+| history `UploadFailed{generation, transport}` | `UploadFailed{generation}`; the envelope code says why |
+
+## order
+
+- PR2 merges after PR1 (its migration `0283_ingest_uploads` follows PR1's
+  `0282_ingest_sources`) and runs in the same end release.
+- the extension build and the web/api deploy go out together: an old extension
+  build sends no `id` and gets 400, and an extension of another wire gets 426
+  ("Update the Nexus extension to keep capturing.").
+
+## preflight census (restored backup, mac only)
+
+```sql
+-- sessions by origin and derived state (TransportFailed ones become CapabilityExpired)
+SELECT input_origin ->> 'kind' AS origin,
+       CASE WHEN published_at IS NOT NULL THEN 'Published'
+            WHEN verification_error_code IS NOT NULL THEN 'VerificationFailed'
+            WHEN transport_failed_at IS NOT NULL THEN 'TransportFailed'
+            WHEN upload_url_expires_at <= now() THEN 'CapabilityExpired'
+            ELSE 'AwaitingBytes' END AS state, count(*)
+FROM media_upload_sessions GROUP BY 1, 2 ORDER BY 1, 2;
+-- history rows that lose their transport detail (they keep E_UPLOAD_TRANSPORT_FAILED)
+SELECT count(*) FROM media_upload_events WHERE event_type = 'Failed' AND payload ? 'transport'
+  AND payload -> 'transport' <> 'null'::jsonb;
+-- reservation jobs deleted: their media/ paths go to the orphan sweep, uploads/ to R2's rule
+SELECT status, payload -> 'checkpoint' ->> 'kind' AS checkpoint, count(*)
+FROM background_jobs WHERE kind = 'storage_object_cleanup' GROUP BY 1, 2;
+```
+
+## preflight: the R2 staging rule
+
+the ledger is gone, so R2's `uploads/` lifecycle rule is the only thing that deletes
+staged upload bytes; without it every generation's staged copy stays forever. read
+the production bucket's rules (owner, with the release's cloudflare token):
+
+```sh
+curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/$R2_BUCKET/lifecycle"
+```
+
+it must hold `expire-direct-upload-staging`, enabled, prefix `uploads/`, delete at
+age 86400. if not, run `deploy/cloudflare/apply-r2-lifecycle.sh`: its PUT replaces
+every rule on the bucket, so first copy any other rule the read shows into
+`deploy/cloudflare/r2-lifecycle.example.json`. read again before the deploy.
+
+## data effects of 0283
+
+- `media_upload_sessions` loses `idempotency_key` (and its unique constraint) and the
+  three transport columns; a `TransportFailed` session derives `CapabilityExpired`:
+  the same Imports group, Retry upload and Remove.
+- every `UploadFailed` payload loses `transport`; history reads "Upload failed. Upload
+  did not finish." for an old transport failure (no network/timeout/status detail).
+- every `storage_object_cleanup` job is deleted; orphans live up to ~30 h (the sweep's
+  24 h minimum age plus its 6 h interval).
+- `resource_mutations` rows with `media_upload_retry:` scopes stay inert until the
+  last user's migration drops the table.
+- irreversible: the pre-migration backup is the rollback.
+
+## env
+
+remove `STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS` wherever set (hetzner api and
+worker env; the example is updated). nothing is added.
+
+## firefox (owner)
+
+1. remove the old extension first: that clears its `nexus-capture-v1` IndexedDB,
+   which may hold a frozen capture's bytes. a capture in flight in the old build is
+   lost; its server session shows in Imports as an expired upload with Remove.
+2. build with `NEXUS_EXTENSION_NEXUS_ORIGIN` / `NEXUS_EXTENSION_STORAGE_ORIGIN` set to
+   production, sign it (AMO, unlisted) from the release sha, install, sign in again.
+3. a restart, an extension reload or a crash now forgets the capture in progress (no
+   Resume); Discard removes a created session in passing.
+
+## web
+
+open Imports panes that hold an `upload:nup1.…` ref read "This import is no longer
+available" once; reopening Imports shows the same import as `upload:<session id>`.
+android needs no apk change (the share page is web in the webview).
+
+## owner smoke (PR2)
+
+upload a pdf from Add; kill the network mid-upload, then Retry upload (one media,
+the session at generation 2); Imports Retry upload of an expired upload with the
+original file; capture an article and a pdf link from Firefox into two libraries,
+block a PUT once and Retry, Discard a draft; share a url and plain text from the
+phone.

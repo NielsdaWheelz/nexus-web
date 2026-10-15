@@ -5,15 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from pydantic import TypeAdapter
 from pydantic_core import core_schema
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.services.sealed_handles import UploadSessionHandle
 
 _UPLOAD_REF_PREFIX = "upload:"
 _MEDIA_REF_PREFIX = "media:"
-_UPLOAD_SESSION_HANDLE = TypeAdapter(UploadSessionHandle)
 
 
 class InvalidImportRef(InvalidRequestError):
@@ -25,7 +22,7 @@ class InvalidImportRef(InvalidRequestError):
 class UploadImportRef:
     """One import whose identity is its upload session, published or not."""
 
-    session_handle: UploadSessionHandle
+    session_id: UUID
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,18 +36,14 @@ type ParsedImportRef = UploadImportRef | MediaImportRef
 
 
 def _split_import_ref(raw: str) -> ParsedImportRef:
-    if raw.startswith(_UPLOAD_REF_PREFIX):
-        return UploadImportRef(
-            session_handle=_UPLOAD_SESSION_HANDLE.validate_python(
-                raw.removeprefix(_UPLOAD_REF_PREFIX)
-            )
-        )
-    if raw.startswith(_MEDIA_REF_PREFIX):
-        raw_id = raw.removeprefix(_MEDIA_REF_PREFIX)
-        media_id = UUID(raw_id)
-        if str(media_id) != raw_id:
-            raise ValueError("media import ref must be canonical lowercase UUID text")
-        return MediaImportRef(media_id=media_id)
+    scheme, _, raw_id = raw.partition(":")
+    row_id = UUID(raw_id)
+    if str(row_id) != raw_id:
+        raise ValueError("an import ref names canonical lowercase UUID text")
+    if f"{scheme}:" == _UPLOAD_REF_PREFIX:
+        return UploadImportRef(session_id=row_id)
+    if f"{scheme}:" == _MEDIA_REF_PREFIX:
+        return MediaImportRef(media_id=row_id)
     raise ValueError("import ref must name an upload session or a media row")
 
 
@@ -85,6 +78,6 @@ def parse_import_ref(raw: str) -> ParsedImportRef:
 def format_import_ref(ref: ParsedImportRef) -> ImportRef:
     match ref:
         case UploadImportRef():
-            return ImportRef(f"{_UPLOAD_REF_PREFIX}{ref.session_handle}")
+            return ImportRef(f"{_UPLOAD_REF_PREFIX}{ref.session_id}")
         case MediaImportRef():
             return ImportRef(f"{_MEDIA_REF_PREFIX}{ref.media_id}")

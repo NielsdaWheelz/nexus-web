@@ -177,12 +177,12 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
   const feedback = useFeedback();
   const fail = useThrowLater();
   const inputRef = useRef<HTMLInputElement>(null);
-  const handle = item.ref.slice("upload:".length);
+  const sessionId = item.ref.slice("upload:".length);
   const source = item.obligations.source;
   const recovery = source !== null ? source.recovery : null;
   const offer = recovery?.kind === "RetryUpload" ? recovery : null;
-  const retrying = pending.has(pendingKey({ kind: "RetryUpload", handle }));
-  const removing = pending.has(pendingKey({ kind: "RemoveUpload", handle }));
+  const retrying = pending.has(pendingKey({ kind: "RetryUpload", sessionId }));
+  const removing = pending.has(pendingKey({ kind: "RemoveUpload", sessionId }));
   const run = (command: UploadCommand) =>
     dispatchUpload(command).catch((error: unknown) => {
       try {
@@ -194,17 +194,12 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
     });
   const choose = (file: File) => {
     if (offer === null) return;
-    void run({
-      kind: "RetryUpload",
-      handle,
-      file,
-      expectedGeneration: offer.expected_generation,
-    });
+    void run({ kind: "RetryUpload", sessionId, file });
   };
   const remove = () => {
     if (!window.confirm(`Remove the unfinished import “${item.title}”?`))
       return;
-    void run({ kind: "RemoveUpload", handle });
+    void run({ kind: "RemoveUpload", sessionId });
   };
   return (
     <>

@@ -52,79 +52,46 @@ actual reference owner (`library_entries.py`) enforces the media-before-library
 barrier for reference writes. Whether any reference remains is a count of
 physical `library_entries` rows for that media, and nothing else.
 
-Three durable task modules own all teardown/lifecycle storage deletion
-(`python/nexus/tasks/`):
+Two durable task modules own all teardown and orphan storage deletion
+(`python/nexus/tasks/`); nothing reserves a path before a write:
 
 - **`media_teardown.py`** — the claimed job. Reloads the current job row and
   transitions its checkpoint: `Unprepared` -> `PathsPrepared` (lease-fenced,
-  reuses the existing path enumerator) -> `DeletionCommitted` (zero
-  references: deletes child state through owners — the one consumption call
-  `delete_media_consumption_state_in_txn` — then intent/media, all in one
-  `retry_serializable` transaction) or `Voided`
+  the media's enumerated paths and `cleanupNotBefore` = now + the clock-skew
+  grace) -> `DeletionCommitted` (zero references: deletes child state through
+  owners — the one consumption call `delete_media_consumption_state_in_txn` —
+  then intent/media, all in one `retry_serializable` transaction) or `Voided`
   (a reference reappeared: deletes only the intent). Absent intent + present
   media records `NoOp`; a stale (non-matching) intent records `Stale`. Every
   intent lookup/delete matches both `intentId` and `mediaId`, so an old job
   never acts on a later intent. `DeletionCommitted` reschedules itself until
   `cleanupNotBefore`, then deletes its persisted paths; deletion is
-  idempotent and failure retries.
-- **`storage_object_cleanup.py`** — the browser-direct-upload backstop. Every
-  in-process object write (`media_source_ingest.py`, `email_ingest_service.py`,
-  `epub_ingest.py`) and each candidate copy (fenced by a fresh candidate id) in
-  `media_upload_sessions.py` first locks its owner and reserves at most one
-  nonterminal `StorageObjectCleanupJob` per `(owner, storagePath)` before the bounded
-  external call: `Armed` -> `Retained` (a short post-write transaction rechecks
-  media + no-intent + committed path ownership) or, after both `retainUntil`
-  and `writeMayLandUntil`, `DeleteRequired` -> `Deleted` (an exclusive queue-owned
-  hold on the path; installed only when no other nonterminal writer targets it). Only
-  `Retained`/`Deleted` is prunable. Browser-direct writes (local PDF/EPUB uploads
-  and extension captures of PDF, EPUB or article packets) are owned by a durable
-  `media_upload_sessions` row whose immutable `input_origin` names the writer's
-  provenance, and by a generation-scoped staging path. Capability expiry changes
-  the session projection to `CapabilityExpired`; it never deletes accepted intent.
-  Each confirmation reserves a fresh candidate path, copies staging into it and
-  verifies that candidate's size, content type, SHA-256 and file signature or
-  strict article packet (a browser capture must also match its intent digest);
-  then one transaction reuses the account's oldest readable media holding exactly
-  those bytes or creates the media, revalidates and adds every placement, creates
-  the source attempt and exact queue job for new media only, and publishes the
-  receipt. Success and failure writes are fenced by the inspected generation and
-  the unpublished state, and one media may carry several receipts. Retry mints a
-  new generation; explicit removal reserves cleanup. Every capture mutation
-  (status, transport failure, retry, confirm) loads the session by viewer and
-  provenance: extension routes reach only `BrowserCapture` sessions, web upload
-  routes only `LocalFile`. Removal is not a capture mutation: the web route
-  removes the viewer's own unpublished session of either origin, since a browser
-  capture's bytes live in the extension, which alone can retry it, so Imports
-  offers Remove but no retry for such a session. A losing or failed candidate
-  is reclaimed by its own reservation, and a reused-media candidate has no owner
-  and is rejected at finalization. The reservation CAS reports one owner-agnostic
-  in-flight-cleanup condition rather than constructing a domain error: `Media` maps
-  it to `E_MEDIA_DELETING`, while removal reads an already-claimed sweep of a staged
-  generation as the durable cleanup intent it needs and still returns `204`.
-  Browser PUTs abort at the earlier of the capability's `expires_at` or the fixed
-  240-second client horizon and report `Timeout`; server configuration requires
-  the cleanup write margin to be strictly longer than that horizon.
-- **`storage_orphan_sweep.py`** — the singleton recurring backstop for writes
-  that complete after a signed-URL expiry or an earlier delete. Durably pages
-  the `media/` prefix, ignores objects modified within
-  `storage_orphan_sweep_min_age_seconds` (default 24h — a write completing
-  after one pass gets a fresh modified time and is caught by a later pass),
-  and deletes only paths with no live DB owner and no Armed cleanup writer.
-  Runs on the job registry's `periodic_interval_seconds` mechanism (default
-  `storage_orphan_sweep_interval_seconds` = 21600s / six hours) rather than the
-  spec's self-chained successor — the registry's per-slot `enqueue_unique_job`
+  idempotent and failure retries. A write that lands after the deletion leaves
+  an unowned object for the sweep.
+- **`storage_orphan_sweep.py`** — the one reclaimer of objects no row names.
+  Writers store bytes first and then commit the row that names them, so a failed
+  commit, a late browser PUT's candidate, a superseded remote file, a reused
+  capture's candidate or a write after a teardown is unowned. The sweep durably
+  pages the `media/` prefix, ignores objects modified within
+  `storage_orphan_sweep_min_age_seconds` (default 24h), and deletes every path
+  that `media_file`, `epub_resources` and the attempts' stored artifacts
+  (`source_types.stored_artifact_path`) do not name. Orphans therefore live up
+  to ~30 h. Runs on the job registry's `periodic_interval_seconds` mechanism
+  (default `storage_orphan_sweep_interval_seconds` = 21600s / six hours) rather
+  than a self-chained successor — the registry's per-slot `enqueue_unique_job`
   dedupe already guarantees an at-most-one run per slot, and
   `never_prune_dead=True` keeps a failed run operator-discoverable via
-  `requeue_dead_job` without inventing chain-restart bookkeeping.
+  `requeue_dead_job`.
 
 On dead-letter, a live media row causes only the exact matching intent to be
-voided; `DeletionCommitted` media jobs and failed path-cleanup jobs are never
-pruned, so paths stay operator-discoverable via `requeue_dead_job`. Domain code
+voided; `DeletionCommitted` media jobs are never pruned, so paths stay
+operator-discoverable via `requeue_dead_job`. Domain code
 never writes `background_jobs` raw — every checkpoint write goes through the
 queue owner's exact-attempt/claimant/lease-fenced CAS methods.
 
 The one-day R2 lifecycle rule on the `uploads/` direct-upload staging prefix is
-an independent durable backstop for late browser writes. The repository-owned
+the only reclaimer of staged bytes: confirmation copies them to a candidate under
+`media/`, and nothing deletes a generation's staging object. The repository-owned
 rule is `deploy/cloudflare/r2-lifecycle.example.json`; operators apply that exact
 file with `deploy/cloudflare/apply-r2-lifecycle.sh`.
 

@@ -1,15 +1,14 @@
-"""Browser-capture wire models: the capture intent, the upload session's input
-origin, the article packet an article capture uploads, and the extension
-session identity.
+"""Browser capture wire models: the capture request, an upload session's origin,
+the article packet an article capture uploads, and the extension session.
 
-The packet is the one immutable object a browser article capture uploads; its
-identity is the sha256 of the exact uploaded bytes and ``decode_article_packet``
-is the one decoder every reader of those bytes (confirmation, the article
-adapter, conversion) shares.
+The packet is the one object an article capture uploads; its identity is the
+sha256 of the exact uploaded bytes, and ``decode_article_packet`` is the one
+decoder every reader of those bytes (confirmation, the article adapter) shares.
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -19,7 +18,6 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
-    TypeAdapter,
     ValidationError,
 )
 from pydantic_core import PydanticCustomError
@@ -30,7 +28,6 @@ from nexus.services.web_article_structure import WEB_ARTICLE_HTML_MAX_BYTES
 
 ARTICLE_PACKET_MAX_BYTES = 4 * 1024 * 1024
 ARTICLE_SOURCE_HTML_MAX_BYTES = 64 * 1024
-_TOO_LARGE = "capture_too_large"
 
 
 class _Strict(BaseModel):
@@ -45,18 +42,18 @@ def _requested_url(value: str) -> str:
     return value
 
 
-def _bounded_utf8(max_bytes: int):
+def _utf8_at_most(limit: int):
     def check(value: str) -> str:
-        if len(value.encode("utf-8")) > max_bytes:
+        if len(value.encode()) > limit:
             raise PydanticCustomError(
-                _TOO_LARGE, "utf-8 length exceeds {max_bytes} bytes", {"max_bytes": max_bytes}
+                "capture_too_large", "utf-8 length exceeds {limit}", {"limit": limit}
             )
         return value
 
     return check
 
 
-def _distinct(values: list) -> list:
+def _distinct(values: list[UUID]) -> list[UUID]:
     if len(set(values)) != len(values):
         raise ValueError("library_ids must be distinct")
     return values
@@ -64,8 +61,6 @@ def _distinct(values: list) -> list:
 
 RequestedUrl = Annotated[str, StringConstraints(max_length=2048), AfterValidator(_requested_url)]
 Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
-CaptureKind = Literal["web_article", "pdf", "epub"]
-CaptureContentType = Literal["application/pdf", "application/epub+zip", "application/json"]
 
 
 class LocalFile(_Strict):
@@ -78,16 +73,14 @@ class BrowserCapture(_Strict):
     sha256: Sha256Hex
 
 
-InputOrigin = Annotated[LocalFile | BrowserCapture, Field(discriminator="kind")]
-InputOriginKind = Literal["LocalFile", "BrowserCapture"]
-INPUT_ORIGIN_ADAPTER: TypeAdapter[LocalFile | BrowserCapture] = TypeAdapter(InputOrigin)
+class CreateCaptureRequest(_Strict):
+    """``id`` is the extension's session id, minted once per draft and resent on retry."""
 
-
-class BrowserCaptureIntent(_Strict):
-    kind: CaptureKind
+    id: UUID
+    kind: Literal["web_article", "pdf", "epub"]
     source_url: RequestedUrl
     filename: str = Field(min_length=1, max_length=255)
-    content_type: CaptureContentType
+    content_type: Literal["application/pdf", "application/epub+zip", "application/json"]
     size_bytes: int = Field(gt=0)
     sha256: Sha256Hex
     library_ids: Annotated[list[UUID], AfterValidator(_distinct)] = Field(default_factory=list)
@@ -99,8 +92,8 @@ class ArticlePacket(_Strict):
     url: RequestedUrl
     base_url: RequestedUrl
     title: str = Field(max_length=1024)
-    content_html: Annotated[str, AfterValidator(_bounded_utf8(WEB_ARTICLE_HTML_MAX_BYTES))]
-    source_html: Annotated[str, AfterValidator(_bounded_utf8(ARTICLE_SOURCE_HTML_MAX_BYTES))]
+    content_html: Annotated[str, AfterValidator(_utf8_at_most(WEB_ARTICLE_HTML_MAX_BYTES))]
+    source_html: Annotated[str, AfterValidator(_utf8_at_most(ARTICLE_SOURCE_HTML_MAX_BYTES))]
     byline: Annotated[str, StringConstraints(max_length=1024)] | None
     excerpt: Annotated[str, StringConstraints(max_length=4000)] | None
     site_name: Annotated[str, StringConstraints(max_length=1024)] | None
@@ -108,27 +101,26 @@ class ArticlePacket(_Strict):
 
 
 def decode_article_packet(raw: bytes) -> ArticlePacket:
-    """Strictly decode packet bytes: a part over its bound is ``E_CAPTURE_TOO_LARGE``,
-    anything else that is not the exact object is ``E_INVALID_FILE_TYPE``."""
+    """A part over its bound is ``E_CAPTURE_TOO_LARGE``; any other mismatch is
+    ``E_INVALID_FILE_TYPE``."""
     if len(raw) > ARTICLE_PACKET_MAX_BYTES:
         raise InvalidRequestError(
-            ApiErrorCode.E_CAPTURE_TOO_LARGE, "Article packet exceeds the packet-size limit."
+            ApiErrorCode.E_CAPTURE_TOO_LARGE, "Article packet exceeds its size limit."
         )
     try:
         return ArticlePacket.model_validate_json(raw)
     except ValidationError as exc:
-        if any(error["type"] == _TOO_LARGE for error in exc.errors()):
+        if any(error["type"] == "capture_too_large" for error in exc.errors()):
             raise InvalidRequestError(
-                ApiErrorCode.E_CAPTURE_TOO_LARGE, "Article packet part exceeds its size limit."
+                ApiErrorCode.E_CAPTURE_TOO_LARGE, "Article packet part is too large."
             ) from exc
         raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_FILE_TYPE, "Uploaded source is not a valid article packet."
+            ApiErrorCode.E_INVALID_FILE_TYPE, "Not a valid article packet."
         ) from exc
 
 
 class CaptureLimits(_Strict):
-    """The byte limits the extension checks at save; the article part bounds are
-    its own constants (extraction precedes login) and are not repeated here."""
+    """The byte limits the extension checks before it sends anything."""
 
     max_pdf_bytes: int
     max_epub_bytes: int
@@ -140,3 +132,9 @@ class ExtensionSessionOut(_Strict):
     email: str | None
     display_name: str | None
     limits: CaptureLimits
+
+
+class ExtensionTokenOut(_Strict):
+    id: UUID
+    token: str
+    created_at: datetime

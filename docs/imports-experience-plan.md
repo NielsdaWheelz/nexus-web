@@ -155,7 +155,7 @@ use existing `openAddTarget` and guarded leave: cancel preserves rows, files, de
 and frozen intent; confirmation may stop/discard browser work and navigates on acceptance.
 navigation refusal keeps the existing blocked-target flow. no hidden or resumable add session.
 receipt copy says “saved”; do not interpret request replay as content duplication.
-native outcome repair remains [separate work](tickets/source-replay-is-reported-as-content-duplicate.md).
+native outcome repair remains separate work (since done: the ingest reauthor's uploads deleted that ticket).
 
 ## content design contract
 

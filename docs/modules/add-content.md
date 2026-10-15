@@ -48,7 +48,7 @@ while task close retains the stop guard. other picker consumers remain responsiv
 ## acceptance and leaving
 
 submission revalidates the ready subset, captures destinations and a new id per
-row synchronously (a url's attempt id; an upload's key), then admits two at a time within one mutation slot. invalid and
+row synchronously (a url's attempt id or an upload's session id), then admits two at a time within one mutation slot. invalid and
 empty drafts send nothing. saved receipts remain in the task; ordinary completion
 neither navigates nor closes it. acceptance proves saving; upload publication
 proves verified bytes. neither proves completed extraction.
@@ -87,28 +87,28 @@ the session owns no placement state.
 `lib/imports/ingest.ts` owns the public url/upload protocol and one
 `AcceptedIngest { kind, mediaId, importRef, processing }` result. imports copy is
 owned by `lib/imports/copy.ts`; native success shapes come from generated types.
-the independent extension owns its capture decoding.
+the extension shares only the generated wire types.
 
 url receipts name the admitted media import; every upload receipt names its exact
-session import, including attention and replay. `uploadIngestFile` publishes each
-successful create's ref through `onImportRef` before transfer or confirmation can
-fail. the add owner retains it under the existing callback fence through phase
-changes, uncertain acceptance and stop. restaging clears the old key/ref. known
-identity does not prove acceptance: unresolved rows retain check-status/retry.
+session import. `uploadIngestFile` publishes the create's ref through `onImportRef`
+before transfer or confirmation can fail. the add owner retains it under the
+existing callback fence through phase changes, uncertain acceptance and stop.
+restaging clears the old key/ref. known identity does not prove acceptance:
+unresolved rows retain check-status/retry.
 
 every known-ref row offers `view import`. it uses the existing guarded leave and
 an exact selected imports url with explicit `import-detail` activation. cancellation
 preserves browser work; confirmation may stop/discard it. blocked navigation keeps
 the existing retained-target flow. there is no resumable add session. receipts say
-`saved`; request replay is not evidence of content duplication.
+`saved`; a resend is not evidence of content duplication.
 
-an upload capability whose signing round trip exhausts its window is re-signed
-once by replaying the same key. the storage put runs under the lesser of 240 s and
-capability expiry. timeout, caller abort, network failure and non-2xx are reported
-to the transport-failure endpoint; confirmation publishes verified bytes. storage
-requests carry no nexus credentials. exceptional durable recovery remains in
-imports. backend source execution/publication/replay defects retain their own
-owners and tickets.
+an upload's id is its session id: the storage put runs until the signed url's
+`expires_at`; a timeout, network failure or non-2xx reads "Upload didn’t complete"
+(`BytesMissing`) and Retry upload sends the same id, which opens a fresh url for a
+new generation; confirmation publishes verified bytes. the size limit is the
+server's (refused at create). storage requests carry no nexus credentials.
+exceptional durable recovery remains in imports. backend source
+execution/publication defects retain their own owners and tickets.
 
 `./scripts/test` remains the permanent static gate. temporary isolated live tests
 are removed after green and review; the plan links retained observations and limits.

@@ -40,10 +40,10 @@ recognized failure remains handled while this runtime survives.
 the context hook is a present scope contract: outside the authenticated
 boundary its default handler returns false. `app/share/page.tsx:10-13`
 deliberately keeps the share capture outside the shell and login flow;
-`ShareCapture.tsx` uses `usePaneFreeServerValue` for its account read there. a failed
+`ShareCapture.tsx` reads the account with `usePaneFreeServerValue` there. a failed
 share account read remains available to that screen's error handling and must
-not navigate to login. inline auth guidance is owned and separately qualified by
-[share capture recovery](share-capture-recovery.md).
+not navigate to login; its inline sign-in guidance is the share page's own
+([ingest](ingest.md)).
 explicit direct-handler callers retain their
 existing decision to invoke global recovery. no alternate provider, scope
 option, or compatibility api is added.

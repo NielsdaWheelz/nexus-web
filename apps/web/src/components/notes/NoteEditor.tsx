@@ -206,7 +206,7 @@ export default function NoteEditor(props: NoteEditorProps) {
       busy.current = true;
       view.setProps({ editable: () => false });
       try {
-        const upload = await uploadIngestFile({ file: files[0]!, libraryIds: [] });
+        const upload = await uploadIngestFile({ file: files[0]!, libraryIds: [], id: crypto.randomUUID() });
         if (view.isDestroyed || !replaceable(view))
           return refuse("The note changed before the upload finished.");
         const embed = schema.nodes.object_embed!.create({

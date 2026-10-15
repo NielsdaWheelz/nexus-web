@@ -669,24 +669,6 @@ export function concurrentWorkLine(item: ImportItem): string | null {
 }
 
 type Facts = HistoryEntry["facts"];
-type TransportFailure = NonNullable<
-  Extract<Facts, { kind: "UploadFailed" }>["transport"]
->;
-
-function transportLine(failure: TransportFailure): string {
-  switch (failure.kind) {
-    case "HttpRejected":
-      return `The storage service rejected this upload (${failure.status})`;
-    case "Timeout":
-      return "The upload ran out of time";
-    case "Aborted":
-      return "The upload was stopped";
-    case "Network":
-      return "The upload lost its connection";
-    default:
-      return assertNever(failure, "Unreachable upload transport failure");
-  }
-}
 
 const SOURCE_RECOVERY_LABEL = {
   RetrySource: "Retry accepted",
@@ -717,7 +699,8 @@ function eventLabel(entry: HistoryEntry): string {
     case "SourceHistoryBaseline":
       return "Detailed execution history was not recorded";
     case "UploadFailed":
-      return facts.transport !== null
+      // a transport failure (rows from before 0283) or a verification rejection
+      return entry.failure_code === "E_UPLOAD_TRANSPORT_FAILED"
         ? stageFailed("Upload")
         : UPLOAD_REJECTED_LABEL;
     case "UploadPublished":
@@ -789,11 +772,7 @@ export function eventLine(entry: HistoryEntry): string {
     case "MetadataOperation":
       return `${label}${reason}`;
     case "UploadFailed":
-      // A transport failure records what the transport did; a rejection only
-      // its verification code. Either way the reason is said once.
-      return facts.transport !== null
-        ? `${label}. ${transportLine(facts.transport)}.`
-        : `${label}.${reason}`;
+      return `${label}.${reason}`;
     case "SourceHistoryBaseline":
       // A pre-cut attempt keeps the outcome it had; that is all its evidence.
       switch (facts.outcome.kind) {
@@ -941,9 +920,6 @@ export const CONFLICT_NOTICE: FeedbackContent = {
   message: "Review its current status",
 };
 
-/** The same conflict for a channel that carries one sentence. */
-const CONFLICT_SENTENCE = `${CONFLICT_NOTICE.title}. ${CONFLICT_NOTICE.message}.`;
-
 export function emptyCopy(
   view: ImportsView,
   hasSearch: boolean,
@@ -1058,15 +1034,11 @@ const FILE_DOES_NOT_MATCH =
 
 /** Imports' Retry upload and Remove: one truthful next step per outcome. */
 const COMMAND_OUTCOME: Readonly<Record<PlainOutcome, string>> = {
-  NeedsAttention:
-    "The upload didn’t finish. Choose the original file to retry.",
   BytesMissing: "The upload didn’t finish. Choose the original file to retry.",
   Superseded: "This import moved on. Imports has been refreshed.",
-  Conflicted: CONFLICT_SENTENCE,
   Unresolved: "Nexus is still verifying this upload. Refresh in a moment.",
   UnsupportedFileType: FILE_DOES_NOT_MATCH,
   FileTooLarge: FILE_DOES_NOT_MATCH,
-  IntentChanged: FILE_DOES_NOT_MATCH,
   FileMismatch: FILE_DOES_NOT_MATCH,
   LibraryForbidden:
     "You no longer have access to a destination library for this import.",
@@ -1113,17 +1085,14 @@ const UNSUPPORTED_FILE = "This file type isn’t supported. Use a PDF or EPUB.";
  * one sentence and, where Imports holds the obligation, a pointer to it.
  */
 const CAPTURE_OUTCOME: Readonly<Record<PlainOutcome, string>> = {
-  NeedsAttention: "Open Imports for the available next step.",
   BytesMissing: "Nexus never received this file. Attach it again.",
   Superseded: "This upload finished elsewhere. Open Imports to find it.",
-  Conflicted: CONFLICT_SENTENCE,
   Unresolved:
     "Nexus couldn’t confirm this upload. Open Imports before attaching it again.",
   UnsupportedFileType: UNSUPPORTED_FILE,
   FileTooLarge: "This file is too large. Attach a smaller file.",
   LibraryForbidden:
     "You no longer have access to a destination library for this attachment.",
-  IntentChanged: "This upload changed. Attach the file again.",
   FileMismatch: "This upload changed. Attach the file again.",
 };
 
@@ -1149,9 +1118,8 @@ const CAPTURE_REFUSAL: Readonly<Record<string, string>> = {
 };
 
 /**
- * A failed capture or attachment, always a hard failure except an upload that
- * Imports now holds. Anything this does not model, a programming error
- * included, is rethrown for the screen boundary.
+ * A failed capture or attachment. Anything this does not model, a programming
+ * error included, is rethrown for the screen boundary.
  */
 export function captureErrorFeedback(
   error: unknown,
@@ -1160,10 +1128,7 @@ export function captureErrorFeedback(
   const title =
     operation === "SaveSource" ? "Couldn’t save" : "Attachment wasn’t added";
   if (error instanceof UploadSessionError) {
-    const message = outcomeSentence(error, CAPTURE_OUTCOME);
-    return error.outcome.kind === "NeedsAttention"
-      ? { tone: "Warning", title: "Upload needs attention", message }
-      : { tone: "Danger", title, message };
+    return { tone: "Danger", title, message: outcomeSentence(error, CAPTURE_OUTCOME) };
   }
   const { code, requestId } = modeled(error);
   if (!Object.hasOwn(CAPTURE_REFUSAL, code)) throw error;
@@ -1201,15 +1166,6 @@ const notAdded = (
 
 /** Add's answer to each upload-session outcome of one frozen intent. */
 const ADD_OUTCOME = {
-  NeedsAttention: {
-    kind: "Rejected",
-    feedback: {
-      tone: "Warning",
-      title: "Upload needs attention",
-      message:
-        "view this import for the available recovery, or edit this item to start a new import.",
-    },
-  },
   BytesMissing: {
     kind: "AcceptanceUnresolved",
     reason: "UploadIncomplete",
@@ -1221,7 +1177,6 @@ const ADD_OUTCOME = {
     },
   },
   Superseded: { kind: "Superseded" },
-  Conflicted: notAdded(CONFLICT_SENTENCE),
   Unresolved: {
     kind: "AcceptanceUnresolved",
     reason: "StatusUnknown",
@@ -1236,13 +1191,12 @@ const ADD_OUTCOME = {
   LibraryForbidden: notAdded(
     "You no longer have access to a destination library. Choose different libraries and start a new import.",
   ),
-  IntentChanged: notAdded("This import changed. Start a new import."),
   FileMismatch: notAdded(FILE_DOES_NOT_MATCH),
 } satisfies Readonly<Record<PlainOutcome, AcceptanceFailure>>;
 
 /**
- * Why an Add acceptance did not land: refused, unknown (replay the frozen
- * intent to find out), or superseded. A transport failure or a 5xx leaves the
+ * Why an Add acceptance did not land: refused, unknown (send its id again to
+ * find out), or superseded. A transport failure or a 5xx leaves the
  * acceptance unknown; defects and a malformed intent are rethrown.
  */
 export function acceptanceFailure(error: unknown): AcceptanceFailure {
