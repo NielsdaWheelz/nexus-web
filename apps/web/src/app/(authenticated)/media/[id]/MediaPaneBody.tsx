@@ -355,15 +355,21 @@ function MediaPane({ id }: { readonly id: string }) {
 
   // ---- render ----
   if (record.status === "loading" || (record.status === "ready" && !media))
-    return <PaneLoadingState label="Loading item…" announcement="Polite" />;
+    return (
+      <div className={styles.stateScrollport} data-mobile={isMobile}>
+        <PaneLoadingState label="Loading item…" announcement="Polite" />
+      </div>
+    );
   if (record.status === "failed" || !media) {
     const missing = record.status === "failed" && record.error.status === 404;
     return (
-      <div className={styles.state}>
-        <FeedbackNotice
-          content={{ tone: "Danger", title: missing ? "Media not found" : "Media couldn’t be loaded" }}
-          announcement="Assertive"
-        />
+      <div className={styles.stateScrollport} data-mobile={isMobile}>
+        <div className={styles.state}>
+          <FeedbackNotice
+            content={{ tone: "Danger", title: missing ? "Media not found" : "Media couldn’t be loaded" }}
+            announcement="Assertive"
+          />
+        </div>
       </div>
     );
   }
@@ -391,26 +397,28 @@ function MediaPane({ id }: { readonly id: string }) {
   ) : null;
   if (!readable)
     return (
-      <div className={styles.state} ref={root}>
-        {transcriptChrome}
-        {transcript ? (
-          <TranscriptState media={media} onChange={(next) => setMedia({ ...media, ...next })} />
-        ) : sourceError ? (
-          <>
-            <p>{sourceError.title}</p>
-            <p>{sourceError.explanation}</p>
-            {sourceError.action.kind === "OpenSource" ? (
-              <a href={sourceError.action.href} target="_blank" rel="noopener noreferrer">
-                Open source
-              </a>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <p>This media is still being processed.</p>
-            <p>Status: {media.processing_status}</p>
-          </>
-        )}
+      <div className={styles.stateScrollport} data-mobile={isMobile} ref={root}>
+        <div className={styles.state}>
+          {transcriptChrome}
+          {transcript ? (
+            <TranscriptState media={media} onChange={(next) => setMedia({ ...media, ...next })} />
+          ) : sourceError ? (
+            <>
+              <p>{sourceError.title}</p>
+              <p>{sourceError.explanation}</p>
+              {sourceError.action.kind === "OpenSource" ? (
+                <a href={sourceError.action.href} target="_blank" rel="noopener noreferrer">
+                  Open source
+                </a>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <p>This media is still being processed.</p>
+              <p>Status: {media.processing_status}</p>
+            </>
+          )}
+        </div>
       </div>
     );
 
