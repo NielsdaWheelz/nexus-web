@@ -1,0 +1,1096 @@
+{
+  "date": "2026-10-15",
+  "baselineSource": "367da80e0c1beb1c426f6d2d72201b0733809b50",
+  "implementationSource": "4c33ec204a8433c15195523ba2618bde8ea18c61",
+  "branch": "codex/library-chooser-20261015",
+  "api": {
+    "baseline": {
+      "runId": "bacce605",
+      "cases": [
+        {
+          "name": "complete catalog includes more than 50 identities",
+          "outcome": "fail",
+          "error": "AssertionError: complete catalog omitted 55 of 55 created libraries"
+        },
+        {
+          "name": "catalog rejects legacy parameters",
+          "outcome": "fail",
+          "error": "AssertionError: legacy catalog parameters accepted: ?q=proof 200"
+        },
+        {
+          "name": "create replay survives rename",
+          "outcome": "fail",
+          "error": "AssertionError: create replay after rename was not the original success: 409"
+        },
+        {
+          "name": "create replay cannot resurrect deletion",
+          "outcome": "fail",
+          "error": "AssertionError: create replay after deletion was not the original success"
+        },
+        {
+          "name": "delayed duplicate cannot reverse later removal",
+          "outcome": "fail",
+          "error": "AssertionError: delayed add replay reversed the later removal"
+        },
+        {
+          "name": "terminal refusal survives changed conditions",
+          "outcome": "fail",
+          "error": "AssertionError: terminal refusal changed after another destination was added: {'kind': 'Confirmed'}"
+        },
+        {
+          "name": "same identity changed body conflicts",
+          "outcome": "fail",
+          "error": "AssertionError: same id changed body did not conflict: 204"
+        },
+        {
+          "name": "concurrent exact replay is inert after later removal",
+          "outcome": "fail",
+          "error": "AssertionError: concurrent exact replay reapplied after removal"
+        }
+      ],
+      "cleanupErrors": []
+    },
+    "candidate": {
+      "runId": "88c037f2",
+      "cases": [
+        {
+          "name": "complete catalog includes more than 50 identities",
+          "outcome": "pass"
+        },
+        {
+          "name": "catalog rejects legacy parameters",
+          "outcome": "pass"
+        },
+        {
+          "name": "create replay survives rename",
+          "outcome": "pass"
+        },
+        {
+          "name": "create replay cannot resurrect deletion",
+          "outcome": "pass"
+        },
+        {
+          "name": "delayed duplicate cannot reverse later removal",
+          "outcome": "pass"
+        },
+        {
+          "name": "terminal refusal survives changed conditions",
+          "outcome": "pass"
+        },
+        {
+          "name": "same identity changed body conflicts",
+          "outcome": "pass"
+        },
+        {
+          "name": "concurrent exact replay is inert after later removal",
+          "outcome": "pass"
+        }
+      ],
+      "cleanupErrors": []
+    }
+  },
+  "chooser": {
+    "baseline": [
+      {
+        "name": "empty query has no active suggestion and enter changes nothing",
+        "outcome": "fail",
+        "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n\n+ '_r_0_-option-fdc69d29-25de-47c1-8bbd-cbbf378167a6'\n- null\n"
+      },
+      {
+        "name": "accepted entry clears query and keeps input focus",
+        "outcome": "fail",
+        "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n\n+ 'chooser alpha'\n- ''\n"
+      },
+      {
+        "name": "selected rows obey current query and repeat entry preserves earlier choices",
+        "outcome": "fail",
+        "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\n1 !== 0\n"
+      },
+      {
+        "name": "home and end edit input without navigating suggestions",
+        "outcome": "fail",
+        "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n\n+ '_r_0_-option-fdc69d29-25de-47c1-8bbd-cbbf378167a6'\n- '_r_0_-option-64d72cc5-fb17-465d-8054-d72c3ff28ba0'\n"
+      },
+      {
+        "name": "escape dismisses just the chooser and restores trigger",
+        "outcome": "pass"
+      },
+      {
+        "name": "keyboard invocation focuses search at narrow width",
+        "outcome": "fail",
+        "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\nfalse !== true\n"
+      }
+    ],
+    "chromium": [
+      {
+        "name": "empty query has no active suggestion and enter changes nothing",
+        "outcome": "pass"
+      },
+      {
+        "name": "accepted entry clears query and keeps input focus",
+        "outcome": "pass"
+      },
+      {
+        "name": "selected rows obey current query and repeat entry preserves earlier choices",
+        "outcome": "pass"
+      },
+      {
+        "name": "home and end edit input without navigating suggestions",
+        "outcome": "pass"
+      },
+      {
+        "name": "escape dismisses just the chooser and restores trigger",
+        "outcome": "pass"
+      },
+      {
+        "name": "keyboard invocation focuses search at narrow width",
+        "outcome": "pass"
+      }
+    ],
+    "otherEnginesAndFocus": [
+      {
+        "engine": "firefox",
+        "version": "148.0.2",
+        "chooser": [
+          {
+            "name": "empty query has no active suggestion and enter changes nothing",
+            "outcome": "pass"
+          },
+          {
+            "name": "accepted entry clears query and keeps input focus",
+            "outcome": "pass"
+          },
+          {
+            "name": "selected rows obey current query and repeat entry preserves earlier choices",
+            "outcome": "pass"
+          },
+          {
+            "name": "home and end edit input without navigating suggestions",
+            "outcome": "pass"
+          },
+          {
+            "name": "escape dismisses just the chooser and restores trigger",
+            "outcome": "pass"
+          },
+          {
+            "name": "keyboard invocation focuses search at narrow width",
+            "outcome": "pass"
+          }
+        ],
+        "focus": [
+          {
+            "name": "native modified arrows preserve active suggestion",
+            "outcome": "pass"
+          },
+          {
+            "name": "native repeated enter does not reapply a choice",
+            "outcome": "pass",
+            "nativeRepeat": true
+          },
+          {
+            "name": "synthetic composition guard preserves query and selection",
+            "outcome": "pass",
+            "scope": "synthetic composition event guard; no physical ime claim"
+          },
+          {
+            "name": "native tab exits to next control without committing",
+            "outcome": "pass"
+          },
+          {
+            "name": "native shift tab exits to opener without committing",
+            "outcome": "pass"
+          },
+          {
+            "name": "outside pointer dismisses and preserves accepted choices",
+            "outcome": "pass"
+          },
+          {
+            "name": "removing an open row leaves focus on surviving source",
+            "outcome": "pass",
+            "invocation": "public remove button focused then native enter while chooser open"
+          },
+          {
+            "name": "390px layout remains usable with doubled text size",
+            "outcome": "pass",
+            "normal": {
+              "inputFont": "16px",
+              "optionFont": "16px",
+              "overflow": 0
+            },
+            "doubled": {
+              "inputFont": "32px",
+              "optionFont": "32px",
+              "overflow": 0
+            },
+            "method": "computed font sizes doubled in page; not browser zoom or physical text preference"
+          }
+        ],
+        "harnessNotes": [
+          "outside click uses verified blank point because the tall chooser covers the page heading",
+          "webkit text-size case isolated from navigation away from an unfinished add modal"
+        ]
+      },
+      {
+        "engine": "webkit",
+        "version": "26.4",
+        "chooser": [
+          {
+            "name": "empty query has no active suggestion and enter changes nothing",
+            "outcome": "pass"
+          },
+          {
+            "name": "accepted entry clears query and keeps input focus",
+            "outcome": "pass"
+          },
+          {
+            "name": "selected rows obey current query and repeat entry preserves earlier choices",
+            "outcome": "pass"
+          },
+          {
+            "name": "home and end edit input without navigating suggestions",
+            "outcome": "pass"
+          },
+          {
+            "name": "escape dismisses just the chooser and restores trigger",
+            "outcome": "pass"
+          },
+          {
+            "name": "keyboard invocation focuses search at narrow width",
+            "outcome": "pass"
+          }
+        ],
+        "focus": [
+          {
+            "name": "native modified arrows preserve active suggestion",
+            "outcome": "pass"
+          },
+          {
+            "name": "native repeated enter does not reapply a choice",
+            "outcome": "pass",
+            "nativeRepeat": true
+          },
+          {
+            "name": "synthetic composition guard preserves query and selection",
+            "outcome": "pass",
+            "scope": "synthetic composition event guard; no physical ime claim"
+          },
+          {
+            "name": "native tab exits to next control without committing",
+            "outcome": "pass"
+          },
+          {
+            "name": "native shift tab exits to opener without committing",
+            "outcome": "pass"
+          },
+          {
+            "name": "outside pointer dismisses and preserves accepted choices",
+            "outcome": "pass"
+          },
+          {
+            "name": "removing an open row leaves focus on surviving source",
+            "outcome": "pass",
+            "invocation": "public remove button focused then native enter while chooser open"
+          },
+          {
+            "name": "390px layout remains usable with doubled text size",
+            "outcome": "pass",
+            "normal": {
+              "inputFont": "16px",
+              "optionFont": "16px",
+              "overflow": 0
+            },
+            "doubled": {
+              "inputFont": "32px",
+              "optionFont": "32px",
+              "overflow": 0
+            },
+            "method": "computed font sizes doubled in page; not browser zoom or physical text preference"
+          }
+        ],
+        "harnessNotes": [
+          "outside click uses verified blank point because the tall chooser covers the page heading",
+          "webkit text-size case isolated from navigation away from an unfinished add modal"
+        ]
+      },
+      {
+        "engine": "chromium",
+        "version": "147.0.7727.15",
+        "chooser": [],
+        "focus": [
+          {
+            "name": "native modified arrows preserve active suggestion",
+            "outcome": "pass"
+          },
+          {
+            "name": "native repeated enter does not reapply a choice",
+            "outcome": "pass",
+            "nativeRepeat": true
+          },
+          {
+            "name": "synthetic composition guard preserves query and selection",
+            "outcome": "pass",
+            "scope": "synthetic composition event guard; no physical ime claim"
+          },
+          {
+            "name": "native tab exits to next control without committing",
+            "outcome": "pass"
+          },
+          {
+            "name": "native shift tab exits to opener without committing",
+            "outcome": "pass"
+          },
+          {
+            "name": "outside pointer dismisses and preserves accepted choices",
+            "outcome": "pass"
+          },
+          {
+            "name": "removing an open row leaves focus on surviving source",
+            "outcome": "pass",
+            "invocation": "public remove button focused then native enter while chooser open"
+          },
+          {
+            "name": "390px layout remains usable with doubled text size",
+            "outcome": "pass",
+            "normal": {
+              "inputFont": "16px",
+              "optionFont": "16px",
+              "overflow": 0
+            },
+            "doubled": {
+              "inputFont": "32px",
+              "optionFont": "32px",
+              "overflow": 0
+            },
+            "method": "computed font sizes doubled in page; not browser zoom or physical text preference"
+          }
+        ],
+        "harnessNotes": [
+          "outside click uses verified blank point because the tall chooser covers the page heading",
+          "webkit text-size case isolated from navigation away from an unfinished add modal"
+        ]
+      }
+    ]
+  },
+  "runtime": {
+    "baseline": [
+      {
+        "name": "live writes keep typing responsive and clear accepted query",
+        "outcome": "fail",
+        "error": "Expected values to be strictly equal:\n\n'' !== null\n"
+      },
+      {
+        "name": "accepted uncertain edit survives dismissal and hard reload",
+        "outcome": "fail",
+        "error": "unknown accepted command has no same-tab journal"
+      }
+    ],
+    "candidate": [
+      {
+        "name": "live writes keep typing responsive and clear accepted query",
+        "outcome": "pass"
+      },
+      {
+        "name": "accepted uncertain edit survives dismissal and hard reload",
+        "outcome": "pass"
+      }
+    ],
+    "recovery": [
+      {
+        "name": "fifo opposite intent survives unknown response and reload",
+        "outcome": "pass",
+        "commands": [
+          {
+            "kind": "AddMedia",
+            "clientMutationId": "1e6c2e3e-aa71-4793-8788-9c96481cc59c",
+            "mediaId": "3f575ac2-cbd7-47d5-b450-b9c57ba7f068",
+            "destination": {
+              "kind": "Library",
+              "libraryId": "fdc69d29-25de-47c1-8bbd-cbbf378167a6"
+            }
+          },
+          {
+            "kind": "AddMedia",
+            "clientMutationId": "1e6c2e3e-aa71-4793-8788-9c96481cc59c",
+            "mediaId": "3f575ac2-cbd7-47d5-b450-b9c57ba7f068",
+            "destination": {
+              "kind": "Library",
+              "libraryId": "fdc69d29-25de-47c1-8bbd-cbbf378167a6"
+            }
+          },
+          {
+            "kind": "AddMedia",
+            "clientMutationId": "1e6c2e3e-aa71-4793-8788-9c96481cc59c",
+            "mediaId": "3f575ac2-cbd7-47d5-b450-b9c57ba7f068",
+            "destination": {
+              "kind": "Library",
+              "libraryId": "fdc69d29-25de-47c1-8bbd-cbbf378167a6"
+            }
+          },
+          {
+            "kind": "RemoveMedia",
+            "clientMutationId": "384a092b-5b1d-4940-931f-04a60cc39d88",
+            "mediaId": "3f575ac2-cbd7-47d5-b450-b9c57ba7f068",
+            "destination": {
+              "kind": "Library",
+              "libraryId": "fdc69d29-25de-47c1-8bbd-cbbf378167a6"
+            }
+          }
+        ]
+      },
+      {
+        "name": "live creation replay releases frozen dependent placement after reload",
+        "outcome": "pass",
+        "commands": [
+          {
+            "kind": "CreateLibrary",
+            "library_id": "999c80c1-579e-4e2e-966d-03b7b4e3d91a",
+            "name": "chooser recovery 4e82549b"
+          },
+          {
+            "kind": "CreateLibrary",
+            "library_id": "999c80c1-579e-4e2e-966d-03b7b4e3d91a",
+            "name": "chooser recovery 4e82549b"
+          },
+          {
+            "kind": "CreateLibrary",
+            "library_id": "999c80c1-579e-4e2e-966d-03b7b4e3d91a",
+            "name": "chooser recovery 4e82549b"
+          },
+          {
+            "kind": "AddMedia",
+            "clientMutationId": "c1effb28-d282-4360-b3d3-377d141076e3",
+            "mediaId": "3f575ac2-cbd7-47d5-b450-b9c57ba7f068",
+            "destination": {
+              "kind": "Library",
+              "libraryId": "999c80c1-579e-4e2e-966d-03b7b4e3d91a"
+            }
+          }
+        ]
+      },
+      {
+        "name": "native storage quota rejects admission without sending",
+        "outcome": "pass",
+        "commands": [
+          {
+            "kind": "AddMedia",
+            "clientMutationId": "9e6c8aa8-2595-4ca3-8b25-cc61fbe5d3e8",
+            "mediaId": "3f575ac2-cbd7-47d5-b450-b9c57ba7f068",
+            "destination": {
+              "kind": "Library",
+              "libraryId": "fdc69d29-25de-47c1-8bbd-cbbf378167a6"
+            }
+          }
+        ]
+      },
+      {
+        "name": "malformed same account recovery stays untouched and blocks writes",
+        "outcome": "pass",
+        "commands": []
+      }
+    ]
+  },
+  "imports": [
+    {
+      "name": "draft defaults and repeated per-row/bulk choices preserve scopes without placement writes",
+      "outcome": "pass",
+      "rows": [
+        [
+          "85e38fa5-1560-4047-b57c-6d34a9826773"
+        ],
+        [
+          "85e38fa5-1560-4047-b57c-6d34a9826773",
+          "64d72cc5-fb17-465d-8054-d72c3ff28ba0"
+        ]
+      ],
+      "futureDefaults": [
+        "fdc69d29-25de-47c1-8bbd-cbbf378167a6"
+      ],
+      "placementWrites": 0
+    },
+    {
+      "name": "ordinary url submission freezes each current draft destination set",
+      "outcome": "pass",
+      "media": [
+        "e1c15e2b-d000-4e4d-a8b8-736f5472ec67",
+        "47da30c1-b44d-4779-a7df-f1135e866db4"
+      ],
+      "importCount": 2,
+      "placementWrites": 0
+    },
+    {
+      "name": "saved row repeated library changes stay open and preserve unrelated membership",
+      "outcome": "pass",
+      "commands": [
+        {
+          "kind": "AddMedia",
+          "clientMutationId": "a4c83865-7b9f-44fa-afc4-5379ef5d39df",
+          "mediaId": "e1c15e2b-d000-4e4d-a8b8-736f5472ec67",
+          "destination": {
+            "kind": "Library",
+            "libraryId": "fdc69d29-25de-47c1-8bbd-cbbf378167a6"
+          }
+        },
+        {
+          "kind": "RemoveMedia",
+          "clientMutationId": "1be42db1-4e15-4451-94b8-50ac88fdfeff",
+          "mediaId": "e1c15e2b-d000-4e4d-a8b8-736f5472ec67",
+          "destination": {
+            "kind": "Library",
+            "libraryId": "85e38fa5-1560-4047-b57c-6d34a9826773"
+          }
+        },
+        {
+          "kind": "AddMedia",
+          "clientMutationId": "db59a072-6976-4914-b48b-c96e06386c18",
+          "mediaId": "e1c15e2b-d000-4e4d-a8b8-736f5472ec67",
+          "destination": {
+            "kind": "Library",
+            "libraryId": "08feb544-6993-418f-b953-bc8d64e830da"
+          }
+        },
+        {
+          "kind": "RemoveMedia",
+          "clientMutationId": "cc1b9144-125a-4eb8-a2ea-6d70e6614ca2",
+          "mediaId": "e1c15e2b-d000-4e4d-a8b8-736f5472ec67",
+          "destination": {
+            "kind": "Library",
+            "libraryId": "08feb544-6993-418f-b953-bc8d64e830da"
+          }
+        }
+      ]
+    },
+    {
+      "name": "saved bulk add/remove preserves target FIFO while another target progresses",
+      "outcome": "pass",
+      "held": "56f74e9e-d132-4337-8bf8-5fada1ac9cfc",
+      "media": [
+        "e1c15e2b-d000-4e4d-a8b8-736f5472ec67",
+        "47da30c1-b44d-4779-a7df-f1135e866db4"
+      ],
+      "commands": [
+        {
+          "kind": "AddMedia",
+          "clientMutationId": "56f74e9e-d132-4337-8bf8-5fada1ac9cfc",
+          "mediaId": "e1c15e2b-d000-4e4d-a8b8-736f5472ec67",
+          "destination": {
+            "kind": "Library",
+            "libraryId": "fa5619bf-773f-42cb-872a-bb9095dcb228"
+          }
+        },
+        {
+          "kind": "AddMedia",
+          "clientMutationId": "7c96b4a7-546b-403c-97a1-a6b514c4db1e",
+          "mediaId": "47da30c1-b44d-4779-a7df-f1135e866db4",
+          "destination": {
+            "kind": "Library",
+            "libraryId": "fa5619bf-773f-42cb-872a-bb9095dcb228"
+          }
+        },
+        {
+          "kind": "RemoveMedia",
+          "clientMutationId": "2e24710f-1af6-416c-8b5c-3afbbe6735b8",
+          "mediaId": "47da30c1-b44d-4779-a7df-f1135e866db4",
+          "destination": {
+            "kind": "Library",
+            "libraryId": "fa5619bf-773f-42cb-872a-bb9095dcb228"
+          }
+        },
+        {
+          "kind": "RemoveMedia",
+          "clientMutationId": "e891df48-3cd5-41d9-b81c-ce71371dfb69",
+          "mediaId": "e1c15e2b-d000-4e4d-a8b8-736f5472ec67",
+          "destination": {
+            "kind": "Library",
+            "libraryId": "fa5619bf-773f-42cb-872a-bb9095dcb228"
+          }
+        }
+      ]
+    },
+    {
+      "name": "bulk draft creation keeps frozen surviving rows and preserves newer selection/query",
+      "outcome": "pass",
+      "request": {
+        "library_id": "627f6e8d-3b4f-4055-82e7-caa95938356a",
+        "name": "chooser import creation e420756f"
+      },
+      "removedId": "add-item-01f4abb8-6066-4df9-a38f-5faed11efd5c",
+      "replacementId": "add-item-304ff090-a484-4c2b-86fb-726e2023b7db",
+      "placementWrites": 0,
+      "preservedQuery": "chooser catalog 01"
+    }
+  ],
+  "canonical": [
+    {
+      "name": "media add canonicalizes inherited membership instead of inventing direct placement",
+      "outcome": "pass",
+      "commands": [
+        {
+          "kind": "AddMedia",
+          "clientMutationId": "15708f70-b51c-466e-8f7f-52dba1bbf8e3",
+          "mediaId": "01a13e79-3975-7c90-b7ea-bf05a3204f87",
+          "destination": {
+            "kind": "Library",
+            "libraryId": "fdc69d29-25de-47c1-8bbd-cbbf378167a6"
+          }
+        }
+      ]
+    },
+    {
+      "name": "podcast repeated entry queues without moving input or newer query",
+      "outcome": "pass",
+      "commands": [
+        {
+          "kind": "AddPodcast",
+          "clientMutationId": "c440bc83-2498-4ebe-9714-148e2673b317",
+          "podcastId": "2732a0bc-f864-4f7f-b4ea-7999412d7af1",
+          "libraryId": "1542464d-6806-4022-94f6-9c470aa9a668"
+        },
+        {
+          "kind": "AddPodcast",
+          "clientMutationId": "7eea34b0-7ed5-4e92-816e-fd95085048d2",
+          "podcastId": "2732a0bc-f864-4f7f-b4ea-7999412d7af1",
+          "libraryId": "a572f383-ee62-4a52-83f4-9091365fa19a"
+        }
+      ]
+    },
+    {
+      "name": "replacement and subscription refusals remain terminal after conditions change",
+      "outcome": "pass",
+      "commands": [
+        {
+          "request": {
+            "kind": "AddPodcast",
+            "clientMutationId": "b8286cf8-7cf1-4425-9ac5-ed7b8a19c748",
+            "podcastId": "2732a0bc-f864-4f7f-b4ea-7999412d7af1",
+            "libraryId": "85e38fa5-1560-4047-b57c-6d34a9826773"
+          },
+          "receipt": {
+            "clientMutationId": "b8286cf8-7cf1-4425-9ac5-ed7b8a19c748",
+            "outcome": {
+              "kind": "Refused",
+              "code": "E_PODCAST_REPLACES_EPISODES"
+            }
+          }
+        },
+        {
+          "request": {
+            "kind": "AddPodcast",
+            "clientMutationId": "783b0084-0bda-40b1-bf8b-89521e76a76f",
+            "podcastId": "2732a0bc-f864-4f7f-b4ea-7999412d7af1",
+            "libraryId": "85e38fa5-1560-4047-b57c-6d34a9826773"
+          },
+          "receipt": {
+            "clientMutationId": "783b0084-0bda-40b1-bf8b-89521e76a76f",
+            "outcome": {
+              "kind": "Refused",
+              "code": "E_PODCAST_SUBSCRIPTION_REQUIRED"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "forms": [
+    {
+      "name": "share chosen draft ids compose into ordinary URL acquisition",
+      "outcome": "pass",
+      "evidence": [
+        {
+          "request": {
+            "url": "https://example.com/?chooser-share=855eb2e5-add5-4e8d-8b4d-f55d9a1ac642",
+            "library_ids": [
+              "fdc69d29-25de-47c1-8bbd-cbbf378167a6",
+              "85e38fa5-1560-4047-b57c-6d34a9826773"
+            ]
+          },
+          "status": 202,
+          "accepted": {
+            "import_ref": "media:5d3b392d-10c2-4a7f-8bb7-e7684992a22a",
+            "media_id": "5d3b392d-10c2-4a7f-8bb7-e7684992a22a",
+            "source_attempt_id": "1911b2a7-b3cf-41b0-a1a5-4b92bf5796b2",
+            "source_type": "generic_web_url",
+            "source_attempt_status": "queued",
+            "idempotency_outcome": "created",
+            "processing_status": "pending",
+            "ingest_enqueued": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "definite create refusal permits corrected name and late success preserves new query",
+      "outcome": "pass",
+      "evidence": [
+        {
+          "initial": "E_NAME_INVALID"
+        },
+        {
+          "created": {
+            "library_id": "41ed7305-b65d-4ce3-a0cc-6756140692fc",
+            "name": "chooser corrected ee322375"
+          }
+        },
+        {
+          "unicodeCodePoints": 100
+        }
+      ]
+    },
+    {
+      "name": "create success followed by target refusal leaves created library and explicit explanation",
+      "outcome": "pass",
+      "evidence": [
+        {
+          "created": {
+            "library_id": "7e1e7b01-837e-49d4-b131-43f63fefbae4",
+            "name": "chooser partial 7380d5a5"
+          },
+          "mediaId": "66d50489-1c14-4212-a251-efa4ee94c7cb",
+          "libraryPreserved": true
+        }
+      ]
+    },
+    {
+      "name": "canonical subscription receives staged chooser ids without direct writes",
+      "outcome": "pass",
+      "evidence": [
+        {
+          "request": {
+            "target": {
+              "kind": "Canonical",
+              "podcastId": "2732a0bc-f864-4f7f-b4ea-7999412d7af1"
+            },
+            "namedLibraryIds": [
+              "64d72cc5-fb17-465d-8054-d72c3ff28ba0",
+              "85e38fa5-1560-4047-b57c-6d34a9826773"
+            ],
+            "replacementConfirmation": {
+              "kind": "Absent"
+            }
+          },
+          "status": 200,
+          "receipt": {
+            "href": "/podcasts/2732a0bc-f864-4f7f-b4ea-7999412d7af1",
+            "podcastId": "2732a0bc-f864-4f7f-b4ea-7999412d7af1",
+            "outcome": "AlreadySubscribed",
+            "destinations": [
+              {
+                "libraryId": "85e38fa5-1560-4047-b57c-6d34a9826773",
+                "outcome": "AlreadyPresent"
+              },
+              {
+                "libraryId": "64d72cc5-fb17-465d-8054-d72c3ff28ba0",
+                "outcome": "AlreadyPresent"
+              }
+            ],
+            "backfill": {
+              "id": "01a13e86-edc5-73c0-ba73-cd3cd99e8999",
+              "state": "Pending",
+              "processedCount": 0,
+              "addedCount": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "browse episode receives staged chooser ids through acquisition owner",
+      "outcome": "pass",
+      "provenance": "first form-live run stdout; later canonical HTTP reread. same acquired target becomes Owned and is not a repeatable preview fixture.",
+      "request": {
+        "target": "ndt1.eyJlcGlzb2RlUmVmIjoiNTg3MjM5MDA0ODUiLCJraW5kIjoiUG9kY2FzdEluZGV4RXBpc29kZSIsInBvZGNhc3RSZWYiOiI3NTc2NzUifQ.IvCq3CZnGxOxqQ7yQqmrSqMO9aA-vyo2_je4evWDSQU",
+        "namedLibraryIds": [
+          "64d72cc5-fb17-465d-8054-d72c3ff28ba0"
+        ]
+      },
+      "observedResponse": {
+        "href": "/media/01a13e90-8eea-7f73-9834-652038669e1b",
+        "mediaId": "01a13e90-8eea-7f73-9834-652038669e1b",
+        "destinationOutcomes": [
+          {
+            "libraryId": "64d72cc5-fb17-465d-8054-d72c3ff28ba0",
+            "outcome": "IncludedThroughPodcast"
+          }
+        ]
+      },
+      "canonical": {
+        "status": 200,
+        "row": {
+          "destination": {
+            "kind": "Library",
+            "library": {
+              "id": "64d72cc5-fb17-465d-8054-d72c3ff28ba0",
+              "name": "chooser catalog 00"
+            }
+          },
+          "relation": {
+            "kind": "Inherited",
+            "provenance": [
+              {
+                "id": "64d72cc5-fb17-465d-8054-d72c3ff28ba0",
+                "name": "chooser catalog 00"
+              }
+            ]
+          },
+          "availability": {
+            "kind": "Blocked",
+            "reason": "Inherited"
+          }
+        }
+      }
+    }
+  ],
+  "account": [
+    {
+      "name": "ordinary account switch hides and preserves a journal then exact recovery resumes for a",
+      "outcome": "pass"
+    },
+    {
+      "name": "share catalog after real signout shows guidance without navigation",
+      "outcome": "pass"
+    },
+    {
+      "name": "share create after real signout retains attempt and shows guidance without retry or redirect",
+      "outcome": "pass"
+    }
+  ],
+  "accountReplayIdentities": [
+    {
+      "kind": "AddMedia",
+      "clientMutationId": "1e70bb5f-5647-49df-9bb7-0c23d0cae4a0",
+      "mediaId": "3f575ac2-cbd7-47d5-b450-b9c57ba7f068",
+      "destination": {
+        "kind": "Library",
+        "libraryId": "fdc69d29-25de-47c1-8bbd-cbbf378167a6"
+      }
+    },
+    {
+      "kind": "AddMedia",
+      "clientMutationId": "1e70bb5f-5647-49df-9bb7-0c23d0cae4a0",
+      "mediaId": "3f575ac2-cbd7-47d5-b450-b9c57ba7f068",
+      "destination": {
+        "kind": "Library",
+        "libraryId": "fdc69d29-25de-47c1-8bbd-cbbf378167a6"
+      }
+    }
+  ],
+  "permission": {
+    "name": "revoked permission refuses admitted command and terminal replay survives restored authority",
+    "outcome": "pass",
+    "evidence": [
+      {
+        "request": {
+          "kind": "AddMedia",
+          "clientMutationId": "3ba6fef6-2a9f-439f-859f-447e9f366d8d",
+          "mediaId": "3f575ac2-cbd7-47d5-b450-b9c57ba7f068",
+          "destination": {
+            "kind": "Library",
+            "libraryId": "fad7d3ce-5685-4314-a5d3-68971b99ec62"
+          }
+        },
+        "receipt": {
+          "clientMutationId": "3ba6fef6-2a9f-439f-859f-447e9f366d8d",
+          "outcome": {
+            "kind": "Refused",
+            "code": "E_LIBRARY_FORBIDDEN"
+          }
+        }
+      },
+      {
+        "request": {
+          "kind": "AddMedia",
+          "clientMutationId": "c7087c90-cde2-4521-b503-e2ee3d503304",
+          "mediaId": "3f575ac2-cbd7-47d5-b450-b9c57ba7f068",
+          "destination": {
+            "kind": "Library",
+            "libraryId": "fad7d3ce-5685-4314-a5d3-68971b99ec62"
+          }
+        },
+        "receipt": {
+          "clientMutationId": "c7087c90-cde2-4521-b503-e2ee3d503304",
+          "outcome": {
+            "kind": "Confirmed"
+          }
+        },
+        "replayAfterInverse": "Absent"
+      }
+    ]
+  },
+  "catalog": [
+    {
+      "name": "initial enter never defers and late closed-generation catalog cannot replace current query/identity",
+      "outcome": "pass"
+    },
+    {
+      "name": "failed refresh retains matching last good rows and disables creation",
+      "outcome": "pass"
+    }
+  ],
+  "extension": {
+    "browser": "firefox158",
+    "baselineCases": [
+      {
+        "name": "continued entry while storage waits",
+        "outcome": "red",
+        "reason": "accepted choice kept query 'chooser alpha'"
+      },
+      {
+        "name": "save freezes every prior accepted edit",
+        "outcome": "red"
+      }
+    ],
+    "baselineLimit": "initial literal-loopback fixture refused publication; original chooser and stored-selection assertions were real reds",
+    "correctedBaseline": {
+      "input": "public fixture, actual baseline popup set_destinations boundary then native save, real indexeddb delay",
+      "limit": "baseline paged catalog unavailable after server hard cut; no catalog response fabricated",
+      "expectedLibrary": {
+        "id": "fdc69d29-25de-47c1-8bbd-cbbf378167a6",
+        "name": "chooser alpha"
+      },
+      "stored": {
+        "destinations": [],
+        "phase": {
+          "kind": "saved",
+          "mediaId": "01a13e7c-57ae-72a9-aea5-d0a7e480248e",
+          "openUrl": "http://localhost:3396/media/01a13e7c-57ae-72a9-aea5-d0a7e480248e"
+        }
+      },
+      "published": true,
+      "outcome": "red"
+    },
+    "candidateCases": [
+      {
+        "name": "continued entry while storage waits",
+        "outcome": "pass",
+        "observed": {
+          "enabled": true,
+          "focused": true,
+          "query": ""
+        }
+      },
+      {
+        "name": "save freezes every prior accepted edit",
+        "outcome": "pass"
+      }
+    ],
+    "candidateCanonical": {
+      "mediaId": "01a13e79-840b-7232-8b24-73bb435d92fb",
+      "rows": [
+        {
+          "destination": {
+            "kind": "SavedInNexus"
+          },
+          "relation": {
+            "kind": "Direct"
+          },
+          "availability": {
+            "kind": "Available"
+          }
+        },
+        {
+          "destination": {
+            "kind": "Library",
+            "library": {
+              "id": "fdc69d29-25de-47c1-8bbd-cbbf378167a6",
+              "name": "chooser alpha"
+            }
+          },
+          "relation": {
+            "kind": "Direct"
+          },
+          "availability": {
+            "kind": "Available"
+          }
+        },
+        {
+          "destination": {
+            "kind": "Library",
+            "library": {
+              "id": "85e38fa5-1560-4047-b57c-6d34a9826773",
+              "name": "chooser beta"
+            }
+          },
+          "relation": {
+            "kind": "Absent"
+          },
+          "availability": {
+            "kind": "Available"
+          }
+        }
+      ]
+    },
+    "extended": [
+      {
+        "case": "rapid include/include/exclude under native storage delay; host Escape closes popup; posted work finishes; reopen/save",
+        "outcome": "pass",
+        "intendedSummary": "selected libraries: chooser beta",
+        "stored": {
+          "destinations": [
+            {
+              "id": "85e38fa5-1560-4047-b57c-6d34a9826773",
+              "name": "chooser beta"
+            }
+          ],
+          "id": "bd1dc043-2da2-402a-9cd6-9368f74dfce9",
+          "intent": {
+            "operationKey": "07f56921-66ac-4c9a-919c-81e51353ab2c",
+            "sha256": "a17ad41c40c0a74eb3de50813453088cb32f4ec86623565c91816d92be487c7f"
+          },
+          "phase": {
+            "kind": "saved",
+            "mediaId": "01a13e7e-d0b0-7cf2-9c2a-a378f0d77ad7",
+            "openUrl": "http://localhost:3396/media/01a13e7e-d0b0-7cf2-9c2a-a378f0d77ad7"
+          }
+        }
+      },
+      {
+        "case": "discard with first write in flight and queued suffix settles native write then clears without resurrection",
+        "outcome": "pass",
+        "stored": null
+      }
+    ],
+    "accountBinding": {
+      "candidate": {
+        "case": "native-cancelled identity leaves unbound draft; restore real identity; hold native binding write; reopen popup",
+        "editableWhileBinding": false,
+        "beforeBound": false,
+        "afterBound": true,
+        "outcome": "pass"
+      },
+      "postBindEntry": {
+        "enabled": true,
+        "focused": true,
+        "query": ""
+      },
+      "preFixCandidate": {
+        "case": "native-cancelled identity leaves unbound draft; restore real identity; hold native binding write; reopen popup",
+        "editableWhileBinding": true,
+        "beforeBound": false,
+        "afterBound": false,
+        "outcome": "red"
+      },
+      "preFixBackgroundBundleSha256": "6d9f9d55974d2e2fd56e3e7fe7ef074466e2efe8b8e75e6cd64361e38cedc017"
+    }
+  },
+  "limits": [
+    "physical soft keyboard and ime unavailable",
+    "actual screen-reader speech unavailable: native window targeting failed",
+    "receipt-retirement storage denial not live injected",
+    "doubled text is not native browser zoom",
+    "malformed receipt guard source-reviewed; no fabricated application response"
+  ],
+  "longNameVisual": {
+    "nameCodePoints": 100,
+    "optionWidth": 382,
+    "optionHeight": 139.171875,
+    "pageWidth": 390,
+    "scrollWidth": 390,
+    "hasCheckboxState": false
+  },
+  "staticGate": {
+    "command": "./scripts/test",
+    "exitCode": 0,
+    "source": "4c33ec204a8433c15195523ba2618bde8ea18c61",
+    "afterCampaignDeletion": true,
+    "migrationHead": "0278"
+  }
+}

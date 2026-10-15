@@ -7,7 +7,7 @@ media publication labels and ordering use the original work's publication date.
 unknown originals never borrow edition dates. podcast-container release ordering
 keeps its provider timestamp. date ownership lives in [media metadata](media-metadata.md).
 
-The domain is split into four owned modules, each owning its own tables:
+the domain has four table owners and one command-composition owner:
 
 - **`services/library_governance.py`** owns the `libraries` table: library CRUD,
   the viewer's libraries index, the
@@ -28,8 +28,8 @@ created_at DESC, id DESC"`), the locked `ensure_entry` append, deletes and
   `normalize_positions`, all read accessors, and the item-in-library
   commands (`list_item_libraries`,
   `ensure_media_in_library_in_current_transaction`,
-  `remove_podcast_from_library`, `reorder_entries`,
-  `ensure_media_in_libraries_for_viewer`, `remove_media_from_library`,
+  `remove_media_from_library_in_current_transaction`, `reorder_entries`,
+  `undo_podcast_filing_for_viewer_in_current_transaction`,
   `assign_libraries_for_media_in_current_transaction`,
   named Podcast placement/compaction, and unsubscribe placement teardown).
 - **`services/library_entry_listing.py`** owns the entry listing path:
@@ -49,6 +49,12 @@ created_at DESC, id DESC"`), the locked `ensure_entry` append, deletes and
   changes the accepting user's default-library list/count on the very next
   read; there is no backfill job, projection worker, or provenance row to
   catch up afterward.
+- **`services/library_placement_commands.py`** composes direct media/podcast
+  placement with the existing `resource_mutations` replay ledger. it owns the
+  command transaction and terminal receipt, not entries or ingestion. domain
+  helpers raise supported refusals before their first write; the one transaction
+  commits either the effect plus `Confirmed` or the prewrite `Refused` receipt.
+  no savepoint or nested transaction exists.
 
 Media capabilities call these services to attach or validate visibility, then
 return to their own owners for ingestion, playback, files, or assets.
@@ -56,12 +62,12 @@ return to their own owners for ingestion, playback, files, or assets.
 ## output contract
 
 `api/routes/libraries.py` returns typed `Data` or `DataPage` models for every
-json success; its three bodyless commands retain 204. generated wire types own
+json success; bodyless commands retain 204. generated wire types own
 both server seed and browser transport shapes. collection pages carry a
 presence cursor inside `data` (`{items, nextCursor}`); governance pages carry a
-presence cursor in `page`; writable destinations retain their snake-case page
-fields. All of them use the one keyset cursor of architecture §8.12; the three
-envelope spellings remain ([ticket](../tickets/list-cursor-codecs-diverge.md)).
+presence cursor in `page`; both use the one keyset cursor of architecture §8.12
+([ticket](../tickets/list-cursor-codecs-diverge.md)). writable destinations are a
+complete `Data<LibraryIdentityOut[]>` catalog, without pagination.
 
 web projections retain media presentation, progress presence, zero-count
 suppression, subscription sync and request identity and value-coherence checks. the
@@ -83,7 +89,7 @@ removal, and ownership transfer. Library Share retains member-only link actions
 and exposes one authorized **Manage members** activation into that tab.
 `LibrarySettingsDialog` owns name settings only. Media and podcast
 placement is a separate top-level `Libraries…` resource relationship action
-backed by `LibraryEntryEditor`; it never appears inside Share. Library entries
+backed by the account-scoped placement owner and shared `LibraryChooser`; it never appears inside Share. Library entries
 are organization references rather than access-grant provenance. See
 [resource-sharing.md](resource-sharing.md).
 
@@ -100,15 +106,30 @@ person fields preserve semantic absence as `Presence`; governance commands
 return fully hydrated projections and use the standard serializable retry
 boundary.
 
-Library entry mutations are commands, not refreshed read models. Media add,
-reorder and media removal are bodyless commands (removal answers 204);
-idempotent Podcast placement add/removal returns its `outcome`. After a
-successful write the placement editor reconciles the subject's action snapshot
-and rereads the placement inventory. Every placement write is idempotent, so a
-transport failure is retried by resending the write; because that write may
-have committed, it also reconciles the snapshot. A refused write rereads the
-inventory and offers no retry, and a missing target ends the editor. An idle
-editor rereads when `Libraries` or `Entries` moved after its read.
+direct placement uses one `POST /library-placement-commands`: explicit add/remove
+media or podcast, caller-generated mutation id, and a terminal confirmed/refused
+receipt. exact account-scoped replay returns the original receipt before mutable
+authority checks; changed bodies conflict. a receipt proves the historical
+command outcome, never current membership. the owner rereads canonical inventory
+after acknowledgement and reconciles the existing resource-action snapshots.
+reorder remains its separate command.
+
+`lib/libraries/placementController.tsx` owns accepted live work above every picker.
+one fifo per target orders all destinations; independent targets progress
+concurrently. admission and dispatch are persisted before acceptance/send in the
+account's `nx_library_work.v1:{accountId}` session-storage journal. unknown work
+retains the exact body/id; reads never settle it. a 30 s delivery deadline is
+unknown delivery. same-account reload attempts recovery once, then explicit retry
+owns further attempts. receipt retirement precedes successor dispatch. storage
+failure stops admission/dispatch, preserving work; malformed journals stay intact
+for live repair. account changes revoke callbacks and never restore another
+account's journal. only observed or unresolved/reconciling targets are retained.
+
+visible membership, intended membership, next action and pending/refused state are
+separate. confirmed commands retain a reconciliation marker until a fenced
+post-write read; inherited membership can be the correct result of add. dismissal
+does not cancel work. unresolved failures remain in the existing feedback rail;
+opening the affected chooser moves that feedback inline without duplicating it.
 Agent filing receives only inserted/already-present truth for Undo and never
 hydrates an entry payload.
 
@@ -247,8 +268,8 @@ episodes immediately resurface with their consumption state intact.
   contains its Podcast returns `IncludedThroughPodcast` rather than creating a
   redundant child entry. Default/All instead applies the active subscription's
   parent-over-child subsumption as the root-set read predicate above;
-  named-Library behavior is otherwise unchanged. The canonical named-placement
-  PUT requires an already-active subscription, rechecks it under the owning
+  named-Library behavior is otherwise unchanged. the canonical named-placement
+  command requires an already-active subscription, rechecks it under the owning
   transaction, and never subscribes as a side effect.
 - **Media deletion counts physical references only.** Whether a document
   media has any reference left — the question that gates last-reference
@@ -429,7 +450,8 @@ those modules retain their tables and mutations.
 The frontend renders **Suggested for this library** after the complete entry
 inventory in a fixed comfortable List, independent of the main collection's
 empty state, Gallery choice, or density. Add delegates to the existing
-media/podcast filing command. It does not synthesize a `LibraryEntry`; visible
+account-scoped placement admission and observes its receipt before reporting
+success. it does not synthesize a `LibraryEntry`; visible
 suggestion survivors stay in order, at most one canonical replacement is appended,
 and the main entry projection reloads on the next pane activation.
 
@@ -444,16 +466,21 @@ resource connections remain available inside the opened resource.
 non-default libraries where the viewer can write entries. It does not mean every
 library the viewer can read.
 
-- **Search/list.** `GET /libraries/writable-destinations` is the sole backend
-  list contract for destination pickers (`LibraryDestinationField` +
-  `LibraryChooserSurface` + `LibraryDestinationPicker` adapter on the
-  frontend). It excludes the default library and member-only libraries,
-  performs server-side search, and pages with the shared keyset cursor
-  (architecture §8.12) over rank + `lower(name)` + name + id, ascending, bound
-  to viewer and query (`LibraryDestinations`). A blank query is
-  alphabetical; a non-empty query ranks exact → prefix → contains matches, then
-  alphabetically within each rank. A foreign or malformed cursor returns
-  `400 E_INVALID_CURSOR`.
+- **catalog.** `GET /libraries/writable-destinations` and its authenticated
+  extension counterpart return every writable named library as `{id,name}`.
+  default/system/member-only libraries are excluded. query, cursor and limit
+  parameters are rejected. `useLibraryDestinationCatalog` owns opening/refresh
+  reads, last-good facts and late-response fences. creation needs a successful
+  latest snapshot. missing selected draft destinations remain visibly unavailable
+  and removable; refresh never silently deletes a selection.
+- **interaction.** `LibraryChooser` owns local query/ranking, active suggestion,
+  keyboard handling, descriptions and announcements. exact, prefix and substring
+  matches precede stable name/id ordering. selected rows obey the same filter.
+  empty search has no active action; accepted enter/click clears search and keeps
+  input focus. writes and late completions never lock input or reset newer text.
+  home/end, modified arrows, ime, escape and tab retain their native/surface
+  owners. one action-list combobox uses `aria-selected` only for active suggestion;
+  confirmed membership and proposed effect are descriptions, not checkbox state.
 - **Standing placement ordering.** `library_entries.list_item_libraries` (the
   `Libraries…` resource-action listing) orders `lower(name) ASC, name ASC, id
   ASC`; the `LibraryChooser` client filters that complete inventory by
@@ -466,26 +493,34 @@ library the viewer can read.
   viewer's default library plus selected destinations by calling
   `assign_libraries_for_media_in_current_transaction` inside their existing
   acceptance transaction; there is no standalone transaction wrapper.
-  `ensure_media_in_libraries_for_viewer` adds post-hoc destinations atomically
-  as a bodyless command.
+  direct post-hoc edits go through replay-protected placement commands.
 
 The canonical HTTP placement surface is:
 
 ```text
 GET    /media/{media_id}/libraries
-POST   /media/{media_id}/libraries
-PUT    /media/{media_id}/saved-in-nexus
-DELETE /media/{media_id}/saved-in-nexus
-DELETE /media/{media_id}/libraries/{library_id}
 GET    /podcasts/{podcast_id}/libraries
-PUT    /libraries/{library_id}/podcasts/{podcast_id}
-DELETE /libraries/{library_id}/podcasts/{podcast_id}
+POST   /library-placement-commands
 ```
 
-The GETs return the strict destination/relation/availability inventory. Media
-POST, Saved PUT and the media removals are idempotent bodyless commands (204);
-Podcast placement returns its outcome. There is no inverse
-library-to-media write route and no scoped resource-delete query mode.
+the gets return the strict destination/relation/availability inventory. the post
+accepts the generated discriminated command union and returns
+`Data<{clientMutationId,outcome}>`. the six former direct writers are removed,
+without compatibility routes. internal acquisition/tool helpers retain their
+transaction-level composition.
+
+`POST /libraries` keeps `{library_id,name}` and `Data<LibraryOut>`. the
+`Library.Create` ledger freezes the normalized request and original result inside
+the creation transaction. replay after rename/deletion returns historical success
+without changing current rows; an existing id without a receipt conflicts.
+live create-and-place journals the creation plus frozen dependent adds atomically.
+creation acknowledgement durably clears prerequisites before adds dispatch.
+placement refusal leaves the created library intact. draft creation instead lives
+in `useDraftLibraryCreation` above the picker for the form lifetime; it delta-adds
+to its original surviving scope and never restores a captured selection array.
+
+see [the chooser specification](../library-chooser-plan.md) and
+[qualification](../library-chooser-verification.md) for the full contract and limits.
 
 ## Composition Rules
 

@@ -117,7 +117,10 @@ startup, not absence.
 the reply's hash must echo the state. The token is stored, then
 `GET /api/extension/session` supplies the account and byte limits; the first
 successful lookup binds an unbound draft to that account and only that account
-may resume it. Once the auth window has run, whatever its outcome, the
+may resume it. identity lookup and whole-draft binding run under the existing
+exclusive owner; connection becomes visible only after binding commits. the
+captured credential must still be current before binding/publication, so a late
+identity reply cannot restore a disconnected session. once the auth window has run, whatever its outcome, the
 background refocuses the window and reopens the popup. The popup sends
 `login`, `save`, `retry`, `resume`, `disconnect` or the `discard` of anything
 but an unsubmitted draft and then, in the same click handler, requests
@@ -142,9 +145,16 @@ honours is ever orphaned.
 
 - popup → background: `CaptureCommand` over `runtime.sendMessage`; the
   background accepts only senders with this extension's id and no tab, decodes
-  the command strictly, and answers `CommandResult`.
-- background → popup: `{kind: "state", state}` pushed on every change over the
-  `nexus-capture-view` port; the popup renders nothing else.
+  the command strictly, and answers `CommandResult`. complete destination reads
+  use `list_destinations`; save and destination edits use the view port instead.
+- popup → background over `nexus-capture-view`: sequenced `set_destination`
+  deltas and a `save` barrier, each naming the pinned draft. admission precedes
+  awaits; wrong draft, gaps and frozen edits reject.
+- background → popup over that port: state pushes carry monotonic revisions;
+  command acknowledgements carry sequence, admission and the covered revision.
+  the popup retires only the contiguous acknowledged prefix covered by its
+  installed view, then reapplies its provisional suffix. stale pushes cannot
+  replace newer intent.
 - background ↔ content: `ContentRequest`/`ContentReply` on the
   `nexus-capture-content` port an injection opens. The background accepts the
   port only from the sender it injected into (tab and frame, or the pinned
@@ -236,7 +246,7 @@ session by `created_by_user_id` and `input_origin.kind = "BrowserCapture"`
 | backend route | contract |
 | --- | --- |
 | `GET`, `DELETE /auth/extension-sessions/current` | account and byte limits; revocation |
-| `GET /extension/library-destinations?q&cursor&limit` | the shared writable-destination search; no create authority |
+| `GET /extension/library-destinations` | complete writable `{id,name}` catalog; query/cursor/limit rejected; no create authority |
 | `POST /extension/captures` | strict intent (`kind`, `source_url`, `filename`, `content_type`, `size_bytes`, `sha256`, `library_ids`) plus `Idempotency-Key`; creates or replays an upload session |
 | `GET /extension/captures/{handle}` | read-only status; an expired capability reads `NeedsAttention` |
 | `POST /extension/captures/{handle}/confirm`, `/retry`, `/transport-failure` | the shared upload-session commands |
@@ -256,7 +266,7 @@ library creation, server scraping and fallback sources after a failure.
 **The popup renders only what the background pushes.** The
 `nexus-capture-view` port is its sole source of view state (Firefox does not
 order a `sendMessage` reply against port messages); command replies are read
-only for a destination page or a failure. Every inbound message is decoded
+only for a complete destination catalog or a failure. every inbound message is decoded
 strictly; a contract violation is a visible `E_CAPTURE_POPUP` failure, never a
 guess. The popup owns the open chooser, its search and the notice of its last
 command, nothing else. `resumable` outranks the phase: a frozen draft after a
@@ -277,20 +287,21 @@ spare prompt is a failed acquisition discarded after a manual revocation. A
 `false` result shows which hosts were refused and that the draft is kept; a
 rejected request is shown as a failure.
 
-**The destination chooser** is inline: the shared `LibraryDestinationTrigger`
-disclosing a region that holds the shared `LibraryChooser` with `create={null}`
-(the popup never creates libraries). Opening moves focus into the search box;
-the chooser closes through its trigger, which keeps focus. The popup owns no
-Escape handling: Firefox closes a browser-action popup on Escape at the chrome
-level, before any key event reaches the document (fact, Firefox 156). A
-chooser that loses its enablement closes and never reopens unasked. The search
-state (one request generation over open, typing, retry and Load More; a
-180 ms pause for typed queries; the query trimmed and lowercased) is
-`components/libraries/useLibraryDestinationSearch.ts`, shared with the web
-`LibraryDestinationPicker`; the popup's transport is the `search_destinations`
-command. Toggles send the whole next selection as `set_destinations` and are
-serialized on the next pushed selection. Destinations freeze once saving
-starts.
+**the destination chooser** is inline: `LibraryDestinationTrigger` discloses a
+region containing the shared `LibraryChooser` with `creation={null}`. keyboard
+opening focuses search. `useLibraryDestinationCatalog` reads the complete writable
+catalog through `list_destinations`; matching, arrows and enter run locally with no
+typing delay. accepted explicit add/remove commands clear the query immediately,
+keep focus and allow the next choice while storage is pending. confirmed and
+intended membership remain distinct. each choice posts `set_destination` with its
+draft id and port sequence; the background owns the ordered storage writes. the
+popup retains only the provisional suffix until a versioned push includes its
+acknowledged commands. closing the popup does not discard admitted work. save
+closes destination admission, drains preceding writes and then freezes the intent;
+a storage failure preserves the draft and blocks that save. a chooser that loses
+enablement closes and never reopens unasked. firefox owns escape in a browser-action
+popup: it closes the panel before the document receives the key (observed in
+firefox 156). the trigger also closes the chooser and retains focus.
 
 **CSS closure.** The popup loads `src/app/globals.css` (the token owner), then
 `src/app/packagedFonts.css` (the next/font families as system stacks; both

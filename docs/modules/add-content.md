@@ -25,23 +25,38 @@ recognized drops prevent native navigation even while intake is unavailable.
 `useAddContentSession` owns the immutable snapshot and its synchronous ref. the
 panel renders its commands; it never calls acquisition or allocates replay keys.
 row destinations, the new-item seed and the bulk header have separate scopes.
-header deltas add/remove one library on populated drafts and seed, preserving
-other selections. mixed coverage is derived; sent/saved rows are excluded.
+header deltas add/remove one library on the counted, populated drafts, preserving
+other selections; they never change the new-item seed. use `for new items` to
+change future defaults. mixed coverage is derived; sent/saved rows are excluded.
 `All` membership is implicit.
 
-`LibraryDestinationPicker` owns shared search/create, with item selection or native
-all/some/none checkboxes. query changes synchronously retire continuation authority;
-every settlement belongs to its query, cursor and generation. deactivation clears
-loading and fences late replies. the shared chooser keeps keyboard-active options
-inside its own scrollport. busy search is read-only, preserving focus.
+`LibraryDestinationPicker` adapts draft selection to the shared action chooser.
+`useLibraryDestinationCatalog` reads the complete writable catalog on open and
+refreshes on library changes; matching is immediate and local. the search stays
+editable during refresh and creation. results describe confirmed/intended coverage
+separately from the keyboard-active suggestion; they are not checkboxes. explicit
+add/remove admission clears the query synchronously and retains input focus. the
+initial empty query has no active suggestion; arrows choose one and keep it inside
+the list's scrollport. failed refresh retains the last catalog, with creation
+unavailable until a fresh authoritative read succeeds.
 
 one active picker belongs to a row or header. desktop uses the responsive anchored
 surface; add on mobile uses an inline region in the scrolling body. header chooser
 content sits at the body's top. escape/back closes the picker first. inline
 regions omit outside-pointerdown dismissal so the intended click can complete.
 retarget resets search; removal/submission/session replacement cannot revive an
-old target or restore focus to its removed anchor. creation locks picker dismissal
-while task close retains the stop guard. other picker consumers remain responsive.
+old target or restore focus to its removed anchor. keyboard opening focuses search
+at every width; touch opening avoids forcing the software keyboard. creation never
+locks typing, selection or picker dismissal.
+
+`useDraftLibraryCreation` belongs to the add session, above its dismissible picker.
+admission freezes the session and current target row ids (or the explicit future
+defaults scope). success adds the new library to each surviving draft's current
+selection; it cannot restore old arrays, include later rows or affect a replacement
+session. uncertain creation retains its exact library id and name for retry and
+stays visible after the picker closes. unresolved creation blocks submission and
+participates in the existing task-leave warning. leaving the form abandons its
+local owner; draft creation has no reload recovery.
 
 ## acceptance and leaving
 
@@ -59,7 +74,7 @@ unconfirmed and files retain the existing upload/imports recovery semantics.
 accepted file rows release browser file handles. stop/reset/discard/unmount fence
 all older callbacks. reload loses browser drafts/files.
 
-`leaveReason` prioritizes active stop, unresolved acceptance/placement, unfinished
+`leaveReason` prioritizes active stop, unresolved acceptance/creation, unfinished
 draft/refused work, then no warning. empty drafts, seed-only changes and settled
 receipts are clean. normal and defect-boundary dismissal use the same confirmation.
 explicit leave discards browser state and never promises to undo a server commit.
@@ -67,22 +82,19 @@ add has no back-to-launcher step.
 
 ## saved placement
 
-accepted aliases share actual placement inventory by media id. reads are lazy;
-submitted destinations never substitute for inventory. bulk work deduplicates
-media ids, rereads eligibility and excludes unavailable targets. only admitted
-direct/absent relations change. closing a picker leaves uncertain changes visible
-on their receipts and in the attention count. admission/check closes saved-item
-pickers; reopening performs the existing authoritative read.
+saved row and bulk editors use `useLibraryPlacements` and `LibraryChooser`
+directly. the shared account owner deduplicates media ids, reads actual placement
+inventory and admits explicit desired membership against eligible targets;
+submitted draft destinations never substitute for inventory. bulk add/remove has
+one explicit operation, with excluded targets and indirect access described in
+the result. none/some/all coverage is descriptive, not a mixed toggle command.
 
-one placement read/write owner per media excludes stale completion. send is
-recorded synchronously; acknowledgement installs the confirmed relation before
-another await. a transport failure, sent defect or stop after send retains the
-exact media/destination/verb and inventory. retry sends those retained commands
-without an inventory prerequisite or changed-selection inference. reads never
-erase uncertainty. queued retries preserve the prior uncertain command; retry
-auth restores it. refused changes settle with feedback; media-not-found is terminal
-unavailable. this remains the existing placement controller, without a new cache
-or consolidation layer.
+live placement work is independent of the import mutation slot and leave guard.
+admission keeps the chooser open and searchable while the shared owner orders
+commands, retains uncertain intent and reconciles inventory. closing add leaves
+admitted work with that owner and its persistent feedback/recovery surface. the
+add session owns no duplicate placement cache, retry machine or write lock; see
+[libraries](library.md) for that contract.
 
 ## acquisition boundary
 

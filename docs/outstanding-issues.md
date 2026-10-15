@@ -29,6 +29,10 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+- [unverified] library chooser / accessibility · 2026-10-15 qualification · three-engine focus checks passed; physical ime/soft keyboard and actual speech remain unobserved: [ticket](tickets/library-chooser-physical-accessibility-unverified.md).
+- [unverified] library chooser / recovery · 2026-10-15 qualification · admission quota failure passed; native receipt-retirement storage denial remains unproved: [ticket](tickets/library-chooser-retirement-storage-failure-unverified.md).
+- [open] podcast acquisition / replay · 2026-10-14 chooser specification · subscription/episode acquisition omit their frozen retry identity from the server replay boundary: [ticket](tickets/podcast-acquisition-retry-reapplies-placement.md).
+- [open] link picker / keyboard · 2026-10-14 chooser survey · enter handling ignores text composition in the separate link picker: [ticket](tickets/link-picker-enter-ignores-text-composition.md).
 - [unverified] workspace / scrollbar input · 2026-10-14 · classic gutter passed; default overlay thumb produced no motion and remains unqualified: [ticket](tickets/canvas-overlay-scrollbar-release-unqualified.md).
 - [open] release / host storage · 2026-10-14 corrective rollout · image pulls can consume the preflight disk reserve: [ticket](tickets/release-image-cache-consumes-disk-reserve.md).
 - [deferred] x / saved positions · 2026-10-14 owner decision · inline quotation becomes an embedded document; preserve the saved copy and explicit refresh conflict: [ticket](tickets/x-inline-quote-refresh-loses-saved-position.md).
@@ -402,7 +406,6 @@ unexpected timeouts. See
 - [open] web / mobile viewport verification · 2026-10-10 app navigation reauthor · no browser can raise a soft keyboard, so the keyboard-inset report stack has no proof: [ticket](tickets/mobile-keyboard-inset-has-no-browser-proof.md).
 - [open] web / mobile viewport verification · 2026-10-10 app navigation reauthor · the nav harness has no playable episode, so the mini-player half of bottom clearance (M10) is unrun: [ticket](tickets/mobile-player-clearance-has-no-browser-proof.md).
 - [open] web / workspace · 2026-10-10 nav harness X1 · the stats pane re-activates itself after its in-place address rewrite, so a quick fork lands behind it: [ticket](tickets/stats-pane-reactivates-after-address-rewrite.md).
-- [open] add content / libraries · 2026-10-10 imports reauthor · Add keeps its own multi-target placement machine beside the shared placement overlay; unify in the libraries rewrite: [ticket](tickets/add-placement-duplicates-library-placement-overlay.md).
 - [open] imports / verification · 2026-10-10 imports reauthor · the imports harness does not drive browse preview Add or note-body attachments: [ticket](tickets/imports-harness-lacks-browse-and-note-attachment-journeys.md).
 - [open] resource actions / web · 2026-10-10 workspace host reauthor · a resource's More menu opens with every canonical action blocked ("Actions are refreshing.") for one snapshot round trip: [ticket](tickets/resource-menu-opens-with-actions-blocked.md).
 - [open] workspace / pane return · 2026-10-10 authors reauthor · p3 · the quick-Back anchor fix landed (route content is the anchor root); acceptance waits on authors harness X8: [ticket](tickets/pane-return-anchor-searches-the-collection-bar.md).
