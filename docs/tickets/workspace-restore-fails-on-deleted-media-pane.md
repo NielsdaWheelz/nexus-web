@@ -46,6 +46,13 @@ webview reproduction above, now without the registry.
 the requested `114a` and `03` readers and metadata/history worked in firefox.
 evidence: `final-0bd-network.json` under
 `/tmp/nexus-session-entry-release-20261014/firefox-qualification/`, request
-`1792032616947`, completion `1792032617408` ms. no deletion or android
-reproduction was performed; the 404 cause is unassigned. this observation does
-not close the original android qualification gap.
+`1792032616947`, completion `1792032617408` ms. retained teardown evidence now
+explains that 404: ordinary `media_teardown` job
+`bff2f70e-cf8c-4c11-ba5d-4d3ea223b4d0` completed with `DeletionCommitted` /
+`Deleted` at `2026-10-15T00:55:35.235426Z`, before the request at
+`2026-10-15T02:50:16.947Z`. evidence:
+`coordinator/missing-originals-production-teardown-history-v1.json`, sha256
+`f47c8036f9a4186e37ce498c4113d5adb7c95f227dce308ee8e30a0d452d7be2`, under
+the book-repair campaign artifacts. the initiating actor is unknown. the
+qualification itself performed no deletion or android reproduction; this
+observation does not close the original android qualification gap.

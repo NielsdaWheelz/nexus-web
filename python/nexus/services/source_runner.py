@@ -52,6 +52,7 @@ from nexus.services.source_publication import (
     reset_source_progress,
     run_source_publication_phase,
 )
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.x_ingest import (
     PreparedXSource,
     publish_prepared_x_source,
@@ -169,6 +170,7 @@ def _publish_file(
     def publish(db: Session, attempt: MediaSourceAttempt) -> tuple[SourceRunOutcome, list[str]]:
         outcome, cleanup = publish_prepared_file(db, media_id=media_id, prepared=prepared)
         _settle(db, attempt, media_id, outcome, fence.execution_id, request_id)
+        record_input_change(db)
         return outcome, cleanup
 
     return run_source_publication_phase(
@@ -205,6 +207,7 @@ def _publish_x(
         if winner_id != media_id:
             _supersede(db, attempt, loser_id=media_id, winner_id=winner_id)
         _settle(db, attempt, winner_id, outcome, fence.execution_id, request_id)
+        record_input_change(db)
         return outcome
 
     return run_source_publication_phase(
@@ -239,6 +242,7 @@ def _publish_outcome(
         if winner_id != media_id:
             _supersede(db, attempt, loser_id=media_id, winner_id=winner_id)
         _settle(db, attempt, winner_id, outcome, fence.execution_id, request_id)
+        record_input_change(db)
 
     run_source_publication_phase(
         session_factory=session_factory,
@@ -337,6 +341,7 @@ def _fail(
         ),
     )
     _sync_embed_targets(db, attempt.media_id)
+    record_input_change(db)
 
 
 def _supersede(

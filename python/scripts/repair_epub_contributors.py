@@ -32,6 +32,7 @@ from nexus.services.parser_temp import (
     parser_attempt_directory,
     stream_storage_object_to_file,
 )
+from nexus.services.suggestion_changes import record_input_change
 from nexus.storage.client import StorageError, get_storage_client
 
 
@@ -167,6 +168,11 @@ def repair_epub_contributors(
                                 db, plan=plan, viewer_id=viewer_id, source=current_source
                             )
                     if applying:
+                        if (
+                            isinstance(result, EpubContributorRepairPreview)
+                            and result.report.changed
+                        ):
+                            record_input_change(db)
                         db.commit()
                     return result
 

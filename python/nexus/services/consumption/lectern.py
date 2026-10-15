@@ -20,6 +20,7 @@ from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas import consumption as wire
 from nexus.services.consumption import lock_viewer, projection, viewer_txn
+from nexus.services.suggestion_changes import record_input_change
 
 LECTERN_MAX_ITEMS = 2000
 _READABLE = frozenset({"web_article", "epub", "pdf"})
@@ -89,6 +90,7 @@ def place(viewer_id: UUID, media_id: UUID, placement: wire.Placement | None) -> 
                 else 0
             )
             _place_visible(db, viewer_id, rows, item_id, at)
+        record_input_change(db)
         db.commit()
 
     viewer_txn("lectern_place", viewer_id, run)
@@ -96,7 +98,8 @@ def place(viewer_id: UUID, media_id: UUID, placement: wire.Placement | None) -> 
 
 def remove(viewer_id: UUID, media_id: UUID) -> None:
     def run(db: Session) -> None:
-        remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id)
+        if remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id) is not None:
+            record_input_change(db)
         db.commit()
 
     viewer_txn("lectern_remove", viewer_id, run)

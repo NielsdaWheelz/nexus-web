@@ -165,16 +165,18 @@ def write_body(
     body_pm_json: dict[str, Any],
     expected_version: int,
     reason: str,
-) -> None:
+) -> bool:
+    """Write a changed body; return false when the exact body is already present."""
     block = owned_note(db, viewer_id=viewer_id, note_id=note_id)
     if block.body_pm_json == body_pm_json:
-        return
+        return False
     require_version(db, viewer_id=viewer_id, note_id=note_id, version=expected_version)
     block.body_pm_json = body_pm_json
     block.body_text = text_from_pm_json(body_pm_json)
     block.updated_at = func.now()
     versions.bump_version(db, viewer_id=viewer_id, ref=note_ref(note_id), lane="body")
     _changed(db, viewer_id, block, reason)
+    return True
 
 
 def require_version(db: Session, *, viewer_id: UUID, note_id: UUID, version: int) -> None:

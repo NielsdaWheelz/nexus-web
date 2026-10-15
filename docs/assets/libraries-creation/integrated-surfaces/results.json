@@ -1,0 +1,170 @@
+[
+  {
+    "id": "s1-loading-failure-invalid-entry",
+    "status": "fail",
+    "message": "locator.waitFor: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText('That change is no longer valid. Refresh and try again.', { exact: true }) to be visible\u001b[22m\n",
+    "observed": null,
+    "ms": 33475
+  },
+  {
+    "id": "s2-320px-pane-header-and-dialog",
+    "status": "pass",
+    "evidence": {
+      "buttonBox": {
+        "x": 484,
+        "y": 53.5,
+        "width": 32,
+        "height": 32
+      },
+      "headerBox": {
+        "x": 240,
+        "y": 40,
+        "width": 320,
+        "height": 60
+      },
+      "dialog": {
+        "box": {
+          "x": 520,
+          "y": 345.703125,
+          "width": 400,
+          "height": 208.59375
+        },
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "horizontalOverflow": false,
+        "controls": [
+          {
+            "text": "Close dialog",
+            "x": 875,
+            "y": 363.09375,
+            "width": 28,
+            "height": 28
+          },
+          {
+            "text": "_r_1_",
+            "x": 537,
+            "y": 449.296875,
+            "width": 366,
+            "height": 36
+          },
+          {
+            "text": "cancel",
+            "x": 682.3125,
+            "y": 501.296875,
+            "width": 82.21875,
+            "height": 36
+          },
+          {
+            "text": "create library",
+            "x": 772.53125,
+            "y": 501.296875,
+            "width": 130.46875,
+            "height": 36
+          }
+        ]
+      },
+      "scrimDismissed": true
+    },
+    "ms": 974
+  },
+  {
+    "id": "s3-mobile-portrait-geometry",
+    "status": "pass",
+    "evidence": {
+      "button": {
+        "x": 286,
+        "y": 5.5,
+        "width": 48,
+        "height": 48
+      },
+      "dialog": {
+        "box": {
+          "x": 16,
+          "y": 317.703125,
+          "width": 358,
+          "height": 208.59375
+        },
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "horizontalOverflow": false,
+        "controls": [
+          {
+            "text": "Close dialog",
+            "x": 329,
+            "y": 335.09375,
+            "width": 28,
+            "height": 28
+          },
+          {
+            "text": "_r_j_",
+            "x": 33,
+            "y": 421.296875,
+            "width": 324,
+            "height": 36
+          },
+          {
+            "text": "cancel",
+            "x": 136.3125,
+            "y": 473.296875,
+            "width": 82.21875,
+            "height": 36
+          },
+          {
+            "text": "create library",
+            "x": 226.53125,
+            "y": 473.296875,
+            "width": 130.46875,
+            "height": 36
+          }
+        ]
+      },
+      "mobileBackDismissed": true,
+      "keyboard": "desktop-emulated viewport only; physical check separate"
+    },
+    "ms": 1003
+  },
+  {
+    "id": "s4-two-index-visits-state-and-aria-isolation",
+    "status": "pass",
+    "evidence": {
+      "first": {
+        "payload": {
+          "id": "3d71c40a-2f97-4ce3-9285-f2d8bd8e2ad8",
+          "name": "lc-mv9rrhjk independent task"
+        },
+        "status": 201,
+        "returnedId": "3d71c40a-2f97-4ce3-9285-f2d8bd8e2ad8"
+      },
+      "firstId": "pane-3eee9df9-d70d-4398-8da9-a040d110ca27",
+      "fieldId": "_r_g_",
+      "errorIds": "_r_h_",
+      "refs": [
+        {
+          "id": "_r_g_",
+          "count": 1
+        },
+        {
+          "id": "_r_h_",
+          "count": 1
+        }
+      ],
+      "invitationIds": [
+        {
+          "id": "_r_3_",
+          "count": 1,
+          "label": "_r_3_"
+        },
+        {
+          "id": "_r_i_",
+          "count": 1,
+          "label": "_r_i_"
+        }
+      ]
+    },
+    "ms": 1205
+  }
+]

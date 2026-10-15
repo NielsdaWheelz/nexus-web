@@ -321,6 +321,7 @@ function PaneView({
           activateChromeAnchor: (event, anchor) =>
             activateTargetAnchor({ event, runtime, anchor }),
           navigation: historyNavigation,
+          primaryAction: body?.primaryAction,
           companionAction: inspector,
           paneActions,
           menuActions: body?.menuActions ?? [],
@@ -441,6 +442,7 @@ function PaneView({
             <SurfaceHeader
               header={header}
               identityId={identityId}
+              primaryAction={body?.primaryAction}
               companionAction={inspector}
               paneActions={paneActions}
               menuActions={body?.menuActions}

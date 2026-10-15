@@ -22,6 +22,7 @@ from nexus.schemas import consumption as wire
 from nexus.schemas.reader import CursorWrite, ReaderCursorSnapshot
 from nexus.services.consumption import lectern, listening, projection, reader_cursor, viewer_txn
 from nexus.services.reader_publication import lock_publication_generation
+from nexus.services.suggestion_changes import engagement_inputs, record_input_change
 
 _EPISODE = "podcast_episode"
 Status = Literal["finished", "unread"] | None
@@ -59,6 +60,7 @@ def put_reader_cursor(viewer_id: UUID, media_id: UUID, write: CursorWrite) -> Re
         )
         if expected is not None and generation != expected:
             raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
+        before = engagement_inputs(db, viewer_id=viewer_id, media_id=media_id)
         snapshot, accepted = reader_cursor.save(
             db, viewer_id=viewer_id, media_id=media_id, kind=kind, write=write
         )
@@ -74,6 +76,8 @@ def put_reader_cursor(viewer_id: UUID, media_id: UUID, write: CursorWrite) -> Re
         )
         if kind != _EPISODE:  # a transcript is not listening
             _resume(db, viewer_id, media_id)
+        if engagement_inputs(db, viewer_id=viewer_id, media_id=media_id) != before:
+            record_input_change(db)
         db.commit()
         return snapshot
 
@@ -87,6 +91,7 @@ def record_listening(
 
     def run(db: Session) -> wire.ListeningPositionOut:
         _episode(db, viewer_id, media_id)
+        before = engagement_inputs(db, viewer_id=viewer_id, media_id=media_id)
         heard = listening.write(db, viewer_id=viewer_id, media_id=media_id, sample=body)
         if heard is None:
             raise ConflictError(
@@ -95,8 +100,11 @@ def record_listening(
                 details={"current": _position(db, viewer_id, media_id).model_dump(mode="json")},
             )
         _resume(db, viewer_id, media_id)
+        result = _position(db, viewer_id, media_id)
+        if engagement_inputs(db, viewer_id=viewer_id, media_id=media_id) != before:
+            record_input_change(db)
         db.commit()
-        return _position(db, viewer_id, media_id)
+        return result
 
     return viewer_txn("record_listening", viewer_id, run)
 
@@ -106,12 +114,15 @@ def install_preview_position(viewer_id: UUID, media_id: UUID, body: wire.Preview
 
     def run(db: Session) -> None:
         _episode(db, viewer_id, media_id)
+        before = engagement_inputs(db, viewer_id=viewer_id, media_id=media_id)
         duration = body.duration_ms
         position = body.position_ms if not duration else min(body.position_ms, duration)
         if listening.install_preview(
             db, viewer_id=viewer_id, media_id=media_id, position_ms=position, duration_ms=duration
         ):
             _resume(db, viewer_id, media_id)
+        if engagement_inputs(db, viewer_id=viewer_id, media_id=media_id) != before:
+            record_input_change(db)
         db.commit()
 
     viewer_txn("install_preview_position", viewer_id, run)
@@ -127,6 +138,7 @@ def finish(viewer_id: UUID, media_id: UUID, body: wire.FinishIn) -> wire.Finish:
         result = _finish(db, viewer_id, media_id, prior)
         if body.leave_lectern:
             result.removed = lectern.remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id)
+        record_input_change(db)
         db.commit()
         return result
 
@@ -163,6 +175,7 @@ def undo_finish(viewer_id: UUID, media_id: UUID, body: wire.Finish) -> None:
             )
         if body.removed is not None:
             lectern.restore_in_txn(db, viewer_id=viewer_id, media_id=media_id, removed=body.removed)
+        record_input_change(db)
         db.commit()
 
     viewer_txn("undo_finish", viewer_id, run)
@@ -175,6 +188,7 @@ def mark_unread(viewer_id: UUID, media_id: UUID) -> None:
         kind = _kind(db, viewer_id, media_id)
         _set_override(db, viewer_id, media_id, "unread")
         _fence(db, viewer_id, media_id, kind)
+        record_input_change(db)
         db.commit()
 
     viewer_txn("mark_unread", viewer_id, run)
@@ -194,6 +208,7 @@ def reset_progress(viewer_id: UUID, media_id: UUID) -> None:
         _set_override(db, viewer_id, media_id, None)
         if kind == _EPISODE:
             listening.reset(db, viewer_id=viewer_id, media_id=media_id)
+        record_input_change(db)
         db.commit()
 
     viewer_txn("reset_progress", viewer_id, run)
@@ -208,11 +223,13 @@ def settle_natural_end(viewer_id: UUID, media_id: UUID, body: wire.NaturalEndIn)
         _episode(db, viewer_id, media_id)
         current = _override(db, viewer_id, media_id)
         expected = body.expected_override_revision
+        changed = False
         if (current.revision if current else None) == expected and listening.write(
             db, viewer_id=viewer_id, media_id=media_id, sample=body.terminal_listening
         ):
             _finish(db, viewer_id, media_id, current)
             lectern.remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id)
+            changed = True
         elif not (
             current is not None
             and current.status == "finished"
@@ -221,6 +238,8 @@ def settle_natural_end(viewer_id: UUID, media_id: UUID, body: wire.NaturalEndIn)
             == body.terminal_listening.expected_reset_epoch
         ):
             raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "The natural end was superseded")
+        if changed:
+            record_input_change(db)
         db.commit()
 
     viewer_txn("settle_natural_end", viewer_id, run)

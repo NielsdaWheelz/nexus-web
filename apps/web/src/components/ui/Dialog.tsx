@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { X } from "lucide-react";
+import { cx } from "@/lib/ui/cx";
 import ModalFrame, { type ModalProps } from "./ModalFrame";
 import styles from "./Dialog.module.css";
 
@@ -9,11 +10,13 @@ import styles from "./Dialog.module.css";
 export default function Dialog({
   onClose,
   title,
+  className,
   children,
   ...modal
 }: Omit<ModalProps, "onDismiss" | "focusKey"> & {
   readonly onClose: () => void;
   readonly title: string;
+  readonly className?: string;
   readonly children: ReactNode;
 }) {
   return (
@@ -22,7 +25,7 @@ export default function Dialog({
       onDismiss={onClose}
       label={title}
       backdropClassName={styles.backdrop}
-      className={styles.dialog}
+      className={cx(styles.dialog, className)}
     >
       {(requestDismiss) => (
         <>

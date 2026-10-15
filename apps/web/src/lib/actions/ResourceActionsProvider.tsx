@@ -69,7 +69,7 @@ export interface ActionContext {
   readonly lectern: {
     readonly atCapacity: boolean;
     readonly failed: boolean;
-  } & ReturnType<typeof useLecternAdds>;
+  } & Pick<ReturnType<typeof useLecternAdds>, "adds" | "add">;
   readonly player: {
     readonly state: ReturnType<typeof usePlayerSession>["state"];
     readonly commands: ReturnType<typeof usePlayerCommands>;

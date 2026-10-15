@@ -44,7 +44,7 @@ The queue is a ledger of attempts; every rule below follows from three facts.
 | lane | kinds |
 |---|---|
 | interactive (in process) | `chat_run`, `dossier_build`, `enrich_metadata`, `oracle_reading_generate`, `podcast_sync_subscription_job` |
-| background (one child per job) | `ingest_media_source`, `media_content_reindex_job` (both Heavy), `note_reindex_job`, `media_unit_build`, `connection_discovery_scan`, `podcast_backfill_subscription`, `media_teardown`, and the periodic `podcast_refresh_due_job`, `atlas_project_job`, `storage_orphan_sweep`, `prune_background_jobs_job`, `purge_expired_auth_handoff_codes` |
+| background (one child per job) | `ingest_media_source`, `media_content_reindex_job` (both Heavy), `note_reindex_job`, `media_unit_build`, `connection_discovery_scan`, `suggestion_shortlist_refresh`, `podcast_backfill_subscription`, `media_teardown`, and the periodic `podcast_refresh_due_job`, `atlas_project_job`, `storage_orphan_sweep`, `prune_background_jobs_job`, `purge_expired_auth_handoff_codes` |
 
 A handler is `fn(*, payload, context) -> JobResult` in its owner:
 `JobResult = Mapping | RescheduleRequested(at, payload?) | TerminalJobFailure | None`.
@@ -91,6 +91,8 @@ Hooks (by path in the registry):
   reschedule: `import_history.on_source_job_outcome` and `on_index_job_outcome`.
   History is total (`queue_failure_code`), skips an attempt its owner already
   settled, and records nothing for deleted media.
+  `suggestion_changes.on_suggestion_job_history` publishes an import-light wakeup for the
+  [suggestions observer](suggestions.md); durable queue state remains truth.
 
 Dead rows of `keep_dead` kinds are never pruned; the source import and the
 search index repair theirs with `requeue_dead_job` (same row, fresh budget).

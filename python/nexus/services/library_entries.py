@@ -33,6 +33,7 @@ from nexus.schemas.library import LibraryPlacementOut
 from nexus.services import libraries
 from nexus.services.consumption import projection
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
+from nexus.services.suggestion_changes import record_input_change
 
 # Mirrors ix_library_entries_library_order: the one entry order.
 _ENTRY_ORDER = "position ASC, created_at DESC, id DESC"
@@ -130,6 +131,47 @@ def destination_membership_rows_sql() -> str:
               AND destination.system_key IS NULL
         )
     """
+
+
+def engagement_anchor_library_ids(
+    db: Session, *, viewer_id: UUID, media_id: UUID
+) -> tuple[UUID, ...]:
+    """Editable destinations whose ordered anchors can change with this media's engagement.
+
+    Named libraries hold the media or its show. All holds physical media reached
+    through any non-system membership; it never has podcast anchors. Registration
+    is irrelevant: a destination's first suggestions request may overlap this write.
+    """
+    return tuple(
+        db.scalars(
+            text("""
+                SELECT l.id
+                FROM libraries l
+                JOIN memberships membership ON membership.library_id = l.id
+                WHERE membership.user_id = :viewer_id AND membership.role = 'admin'
+                  AND l.system_key IS NULL
+                  AND (
+                    (NOT l.is_default AND EXISTS (
+                        SELECT 1 FROM library_entries le
+                        WHERE le.library_id = l.id AND (
+                            le.media_id = :media_id OR le.podcast_id = (
+                                SELECT podcast_id FROM podcast_episodes
+                                WHERE media_id = :media_id
+                            )
+                        )
+                    )) OR (l.is_default AND l.owner_user_id = :viewer_id AND EXISTS (
+                        SELECT 1 FROM library_entries le
+                        JOIN memberships source_member ON source_member.library_id = le.library_id
+                        JOIN libraries source_library ON source_library.id = le.library_id
+                        WHERE le.media_id = :media_id AND source_member.user_id = :viewer_id
+                          AND source_library.system_key IS NULL
+                    ))
+                  )
+                ORDER BY l.id
+            """),
+            {"viewer_id": viewer_id, "media_id": media_id},
+        )
+    )
 
 
 def library_anchor_facts(
@@ -723,6 +765,7 @@ def place_item(
                     podcast_id=target.id,
                     replace_episodes=replace_episodes,
                 )
+            record_input_change(db)
 
     retry_read_committed(db, "place_item", attempt)
 
@@ -741,6 +784,7 @@ def unplace_item(db: Session, viewer_id: UUID, library_id: UUID, target: EntryTa
                 undo_podcast_filing_for_viewer_in_current_transaction(
                     db, viewer_id=viewer_id, library_id=library_id, podcast_id=target.id
                 )
+            record_input_change(db)
 
     retry_read_committed(db, "unplace_item", attempt)
 

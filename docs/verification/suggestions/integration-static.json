@@ -1,0 +1,27 @@
+{
+  "date_utc": "2026-10-15T17:23:45.219478+00:00",
+  "command": "./scripts/test",
+  "exit_code": 0,
+  "application_source_sha": "01297cb151db0e6fe05688f5e4c1d3013e345187",
+  "pending_changes": "documentation and sanitized receipts only",
+  "run_after_temporary_test_deletion": true,
+  "canonical_migration_head": "0287",
+  "log_sha256": "85082fa457a6ef7010755062d7ba89b851095d35282b4bdabd2d30b84bf9c190",
+  "log_retained": false,
+  "result": "static checks pass; this gate does not establish runtime behavior",
+  "existing_nonfatal_diagnostics": [
+    "pinned pyright reports an available newer release",
+    "lightningcss custom-highlight warning tracked in docs/tickets/offline-css-minifier-rejects-highlight-syntax.md"
+  ],
+  "runtime_evidence": [
+    "integration-backend.json",
+    "integration-inputs.json",
+    "integration-frontend.json"
+  ],
+  "cleanup_evidence": [
+    "integration-cleanup-local.json",
+    "integration-cleanup-remote.json",
+    "integration-frontend-cleanup.json"
+  ],
+  "release_state": "pr626 held open; no merge into main, protection change or production operation"
+}

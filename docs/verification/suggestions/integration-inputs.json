@@ -1,0 +1,193 @@
+{
+  "status": "passed",
+  "source_sha": "531dd909a7c49913c5f5998f5b03549fd6b26727",
+  "upstream_base": "7bc7c8a13d7f0c866bef49ad1fc218b603393594",
+  "database": "nexus_suggestions_merge_20261015",
+  "schema": "0287",
+  "finished_at": "2026-10-15T17:03:48.457042+00:00",
+  "fixture": {
+    "viewer_id": "88f6015d-c988-42ca-a16f-ca451dc2319c",
+    "viewer_admission": "ordinary invitation, password setup and authenticated /me bootstrap; UI-created named library",
+    "named_library_id": "299bd922-01d6-467a-97ce-427cff74c495",
+    "default_library_id": "64305e0c-7ab8-4fb0-b545-7ea424d632d1",
+    "named_members": 101,
+    "grant_only_arrivals": 24,
+    "grants": "24 real create_share calls from a labelled fixture owner whose external library physically references the targets; viewer has no membership in that library",
+    "initial_exact_ranked_pool_sizes": {
+      "lectern": 20,
+      "named": 20,
+      "all": 20
+    },
+    "publication_setup": "no fabricated feed or publication; input writers created no additional feeds",
+    "source_articles_after_proof": "three published reader fixtures remain: two explicitly Finished, one InProgress; the terminal-failure fixture was physically deleted"
+  },
+  "source_checks": [
+    {
+      "case": "source admission",
+      "passed": true,
+      "revision_delta": 1,
+      "elapsed_ms": 27.998
+    },
+    {
+      "case": "source admission same identity",
+      "passed": true,
+      "revision_delta": 0,
+      "elapsed_ms": 4.385
+    },
+    {
+      "case": "real fenced reader publication",
+      "passed": true,
+      "revision_delta": 1,
+      "elapsed_ms": 31.517
+    },
+    {
+      "case": "source outcome settlement",
+      "passed": true,
+      "revision_delta": 1,
+      "elapsed_ms": 12.909
+    },
+    {
+      "case": "new reader engagement changes anchors",
+      "passed": true,
+      "revision_delta": 1,
+      "elapsed_ms": 30.732
+    },
+    {
+      "case": "same-anchor changed-position heartbeat stays clean",
+      "passed": true,
+      "revision_delta": 0,
+      "elapsed_ms": 24.83
+    },
+    {
+      "case": "explicit finish",
+      "passed": true,
+      "revision_delta": 1,
+      "elapsed_ms": 8.958
+    },
+    {
+      "case": "later progress preserves explicit finished state",
+      "passed": true,
+      "revision_delta": 0,
+      "elapsed_ms": 27.249
+    },
+    {
+      "case": "mark unread re-enters current eligibility",
+      "passed": true,
+      "revision_delta": 1,
+      "elapsed_ms": 6.211
+    },
+    {
+      "case": "accepted progress clears unread",
+      "passed": true,
+      "revision_delta": 1,
+      "elapsed_ms": 26.42
+    },
+    {
+      "case": "contributor publication",
+      "passed": true,
+      "revision_delta": 1,
+      "elapsed_ms": 15.36
+    },
+    {
+      "case": "identical contributor observation stays clean",
+      "passed": true,
+      "revision_delta": 0,
+      "elapsed_ms": 5.476
+    },
+    {
+      "case": "direct grant revocation",
+      "passed": true,
+      "revision_delta": 1,
+      "elapsed_ms": 41.991
+    },
+    {
+      "case": "grant revocation resend stays clean",
+      "passed": true,
+      "revision_delta": 0,
+      "elapsed_ms": 1.952
+    },
+    {
+      "case": "direct grant restored through real authority",
+      "passed": true,
+      "revision_delta": 1,
+      "elapsed_ms": 12.88
+    },
+    {
+      "case": "source refresh successor admission",
+      "passed": true,
+      "revision_delta": 1,
+      "elapsed_ms": 13.308
+    },
+    {
+      "case": "source publication versus cursor adverse schedule",
+      "passed": true,
+      "publisher_waits_for_counter": true,
+      "cursor_waits_for_publication": true,
+      "atomic_before_commit": true,
+      "cursor_result": "E_READER_CONTENT_CHANGED",
+      "generation_after": 2,
+      "revision_delta": 1,
+      "timeouts_unchanged": true
+    },
+    {
+      "case": "source outcome settlement",
+      "passed": true,
+      "revision_delta": 1,
+      "elapsed_ms": 17.322
+    },
+    {
+      "case": "terminal source failure fixture admission",
+      "passed": true,
+      "revision_delta": 1,
+      "elapsed_ms": 16.357
+    },
+    {
+      "case": "terminal source failure fixture admission same identity",
+      "passed": true,
+      "revision_delta": 0,
+      "elapsed_ms": 3.758
+    },
+    {
+      "case": "terminal queue failure publishes source failure then final input revision",
+      "passed": true,
+      "revision_delta": 1,
+      "elapsed_ms": 8.018
+    },
+    {
+      "case": "remove failed fixture media",
+      "passed": true,
+      "revision_delta": 1,
+      "elapsed_ms": 27.251
+    },
+    {
+      "case": "reauthored physical teardown owner",
+      "passed": true,
+      "revision_delta": 1,
+      "elapsed_ms": 54.946
+    }
+  ],
+  "counter_last": {
+    "committed_revision_transactions": 17,
+    "violations": []
+  },
+  "source_jobs_settled": true,
+  "provider_side_effects": {
+    "dispatched": false,
+    "owned_index_jobs_retired_through_claim_and_fenced_failure": 3
+  },
+  "discarded_harness_attempts": {
+    "count": 2,
+    "cause": "both initially expected accepted progress to clear an explicit Finished override; the second tried a fresh cursor base but retained that incorrect expectation",
+    "correct_contract": "Finished persists through later progress. MarkUnread explicitly reopens it; accepted progress then clears Unread. The final campaign proves both cases.",
+    "product_defect": false,
+    "cleanup": "their source jobs had already succeeded; their index jobs were included in the three owned fenced retirements; their reader media remain labelled Finished fixtures"
+  },
+  "limits": [
+    "focused real service/queue qualification, not a repeat of every historical writer campaign",
+    "prepared article content replaces external fetching; no external provider or production service was called",
+    "foreign grant owner and compact media are controlled database fixtures; ordinary browser account bootstrap remains separate",
+    "database blocking identities prove publisher waits on final counter and cursor waits on reader publication; unchanged deployed transaction timeouts remained in force",
+    "first-registration/worker-snapshot and corpus-sized latency proofs are separate; this receipt makes no new claim for them",
+    "ordinary-worker, browser, SSE and transport results have their own receipts"
+  ]
+}

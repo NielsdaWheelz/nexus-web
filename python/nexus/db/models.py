@@ -36,6 +36,47 @@ class Base(DeclarativeBase):
     pass
 
 
+class SuggestionInput(Base):
+    """The migration-seeded, global revision of suggestion ranking inputs."""
+
+    __tablename__ = "suggestion_inputs"
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    revision: Mapped[int] = mapped_column(BigInteger)
+
+
+class SuggestionFeed(Base):
+    """A requested viewer/destination and its one unfinished queue operation."""
+
+    __tablename__ = "suggestion_feeds"
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"))
+    library_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("libraries.id")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    # The raw-SQL queue has no ORM mapping; the migration owns this foreign key.
+    current_job_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+
+
+class SuggestionShortlist(Base):
+    """One successful, latest-only ranking publication; empty refs are a success."""
+
+    __tablename__ = "suggestion_shortlists"
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    feed_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("suggestion_feeds.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    ranked_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    ranked_revision: Mapped[int] = mapped_column(BigInteger)
+    target_refs: Mapped[list[str]] = mapped_column(JSONB)
+
+
 # =============================================================================
 # Enums
 # =============================================================================

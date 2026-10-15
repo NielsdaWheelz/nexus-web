@@ -63,3 +63,8 @@ private original logs and receipts are retained in
 the approved isolated reader proof uses the matching cached arm64 publisher
 digest on the mac, a new private bucket and explicit loopback ssh forwarding.
 that alternate proof topology does not establish fresh local installation.
+
+2026-10-15 library chooser integration: the same `minio/mc` pin returned
+`pull access denied` on the mac. the existing task-owned postgres/minio volumes
+were preserved; only those cached services were restarted, without the init
+helper. this does not qualify a fresh `make dev` installation.

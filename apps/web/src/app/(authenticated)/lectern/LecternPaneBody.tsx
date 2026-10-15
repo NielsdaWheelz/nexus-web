@@ -8,9 +8,10 @@ import { Play } from "lucide-react";
 import { useCallback, useId, useRef, useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
-import SuggestionsSection, {
-  suggestionTargetId,
-} from "@/components/collections/SuggestionsSection";
+import SuggestionsSection from "@/components/collections/SuggestionsSection";
+import QuickReadsSection from "@/components/collections/QuickReadsSection";
+import { suggestionTargetId } from "@/lib/suggestions";
+import { useSuggestions } from "@/lib/useSuggestions";
 import {
   FeedbackNotice,
   type FeedbackContent,
@@ -38,7 +39,7 @@ import {
 } from "@/lib/lectern/lectern";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
-import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import {
   matchesPaneFilterQuery,
@@ -123,6 +124,12 @@ export default function LecternPaneBody() {
   const { add } = useLecternAdds();
   const { playAudio } = usePlayerCommands();
   const isActive = usePaneIsActive();
+  const suggestions = useSuggestions({ kind: "Lectern" }, isActive);
+  const { refresh: refreshSuggestionFeed } = suggestions;
+  const refreshSuggestions = useCallback<PaneRefreshExecute>(async ({ signal }) => {
+    const requested = await refreshSuggestionFeed(signal);
+    return { kind: requested ? "Complete" : "Failed", announcement: requested ? "refresh requested" : "couldn’t request suggestions." };
+  }, [refreshSuggestionFeed]);
   const params = usePaneSearchParams();
   const router = usePaneRouter();
   const fail = useThrowLater();
@@ -188,6 +195,9 @@ export default function LecternPaneBody() {
     ? { kind: "Pending" }
     : { kind: "Count", value: items.length, unit: "item" };
   usePaneChrome({
+    refresh: suggestions.state === null ? { kind: "Resolving" } : {
+      kind: "Refreshable", sourceKey: "lectern:suggestions", execute: refreshSuggestions,
+    },
     query: valid
       ? {
           kind: "Controls",
@@ -387,10 +397,11 @@ export default function LecternPaneBody() {
           />
         ) : null}
       </section>
-      <SuggestionsSection kind="QuickReads" isActive={isActive} />
+      <QuickReadsSection isActive={isActive} />
       <SuggestionsSection
-        kind="Lectern"
-        isActive={isActive}
+        destination={{ kind: "Lectern" }}
+        suggestions={suggestions}
+        returnScope="Lectern.Suggestions"
         accept={async (target) =>
           (await add({
             mediaId: suggestionTargetId(target),

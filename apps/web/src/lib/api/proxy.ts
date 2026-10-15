@@ -15,9 +15,11 @@ import { isAbortError } from "@/lib/errors";
 import { PUBLIC_API_CSP } from "@/lib/security/csp";
 import { AuthUnavailable } from "@/lib/supabase/auth";
 import { WIRE_REVISION } from "./wire.gen";
+import { isSuggestionJsonPath, SUGGESTIONS_REQUEST_TIMEOUT_MS } from "./suggestionPolicy";
 
 /**
- * Json: structured calls (30 s to response headers). Asset: bytes an element
+ * Json: structured calls (30 s to response headers; suggestions 10 s through
+ * their bounded JSON body). Asset: bytes an element
  * loads (it cannot name a wire, so the bff names its own; FastAPI's cache
  * policy kept). Stream: event streams, ended cleanly at 280 s, before the
  * route's maxDuration. Copy: the offline reading copy's slow build.
@@ -109,7 +111,13 @@ async function forward(input: {
   if (internalSecret) headers.set("x-nexus-internal", internalSecret);
   const controller = new AbortController();
   const abort = () => controller.abort();
-  const deadline = setTimeout(abort, input.deadlineMs);
+  const boundedJson = isSuggestionJsonPath(path);
+  let bodyOwnsDeadline = false;
+  const deadline = setTimeout(abort, boundedJson ? SUGGESTIONS_REQUEST_TIMEOUT_MS : input.deadlineMs);
+  const release = () => {
+    clearTimeout(deadline);
+    request.signal.removeEventListener("abort", abort);
+  };
   // the client may have left already, or leave before next reads the body
   if (request.signal.aborted) abort();
   request.signal.addEventListener("abort", abort, { once: true });
@@ -140,12 +148,32 @@ async function forward(input: {
     out.set("x-request-id", answerId);
     const empty =
       method === "HEAD" || [204, 205, 304].includes(upstream.status);
-    const content =
-      empty || !upstream.body
-        ? null
-        : input.cutMs
-          ? cutAfter(upstream.body, input.cutMs)
-          : upstream.body;
+    let content: ReadableStream<Uint8Array> | null = empty ? null : upstream.body;
+    if (content !== null && boundedJson) {
+      const reader = content.getReader();
+      bodyOwnsDeadline = true;
+      // Suggestions keep their deadline through streaming body consumption.
+      // Closure also releases a body which the downstream never starts reading.
+      void reader.closed.then(release, release);
+      content = new ReadableStream<Uint8Array>({
+        async pull(output) {
+          try {
+            const { done, value } = await reader.read();
+            if (done) output.close();
+            else output.enqueue(value);
+          } catch (error) {
+            output.error(error);
+          }
+        },
+        cancel(reason) {
+          release();
+          controller.abort();
+          return reader.cancel(reason);
+        },
+      });
+    } else if (content !== null && input.cutMs) {
+      content = cutAfter(content, input.cutMs);
+    }
     return new NextResponse(content, { status: upstream.status, headers: out });
   } catch (error) {
     if (!isAbortError(error)) {
@@ -156,7 +184,10 @@ async function forward(input: {
       ? new NextResponse(null, { status: 499, headers: { "x-request-id": id } })
       : unreachable(id, 504);
   } finally {
-    clearTimeout(deadline);
+    if (!bodyOwnsDeadline) {
+      if (boundedJson) release();
+      else clearTimeout(deadline);
+    }
   }
 }
 

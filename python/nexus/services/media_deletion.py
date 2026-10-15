@@ -44,6 +44,7 @@ from nexus.services.reader_apparatus import delete_media_apparatus
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.source_types import stored_artifact_path
+from nexus.services.suggestion_changes import record_input_change
 from nexus.storage.client import StorageError, get_storage_client
 
 logger = get_logger(__name__)
@@ -201,6 +202,7 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
         )
         reconcile_document_embed_edges_for_viewer(db, viewer_id=viewer_id, media_id=media_id)
         dossier_engine.on_visibility_lost(db, user_id=viewer_id)
+        record_input_change(db)
 
 
 def delete_duplicate_document_media(
@@ -364,9 +366,11 @@ def run_teardown_job(*, payload: Mapping[str, Any], context: JobExecutionContext
                 return "Stale", []
             if _references(db, media_id) > 0:
                 _run(db, "DELETE FROM media_teardown_intents WHERE id = :i", i=intent_id)
+                record_input_change(db)
                 db.commit()
                 return "Voided", []
             paths = _hard_delete(db, media_id)
+            record_input_change(db)
             db.commit()
             return "Deleted", paths
 

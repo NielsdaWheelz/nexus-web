@@ -38,7 +38,7 @@ uploads and captures (`Data{data}`; the web under `/api`, the extension under `/
 | `DELETE /media/uploads/{session_id}` | none | 204 | absent is done; published: 409 `E_UPLOAD_ALREADY_PUBLISHED`. the account removes its own session of either origin |
 | `POST /extension/captures` | `{id, kind: web_article \| pdf \| epub, source_url, filename, content_type, size_bytes, sha256, library_ids}` (distinct) | as `/media/uploads` | as `/media/uploads`; another account's id is 409 |
 | `POST /extension/captures/{session_id}/confirm`, `DELETE …` | as uploads | as uploads | as uploads; only `BrowserCapture` sessions |
-| `GET /extension/library-destinations?q&cursor&limit≤50` | none | `{items, next_cursor}` | read; no create authority |
+| `GET /extension/library-destinations` | no query parameters | complete `[{id,name}]` | read; no create authority |
 | `POST /auth/extension-sessions` (account) | none | 201 `{id, token, created_at}` | a new token per call; the extension keeps the last |
 | `GET`, `DELETE /auth/extension-sessions/current` (bearer) | none | `{user_id, email, display_name, limits}`, 204 | a revoked or unknown token is 401, which the extension reads as revoked |
 

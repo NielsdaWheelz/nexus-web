@@ -3,7 +3,10 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { MouseEventHandler } from "react";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
-import type { PaneCompanionAction } from "@/lib/panes/paneChrome";
+import type {
+  PaneCompanionAction,
+  PanePrimaryAction,
+} from "@/lib/panes/paneChrome";
 import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import {
@@ -26,12 +29,13 @@ export interface SurfaceHeaderNavigation {
 
 /**
  * A desktop pane's chrome bar: back and forward, the identity (which yields
- * width first), one More menu (pane, view, then the resource's own actions)
- * and the icon-only Inspector companion, which never collapses.
+ * width first), the optional primary command, one More menu (pane, view, then
+ * the resource's own actions) and the icon-only Inspector, which never collapses.
  */
 export default function SurfaceHeader({
   header,
   identityId,
+  primaryAction,
   companionAction: companion,
   paneActions = [],
   menuActions = [],
@@ -41,6 +45,7 @@ export default function SurfaceHeader({
 }: {
   header: PaneHeaderModel;
   identityId: string;
+  primaryAction?: PanePrimaryAction;
   companionAction?: PaneCompanionAction;
   paneActions?: readonly ActionDescriptor[];
   menuActions?: readonly ActionDescriptor[];
@@ -81,6 +86,27 @@ export default function SurfaceHeader({
         />
       </div>
       <div className={styles.trailing}>
+        {primaryAction ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className={styles.primaryAction}
+            aria-label={primaryAction.label}
+            title={primaryAction.label}
+            data-action-id={primaryAction.id}
+            onClick={(event) => {
+              event.stopPropagation();
+              primaryAction.onSelect({ triggerEl: event.currentTarget });
+            }}
+          >
+            <span className={styles.primaryActionContent} aria-hidden="true">
+              {primaryAction.icon}
+              <span className={styles.primaryActionLabel}>
+                {primaryAction.shortLabel}
+              </span>
+            </span>
+          </Button>
+        ) : null}
         {actions.length > 0 || resourceRef !== undefined ? (
           <ContextualActionMenu
             label="More"

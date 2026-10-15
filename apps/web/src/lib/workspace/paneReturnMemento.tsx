@@ -360,10 +360,19 @@ export function usePaneVisitData<T>(
   return sample.current.value;
 }
 
-/** Commit retained visit data before a navigation can unmount its body. */
-export function usePaneVisitDataWriter<T>(key: PaneVisitDataKey<T>): (value: T | null) => void {
+/** Write before navigation, using this mounted visit's latest committed route. */
+export function usePaneVisitDataWriter<T>(
+  key: PaneVisitDataKey<T>,
+): (snapshot: T | null) => void {
   const { memory, visitId, routeKey } = useScope();
-  return useCallback((value: T | null) => memory.write(visitId, routeKey, key.name, value), [key.name, memory, routeKey, visitId]);
+  const committed = useRef({ memory, visitId, routeKey, name: key.name });
+  useLayoutEffect(() => {
+    committed.current = { memory, visitId, routeKey, name: key.name };
+  }, [memory, visitId, routeKey, key.name]);
+  return useCallback((snapshot: T | null) => {
+    const scope = committed.current;
+    scope.memory.write(scope.visitId, scope.routeKey, scope.name, snapshot);
+  }, []);
 }
 
 /** Call before a same-path view swap; the offset returns once `commitToken` changes. */
