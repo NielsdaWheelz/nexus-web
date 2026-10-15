@@ -25,7 +25,6 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.services.sealed_handles import UserHandle
 from nexus.services.url_normalize import validate_requested_url
 from nexus.services.web_article_structure import WEB_ARTICLE_HTML_MAX_BYTES
 
@@ -137,7 +136,7 @@ class CaptureLimits(_Strict):
 
 
 class ExtensionSessionOut(_Strict):
-    user_handle: UserHandle
+    user_id: UUID
     email: str | None
     display_name: str | None
     limits: CaptureLimits

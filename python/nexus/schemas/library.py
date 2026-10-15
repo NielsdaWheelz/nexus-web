@@ -59,6 +59,8 @@ class LibraryOut(BaseModel):
     # delete and transfer: its owner.
     can_delete: bool
     can_transfer_ownership: bool
+    # leave: any member of a mutable library but its owner.
+    can_leave: bool
     created_at: datetime
     updated_at: datetime
 

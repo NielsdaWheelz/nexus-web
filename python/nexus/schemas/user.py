@@ -8,22 +8,15 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from nexus.services.sealed_handles import UserHandle
-
 DISPLAY_NAME_MAX_LENGTH = 100
 
 
 class UserSearchOut(BaseModel):
-    """Response schema for a user search result."""
+    """One person found by people search; `email` only when the query was it exactly."""
 
-    user_handle: UserHandle
+    user_id: UUID
     email: str | None
     display_name: str | None
-
-    model_config = ConfigDict(
-        from_attributes=True,
-        extra="forbid",
-    )
 
 
 class UserProfileOut(BaseModel):

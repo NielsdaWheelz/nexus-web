@@ -52,12 +52,6 @@ class _EntityHandleSpec:
         )
 
 
-_RESOURCE_GRANT = _EntityHandleSpec(prefix="nrg1", domain="resource-grant")
-_USER = _EntityHandleSpec(prefix="nus1", domain="user")
-_LIBRARY_INVITATION = _EntityHandleSpec(
-    prefix="nli1",
-    domain="library-invitation",
-)
 _UPLOAD_SESSION = _EntityHandleSpec(prefix="nup1", domain="upload-session")
 _SHARE_TOKEN_RE = re.compile(rf"^nxshr1_[A-Za-z0-9_-]{{{_SHARE_TOKEN_CHARS}}}$")
 
@@ -98,18 +92,6 @@ class _CanonicalEntityHandle(str):
             cls._validate,
             core_schema.str_schema(),
         )
-
-
-class ResourceGrantHandle(_CanonicalEntityHandle):
-    _spec = _RESOURCE_GRANT
-
-
-class UserHandle(_CanonicalEntityHandle):
-    _spec = _USER
-
-
-class LibraryInvitationHandle(_CanonicalEntityHandle):
-    _spec = _LIBRARY_INVITATION
 
 
 class UploadSessionHandle(_CanonicalEntityHandle):
@@ -262,30 +244,6 @@ def _unseal(raw: str, spec: _EntityHandleSpec, message: str) -> UUID:
     if not hmac.compare_digest(presented_tag, _tag(spec, entity_id)):
         raise InvalidSealedHandle(message)
     return entity_id
-
-
-def seal_resource_grant(grant_id: UUID) -> ResourceGrantHandle:
-    return _seal(grant_id, _RESOURCE_GRANT, ResourceGrantHandle)
-
-
-def unseal_resource_grant(raw: str) -> UUID:
-    return _unseal(raw, _RESOURCE_GRANT, "Invalid resource grant handle")
-
-
-def seal_user(user_id: UUID) -> UserHandle:
-    return _seal(user_id, _USER, UserHandle)
-
-
-def unseal_user(raw: str) -> UUID:
-    return _unseal(raw, _USER, "Invalid user handle")
-
-
-def seal_library_invitation(invitation_id: UUID) -> LibraryInvitationHandle:
-    return _seal(invitation_id, _LIBRARY_INVITATION, LibraryInvitationHandle)
-
-
-def unseal_library_invitation(raw: str) -> UUID:
-    return _unseal(raw, _LIBRARY_INVITATION, "Invalid library invitation handle")
 
 
 def seal_upload_session(session_id: UUID) -> UploadSessionHandle:

@@ -973,11 +973,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * List Viewer Invites
-         * @description List invitations addressed to the current viewer.
-         */
-        get: operations["list_viewer_invites_libraries_invites_get"];
+        /** List Viewer Invitations */
+        get: operations["list_viewer_invitations_libraries_invites_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -986,7 +983,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/libraries/invites/{invitation_handle}": {
+    "/libraries/invites/{invitation_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -996,17 +993,14 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /**
-         * Revoke Library Invite
-         * @description Revoke a pending invitation. Admin-only; idempotent when already revoked.
-         */
-        delete: operations["revoke_library_invite_libraries_invites__invitation_handle__delete"];
+        /** Revoke Invitation */
+        delete: operations["revoke_invitation_libraries_invites__invitation_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/libraries/invites/{invitation_handle}/accept": {
+    "/libraries/invites/{invitation_id}/accept": {
         parameters: {
             query?: never;
             header?: never;
@@ -1015,18 +1009,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Accept Library Invite
-         * @description Accept a library invitation. Invitee-only; idempotent when already accepted.
-         */
-        post: operations["accept_library_invite_libraries_invites__invitation_handle__accept_post"];
+        /** Accept Invitation */
+        post: operations["accept_invitation_libraries_invites__invitation_id__accept_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/libraries/invites/{invitation_handle}/decline": {
+    "/libraries/invites/{invitation_id}/decline": {
         parameters: {
             query?: never;
             header?: never;
@@ -1035,11 +1026,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Decline Library Invite
-         * @description Decline a library invitation. Invitee-only; idempotent when already declined.
-         */
-        post: operations["decline_library_invite_libraries_invites__invitation_handle__decline_post"];
+        /** Decline Invitation */
+        post: operations["decline_invitation_libraries_invites__invitation_id__decline_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1133,16 +1121,13 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List Library Invites
-         * @description List a library's invitations, newest first. Admin-only.
+         * List Invitations
+         * @description Pending invitations, newest first.
          */
-        get: operations["list_library_invites_libraries__library_id__invites_get"];
+        get: operations["list_invitations_libraries__library_id__invites_get"];
         put?: never;
-        /**
-         * Create Library Invite
-         * @description Invite an existing user to a library. Admin-only.
-         */
-        post: operations["create_library_invite_libraries__library_id__invites_post"];
+        /** Create Invitation */
+        post: operations["create_invitation_libraries__library_id__invites_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1174,11 +1159,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * List Library Members
-         * @description List a library's members by immutable member identity. Admin-only.
-         */
-        get: operations["list_library_members_libraries__library_id__members_get"];
+        /** List Members */
+        get: operations["list_members_libraries__library_id__members_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1187,7 +1169,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/libraries/{library_id}/members/{user_handle}": {
+    "/libraries/{library_id}/members/{user_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1197,18 +1179,29 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /**
-         * Remove Library Member
-         * @description Remove a member. Admin-only; idempotent for an absent target.
-         */
-        delete: operations["remove_library_member_libraries__library_id__members__user_handle__delete"];
+        /** Remove Member */
+        delete: operations["remove_member_libraries__library_id__members__user_id__delete"];
         options?: never;
         head?: never;
-        /**
-         * Update Library Member Role
-         * @description Set a member's role. Admin-only; the owner's role is fixed.
-         */
-        patch: operations["update_library_member_role_libraries__library_id__members__user_handle__patch"];
+        /** Set Member Role */
+        patch: operations["set_member_role_libraries__library_id__members__user_id__patch"];
+        trace?: never;
+    };
+    "/libraries/{library_id}/membership": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Leave Library */
+        delete: operations["leave_library_libraries__library_id__membership_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/libraries/{library_id}/suggestions": {
@@ -1240,11 +1233,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Transfer Library Ownership
-         * @description Transfer ownership to another member. Owner-only.
-         */
-        post: operations["transfer_library_ownership_libraries__library_id__transfer_ownership_post"];
+        /** Transfer Ownership */
+        post: operations["transfer_ownership_libraries__library_id__transfer_ownership_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2674,7 +2664,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/resource-shares/{resource_grant_handle}": {
+    "/resource-shares/{grant_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -2684,8 +2674,11 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete Resource Share */
-        delete: operations["delete_resource_share_resource_shares__resource_grant_handle__delete"];
+        /**
+         * Delete Resource Share
+         * @description Revoke or decline; absent or not the viewer's is 204 too.
+         */
+        delete: operations["delete_resource_share_resource_shares__grant_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2864,10 +2857,7 @@ export interface paths {
         };
         /**
          * Search Users
-         * @description Search users by email prefix or display name.
-         *
-         *     Authenticated endpoint. Returns matching users excluding the searcher.
-         *     Minimum query length: 3 characters.
+         * @description Display name contains `q` (at least 3 characters), or email is exactly `q`.
          */
         get: operations["search_users_users_search_get"];
         put?: never;
@@ -2902,13 +2892,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** AcceptLibraryInviteResponse */
-        AcceptLibraryInviteResponse: {
-            /** Idempotent */
-            idempotent: boolean;
-            invite: components["schemas"]["LibraryInvitationOut"];
-            membership: components["schemas"]["InviteAcceptMembershipOut"];
-        };
         /** AcceptedChatAdmission */
         AcceptedChatAdmission: {
             /**
@@ -3734,6 +3717,20 @@ export interface components {
             /** Next Cursor */
             next_cursor: string | null;
         };
+        /** CollectionPage[LibraryInvitationOut] */
+        CollectionPage_LibraryInvitationOut_: {
+            /** Items */
+            items: components["schemas"]["LibraryInvitationOut"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** CollectionPage[LibraryMemberOut] */
+        CollectionPage_LibraryMemberOut_: {
+            /** Items */
+            items: components["schemas"]["LibraryMemberOut"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
         /** CollectionPage[LibraryOut] */
         CollectionPage_LibraryOut_: {
             /** Items */
@@ -3759,6 +3756,13 @@ export interface components {
         CollectionPage_PodcastSubscriptionListItemOut_: {
             /** Items */
             items: components["schemas"]["PodcastSubscriptionListItemOut"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** CollectionPage[ViewerInvitationOut] */
+        CollectionPage_ViewerInvitationOut_: {
+            /** Items */
+            items: components["schemas"]["ViewerInvitationOut"][];
             /** Next Cursor */
             next_cursor: string | null;
         };
@@ -4209,12 +4213,26 @@ export interface components {
             /** Initial Context Refs */
             initial_context_refs?: string[] | null;
         };
-        /** CreateLibraryInviteRequest */
-        CreateLibraryInviteRequest: {
-            invitee: components["schemas"]["UserLibraryInvitee"];
+        /**
+         * CreateInvitationRequest
+         * @description Retry: resend the same client-minted id. `invitee_email` is the email the inviter
+         *     typed to find the invitee (theirs, in any case), or null when found by name.
+         */
+        CreateInvitationRequest: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Invitee Email */
+            invitee_email: string | null;
+            /**
+             * Invitee User Id
+             * Format: uuid
+             */
+            invitee_user_id: string;
             /**
              * Role
-             * @description Role to assign to the invitee ('admin' or 'member')
              * @enum {string}
              */
             role: "admin" | "member";
@@ -4279,10 +4297,18 @@ export interface components {
             /** Share */
             share: components["schemas"]["UserShareOut"] | components["schemas"]["LinkShareOut"];
         };
-        /** CreateResourceShareRequest */
+        /**
+         * CreateResourceShareRequest
+         * @description Retry: resend the same client-minted id.
+         */
         CreateResourceShareRequest: {
             /** Audience */
             audience: components["schemas"]["UserAudienceIn"] | components["schemas"]["LinkAudienceIn"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
         };
         /** CreateUploadSessionRequest */
         CreateUploadSessionRequest: {
@@ -4369,22 +4395,6 @@ export interface components {
             materialized: boolean;
             outline: components["schemas"]["OutlineOut"];
         };
-        /** DataPage[LibraryInvitationOut, LibraryGovernancePageInfo] */
-        DataPage_LibraryInvitationOut_LibraryGovernancePageInfo_: {
-            /** Data */
-            data: components["schemas"]["LibraryInvitationOut"][];
-            page: components["schemas"]["LibraryGovernancePageInfo"];
-        };
-        /** DataPage[LibraryMemberOut, LibraryGovernancePageInfo] */
-        DataPage_LibraryMemberOut_LibraryGovernancePageInfo_: {
-            /** Data */
-            data: components["schemas"]["LibraryMemberOut"][];
-            page: components["schemas"]["LibraryGovernancePageInfo"];
-        };
-        /** Data[AcceptLibraryInviteResponse] */
-        Data_AcceptLibraryInviteResponse_: {
-            data: components["schemas"]["AcceptLibraryInviteResponse"];
-        };
         /** Data[ActivityExclusionResultOut] */
         Data_ActivityExclusionResultOut_: {
             data: components["schemas"]["ActivityExclusionResultOut"];
@@ -4463,6 +4473,14 @@ export interface components {
         Data_CollectionPage_LibraryDestinationOut__: {
             data: components["schemas"]["CollectionPage_LibraryDestinationOut_"];
         };
+        /** Data[CollectionPage[LibraryInvitationOut]] */
+        Data_CollectionPage_LibraryInvitationOut__: {
+            data: components["schemas"]["CollectionPage_LibraryInvitationOut_"];
+        };
+        /** Data[CollectionPage[LibraryMemberOut]] */
+        Data_CollectionPage_LibraryMemberOut__: {
+            data: components["schemas"]["CollectionPage_LibraryMemberOut_"];
+        };
         /** Data[CollectionPage[LibraryOut]] */
         Data_CollectionPage_LibraryOut__: {
             data: components["schemas"]["CollectionPage_LibraryOut_"];
@@ -4478,6 +4496,10 @@ export interface components {
         /** Data[CollectionPage[PodcastSubscriptionListItemOut]] */
         Data_CollectionPage_PodcastSubscriptionListItemOut__: {
             data: components["schemas"]["CollectionPage_PodcastSubscriptionListItemOut_"];
+        };
+        /** Data[CollectionPage[ViewerInvitationOut]] */
+        Data_CollectionPage_ViewerInvitationOut__: {
+            data: components["schemas"]["CollectionPage_ViewerInvitationOut_"];
         };
         /** Data[ConnectionDiscoveryScanOut] */
         Data_ConnectionDiscoveryScanOut_: {
@@ -4527,10 +4549,6 @@ export interface components {
         Data_DailyPageOut_: {
             data: components["schemas"]["DailyPageOut"];
         };
-        /** Data[DeclineLibraryInviteResponse] */
-        Data_DeclineLibraryInviteResponse_: {
-            data: components["schemas"]["DeclineLibraryInviteResponse"];
-        };
         /** Data[DossierBuildCreatedOut] */
         Data_DossierBuildCreatedOut_: {
             data: components["schemas"]["DossierBuildCreatedOut"];
@@ -4574,10 +4592,6 @@ export interface components {
         /** Data[LibraryInvitationOut] */
         Data_LibraryInvitationOut_: {
             data: components["schemas"]["LibraryInvitationOut"];
-        };
-        /** Data[LibraryMemberOut] */
-        Data_LibraryMemberOut_: {
-            data: components["schemas"]["LibraryMemberOut"];
         };
         /** Data[LibraryOut] */
         Data_LibraryOut_: {
@@ -4805,16 +4819,10 @@ export interface components {
             /** Data */
             data: components["schemas"]["OracleReadingSummaryOut"][];
         };
-        /** Data[list[ViewerLibraryInvitationOut]] */
-        Data_list_ViewerLibraryInvitationOut__: {
+        /** Data[list[UserSearchOut]] */
+        Data_list_UserSearchOut__: {
             /** Data */
-            data: components["schemas"]["ViewerLibraryInvitationOut"][];
-        };
-        /** DeclineLibraryInviteResponse */
-        DeclineLibraryInviteResponse: {
-            /** Idempotent */
-            idempotent: boolean;
-            invite: components["schemas"]["LibraryInvitationOut"];
+            data: components["schemas"]["UserSearchOut"][];
         };
         /** DetachContextMutation */
         DetachContextMutation: {
@@ -6111,21 +6119,6 @@ export interface components {
              */
             code: "invalid_output";
         };
-        /** InviteAcceptMembershipOut */
-        InviteAcceptMembershipOut: {
-            /**
-             * Library Id
-             * Format: uuid
-             */
-            library_id: string;
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "admin" | "member";
-            /** User Handle */
-            user_handle: string;
-        };
         /** LearnDossierBuildAcceptedOut */
         LearnDossierBuildAcceptedOut: {
             /** Artifact Ref */
@@ -6206,11 +6199,6 @@ export interface components {
             /** Name */
             name: string;
         };
-        /** LibraryGovernancePageInfo */
-        LibraryGovernancePageInfo: {
-            /** Next Cursor */
-            next_cursor: string | null;
-        };
         /** LibraryInvitationOut */
         LibraryInvitationOut: {
             /**
@@ -6218,23 +6206,25 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            /** Invitation Handle */
-            invitation_handle: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
             /** Invitee Display Name */
             invitee_display_name: string | null;
             /** Invitee Email */
             invitee_email: string | null;
-            /** Invitee User Handle */
-            invitee_user_handle: string;
-            /** Inviter User Handle */
-            inviter_user_handle: string;
+            /**
+             * Invitee User Id
+             * Format: uuid
+             */
+            invitee_user_id: string;
             /**
              * Library Id
              * Format: uuid
              */
             library_id: string;
-            /** Responded At */
-            responded_at: string | null;
             /**
              * Role
              * @enum {string}
@@ -6280,13 +6270,18 @@ export interface components {
              * @enum {string}
              */
             role: "admin" | "member";
-            /** User Handle */
-            user_handle: string;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
         };
         /** LibraryOut */
         LibraryOut: {
             /** Can Delete */
             can_delete: boolean;
+            /** Can Leave */
+            can_leave: boolean;
             /** Can Manage */
             can_manage: boolean;
             /** Can Transfer Ownership */
@@ -6485,8 +6480,11 @@ export interface components {
         };
         /** LinkShareOut */
         LinkShareOut: {
-            /** Handle */
-            handle: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -9767,8 +9765,11 @@ export interface components {
         };
         /** ReceivedUserShareOut */
         ReceivedUserShareOut: {
-            /** Handle */
-            handle: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
             /**
              * Kind
              * @default ReceivedUser
@@ -11035,6 +11036,22 @@ export interface components {
              */
             note_id: string;
         };
+        /**
+         * SetMemberRoleRequest
+         * @description `expected_role` is the role the client last read (the expected version).
+         */
+        SetMemberRoleRequest: {
+            /**
+             * Expected Role
+             * @enum {string}
+             */
+            expected_role: "admin" | "member";
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "admin" | "member";
+        };
         /** SetOrderCommand */
         SetOrderCommand: {
             /**
@@ -11120,8 +11137,11 @@ export interface components {
             display_name: string | null;
             /** Email */
             email: string | null;
-            /** User Handle */
-            user_handle: string;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
         };
         /** SimpleAction */
         SimpleAction: {
@@ -11702,10 +11722,13 @@ export interface components {
              */
             type: "transcript_time_range";
         };
-        /** TransferLibraryOwnershipRequest */
-        TransferLibraryOwnershipRequest: {
-            /** New Owner User Handle */
-            new_owner_user_handle: string;
+        /** TransferOwnershipRequest */
+        TransferOwnershipRequest: {
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
         };
         /** TransportFailed */
         TransportFailed: {
@@ -11961,15 +11984,6 @@ export interface components {
             /** Exact */
             exact?: string | null;
         };
-        /** UpdateLibraryMemberRequest */
-        UpdateLibraryMemberRequest: {
-            /**
-             * Role
-             * @description New role for the member ('admin' or 'member')
-             * @enum {string}
-             */
-            role: "admin" | "member";
-        };
         /**
          * UpdateProfileRequest
          * @description Request body for PATCH /me.
@@ -12202,25 +12216,24 @@ export interface components {
              */
             kind: "Timeout";
         };
-        /** UserAudienceIn */
+        /**
+         * UserAudienceIn
+         * @description `email` is the email the sharer typed to find the user (theirs, in any case), or
+         *     null when found by name.
+         */
         UserAudienceIn: {
+            /** Email */
+            email: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "User";
-            /** User Handle */
-            user_handle: string;
-        };
-        /** UserLibraryInvitee */
-        UserLibraryInvitee: {
             /**
-             * Kind
-             * @constant
+             * User Id
+             * Format: uuid
              */
-            kind: "User";
-            /** User Handle */
-            user_handle: string;
+            user_id: string;
         };
         /**
          * UserProfileOut
@@ -12246,10 +12259,28 @@ export interface components {
              */
             user_id: string;
         };
+        /**
+         * UserSearchOut
+         * @description One person found by people search; `email` only when the query was it exactly.
+         */
+        UserSearchOut: {
+            /** Display Name */
+            display_name: string | null;
+            /** Email */
+            email: string | null;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+        };
         /** UserShareOut */
         UserShareOut: {
-            /** Handle */
-            handle: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -12360,23 +12391,25 @@ export interface components {
             /** Video Ref */
             video_ref: string;
         };
-        /** ViewerLibraryInvitationOut */
-        ViewerLibraryInvitationOut: {
+        /**
+         * ViewerInvitationOut
+         * @description A pending invitation addressed to the viewer, with who sent it.
+         */
+        ViewerInvitationOut: {
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
-            /** Invitation Handle */
-            invitation_handle: string;
-            /** Invitee Display Name */
-            invitee_display_name: string | null;
-            /** Invitee Email */
-            invitee_email: string | null;
-            /** Invitee User Handle */
-            invitee_user_handle: string;
-            /** Inviter User Handle */
-            inviter_user_handle: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Inviter Display Name */
+            inviter_display_name: string | null;
+            /** Inviter Email */
+            inviter_email: string | null;
             /**
              * Library Id
              * Format: uuid
@@ -12384,18 +12417,11 @@ export interface components {
             library_id: string;
             /** Library Name */
             library_name: string;
-            /** Responded At */
-            responded_at: string | null;
             /**
              * Role
              * @enum {string}
              */
             role: "admin" | "member";
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "pending" | "accepted" | "declined" | "revoked";
         };
         /** ViewingActivityBatchIn */
         ViewingActivityBatchIn: {
@@ -14524,12 +14550,10 @@ export interface operations {
             };
         };
     };
-    list_viewer_invites_libraries_invites_get: {
+    list_viewer_invitations_libraries_invites_get: {
         parameters: {
             query?: {
-                /** @description Filter by invite status */
-                status?: "pending" | "accepted" | "declined" | "revoked";
-                /** @description Maximum results (clamped to 200) */
+                cursor?: string | null;
                 limit?: number;
             };
             header?: never;
@@ -14544,7 +14568,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_list_ViewerLibraryInvitationOut__"];
+                    "application/json": components["schemas"]["Data_CollectionPage_ViewerInvitationOut__"];
                 };
             };
             /** @description Validation Error */
@@ -14558,12 +14582,12 @@ export interface operations {
             };
         };
     };
-    revoke_library_invite_libraries_invites__invitation_handle__delete: {
+    revoke_invitation_libraries_invites__invitation_id__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                invitation_handle: string;
+                invitation_id: string;
             };
             cookie?: never;
         };
@@ -14587,25 +14611,23 @@ export interface operations {
             };
         };
     };
-    accept_library_invite_libraries_invites__invitation_handle__accept_post: {
+    accept_invitation_libraries_invites__invitation_id__accept_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                invitation_handle: string;
+                invitation_id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["Data_AcceptLibraryInviteResponse_"];
-                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -14618,25 +14640,23 @@ export interface operations {
             };
         };
     };
-    decline_library_invite_libraries_invites__invitation_handle__decline_post: {
+    decline_invitation_libraries_invites__invitation_id__decline_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                invitation_handle: string;
+                invitation_id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["Data_DeclineLibraryInviteResponse_"];
-                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -14840,14 +14860,10 @@ export interface operations {
             };
         };
     };
-    list_library_invites_libraries__library_id__invites_get: {
+    list_invitations_libraries__library_id__invites_get: {
         parameters: {
             query?: {
-                /** @description Filter by invite status */
-                status?: "pending" | "accepted" | "declined" | "revoked";
-                /** @description Pagination cursor */
                 cursor?: string | null;
-                /** @description Maximum results (clamped to 200) */
                 limit?: number;
             };
             header?: never;
@@ -14864,7 +14880,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DataPage_LibraryInvitationOut_LibraryGovernancePageInfo_"];
+                    "application/json": components["schemas"]["Data_CollectionPage_LibraryInvitationOut__"];
                 };
             };
             /** @description Validation Error */
@@ -14878,7 +14894,7 @@ export interface operations {
             };
         };
     };
-    create_library_invite_libraries__library_id__invites_post: {
+    create_invitation_libraries__library_id__invites_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -14889,7 +14905,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateLibraryInviteRequest"];
+                "application/json": components["schemas"]["CreateInvitationRequest"];
             };
         };
         responses: {
@@ -14977,12 +14993,10 @@ export interface operations {
             };
         };
     };
-    list_library_members_libraries__library_id__members_get: {
+    list_members_libraries__library_id__members_get: {
         parameters: {
             query?: {
-                /** @description Pagination cursor */
                 cursor?: string | null;
-                /** @description Maximum results (clamped to 200) */
                 limit?: number;
             };
             header?: never;
@@ -14999,7 +15013,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DataPage_LibraryMemberOut_LibraryGovernancePageInfo_"];
+                    "application/json": components["schemas"]["Data_CollectionPage_LibraryMemberOut__"];
                 };
             };
             /** @description Validation Error */
@@ -15013,13 +15027,13 @@ export interface operations {
             };
         };
     };
-    remove_library_member_libraries__library_id__members__user_handle__delete: {
+    remove_member_libraries__library_id__members__user_id__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 library_id: string;
-                user_handle: string;
+                user_id: string;
             };
             cookie?: never;
         };
@@ -15043,30 +15057,57 @@ export interface operations {
             };
         };
     };
-    update_library_member_role_libraries__library_id__members__user_handle__patch: {
+    set_member_role_libraries__library_id__members__user_id__patch: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 library_id: string;
-                user_handle: string;
+                user_id: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["UpdateLibraryMemberRequest"];
+                "application/json": components["schemas"]["SetMemberRoleRequest"];
             };
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_LibraryMemberOut_"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    leave_library_libraries__library_id__membership_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -15110,7 +15151,7 @@ export interface operations {
             };
         };
     };
-    transfer_library_ownership_libraries__library_id__transfer_ownership_post: {
+    transfer_ownership_libraries__library_id__transfer_ownership_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -15121,18 +15162,16 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TransferLibraryOwnershipRequest"];
+                "application/json": components["schemas"]["TransferOwnershipRequest"];
             };
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["Data_LibraryOut_"];
-                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -17862,12 +17901,12 @@ export interface operations {
             };
         };
     };
-    delete_resource_share_resource_shares__resource_grant_handle__delete: {
+    delete_resource_share_resource_shares__grant_id__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                resource_grant_handle: string;
+                grant_id: string;
             };
             cookie?: never;
         };
@@ -18163,9 +18202,7 @@ export interface operations {
     search_users_users_search_get: {
         parameters: {
             query: {
-                /** @description Search query (min 3 chars) */
                 q: string;
-                /** @description Max results */
                 limit?: number;
             };
             header?: never;
@@ -18180,9 +18217,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_list_UserSearchOut__"];
                 };
             };
             /** @description Validation Error */

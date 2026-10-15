@@ -166,7 +166,7 @@ function Popup() {
           <span className={styles.accountName}>
             {connection.account.displayName ??
               connection.account.email ??
-              connection.account.userHandle}
+              connection.account.userId}
           </span>
         </div>
       ) : (
@@ -478,13 +478,13 @@ function decodeConnection(raw: unknown): CaptureConnection {
       const connection = expectExactRecord(raw, ["kind", "account"], "connection");
       const account = expectExactRecord(
         connection.account,
-        ["userHandle", "email", "displayName"],
+        ["userId", "email", "displayName"],
         "connection.account",
       );
       return {
         kind,
         account: {
-          userHandle: expectNonemptyString(account.userHandle, "account.userHandle"),
+          userId: expectNonemptyString(account.userId, "account.userId"),
           email: expectNullableString(account.email, "account.email"),
           displayName: expectNullableString(account.displayName, "account.displayName"),
         },

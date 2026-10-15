@@ -36,7 +36,7 @@ export type CaptureTargetView =
       documentKind: "unknown" | "pdf" | "epub";
     };
 
-export interface CaptureAccount { userHandle: string; email: string | null; displayName: string | null }
+export interface CaptureAccount { userId: string; email: string | null; displayName: string | null }
 
 export interface CaptureFailure { code: string; message: string; requestId: string | null }
 
@@ -241,7 +241,7 @@ export function decodeExtensionSession(raw: unknown): ExtensionSession {
   const envelope = expectExactRecord(raw, ["data"], name);
   const data = expectExactRecord(
     envelope.data,
-    ["user_handle", "email", "display_name", "limits"],
+    ["user_id", "email", "display_name", "limits"],
     name,
   );
   const limits = expectExactRecord(
@@ -251,7 +251,7 @@ export function decodeExtensionSession(raw: unknown): ExtensionSession {
   );
   return {
     account: {
-      userHandle: expectNonemptyString(data.user_handle, `${name}.user_handle`),
+      userId: expectNonemptyString(data.user_id, `${name}.user_id`),
       email: expectNullableString(data.email, `${name}.email`),
       displayName: expectNullableString(data.display_name, `${name}.display_name`),
     },

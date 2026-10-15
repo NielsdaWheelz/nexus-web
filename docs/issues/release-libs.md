@@ -1,4 +1,4 @@
-# release: libraries (PR A, collections, placement and the chooser)
+# release: libraries (PR A collections, placement and the chooser; PR B membership and sharing)
 
 PR A changes these contracts at once; the api refuses the old forms and there is
 no compatibility arm. `X-Nexus-Wire` is not bumped during the campaign
@@ -54,3 +54,68 @@ fails its library requests until reloaded.
 - drag a row in a named library; reload: the order holds.
 - Add content: add a link, then the row's Libraries and Libraries for all….
 - extension popup: destinations search, Load more, toggle, save.
+
+## PR B: membership and sharing
+
+Users, invitations and grants are plain uuids on the wire; the sealed `nus1.`,
+`nli1.` and `nrg1.` handles are gone (share tokens, upload sessions and discovery
+targets stay sealed). Same cutover as PR A: no compatibility arm, web and api
+deploy together.
+
+| before | after |
+|---|---|
+| `GET /libraries/{id}/members` `{data: [...], page: {next_cursor}}`, rows `user_handle` | `{data: {items, next_cursor}}`, rows `user_id` |
+| `PATCH /libraries/{id}/members/{user_handle} {role}` → member | `PATCH …/members/{user_id} {role, expected_role}` → 204; 409 `{current_role}` when changed meanwhile |
+| `DELETE /libraries/{id}/members/{user_handle}` (admin only) | `…/members/{user_id}` (admin, or the viewer themself) and `DELETE /libraries/{id}/membership` (leave); absent → 204 |
+| `POST …/transfer-ownership {new_owner_user_handle}` → `LibraryOut`; a retry after success 403 | `{user_id}` → 204; already that owner → 204 |
+| `POST …/invites {invitee: {kind, user_handle}, role}`; a retry 409 | `{id, invitee_user_id, invitee_email, role}` → 201; the same id answers that invitation |
+| `GET …/invites?status=` `{data, page}`; `invitee_email` always | `?cursor&limit`, pending only, `{items, next_cursor}`; `invitee_email` only as the inviter typed it (or once a member), else null |
+| `GET /libraries/invites?status&limit` (unpaged, at most 100) | `?cursor&limit` page with `library_name`, `inviter_email`, `inviter_display_name` |
+| `POST /libraries/invites/{handle}/accept\|decline` → `{invite, membership?, idempotent}` | `…/{invitation_id}/accept\|decline` → 204 |
+| `DELETE /libraries/invites/{handle}` | `…/{invitation_id}`; absent or invisible → 204 |
+| `LibraryOut` | adds `can_leave` |
+| `GET /users/search` `{data: [{user_handle, email?, display_name?}]}`, email prefix | `{user_id, email, display_name}`; display name contains, or exact email (email returned only then) |
+| shares `{audience: {kind: "User", user_handle}}`, grants `handle`; the grantee's `email` always | `{id, audience: {kind: "User", user_id, email}}`, grants `id`; a non-reader's create is 404 (was 400); the grantee's `email` only as the sharer typed it, else null |
+| `DELETE /resource-shares/{grant_handle}`; absent 404 | `/{grant_id}`; absent or not the viewer's → 204 |
+| `GET /extension/session` `user_handle` | `user_id` |
+
+### pairing
+
+- **web + api**: one deploy, as PR A.
+- **firefox extension**: the session decoder reads `user_id`; the old popup
+  fails its session read against the new api. Ship the rebuilt extension with
+  the release. A capture pinned before the update is bound to the old handle
+  and reads as another account's: finish or discard pinned captures before
+  updating (owner step).
+- **android**: no change.
+
+### preflight / env / data
+
+- migration `0280_typed_counterparty_emails` (after 0279): adds nullable
+  `library_invitations.invitee_email` and `resource_grants.grantee_email`. every
+  existing row gets NULL, so existing pending invitations and person grants show
+  the invitee's or grantee's display name, or "Unknown person" without one
+  (nothing typed was stored before). nothing is refused; downgrade drops both
+  columns. no env change, no backfill.
+- rehearsal census on a restored backup, for the release notes:
+  - pending invitations and person grants that will read "Unknown person"
+    (counterparty without a display name):
+    `select (select count(*) from library_invitations i join users u on u.id = i.invitee_user_id where i.status = 'pending' and u.display_name is null), (select count(*) from resource_grants g join users u on u.id = g.grantee_user_id where u.display_name is null);`
+  - non-owner members of named libraries (who now see Leave library…; system
+    libraries offer no Leave):
+    `select count(*) from memberships m join libraries l on l.id = m.library_id where m.user_id <> l.owner_user_id and not l.is_default and l.system_key is null;`
+  - accounts without a display name (people search now finds them only by
+    exact email): `select count(*) filter (where display_name is null), count(*) from users;`
+  - viewers with more than 100 pending invitations (the old inbox cap):
+    `select invitee_user_id, count(*) from library_invitations where status = 'pending' group by 1 having count(*) > 100;`
+
+### owner smoke after release
+
+- invite a second account by display name (and once by exact email), accept
+  from the other account (the row names who sent it), change its role, then
+  leave from that account's library pane.
+- transfer ownership and back; remove a member (Cancel returns focus to the
+  row's Actions button).
+- share a media with a person, open it as them, remove the share; turn a
+  public link on and off.
+- extension: reconnect, the popup shows the account, a capture saves.

@@ -115,9 +115,9 @@ startup, not absence.
 `login` runs `identity.launchWebAuthFlow` against the build's nexus origin,
 `/extension/connect/start?redirect_uri=<identity.getRedirectURL()>&state=<uuid>`;
 the reply's hash must echo the state. The token is stored, then
-`GET /api/extension/session` supplies the account and byte limits; the first
-successful lookup binds an unbound draft to that account and only that account
-may resume it. Once the auth window has run, whatever its outcome, the
+`GET /api/extension/session` supplies the account (`user_id`, email, display
+name) and byte limits; the first successful lookup binds an unbound draft to
+that account's `user_id` and only that account may resume it. Once the auth window has run, whatever its outcome, the
 background refocuses the window and reopens the popup. The popup sends
 `login`, `save`, `retry`, `resume`, `disconnect` or the `discard` of anything
 but an unsubmitted draft and then, in the same click handler, requests

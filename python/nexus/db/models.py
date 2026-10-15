@@ -1934,6 +1934,8 @@ class ResourceGrant(Base):
         ForeignKey("users.id"),
         nullable=True,
     )
+    # The grantee's email as the creator typed it; null when they found the grantee by name.
+    grantee_email: Mapped[str | None] = mapped_column(Text, nullable=True)
     share_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),

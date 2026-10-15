@@ -21,15 +21,25 @@ holds one grant per subject and audience. A grant is also:
 
 Every grant mutation invalidates audience visibility for exactly the users it
 affects, in the same transaction. Locks go media, then highlight, then grant,
-the order media deletion uses. Revoke/decline runs READ COMMITTED and restarts
-when a dedupe repoint moved the grant's subject while it waited.
+the order media deletion uses. Grants and users are addressed by plain uuids.
+`DELETE /resource-shares/{grant_id}` revokes (creator) or declines (grantee);
+an absent grant, or one that is not the viewer's, answers 204 too. It runs READ
+COMMITTED and restarts when a dedupe repoint moved the grant's subject while it
+waited.
 
 `services/resource_sharing.py` serves the Share overlay: one ordered
-availability check (mode, highlight present, not deleting, highlight owner,
-media readable, highlight resolvable; then, for links, public readiness) whose
-first failing reason wins. The create command re-runs it under the subject's row
-locks, returns an existing grant for the same audience, and inserts under
-SERIALIZABLE.
+availability check (mode; a subject the viewer cannot read is 404, as its
+snapshot is; not deleting, highlight owner, highlight resolvable; then, for
+links, public readiness) whose first failing reason wins. `POST
+/resource-items/{ref}/shares {id, audience: {kind: "User", user_id, email|null} |
+{kind: "Link"}}` re-runs it under the subject's row locks and inserts under
+SERIALIZABLE with the client's id. Retry: the same id answers that grant (409
+`E_RESOURCE_CONFLICT` when it names another), and the creator's existing grant
+for the same audience answers as it is (`created: false`). `email` is the email
+the sharer typed (400 when it is not the user's, ignoring case); the grant stores
+it, and the sharer's rows show the grantee's email only as typed, otherwise
+null (the web shows the display name, else "Unknown person"). A received share
+names its sharer, email included.
 Library subjects carry `members` (can the viewer manage them) from
 `libraries.access(…).out(…).can_manage`.
 
@@ -89,7 +99,13 @@ CSP and no `Set-Cookie`, stamped by `app.py`'s middleware, the BFF and
 `lib/sharing/controller.tsx` owns the one Share overlay
 (`components/sharing/ShareOverlay.tsx`): Nexus link copy/share, people search,
 person grants, received access with decline, the public link (copy, native
-share and X behind bearer warnings, turn off), and library People. Route
+share and X behind bearer warnings, turn off), and library People. One change
+runs at a time; every other control waits for it.
+
+People search (`GET /users/search?q&limit≤20`, `components/users/PeopleSearch`,
+shared with the library Members tab) finds users whose display name contains
+`q` (at least 3 characters) or whose email is exactly `q`, never the viewer. It
+returns an email only on that exact match, so no search lists addresses. Route
 targets copy the pane's address without a request. The wire types of every
 route here come from `lib/api/wire.gen.ts`.
 
