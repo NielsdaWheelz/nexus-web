@@ -1,7 +1,8 @@
 # retained-book repair plan
 
-status: implementation in draft prs [#608](https://github.com/NielsdaWheelz/nexus-web/pull/608)
-and [#609](https://github.com/NielsdaWheelz/nexus-web/pull/609); static checks,
+status: implementation in draft prs [#608](https://github.com/NielsdaWheelz/nexus-web/pull/608),
+[#609](https://github.com/NielsdaWheelz/nexus-web/pull/609) and
+[#613](https://github.com/NielsdaWheelz/nexus-web/pull/613); static checks,
 local source probes and operator containment proofs passed. restored-database qualification is in progress;
 production repair and consumer acceptance remain NOT_RUN.
 owner decisions settled 2026-10-14. planning base: `75b17c0301be59da4a45dec8b35ab97d998e9199`.
