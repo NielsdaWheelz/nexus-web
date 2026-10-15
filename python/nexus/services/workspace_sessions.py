@@ -35,7 +35,7 @@ def get_workspace_sessions(db: Session, user_id: UUID, device_id: str) -> Worksp
 def put_workspace_session(
     db: Session, user_id: UUID, device_id: str, state: WorkspaceState
 ) -> None:
-    payload = state.model_dump(mode="json", by_alias=True)
+    payload = state.model_dump(mode="json")
     db.execute(
         insert(WorkspaceSession)
         .values(user_id=user_id, device_id=device_id, state=payload)

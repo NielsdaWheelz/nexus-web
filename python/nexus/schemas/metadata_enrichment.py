@@ -1,22 +1,13 @@
-"""Generated metadata ingress, accepted research, and the one operation wire."""
+"""The research model's output contract, job payloads, a run's outcomes, and the operation wire."""
 
 from __future__ import annotations
 
 from typing import Annotated, Literal, get_args
 from uuid import UUID
 
-from pydantic import (
-    AwareDatetime,
-    BaseModel,
-    ConfigDict,
-    Field,
-    StringConstraints,
-    model_validator,
-)
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from nexus.schemas.client_mutation import ClientMutationUuidText
 from nexus.schemas.isbn import Isbn13
-from nexus.schemas.presence import Presence, Present
 from nexus.schemas.publication_dates import PublicationDate
 from nexus.services.contributor_taxonomy import (
     CONTRIBUTOR_ROLES_ORDERED,
@@ -24,12 +15,7 @@ from nexus.services.contributor_taxonomy import (
     MAX_CONTRIBUTOR_NAME_CODE_POINTS,
     MAX_CREDITS_PER_MANAGED_ROLE,
     MAX_RAW_ROLE_LENGTH,
-    NOT_OBSERVED,
-    ContributorHandle,
-    ContributorObservation,
-    ContributorObservationBatch,
     ContributorRole,
-    ObservedRoleSlices,
 )
 
 type MetadataField = Literal[
@@ -43,6 +29,7 @@ type MetadataField = Literal[
     "description",
 ]
 METADATA_FIELDS: tuple[MetadataField, ...] = get_args(MetadataField.__value__)
+# A media's purpose is fixed by what it is (metadata_purpose); every job freezes its own.
 type MetadataPurpose = Literal["bibliography", "title"]
 
 type MetadataFailureCode = Literal[
@@ -65,16 +52,10 @@ type MetadataFailureCode = Literal[
 
 _ShortText = Annotated[str, StringConstraints(min_length=1, max_length=255, pattern=r"\S")]
 _Name = Annotated[
-    str,
-    StringConstraints(
-        min_length=1,
-        max_length=MAX_CONTRIBUTOR_NAME_CODE_POINTS,
-        pattern=r"\S",
-    ),
+    str, StringConstraints(min_length=1, max_length=MAX_CONTRIBUTOR_NAME_CODE_POINTS, pattern=r"\S")
 ]
 _RawRole = Annotated[
-    str,
-    StringConstraints(min_length=1, max_length=MAX_RAW_ROLE_LENGTH, pattern=r"\S"),
+    str, StringConstraints(min_length=1, max_length=MAX_RAW_ROLE_LENGTH, pattern=r"\S")
 ]
 _Handle = Annotated[
     str,
@@ -88,21 +69,23 @@ _Description = Annotated[str, StringConstraints(min_length=1, max_length=2000, p
 _Language = Annotated[str, StringConstraints(min_length=2, max_length=2, pattern=r"^[a-z]{2}$")]
 
 
-class _MetadataModel(BaseModel):
+class _Frozen(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
 
-class _MetadataJobPayload(_MetadataModel):
+class _JobPayload(_Frozen):
     media_id: UUID
     requester_user_id: UUID
     request_id: str | None
 
 
-class BibliographyMetadataJobPayload(_MetadataJobPayload):
+class BibliographyMetadataJobPayload(_JobPayload):
     purpose: Literal["bibliography"]
 
 
-class TitleMetadataJobPayload(_MetadataJobPayload):
+class TitleMetadataJobPayload(_JobPayload):
+    """An x article's title from the source attempt whose capture it names."""
+
     purpose: Literal["title"]
     source_attempt_id: UUID
 
@@ -112,38 +95,37 @@ type MetadataJobPayload = Annotated[
 ]
 
 
-class MetadataContributorCreditOutput(_MetadataModel):
+# The docstrings below are model-facing (schema descriptions, kept verbatim); notes are comments.
+class MetadataCredit(_Frozen):
     """Generated nulls belong only to this external output contract."""
 
+    # A contributor_handle must be one the input offered (accept_findings checks it).
     contributor_handle: _Handle | None
     credited_name: _Name
     raw_role: _RawRole | None
 
 
-class MetadataContributorRoleSliceOutput(_MetadataModel):
+class MetadataRoleSlice(_Frozen):
     role: ContributorRole
-    credits: Annotated[
-        list[MetadataContributorCreditOutput], Field(max_length=MAX_CREDITS_PER_MANAGED_ROLE)
-    ]
+    credits: Annotated[list[MetadataCredit], Field(max_length=MAX_CREDITS_PER_MANAGED_ROLE)]
 
     @model_validator(mode="after")
-    def unique_existing_people(self) -> MetadataContributorRoleSliceOutput:
-        handles = [
-            row.contributor_handle for row in self.credits if row.contributor_handle is not None
-        ]
+    def _one_person_once(self) -> MetadataRoleSlice:
+        handles = [c.contributor_handle for c in self.credits if c.contributor_handle is not None]
         if len(handles) != len(set(handles)):
             raise ValueError("one person cannot occur twice within a contributor role")
         return self
 
 
-class MetadataEnrichmentOutput(_MetadataModel):
+class MetadataFindings(_Frozen):
     """The sole external eight-field, required-nullable research result."""
 
+    # As generated and as accepted: null keeps the stored value; contributors=[] is
+    # invalid; credits=[] clears that role.
     title: _ShortText | None
     contributors: (
         Annotated[
-            list[MetadataContributorRoleSliceOutput],
-            Field(min_length=1, max_length=len(CONTRIBUTOR_ROLES_ORDERED)),
+            list[MetadataRoleSlice], Field(min_length=1, max_length=len(CONTRIBUTOR_ROLES_ORDERED))
         ]
         | None
     )
@@ -155,68 +137,14 @@ class MetadataEnrichmentOutput(_MetadataModel):
     description: _Description | None
 
     @model_validator(mode="after")
-    def unique_roles(self) -> MetadataEnrichmentOutput:
-        if self.contributors is not None:
-            roles = [item.role for item in self.contributors]
-            if len(roles) != len(set(roles)):
-                raise ValueError("each contributor role must occur at most once")
+    def _each_role_once(self) -> MetadataFindings:
+        roles = [item.role for item in self.contributors or []]
+        if len(roles) != len(set(roles)):
+            raise ValueError("each contributor role must occur at most once")
         return self
 
 
-class AcceptedMetadataContributorCredit(_MetadataModel):
-    contributor_handle: Presence[ContributorHandle]
-    credited_name: _Name
-    raw_role: Presence[_RawRole]
-
-
-class AcceptedMetadataContributorRoleSlice(_MetadataModel):
-    role: ContributorRole
-    credits: list[AcceptedMetadataContributorCredit]
-
-
-class AcceptedMetadataEnrichment(_MetadataModel):
-    """Validated findings. Presence is owned absence; no raw null reaches publication."""
-
-    title: Presence[_ShortText]
-    contributors: Presence[list[AcceptedMetadataContributorRoleSlice]]
-    original_published_date: Presence[PublicationDate]
-    edition_published_date: Presence[PublicationDate]
-    edition_isbn: Presence[Isbn13]
-    publisher: Presence[_ShortText]
-    language: Presence[_Language]
-    description: Presence[_Description]
-
-    @property
-    def has_findings(self) -> bool:
-        return any(isinstance(getattr(self, name), Present) for name in METADATA_FIELDS)
-
-    @property
-    def unresolved_fields(self) -> list[MetadataField]:
-        return [name for name in METADATA_FIELDS if not isinstance(getattr(self, name), Present)]
-
-    def contributor_observation(self) -> ContributorObservationBatch:
-        """Adapt accepted credits to the contributor owner's existing observation API."""
-        if not isinstance(self.contributors, Present):
-            return NOT_OBSERVED
-        return ObservedRoleSlices(
-            managed_roles=frozenset(item.role for item in self.contributors.value),
-            credits=tuple(
-                ContributorObservation(
-                    credited_name=credit.credited_name,
-                    role=item.role,
-                    raw_role=credit.raw_role.value
-                    if isinstance(credit.raw_role, Present)
-                    else None,
-                    identity_key=None,
-                    contributor_handle=credit.contributor_handle,
-                )
-                for item in self.contributors.value
-                for credit in item.credits
-            ),
-        )
-
-
-class MetadataBibliographyCompletedOutcome(_MetadataModel):
+class MetadataBibliographyCompletedOutcome(_Frozen):
     status: Literal["completed"] = "completed"
     purpose: Literal["bibliography"]
     completed_at: AwareDatetime
@@ -225,7 +153,7 @@ class MetadataBibliographyCompletedOutcome(_MetadataModel):
     retained_manual_authors: bool
 
 
-class MetadataTitleCompletedOutcome(_MetadataModel):
+class MetadataTitleCompletedOutcome(_Frozen):
     status: Literal["completed"] = "completed"
     purpose: Literal["title"]
     completed_at: AwareDatetime
@@ -239,13 +167,13 @@ type MetadataCompletedOutcome = Annotated[
 ]
 
 
-class MetadataNoFindingsOutcome(_MetadataModel):
+class MetadataNoFindingsOutcome(_Frozen):
     status: Literal["no_findings"] = "no_findings"
     purpose: Literal["bibliography"]
     completed_at: AwareDatetime
 
 
-class MetadataFailedOutcome(_MetadataModel):
+class MetadataFailedOutcome(_Frozen):
     status: Literal["failed"] = "failed"
     purpose: MetadataPurpose
     completed_at: AwareDatetime
@@ -258,32 +186,26 @@ type MetadataOutcome = Annotated[
 ]
 
 
-class MetadataEnrichmentRequest(_MetadataModel):
-    client_mutation_id: ClientMutationUuidText
-    expected_job_id: Presence[UUID]
+class MetadataEnrichmentRequest(_Frozen):
+    """The latest job the viewer saw; null when they saw none."""
+
+    # FastAPI validates the decoded body in python mode, where strict refuses uuid text.
+    expected_job_id: UUID | None = Field(strict=False)
 
 
-class MetadataEnrichmentAccepted(_MetadataModel):
+class MetadataEnrichmentAccepted(_Frozen):
     media_id: UUID
     job_id: UUID
+    last_enriched_at: AwareDatetime | None
 
 
-class MetadataResultReviewRequest(_MetadataModel):
-    client_mutation_id: ClientMutationUuidText
-
-
-class MetadataResultReviewed(_MetadataModel):
-    job_id: UUID
-    reviewed_at: AwareDatetime
-
-
-class MetadataRetryAllowed(_MetadataModel):
+class MetadataRetryAllowed(_Frozen):
     status: Literal["allowed"] = "allowed"
     purpose: MetadataPurpose
-    expected_job_id: Presence[UUID]
+    expected_job_id: UUID | None
 
 
-class MetadataRetryBlocked(_MetadataModel):
+class MetadataRetryBlocked(_Frozen):
     status: Literal["blocked"] = "blocked"
     purpose: MetadataPurpose
     reason: Literal["not_creator", "not_eligible", "active", "source_context_missing"]
@@ -294,61 +216,71 @@ type MetadataRetry = Annotated[
 ]
 
 
-class MetadataSelection(_MetadataModel):
-    provider: str
+class MetadataSelection(_Frozen):
+    """The generation's route, model (a provider route's ``model_ref``) and reasoning."""
+
+    route: str
     model: str
     reasoning: str
 
 
-class _MetadataOperationBase(_MetadataModel):
+class _Operation(_Frozen):
     job_id: UUID
     created_at: AwareDatetime
-    started_at: Presence[AwareDatetime]
-    generation_id: Presence[UUID]
-    selection: Presence[MetadataSelection]
+    started_at: AwareDatetime | None
+    generation_id: UUID | None
+    selection: MetadataSelection | None
 
 
-class MetadataQueuedOperation(_MetadataOperationBase):
+class MetadataQueuedOperation(_Operation):
     status: Literal["queued"] = "queued"
     purpose: MetadataPurpose
 
 
-class MetadataRunningOperation(_MetadataOperationBase):
+class MetadataRunningOperation(_Operation):
     status: Literal["running"] = "running"
     purpose: MetadataPurpose
 
 
-class MetadataRecoveringOperation(_MetadataOperationBase):
+class MetadataRecoveringOperation(_Operation):
     status: Literal["recovering"] = "recovering"
     purpose: MetadataPurpose
 
 
-class MetadataWaitingOperation(_MetadataOperationBase):
+class MetadataWaitingOperation(_Operation):
     status: Literal["waiting"] = "waiting"
     purpose: MetadataPurpose
     reason: Literal["retry"]
-    until: Presence[AwareDatetime]
+    until: AwareDatetime | None
 
 
-class MetadataCompletedOperation(_MetadataOperationBase):
+class MetadataCompletedOperation(_Operation):
     status: Literal["completed"] = "completed"
     purpose: MetadataPurpose
     outcome: MetadataCompletedOutcome
 
 
-class MetadataNoFindingsOperation(_MetadataOperationBase):
+class MetadataNoFindingsOperation(_Operation):
     status: Literal["no_findings"] = "no_findings"
     purpose: Literal["bibliography"]
     completed_at: AwareDatetime
-    reviewed_at: Presence[AwareDatetime]
+    reviewed_at: AwareDatetime | None
 
 
-class MetadataFailedOperation(_MetadataOperationBase):
+class MetadataFailedOperation(_Operation):
     status: Literal["failed"] = "failed"
     purpose: MetadataPurpose
     completed_at: AwareDatetime
     code: MetadataFailureCode
 
+
+type MetadataUnfinishedOperation = Annotated[
+    MetadataQueuedOperation
+    | MetadataRunningOperation
+    | MetadataRecoveringOperation
+    | MetadataWaitingOperation,
+    Field(discriminator="status"),
+]
 
 type MetadataOperationOut = Annotated[
     MetadataQueuedOperation
@@ -362,18 +294,12 @@ type MetadataOperationOut = Annotated[
 ]
 
 
-type MetadataUnfinishedOperation = Annotated[
-    MetadataQueuedOperation
-    | MetadataRunningOperation
-    | MetadataRecoveringOperation
-    | MetadataWaitingOperation,
-    Field(discriminator="status"),
-]
+class MetadataEnrichmentView(_Frozen):
+    """The latest operation, the oldest unfinished one, and whether the viewer may start one;
+    the metadata stream ends once ``unfinished_count`` is 0 (only a new run changes it)."""
 
-
-class MetadataEnrichmentView(_MetadataModel):
-    operation: Presence[MetadataOperationOut]
+    operation: MetadataOperationOut | None
     unfinished_count: Annotated[int, Field(ge=0)]
-    unfinished_operation: Presence[MetadataUnfinishedOperation]
+    unfinished_operation: MetadataUnfinishedOperation | None
     retry: MetadataRetry
-    last_enriched_at: Presence[AwareDatetime]
+    last_enriched_at: AwareDatetime | None

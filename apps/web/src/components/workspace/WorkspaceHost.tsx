@@ -49,7 +49,7 @@ const PaneContent = memo(function PaneContent(props: {
 export default function WorkspaceHost() {
   const store = useWorkspaceStore();
   const { state, columnWidthPx, runtimeLabelByPaneId } = store;
-  const activeId = state.activePrimaryPaneId;
+  const activeId = state.active_primary_pane_id;
   const isMobile = useIsMobileViewport();
   const panes = useMemo(
     () =>
@@ -109,11 +109,12 @@ export default function WorkspaceHost() {
     wasActive.current = activeId;
     const { store, active } = latest.current;
     const delivery = store.pendingPaneEntryDeliveryByPaneId.get(activeId);
-    // an appended note on mobile keeps its editor's focus.
+    // a note entry on mobile keeps its editor's focus.
+    const entry = delivery?.entry.kind;
     if (
       isMobile &&
-      delivery?.entry.kind === "AppendNote" &&
-      delivery.visitId === active?.pane.currentVisit.id
+      (entry === "AppendNote" || entry === "FocusNote") &&
+      delivery?.visitId === active?.pane.current_visit.id
     ) {
       pendingFocus.current = null;
       return;
@@ -141,7 +142,7 @@ export default function WorkspaceHost() {
         <WorkspacePaneStrip
           items={panes.map(({ pane, label, labelState }) => ({
             paneId: pane.id,
-            href: pane.currentVisit.href,
+            href: pane.current_visit.href,
             label,
             pending: labelState === "pending",
             isActive: pane.id === activeId,
@@ -166,9 +167,9 @@ export default function WorkspaceHost() {
         >
           {rendered.map(({ pane, route, label, labelState }) => {
             const minimized = pane.visibility === "minimized";
-            const bodyKey = paneMountKey(route, pane.currentVisit.id);
+            const bodyKey = paneMountKey(route, pane.current_visit.id);
             const slot = primaryWidth({
-              storedPx: pane.primaryWidthPx,
+              storedPx: pane.primary_width_px,
               columnPx: columnWidthPx,
               routeMaxPx: route.width.maxWidthPx,
               intrinsicPx: null,
@@ -185,7 +186,7 @@ export default function WorkspaceHost() {
               >
                 <PaneRouteErrorBoundary
                   paneId={pane.id}
-                  visitId={pane.currentVisit.id}
+                  visitId={pane.current_visit.id}
                   isActive={pane.id === activeId}
                   resetKey={`${pane.id}:${route.routeKey}`}
                   slotMinWidth={isMobile ? "100%" : `${slot.widthPx}px`}

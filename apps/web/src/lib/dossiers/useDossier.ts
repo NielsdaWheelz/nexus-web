@@ -76,8 +76,8 @@ export function useDossier(target: DossierTarget): Dossier {
 
   const ready = head.kind === "Ready" ? head.value : null;
   const watched =
-    ready?.active_build.kind === "Present"
-      ? ready.active_build.value.handle
+    ready?.active_build != null
+      ? ready.active_build.handle
       : null;
   useEffect(() => {
     if (!watched) return;
@@ -95,7 +95,7 @@ export function useDossier(target: DossierTarget): Dossier {
                   kind: "Ready",
                   value: {
                     ...current.head.value,
-                    active_build: { kind: "Present", value: build },
+                    active_build: build,
                   },
                 },
               }
@@ -146,10 +146,7 @@ export function useDossier(target: DossierTarget): Dossier {
     retry() {
       const failure = ready?.last_failure;
       generate(
-        failure?.kind === "Present" &&
-          failure.value.instruction.kind === "Present"
-          ? failure.value.instruction.value
-          : null,
+        failure != null ? failure.instruction : null,
       );
     },
     cancel() {

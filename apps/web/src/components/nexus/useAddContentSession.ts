@@ -1,21 +1,16 @@
 "use client";
 
 /**
- * The Add session (docs/modules/add-content.md): stage links and files, send
- * them two at a time, reconcile unknown outcomes and file accepted items into
- * libraries, all browser-local. What was sent is frozen: an unknown outcome
- * keeps its intent for exact replay; a new attempt gets a key at submission.
- * At most one mutation runs; stop and reset fence every older completion, and a
- * placement read writes only while it still owns that media's placement.
+ * The Add session (docs/modules/add-content.md): stage links and files with
+ * their libraries, send them two at a time and reconcile unknown outcomes, all
+ * browser-local. What was sent is frozen: an unknown outcome keeps its intent
+ * for exact replay; a new attempt gets a key at submission. At most one
+ * mutation runs; stop and reset fence every older completion. Accepted items
+ * are filed afterwards through the shared "Libraries…" overlay.
  */
 
 import { useEffect, useRef, useState } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import {
-  apiTransportFeedback,
-  isApiError,
-  isSameSystemApiDefect,
-} from "@/lib/api/client";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
@@ -32,18 +27,7 @@ import {
   type UploadFileKind,
   type UploadPhase,
 } from "@/lib/imports/ingest";
-import { createLibrary } from "@/lib/libraries/client";
-import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
-import {
-  addLibraryPlacement,
-  libraryPlacementDestinationKey,
-  listLibraryPlacements,
-  projectLibraryPlacement,
-  removeLibraryPlacement,
-  type LibraryPlacementDestination,
-  type LibraryPlacementOption,
-} from "@/lib/libraries/libraryPlacement";
-import { libraryRequestErrorMessage } from "@/lib/libraries/libraryRequestErrorMessage";
+import { createLibrary, type LibraryDestination } from "@/lib/libraries/api";
 import type { AddSeed } from "@/lib/nexus/model";
 import {
   findAmbiguousUrlSplit,
@@ -69,8 +53,9 @@ type FileSummary = {
 };
 type AcceptanceIntent = Readonly<{
   source: AddSource;
-  destinations: readonly LibraryDestinationSelection[];
-  idempotencyKey: string;
+  destinations: readonly LibraryDestination[];
+  /** Minted once per frozen intent: every resend carries it (a url's attempt id). */
+  id: string;
 }>;
 type FileIntent = AcceptanceIntent & {
   source: Extract<AddSource, { kind: "File" }>;
@@ -85,7 +70,7 @@ export type AddItem =
       readonly kind: "Draft";
       readonly id: string;
       readonly source: DraftSource;
-      readonly destinations: readonly LibraryDestinationSelection[];
+      readonly destinations: readonly LibraryDestination[];
       readonly showFeedback: boolean;
     }
   | { kind: "Queued"; id: string; intent: AcceptanceIntent }
@@ -125,35 +110,6 @@ export type AddItem =
       result: AcceptedIngest;
     };
 
-type PlacementCommand = {
-  kind: "Add" | "Remove";
-  destination: LibraryPlacementDestination;
-};
-type PlacementWork = {
-  libraries: readonly LibraryPlacementOption[];
-  command: PlacementCommand;
-};
-type RestingPlacement =
-  | { kind: "Ready"; libraries: readonly LibraryPlacementOption[] }
-  | { kind: "LoadFailed" | "Unavailable"; feedback: FeedbackContent }
-  | {
-      kind: "Refused";
-      libraries: readonly LibraryPlacementOption[];
-      feedback: FeedbackContent;
-    }
-  | ({ kind: "Uncertain"; feedback: FeedbackContent } & PlacementWork);
-type LoadingPlacement = { kind: "Loading"; previous: RestingPlacement | null };
-
-export type PlacementState =
-  | RestingPlacement
-  | LoadingPlacement
-  | {
-      kind: "Queued";
-      previous: RestingPlacement | null;
-      command: PlacementCommand;
-    }
-  | ({ kind: "Updating" } & PlacementWork);
-
 type Mutation =
   | { kind: "Idle" }
   | {
@@ -161,16 +117,14 @@ type Mutation =
       operation:
         | { kind: "Submit"; itemIds: readonly string[] }
         | { kind: "ReconcileAcceptance"; itemId: string }
-        | { kind: "CreateDestination" }
-        | { kind: "Placement"; mediaIds: readonly string[] };
+        | { kind: "CreateDestination" };
     };
 
 export type AddSessionState = Readonly<{
   sessionId: string;
   intakeFeedback?: FeedbackContent;
   items: readonly AddItem[];
-  newItemDestinations: readonly LibraryDestinationSelection[];
-  placementByMediaId: ReadonlyMap<string, PlacementState>;
+  newItemDestinations: readonly LibraryDestination[];
   mutation: Mutation;
 }>;
 
@@ -204,29 +158,19 @@ export interface AddContentSessionController {
   removeItem(itemId: string): void;
   restageItem(itemId: string): void;
   setNewItemDestinations(input: {
-    destinations: readonly LibraryDestinationSelection[];
+    destinations: readonly LibraryDestination[];
   }): void;
   setItemDestinations(input: {
     itemId: string;
-    destinations: readonly LibraryDestinationSelection[];
+    destinations: readonly LibraryDestination[];
   }): void;
   setDraftLibrary(input: {
-    destination: LibraryDestinationSelection;
+    destination: LibraryDestination;
     included: boolean;
   }): void;
   submit(): Promise<void>;
   reconcileAcceptance(itemId: string): Promise<void>;
-  refreshPlacements(mediaIds: readonly string[]): Promise<void>;
-  runPlacement(input: {
-    mediaIds: readonly string[];
-    command: PlacementCommand;
-  }): Promise<void>;
-  retryPlacements(mediaIds: readonly string[]): Promise<void>;
-  createDestination(name: string): Promise<LibraryDestinationSelection>;
-  createAndPlace(input: {
-    name: string;
-    mediaIds: readonly string[];
-  }): Promise<void>;
+  createDestination(name: string): Promise<LibraryDestination>;
   stop(): void;
   discard(): void;
 }
@@ -254,7 +198,6 @@ function initialState(seed: AddSeed): AddSessionState {
       { kind: "Insertion", id: createRandomId("add-item") },
     ],
     newItemDestinations: [...seed.initialDestinations],
-    placementByMediaId: new Map(),
     mutation: { kind: "Idle" },
   };
 }
@@ -291,26 +234,6 @@ function draftFromIntent(row: {
   };
 }
 
-const acceptedMediaIds = (snapshot: AddSessionState) =>
-  new Set(
-    snapshot.items.flatMap((row) =>
-      row.kind === "Accepted" ? [row.result.mediaId] : [],
-    ),
-  );
-
-/** A media the server no longer has is unavailable, whatever the request. */
-function unavailable(
-  error: unknown,
-  feedback: FeedbackContent,
-): RestingPlacement | null {
-  return isApiError(error) && error.code === "E_MEDIA_NOT_FOUND"
-    ? {
-        kind: "Unavailable",
-        feedback: { ...feedback, message: "This item is no longer available." },
-      }
-    : null;
-}
-
 export function useAddContentSession(): AddContentSessionController {
   const [state, setState] = useState(() => initialState(EMPTY_SEED));
   const current = useRef(state);
@@ -326,14 +249,6 @@ export function useAddContentSession(): AddContentSessionController {
       ...snapshot,
       items: snapshot.items.map((row) => (row.id === next.id ? next : row)),
     }));
-  }
-  function placement(mediaId: string, next: PlacementState | null) {
-    update((snapshot) => {
-      const placements = new Map(snapshot.placementByMediaId);
-      if (next === null) placements.delete(mediaId);
-      else placements.set(mediaId, next);
-      return { ...snapshot, placementByMediaId: placements };
-    });
   }
   function running(
     operation: Extract<Mutation, { kind: "Running" }>["operation"],
@@ -389,8 +304,7 @@ export function useAddContentSession(): AddContentSessionController {
   }
   /**
    * Fence everything in flight: unsent rows return to draft, a sent link's
-   * acceptance is unknown, a sent file's upload stopped, and a placement
-   * change in flight is uncertain.
+   * acceptance is unknown and a sent file's upload stopped.
    */
   function stop() {
     abort.current.abort();
@@ -428,19 +342,6 @@ export function useAddContentSession(): AddContentSessionController {
               },
             };
       }),
-      placementByMediaId: new Map(
-        [...snapshot.placementByMediaId].flatMap(
-          ([mediaId, row]): [string, PlacementState][] => {
-            if (row.kind === "Loading" || row.kind === "Queued") {
-              return row.previous ? [[mediaId, row.previous]] : [];
-            }
-            if (row.kind !== "Updating") return [[mediaId, row]];
-            return [
-              [mediaId, { ...row, kind: "Uncertain", feedback: STOPPED }],
-            ];
-          },
-        ),
-      ),
     }));
   }
   function intakeAllowed() {
@@ -662,20 +563,11 @@ export function useAddContentSession(): AddContentSessionController {
     ) {
       return;
     }
-    update((snapshot) => {
-      const items = snapshot.items.filter((row) => row.id !== itemId);
-      const retained = acceptedMediaIds({ ...snapshot, items });
-      return {
-        ...snapshot,
-        intakeFeedback: undefined,
-        items,
-        placementByMediaId: new Map(
-          [...snapshot.placementByMediaId].filter(([mediaId]) =>
-            retained.has(mediaId),
-          ),
-        ),
-      };
-    });
+    update((snapshot) => ({
+      ...snapshot,
+      intakeFeedback: undefined,
+      items: snapshot.items.filter((row) => row.id !== itemId),
+    }));
   }
   function restageItem(itemId: string) {
     if (current.current.mutation.kind !== "Idle") return;
@@ -692,7 +584,7 @@ export function useAddContentSession(): AddContentSessionController {
   function setNewItemDestinations({
     destinations,
   }: {
-    destinations: readonly LibraryDestinationSelection[];
+    destinations: readonly LibraryDestination[];
   }) {
     if (current.current.mutation.kind !== "Idle") return;
     update((snapshot) => ({
@@ -705,7 +597,7 @@ export function useAddContentSession(): AddContentSessionController {
     destinations,
   }: {
     itemId: string;
-    destinations: readonly LibraryDestinationSelection[];
+    destinations: readonly LibraryDestination[];
   }) {
     if (current.current.mutation.kind !== "Idle") return;
     const row = current.current.items.find((next) => next.id === itemId);
@@ -720,11 +612,11 @@ export function useAddContentSession(): AddContentSessionController {
     destination,
     included,
   }: {
-    destination: LibraryDestinationSelection;
+    destination: LibraryDestination;
     included: boolean;
   }) {
     if (current.current.mutation.kind !== "Idle") return;
-    const change = (destinations: readonly LibraryDestinationSelection[]) => {
+    const change = (destinations: readonly LibraryDestination[]) => {
       if (!included) {
         return destinations.filter((next) => next.id !== destination.id);
       }
@@ -752,7 +644,6 @@ export function useAddContentSession(): AddContentSessionController {
     const { id, intent } = row;
     let importRef = row.kind === "AcceptanceUnresolved" ? row.importRef : null;
     const libraryIds = intent.destinations.map((destination) => destination.id);
-    const idempotencyKey = intent.idempotencyKey;
     try {
       let result: AcceptedIngest;
       const source = intent.source;
@@ -763,7 +654,7 @@ export function useAddContentSession(): AddContentSessionController {
         result = await addMediaFromUrl({
           url: source.url,
           libraryIds,
-          idempotencyKey,
+          id: intent.id,
           signal,
         });
       } else {
@@ -776,7 +667,7 @@ export function useAddContentSession(): AddContentSessionController {
         result = await uploadIngestFile({
           file: source.file,
           libraryIds,
-          idempotencyKey,
+          id: intent.id,
           signal,
           onPhaseChange,
           onImportRef: (ref) => {
@@ -850,7 +741,7 @@ export function useAddContentSession(): AddContentSessionController {
         intent: {
           source: validation.source,
           destinations: [...row.destinations],
-          idempotencyKey: createRandomId("media-add"),
+          id: crypto.randomUUID(),
         },
       };
       rows.push(queued);
@@ -880,269 +771,10 @@ export function useAddContentSession(): AddContentSessionController {
     await batch([row], signal, (next) => accept(next, signal));
   }
 
-  /**
-   * One media's library inventory, written while `request` still owns its
-   * placement. A stopped read, or one under an uncertain change, restores the
-   * previous state; a failed one says whether the item is gone. Every path
-   * that reads placements reads through this.
-   */
-  async function readPlacement(
-    mediaId: string,
-    request: LoadingPlacement,
-    signal: AbortSignal,
-  ): Promise<readonly LibraryPlacementOption[] | null> {
-    const owns = () =>
-      active(signal) &&
-      current.current.placementByMediaId.get(mediaId) === request;
-    try {
-      const libraries = await listLibraryPlacements(
-        { kind: "Media", id: mediaId },
-        { signal },
-      );
-      if (!owns()) return null;
-      placement(mediaId, { kind: "Ready", libraries });
-      return libraries;
-    } catch (error) {
-      if (!owns()) return null;
-      const stopped =
-        isAbortError(error) || handleUnauthenticatedApiError(error);
-      if (stopped || request.previous?.kind === "Uncertain") {
-        placement(mediaId, request.previous);
-        return null;
-      }
-      try {
-        const feedback = libraryRequestErrorMessage(error, {
-          title: "Libraries couldn’t be loaded",
-          request: "EntryRead",
-        });
-        placement(
-          mediaId,
-          unavailable(error, feedback) ?? { kind: "LoadFailed", feedback },
-        );
-      } catch (defect) {
-        placement(mediaId, request.previous);
-        throw defect;
-      }
-      return null;
-    }
-  }
-  async function refreshPlacements(mediaIds: readonly string[]) {
-    const accepted = acceptedMediaIds(current.current);
-    const signal = abort.current.signal;
-    const work = [...new Set(mediaIds)].flatMap((mediaId) => {
-      if (!accepted.has(mediaId)) return [];
-      const previous = current.current.placementByMediaId.get(mediaId) ?? null;
-      // A change in flight, an uncertain one or a gone item is not reread: an
-      // uncertain change stays retryable even if the inventory is unreadable.
-      if (
-        previous !== null &&
-        previous.kind !== "Ready" &&
-        previous.kind !== "LoadFailed" &&
-        previous.kind !== "Refused"
-      ) {
-        return [];
-      }
-      const request: LoadingPlacement = { kind: "Loading", previous };
-      placement(mediaId, request);
-      return [{ mediaId, request }];
-    });
-    const outcomes = await runBoundedTasks({
-      items: work,
-      concurrency: 2,
-      run: async ({ mediaId, request }) => {
-        signal.throwIfAborted();
-        await readPlacement(mediaId, request, signal);
-      },
-    });
-    if (!active(signal)) return;
-    const failed = outcomes.find((outcome) => outcome.kind === "Rejected");
-    if (failed?.kind === "Rejected") throw failed.error;
-  }
-  /**
-   * Writes one admitted change. A transport failure leaves it uncertain (Retry
-   * resends exactly it), a gone item is unavailable, anything else refused.
-   */
-  async function writePlacement({
-    mediaId,
-    libraries,
-    command,
-    signal,
-    beforeRetry,
-  }: PlacementWork & {
-    mediaId: string;
-    signal: AbortSignal;
-    beforeRetry?: Extract<RestingPlacement, { kind: "Uncertain" }>;
-  }) {
-    const work = { libraries, command };
-    if (!active(signal)) return;
-    placement(mediaId, { kind: "Updating", ...work });
-    try {
-      const write =
-        command.kind === "Add" ? addLibraryPlacement : removeLibraryPlacement;
-      const target = { kind: "Media", id: mediaId } as const;
-      await write({ target, destination: command.destination, signal });
-      if (!active(signal)) return;
-      const relation =
-        command.kind === "Add"
-          ? ({ kind: "Direct" } as const)
-          : ({ kind: "Absent" } as const);
-      placement(mediaId, {
-        kind: "Ready",
-        libraries: projectLibraryPlacement(
-          libraries,
-          command.destination,
-          relation,
-        ),
-      });
-    } catch (error) {
-      if (!active(signal)) return;
-      if (isAbortError(error)) {
-        placement(mediaId, { kind: "Uncertain", ...work, feedback: STOPPED });
-        return;
-      }
-      if (handleUnauthenticatedApiError(error)) {
-        placement(mediaId, beforeRetry ?? { kind: "Ready", libraries });
-        return;
-      }
-      try {
-        const title = "Libraries couldn’t be updated";
-        const feedback = libraryRequestErrorMessage(error, {
-          title,
-          request: "PlacementMutation",
-        });
-        const uncertain =
-          isApiError(error) &&
-          !isSameSystemApiDefect(error) &&
-          apiTransportFeedback(error, title) !== null;
-        placement(
-          mediaId,
-          uncertain
-            ? { kind: "Uncertain", ...work, feedback }
-            : (unavailable(error, feedback) ?? {
-                kind: "Refused",
-                libraries,
-                feedback,
-              }),
-        );
-      } catch (defect) {
-        placement(mediaId, {
-          kind: "Uncertain",
-          ...work,
-          feedback: {
-            tone: "Warning",
-            title: "Couldn’t confirm the library change",
-            message: "Retry the same change to confirm its result.",
-          },
-        });
-        throw defect;
-      }
-    }
-  }
-  /**
-   * Rereads each media's eligibility, then writes the change only where it is
-   * admitted: the destination is available and the media is absent from it
-   * (Add) or directly in it (Remove).
-   */
-  async function runPlacement({
-    mediaIds,
-    command,
-  }: {
-    mediaIds: readonly string[];
-    command: PlacementCommand;
-  }) {
-    const snapshot = current.current;
-    if (snapshot.mutation.kind !== "Idle") return;
-    const accepted = acceptedMediaIds(snapshot);
-    const placements = snapshot.placementByMediaId;
-    const ids = [...new Set(mediaIds)].filter(
-      (mediaId) =>
-        accepted.has(mediaId) &&
-        placements.get(mediaId)?.kind !== "Unavailable",
-    );
-    if (ids.length === 0) return;
-    if (ids.some((mediaId) => placements.get(mediaId)?.kind === "Loading"))
-      return;
-    const signal = abort.current.signal;
-    const work = ids.map((mediaId) => ({
-      mediaId,
-      // justify-type-assertion: Idle excludes queued and sent work and Loading
-      // returned above; a map lookup cannot be refined by those gates.
-      previous: (placements.get(mediaId) ?? null) as RestingPlacement | null,
-    }));
-    update((next) => ({
-      ...next,
-      mutation: {
-        kind: "Running",
-        operation: { kind: "Placement", mediaIds: ids },
-      },
-      placementByMediaId: new Map([
-        ...next.placementByMediaId,
-        ...work.map(
-          ({ mediaId, previous }) =>
-            [mediaId, { kind: "Queued", previous, command }] as const,
-        ),
-      ]),
-    }));
-    await batch(work, signal, async ({ mediaId, previous }) => {
-      const request: LoadingPlacement = { kind: "Loading", previous };
-      placement(mediaId, request);
-      const libraries = await readPlacement(mediaId, request, signal);
-      if (libraries === null || !active(signal)) return;
-      const key = libraryPlacementDestinationKey(command.destination);
-      const target = libraries.find(
-        (option) => libraryPlacementDestinationKey(option.destination) === key,
-      );
-      const admitted = command.kind === "Add" ? "Absent" : "Direct";
-      if (
-        target?.availability.kind !== "Available" ||
-        target.relation.kind !== admitted
-      ) {
-        return;
-      }
-      await writePlacement({ mediaId, libraries, command, signal });
-    });
-  }
-  /** Resends exactly the retained uncertain changes, without a read. */
-  async function retryPlacements(mediaIds: readonly string[]) {
-    const snapshot = current.current;
-    if (snapshot.mutation.kind !== "Idle") return;
-    const work = [...new Set(mediaIds)].flatMap((mediaId) => {
-      const row = snapshot.placementByMediaId.get(mediaId);
-      return row?.kind === "Uncertain" ? [{ mediaId, row }] : [];
-    });
-    if (work.length === 0) return;
-    const signal = abort.current.signal;
-    update((next) => ({
-      ...next,
-      mutation: {
-        kind: "Running",
-        operation: { kind: "Placement", mediaIds: work.map((w) => w.mediaId) },
-      },
-      placementByMediaId: new Map([
-        ...next.placementByMediaId,
-        ...work.map(
-          ({ mediaId, row }) =>
-            [
-              mediaId,
-              { kind: "Queued", previous: row, command: row.command },
-            ] as const,
-        ),
-      ]),
-    }));
-    await batch(work, signal, ({ mediaId, row }) =>
-      writePlacement({
-        mediaId,
-        libraries: row.libraries,
-        command: row.command,
-        signal,
-        beforeRetry: row,
-      }),
-    );
-  }
   /** One library per normalized name, however often its creation is retried. */
   async function createDestination(
     name: string,
-  ): Promise<LibraryDestinationSelection> {
+  ): Promise<LibraryDestination> {
     if (current.current.mutation.kind !== "Idle") {
       throw new Error("Another Add operation is already running.");
     }
@@ -1152,11 +784,7 @@ export function useAddContentSession(): AddContentSessionController {
     createIds.current.set(normalized, libraryId);
     running({ kind: "CreateDestination" });
     try {
-      const destination = await createLibrary({
-        libraryId,
-        name: normalized,
-        signal,
-      });
+      const destination = await createLibrary({ id: libraryId, name: normalized });
       if (!active(signal)) {
         throw new DOMException(
           "Destination creation no longer belongs to the active Add session.",
@@ -1171,35 +799,11 @@ export function useAddContentSession(): AddContentSessionController {
       }
     }
   }
-  async function createAndPlace({
-    name,
-    mediaIds,
-  }: {
-    name: string;
-    mediaIds: readonly string[];
-  }) {
-    const signal = abort.current.signal;
-    const ids = [...mediaIds];
-    const library = await createDestination(name);
-    if (!active(signal))
-      throw new DOMException("Add session stopped.", "AbortError");
-    await runPlacement({
-      mediaIds: ids,
-      command: { kind: "Add", destination: { kind: "Library", library } },
-    });
-  }
-
   let leaveReason: AddLeaveReason = null;
   if (state.mutation.kind === "Running") {
     leaveReason = "Stop";
   } else if (
-    state.items.some((row) => row.kind === "AcceptanceUnresolved") ||
-    [...state.placementByMediaId.values()].some(
-      (placement) =>
-        placement.kind === "Uncertain" ||
-        ((placement.kind === "Loading" || placement.kind === "Queued") &&
-          placement.previous?.kind === "Uncertain"),
-    )
+    state.items.some((row) => row.kind === "AcceptanceUnresolved")
   ) {
     leaveReason = "Unconfirmed";
   } else if (
@@ -1228,11 +832,7 @@ export function useAddContentSession(): AddContentSessionController {
     setDraftLibrary,
     submit,
     reconcileAcceptance,
-    refreshPlacements,
-    runPlacement,
-    retryPlacements,
     createDestination,
-    createAndPlace,
     stop,
     discard: () => {
       start(EMPTY_SEED);

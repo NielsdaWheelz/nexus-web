@@ -30,7 +30,7 @@ from nexus.schemas.oracle import (
     OracleStoredPassage,
 )
 from nexus.schemas.resource_graph import CitationSnapshot
-from nexus.services import library_governance
+from nexus.services import libraries
 from nexus.services.generation.contract import Owner
 from nexus.services.generation.run import generate
 from nexus.services.generation.runtime import Runtime, run_generation_job
@@ -85,9 +85,7 @@ def create_reading(
         db.flush()
         reading_id = reading.id
         enqueue_job(db, kind="oracle_reading_generate", payload={"reading_id": str(reading_id)})
-        if library_governance.join_system_library(
-            db, system_key=corpus.SYSTEM_KEY, user_id=viewer_id
-        ):
+        if libraries.join_system_library(db, system_key=corpus.SYSTEM_KEY, user_id=viewer_id):
             record_input_change(db)
     db.commit()
     return OracleReadingCreatedOut(reading_id=reading_id)

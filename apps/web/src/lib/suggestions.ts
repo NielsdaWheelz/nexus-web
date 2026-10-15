@@ -1,8 +1,7 @@
 /** Published suggestions and direct quick reads share only their item presentation. */
 
-import { absent, present } from "@/lib/api/presence";
 import { apiFetch, requestWithDeadline, type ApiPath } from "@/lib/api/client";
-import { requestWithRetry } from "@/lib/api/retryPolicy";
+import { requestWithRetry } from "@/lib/api/serverState";
 import { SUGGESTIONS_REQUEST_TIMEOUT_MS } from "@/lib/api/suggestionPolicy";
 import type { paths } from "@/lib/api/wire.gen";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -23,17 +22,21 @@ export type SuggestionsDestination =
   | { kind: "Library"; id: string; name: string };
 
 export async function getSuggestions(path: ApiPath, signal: AbortSignal): Promise<Suggestions> {
-  return requestWithRetry(async (attemptSignal) =>
-    (await apiFetch<ApiJson<"/lectern/suggestions", "get">>(path, { signal: attemptSignal })).data,
-  signal, { timeoutMs: SUGGESTIONS_REQUEST_TIMEOUT_MS });
+  return requestWithDeadline({
+    request: (boundedSignal) => requestWithRetry(async (attemptSignal) =>
+      (await apiFetch<ApiJson<"/lectern/suggestions", "get">>(path, { signal: attemptSignal })).data, boundedSignal),
+    signal, timeoutMs: SUGGESTIONS_REQUEST_TIMEOUT_MS,
+  });
 }
 
 export async function viewSuggestions(path: ApiPath, refs: string[], signal: AbortSignal) {
-  return requestWithRetry(async (attemptSignal) =>
-    (await apiFetch<ApiJson<"/lectern/suggestions/view", "post">>(`${path}/view`, {
-      method: "POST", body: JSON.stringify({ refs }), signal: attemptSignal,
-    })).data,
-  signal, { timeoutMs: SUGGESTIONS_REQUEST_TIMEOUT_MS });
+  return requestWithDeadline({
+    request: (boundedSignal) => requestWithRetry(async (attemptSignal) =>
+      (await apiFetch<ApiJson<"/lectern/suggestions/view", "post">>(`${path}/view`, {
+        method: "POST", body: JSON.stringify({ refs }), signal: attemptSignal,
+      })).data, boundedSignal),
+    signal, timeoutMs: SUGGESTIONS_REQUEST_TIMEOUT_MS,
+  });
 }
 
 export async function refreshSuggestions(path: ApiPath, input: SuggestionRefresh, signal: AbortSignal) {
@@ -54,15 +57,15 @@ export function suggestionTargetId(target: SuggestionTarget): string {
 }
 
 export function presentSuggestionItem({ target }: SuggestionItem): CollectionRowView {
-  const actionSubject = { ref: assumeCanonicalResourceRef(target.ref) };
+  const resourceRef = assumeCanonicalResourceRef(target.ref);
   if (target.kind === "Media") {
-    return presentMedia(target.mediaSummary, {
+    return presentMedia(target.media_summary, {
       id: target.ref,
       primary: {
         kind: "link",
         href: target.href,
       },
-      actionSubject,
+      resourceRef,
       selected: false,
     });
   }
@@ -72,14 +75,14 @@ export function presentSuggestionItem({ target }: SuggestionItem): CollectionRow
     primary: { kind: "link", href: target.href, paneLabelHint: target.title },
     title: { text: target.title },
     contributors: [],
-    publicationDate: absent(),
+    publicationDate: null,
     context:
-      target.subtitle.kind === "Present"
-        ? present({ kind: "Text", text: target.subtitle.value })
-        : absent(),
-    activity: absent(),
-    exceptionalStatus: absent(),
-    actionSubject,
+      target.subtitle !== null
+        ? { kind: "Text", text: target.subtitle }
+        : null,
+    activity: null,
+    exceptionalStatus: null,
+    resourceRef,
     selected: false,
   };
 }

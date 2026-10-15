@@ -8,7 +8,7 @@ import {
 } from "@/components/feedback/Feedback";
 import HighlightSnippet from "@/components/chat/HighlightSnippet";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
-import { useResource } from "@/lib/api/useResource";
+import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { ReaderSelectionKey } from "@/lib/chat/readerIntent";
 import { failureDetail } from "@/lib/chat/wire";
@@ -24,10 +24,11 @@ export type QuoteState =
 /** Hydrate the highlight a quote launch names; the send carries only its key and revision. */
 export function useQuotePreview(key: ReaderSelectionKey | null) {
   const [generation, setGeneration] = useState(0);
-  const preview = useResource<Schema<"ReaderSelectionPreview">>({
-    cacheKey:
+  const preview = usePaneFreeServerValue<Schema<"ReaderSelectionPreview">>({
+    key:
       key &&
       `chat-reader-selection:${key.mediaId}:${key.highlightId}:${generation}`,
+    stale: "",
     load: async (signal) => {
       if (!key) throw new Error("A quote preview needs its key");
       const path = `/api/chat-reader-selections/highlights/${key.highlightId}?media_id=${key.mediaId}`;
@@ -43,7 +44,7 @@ export function useQuotePreview(key: ReaderSelectionKey | null) {
     ? null
     : preview.status === "ready"
       ? { kind: "Ready", selection: preview.data }
-      : preview.status === "error"
+      : preview.status === "failed"
         ? {
             kind: "Failed",
             feedback: {

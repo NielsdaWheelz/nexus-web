@@ -8,7 +8,7 @@ import Link from "next/link";
 import { Compass } from "lucide-react";
 import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
-import { podcastViewHref } from "@/lib/podcasts/view";
+import { viewHref } from "@/lib/collections/view";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import RadioGroup from "@/components/ui/RadioGroup";
@@ -16,10 +16,9 @@ import Button from "@/components/ui/Button";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
-import { absent, present } from "@/lib/api/presence";
-import { useResource } from "@/lib/api/useResource";
+import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
-import { listMemberLibraries } from "@/lib/libraries/client";
+import { memberLibraries } from "@/lib/libraries/api";
 import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import {
@@ -100,9 +99,10 @@ export default function PodcastsPaneBody() {
     fetchPage: (cursor, limit, signal) =>
       listSubscriptions(pageQuery(key, cursor, limit), signal),
   });
-  const libraries = useResource({
-    cacheKey: "podcasts:member-libraries",
-    load: (signal) => listMemberLibraries({ signal }),
+  const libraries = usePaneFreeServerValue({
+    key: "podcasts:member-libraries",
+    stale: "",
+    load: memberLibraries,
   });
   const rows = list.status === "ready" ? list.items : null;
   const complete = list.complete;
@@ -120,7 +120,7 @@ export default function PodcastsPaneBody() {
   });
   const replaceView = useCallback(
     (changes: Readonly<Record<string, string | null>>) =>
-      router.replace(podcastViewHref("/podcasts", params, changes), {
+      router.replace(viewHref("/podcasts", params, changes), {
         viewTransition: { kind: "collection-reflow" },
       }),
     [params, router],
@@ -219,9 +219,9 @@ export default function PodcastsPaneBody() {
           contributors: row.contributors,
           unplayedCount:
             row.unplayed_count > 0
-              ? present({ value: row.unplayed_count })
-              : absent(),
-          syncStatus: present(row.sync_status),
+              ? { value: row.unplayed_count }
+              : null,
+          syncStatus: row.sync_status,
           publicationDate: row.latest_episode_published_at,
         }),
       )}
@@ -240,14 +240,14 @@ export default function PodcastsPaneBody() {
             announcement="Polite"
             actions={[{ label: "Retry", onClick: list.retry }]}
           />
-        ) : libraries.status === "error" ? (
+        ) : libraries.status === "failed" ? (
           <FeedbackNotice
             content={podcastErrorMessage(
               libraries.error,
               "Podcast libraries couldn’t be loaded",
             )}
             announcement="Polite"
-            actions={[{ label: "Retry", onClick: libraries.retry }]}
+            actions={[{ label: "Retry", onClick: libraries.refetch }]}
           />
         ) : undefined
       }

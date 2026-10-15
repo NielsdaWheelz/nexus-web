@@ -2,18 +2,14 @@
 snapshot, connection reads and the link commands. Refs travel as ``<scheme>:<uuid>``."""
 
 from datetime import datetime
-from typing import Annotated, Any, Literal, get_args
+from typing import Annotated, Literal, get_args
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from nexus.schemas.assistant_writes import MachineAuthorshipOut
 from nexus.schemas.highlights import HIGHLIGHT_COLORS, LinkedNoteBlockRef, PdfQuadIn
-from nexus.schemas.resource_items import (
-    ExpectedNoteBody,
-    ResourceActivationOut,
-    validate_note_body_pm_json,
-)
+from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.resource_graph.refs import ResourceScheme
 
 EdgeKind = Literal["context", "supports", "contradicts"]
@@ -178,7 +174,9 @@ LinkEndpoint = Annotated[LinkResourceEndpoint | LinkPassageEndpoint, Field(discr
 
 
 class CreateLinkRequest(Model):
-    client_mutation_id: str = Field(..., min_length=1, max_length=120)
+    """``link_id`` names the link this intent creates; a resend that landed answers it."""
+
+    link_id: UUID
     source: Annotated[
         LinkResourceEndpoint
         | LinkPassageEndpoint
@@ -193,21 +191,6 @@ class CreateLinkOut(Model):
     created: bool
     created_source_ref: str | None
     connection: ConnectionOut
-
-
-class PutLinkNoteRequest(Model):
-    client_mutation_id: str = Field(..., min_length=1, max_length=120)
-    note_block_id: UUID
-    expected_body: ExpectedNoteBody
-    body_pm_json: dict[str, Any]
-
-    @field_validator("body_pm_json")
-    @classmethod
-    def _body(cls, value: dict[str, Any]) -> dict[str, Any]:
-        validated = validate_note_body_pm_json(value)
-        if validated is None:
-            raise ValueError("body_pm_json is required")
-        return validated
 
 
 class LinkNoteOut(LinkedNoteBlockRef):

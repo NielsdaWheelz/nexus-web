@@ -66,7 +66,7 @@ export interface WorkspacePaneLabel {
 }
 export type WorkspaceAdjacentPaneDirection = "Previous" | "Next";
 export type SecondaryPanePatch = Partial<
-  Pick<WorkspaceSecondaryPane, "visibility" | "activeSurfaceId" | "widthPx">
+  Pick<WorkspaceSecondaryPane, "visibility" | "active_surface_id" | "width_px">
 >;
 /** What a body published about its pane, valid while the pane shows `routeKey`. */
 interface Published<T> {
@@ -80,13 +80,12 @@ interface Data {
   runtimeLabelByPaneId: ReadonlyMap<string, Published<WorkspacePaneLabel>>;
   dailyPageByPaneId: ReadonlyMap<string, Published<PaneDailyPage>>;
   pendingPaneEntryDeliveryByPaneId: ReadonlyMap<string, PaneEntryDelivery>;
-  cancelledPaneEntryActivationIds: ReadonlySet<string>;
 }
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
 export type WorkspaceStoreValue = Data & WorkspaceStore["commands"];
 
 const routeKeyOf = (pane: WorkspacePane) =>
-  resolvePaneRouteModel(pane.currentVisit.href).routeKey;
+  resolvePaneRouteModel(pane.current_visit.href).routeKey;
 
 function updatePane(
   state: WorkspaceState,
@@ -103,7 +102,7 @@ function trimHistory(state: WorkspaceState): WorkspaceState {
     p.history.back.length + p.history.forward.length;
   let excess = state.panes.reduce((n, p) => n + size(p), 0) - MAX_TOTAL_HISTORY;
   if (excess <= 0) return state;
-  const isActive = (p: WorkspacePane) => p.id === state.activePrimaryPaneId;
+  const isActive = (p: WorkspacePane) => p.id === state.active_primary_pane_id;
   const trimmed = new Map<string, WorkspacePane>();
   for (const pane of [
     ...state.panes.filter((p) => !isActive(p)),
@@ -138,7 +137,6 @@ function createWorkspaceStore(
     runtimeLabelByPaneId: new Map(),
     dailyPageByPaneId: new Map(),
     pendingPaneEntryDeliveryByPaneId: new Map(),
-    cancelledPaneEntryActivationIds: new Set(),
   };
   let value: Data & typeof commands;
 
@@ -153,8 +151,8 @@ function createWorkspaceStore(
   // Next patches it in a passive effect that can run after the first commit's
   // layout effects; then write the bare entry and re-project a frame later.
   function project(force = false): void {
-    const active = find(data.state.activePrimaryPaneId);
-    const href = active?.currentVisit.href ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
+    const active = find(data.state.active_primary_pane_id);
+    const href = active?.current_visit.href ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
     const { pathname, search, hash } = window.location;
     if (!force && href === `${pathname}${search}${hash}`) return;
     if (Object.hasOwn(window.history, "replaceState")) {
@@ -173,25 +171,19 @@ function createWorkspaceStore(
     next = trimHistory(next);
     if (next === data.state && Object.keys(patch).length === 0) return;
     const closed = patch.recentlyClosedPanes ?? data.recentlyClosedPanes;
-    const visitOf = new Map(next.panes.map((p) => [p.id, p.currentVisit.id]));
+    const visitOf = new Map(next.panes.map((p) => [p.id, p.current_visit.id]));
     const deliveries = new Map(
       patch.pendingPaneEntryDeliveryByPaneId ??
         data.pendingPaneEntryDeliveryByPaneId,
     );
-    const cancelled = new Set(
-      patch.cancelledPaneEntryActivationIds ??
-        data.cancelledPaneEntryActivationIds,
-    );
     for (const [paneId, delivery] of deliveries) {
-      if (visitOf.get(paneId) === delivery.visitId) continue;
-      deliveries.delete(paneId);
-      cancelled.add(delivery.activationId);
+      if (visitOf.get(paneId) !== delivery.visitId) deliveries.delete(paneId);
     }
     const labels = patch.runtimeLabelByPaneId ?? data.runtimeLabelByPaneId;
     memento.forget(
       new Set(
         next.panes.flatMap((p) =>
-          [p.currentVisit, ...p.history.back, ...p.history.forward].map(
+          [p.current_visit, ...p.history.back, ...p.history.forward].map(
             (visit) => visit.id,
           ),
         ),
@@ -206,7 +198,6 @@ function createWorkspaceStore(
       runtimeLabelByPaneId: pruneRouteKeyedRecords(labels, routeKeys),
       dailyPageByPaneId: pruneRouteKeyedRecords(data.dailyPageByPaneId, routeKeys),
       pendingPaneEntryDeliveryByPaneId: deliveries,
-      cancelledPaneEntryActivationIds: cancelled,
     });
     if (mounted) project();
   }
@@ -217,13 +208,13 @@ function createWorkspaceStore(
 
   /** Activation moves to `paneId`: the pane losing it may unmount (mobile). */
   function leave(paneId: string): void {
-    const { activePrimaryPaneId } = data.state;
+    const { active_primary_pane_id: activePrimaryPaneId } = data.state;
     if (activePrimaryPaneId !== paneId) memento.capture(activePrimaryPaneId);
   }
 
   function activated(state: WorkspaceState, paneId: string): WorkspaceState {
     const pane = find(paneId);
-    if (state.activePrimaryPaneId === paneId && pane?.visibility === "visible") {
+    if (state.active_primary_pane_id === paneId && pane?.visibility === "visible") {
       return state;
     }
     leave(paneId);
@@ -231,7 +222,7 @@ function createWorkspaceStore(
       ...p,
       visibility: "visible",
     }));
-    return { ...next, activePrimaryPaneId: paneId };
+    return { ...next, active_primary_pane_id: paneId };
   }
 
   /** Push (a new visit), replace (the pane's own visit id) or traverse (`history`). */
@@ -242,7 +233,7 @@ function createWorkspaceStore(
     activate: boolean,
     history?: WorkspacePane["history"],
   ): WorkspaceState {
-    const push = visit.id !== find(paneId)!.currentVisit.id;
+    const push = visit.id !== find(paneId)!.current_visit.id;
     if (activate) leave(paneId);
     if (push) memento.capture(paneId);
     const next = updatePane(state, paneId, (p) => ({
@@ -252,12 +243,12 @@ function createWorkspaceStore(
         history ??
         (push
           ? {
-              back: [...p.history.back, p.currentVisit].slice(-MAX_PANE_HISTORY),
+              back: [...p.history.back, p.current_visit].slice(-MAX_PANE_HISTORY),
               forward: [],
             }
           : p.history),
     }));
-    return activate ? { ...next, activePrimaryPaneId: paneId } : next;
+    return activate ? { ...next, active_primary_pane_id: paneId } : next;
   }
 
   function withSecondary(
@@ -267,14 +258,14 @@ function createWorkspaceStore(
   ): WorkspaceState {
     const groupId = getSecondaryGroupForSurface(surfaceId);
     return updatePane(state, paneId, (pane) => {
-      const route = resolvePaneRouteModel(pane.currentVisit.href);
+      const route = resolvePaneRouteModel(pane.current_visit.href);
       if (!route.groups.includes(groupId)) return pane;
-      const kept = pane.secondary?.groupId === groupId ? pane.secondary : null;
+      const kept = pane.secondary?.group_id === groupId ? pane.secondary : null;
       const secondary: WorkspaceSecondaryPane = {
         id: kept?.id ?? createRandomId("secondary-pane"),
-        groupId,
-        activeSurfaceId: surfaceId,
-        widthPx: companionWidthPx(kept?.widthPx ?? null),
+        group_id: groupId,
+        active_surface_id: surfaceId,
+        width_px: companionWidthPx(kept?.width_px ?? null),
         visibility: "visible",
       };
       return { ...pane, secondary };
@@ -324,7 +315,7 @@ function createWorkspaceStore(
     activateAdjacentPane(input: { direction: WorkspaceAdjacentPaneDirection }) {
       const visible = data.state.panes.filter((p) => p.visibility === "visible");
       const index = visible.findIndex(
-        (p) => p.id === data.state.activePrimaryPaneId,
+        (p) => p.id === data.state.active_primary_pane_id,
       );
       const pane = visible[index + (input.direction === "Next" ? 1 : -1)];
       if (!pane) return { kind: "Unchanged" } as const;
@@ -339,12 +330,7 @@ function createWorkspaceStore(
         data.dailyPageByPaneId,
         request,
       );
-      const activation = request.paneEntryActivation;
       if (plan.kind === "Rejected") {
-        if (activation?.entry) {
-          const cancelled = new Set(data.cancelledPaneEntryActivationIds);
-          set({ cancelledPaneEntryActivationIds: cancelled.add(activation.activationId) });
-        }
         onPaneLimit();
         return plan;
       }
@@ -355,7 +341,7 @@ function createWorkspaceStore(
         leave(pane.id);
         const panes = [...data.state.panes];
         panes.splice(panes.findIndex((p) => p.id === paneId) + 1, 0, pane);
-        state = { activePrimaryPaneId: pane.id, panes };
+        state = { active_primary_pane_id: pane.id, panes };
         paneId = pane.id;
       } else if (plan.kind === "NavigatedOrigin" || plan.kind === "NavigatedExisting") {
         state = moved(data.state, paneId, newVisit(plan.href), true);
@@ -365,19 +351,16 @@ function createWorkspaceStore(
       const surface = request.target.secondaryActivation?.surfaceId;
       if (surface) state = withSecondary(state, paneId, surface);
       const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
-      const cancelled = new Set(data.cancelledPaneEntryActivationIds);
-      if (activation) {
-        const previous = deliveries.get(paneId);
-        if (previous) cancelled.add(previous.activationId);
-        deliveries.delete(paneId);
-        const visitId = state.panes.find((p) => p.id === paneId)!.currentVisit.id;
-        const { activationId, entry } = activation;
-        if (entry) deliveries.set(paneId, { activationId, paneId, visitId, entry });
+      const { entry } = request;
+      if (entry) {
+        // a newer delivery to a pane supersedes its pending one.
+        const visitId = state.panes.find((p) => p.id === paneId)!.current_visit.id;
+        const activationId = crypto.randomUUID();
+        deliveries.set(paneId, { activationId, paneId, visitId, entry });
       }
       commit(state, {
         runtimeLabelByPaneId: hinted(paneId, plan.href, request.target.labelHint),
         pendingPaneEntryDeliveryByPaneId: deliveries,
-        cancelledPaneEntryActivationIds: cancelled,
       });
       return { kind: plan.kind, paneId };
     },
@@ -388,9 +371,9 @@ function createWorkspaceStore(
     ): void {
       const target = normalizeWorkspaceHref(href);
       const pane = find(paneId);
-      if (!target || !pane || pane.currentVisit.href === target) return;
+      if (!target || !pane || pane.current_visit.href === target) return;
       const visit = options.replace
-        ? { id: pane.currentVisit.id, href: target }
+        ? { id: pane.current_visit.id, href: target }
         : newVisit(target);
       commit(moved(data.state, paneId, visit, options.activate ?? true), {
         runtimeLabelByPaneId: hinted(paneId, target, options.labelHint),
@@ -410,7 +393,7 @@ function createWorkspaceStore(
         ...data.recentlyClosedPanes,
       ].slice(0, MAX_RECENTLY_CLOSED);
       let panes = data.state.panes.filter((p) => p.id !== paneId);
-      let active = data.state.activePrimaryPaneId;
+      let active = data.state.active_primary_pane_id;
       if (panes.length === 0) {
         panes = [newPane(WORKSPACE_DEFAULT_FALLBACK_HREF)];
         active = panes[0]!.id;
@@ -425,7 +408,7 @@ function createWorkspaceStore(
           p.id === active ? { ...p, visibility: "visible" } : p,
         );
       }
-      commit({ activePrimaryPaneId: active, panes }, { recentlyClosedPanes });
+      commit({ active_primary_pane_id: active, panes }, { recentlyClosedPanes });
     },
     restoreClosedPane(paneId: string) {
       const closed = data.recentlyClosedPanes.find((c) => c.pane.id === paneId);
@@ -437,11 +420,11 @@ function createWorkspaceStore(
         return { kind: "Rejected", reason: "PaneLimitReached" } as const;
       }
       leave(paneId);
-      const pane = moveTo(closed.pane, closed.pane.currentVisit, true);
+      const pane = moveTo(closed.pane, closed.pane.current_visit, true);
       const panes = [...data.state.panes];
       panes.splice(closed.index, 0, { ...pane, visibility: "visible" });
       commit(
-        { activePrimaryPaneId: paneId, panes },
+        { active_primary_pane_id: paneId, panes },
         {
           recentlyClosedPanes: data.recentlyClosedPanes.filter(
             (c) => c !== closed,
@@ -454,7 +437,7 @@ function createWorkspaceStore(
       const visible = data.state.panes.filter((p) => p.visibility === "visible");
       const index = visible.findIndex((p) => p.id === paneId);
       if (index < 0 || visible.length < 2) return;
-      let active = data.state.activePrimaryPaneId;
+      let active = data.state.active_primary_pane_id;
       if (active === paneId) {
         active = (visible[index + 1] ?? visible[index - 1]!).id;
         leave(active);
@@ -463,12 +446,11 @@ function createWorkspaceStore(
         ...p,
         visibility: "minimized",
       }));
-      commit({ ...next, activePrimaryPaneId: active });
+      commit({ ...next, active_primary_pane_id: active });
     },
     /** Stores the user's width; the host clamps it to the column and route. */
     resizePrimaryPane(paneId: string, widthPx: number): void {
-      const primaryWidthPx = Math.round(widthPx);
-      commit(updatePane(data.state, paneId, (p) => ({ ...p, primaryWidthPx })));
+      commit(updatePane(data.state, paneId, (p) => ({ ...p, primary_width_px: Math.round(widthPx) })));
     },
     requestSecondarySurface(
       paneId: string,
@@ -488,10 +470,10 @@ function createWorkspaceStore(
       let secondary: WorkspaceSecondaryPane | null = null;
       if (patch) {
         const next = { ...pane.secondary, ...patch };
-        if (getSecondaryGroupForSurface(next.activeSurfaceId) !== next.groupId) {
+        if (getSecondaryGroupForSurface(next.active_surface_id) !== next.group_id) {
           return;
         }
-        secondary = { ...next, widthPx: companionWidthPx(next.widthPx) };
+        secondary = { ...next, width_px: companionWidthPx(next.width_px) };
       }
       commit(updatePane(data.state, pane.id, (p) => ({ ...p, secondary })));
     },
@@ -524,13 +506,15 @@ function createWorkspaceStore(
       );
       if (pages) set({ dailyPageByPaneId: pages });
     },
-    acknowledgePaneEntryDelivery(delivery: PaneEntryDelivery): void {
+    /** Removes a pending delivery; true only for the one call that removed it. */
+    claimPaneEntryDelivery(delivery: PaneEntryDelivery): boolean {
       const deliveries = data.pendingPaneEntryDeliveryByPaneId;
       const pending = deliveries.get(delivery.paneId);
-      if (pending?.activationId !== delivery.activationId) return;
+      if (pending?.activationId !== delivery.activationId) return false;
       const next = new Map(deliveries);
       next.delete(delivery.paneId);
       set({ pendingPaneEntryDeliveryByPaneId: next });
+      return true;
     },
   };
 
@@ -540,8 +524,8 @@ function createWorkspaceStore(
     const visit = back ? b.at(-1) : f[0];
     if (!pane || !visit) return;
     const history = back
-      ? { back: b.slice(0, -1), forward: [pane.currentVisit, ...f] }
-      : { back: [...b, pane.currentVisit], forward: f.slice(1) };
+      ? { back: b.slice(0, -1), forward: [pane.current_visit, ...f] }
+      : { back: [...b, pane.current_visit], forward: f.slice(1) };
     commit(moved(data.state, paneId, visit, true, history));
   }
 
@@ -561,9 +545,9 @@ function createWorkspaceStore(
       // Another path's entry (Back onto a fragment) never moves the active
       // pane (L8); the address goes back to naming it.
       const foldHash = () => {
-        const pane = find(data.state.activePrimaryPaneId);
+        const pane = find(data.state.active_primary_pane_id);
         const { pathname, search, hash } = window.location;
-        const [path] = pane?.currentVisit.href.split("#") ?? [];
+        const [path] = pane?.current_visit.href.split("#") ?? [];
         if (path !== `${pathname}${search}`) {
           if (mounted) project();
         } else if (pane && hash) {
@@ -624,6 +608,14 @@ export function useWorkspaceStore(): WorkspaceStoreValue {
   return useSyncExternalStore(store.subscribe, store.value, store.value);
 }
 
+/** The workspace as it is when called, without re-rendering on its changes: for code
+ *  that acts on the workspace, not code that renders it. */
+export function useLatestWorkspace(): () => WorkspaceStoreValue {
+  const store = useContext(StoreContext);
+  if (!store) throw new Error("useLatestWorkspace requires WorkspaceStoreProvider");
+  return store.value;
+}
+
 export interface WorkspacePaneLabelDescriptor {
   routeKey: string;
   route: ResolvedPaneRouteModel;
@@ -636,7 +628,7 @@ export function resolveWorkspacePaneLabel(
   pane: WorkspacePane,
   labels: WorkspaceStoreValue["runtimeLabelByPaneId"],
 ): WorkspacePaneLabelDescriptor {
-  const route = resolvePaneRouteModel(pane.currentVisit.href);
+  const route = resolvePaneRouteModel(pane.current_visit.href);
   const published = routeKeyedRecord(labels, pane.id, route.routeKey);
   return {
     routeKey: route.routeKey,

@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
     from nexus.jobs.queue import JobRow
-    from nexus.schemas.media import MediaReadState
+    from nexus.schemas.media_summary import ConsumptionState
     from nexus.services.resource_graph.refs import ResourceRef
 
 CHANNEL = "nexus_suggestions"
@@ -62,7 +62,7 @@ class EngagementInputs:
 
     lectern: tuple[ResourceRef, ...]
     libraries: tuple[tuple[UUID, tuple[ResourceRef, ...]], ...]
-    read_state: MediaReadState
+    read_state: ConsumptionState
 
 
 def engagement_inputs(db: Session, *, viewer_id: UUID, media_id: UUID) -> EngagementInputs:

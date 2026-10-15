@@ -1,0 +1,173 @@
+"use client";
+
+// The one note on a highlight or a link, written in place (the reader's floating
+// surface, the mobile sheet, an evidence row). A new note is made by its first non-empty
+// save, which creates and attaches it (also for a highlight still being created: the
+// save waits for its id); later edits save like any note. "Remove annotation" detaches
+// it and the note stays. It keeps its own undo history.
+import { useEffect, useRef, useState } from "react";
+import { useFeedback } from "@/components/feedback/Feedback";
+import NoteEditor from "@/components/notes/NoteEditor";
+import { NoteConflict, WritingStatus } from "@/components/notes/NoteNotices";
+import Button from "@/components/ui/Button";
+import { apiFetch, apiTransportFeedback, isApiError, type ApiPath } from "@/lib/api/client";
+import type { Schema } from "@/lib/api/wire";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { emptyBody, type NoteBody } from "@/lib/notes/noteBody";
+import {
+  adoptText,
+  createText,
+  editText,
+  readText,
+  setCreator,
+  useText,
+  type Creator,
+} from "@/lib/notes/texts";
+import { activateResource } from "@/lib/resources/activation";
+import { resolveResourceItem } from "@/lib/resources/items";
+import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
+import styles from "./AnnotationNoteEditor.module.css";
+
+type AttachedNote = Schema<"LinkedNoteBlockRef">;
+
+export interface AnnotationTarget {
+  readonly kind: "highlight" | "link";
+  /** Null while the highlight is being created; `creation` then names it. */
+  readonly id: string | null;
+  readonly creation?: Promise<{ id: string } | null>;
+}
+
+export interface AnnotationNoteEditorProps {
+  target: AnnotationTarget;
+  note: AttachedNote | null;
+  editable: boolean;
+  onSaved: (targetId: string, note: AttachedNote) => void;
+  onDetached: (targetId: string, noteBlockId: string) => void;
+  onOpenLink: (href: string, disposition: WorkspaceTargetDisposition) => void;
+  /** Each new positive value focuses the note's end. */
+  focusRequest?: number;
+}
+
+const notePath = (target: AnnotationTarget["kind"], id: string, noteId?: string) =>
+  `/api/${target === "highlight" ? "highlights" : "resource-graph/links"}/${id}/note${
+    noteId ? `/${noteId}` : ""
+  }` as ApiPath;
+
+export default function AnnotationNoteEditor(props: AnnotationNoteEditorProps) {
+  const { target, note, editable, focusRequest = 0 } = props;
+  const feedback = useFeedback();
+  const [noteId] = useState(() => note?.note_block_id ?? crypto.randomUUID());
+  const ref = `note_block:${noteId}`;
+  const [targetId, setTargetId] = useState(target.id);
+  const [attached, setAttached] = useState(note !== null);
+  const [detaching, setDetaching] = useState(false);
+  const latest = useRef(props);
+  latest.current = props;
+  const text = useText(ref);
+
+  // The note as the server has it, or a new one made by its first non-empty save.
+  useEffect(() => {
+    if (note) adoptText(ref, { body_pm_json: note.body_pm_json, body_text: note.body_text }, note.body_version);
+    else if (!readText(ref)) createText(ref, emptyBody(), null);
+  }, [note, ref]);
+
+  // A new note's creator: PUT …/note on the target, once the target exists.
+  useEffect(() => {
+    if (note || attached) return;
+    let live = true;
+    const bind = (id: string) => {
+      setTargetId(id);
+      const creator: Creator = {
+        request: (value: NoteBody) => ({
+          path: notePath(target.kind, id),
+          method: "PUT",
+          body: { note_id: noteId, body_pm_json: value.body_pm_json },
+        }),
+        settle(reply) {
+          // justify-type-assertion: both note routes answer the attached note.
+          const saved = reply as AttachedNote;
+          reported.current = saved.body_version;
+          setAttached(true);
+          latest.current.onSaved(id, saved);
+          return saved.body_version;
+        },
+      };
+      setCreator(ref, creator);
+    };
+    if (target.id) bind(target.id);
+    else
+      void target.creation?.then((created) => live && created && bind(created.id));
+    return () => void (live = false);
+  }, [attached, note, noteId, ref, target.kind, target.id, target.creation]);
+
+  // Later saves report the note as saved, so the reader shows its new text.
+  const version = text?.acked?.version ?? null;
+  const reported = useRef(note?.body_version ?? null);
+  useEffect(() => {
+    if (version === null || !attached || !targetId || reported.current === version) return;
+    reported.current = version;
+    const value = text!.acked!.value as NoteBody;
+    latest.current.onSaved(targetId, { note_block_id: noteId, ...value, body_version: version });
+  }, [attached, noteId, targetId, text, version]);
+
+  const detach = () => {
+    if (!targetId) return;
+    setDetaching(true);
+    apiFetch(notePath(target.kind, targetId, noteId), { method: "DELETE" }).then(
+      () => {
+        setAttached(false);
+        latest.current.onDetached(targetId, noteId);
+      },
+      (error: unknown) => {
+        if (handleUnauthenticatedApiError(error)) return;
+        const title = "Annotation wasn’t removed";
+        const content = (isApiError(error) && apiTransportFeedback(error, title)) || {
+          tone: "Danger" as const,
+          title,
+          message: "Retry, or refresh the reader.",
+        };
+        feedback.publish({ kind: "Hud", content });
+      },
+    ).finally(() => setDetaching(false));
+  };
+
+  const openEmbed = (embed: string, disposition: WorkspaceTargetDisposition) =>
+    void resolveResourceItem(embed).then(
+      (item) =>
+        activateResource(item.activation, {
+          disposition,
+          activateTarget: ({ target: to }) => latest.current.onOpenLink(to.href, disposition),
+        }),
+      (error: unknown) => {
+        if (handleUnauthenticatedApiError(error)) return;
+        feedback.publish({ kind: "Hud", content: { tone: "Warning", title: "Linked object couldn’t be opened" } });
+      },
+    );
+
+  if (!text || typeof text.value === "string") return null;
+  return (
+    <div className={styles.shell} data-editable={editable ? "true" : "false"}>
+      <NoteEditor
+        editorKey={ref}
+        body={text.value}
+        revision={text.revision}
+        editable={editable}
+        label={target.kind === "highlight" ? "Highlight note" : "Link note"}
+        compact
+        focus={focusRequest > 0 ? { selection: "end", serial: focusRequest } : null}
+        history={null}
+        onEdit={(edit) => editText(ref, edit.after)}
+        onOpenEmbed={openEmbed}
+      />
+      <NoteConflict textRef={ref} />
+      <div className={styles.actions}>
+        <WritingStatus />
+        {attached && editable ? (
+          <Button variant="ghost" size="sm" onClick={detach} disabled={detaching}>
+            Remove annotation
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}

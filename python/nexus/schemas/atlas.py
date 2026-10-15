@@ -1,6 +1,4 @@
-"""Read-model schemas for the grand atlas (grand-atlas §6)."""
-
-from __future__ import annotations
+"""The atlas read model: the viewer's stars, constellations and edges in the one frame."""
 
 from typing import Literal
 from uuid import UUID
@@ -10,11 +8,11 @@ from pydantic import BaseModel
 
 class StarOut(BaseModel):
     media_id: UUID
-    x: float | None  # None = Nebula (no atlas position)
+    x: float | None  # both null: unpositioned (the nebula)
     y: float | None
     title: str
     kind: str
-    magnitude: int  # highlight count (phase 1; soft upgrade: dwell)
+    magnitude: int  # the viewer's highlight count on the work
 
 
 class ConstellationOut(BaseModel):
@@ -27,7 +25,6 @@ class AtlasEdgeOut(BaseModel):
     source_media_id: UUID
     target_media_id: UUID
     kind: Literal["context", "contradicts"]
-    origin: str
 
 
 class AtlasOut(BaseModel):

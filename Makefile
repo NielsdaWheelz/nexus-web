@@ -9,10 +9,7 @@
 -include .dev-ports
 export
 
-SUPABASE_DB_PORT ?= 54322
 SUPABASE_URL ?= http://127.0.0.1:54321
-STREAM_BASE_URL ?= http://localhost:$(API_PORT)
-STREAM_CORS_ORIGINS ?= http://localhost:$(WEB_PORT),http://localhost:3000,http://localhost:3001
 
 POSTGRES_PORT ?= 54320
 MINIO_PORT ?= 9000
@@ -147,8 +144,6 @@ api: local-runtime-identity
 	cd apps/api && PYTHONPATH=$$PWD/../../python DATABASE_URL=$(DATABASE_URL) \
 		NEXUS_RUNTIME_IDENTITY_FILE=$(LOCAL_RUNTIME_IDENTITY) \
 		SUPABASE_AUTH_ADMIN_KEY= \
-		STREAM_BASE_URL=$(STREAM_BASE_URL) \
-		STREAM_CORS_ORIGINS=$(STREAM_CORS_ORIGINS) \
 		uv run --project ../../python uvicorn main:app --reload --port $(API_PORT)
 
 web:

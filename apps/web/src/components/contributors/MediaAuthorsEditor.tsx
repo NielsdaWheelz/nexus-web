@@ -3,9 +3,10 @@
 // Edit authors (media creator only). Loads the media's author slice, edits an
 // ordered list of credited names each bound to an existing visible author or a
 // new one, and saves it as a pinned manual list; "Reset to automatic authors"
-// releases the pin. A saved PUT is the commit point: a retry of an unchanged
-// draft reuses its client mutation id, and a failure after the PUT succeeded
-// never re-sends it.
+// releases the pin. A saved PUT is the commit point: the PUT is absolute, so a
+// retry re-applies the same list, and a new author carries the id minted when it
+// was added, so a resend that landed binds the person it created instead of
+// creating another. A failure after the PUT succeeded never re-sends it.
 
 import { useEffect, useId, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Plus } from "lucide-react";
@@ -18,10 +19,8 @@ import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import MobileSheet from "@/components/ui/MobileSheet";
-import type { ResourceActionMutationBoundary } from "@/lib/actions/resourceActionMutation";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { useThrowLater } from "@/lib/api/serverState";
-import { useResource } from "@/lib/api/useResource";
+import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -33,7 +32,6 @@ import {
 import { contributorNameKey } from "@/lib/contributors/credits";
 import { createRandomId } from "@/lib/createRandomId";
 import { useMediaBibliographyInvalidation } from "@/lib/media/MediaSummaryProvider";
-import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { DismissDecision, ReturnFocusTarget } from "@/lib/ui/overlay";
 import AuthorSearchField from "./AuthorSearchField";
@@ -57,16 +55,14 @@ type Row =
       readonly revert: Bound | null;
     };
 
-/** A PUT body before its client mutation id is chosen. */
 type Draft =
-  | Omit<Schema<"ManualMediaAuthorsRequest">, "clientMutationId">
-  | Omit<Schema<"AutomaticMediaAuthorsRequest">, "clientMutationId">;
+  Schema<"ManualMediaAuthorsRequest"> | Schema<"AutomaticMediaAuthorsRequest">;
 
 const bound = (row: Bound): Row => ({ kind: "Bound", ...row });
 const identity = (binding: AuthorBinding) =>
   binding.kind === "existing"
-    ? `existing:${binding.contributorHandle}`
-    : `new:${contributorNameKey(binding.displayName)}`;
+    ? `existing:${binding.contributor_handle}`
+    : `new:${contributorNameKey(binding.display_name)}`;
 // JSON, so a credited name holding a delimiter can never collide two lists.
 const signature = (rows: readonly Bound[]) =>
   JSON.stringify(rows.map((row) => [identity(row.binding), row.creditedName]));
@@ -92,48 +88,43 @@ const ERRORS: Readonly<Record<string, readonly [string, string?]>> = {
     "That author can’t be selected",
     "Choose another author and retry.",
   ],
-  E_IDEMPOTENCY_KEY_REPLAY_MISMATCH: [
-    "The authors weren’t updated",
-    "Retry the saved draft.",
-  ],
 };
 
 export default function MediaAuthorsEditor({
   mediaId,
-  mutation,
   returnFocusTo,
   onClose,
 }: {
   readonly mediaId: string;
-  /** The canonical action boundary, begun immediately before each PUT. */
-  readonly mutation: ResourceActionMutationBoundary;
   readonly returnFocusTo: ReturnFocusTarget;
   readonly onClose: () => void;
 }) {
   const feedback = useFeedback();
-  const source = useResource({
-    cacheKey: `media-authors:${mediaId}`,
+  const source = usePaneFreeServerValue({
+    key: `media-authors:${mediaId}`,
+    stale: "",
     load: (signal) => getMediaAuthors(mediaId, signal),
   });
+  const failure = source.status === "failed" ? source.error : null;
   useEffect(() => {
-    if (source.status !== "error") return;
+    if (failure === null) return;
     feedback.publish({
       kind: "Hud",
       key: `media-authors:${mediaId}`,
       content: {
         tone: "Danger",
         title: "Authors couldn’t be loaded",
-        requestId: source.error.requestId,
+        requestId: failure.requestId,
       },
     });
     onClose();
-  }, [feedback, mediaId, onClose, source]);
+  }, [failure, feedback, mediaId, onClose]);
   if (source.status !== "ready") return null;
   const loaded = source.data.authors.map((credit): Bound => ({
     id: createRandomId("author-row"),
     binding: {
       kind: "existing",
-      contributorHandle: credit.contributor_handle!,
+      contributor_handle: credit.contributor_handle!,
     },
     creditedName: credit.credited_name,
     canonical: credit.contributor_display_name ?? credit.credited_name,
@@ -143,7 +134,6 @@ export default function MediaAuthorsEditor({
       mediaId={mediaId}
       loaded={loaded}
       manual={source.data.manual}
-      mutation={mutation}
       returnFocusTo={returnFocusTo}
       onClose={onClose}
     />
@@ -154,19 +144,16 @@ function Editor({
   mediaId,
   loaded,
   manual,
-  mutation,
   returnFocusTo,
   onClose,
 }: {
   readonly mediaId: string;
   readonly loaded: readonly Bound[];
   readonly manual: boolean;
-  readonly mutation: ResourceActionMutationBoundary;
   readonly returnFocusTo: ReturnFocusTarget;
   readonly onClose: () => void;
 }) {
   const isMobile = useIsMobileViewport();
-  const feedback = useFeedback();
   const invalidateBibliography = useMediaBibliographyInvalidation();
   const throwLater = useThrowLater();
   const [rows, setRows] = useState<readonly Row[]>(() => loaded.map(bound));
@@ -174,10 +161,6 @@ function Editor({
   const [saving, setSaving] = useState(false);
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
   const [announcement, setAnnouncement] = useState("");
-  const mutationId = useRef<{
-    readonly payload: string;
-    readonly id: string;
-  } | null>(null);
   const focusTarget = useRef<string | null>(null);
   const lastFocus = useRef<HTMLElement | null>(null);
   const addRef = useRef<HTMLButtonElement>(null);
@@ -206,13 +189,13 @@ function Editor({
   const dirty = signature(committed) !== signature(loaded);
   const takenHandles = new Set(
     boundRows.flatMap((row) =>
-      row.binding.kind === "existing" ? [row.binding.contributorHandle] : [],
+      row.binding.kind === "existing" ? [row.binding.contributor_handle] : [],
     ),
   );
   const takenNewKeys = new Set(
     boundRows.flatMap((row) =>
       row.binding.kind === "new"
-        ? [contributorNameKey(row.binding.displayName)]
+        ? [contributorNameKey(row.binding.display_name)]
         : [],
     ),
   );
@@ -262,21 +245,11 @@ function Editor({
 
   async function submit(body: Draft) {
     if (saving) return;
-    const lease = mutation.begin();
-    if (lease === null) return;
-    const payload = JSON.stringify(body);
-    if (mutationId.current?.payload !== payload) {
-      mutationId.current = { payload, id: createRandomId("media-authors") };
-    }
     setSaving(true);
     setNotice(null);
     try {
-      await putMediaAuthors(mediaId, {
-        ...body,
-        clientMutationId: mutationId.current.id,
-      });
+      await putMediaAuthors(mediaId, body);
     } catch (error) {
-      lease.abort();
       setSaving(false);
       if (handleUnauthenticatedApiError(error)) return;
       const copy =
@@ -285,9 +258,6 @@ function Editor({
           : undefined;
       if (copy === undefined || !isApiError(error))
         return throwLater({ error });
-      // The key now names another request server-side: the next Save mints one.
-      if (error.code === "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH")
-        mutationId.current = null;
       setNotice({
         tone: "Danger",
         title: copy[0],
@@ -296,27 +266,8 @@ function Editor({
       });
       return;
     }
-    // Saved. Refreshing other views is best effort and never re-sends the PUT.
+    // Saved: other views refresh from the bibliography change.
     invalidateBibliography(mediaId);
-    try {
-      await lease.reconcile({
-        kind: "Subjects",
-        refs: [assumeCanonicalResourceRef(`media:${mediaId}`)],
-      });
-      await lease.commit();
-    } catch (error) {
-      if (!isApiError(error) || isSameSystemApiDefect(error))
-        return throwLater({ error });
-      feedback.publish({
-        kind: "Hud",
-        content: {
-          tone: "Neutral",
-          title: "Authors saved",
-          message: "Some views will update when they next refresh.",
-          requestId: error.requestId,
-        },
-      });
-    }
     onClose();
   }
 
@@ -347,15 +298,19 @@ function Editor({
             onSelectExisting={(item: ContributorSearchItem) =>
               bind(row.id, row.revert, {
                 id: row.id,
-                binding: { kind: "existing", contributorHandle: item.handle },
-                creditedName: item.displayName,
-                canonical: item.displayName,
+                binding: { kind: "existing", contributor_handle: item.handle },
+                creditedName: item.display_name,
+                canonical: item.display_name,
               })
             }
             onCreateNew={(name) =>
               bind(row.id, row.revert, {
                 id: row.id,
-                binding: { kind: "new", displayName: name },
+                binding: {
+                  kind: "new",
+                  id: createRandomId(),
+                  display_name: name,
+                },
                 creditedName: name,
                 canonical: name,
               })
@@ -542,7 +497,7 @@ function Editor({
               void submit({
                 mode: "manual",
                 authors: committed.map((row) => ({
-                  creditedName: row.creditedName,
+                  credited_name: row.creditedName,
                   binding: row.binding,
                 })),
               })

@@ -1,6 +1,6 @@
 # suggestions publication plan
 
-status: implemented; product decisions confirmed 2026-10-14.
+status: implemented; current-main integration in progress; product decisions confirmed 2026-10-14.
 [verification](suggestions-verification.md) records the live red/green/refactor
 campaign, final artifact, limits and cleanup. deployment is separate.
 
@@ -115,8 +115,8 @@ source hooks must cover these actual ranker inputs, including non-browser writer
 
 | input | integration owners under `python/nexus/services/` |
 |---|---|
-| ordered anchor identities; finished/unread/reset transitions | `consumption/{activity,service,lectern,listening,reader_cursor}.py`, `library_entries.py` |
-| membership, visibility, destination authority and deletion | `library_entries.py`, `library_governance.py`, `library_sharing.py`, `resource_grants.py`, `resource_sharing.py`, user/media teardown owners |
+| ordered anchor identities; finished/unread/reset transitions | `consumption/{activity,state,lectern,listening,reader_cursor}.py`, `library_entries.py` |
+| membership, visibility, destination authority and deletion | `library_entries.py`, `libraries.py`, `library_members.py`, `resource_grants.py`, `resource_sharing.py`, user/media teardown owners |
 | highlights and note anchors | `highlights.py`, `pdf_highlights.py`, `notes.py`, note/page mutation owners |
 | graph evidence, including removal | `resource_graph/{edges,cleanup,links,highlight_notes,citations}.py` |
 | author/publication facts and active embeddings | `contributor_writes.py`, `contributors.py`, metadata publication owners, `content_indexing.py` |
@@ -133,25 +133,27 @@ the age target. notification is a wake-up hint; revisions are durable truth.
 
 existing route prefixes are `/lectern/suggestions` and
 `/libraries/{library_id}/suggestions`; browser bff paths add `/api`.
-use `Data[...]`, `CamelOut`, generated wire types and owned `Presence`.
+use `Data[...]`, native pydantic models and generated wire types. the current
+[wire standard](local-rules/typed-wire.md) requires snake_case and plain null;
+it supersedes the original qualification's camel-case/presence encoding.
 the following are schema definitions, not additional handwritten web types:
 
 ```text
-publication_meta = { id: uuid, asOf: instant, inputRevision: integer }
+publication_meta = { id: uuid, as_of: instant, input_revision: integer }
 capability = Available | LecternFull | NotApplicable
 automatic_refresh = Now | At { at: instant } | Stopped
 state = {
-  inputRevision: integer,
-  latest: Presence<publication_meta>,
-  work: Presence<DurableExecutionPhase>,
+  input_revision: integer,
+  latest: publication_meta | null,
+  work: DurableExecutionPhase | null,
   capability,
-  automaticRefresh: automatic_refresh
+  automatic_refresh
 }
-read = { observedAt: instant, state,
-         publication: Presence<publication_meta & { items: SuggestionItemOut[0..80] }> }
+read = { observed_at: instant, state,
+         publication: (publication_meta & { items: SuggestionItemOut[0..80] }) | null }
 view_input = { refs: distinct canonical target refs[0..80] }
-view = { observedAt: instant, state, items: SuggestionItemOut[0..80] }
-refresh_input = EnsureFresh | Explicit { observedPublicationId: Presence<uuid> }
+view = { observed_at: instant, state, items: SuggestionItemOut[0..80] }
+refresh_input = EnsureFresh | Explicit { observed_publication_id: uuid | null }
 ```
 
 | endpoint | contract |
@@ -161,7 +163,7 @@ refresh_input = EnsureFresh | Explicit { observedPublicationId: Presence<uuid> }
 | `POST <prefix>/refresh` | authorize and coalesce; return 202 `Data[state]` after admission, never after computation; explicit refresh only admits if the observed publication is still current, making repeated delivery safe |
 | `GET /stream/lectern/suggestions` or `/stream/libraries/{library_id}/suggestions` | authenticated snapshot/diff stream; payload is `Current { state } \| Withdrawn`; the existing tailer emits terminal `Withdrawn` as both `state` and `done`; clear content on either |
 
-in one get response, `state.latest` and publication metadata agree. `asOf` is
+in one get response, `state.latest` and publication metadata agree. `as_of` is
 `ranked_at`, not publication/attempt time. absent feeds still report the global
 input revision, no publication/work and `Now`. while work exists or capability is
 inapplicable, advice is `Stopped`; otherwise missing means `Now`, dirty means
@@ -187,8 +189,8 @@ an old adopted pool remains independently reconcilable after a newer publication
 overwrites it. a depleted pool may show fewer than ten; never synthesize padding.
 
 subscribe before the initial stream reread; reauthorize on every reread. use
-`open_sse_listener`, `tail_snapshot_stream` and `sseClientDirect`. keep
-`observedAt` OUT of the stream comparison payload, or every keepalive becomes
+the current `open_listener`/snapshot stream and browser `openStream` owners. keep
+`observed_at` OUT of the stream comparison payload, or every keepalive becomes
 a false change. initial unauthorized requests retain ordinary http errors;
 later scope loss returns `Withdrawn`. admission/publication/repair notify in their
 own transactions. add an import-light `on_history` hook for retry/reclaim/dead
@@ -224,13 +226,13 @@ retain current rows until it succeeds. late revisit data may auto-adopt only
 before the user interacts with the section; otherwise stage it.
 focus/visibility recovery reconciles current rows. close observers and the
 one-shot age timer while inactive/hidden. schedule server advice from http
-`observedAt` plus monotonic elapsed time since receipt, not browser wall time or
+`observed_at` plus monotonic elapsed time since receipt, not browser wall time or
 a restarted full delay. no interval poll.
 
 input-revision changes reconcile the adopted pool; publication-id changes fetch
 and stage the latest pool; work-only changes update status. older http responses
 must not overwrite newer observation state. existing pane refresh submits
-`Explicit { observedPublicationId }`, reconciles, and reports “refresh requested”;
+`Explicit { observed_publication_id }`, reconciles, and reports “refresh requested”;
 it neither awaits ranking nor installs a replacement.
 failed admission stops automatic resubmission from unchanged advice; retry the
 same command explicitly or reconcile on a later visit. observation may discover
@@ -283,10 +285,10 @@ is frozen; integration changes return to that file's owner.
 
 | work package | exclusive files | adversarial gate |
 |---|---|---|
-| a: ranking, storage, api | `services/suggestions.py`, new `services/suggestion_shortlists.py`, `db/models.py`, `db/retries.py` (named insert-race constraints), one next-head migration, `jobs/registry.py`, `schemas/suggestions.py`, routes `lectern.py`, `libraries.py`, `stream.py`, `wire_schema.py`, generated `wire.gen.ts` | systems reviewer proves publication/claim/revision races and exact first-ten preservation |
+| a: ranking, storage, api | `services/suggestions.py`, new `services/suggestion_shortlists.py`, `db/models.py`, `db/retries.py` (named insert-race constraints), `0287_suggestion_publications.py` after `0286`, `jobs/registry.py`, `schemas/suggestions.py`, routes `consumption.py`, `libraries.py`, `stream.py`, `wire_schema.py`, generated `wire.gen.ts` | systems reviewer proves publication/claim/revision races and exact first-ten preservation |
 | b: source integration and cleanup | mutation owners above; new import-light `services/suggestion_changes.py` owns counter update, notification, queue history hook and cleanup helpers | backend reviewer enumerates commits, counter-last ordering, heartbeat suppression, withdrawal and teardown |
-| c: interaction and content | `SuggestionsSection.tsx`/css, new suggestions hook, `lib/suggestions.ts`, suggestion resource descriptors/loaders, lectern/library pane adapters | designer owns every state/copy row above; ux reviewer attacks order, focus, cold/empty/full/error and lost acknowledgements |
-| d: transport | `lib/api/{client,retryPolicy,proxy,server}.ts` | transport reviewer proves total budget and unchanged mutation/stream/media semantics |
+| c: interaction and content | `SuggestionsSection.tsx`/css, new suggestions hook, `lib/useSuggestions.ts`, suggestion resource descriptors/loaders, lectern/library pane adapters | designer owns every state/copy row above; ux reviewer attacks order, focus, cold/empty/full/error and lost acknowledgements |
+| d: transport | `lib/api/{client,serverState,proxy,server}.ts` | transport reviewer proves total budget and unchanged mutation/stream/media semantics |
 | e: verification | disposable external harness; `docs/suggestions-verification.md` and its sanitized receipts | independent reviewer checks red failures, real final flows and cleanup |
 
 split quick-read typing from the changed suggestions envelope. remove old
@@ -332,7 +334,10 @@ static gate. surviving evidence is documentation, not a hidden test suite.
 ## cutover and explicit costs
 
 deploy matching api/worker/web with the normal migration controller; reload old
-clients. start with no fake publication; the first normal refresh creates it.
+clients. wire revision 2 rejects older clients because the suggestions envelope
+changed. migration `0287` follows the canonical `0286` head and requires the
+normal verified release backup; its downgrade is deliberately refused. start
+with no fake publication; the first normal refresh creates it.
 verify both surfaces and quick reads on the exact deployed revision. remove
 resolved tickets only after proof; retain wider graph/search/transport issues.
 

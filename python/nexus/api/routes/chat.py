@@ -10,11 +10,7 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends, Header, Query, Request, Response
 from starlette.concurrency import run_in_threadpool
 
-from nexus.api.deps import (
-    get_generation_catalog,
-    require_chat_contract_revision,
-    require_tool_projection_revision,
-)
+from nexus.api.deps import get_generation_catalog
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import (
     DbSession,
@@ -43,7 +39,6 @@ from nexus.services.generation.catalog import Catalog
 from nexus.services.tools.run import Toolbox
 
 router = APIRouter(tags=["chat"])
-CONTRACT = [Depends(require_chat_contract_revision), Depends(require_tool_projection_revision)]
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 CatalogDep = Annotated[Catalog, Depends(get_generation_catalog)]
 KeyHeader = Annotated[str | None, Header(alias="Idempotency-Key")]
@@ -56,7 +51,7 @@ def _tools(request: Request) -> Toolbox:
 ToolsDep = Annotated[Toolbox, Depends(_tools)]
 
 
-@router.post("/chat-runs", dependencies=CONTRACT)
+@router.post("/chat-runs")
 async def create_chat_run(
     body: ChatRunCreateRequest,
     viewer: ViewerDep,
@@ -74,7 +69,7 @@ async def create_chat_run(
     return Data(data=receipt)
 
 
-@router.get("/chat-runs/{run_id}", dependencies=CONTRACT)
+@router.get("/chat-runs/{run_id}")
 async def get_chat_run(run_id: UUID, viewer: ViewerDep) -> Data[ChatRunResponse]:
     def read() -> ChatRunResponse:
         with get_session_factory()() as db:
@@ -83,7 +78,7 @@ async def get_chat_run(run_id: UUID, viewer: ViewerDep) -> Data[ChatRunResponse]
     return Data(data=await run_in_threadpool(read))
 
 
-@router.post("/chat-runs/{run_id}/cancel", dependencies=CONTRACT)
+@router.post("/chat-runs/{run_id}/cancel")
 async def cancel_chat_run(run_id: UUID, viewer: ViewerDep) -> Data[ChatRunResponse]:
     response = await run_in_threadpool(admit.cancel, viewer_id=viewer.user_id, run_id=run_id)
     return Data(data=response)
@@ -110,7 +105,7 @@ async def _repeat(
     return Data(data=response)
 
 
-@router.post("/messages/{assistant_message_id}/rerun", dependencies=CONTRACT)
+@router.post("/messages/{assistant_message_id}/rerun")
 async def rerun_assistant_message(
     assistant_message_id: UUID,
     body: ChatRunRepeatRequest,
@@ -124,7 +119,7 @@ async def rerun_assistant_message(
     )
 
 
-@router.post("/messages/{assistant_message_id}/regenerate", dependencies=CONTRACT)
+@router.post("/messages/{assistant_message_id}/regenerate")
 async def regenerate_assistant_message(
     assistant_message_id: UUID,
     body: ChatRunRepeatRequest,
@@ -172,14 +167,14 @@ def delete_conversation(conversation_id: UUID, viewer: ViewerDep, db: DbSession)
     return Response(status_code=204)
 
 
-@router.get("/conversations/{conversation_id}/tree", dependencies=CONTRACT)
+@router.get("/conversations/{conversation_id}/tree")
 def get_conversation_tree(
     conversation_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
 ) -> Data[ConversationTreeOut]:
     return Data(data=reads.tree(db, viewer_id=viewer.user_id, conversation_id=conversation_id))
 
 
-@router.post("/conversations/{conversation_id}/active-path", status_code=204, dependencies=CONTRACT)
+@router.post("/conversations/{conversation_id}/active-path", status_code=204)
 def set_active_path(
     conversation_id: UUID, body: SetActivePathRequest, viewer: ViewerDep, db: DbSession
 ) -> Response:

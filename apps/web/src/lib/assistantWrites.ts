@@ -1,12 +1,12 @@
 /** The one undo of an assistant write: the chat card, connections and settings. */
 import {
-  apiCommand204,
+  apiFetch,
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
 
 export function undoAssistantWrite(toolCallId: string): Promise<void> {
-  return apiCommand204(`/api/assistant-writes/${toolCallId}/undo`, {
+  return apiFetch<void>(`/api/assistant-writes/${toolCallId}/undo`, {
     method: "POST",
   });
 }

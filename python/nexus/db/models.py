@@ -98,19 +98,6 @@ class ProcessingStatus(str, PyEnum):
     failed = "failed"
 
 
-class FailureStage(str, PyEnum):
-    """Stage at which processing failed.
-
-    Metadata research has its own background operation outcomes.
-    """
-
-    upload = "upload"
-    extract = "extract"
-    transcribe = "transcribe"
-    embed = "embed"
-    other = "other"
-
-
 class MediaKind(str, PyEnum):
     """Types of media that can be ingested."""
 
@@ -139,16 +126,6 @@ class TranscriptCoverage(str, PyEnum):
     none = "none"
     partial = "partial"
     full = "full"
-
-
-class MediaSourceAttemptStatus(str, PyEnum):
-    """Durable source-acquisition attempt state."""
-
-    accepted = "accepted"
-    queued = "queued"
-    running = "running"
-    succeeded = "succeeded"
-    failed = "failed"
 
 
 # =============================================================================
@@ -298,35 +275,6 @@ class ResourceVersion(Base):
         nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-
-class ResourceMutation(Base):
-    """Replay receipts, with server-owned inverse effects for writing edits."""
-
-    __tablename__ = "resource_mutations"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    mutation_scope: Mapped[str] = mapped_column(Text, nullable=False)
-    client_mutation_id: Mapped[str] = mapped_column(Text, nullable=False)
-    request_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    response_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    effects_json: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
@@ -575,15 +523,9 @@ class MediaUploadSession(Base):
     content_type: Mapped[str] = mapped_column(Text, nullable=False)
     expected_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     input_origin: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
     upload_generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
     upload_url_expires_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False
-    )
-    transport_failure_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
-    transport_http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    transport_failed_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
     )
     verification_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     verification_failed_at: Mapped[datetime | None] = mapped_column(
@@ -661,20 +603,8 @@ class Media(Base):
         server_default="pending",
         nullable=False,
     )
-    failure_stage: Mapped[FailureStage | None] = mapped_column(
-        Enum(
-            FailureStage,
-            name="failure_stage_enum",
-            create_type=False,  # Type created in migration
-        ),
-        nullable=True,
-    )
     last_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    processing_started_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    failed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     # URL and file identity fields
     requested_url: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -748,7 +678,7 @@ class Media(Base):
 
 
 class MediaSourceAttempt(Base):
-    """Durable record of one accepted source-ingest intent or retry."""
+    """One link of a media's source chain (``services/source_attempts.py``)."""
 
     __tablename__ = "media_source_attempts"
 
@@ -776,8 +706,6 @@ class MediaSourceAttempt(Base):
         TIMESTAMP(timezone=True), nullable=True
     )
     status: Mapped[str] = mapped_column(Text, nullable=False)
-    intent_key: Mapped[str] = mapped_column(Text, nullable=False)
-    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     requested_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     canonical_source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -1975,6 +1903,8 @@ class ResourceGrant(Base):
         ForeignKey("users.id"),
         nullable=True,
     )
+    # The grantee's email as the creator typed it; null when they found the grantee by name.
+    grantee_email: Mapped[str | None] = mapped_column(Text, nullable=True)
     share_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),

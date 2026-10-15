@@ -8,7 +8,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
 
-from nexus.schemas.presence import absent, present
 from nexus.schemas.reader import (
     EpubTextOffsetsTargetOut,
     HighlightTargetPdfQuadOut,
@@ -236,11 +235,11 @@ def resolved_highlight_reader_target(
                 return EpubTextOffsetsTargetOut(
                     fragment_id=fragment_id, start_offset=start_offset, end_offset=end_offset
                 )
-            time_range = absent()
+            time_range = None
             if t_start_ms is not None or t_end_ms is not None:
                 if t_start_ms is None or t_end_ms is None:
                     return None
-                time_range = present(ReaderTimeRange(start_ms=t_start_ms, end_ms=t_end_ms))
+                time_range = ReaderTimeRange(start_ms=t_start_ms, end_ms=t_end_ms)
             return TranscriptTextOffsetsTargetOut(
                 fragment_id=fragment_id,
                 start_offset=start_offset,

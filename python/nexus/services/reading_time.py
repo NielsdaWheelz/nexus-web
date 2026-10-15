@@ -6,7 +6,6 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.schemas.presence import presence_from_nullable
 from nexus.schemas.reading_time import ReadingTimeEstimateOut
 from nexus.services.capabilities import quotable_document_rows_sql
 from nexus.services.consumption.reader_cursor import current_position_rows_sql
@@ -64,7 +63,7 @@ def load_reading_time_estimates(
     return {
         row.media_id: ReadingTimeEstimateOut(
             total_minutes=_display_minutes(row.total_seconds),
-            remaining_minutes=presence_from_nullable(
+            remaining_minutes=(
                 None if row.remaining_seconds is None else _display_minutes(row.remaining_seconds)
             ),
         )

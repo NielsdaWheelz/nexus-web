@@ -1,11 +1,13 @@
 "use client";
 
+// A list whose rows move by drag (mouse, or touch after a press) or by their
+// Move up / Move down controls. Each move calls onReorder with the whole next
+// order and announces the new position; focus stays on the moved row's handle.
+// The click that ends a drag is swallowed so the row's link does not open.
+
 import {
-  useCallback,
-  useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type MouseEventHandler,
   type ReactNode,
   type TouchEventHandler,
@@ -17,9 +19,6 @@ import {
   closestCenter,
   useSensor,
   useSensors,
-  type DragCancelEvent,
-  type DragEndEvent,
-  type DragStartEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -31,16 +30,15 @@ import { CSS } from "@dnd-kit/utilities";
 import ResourceList from "@/components/ui/ResourceList";
 import styles from "./SortableList.module.css";
 
-const SILENT_DND_ANNOUNCEMENTS = {
+// The list announces moves itself; dnd-kit's own live regions stay silent and
+// detached from the document.
+const SILENT = {
   onDragStart: () => "",
   onDragMove: () => "",
   onDragOver: () => "",
   onDragEnd: () => "",
   onDragCancel: () => "",
-} as const;
-const SILENT_DND_INSTRUCTIONS = { draggable: "" } as const;
-const POST_MOUSE_DRAG_CLICK_SUPPRESSION_MS = 50;
-const POST_TOUCH_DRAG_CLICK_SUPPRESSION_MS = 500;
+};
 
 export interface SortableActivatorProps {
   readonly setActivatorNodeRef: (node: HTMLButtonElement | null) => void;
@@ -62,87 +60,53 @@ export interface SortableListRenderItemProps<T> {
   readonly activatorProps: SortableActivatorProps;
 }
 
-interface SortableListProps<T> {
-  readonly items: readonly T[];
-  readonly getItemId: (item: T) => string;
-  readonly renderItem: (props: SortableListRenderItemProps<T>) => ReactNode;
-  readonly onReorder: (nextItems: T[]) => void;
-  readonly ariaLabel: string;
-  readonly busy?: boolean;
-  readonly disabled?: boolean;
+interface Moves {
+  readonly move: (id: string, to: number) => void;
+  readonly handles: Map<string, HTMLButtonElement>;
+  readonly consumeClick: (id: string) => boolean;
 }
 
-interface SortableListItemProps<T> {
-  readonly item: T;
+function Row<T>(props: {
   readonly id: string;
   readonly index: number;
-  readonly total: number;
+  readonly count: number;
   readonly disabled: boolean;
+  readonly item: T;
   readonly renderItem: (props: SortableListRenderItemProps<T>) => ReactNode;
-  readonly moveItem: (id: string, nextIndex: number) => void;
-  readonly registerActivator: (id: string, node: HTMLButtonElement | null) => void;
-  readonly consumeClickSuppression: (id: string) => boolean;
-}
-
-function SortableListItem<T>({
-  item,
-  id,
-  index,
-  total,
-  disabled,
-  renderItem,
-  moveItem,
-  registerActivator,
-  consumeClickSuppression,
-}: SortableListItemProps<T>) {
-  const {
-    listeners,
-    setNodeRef,
-    setActivatorNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id, disabled });
-  const style: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
-  const registerNode = useCallback(
-    (node: HTMLButtonElement | null) => {
-      setActivatorNodeRef(node);
-      registerActivator(id, node);
-    },
-    [id, registerActivator, setActivatorNodeRef],
-  );
-  const mouseListener = listeners?.onMouseDown;
-  const touchListener = listeners?.onTouchStart;
-
+  readonly moves: Moves;
+}) {
+  const { id, index, count, disabled, moves } = props;
+  const sortable = useSortable({ id, disabled });
+  const listeners = sortable.listeners;
   return (
     <li
-      ref={setNodeRef}
-      style={style}
+      ref={sortable.setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(sortable.transform),
+        transition: sortable.transition,
+      }}
       className={styles.item}
-      data-dragging={isDragging ? "true" : "false"}
+      data-dragging={sortable.isDragging ? "true" : "false"}
     >
-      {renderItem({
-        item,
+      {props.renderItem({
+        item: props.item,
         activatorProps: {
-          setActivatorNodeRef: registerNode,
+          setActivatorNodeRef: (node) => {
+            sortable.setActivatorNodeRef(node);
+            if (node) moves.handles.set(id, node);
+            else moves.handles.delete(id);
+          },
           listeners: {
-            onMouseDown: mouseListener
-              ? (event) => mouseListener(event)
-              : undefined,
-            onTouchStart: touchListener
-              ? (event) => touchListener(event)
-              : undefined,
+            onMouseDown: listeners && ((event) => listeners.onMouseDown?.(event)),
+            onTouchStart: listeners && ((event) => listeners.onTouchStart?.(event)),
           },
           canMoveUp: !disabled && index > 0,
-          canMoveDown: !disabled && index < total - 1,
+          canMoveDown: !disabled && index < count - 1,
           disabled,
-          isDragging,
-          moveUp: () => moveItem(id, index - 1),
-          moveDown: () => moveItem(id, index + 1),
-          consumeClickSuppression: () => consumeClickSuppression(id),
+          isDragging: sortable.isDragging,
+          moveUp: () => moves.move(id, index - 1),
+          moveDown: () => moves.move(id, index + 1),
+          consumeClickSuppression: () => moves.consumeClick(id),
         },
       })}
     </li>
@@ -157,148 +121,93 @@ export default function SortableList<T>({
   ariaLabel,
   busy,
   disabled = false,
-}: SortableListProps<T>) {
+}: {
+  readonly items: readonly T[];
+  readonly getItemId: (item: T) => string;
+  readonly renderItem: (props: SortableListRenderItemProps<T>) => ReactNode;
+  readonly onReorder: (nextItems: T[]) => void;
+  readonly ariaLabel: string;
+  readonly busy?: boolean;
+  readonly disabled?: boolean;
+}) {
   const [announcement, setAnnouncement] = useState("");
-  const activatorNodesRef = useRef(new Map<string, HTMLButtonElement>());
-  const suppressedClickExpiryRef = useRef(new Map<string, number>());
-  const activeClickSuppressionMsRef = useRef(
-    POST_MOUSE_DRAG_CLICK_SUPPRESSION_MS,
+  const handles = useRef(new Map<string, HTMLButtonElement>()).current;
+  // The row whose drag just ended, and until when its click is swallowed.
+  const swallow = useRef<{ id: string; until: number } | null>(null);
+  const touch = useRef(false);
+  const [liveRegions] = useState(() =>
+    typeof document === "undefined" ? undefined : document.createElement("div"),
   );
-  const dndAccessibilityContainerRef = useRef<Element | null>(null);
-  if (
-    typeof document !== "undefined" &&
-    dndAccessibilityContainerRef.current === null
-  ) {
-    dndAccessibilityContainerRef.current = document.createElement("div");
-  }
-  const itemIds = useMemo(() => items.map(getItemId), [getItemId, items]);
+  const ids = items.map(getItemId);
   const sensors = useSensors(
-    useSensor(MouseSensor, {
-      activationConstraint: { distance: 8 },
-    }),
-    useSensor(TouchSensor, {
-      activationConstraint: { delay: 250, tolerance: 8 },
-    }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
   );
+  const focus = (id: string) =>
+    requestAnimationFrame(() => handles.get(id)?.focus());
 
-  const registerActivator = useCallback(
-    (id: string, node: HTMLButtonElement | null) => {
-      if (node) activatorNodesRef.current.set(id, node);
-      else activatorNodesRef.current.delete(id);
-    },
-    [],
-  );
-
-  const focusActivator = useCallback((id: string) => {
-    requestAnimationFrame(() => activatorNodesRef.current.get(id)?.focus());
-  }, []);
-
-  const announceMove = useCallback(
-    (id: string, nextIndex: number) => {
-      setAnnouncement("");
-      requestAnimationFrame(() => {
-        setAnnouncement(`Moved to position ${nextIndex + 1} of ${items.length}`);
-        activatorNodesRef.current.get(id)?.focus();
-      });
-    },
-    [items.length],
-  );
-
-  const moveItem = useCallback(
-    (id: string, nextIndex: number) => {
-      if (disabled) return;
-      const currentIndex = itemIds.indexOf(id);
-      if (
-        currentIndex < 0 ||
-        nextIndex < 0 ||
-        nextIndex >= items.length ||
-        currentIndex === nextIndex
-      ) {
-        focusActivator(id);
-        return;
-      }
-      onReorder(arrayMove([...items], currentIndex, nextIndex));
-      announceMove(id, nextIndex);
-    },
-    [announceMove, disabled, focusActivator, itemIds, items, onReorder],
-  );
-
-  const suppressNextClick = useCallback((id: string, durationMs: number) => {
-    const expiresAt = Date.now() + durationMs;
-    suppressedClickExpiryRef.current.set(id, expiresAt);
-    window.setTimeout(() => {
-      if (suppressedClickExpiryRef.current.get(id) === expiresAt) {
-        suppressedClickExpiryRef.current.delete(id);
-      }
-    }, durationMs);
-  }, []);
-
-  const consumeClickSuppression = useCallback((id: string) => {
-    const expiresAt = suppressedClickExpiryRef.current.get(id);
-    suppressedClickExpiryRef.current.delete(id);
-    return expiresAt !== undefined && Date.now() <= expiresAt;
-  }, []);
-
-  const handleDragStart = (event: DragStartEvent) => {
-    activeClickSuppressionMsRef.current = event.activatorEvent.type.startsWith(
-      "touch",
-    )
-      ? POST_TOUCH_DRAG_CLICK_SUPPRESSION_MS
-      : POST_MOUSE_DRAG_CLICK_SUPPRESSION_MS;
-    setAnnouncement("");
-  };
-
-  const handleDragEnd = (event: DragEndEvent) => {
-    const activeId = String(event.active.id);
-    suppressNextClick(activeId, activeClickSuppressionMsRef.current);
-    if (!event.over) {
-      focusActivator(activeId);
+  const move = (id: string, to: number) => {
+    const from = ids.indexOf(id);
+    if (disabled) return;
+    if (from < 0 || to < 0 || to >= items.length || from === to) {
+      focus(id);
       return;
     }
-    const nextIndex = itemIds.indexOf(String(event.over.id));
-    moveItem(activeId, nextIndex);
+    onReorder(arrayMove([...items], from, to));
+    setAnnouncement("");
+    requestAnimationFrame(() => {
+      setAnnouncement(`Moved to position ${to + 1} of ${items.length}`);
+      handles.get(id)?.focus();
+    });
   };
-
-  const handleDragCancel = (event: DragCancelEvent) => {
-    const activeId = String(event.active.id);
-    suppressNextClick(activeId, activeClickSuppressionMsRef.current);
-    focusActivator(activeId);
+  const ended = (id: string) => {
+    swallow.current = { id, until: Date.now() + (touch.current ? 500 : 50) };
   };
-
-  const sortableItems = items.map((item, index) => {
-    const id = getItemId(item);
-    return (
-      <SortableListItem
-        key={id}
-        id={id}
-        index={index}
-        total={items.length}
-        disabled={disabled}
-        item={item}
-        moveItem={moveItem}
-        registerActivator={registerActivator}
-        consumeClickSuppression={consumeClickSuppression}
-        renderItem={renderItem}
-      />
-    );
-  });
+  const consumeClick = (id: string) => {
+    const held = swallow.current;
+    swallow.current = null;
+    return held?.id === id && Date.now() <= held.until;
+  };
+  const moves = { move, handles, consumeClick };
 
   return (
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
       accessibility={{
-        announcements: SILENT_DND_ANNOUNCEMENTS,
-        screenReaderInstructions: SILENT_DND_INSTRUCTIONS,
-        container: dndAccessibilityContainerRef.current ?? undefined,
+        announcements: SILENT,
+        screenReaderInstructions: { draggable: "" },
+        container: liveRegions,
       }}
-      onDragStart={handleDragStart}
-      onDragCancel={handleDragCancel}
-      onDragEnd={handleDragEnd}
+      onDragStart={(event) => {
+        touch.current = event.activatorEvent.type.startsWith("touch");
+        setAnnouncement("");
+      }}
+      onDragCancel={(event) => {
+        ended(String(event.active.id));
+        focus(String(event.active.id));
+      }}
+      onDragEnd={(event) => {
+        const id = String(event.active.id);
+        ended(id);
+        if (event.over) move(id, ids.indexOf(String(event.over.id)));
+        else focus(id);
+      }}
     >
-      <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
+      <SortableContext items={ids} strategy={verticalListSortingStrategy}>
         <ResourceList ariaLabel={ariaLabel} busy={busy}>
-          {sortableItems}
+          {items.map((item, index) => (
+            <Row
+              key={ids[index]}
+              id={ids[index]!}
+              index={index}
+              count={items.length}
+              disabled={disabled}
+              item={item}
+              renderItem={renderItem}
+              moves={moves}
+            />
+          ))}
         </ResourceList>
       </SortableContext>
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">

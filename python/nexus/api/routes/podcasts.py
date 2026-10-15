@@ -150,6 +150,6 @@ def list_podcast_episodes(
 
 @router.post("/podcasts/{podcast_id}/episodes/mark-played")
 def mark_podcast_episode_selection_played(
-    podcast_id: UUID, body: wire.PodcastEpisodeSelection, viewer: ViewerDep, db: DbSession
+    podcast_id: UUID, body: wire.PodcastEpisodeSelection, viewer: ViewerDep
 ) -> Data[wire.PodcastEpisodeMarkPlayedOut]:
-    return Data(data=episodes.mark_played(db, viewer.user_id, podcast_id, body.state))
+    return Data(data=episodes.mark_played(viewer.user_id, podcast_id, body.state))

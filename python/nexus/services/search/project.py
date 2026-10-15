@@ -11,7 +11,6 @@ from sqlalchemy import RowMapping
 from sqlalchemy.orm import Session
 
 from nexus.schemas.media_summary import MediaSummaryOut
-from nexus.schemas.presence import Present, presence_from_nullable
 from nexus.schemas.retrieval import LocatorBackedResultType
 from nexus.schemas.search import (
     RESULT_MODELS,
@@ -24,10 +23,10 @@ from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
 )
 from nexus.services.locator_resolver import evidence_resolution, locator_from_resolution
-from nexus.services.media import list_collection_media_for_viewer_by_ids
+from nexus.services.media import media_summaries
 from nexus.services.resource_graph.highlight_notes import highlight_excerpts_for_note_blocks
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
-from nexus.services.resource_items.capabilities import resource_citation_result_type
+from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.routing import resource_activations_for_refs
 from nexus.services.search.sources import Hit, hydrate
 
@@ -92,7 +91,7 @@ def build_source_label(source: SearchResultSourceOut | MediaSummaryOut) -> str:
     names = ", ".join(c.credited_name for c in source.contributors if c.credited_name)
     date = source.original_published_date
     kind = (source.media_kind or "").replace("_", " ")
-    parts = [source.title, names, date.value if isinstance(date, Present) else "", kind]
+    parts = [source.title, names, date if date is not None else "", kind]
     return " - ".join(part for part in parts if part)
 
 
@@ -150,12 +149,7 @@ def project(
     sourced = [row["media_id"] for row in rows.values() if "media_title" in row]
     credits = load_contributor_credits_for_media(db, sourced)
     credits |= load_contributor_credits_for_podcasts(db, ids.get("podcast", []))
-    summaries = {
-        item.id: item.summary
-        for item in list_collection_media_for_viewer_by_ids(
-            db, viewer_id=viewer_id, media_ids=ids.get("media", [])
-        )
-    }
+    summaries = media_summaries(db, viewer_id=viewer_id, media_ids=ids.get("media", []))
     excerpts = highlight_excerpts_for_note_blocks(db, viewer_id, ids.get("note_block", []))
     placed = []
     for hit in hits:
@@ -189,7 +183,7 @@ def project(
                 media_kind=row["media_kind"],
                 title=row["media_title"],
                 contributors=credits.get(row["media_id"], []),
-                original_published_date=presence_from_nullable(row["original_published_date"]),
+                original_published_date=row["original_published_date"],
             )
             values |= {"source": source, "title": source.title}
             values["source_label"] = build_source_label(source)
@@ -212,9 +206,9 @@ def project(
             "snippet": snippet(row["text"] or "", terms, row["headline"]),
             "resource_ref": ref.uri,
             "owner_resource_ref": owner.uri,
-            "action_subject_ref": (owner if t in _PASSAGES else ref).uri,
+            "action_ref": (owner if t in _PASSAGES else ref).uri,
             "activation": activation,
-            "citation_target": ref.uri if resource_citation_result_type(ref) else None,
+            "citation_target": ref.uri if capability(ref.scheme).citable_result_type else None,
             "context_ref": SearchResultContextRefOut(
                 type="media" if t in MEDIA_TYPES else t,
                 id=handle or rid,

@@ -24,7 +24,6 @@ from nexus.schemas.assistant_writes import (
     MachineAuthorshipOut,
     TargetKind,
 )
-from nexus.schemas.presence import absent, present
 from nexus.schemas.resource_graph import ConnectionCreationOut, UndoAssistantWriteMutation
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from nexus.services.suggestion_changes import record_input_change
@@ -171,9 +170,7 @@ def history(
         )
         for row in rows[:30]
     ]
-    return AssistantWritePage(
-        items=items, next_cursor=present(rows[29].id) if len(rows) > 30 else absent()
-    )
+    return AssistantWritePage(items=items, next_cursor=rows[29].id if len(rows) > 30 else None)
 
 
 def undo(db: Session, *, viewer_id: UUID, tool_call_id: UUID) -> None:

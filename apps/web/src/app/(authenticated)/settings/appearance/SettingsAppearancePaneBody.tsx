@@ -3,45 +3,33 @@
 import { Fragment, useEffect, useState } from "react";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
+// Imported here only: the inscription registry is data-heavy and must stay out
+// of shared bundles; this body is a lazy chunk.
+import { elvishInscriptions } from "@/lib/theme/elvishInscriptions";
 import { parseRoom, ROOM_CHROME, THEME_COOKIE, type AppTheme } from "@/lib/theme/room";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
-// Imported directly by the one surface that draws it: the inscription registry
-// is data-heavy and must never enter a shared barrel (blueprint §3). This pane
-// body is a lazy chunk (paneRenderRegistry), so it costs no First Load JS.
-import { elvishInscriptions } from "@/lib/theme/elvishInscriptions";
 import styles from "./page.module.css";
 
-const DOORWAYS: { value: AppTheme; name: string; hint: string }[] = [
-  {
-    value: "light",
-    name: "Study",
-    hint: "Warm paper, dark ink — day.",
-  },
-  {
-    value: "dark",
-    name: "Press",
-    hint: "Near-black canvas, warm ink — night.",
-  },
-  {
-    value: "elvish",
-    name: "Solar",
-    hint: "Green twilight, brass ink — dusk.",
-  },
+const DOORWAYS: readonly { room: AppTheme; name: string; hint: string }[] = [
+  { room: "light", name: "Study", hint: "Warm paper, dark ink — day." },
+  { room: "dark", name: "Press", hint: "Near-black canvas, warm ink — night." },
+  { room: "elvish", name: "Solar", hint: "Green twilight, brass ink — dusk." },
 ];
-
 const INSCRIPTION = elvishInscriptions.elenSila;
 
+/** The three rooms as doorways, and the Solar's colophon. */
 export default function SettingsAppearancePaneBody() {
-  const [selection, setSelection] = useState<AppTheme | null>(null);
-
-  useEffect(() => {
-    setSelection(parseRoom(document.documentElement.dataset.theme));
-  }, []);
-  usePaneReturnReady(selection !== null);
+  // the room is the document's (the server paints it from the nx-theme cookie)
+  const [room, setRoom] = useState<AppTheme | null>(null);
+  useEffect(
+    () => setRoom(parseRoom(document.documentElement.dataset.theme)),
+    [],
+  );
+  usePaneReturnReady(room !== null);
 
   // Appearance belongs to this browser; its cookie supplies the next first paint.
-  function handleChange(next: AppTheme) {
-    setSelection(next);
+  function choose(next: AppTheme) {
+    setRoom(next);
     document.documentElement.dataset.theme = next;
     document
       .querySelector('meta[name="theme-color"]')
@@ -49,31 +37,29 @@ export default function SettingsAppearancePaneBody() {
     document.cookie = `${THEME_COOKIE}=${next}; path=/; max-age=31536000; samesite=lax${window.location.protocol === "https:" ? "; secure" : ""}`;
   }
 
-  if (selection === null) return null;
-
+  if (room === null) return null;
   return (
     <PaneSurface>
       <PaneSection title="Theme">
         <fieldset className={styles.fieldset}>
           <legend className={styles.legend}>Choose how Nexus looks.</legend>
           {DOORWAYS.map((doorway) => (
-            <label key={doorway.value} className={styles.doorway}>
-              <Plate room={doorway.value} />
+            <label key={doorway.room} className={styles.doorway}>
+              <Plate room={doorway.room} />
               <span className={styles.caption}>
                 <input
                   type="radio"
                   name="appearance"
-                  value={doorway.value}
-                  checked={selection === doorway.value}
-                  onChange={() => handleChange(doorway.value)}
+                  value={doorway.room}
+                  checked={room === doorway.room}
+                  onChange={() => void choose(doorway.room)}
                 />
                 <span className={styles.name}>{doorway.name}</span>
               </span>
               <span className={styles.hint}>{doorway.hint}</span>
-              {/* The plaque's caption, hidden from the accessible name so the
-                  radio still announces exactly "Solar" and its hint; the
-                  colophon below carries the Latin as real, readable text. */}
-              {doorway.value === "elvish" ? (
+              {/* hidden from the radio's name ("Solar" and its hint); the
+                  colophon carries the Latin as readable text */}
+              {doorway.room === "elvish" ? (
                 <span className={styles.latinCaption} aria-hidden="true">
                   {INSCRIPTION.latin}
                 </span>
@@ -82,7 +68,6 @@ export default function SettingsAppearancePaneBody() {
           ))}
         </fieldset>
       </PaneSection>
-
       <PaneSection
         title="Colophon"
         description="The Solar — the room at the top of the stair; green dusk, one brass lamp, and a book left open."
@@ -117,10 +102,8 @@ export default function SettingsAppearancePaneBody() {
   );
 }
 
-// A miniature elevation of one room, painted by the real theme mechanism: the
-// plate carries that room's `data-theme`, so every token below repaints
-// natively and this file holds no colour of its own. Decorative — the room's
-// name and hint beside it carry the meaning.
+// A miniature of one room painted by the real theme mechanism: the plate carries
+// that room's data-theme, so every token repaints and this file holds no colour.
 function Plate({ room }: { room: AppTheme }) {
   return (
     <span className={styles.plate} data-theme={room} aria-hidden="true">
@@ -129,15 +112,12 @@ function Plate({ room }: { room: AppTheme }) {
       <span className={`${styles.line} ${styles.lineSecond}`} />
       <span className={`${styles.line} ${styles.lineThird}`} />
       <span className={styles.accentLine} />
-      {room === "elvish" ? (
-        <Inscription className={styles.plaque} />
-      ) : null}
+      {room === "elvish" ? <Inscription className={styles.plaque} /> : null}
     </span>
   );
 }
 
-// Baked outlines, never a font (direction §5). The English beside it carries
-// the meaning, so the drawing is `aria-hidden` and unfocusable.
+// Baked outlines, never a font; the English beside it carries the meaning.
 function Inscription({ className }: { className: string }) {
   return (
     <svg

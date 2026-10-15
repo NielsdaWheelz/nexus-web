@@ -42,7 +42,6 @@ from nexus.schemas.highlights import (
     TypedHighlightOut,
     UpdateHighlightRequest,
 )
-from nexus.schemas.resource_items import NoteBodyVersionsOut
 from nexus.services import text_quote
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.passage_anchors import normalize_quote_text
@@ -349,25 +348,25 @@ def _project_anchored(
     }
     attached = linked_note_blocks_for_highlights(db, viewer_id, ids)
     note_ids = {block.id for blocks in attached.values() for block in blocks}
-    note_versions: dict[UUID, dict[str, int]] = {note_id: {} for note_id in note_ids}
-    if note_ids:
-        for note_id, lane, version in db.execute(
-            select(
-                ResourceVersion.resource_id, ResourceVersion.lane, ResourceVersion.version
-            ).where(
+    body_versions: dict[UUID, int] = dict(
+        db.execute(
+            select(ResourceVersion.resource_id, ResourceVersion.version).where(
                 ResourceVersion.user_id == viewer_id,
                 ResourceVersion.resource_scheme == "note_block",
                 ResourceVersion.resource_id.in_(note_ids),
+                ResourceVersion.lane == "body",
             )
-        ):
-            note_versions[note_id][lane] = version
+        )
+        .tuples()
+        .all()
+    )
     notes = {
         highlight_id: [
             LinkedNoteBlockRef(
                 note_block_id=block.id,
                 body_pm_json=block.body_pm_json,
                 body_text=block.body_text,
-                version_by_lane=NoteBodyVersionsOut.model_validate(note_versions[block.id]),
+                body_version=body_versions.get(block.id, 1),
             )
             for block in blocks
         ]

@@ -1,16 +1,18 @@
-"""One metadata generation for a frozen purpose, then claim-fenced publication.
+"""The ``enrich_metadata`` job: one generation for its frozen purpose, then its fenced
+publication (I9).
 
-Every attempt builds its input fresh and generates once; publication applies the
-result only when the input it was asked about is still the current one. A worker
-that dies mid-generation leaves its row ``interrupted`` and the retry generates
-again. Publication takes the media lock before its exact queue claim.
+A bibliography job researches the media's facts; a title job names an x article from the
+captured source attempt its payload freezes. Each attempt builds its input fresh and
+generates once; a retry after a dead worker generates again. Publication takes the media
+lock, then its exact queue claim, re-checks access, eligibility, the purpose and the input
+fingerprint, and commits the facts, the strictly later ``metadata_enriched_at`` and the
+outcome together.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from datetime import datetime
 from typing import Any
 
 from pydantic import TypeAdapter
@@ -23,17 +25,16 @@ from nexus.db.retries import retry_serializable
 from nexus.db.session import get_repeatable_read_db, get_session_factory
 from nexus.jobs.queue import (
     JobExecutionContext,
-    JobResult,
     TerminalJobFailure,
     finish_job,
     lock_running_job_claim,
 )
-from nexus.logging import get_logger
 from nexus.schemas.metadata_enrichment import (
-    AcceptedMetadataEnrichment,
+    METADATA_FIELDS,
     MetadataBibliographyCompletedOutcome,
     MetadataFailedOutcome,
     MetadataFailureCode,
+    MetadataFindings,
     MetadataJobPayload,
     MetadataNoFindingsOutcome,
     MetadataOutcome,
@@ -59,17 +60,17 @@ from nexus.services.generation.contract import (
 )
 from nexus.services.generation.run import generate
 from nexus.services.generation.runtime import Runtime, run_generation_job
-from nexus.services.media_processing_state import is_metadata_enrichment_eligible
 from nexus.services.metadata_enrichment import (
     MetadataInputTooLarge,
     MetadataResearchInput,
-    admitted_contributor_handles,
+    accept_findings,
     build_metadata_research_input,
-    merge_enrichment,
-    metadata_enrichment_agent_definition,
-    validate_structured_enrichment,
+    contributor_observation,
+    merge_findings,
+    research_intent_definition,
+    unresolved_fields,
 )
-from nexus.services.metadata_operations import metadata_purpose
+from nexus.services.metadata_operations import is_metadata_enrichment_eligible, metadata_purpose
 from nexus.services.reader_publication import (
     lock_publication_generation,
     replace_reader_document_title,
@@ -85,9 +86,6 @@ from nexus.services.x_titles import (
     x_title_intent,
 )
 
-logger = get_logger(__name__)
-
-type _JobResult = dict[str, object] | TerminalJobFailure
 _PAYLOAD = TypeAdapter(MetadataJobPayload)
 
 _FAILURE_CODES: dict[FailureCode, MetadataFailureCode] = {
@@ -104,60 +102,96 @@ _FAILURE_CODES: dict[FailureCode, MetadataFailureCode] = {
     "interrupted": "worker_interrupted",
     "defect": "execution_failed",
 }
+type _Settled = dict[str, object] | TerminalJobFailure
+_CLAIM_LOST: _Settled = {"status": "skipped", "reason": "claim_lost_before_publication"}
 
 
-def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobResult:
-    """The ``enrich_metadata`` handler."""
-    return enrich_metadata(
-        _PAYLOAD.validate_json(json.dumps(dict(payload))),
-        context=context,
+def _now(db: Session) -> Any:
+    return db.scalar(text("SELECT clock_timestamp()"))
+
+
+def _settlement(outcome: MetadataOutcome) -> _Settled:
+    """Completed succeeds; no findings and failures dead-letter with the outcome kept."""
+    result = outcome.model_dump(mode="json")
+    if outcome.status == "completed":
+        return result
+    reason = "no_findings" if outcome.status == "no_findings" else outcome.reason
+    return TerminalJobFailure(
+        result_payload=result,
+        error_code=f"E_METADATA_{reason.upper()}",
+        error_message="no metadata found"
+        if outcome.status == "no_findings"
+        else f"metadata {outcome.purpose} failed: {reason}",
     )
 
 
-def enrich_metadata(
-    payload: MetadataJobPayload,
-    *,
-    context: JobExecutionContext,
-) -> _JobResult:
-    """Build the input, generate once, publish; every failure settles the job."""
-    media_uuid = payload.media_id
-    requester_user_id = payload.requester_user_id
-    logger.info(
-        "enrich_metadata_started",
-        media_id=str(media_uuid),
-        request_id=payload.request_id,
-        purpose=payload.purpose,
-    )
+def _refusal(
+    db: Session, media: Media | None, payload: MetadataJobPayload
+) -> MetadataFailureCode | None:
+    if media is None or not can_read_media(db, payload.requester_user_id, media.id):
+        return "access_revoked"
+    if not is_metadata_enrichment_eligible(
+        kind=media.kind, processing_status=media.processing_status
+    ) or payload.purpose != metadata_purpose(provider=media.provider, kind=media.kind):
+        return "no_longer_eligible"
+    return None
 
-    async def work(db: Session, runtime: Runtime) -> _JobResult:
+
+def _input(
+    db: Session, media: Media, payload: MetadataJobPayload
+) -> MetadataResearchInput | XTitleInput | MetadataFailureCode:
+    """What this job's purpose asks about, as it stands now."""
+    if isinstance(payload, TitleMetadataJobPayload):
+        try:
+            return build_x_title_input(db, media, source_attempt_id=payload.source_attempt_id)
+        except XTitleSourceRejected as rejection:
+            return rejection.code
+        except XTitleInputTooLarge:
+            return "input_too_large"
+    try:
+        return build_metadata_research_input(db, media)
+    except MetadataInputTooLarge:
+        return "input_too_large"
+
+
+def _research(
+    db: Session, job: MetadataJobPayload
+) -> MetadataResearchInput | XTitleInput | MetadataFailureCode:
+    media = db.get(Media, job.media_id, options=(defer(Media.plain_text),))
+    if (refusal := _refusal(db, media, job)) is not None:
+        return refusal
+    assert media is not None  # _refusal answers access_revoked for a missing media
+    return _input(db, media, job)
+
+
+def _stale(
+    db: Session,
+    media: Media,
+    job: MetadataJobPayload,
+    research: MetadataResearchInput | XTitleInput,
+) -> MetadataFailureCode | None:
+    current = _input(db, media, job)
+    if current == "input_too_large":
+        return "stale_input"  # the admitted input fit; the current facts do not
+    if isinstance(current, str):
+        return current
+    return None if current.fingerprint == research.fingerprint else "stale_input"
+
+
+def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> _Settled:
+    job = _PAYLOAD.validate_json(json.dumps(dict(payload)))
+    media_id, requester = job.media_id, job.requester_user_id
+
+    async def work(db: Session, runtime: Runtime) -> _Settled:
         get_repeatable_read_db(db)
-        media = db.get(Media, media_uuid, options=(defer(Media.plain_text),))
-        if media is None or not can_read_media(db, requester_user_id, media_uuid):
-            db.rollback()
-            return _queue_only_failure(context, payload.purpose, "access_revoked")
-        if (
-            not is_metadata_enrichment_eligible(
-                kind=media.kind, processing_status=media.processing_status
-            )
-            or metadata_purpose(media) != payload.purpose
-        ):
-            db.rollback()
-            return _queue_only_failure(context, payload.purpose, "no_longer_eligible")
-        owner = Owner("media_enrichment", media_uuid, requester_user_id, context)
-        if isinstance(payload, TitleMetadataJobPayload):
-            try:
-                title_input = build_x_title_input(
-                    db, media, source_attempt_id=payload.source_attempt_id
-                )
-            except XTitleSourceRejected as rejection:
-                db.rollback()
-                return _queue_only_failure(context, payload.purpose, rejection.code)
-            except XTitleInputTooLarge:
-                db.rollback()
-                return _queue_only_failure(context, payload.purpose, "input_too_large")
-            db.rollback()
-            research = title_input
-            terminal = await generate(
+        research = _research(db, job)
+        db.rollback()
+        if isinstance(research, str):
+            return _settle_refusal(context, job.purpose, research)
+        owner = Owner("media_enrichment", media_id, requester, context)
+        if isinstance(research, XTitleInput):
+            title_input = research
+            terminal: Terminal[MetadataFindings] | Terminal[AcceptedXTitle] = await generate(
                 runtime,
                 owner=owner,
                 operation="media_title",
@@ -165,221 +199,157 @@ def enrich_metadata(
                 decode=lambda out: accept_x_title(out, source=title_input),
             )
         else:
-            try:
-                research = build_metadata_research_input(db, media)
-            except MetadataInputTooLarge:
-                db.rollback()
-                return _queue_only_failure(context, payload.purpose, "input_too_large")
-            db.rollback()
-            intent = _intent(research.user_content)
-            handles = admitted_contributor_handles(intent.input)
+            handles = research.handles
+            instructions, schema = research_intent_definition()
             terminal = await generate(
                 runtime,
                 owner=owner,
                 operation="metadata_enrichment",
-                intent=intent,
-                decode=lambda out: validate_structured_enrichment(out, admitted_handles=handles),
-                tools=Tools("MetadataResearch", frozenset({f"media:{media_uuid}"})),
+                intent=GenerationIntent(
+                    instructions=instructions,
+                    input=research.user_content,
+                    output=JsonSchemaOutput(
+                        kind="JsonSchema",
+                        name="media_metadata_enrichment",
+                        schema=schema,
+                        strict=True,
+                    ),
+                ),
+                decode=lambda out: accept_findings(out, handles=handles),
+                tools=Tools("MetadataResearch", frozenset({f"media:{media_id}"})),
             )
-        with runtime.session_factory() as publication_db:
+        with runtime.session_factory() as publication:
             return retry_serializable(
-                publication_db,
+                publication,
                 "metadata_enrichment.publish",
-                lambda: _publish(publication_db, context, payload, research, terminal),
+                lambda: _publish(publication, context, job, research, terminal),
             )
 
     return run_generation_job("metadata_generation", context, work)
 
 
-def _queue_only_failure(
+def _settle_refusal(
     context: JobExecutionContext, purpose: MetadataPurpose, code: MetadataFailureCode
-) -> _JobResult:
+) -> _Settled:
     with get_session_factory()() as db:
 
-        def settle() -> _JobResult:
-            completed_at = db.scalar(text("SELECT clock_timestamp()"))
+        def settle() -> _Settled:
             result = _settlement(
-                MetadataFailedOutcome(purpose=purpose, completed_at=completed_at, reason=code)
+                MetadataFailedOutcome(purpose=purpose, completed_at=_now(db), reason=code)
             )
             if finish_job(db, context=context, result=result) is None:
                 db.rollback()
-                return {"status": "skipped", "reason": "claim_lost_before_publication"}
+                return _CLAIM_LOST
             db.commit()
             return result
 
         return retry_serializable(db, "metadata_enrichment.reject", settle)
 
 
-def _intent(user_content: str) -> GenerationIntent:
-    instructions, output_schema = metadata_enrichment_agent_definition()
-    return GenerationIntent(
-        instructions=instructions,
-        input=user_content,
-        output=JsonSchemaOutput.model_validate(
-            {
-                "kind": "JsonSchema",
-                "name": "media_metadata_enrichment",
-                "schema": output_schema,
-                "strict": True,
-            }
-        ),
-    )
-
-
-def _settlement(outcome: MetadataOutcome) -> _JobResult:
-    result = outcome.model_dump(mode="json")
-    if outcome.status == "completed":
-        return result
-    code = (
-        "E_METADATA_NO_FINDINGS"
-        if outcome.status == "no_findings"
-        else f"E_METADATA_{outcome.reason.upper()}"
-    )
-    return TerminalJobFailure(
-        result_payload=result,
-        error_code=code,
-        error_message="no metadata found"
-        if outcome.status == "no_findings"
-        else f"metadata {outcome.purpose} failed: {outcome.reason}",
-    )
-
-
 def _publish(
     db: Session,
     context: JobExecutionContext,
-    payload: MetadataJobPayload,
+    job: MetadataJobPayload,
     research: MetadataResearchInput | XTitleInput,
-    terminal: Terminal[AcceptedMetadataEnrichment] | Terminal[AcceptedXTitle],
-) -> _JobResult:
-    """The claim-fenced publication transaction; the queue stores its settlement."""
-    media_id, requester_user_id = payload.media_id, payload.requester_user_id
-    # Media row before queue rows: the retry lifecycle locks in that same order.
+    terminal: Terminal[MetadataFindings] | Terminal[AcceptedXTitle],
+) -> _Settled:
+    # The media row before the claim: admission and enqueue lock in that order.
     media = db.scalar(
-        select(Media).options(defer(Media.plain_text)).where(Media.id == media_id).with_for_update()
+        select(Media)
+        .options(defer(Media.plain_text))
+        .where(Media.id == job.media_id)
+        .with_for_update()
     )
     if lock_running_job_claim(db, context=context) is None:
         db.rollback()
-        return {"status": "skipped", "reason": "claim_lost_before_publication"}
+        return _CLAIM_LOST
 
-    def finish(outcome: MetadataOutcome) -> _JobResult:
+    def finish(outcome: MetadataOutcome) -> _Settled:
         result = _settlement(outcome)
-        if finish_job(db, context=context, result=result) is None:
-            db.rollback()
-            # justify-defect: the exact running claim is locked until this
-            # transaction commits; publication cannot lose it halfway through.
-            raise AssertionError("locked metadata claim disappeared during publication")
-        if isinstance(
-            outcome, MetadataBibliographyCompletedOutcome | MetadataTitleCompletedOutcome
+        finish_job(db, context=context, result=result)  # the claim is locked: it cannot vanish
+        if (
+            isinstance(
+                outcome, MetadataBibliographyCompletedOutcome | MetadataTitleCompletedOutcome
+            )
+            and outcome.changed_fields
         ):
-            if outcome.changed_fields:
-                record_input_change(db)
+            record_input_change(db)
         db.commit()
         return result
 
-    def failed(code: MetadataFailureCode) -> _JobResult:
-        completed_at = db.scalar(text("SELECT clock_timestamp()"))
+    def failed(code: MetadataFailureCode) -> _Settled:
         return finish(
-            MetadataFailedOutcome(purpose=payload.purpose, completed_at=completed_at, reason=code)
+            MetadataFailedOutcome(purpose=job.purpose, completed_at=_now(db), reason=code)
         )
 
-    if media is None or not can_read_media(db, requester_user_id, media_id):
-        return failed("access_revoked")
+    if (refusal := _refusal(db, media, job)) is not None:
+        return failed(refusal)
+    assert media is not None  # _refusal answers access_revoked for a missing media
+    # A title's captured source is checked before its generation's outcome.
     if (
-        not is_metadata_enrichment_eligible(
-            kind=media.kind, processing_status=media.processing_status
-        )
-        or metadata_purpose(media) != payload.purpose
+        isinstance(job, TitleMetadataJobPayload)
+        and (code := _stale(db, media, job, research)) is not None
     ):
-        return failed("no_longer_eligible")
-    if isinstance(payload, TitleMetadataJobPayload):
-        # justify-defect: the frozen payload chooses this attempt's input contract.
-        if not isinstance(research, XTitleInput):
-            raise AssertionError("title job requires title input")
-        try:
-            current = build_x_title_input(db, media, source_attempt_id=payload.source_attempt_id)
-        except XTitleSourceRejected as rejection:
-            return failed(rejection.code)
-        except XTitleInputTooLarge:
-            return failed("stale_input")
-        if current.fingerprint != research.fingerprint:
-            return failed("stale_input")
+        return failed(code)
     if isinstance(terminal, Failed):
         return failed(_FAILURE_CODES[terminal.code])
     if not isinstance(terminal, Succeeded):
         return failed("cancelled")
-    if isinstance(payload, TitleMetadataJobPayload):
-        # justify-defect: the title generation decoder returns only AcceptedXTitle.
-        if not isinstance(terminal.value, AcceptedXTitle):
-            raise AssertionError("title job requires accepted title output")
-        changed_title = terminal.value.title != media.title
-        if changed_title and not replace_reader_document_title(
-            db, media=media, title=terminal.value.title
-        ):
-            # justify-defect: captured x evidence and a readable source publish together.
+    if isinstance(terminal.value, AcceptedXTitle):
+        title = terminal.value
+        changed_title = title.title != media.title
+        # justify-defect: captured x evidence and its readable source publish together.
+        if changed_title and not replace_reader_document_title(db, media=media, title=title.title):
             raise AssertionError("x title publication requires its reader publication")
-        completed_at = _stamp_success(db, media)
         return finish(
             MetadataTitleCompletedOutcome(
                 purpose="title",
-                completed_at=completed_at,
+                completed_at=_stamp(db, media),
                 changed_fields=["title"] if changed_title else [],
-                disposition=terminal.value.disposition,
+                disposition=title.disposition,
             )
         )
-    # justify-defect: bibliographic input and output follow the frozen purpose.
-    if not isinstance(research, MetadataResearchInput) or not isinstance(
-        terminal.value, AcceptedMetadataEnrichment
-    ):
-        raise AssertionError("bibliography job requires bibliographic input and output")
-    lock_publication_generation(db, media_id=media_id)
+    lock_publication_generation(db, media_id=media.id)
+    if (code := _stale(db, media, job, research)) is not None:
+        return failed(code)
+    findings = terminal.value
+    unresolved = unresolved_fields(findings)
+    if len(unresolved) == len(METADATA_FIELDS):
+        return finish(MetadataNoFindingsOutcome(purpose="bibliography", completed_at=_now(db)))
     try:
-        current = build_metadata_research_input(db, media)
-    except MetadataInputTooLarge:
-        # The admitted input fit; enlarged current facts invalidate that input.
-        return failed("stale_input")
-    if current.fingerprint != research.fingerprint:
-        return failed("stale_input")
-    enrichment = terminal.value
-    if not enrichment.has_findings:
-        return finish(
-            MetadataNoFindingsOutcome(
-                purpose="bibliography", completed_at=db.scalar(text("SELECT clock_timestamp()"))
-            )
-        )
-    try:
-        prepared_credits = prepare_observed_role_slices_in_current_transaction(
+        credits = prepare_observed_role_slices_in_current_transaction(
             db,
             target=MediaTarget(media.id),
-            observation=enrichment.contributor_observation(),
+            observation=contributor_observation(findings),
             source="metadata_enrichment",
         )
     except ContributorObservationRejected:
         return failed("invalid_output")
-    # All domain rejection precedes every proposed write. Unexpected writer
-    # failures roll back this whole serializable attempt.
-    changed = merge_enrichment(db, media, enrichment)
-    credit_result = apply_prepared_role_slices_in_current_transaction(db, prepared=prepared_credits)
-    if credit_result.changed:
+    # Every rejection precedes every write; a writer failure rolls back the whole attempt.
+    changed = merge_findings(db, media, findings)
+    applied = apply_prepared_role_slices_in_current_transaction(db, prepared=credits)
+    if applied.changed:
         changed.append("contributors")
-    completed_at = _stamp_success(db, media)
     return finish(
         MetadataBibliographyCompletedOutcome(
             purpose="bibliography",
-            completed_at=completed_at,
+            completed_at=_stamp(db, media),
             changed_fields=changed,
-            unresolved_fields=list(enrichment.unresolved_fields),
-            retained_manual_authors=credit_result.retained_manual_authors,
+            unresolved_fields=unresolved,
+            retained_manual_authors=applied.retained_manual_authors,
         )
     )
 
 
-def _stamp_success(db: Session, media: Media) -> datetime:
-    completed_at = db.execute(
+def _stamp(db: Session, media: Media) -> Any:
+    """A success's ``metadata_enriched_at``: strictly later than the last one."""
+    completed_at = db.scalar(
         text(
-            "SELECT greatest(clock_timestamp(), CAST(:previous AS timestamptz) + interval '1 microsecond')"
+            "SELECT greatest(clock_timestamp(),"
+            " CAST(:previous AS timestamptz) + interval '1 microsecond')"
         ),
         {"previous": media.metadata_enriched_at},
-    ).scalar_one()
+    )
     media.metadata_enriched_at = completed_at
     media.updated_at = completed_at
     return completed_at

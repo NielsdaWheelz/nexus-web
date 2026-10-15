@@ -25,7 +25,7 @@ exposes the provider's canonical import/source URL without creating Media,
 Library entries, files, source attempts, or jobs. It never exposes a fabricated
 `/browse/gutenberg/{id}` download path.
 
-Add passes the Preview-resolved canonical EPUB URL to `/media/from_url`; normal
+Add passes the Preview-resolved canonical EPUB URL to `/media/from-url`; normal
 remote-file validation, durable source acceptance, dedupe, Library assignment,
 and `ingest_media_source` processing remain the only acquisition path.
 

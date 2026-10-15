@@ -93,7 +93,7 @@ export default function AssistantMessage({
   const run = message.trust_trail?.run ?? null;
   const pending = message.status === "pending";
   const failed = message.status === "error" || message.status === "cancelled";
-  const saved = run?.execution.kind === "Present" ? run.execution.value : null;
+  const saved = run?.execution != null ? run.execution : null;
   const phase = (live?.execution ?? saved)?.phase ?? null;
   // cancel intent is monotonic, so either source saying so is exact
   const stopped = Boolean(
@@ -108,8 +108,8 @@ export default function AssistantMessage({
   const tools = Object.values(pending ? (live?.tools ?? {}) : {});
   const tool = tools.findLast((t) => t.running)?.label;
   const supportId =
-    run?.support_id.kind === "Present"
-      ? `Support ID: ${run.support_id.value}`
+    run?.support_id != null
+      ? `Support ID: ${run.support_id}`
       : undefined;
   const reconnect = () => store.reconnect(id);
 
@@ -256,7 +256,7 @@ export default function AssistantMessage({
           />
         </div>
       ) : null}
-      {run?.publication_warning.kind === "Present" ? (
+      {run?.publication_warning != null ? (
         <div className={styles.notice} role="status">
           <TriangleAlert size={15} aria-hidden="true" />
           <p>
@@ -324,9 +324,7 @@ export default function AssistantMessage({
             />
           ) : null}
           <ResourceActionMenu
-            actionSubject={{
-              ref: canonicalResourceRef({ scheme: "message", id }),
-            }}
+            resourceRef={canonicalResourceRef({ scheme: "message", id })}
             label="Actions for this answer"
             align="start"
           />

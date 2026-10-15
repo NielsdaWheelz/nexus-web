@@ -30,7 +30,7 @@ export default function PaneHeaderIdentity({
   let support: ReactNode = null;
   if (model.kind === "Section") {
     const context =
-      model.context.kind === "Present" ? [model.context.value] : [];
+      model.context !== null ? [model.context] : [];
     const meta =
       model.meta.kind === "Count"
         ? [

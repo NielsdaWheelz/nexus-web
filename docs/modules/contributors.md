@@ -17,7 +17,7 @@ works.
 | observation | `contributor_taxonomy` (`build_observation`, `ObservedRoleSlices`, `NOT_OBSERVED`) | none |
 | author pin | the PUT sets it; `prepare_observed_role_slices_in_current_transaction` honours it | `media.authors_manually_managed` |
 | works view | `contributors._WORKS_PLANS`; the web forwards url keys verbatim | url `sort`/`direction` |
-| manual edit (web) | `components/contributors/MediaAuthorsEditor` (load, edit, PUT, reconcile) | rows, notice, mutation id |
+| manual edit (web) | `components/contributors/MediaAuthorsEditor` (load, edit, PUT, reconcile) | rows (a new person's minted id), notice |
 | credit presentation (web) | `lib/contributors/credits.ts` | none |
 
 `contributors.py` is the facade every other module calls: search, detail, works,
@@ -43,9 +43,10 @@ the saved-epub repair lives in `epub_contributor_repair.py`, gated on
 - I4 handles match `[a-z0-9]+(-[a-z0-9]+)*`, 3..80; they grant nothing and never
   change. a new person takes `slug≤32-<12 hex of sha256(name key)>` while it is
   free, else that base plus 12 random hex.
-- I5 author edits are creator-only, serializable, and replayed per
-  `(viewer, "media:{id}:authors", clientMutationId)` over the field-name request
-  bytes; another body under a used id is 409 `E_IDEMPOTENCY_KEY_REPLAY_MISMATCH`.
+- I5 author edits are creator-only, serializable and absolute (last writer
+  wins): a resend applies the same list again. a new person takes the client's
+  id, so a resend that landed binds the person it created (if visible, else 422
+  `E_AUTHOR_NOT_SELECTABLE`) instead of creating another.
 - I6 publication plans the whole roster read-only before any write (prepare) and
   writes on the caller's transaction (apply). prepare rejects a bound handle that
   is missing, combined with a key, or not credited on that media, and, for
@@ -76,19 +77,18 @@ publication orders sort by `(date_missing asc, date, title, href)`, so undated
 works stay last both ways. cursors bind viewer, handle and view (`AuthorWorks`,
 architecture §8.12): a cursor issued for another binding is 400
 `E_INVALID_CURSOR`. podcast works carry role facts and no date ("Publication date
-unknown"); catalogue works carry their author credits and no action subject. the
+unknown"); catalogue works carry their author credits and no action ref. the
 pane drains every page while active (`useServerList`), so its count and filter
 cover all works; a failed continuation keeps the rows and offers Retry, a
 rejected cursor Refresh list.
 
 ## media authors
 
-`PUT /media/{id}/authors` takes `{clientMutationId, mode: "manual", authors[≤20]
-{creditedName, binding: {kind: "existing", contributorHandle} | {kind: "new",
-displayName}}}` or `{clientMutationId, mode: "automatic"}` (camel keys only) and
-answers `{data: {authorMode}}`. manual replaces the author slice in the sent
+`PUT /media/{id}/authors` takes `{mode: "manual", authors[≤20] {credited_name,
+binding: {kind: "existing", contributor_handle} | {kind: "new", id,
+display_name}}}` or `{mode: "automatic"}` and answers `{data: {author_mode}}`. manual replaces the author slice in the sent
 order and pins it; automatic releases the pin and keeps the rows until the next
 observation. a pinned media withholds automatic author proposals and reports
-`retained_manual_authors`. the editor reuses its mutation id while the body is
-unchanged and treats a confirmed PUT as the commit point: a failure after it
-never re-sends.
+`retained_manual_authors`. the editor mints a new person's id when the row is
+added, keeps it across retries and treats a confirmed PUT as the commit point: a
+failure after it never re-sends.

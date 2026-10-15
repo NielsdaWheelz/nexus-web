@@ -25,7 +25,7 @@ from nexus.services.resource_graph.edges import (
 )
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
 from nexus.services.resource_graph.resolve import ResolvedResource, resolve_refs
-from nexus.services.resource_items.capabilities import resource_can_attach
+from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.routing import resource_activations_for_refs
 
 
@@ -101,7 +101,7 @@ def add_context_ref_without_commit(
     """Attach ``target`` automatically at the next rank, under the chat's lock; ``None``
     when it is already a member."""
     _owned_chat(db, viewer_id, conversation_id)
-    if not resource_can_attach(target):
+    if not capability(target.scheme).attachable:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "Resource cannot be attached to conversation context"
         )

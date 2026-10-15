@@ -11,8 +11,7 @@ their owning media follows canonical dedupe so loser teardown cannot erase
 the accepted source identity's resolution.
 
 No policy, no scheduling, no domain decisions — these are the final insert
-adapters for the two tables, which is why they convert owned `Presence` to
-column `NULL` (`docs/rules/boundaries.md`). The two queue hooks at the end
+adapters for the two tables. The two queue hooks at the end
 translate a job's transition into its history, inside that transition.
 """
 
@@ -56,15 +55,8 @@ from nexus.schemas.import_history import (
     history_payload,
     queue_failure_code,
 )
-from nexus.schemas.presence import (
-    Presence,
-    Present,
-    absent,
-    nullable_from_presence,
-    presence_from_nullable,
-    present,
-)
-from nexus.services.source_history import source_failure_progress, source_history_stage
+from nexus.services.source_types import source_failure_progress, source_history_stage
+from nexus.services.suggestion_changes import record_input_change
 
 _APPEND_UPLOAD_EVENT = text(
     """
@@ -86,8 +78,8 @@ def append_upload_event(
     *,
     session_id: UUID,
     facts: UploadFacts,
-    stage: Presence[Stage],
-    failure_code: Presence[SafeFailureCode],
+    stage: Stage | None,
+    failure_code: SafeFailureCode | None,
 ) -> UUID:
     """Record one upload-session event. `occurred_at` is the database clock."""
     event_id = new_uuid7()
@@ -97,8 +89,8 @@ def append_upload_event(
             "id": event_id,
             "session_id": session_id,
             "event_type": history_event_type(facts),
-            "stage": nullable_from_presence(stage),
-            "failure_code": nullable_from_presence(failure_code),
+            "stage": stage,
+            "failure_code": failure_code,
             "payload": history_payload(facts),
         },
     )
@@ -110,8 +102,8 @@ def append_processing_event(
     *,
     media_id: UUID,
     facts: SourceFacts | IndexFacts,
-    stage: Presence[Stage],
-    failure_code: Presence[SafeFailureCode],
+    stage: Stage | None,
+    failure_code: SafeFailureCode | None,
 ) -> UUID:
     """Record one source-ingest or content-index event for a media."""
     event_id = new_uuid7()
@@ -121,8 +113,8 @@ def append_processing_event(
             "id": event_id,
             "media_id": media_id,
             "event_type": history_event_type(facts),
-            "stage": nullable_from_presence(stage),
-            "failure_code": nullable_from_presence(failure_code),
+            "stage": stage,
+            "failure_code": failure_code,
             "payload": history_payload(facts),
         },
     )
@@ -163,7 +155,7 @@ def rehome_source_supersessions(
     )
 
 
-def source_supersession_media_id(db: Session, *, source_attempt_id: UUID) -> Presence[UUID]:
+def source_supersession_media_id(db: Session, *, source_attempt_id: UUID) -> UUID | None:
     """Resolve a superseded acceptance independently of its retired attempt/job.
 
     Repeated executions may record the same supersession. Distinct surviving
@@ -187,7 +179,7 @@ def source_supersession_media_id(db: Session, *, source_attempt_id: UUID) -> Pre
         owners.add(row.media_id)
     if len(owners) > 1:
         raise AssertionError("accepted source attempt has multiple canonical media owners")
-    return presence_from_nullable(next(iter(owners), None))
+    return next(iter(owners), None)
 
 
 def _owner_sources(owner: HistoryOwner) -> tuple[list[tuple[HistoryTable, str]], dict[str, object]]:
@@ -201,9 +193,9 @@ def _owner_sources(owner: HistoryOwner) -> tuple[list[tuple[HistoryTable, str]],
             (UPLOAD_EVENTS_TABLE, "session_id = :session_id")
         ]
         params: dict[str, object] = {"session_id": owner.session_id}
-        if isinstance(owner.media_id, Present):
+        if owner.media_id is not None:
             sources.append((PROCESSING_EVENTS_TABLE, "media_id = :media_id"))
-            params["media_id"] = owner.media_id.value
+            params["media_id"] = owner.media_id
         return sources, params
     return [(PROCESSING_EVENTS_TABLE, "media_id = :media_id")], {"media_id": owner.media_id}
 
@@ -253,8 +245,8 @@ def history_entries(
                 HistoryEntry(
                     id=row["id"],
                     occurred_at=row["occurred_at"],
-                    stage=present("Metadata"),
-                    failure_code=presence_from_nullable(row["failure_code"]),
+                    stage="Metadata",
+                    failure_code=row["failure_code"],
                     facts=MetadataOperationFacts(operation=operations[row["storage_id"]]),
                 )
             )
@@ -278,20 +270,20 @@ def read_history_page(
     *,
     viewer_id: UUID,
     owner: HistoryOwner,
-    before: Presence[tuple[datetime, str]],
+    before: tuple[datetime, str] | None,
     limit: int,
 ) -> list[HistoryEntry]:
     """Recorded events and retained operations, keyset-paged by time and text id."""
     params: dict[str, object] = {"viewer_id": viewer_id, "limit": limit}
     if isinstance(owner, UploadHistoryOwner):
         params["session_id"] = owner.session_id
-        params["media_id"] = nullable_from_presence(owner.media_id)
+        params["media_id"] = owner.media_id
     else:
         params["session_id"] = None
         params["media_id"] = owner.media_id
     keyset = ""
-    if isinstance(before, Present):
-        params["before_occurred_at"], params["before_id"] = before.value
+    if before is not None:
+        params["before_occurred_at"], params["before_id"] = before
         keyset = "WHERE (occurred_at, id) < (:before_occurred_at, :before_id)"
     relation = events_of_import_sql(session_id_expr=":session_id", media_id_expr=":media_id")
     rows = (
@@ -324,8 +316,8 @@ def history_entry(
         {
             "id": f"{'upload' if table == UPLOAD_EVENTS_TABLE else 'processing'}:{event_id}",
             "occurred_at": occurred_at,
-            "stage": presence_from_nullable(stage),
-            "failure_code": presence_from_nullable(failure_code),
+            "stage": stage,
+            "failure_code": failure_code,
             "facts": history_facts(table=table, event_type=event_type, payload=payload),
         }
     )
@@ -366,12 +358,14 @@ def on_source_job_outcome(db: Session, job: JobRow, execution_id: UUID) -> None:
         .one_or_none()
     )
     if attempt is None:
+        if job.status == "dead":
+            # The preceding source on_dead reaction may have published failure.
+            # Its final history reaction owns invalidation after all source writes.
+            record_input_change(db)
         return
     failure, terminal, next_at = _queue_outcome(job)
-    stage: Presence[Stage] = present(
-        source_history_stage(
-            source_type=attempt["source_type"], processing_stage=attempt["processing_stage"]
-        )
+    stage: Stage | None = source_history_stage(
+        source_type=attempt["source_type"], processing_stage=attempt["processing_stage"]
     )
     if failure is not None:
         progress = source_failure_progress(
@@ -382,23 +376,21 @@ def on_source_job_outcome(db: Session, job: JobRow, execution_id: UUID) -> None:
         )
         facts = SourceFailed(
             source_attempt_id=attempt_id,
-            execution_id=present(execution_id),
+            execution_id=execution_id,
             origin="Execution",
             terminal=terminal,
             progress=progress,
         )
         append_processing_event(
-            db, media_id=media_id, facts=facts, stage=stage, failure_code=present(failure)
+            db, media_id=media_id, facts=facts, stage=stage, failure_code=failure
         )
     if next_at is not None:
         retry = SourceRetryScheduled(
             source_attempt_id=attempt_id,
-            execution_id=present(execution_id),
+            execution_id=execution_id,
             next_attempt_at=next_at,
         )
-        append_processing_event(
-            db, media_id=media_id, facts=retry, stage=stage, failure_code=absent()
-        )
+        append_processing_event(db, media_id=media_id, facts=retry, stage=stage, failure_code=None)
 
 
 def on_index_job_outcome(db: Session, job: JobRow, execution_id: UUID) -> None:
@@ -407,15 +399,15 @@ def on_index_job_outcome(db: Session, job: JobRow, execution_id: UUID) -> None:
     if db.execute(text("SELECT 1 FROM media WHERE id = :id"), {"id": media_id}).first() is None:
         return
     failure, terminal, next_at = _queue_outcome(job)
-    execution = {"revision": revision, "job_id": job.id, "execution_id": present(execution_id)}
-    stage: Presence[Stage] = present("Index")
+    execution = {"revision": revision, "job_id": job.id, "execution_id": execution_id}
+    stage: Stage | None = "Index"
     if failure is not None:
         append_processing_event(
             db,
             media_id=media_id,
             facts=IndexFailed(**execution, origin="Execution", terminal=terminal),
             stage=stage,
-            failure_code=present(failure),
+            failure_code=failure,
         )
     if next_at is not None:
         append_processing_event(
@@ -423,7 +415,7 @@ def on_index_job_outcome(db: Session, job: JobRow, execution_id: UUID) -> None:
             media_id=media_id,
             facts=IndexRetryScheduled(**execution, next_attempt_at=next_at),
             stage=stage,
-            failure_code=absent(),
+            failure_code=None,
         )
 
 

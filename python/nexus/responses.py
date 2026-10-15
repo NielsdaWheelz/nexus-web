@@ -1,14 +1,12 @@
-"""API response envelope helpers and exception handlers.
+"""The envelope every answer uses, and the handlers that render errors in it.
 
-All API responses use a consistent envelope:
-- Success: { "data": ... }
-- Error: { "error": { "code": "E_...", "message": "...", "request_id": "..." } }
+- success: ``{"data": ...}`` or ``{"data": [...], "page": {...}}``;
+- error: ``{"error": {"code", "message", "request_id"?, "details"?}}``. The status is the
+  code's own (``ApiErrorCode.status``), so a client branches on ``code``.
 
-The request_id is included in error responses for debugging and support.
-
-A typed route returns ``Data[XOut]`` or ``DataPage[XOut, PageOut]`` and FastAPI
-serializes it by alias; ``ok``/``ok_page``/``success_response`` serve the routes
-not yet typed (docs/local-rules/typed-wire.md).
+A typed route returns ``Data[XOut]`` or ``DataPage[XOut, PageOut]``. ``ok``, ``ok_page``
+and ``success_response`` serve the routes not yet typed and leave with the last of them.
+The last-resort 500 is the edge middleware's (``nexus.api.edge``).
 """
 
 from collections.abc import Sequence
@@ -17,15 +15,20 @@ from typing import Any
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy.exc import TimeoutError as SAQueuePoolTimeout
-from sqlalchemy.pool import QueuePool
-from starlette.requests import ClientDisconnect
+from starlette.exceptions import HTTPException
 
-from nexus.db.engine import get_engine
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger, get_request_id
 
 logger = get_logger(__name__)
+_HTTP_CODES = {
+    400: ApiErrorCode.E_INVALID_REQUEST,
+    401: ApiErrorCode.E_UNAUTHENTICATED,
+    403: ApiErrorCode.E_FORBIDDEN,
+    404: ApiErrorCode.E_NOT_FOUND,
+    405: ApiErrorCode.E_INVALID_REQUEST,
+    422: ApiErrorCode.E_INVALID_REQUEST,
+}
 
 
 class Data[T](BaseModel):
@@ -42,128 +45,47 @@ class DataPage[T, P](BaseModel):
 
 
 def success_response(data: Any) -> dict[str, Any]:
-    """Create a success response envelope.
-
-    Args:
-        data: The response data to wrap.
-
-    Returns:
-        Dict with "data" key containing the response.
-    """
     return {"data": data}
 
 
-def ok(data: BaseModel | Sequence[BaseModel], *, by_alias: bool = False) -> dict[str, Any]:
-    """Envelope a model (or list of models) as ``{"data": ...}``.
-
-    The single owner of the serialize-then-envelope projection for model payloads,
-    replacing the hand-written ``success_response(x.model_dump(mode="json"))`` idiom.
-    Binary/204 and named-key wrapper responses are not plain model payloads and keep
-    their own shape.
-    """
+def ok(data: BaseModel | Sequence[BaseModel]) -> dict[str, Any]:
     if isinstance(data, BaseModel):
-        return {"data": data.model_dump(mode="json", by_alias=by_alias)}
-    return {"data": [item.model_dump(mode="json", by_alias=by_alias) for item in data]}
+        return {"data": data.model_dump(mode="json")}
+    return {"data": [item.model_dump(mode="json") for item in data]}
 
 
-def ok_page(
-    items: Sequence[BaseModel], page: BaseModel, *, by_alias: bool = False
-) -> dict[str, Any]:
-    """Envelope a page of models as ``{"data": [...], "page": {...}}``."""
+def ok_page(items: Sequence[BaseModel], page: BaseModel) -> dict[str, Any]:
     return {
-        "data": [item.model_dump(mode="json", by_alias=by_alias) for item in items],
-        "page": page.model_dump(mode="json", by_alias=by_alias),
+        "data": [item.model_dump(mode="json") for item in items],
+        "page": page.model_dump(mode="json"),
     }
 
 
 def error_response(
-    code: ApiErrorCode,
-    message: str,
-    request_id: str | None = None,
-    details: dict[str, Any] | None = None,
+    code: ApiErrorCode, message: str, details: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Create an error response envelope.
-
-    Args:
-        code: The error code enum value.
-        message: Human-readable error message.
-        request_id: Optional request ID for correlation (auto-populated from context if None).
-
-    Returns:
-        Dict with "error" key containing code, message, and request_id.
-    """
-    # Get request_id from context if not explicitly provided
-    if request_id is None:
-        request_id = get_request_id()
-
+    """The error envelope, carrying the current request's id."""
     error: dict[str, Any] = {"code": code.value, "message": message}
     if details is not None:
         error["details"] = details
+    request_id = get_request_id()
     if request_id:
         error["request_id"] = request_id
-
     return {"error": error}
 
 
 async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Handle ApiError exceptions and return proper JSON response."""
-    if not isinstance(exc, ApiError):
-        raise exc
-    logger.warning(
-        "api_error",
-        code=exc.code.value,
-        status=exc.status_code,
-        message=exc.message,
-        path=request.url.path,
-        method=request.method,
+    assert isinstance(exc, ApiError)
+    logger.warning("api_error", code=exc.code.value, status=exc.status_code, message=exc.message)
+    return JSONResponse(
+        status_code=exc.status_code, content=error_response(exc.code, exc.message, exc.details)
     )
+
+
+async def http_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    assert isinstance(exc, HTTPException)
+    code = _HTTP_CODES.get(exc.status_code, ApiErrorCode.E_INTERNAL)
     return JSONResponse(
         status_code=exc.status_code,
-        content=error_response(exc.code, exc.message, details=exc.details),
-    )
-
-
-async def http_exception_handler(request: Request, exc: Any) -> JSONResponse:
-    """Handle FastAPI HTTPException and return proper JSON response."""
-    # Map common HTTP status codes to our error codes
-    status_to_code = {
-        400: ApiErrorCode.E_INVALID_REQUEST,
-        401: ApiErrorCode.E_UNAUTHENTICATED,
-        403: ApiErrorCode.E_FORBIDDEN,
-        404: ApiErrorCode.E_NOT_FOUND,
-        422: ApiErrorCode.E_INVALID_REQUEST,
-    }
-    code = status_to_code.get(exc.status_code, ApiErrorCode.E_INTERNAL)
-    message = str(exc.detail) if exc.detail else "An error occurred"
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=error_response(code, message),
-    )
-
-
-async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Handle unhandled exceptions and return 500 with E_INTERNAL.
-
-    Logs the exception server-side but never leaks details to client.
-    """
-    if isinstance(exc, ClientDisconnect):
-        return JSONResponse(
-            status_code=499,
-            content=error_response(ApiErrorCode.E_CLIENT_DISCONNECT, "Client disconnected"),
-        )
-    pool = get_engine().pool
-    if isinstance(exc, SAQueuePoolTimeout) and isinstance(pool, QueuePool):
-        logger.error(
-            "db_pool_exhausted",
-            pool_checked_out=pool.checkedout(),
-            pool_overflow=pool.overflow(),
-            pool_size=pool.size(),
-            path=request.url.path,
-        )
-    else:
-        logger.exception("Unhandled exception: %s", exc)
-
-    return JSONResponse(
-        status_code=500,
-        content=error_response(ApiErrorCode.E_INTERNAL, "Internal server error"),
+        content=error_response(code, str(exc.detail) if exc.detail else "An error occurred"),
     )

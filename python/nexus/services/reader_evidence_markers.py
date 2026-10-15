@@ -5,8 +5,7 @@ from __future__ import annotations
 from typing import cast
 from uuid import UUID
 
-from nexus.schemas.media import DocumentEmbedOut
-from nexus.schemas.presence import absent, present
+from nexus.schemas.document_embeds import DocumentEmbedOut
 from nexus.schemas.reader_document_map import (
     ReaderDocumentMapMarkerKind,
     ReaderDocumentMapMarkerOut,
@@ -83,7 +82,7 @@ def build_markers(
                     end_position=end_position,
                     tone=_ITEM_TONES[item.kind],
                     label=item.label,
-                    preview=item.excerpt.value if item.excerpt.kind == "Present" else None,
+                    preview=item.excerpt if item.excerpt is not None else None,
                 )
             )
     markers.sort(key=lambda marker: (marker.position, marker.kind, marker.item_id))
@@ -105,10 +104,10 @@ def _marker(
         kind=kind,
         item_id=item_id,
         position=position,
-        end_position=present(end_position) if end_position is not None else absent(),
+        end_position=end_position if end_position is not None else None,
         tone=tone,
         label=label,
-        preview=present(preview) if preview else absent(),
+        preview=preview if preview else None,
     )
 
 

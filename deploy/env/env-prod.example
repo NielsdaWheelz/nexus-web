@@ -18,9 +18,6 @@ SUPABASE_AUDIENCES=authenticated
 # Shared BFF -> FastAPI secret. Use the same value in Vercel and on the VPS.
 NEXUS_INTERNAL_SECRET=<generate-a-long-random-secret>
 
-# Browser origins used by FastAPI runtime policy.
-STREAM_CORS_ORIGINS=https://your-vercel-app.example.com
-
 # Public R2 S3 API origin. Shared because the backend signs presigned URLs
 # against this origin and the frontend CSP must allow browsers to connect to it.
 # Credentials and bucket names stay backend-only.

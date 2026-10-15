@@ -7,20 +7,22 @@ them.
 
 - **Lectern** — the viewer's ordered list of intentions: ensure, place, remove, order.
 - **Consumption state** — where the viewer stands with a media: an explicit
-  override (`finished` / `unread`), else positive podcast listening position
-  means in progress, else reader engagement, else
-  unread; plus the first-completion fact and the listening position under its
-  reset epoch.
+  override register (`finished` / `unread` / none, with a revision every write
+  advances and never reuses), else positive podcast listening position means
+  in progress, else reader engagement, else unread; plus the first-completion
+  fact and the listening position under its reset epoch.
 - **Audio session** — what one device is playing, owned by exactly one engine
   per device: an `<audio>` element in the browser, the media3 service in the
   Android shell.
 
-The synchronizations: **done** (finish + leave the Lectern + next readable),
-**natural end** (fenced finish + leave the Lectern + next audio, settled by
-whichever engine heard the end) and **resume** (the server decides where a
-play starts; the client asks it at play time). The server picks successors,
-decides origin (a media with a visible Lectern row advances at its end, one
-off the Lectern stops) and owns the "finished means start over" rule.
+The synchronizations: **done** (finish + leave the Lectern, then open the next
+readable row), **natural end** (fenced finish + leave the Lectern, then play
+the next audio row; settled by whichever engine heard the end) and **resume**
+(the server decides where a play starts; the client asks it at play time). One
+successor rule, on the client (`lecternNext`): the first row of the wanted
+activation after the media's row, from the head when it has none; a media off
+the Lectern stops at its end. The server owns the "finished means start over"
+rule.
 
 **quick reads** and **suggestions** sit beside the
 Lectern without owning queue state. Browse owns discovery and Preview; the
@@ -32,130 +34,135 @@ downloads are adjacent, not player state ([offline](offline.md)).
 
 1. Every write is serializable under the viewer row lock
    (`services/consumption/__init__.py: viewer_txn`).
-2. Commands replay by `clientMutationId` (`replayed_command`, memo in
-   `resource_mutations`).
-3. Listening writes are fenced by `reset_epoch` alone: last writer wins within
-   an epoch, a reset wins across epochs. `ResetProgress` bumps the epoch.
-4. A natural end retains its captured reset epoch and drains its own heartbeat
-   before using the acknowledged override revision. Later unread/reset commands
-   supersede it.
-5. One audio owner per device: the Android shell plays natively (or shows
+2. Every write is absolute and states its retry rule: Lectern placements put
+   the media where asked again; a removal of an absent row succeeds; finish
+   re-applies (no second completion); unread and reset re-apply (the fences
+   advance again).
+3. The override revision is never reused (reset and the clearing of unread
+   keep the row). A finish answers `Finish {revision, prior_status,
+   completion_id, removed}`; its undo, carrying that answer, applies only while
+   the override still holds that revision, and a resend that already landed
+   (the next revision, back in the prior status, the fact gone) succeeds.
+4. Listening writes are fenced by `reset_epoch` alone: last writer wins within
+   an epoch, a reset wins across epochs. Unread, reset and undo bump the epoch.
+5. A natural end is fenced on the override revision the device last saw and
+   the reset epoch of its terminal sample; a resend that already landed (the
+   next revision, finished, the same epoch) succeeds.
+6. One audio owner per device: the Android shell plays natively (or shows
    "Update Nexus for Android"), everything else plays in the browser.
-6. Raw device ids never leave the BFF; only sealed `ncd1.` handles do.
-7. A Lectern holds at most 2000 rows; media teardown removes every consumption
-   row of the media.
-8. The server owns successor choice, origin and the resume point.
+7. A Lectern holds at most 2000 rows, hidden ones included; media teardown
+   removes every consumption row of the media.
+8. A mounted reader or player of a media flushes and pauses its unsaved
+   progress before unread, reset and undo of that media, and reads the
+   server's after (`holdProgress`).
 
 ## Backend owners
 
 `python/nexus/services/consumption/`:
 
-- `lectern.py` — sole DML owner of `consumption_queue_items`. Positions are
-  dense over visible and hidden rows (a row is hidden while its media is not
-  visible to the viewer or is being torn down; hidden rows keep their slots).
-  `ensure_missing_in_txn` appends absent media at the absolute tail and preserves
-  existing identity, added time and position. `place` intentionally moves a block
-  to the first visible boundary or after a visible anchor;
-  `set_order` takes the exact visible permutation; `remove_media` returns the
-  visible index the row had (where the successor search starts); `restore`
-  puts back a removed row with its id and `added_at` (undo only).
+- `lectern.py` — sole DML owner of `consumption_queue_items` and the Lectern
+  read. Positions are dense over visible and hidden rows (a row is hidden while
+  its media is not visible to the viewer or is being torn down; hidden rows
+  keep their slots, since a placement permutes the visible rows through the
+  visible slots and a new row takes a new last slot, and they count toward the
+  cap). `place` puts one media first or
+  after another media's visible row (first when that row is absent or hidden);
+  a null placement only ensures membership: an absent media takes the absolute
+  tail and an existing row keeps its identity, added time and position;
+  `remove_media_in_txn` answers what an undo needs (`{item_id,
+  added_at, after_item_id}`); `restore_in_txn` puts that row back after its
+  former predecessor while it is visible, else first;
+  `append_missing_in_txn` and `remove_item_in_txn` serve the assistant and
+  podcast sync in the caller's transaction.
+- `state.py` — sole DML owner of `consumption_overrides`,
+  `reader_engagement_states` and `consumption_completion_facts`: the player
+  read, the reader cursor composition, listening and preview writes, finish,
+  undo, unread, reset, the natural-end settle, the podcast batch state and
+  media teardown.
 - `listening.py` — sole DML owner of `podcast_listening_states` (position,
   duration, nullable episode rate, reset epoch, `last_engaged_at`). A write is
   `UPDATE … WHERE reset_epoch = :epoch`, else an insert when the epoch is 0;
-  positions are clamped only to positive duration; an absent rate or duration keeps the
-  stored one. `install_preview` writes only when there is no progress.
+  positions are clamped only to positive duration; an absent rate or duration
+  keeps the stored one. `install_preview` writes only when there is no row.
 - `projection.py` — the read model other slices compose: the one read-state
   ladder in SQL (`engagement_fact_rows_sql`, `episode_state_*_sql`), read
-  states, recency and anchors, `player_descriptors` and `lectern_snapshot`.
-  A descriptor's `positionMs` is 0 when the episode is finished by override;
-  `playbackRate` is the episode
-  rate ?? the subscription default ?? 1; `podcastId` is present iff the viewer
-  subscribes.
-- `service.py` — the public facade: `get_lectern`, `get_player`, the Lectern and
-  consumption commands, `record_listening`, `install_preview_position`, the
-  reader cursor composition, the podcast batch state used by the podcasts
-  route, assistant ensure/remove and media teardown. It is the sole DML owner of
-  `consumption_overrides`, `reader_engagement_states` and
-  `consumption_completion_facts`.
-- `activity.py` (span ingest), `exclusions.py`, `stats.py`, `handles.py`,
-  `reader_cursor.py` — see [consumption-activity.md](consumption-activity.md)
-  and [reader-implementation.md](reader-implementation.md).
+  states (`Unread | InProgress | Finished`), engagement recency and anchors,
+  `player_descriptors`. A descriptor's `position_ms` is 0 when the episode is
+  finished by override; `playback_rate` is the episode rate ?? the
+  subscription default ?? 1; `podcast_id` is present iff the viewer subscribes.
+- `reader_cursor.py`, `activity.py`, `stats.py` — see
+  [reader-implementation.md](reader-implementation.md) and
+  [consumption-activity.md](consumption-activity.md).
 
 ## Wire
 
 ```http
-GET  /lectern                       -> LecternSnapshot
-POST /lectern/commands              EnsureItem | PlaceItems | RemoveItem | SetOrder
-POST /consumption/commands          EnsureMediaFinished | Done | SetUnread | ResetProgress
-                                    | UndoFinish | SettleNaturalEnd
-GET  /media/{id}/player             -> PlayerDescriptor (404 when not playable)
-PUT  /media/{id}/listening-state    {positionMs, durationMs, episodePlaybackRate, expectedResetEpoch} -> Data[ListeningPositionOut]
-POST /media/{id}/preview-position   {positionMs, durationMs} -> 204
-POST /consumption/activity          {mediaRef, deviceClass, batch} -> 204 (the BFF adds deviceId)
-GET  /lectern/suggestions, /lectern/quick-reads   (suggestions)
+GET    /lectern                       -> {items: [{media_summary, added_at, activation}], at_capacity}
+PUT    /lectern/items/{media_id}      {placement: First | After{media_id} | null} -> 204
+DELETE /lectern/items/{media_id}      -> 204
+POST   /media/{id}/finish             {leave_lectern} -> Finish
+POST   /media/{id}/finish/undo        Finish -> 204
+POST   /media/{id}/unread             -> 204
+POST   /media/{id}/progress/reset     -> 204
+POST   /media/{id}/natural-end        {terminal_listening, expected_override_revision} -> 204
+GET    /media/{id}/player             -> PlayerDescriptor (404 when not playable)
+PUT    /media/{id}/listening-state    ListeningIn -> ListeningPositionOut
+POST   /media/{id}/preview-position   {position_ms, duration_ms} -> 204
+GET    /lectern/suggestions, /lectern/quick-reads   (suggestions)
 ```
 
-`api/routes/lectern.py` owns the Lectern reads and the two command ports;
-`api/routes/playback.py` owns the player read, the listening write, the preview
-hand-off and activity capture (registered before the `media` router).
+`api/routes/consumption.py` owns the Lectern, its suggestions and the
+read-state writes; `api/routes/playback.py` the player read, the listening
+write and the preview hand-off (both registered before the `media` router).
 
-`EnsureItem {mediaId, clientMutationId}` acknowledges with `Ensured`; replay
-returns that receipt with a fresh snapshot and never reapplies a removed item.
-admission runs only after replay lookup. `LecternSnapshot.atCapacity` counts all
-canonical rows, including hidden members; its `items` remain visibility-filtered.
-snapshot absence therefore does not establish non-membership.
+A null placement is the ensure every user-facing add sends: its 204
+acknowledges membership, a resend never moves the row. `at_capacity` counts
+every row, hidden members included; `items` stay visibility-filtered, so a
+media's absence from them does not establish non-membership.
 
-A listening write answers 200 with the accepted
-`{positionMs, resetEpoch, consumptionOverrideRevision}` tuple. An accepted
+Errors: a placement 404 (unknown media), 400 (after itself), 409 `E_LIMIT`
+(2000 rows, an absent media only) or `E_MEDIA_DELETING`; an undo 409 `E_RESOURCE_CONFLICT`
+("Completion is no longer undoable") or `E_LIMIT` when its row cannot return;
+a settle 409 `E_RESOURCE_CONFLICT` when superseded, 404 when gone, 400
+`E_INVALID_KIND` for a non-episode. A listening write answers the accepted
+`{position_ms, reset_epoch, consumption_override_revision}`; an accepted
 position clears unread and, with known progress at least 95%, writes sticky
-finished under the same viewer lock. A stale epoch answers 409
+finished under the same lock. A stale epoch answers 409
 `E_STALE_LISTENING_REVISION` with that tuple in `error.details.current`; the
-writer adopts it with no read. A consumption command answers
-`ConsumptionResult {outcome: Done |
-Superseded | Gone, lectern, nextItem, finishId, progressState}`; `finishId` (the command's own
-`clientMutationId`) is present after EnsureMediaFinished and Done. `nextItem` is present only for `Done` (the
-first visible Readable row after the removed one) and `SettleNaturalEnd` (the
-first visible FooterAudio row after it), no wrap. `Superseded`: the override
-revision or the reset epoch moved. `Gone`: the media is no longer readable.
+writer adopts it. "Mark as played" changes state only; the row stays.
 
-`UndoFinish {mediaId, finishId, restore?}` is atomic and applies only while the
-override is still the one that finish wrote: the finish's replay memo records
-the override it replaced (absent, or its status and revision) and the
-first-completion fact it created, and the undo puts back exactly that override
-(a finish never moves progress, so this is the prior state) and deletes that
-fact; after a Done it re-inserts the row with its id and `addedAt` after its
-nearest surviving predecessor (first when that is gone). "Mark as played"
-changes state only; the row stays where it is.
+Change topics: Lectern writes, finish, undo and settle publish `Lectern`;
+finish, undo, unread, reset and settle publish `Consumption`.
 
 ## Frontend owners
 
 `AuthenticatedShell` mounts `MediaSummaryProvider` above `LecternProvider` and
 `GlobalPlayerProvider`, which wraps the workspace and `GlobalPlayerSurfaces`.
 
-- `lib/lectern/contract.ts` — branded ids and the wire projected once into
-  domain values. `LecternProvider.tsx` — the snapshot resource and every
-  Lectern/consumption command on one promise chain (installs never
-  interleave). ensure retains its exact command until receipt, bounds each send
-  and body read at 30 seconds, and owns dismissible recovery above pane lifetime.
-  the shared api client classifies failed body acquisition as transport regardless
-  of status; completed malformed responses remain defects. ordinary command
-  failures refetch then rethrow. the `progressState` event after
-  ResetProgress, and paired progress-fence hooks that drain/gate then reconcile
-  mounted owners around unread, reset and undo. `useCompletionUndo.ts`
-  — the ten-second "Marked as finished" HUD. `view.ts` — the url-only sort.
+- `lib/lectern/lectern.tsx` — the one shared Lectern read
+  (`usePaneFreeServerValue`, rereads on `Lectern`, `Metadata` and when the page
+  returns to the screen at most once a minute), `lecternNext`, the two writes
+  and the adds awaiting an answer: an add keeps its request until its 204,
+  bounds each send at 30 seconds, and after a lost answer offers "check add"
+  (the same idempotent PUT) in a dismissible notice above pane lifetime; a
+  second add of that media joins the first. `lib/consumption/state.tsx` — finish with the ten-second "Marked as
+  finished" HUD and Undo, unread, reset, the settle, and the `holdProgress`
+  registry the reader and the player join.
 - `app/(authenticated)/lectern/LecternPaneBody.tsx` — **On the lectern** (play
-  rows, sort, filter, drag reorder in Custom view), Quick reads, At hand.
-- `components/collections/LecternAddControl.tsx` — shared quick-read/transcript
-  add, frozen-request check and fresh membership status. receipt invalidates
-  action facts through `ensureAcknowledged`; only a fresh action snapshot supplies
-  presence/absence. unrelated edits remain available after uncertainty. dismissal
-  hides recovery without discarding identity; account teardown/reload ends it.
+  rows, one url `sort` key, filter, drag moves one row in Custom view), Quick
+  reads and Suggestions.
+- `components/collections/LecternAddControl.tsx` — the shared quick-read and
+  transcript add, its pending-add check and fresh membership status. it reads
+  the media's verbs on mount and again when its lectern membership changes;
+  only that fresh read supplies presence or absence. unrelated edits remain
+  available after uncertainty. dismissal hides recovery without discarding the
+  request; account teardown or reload ends it.
 - `lib/player/playerRuntime.tsx` — `GlobalPlayerProvider`: engine choice, the
   state/timeline context split, device history (previous restarts after 3 s,
   else pops back; next pops forward, else the next Lectern audio row), the fresh
   `GET /api/media/{id}/player` before a play of another media (2 s bound, else
   the descriptor it was given), serialized loads with the latest request
-  winning, remember-rate, adoption of a reset elsewhere, keyboard shortcuts.
+  winning, remember-rate, keyboard shortcuts.
   Every play of the loaded episode (bar, page, keyboard, transcript) goes to
   its engine, which owns where a resume starts.
 - Both engines resume alike. While the device holds a listening sample the
@@ -171,8 +178,11 @@ changes state only; the row stays where it is.
   buttons on Android.
 - `lib/player/browserEngine.ts` — the `<audio>` engine: listening writes (one
   flight, newest sample; at once on pause, seek and rate; every 15 s while
-  playing; `keepalive` on pagehide only with news), the recorder observer, the
-  Media Session and the natural-end settle (one id, retried on network or 5xx).
+  playing; `keepalive` on pagehide only with news), the activity observer, the
+  Media Session and the natural-end settle (retried on network or 5xx; on 204
+  it plays the next audio row it read from the Lectern before settling, from
+  the position a fresh `GET /media/{id}/player` reports, 2 s bound, else the
+  Lectern's copy).
   Only the attached episode samples the shared element: a load detaches the
   outgoing episode after taking its last sample, and its late writes send that. The episode rate
   is sent only after the listener sets one; until then the stored value stands.
@@ -191,8 +201,7 @@ changes state only; the row stays where it is.
 second while playing. Ops: `hello{accountId}`, `load{descriptor}`,
 `preview{descriptor}`, `play{key, descriptor?}` (the page's descriptor, for
 an unanswered resume), `pause{key}`, `seek{key, positionMs}`,
-`skip{key, deltaMs}`, `rate{key, value}`, `adopt{key, position}`,
-`fence{key}`, `reconcile{key}`,
+`skip{key, deltaMs}`, `rate{key, value}`, `fence{key}`, `reconcile{key}`,
 `volume{value}`, `shortenPauses{on}` (device default),
 `sessionShortenPauses{key, on|null}` (this session's override), `dismiss{}`.
 The object's name is the compatibility identity: an incompatible change renames
@@ -206,18 +215,18 @@ Every snapshot requires `consumptionRevision`. It advances after an acknowledged
 listening write so hosted list summaries refresh from accepted facts. Pending
 samples do not advance it. Backend, web and Android ship together for this cutover.
 
-unread/reset preparation drains the loaded episode's recorder before sending the
-command. a preparation timeout refuses that unsent command through existing
-transport feedback. reconciliation drains again before reading authority, even
-after a timed-out preparation; a failed read retains the workspace and saving
-gate. retry reads only, and separate play/seek resumes activity after adoption.
-an adoption timeout after a committed command retains local feedback rather than
-reporting that command as refused.
+unread/reset/undo preparation drains the loaded episode's recorder before
+sending the write. a preparation timeout refuses that unsent write through
+existing transport feedback. reconciliation drains again before reading
+authority, even after a timed-out preparation; a failed read retains the
+workspace and saving gate. retry reads only, and separate play/seek resumes
+activity after reconciliation.
 
 The native service owns ExoPlayer and the media session (notification and lock
 screen), listening writes, activity spans in a durable outbox, and natural ends:
-it posts `SettleNaturalEnd` itself with the webview's cookies and plays the
-returned `nextItem`, so an episode advances with the webview gone. A downloaded
+it posts `POST /media/{id}/natural-end` itself with the webview's cookies and,
+on 204, plays the first audio row after the ended one in the `GET /lectern` it
+read before settling, so an episode advances with the webview gone. A downloaded
 episode plays from its `OfflineStore` lease. Pause shortening is
 `skipSilenceEnabled`: this session's override ?? the podcast's mode ?? the
 device default, with the time it saved on this device.
@@ -225,5 +234,5 @@ device default, with the time it saved on this device.
 ## Boundary with podcast sync
 
 Playback never fetches feeds or writes transcripts. Live sync may append
-auto-queue episodes through `lectern.ensure_missing_in_txn`; backfill never
+auto-queue episodes through `lectern.append_missing_in_txn`; backfill never
 enqueues.

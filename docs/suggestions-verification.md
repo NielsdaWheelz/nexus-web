@@ -1,6 +1,6 @@
 # suggestions publication verification
 
-status: implemented, verified and cleaned up, 2026-10-15.
+status: original campaign complete; current-main integration requalification in progress, 2026-10-15.
 branch: `codex/suggestions-publication`; baseline: `367da80e0c1b`.
 final application: `2a856b824e22736d7176b1d900e5c4df04080569`;
 ordinary next build: `JCBY1ucZaC5-ri1ZsaC_m`.
@@ -8,6 +8,17 @@ backend qualification began at `fde33a16367b`, interaction qualification at
 `e8312f80e7a2`; receipts preserve that provenance. backend files are identical
 through the final artifact; its affected frontend cases were rerun. no production
 operation or deployment was performed.
+
+## current-main integration
+
+pr integration targets `7bc7c8a13d7f`: snake_case/null wire revision 2,
+current library/lectern/source owners, and migration `0287` after `0286`.
+the receipts below retain their original artifact identities; they do not claim
+to qualify this composition. fresh canonical databases and affected live checks
+will qualify the integrated artifact. old suggestion-campaign databases stamped
+`0279` belong to a different, unreleased migration branch: preserve them frozen;
+never stamp or upgrade them into main's distinct `0279` chain. the new corpus
+copy comes from the retained genuine canonical ancestor, then normal migrations.
 
 ## result and evidence
 

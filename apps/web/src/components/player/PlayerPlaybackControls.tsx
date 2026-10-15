@@ -151,7 +151,7 @@ export function PlayerPanel() {
       await commands.rememberPlaybackRateForPodcast();
       setRemembered({
         rate,
-        text: `New episodes of ${episode?.subtitle.kind === "Present" ? episode.subtitle.value : "this podcast"} start at ${formatPlaybackRate(rate)}`,
+        text: `New episodes of ${episode?.subtitle != null ? episode.subtitle : "this podcast"} start at ${formatPlaybackRate(rate)}`,
       });
     } catch (error) {
       const failure = isApiError(error)
@@ -169,7 +169,7 @@ export function PlayerPanel() {
   const scope =
     state.shortenPausesSession !== null
       ? "This session"
-      : episode?.pauseShorteningMode.kind === "Present"
+      : episode?.pause_shortening_mode != null
         ? "This podcast"
         : "Device default";
 
@@ -181,7 +181,7 @@ export function PlayerPanel() {
         label="Playback speed"
         description={`About ${formatClock(Math.max(0, durationMs - positionMs) / state.rate / 1000)} remaining`}
       />
-      {episode?.podcastId.kind === "Present" ? (
+      {episode?.podcast_id != null ? (
         <div className={styles.panelRow}>
           <Button
             variant="secondary"
@@ -247,16 +247,16 @@ export function PlayerPanel() {
         <section className={styles.panelRow} aria-label="Chapters">
           <ol className={styles.chapters}>
             {episode.chapters.map((chapter) => (
-              <li key={`${chapter.startMs}:${chapter.title}`}>
+              <li key={`${chapter.start_ms}:${chapter.title}`}>
                 <Button
                   variant="ghost"
                   size="sm"
                   className={styles.chapter}
-                  onClick={() => commands.seekTo(chapter.startMs)}
+                  onClick={() => commands.seekTo(chapter.start_ms)}
                 >
                   <span>{chapter.title}</span>
                   <span className={styles.time}>
-                    {formatClock(chapter.startMs / 1000)}
+                    {formatClock(chapter.start_ms / 1000)}
                   </span>
                 </Button>
               </li>

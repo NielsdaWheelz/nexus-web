@@ -60,14 +60,15 @@ export default function MobilePaneBar() {
         ) : null}
       </div>
       <div className={styles.topBarControls}>
-        {chrome && (paneActions.length > 0 || menuActions.length > 0 || chrome.actionSubject) ? (
+        {chrome && (paneActions.length > 0 || menuActions.length > 0 || chrome.resourceRef) ? (
           <ContextualActionMenu
             label="More"
             sections={[
               { id: "Pane", actions: paneActions },
               { id: "View", actions: menuActions },
             ]}
-            actionSubject={chrome.actionSubject}
+            resourceRef={chrome.resourceRef}
+            onDefect={chrome.onDefect}
             triggerAttributes={{ "data-pane-menu-trigger": chrome.paneId }}
             renderTrigger={(props) => (
               <button {...props} className={cx(props.className, styles.topBarButton)}>

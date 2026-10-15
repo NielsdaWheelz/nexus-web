@@ -16,22 +16,46 @@ export type WorkspaceTargetDisposition =
   | { kind: "Fork" }
   | { kind: "Adopt" };
 
-export interface WorkspacePaneEntry {
-  kind: "AppendNote";
-  noteId: string;
-  clientMutationId: string;
-  initialText: string;
-}
+/**
+ * What the landing pane does once it is ready (contract: campaign
+ * notes/activation-contract.md). The href picks the pane; ids are plain uuids.
+ * The consuming pane claims an entry before acting and owns every outcome.
+ */
+export type WorkspacePaneEntry =
+  // page or daily pane: a new empty row at the end, focused (a latent day: its draft)
+  | { readonly kind: "AppendNote" }
+  // page or daily pane: the caret at the end of that note's row
+  | { readonly kind: "FocusNote"; readonly noteBlockId: string }
+  // page pane: focus the title
+  | { readonly kind: "EditPageTitle"; readonly pageId: string }
+  // note pane: focus the body
+  | { readonly kind: "EditNoteBody"; readonly noteBlockId: string }
+  // media pane: one highlight; a null note block adds a note
+  | { readonly kind: "EditHighlight"; readonly highlightId: string }
+  | {
+      readonly kind: "EditHighlightNote";
+      readonly highlightId: string;
+      readonly noteBlockId: string | null;
+    }
+  | { readonly kind: "EditHighlightBounds"; readonly highlightId: string }
+  | { readonly kind: "DeleteHighlight"; readonly highlightId: string }
+  // chat pane: one message of the loaded transcript
+  | {
+      readonly kind:
+        | "ForkMessage"
+        | "WalkMessageSources"
+        | "RerunMessage"
+        | "RegenerateMessage"
+        | "DeleteMessage";
+      readonly messageId: string;
+    };
 
 export interface WorkspaceTargetActivationRequest {
   originPaneId: string;
   target: WorkspaceTarget;
   disposition: WorkspaceTargetDisposition;
-  /** Daily Today/quick note: hand `entry` to the exact visit the target lands on. */
-  paneEntryActivation?: {
-    activationId: string;
-    entry: WorkspacePaneEntry | null;
-  };
+  /** Hand `entry` to the exact visit the target lands on. */
+  entry?: WorkspacePaneEntry;
 }
 
 export interface PaneEntryDelivery {
@@ -87,7 +111,7 @@ export function planWorkspaceTarget(
       : target.id === "page" && daily.value.pageId === target.params.pageId;
   };
   const matches = state.panes.flatMap((pane) => {
-    const route = resolvePaneRouteModel(pane.currentVisit.href);
+    const route = resolvePaneRouteModel(pane.current_visit.href);
     if (route.routeKey === target.routeKey) return [{ pane, exact: false }];
     return sameDay(pane.id, route) ? [{ pane, exact: true }] : [];
   });
@@ -106,7 +130,7 @@ export function planWorkspaceTarget(
       : create;
   }
   const { pane } = match;
-  if (!match.exact && pane.currentVisit.href !== href) {
+  if (!match.exact && pane.current_visit.href !== href) {
     return { kind: "NavigatedExisting", paneId: pane.id, href };
   }
   const kind = pane === origin ? "Unchanged" : "ActivatedExisting";

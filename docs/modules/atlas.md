@@ -1,34 +1,53 @@
 # atlas
 
-status: reauthored with the oracle (cleanup/oracle-reauthor) · 2026-10-04
+status: reauthored (cleanup/atlas-share-reauthor) · 2026-10-14
 
-## one frame
+purpose: a celestial chart of the viewer's library. one star per work they hold,
+placed by meaning in one global frame, grouped into constellations by library,
+linked by discovery and contradiction edges, with the oracle's readings as a
+second layer.
 
-`services/atlas.py` owns `media_atlas_positions` (media_id, x, y ∈ [0,1]). The
-periodic `atlas_project_job` (`ATLAS_PROJECT_SCHEDULE_SECONDS`) recomputes one
-global frame: the mean of each media's embeddings under the active model, for
-media filed in any non-system library; one pure-python power-iteration PCA (axis
-seeds e0, e1; component 2 re-orthogonalized every step); min-max normalization;
-one repulsion pass; upsert; positions outside the frame are deleted. Every viewer
-sees a shared media at the same place. New media sit unpositioned (the nebula)
-until the next sweep; there is no on-demand trigger.
+## one frame (sole writer)
+
+`services/atlas.py` owns `media_atlas_positions (media_id, x, y ∈ [0,1])`. The
+periodic `atlas_project_job` (`ATLAS_PROJECT_SCHEDULE_SECONDS`, prod 86400) is its
+only writer; nothing enqueues it on demand. One sweep reads the mean active-model
+embedding (`avg(...)::real[]`) of every media filed in any non-system library,
+runs a numpy power-iteration PCA (component 1 from the axis e0, component 2 from
+e1 re-orthogonalized against component 1 every step, 20 steps each), min-max
+normalizes to [0, 1], applies one repulsion pass (gap 0.02), deletes positions
+outside the frame and upserts the rest, all in one transaction: a retry
+recomputes the whole frame (idempotent). Fewer than three vectors take fixed
+spots. New media wait unpositioned (the nebula) until the next sweep.
 
 ## read model
 
-`GET /atlas` is a typed route returning `Data[AtlasOut]`: stars (media_id,
-nullable x/y, title, kind, the viewer's highlight count), constellations (one per
-non-system membership, empty ones omitted, the viewer's default named `All`) and
-edges (the viewer's discovery-context and contradicts edges between two of their
-stars; a discovery edge that targets an evidence span stands for its media). Stars
-come from the viewer's personal relation over non-system memberships, so corpus
-works never become stars. There is no ETag: no consumer sent `If-None-Match`.
+`GET /atlas` → `Data[AtlasOut]`, one read and one picture: it is exempt from
+keyset pagination because the sky cannot be drawn in pages.
+
+- stars: the viewer's personal relation (every visible media of their
+  non-system memberships), never corpus works: `media_id`, nullable `x`/`y`,
+  `title`, `kind`, `magnitude` (the viewer's highlight count).
+- constellations: one per non-system membership, empty ones omitted; members
+  are `library_media_ids_cte_sql` for that library, so the viewer's Default is
+  "All" and holds every star.
+- edges: the viewer's discovery-context and contradicts edges between two of
+  their stars (`source_media_id`, `target_media_id`, `kind`); an edge that targets
+  an evidence span stands for its media.
 
 ## sky
 
-`atlas/sky.ts` draws the dome as a planisphere: (x, y) becomes polar coordinates
-about the zenith, so the two ends of the principal axis face each other across
-the dome. The nebula sits on the rim; folios on the readings layer are placed by
-a hash of their theme. `GrandAtlasPaneBody.tsx` owns the loop (idle rotation
-unless reduced motion), dragging, hover labels, the two layer toggles
-(`?layer=readings` opens the readings layer), a folio's first tap tracing its
-concordance and the second opening it, and the screen-reader list of stars.
+`atlas/sky.ts` is geometry and paint: a planisphere maps (x, y) to polar
+coordinates about the zenith; the nebula sits on the rim; folios sit on an arc
+by a hash of their theme. `atlas/SkyCanvas.tsx` hosts the canvas: scene in, hover
+and pick out. It draws only while its pane is visible; under reduced motion it
+draws once per change (scene, resize, drag) and never turns on its own.
+`GrandAtlasPaneBody.tsx` reads the sky (`useServerValue`, visit `Atlas.Sky`),
+the readings when that layer is on and a selected folio's concordance; a work
+opens in the pane, a folio's first pick traces its concordance and keeps its
+label until the next pick (touch has no hover, so with a mouse too the label
+stays after the pointer leaves), the second opens it. A failed read shows the
+shared failure copy (`failureCopy`: transport copy, else "Something went wrong.
+Try again." with the request id; it never throws on a modeled answer) with
+Retry, which leaves focus on the headline. The screen-reader list mirrors the
+visible layers and opens in the pane.

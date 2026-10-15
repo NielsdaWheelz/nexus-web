@@ -1,26 +1,44 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useFeedback } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { useThrowLater } from "@/lib/api/serverState";
+import { BLOCKED_COPY } from "@/lib/actions/catalog";
+import {
+  useActionRuntime,
+  useBusyActionIds,
+} from "@/lib/actions/ResourceActionsProvider";
+import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
+import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import type { Schema } from "@/lib/api/wire";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { publishImportsInvalidation } from "@/lib/imports/api";
 import {
   METADATA_REVIEW_HELP,
   metadataResearchLabel,
 } from "@/lib/media/mediaMetadataCopy";
 import {
-  reconnectMetadataOperations,
+  requestMetadataResearch,
   submitMetadataResultReview,
 } from "@/lib/media/mediaMetadataOperations";
-import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 
-/** History submits its inspected job directly; current menu capability is unrelated. */
+/** Where focus goes once a control leaves: its pane's landmark, else its dialog. */
+function homeOf(control: HTMLElement): () => HTMLElement | null {
+  const paneId = control.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
+  const dialog = control.closest<HTMLElement>("[role=dialog]");
+  return () => findPaneLandmarkFocusTarget(paneId) ?? dialog;
+}
+
+/** Await a control's work; by then it left (disabled meanwhile, it lost focus): go home. */
+async function landing(control: HTMLElement, work: () => Promise<void>) {
+  const held = document.activeElement === control;
+  const home = homeOf(control);
+  await work();
+  const active = document.activeElement;
+  if (held && (active === control || active === document.body))
+    home()?.focus({ preventScroll: true });
+}
+
+/** Review one exact no-findings job (history passes its own; the menu is unrelated). */
 export function MetadataReviewButton({
   mediaId,
   jobId,
@@ -32,35 +50,21 @@ export function MetadataReviewButton({
   const feedback = useFeedback();
   const fail = useThrowLater();
   const review = async (trigger: HTMLButtonElement) => {
-    if (pending) return;
-    const heldFocus = document.activeElement === trigger;
-    const paneId =
-      trigger.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
     setPending(true);
     try {
-      await submitMetadataResultReview(mediaId, jobId);
-      // Review removes this control from current and historical projections.
-      // Move keyboard focus before the refreshed row disappears; never steal it.
-      if (
-        heldFocus &&
-        (document.activeElement === trigger ||
-          document.activeElement === document.body)
-      ) {
-        findPaneLandmarkFocusTarget(paneId)?.focus({ preventScroll: true });
-      }
+      await landing(trigger, () => submitMetadataResultReview(mediaId, jobId));
     } catch (error) {
-      if (handleUnauthenticatedApiError(error)) return;
-      if (isApiError(error) && !isSameSystemApiDefect(error)) {
+      const modeled = modeledApiError(error, fail);
+      if (modeled !== null)
         feedback.publish({
           kind: "Hud",
           content: {
             tone: "Danger",
             title: "could not confirm review",
-            message: error.message,
-            requestId: error.requestId,
+            message: modeled.message,
+            requestId: modeled.requestId,
           },
         });
-      } else fail({ error });
     } finally {
       setPending(false);
     }
@@ -78,7 +82,11 @@ export function MetadataReviewButton({
   );
 }
 
-/** Same admissions and busy state as the media menu, with contextual copy. */
+/**
+ * Research from what this view shows (its `retry`), run as the menu's verb. A title
+ * blocked on missing x source context offers the media's own source remedy (refresh,
+ * retry or repair), read from its verbs while it is needed.
+ */
 export default function MetadataResearchActions({
   mediaId,
   view,
@@ -88,88 +96,77 @@ export default function MetadataResearchActions({
   readonly view: Schema<"MetadataEnrichmentView">;
   readonly primaryOnly?: boolean;
 }) {
-  const subject = useMemo(
-    () => ({ ref: canonicalResourceRef({ scheme: "media", id: mediaId }) }),
-    [mediaId],
+  const { ctx, run } = useActionRuntime();
+  const ref = `media:${mediaId}`;
+  const busy = useBusyActionIds(ref).has("RetryMetadata");
+  const { operation, retry } = view;
+  const reviewJob =
+    operation?.status === "no_findings" && operation.reviewed_at === null
+      ? operation.job_id
+      : null;
+  const remedyNeeded =
+    (!primaryOnly || reviewJob === null) &&
+    retry.status === "blocked" &&
+    retry.reason === "source_context_missing";
+  const remedies = useResourceActionMenu(remedyNeeded ? ref : null);
+  const { onOpenChange } = remedies;
+  useEffect(() => {
+    if (!remedyNeeded) return;
+    onOpenChange(true);
+    return () => onOpenChange(false);
+  }, [onOpenChange, remedyNeeded]);
+  const sourceRemedy = remedies.options.find(
+    (action) =>
+      action.kind === "command" &&
+      !action.disabled &&
+      (action.id === "RefreshSource" ||
+        action.id === "RetrySource" ||
+        action.id === "RepairSource"),
   );
-  const model = useResourceActionMenuModel(subject);
-  const retry = model.descriptors.find(
-    (action) => action.id === "ResourceOperation.Media.RetryMetadata",
-  );
-  const capability = model.capabilities.find(
-    (candidate) => candidate.kind === "RetryMetadata",
-  );
-  const currentRetry =
-    capability?.kind === "RetryMetadata" ? capability.retry : undefined;
-  const expected =
-    view.retry.status === "allowed" ? view.retry.expected_job_id : undefined;
-  const offered =
-    currentRetry?.status === "allowed"
-      ? currentRetry.expected_job_id
-      : undefined;
-  const matches =
-    currentRetry?.purpose === view.retry.purpose &&
-    expected !== undefined &&
-    offered !== undefined &&
-    expected.kind === offered.kind &&
-    (expected.kind === "Absent" ||
-      (offered.kind === "Present" && expected.value === offered.value));
-  const operation = view.operation;
-  const sourceRemedy =
-    view.retry.status === "blocked" &&
-    view.retry.reason === "source_context_missing"
-      ? model.descriptors.find(
-          (action) =>
-            action.kind === "command" &&
-            !action.disabled &&
-            (action.id === "ResourceOperation.Media.RefreshSource" ||
-              action.id === "ResourceOperation.Media.RetryProcessing" ||
-              action.id === "ResourceOperation.Media.RepairSource"),
-        )
-      : undefined;
-  const reviewable =
-    operation.kind === "Present" &&
-    operation.value.status === "no_findings" &&
-    operation.value.reviewed_at.kind === "Absent";
+  const research = (
+    trigger: HTMLButtonElement,
+    retry: Schema<"MetadataRetryAllowed">,
+  ) => {
+    const home = homeOf(trigger);
+    run({
+      ref,
+      id: "RetryMetadata",
+      label: metadataResearchLabel(null, retry.purpose),
+      title: "",
+      confirmation: null,
+      tracked: true,
+      execute: () =>
+        landing(trigger, () =>
+          requestMetadataResearch(mediaId, retry.expected_job_id, {
+            feedback: ctx.feedback,
+            showMetadata: () =>
+              ctx.overlays.open({
+                kind: "Metadata",
+                mediaId,
+                returnFocusTo: trigger,
+                fallback: home,
+              }),
+          }),
+        ),
+    });
+  };
   return (
     <>
-      {reviewable ? (
-        <MetadataReviewButton
-          mediaId={mediaId}
-          jobId={operation.value.job_id}
-        />
+      {reviewJob !== null ? (
+        <MetadataReviewButton mediaId={mediaId} jobId={reviewJob} />
       ) : null}
-      {(!primaryOnly || !reviewable) &&
-      !model.metadataRequestPending &&
-      view.retry.status === "allowed" &&
-      model.status === "Ready" &&
-      !matches ? (
+      {retry.status === "allowed" && (!primaryOnly || reviewJob === null) ? (
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => {
-            publishImportsInvalidation();
-            reconnectMetadataOperations(mediaId);
-            model.refresh();
-          }}
+          disabled={busy || !ctx.online}
+          title={ctx.online ? undefined : BLOCKED_COPY.RequiresOnline}
+          onClick={(event) => research(event.currentTarget, retry)}
         >
-          refresh status
-        </Button>
-      ) : (!primaryOnly || !reviewable) &&
-        (view.retry.status === "allowed" || model.metadataRequestPending) &&
-        retry?.kind === "command" ? (
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={retry.disabled}
-          onClick={(event) => retry.onSelect({ triggerEl: event.currentTarget })}
-        >
-          {model.metadataRequestPending
-            ? retry.label
-            : metadataResearchLabel(operation, view.retry.purpose)}
+          {metadataResearchLabel(operation, retry.purpose)}
         </Button>
       ) : null}
-      {(!primaryOnly || !reviewable) && sourceRemedy?.kind === "command" ? (
+      {remedyNeeded && sourceRemedy?.kind === "command" ? (
         <Button
           variant="secondary"
           size="sm"

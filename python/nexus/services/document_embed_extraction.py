@@ -9,7 +9,11 @@ from urllib.parse import urljoin, urlparse
 from lxml.html import Element, HtmlElement
 
 from nexus.errors import InvalidRequestError
-from nexus.schemas.media import DocumentEmbedKind, DocumentEmbedProvider, DocumentEmbedSourceShape
+from nexus.schemas.document_embeds import (
+    DocumentEmbedKind,
+    DocumentEmbedProvider,
+    DocumentEmbedSourceShape,
+)
 from nexus.services.html_tree import inner_html, parse_html_document
 from nexus.services.url_normalize import validate_requested_url
 from nexus.services.x_identity import classify_x_url

@@ -1,27 +1,11 @@
-"""Lossy-input coercion helpers shared across services."""
+"""Lossy integers from provider payloads: anything unusable is None."""
 
 from typing import Any
 
 
-def coerce_positive_int(raw_value: Any) -> int | None:
-    if raw_value is None:
-        return None
+def coerce_int(raw: Any, *, minimum: int) -> int | None:
     try:
-        value = int(raw_value)
+        value = int(raw)
     except (TypeError, ValueError):
         return None
-    if value <= 0:
-        return None
-    return value
-
-
-def coerce_non_negative_int(raw_value: Any) -> int | None:
-    if raw_value is None:
-        return None
-    try:
-        value = int(raw_value)
-    except (TypeError, ValueError):
-        return None
-    if value < 0:
-        return None
-    return value
+    return value if value >= minimum else None

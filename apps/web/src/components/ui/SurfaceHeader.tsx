@@ -5,7 +5,7 @@ import type { MouseEventHandler } from "react";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import type { PaneCompanionAction } from "@/lib/panes/paneChrome";
 import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
-import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import {
   projectActionControlState,
   type ActionDescriptor,
@@ -33,7 +33,7 @@ export default function SurfaceHeader({
   companionAction: companion,
   paneActions = [],
   menuActions = [],
-  actionSubject,
+  resourceRef,
   navigation,
   onMouseDown,
 }: {
@@ -42,7 +42,7 @@ export default function SurfaceHeader({
   companionAction?: PaneCompanionAction;
   paneActions?: readonly ActionDescriptor[];
   menuActions?: readonly ActionDescriptor[];
-  actionSubject?: ResourceActionSubject;
+  resourceRef?: CanonicalResourceRef;
   navigation: SurfaceHeaderNavigation;
   onMouseDown: MouseEventHandler<HTMLElement>;
 }) {
@@ -79,7 +79,7 @@ export default function SurfaceHeader({
         />
       </div>
       <div className={styles.trailing}>
-        {actions.length > 0 || actionSubject !== undefined ? (
+        {actions.length > 0 || resourceRef !== undefined ? (
           <ContextualActionMenu
             label="More"
             placement="below"
@@ -88,7 +88,7 @@ export default function SurfaceHeader({
               { id: "Pane", actions: paneActions },
               { id: "View", actions: menuActions },
             ]}
-            actionSubject={actionSubject}
+            resourceRef={resourceRef}
             renderTrigger={(props) => (
               <button {...props}>
                 &hellip;

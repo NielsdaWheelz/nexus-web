@@ -22,15 +22,10 @@ R2_SECRET_ACCESS_KEY=<r2-secret-access-key>
 R2_BUCKET=media
 # R2_REGION=auto
 
-# Generate with:
+# The HMAC root of every sealed handle (share asset, device, entity handles).
+# Never rotate it casually: every handle sealed with it stops verifying. Generate with:
 # python -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
-STREAM_TOKEN_SIGNING_KEY=<base64-encoded-32-byte-key>
-# Public HTTPS origin of the direct /stream/* lane: browser SSE and Android's
-# reading-copy downloads (handed out with each stream token).
-STREAM_BASE_URL=https://api.example.com
-
-# Keep paid/provider-gated features off until credentials are present.
-PODCASTS_ENABLED=false
+NEXUS_HANDLE_KEY=<base64-encoded-32-byte-key>
 
 # Required by staging/prod config for browse providers.
 YOUTUBE_DATA_API_KEY=<youtube-data-api-key>
@@ -55,15 +50,12 @@ ANTHROPIC_GENERATION_API_KEY=<anthropic-generation-api-key>
 GEMINI_GENERATION_API_KEY=<gemini-generation-api-key>
 DEEPSEEK_GENERATION_API_KEY=<deepseek-generation-api-key>
 XAI_GENERATION_API_KEY=<xai-generation-api-key>
-# Required acknowledgement for Anthropic/Fable retention semantics.
-NEXUS_FABLE_RETENTION_ACCEPTED_AT=2026-08-31T00:00:00Z
 
 # BRAVE_SEARCH_API_KEY=
 
 # Post Room: private email ingest address (Cloudflare Email Worker).
-# Set EMAIL_INGEST_ENABLED=true once DNS MX + Email Routing + worker are deployed.
-# All four non-defaulted keys are required when enabled in staging/prod.
-EMAIL_INGEST_ENABLED=false
+# Set all four once DNS MX + Email Routing + worker are deployed; until then
+# /ingest/email answers 503.
 # EMAIL_INGEST_HMAC_SECRET=<generate-with: python -c "import secrets; print(secrets.token_hex(32))">
 # EMAIL_INGEST_ADDRESS_SLUG=<local-part of the ingest address, e.g. "letters-abc123">
 # EMAIL_INGEST_DOMAIN=<mail domain configured in Cloudflare Email Routing, e.g. "mail.example.com">

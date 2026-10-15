@@ -59,11 +59,11 @@ export function planInspectorSurfaces(input: {
 }): InspectorSurfacePlan {
   const { policy, bodies, dossierBody } = input;
   const surfaces: InspectorSurfacePlan["surfaces"] = [];
-  const linkedId = linkedItemsSurfaceId(policy.linkedItems);
+  const linkedId = linkedItemsSurfaceId(policy.linked_items);
 
   if (bodies.linkedItems == null) {
     throw new Error(
-      `Resource Inspector policy requires a linked-items body for ${policy.linkedItems}`,
+      `Resource Inspector policy requires a linked-items body for ${policy.linked_items}`,
     );
   }
   if (policy.forks === "ConversationForks" && bodies.forks == null) {
@@ -107,7 +107,7 @@ export function planInspectorSurfaces(input: {
   // that maps to a published surface. It always ends in Dossier, so this
   // resolves.
   let defaultSurfaceId: InspectorSurfaceId = "resource-dossier";
-  for (const role of policy.defaultSurfaceOrder) {
+  for (const role of policy.default_surface_order) {
     const resolved = roleSurfaceId(role);
     if (resolved !== null) {
       defaultSurfaceId = resolved;

@@ -15,7 +15,8 @@ transport policy are removed.
 only those two nexus production files change. history calls unchanged
 `apiTransportFeedback(error: ApiError, title: string): FeedbackContent | null`
 after an explicit ApiError/accepted-code gate. its frozen send closure, raw body,
-mutation id, persistent feedback key `nexus-history-save` and Polite Retry remain.
+persistent feedback key `nexus-history-save` and Polite Retry remain (the body carries
+no mutation id: a retry after a lost answer counts the pick again, frecency only).
 
 existing `createFailure(error: unknown, title: string, codes: readonly string[]): FeedbackContent | null`
 owns the five creation-domain messages. auth handling remains first. only an
@@ -29,7 +30,7 @@ to `E_NETWORK`, `E_UPSTREAM`, `E_UPSTREAM_TIMEOUT`.
 
 | caller | additional admitted codes | retained title/retry identity |
 | --- | --- | --- |
-| history | none | `Nexus history wasn’t saved`; same serialized selection/mutation id |
+| history | none | `Nexus history wasn’t saved`; same serialized selection |
 | page | `E_FORBIDDEN`, `E_LIBRARY_FORBIDDEN`, `E_INVALID_REQUEST`, `E_RESOURCE_CONFLICT` | `Page couldn’t be created`; same page id/title/activation |
 | library | page set + `E_NAME_INVALID` | `Library couldn’t be created`; same library id/name/activation |
 

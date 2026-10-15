@@ -42,6 +42,11 @@ val debugUri = URI(debugBaseUrl)
 val releaseUri = URI(releaseBaseUrl)
 val assetLinksText = rootProject.file("../web/public/.well-known/assetlinks.json").readText()
 val assetLinksTextForFingerprintMatch = assetLinksText.replace(":", "").uppercase()
+// the wire revision every native call sends (X-Nexus-Wire): the web build's generated one
+val nexusWire = Regex("""export const WIRE_REVISION = (\d+);""")
+    .find(rootProject.file("../web/src/lib/api/wire.gen.ts").readText())
+    ?.groupValues?.get(1)
+    ?: error("apps/web/src/lib/api/wire.gen.ts names no WIRE_REVISION")
 
 require(debugUri.host == debugOwnedHost) {
     "nexusAndroidDebugBaseUrl host must match nexusAndroidDebugOwnedHost."
@@ -130,6 +135,7 @@ android {
         targetSdk = 36
         versionCode = versionCodeProperty?.toIntOrNull() ?: 1
         versionName = versionNameProperty ?: "1.0"
+        buildConfigField("int", "NEXUS_WIRE", nexusWire)
     }
 
     buildFeatures {

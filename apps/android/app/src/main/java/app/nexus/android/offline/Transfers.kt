@@ -10,7 +10,6 @@ import java.io.FileOutputStream
 import java.io.FilterInputStream
 import java.io.InputStream
 import java.util.UUID
-import java.util.concurrent.TimeUnit
 import java.util.zip.ZipInputStream
 
 /** A failed transfer with its user-facing reason; retryable ones go back to the queue. */
@@ -71,7 +70,8 @@ internal fun fetchAudio(url: String, into: File, http: OkHttpClient, onProgress:
 }
 
 /**
- * Fetches one reading copy: account check, stream token, the zip unpacked into
+ * Fetches one reading copy: account check, the server's freshly stored copy,
+ * its zip fetched from the signed url without credentials and unpacked into
  * `into` (confined, CRC-checked, body length enforced), then the cursor baseline.
  */
 internal suspend fun fetchCopy(
@@ -84,14 +84,9 @@ internal suspend fun fetchCopy(
 ): CopyMeta {
     try {
         if (origin.me() != account) throw TransferFailure("AuthorizationRequired", false)
-        val (token, streamBaseUrl) = origin.mintStreamToken()
-        val request = Request.Builder()
-            .url("${streamBaseUrl.trimEnd('/')}/stream/media/$mediaId/reading-copy")
-            .header("Authorization", "Bearer $token")
-            .build()
-        // the server builds the whole zip before its first byte; Caddy allows 660 s
-        val copyHttp = http.newBuilder().readTimeout(15, TimeUnit.MINUTES).build()
-        val generation = copyHttp.newCall(request).execute().use { response ->
+        val copy = origin.readingCopy(mediaId)
+        val request = Request.Builder().url(copy.getString("url")).build()
+        http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw httpFailure(response.code)
             val body = response.body!!
             val length = body.contentLength()
@@ -101,9 +96,8 @@ internal suspend fun fetchCopy(
             // reading past the central directory makes OkHttp enforce Content-Length
             val rest = ByteArray(8192)
             while (raw.read(rest) >= 0) continue
-            response.header("Nexus-Reader-Generation")?.toLongOrNull() ?: throw TransferFailure("Server", false)
         }
-        return CopyMeta(generation, origin.getReaderState(mediaId))
+        return CopyMeta(copy.getLong("generation"), origin.getReaderState(mediaId))
     } catch (error: NexusOriginError) {
         throw httpFailure(error.status)
     }
@@ -113,7 +107,8 @@ private fun httpFailure(status: Int): TransferFailure = when (status) {
     401, 403 -> TransferFailure("AuthorizationRequired", false)
     404, 410 -> TransferFailure("SourceUnavailable", false)
     409 -> TransferFailure("Changed", false)
-    in 500..599 -> TransferFailure("Server", true)
+    // a server built for another wire: kept for the updated app
+    426, in 500..599 -> TransferFailure("Server", true)
     else -> TransferFailure("Server", false)
 }
 

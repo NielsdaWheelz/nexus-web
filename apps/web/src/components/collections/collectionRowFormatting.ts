@@ -14,8 +14,8 @@ export function collectionConsumptionText(consumption: Schema<"ConsumptionOut">)
     case "Finished":
       return "finished";
     case "InProgress":
-      return consumption.progress.kind === "Present"
-        ? `${Math.round(consumption.progress.value * 100)}%`
+      return consumption.progress !== null
+        ? `${Math.round(consumption.progress * 100)}%`
         : "in progress";
   }
 }

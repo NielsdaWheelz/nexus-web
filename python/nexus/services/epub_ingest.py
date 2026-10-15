@@ -16,7 +16,7 @@ import unicodedata
 import zipfile
 from collections.abc import Callable, Iterator
 from contextlib import closing
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from html.entities import name2codepoint
 from pathlib import Path
@@ -31,10 +31,9 @@ from defusedxml.ElementTree import DefusedXMLParser
 from lxml.etree import LxmlError
 from lxml.html import HtmlElement
 from sqlalchemy import text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from nexus import web_paths
-from nexus.config import Settings, get_settings
 from nexus.db.models import (
     EpubFragmentSource,
     EpubNavLocation,
@@ -45,7 +44,6 @@ from nexus.db.models import (
 from nexus.errors import ApiErrorCode, ResourceFailureDimension
 from nexus.ids import new_uuid7
 from nexus.schemas.isbn import Isbn13, normalize_source_isbn
-from nexus.schemas.presence import Presence, Present, absent, nullable_from_presence, present
 from nexus.schemas.publication_dates import PublicationDate, normalize_source_publication_date
 from nexus.schemas.reader_apparatus import NotesGroup
 from nexus.schemas.source_issues import (
@@ -108,7 +106,6 @@ from nexus.services.parser_temp import (
 from nexus.services.reader_apparatus import note_regions_from_publication, replace_media_apparatus
 from nexus.storage.client import StorageError
 from nexus.storage.paths import build_epub_attempt_asset_storage_path
-from nexus.tasks.storage_object_cleanup import reserve_storage_object_write
 from nexus.text import normalize_whitespace
 
 if TYPE_CHECKING:
@@ -120,6 +117,11 @@ EPUB_APPARATUS_MAX_TARGETS = 10_000
 EPUB_APPARATUS_MAX_BACKLINKS = 10_000
 EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES = 8 * 1024 * 1024
 EPUB_APPARATUS_MAX_CANDIDATE_INDEX_PAGES = 16_384
+_ARCHIVE_MAX_ENTRIES = 10_000
+_ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
+_ARCHIVE_MAX_ENTRY_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
+_ARCHIVE_MAX_COMPRESSION_RATIO = 100
+_ARCHIVE_MAX_PARSE_MS = 30_000
 
 _XHTML_DECODED_BYTES_MESSAGE = "EPUB XHTML decoded bytes exceed the 16 MiB per-entry limit"
 
@@ -179,8 +181,8 @@ class EpubExtractionResult:
     publisher: str | None = None
     language: str | None = None
     description: str | None = None
-    edition_published_date: Presence[PublicationDate] = field(default_factory=absent)
-    edition_isbn: Presence[Isbn13] = field(default_factory=absent)
+    edition_published_date: PublicationDate | None = None
+    edition_isbn: Isbn13 | None = None
 
 
 @dataclass(frozen=True)
@@ -335,7 +337,6 @@ def _resource_limit(message: str, *, dimension: ResourceFailureDimension) -> Epu
 
 def build_epub_extraction_plan(
     *,
-    session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt_id: UUID,
     storage_path: str,
@@ -380,7 +381,6 @@ def build_epub_extraction_plan(
             content, package = parsed
             asset_storage_paths = _write_epub_assets(
                 package,
-                session_factory=session_factory,
                 attempt_id=attempt_id,
                 storage_client=storage_client,
                 attempt_directory=attempt_directory,
@@ -450,7 +450,7 @@ def extract_epub_metadata(epub_path: Path) -> EpubExtractionResult | EpubExtract
     """Read OPF metadata only, retaining archive bounds without publishing content."""
     try:
         with zipfile.ZipFile(epub_path) as zf:
-            package_document = _open_package_document(zf, get_settings())
+            package_document = _open_package_document(zf)
             if isinstance(package_document, EpubExtractionError):
                 return package_document
             return _extract_opf_metadata(package_document[1])
@@ -460,11 +460,9 @@ def extract_epub_metadata(epub_path: Path) -> EpubExtractionResult | EpubExtract
         return _resource_limit(str(exc), dimension=exc.dimension)
 
 
-def _open_package_document(
-    zf: zipfile.ZipFile, settings: Settings
-) -> tuple[str, ET.Element] | EpubExtractionError:
+def _open_package_document(zf: zipfile.ZipFile) -> tuple[str, ET.Element] | EpubExtractionError:
     """Check the archive, locate the OPF rootfile, and parse it."""
-    safety_error = _check_archive_safety(zf, settings)
+    safety_error = _check_archive_safety(zf)
     if safety_error is not None:
         return safety_error
     opf_path = _find_opf_path(zf)
@@ -487,10 +485,9 @@ def _build_plan(
     retained_fragments: tuple[RetainedEpubFragment, ...] | None = None,
 ) -> tuple[_ParsedEpub, _Package] | EpubExtractionError:
     """Parse one opened archive and stage its attempt-owned assets."""
-    settings = get_settings()
     started = time.monotonic()
 
-    package_document = _open_package_document(zf, settings)
+    package_document = _open_package_document(zf)
     if isinstance(package_document, EpubExtractionError):
         return package_document
     opf_path, opf = package_document
@@ -768,9 +765,9 @@ def _build_plan(
         return _resource_limit("EPUB output exceeds the 64 MiB limit", dimension="Output")
 
     elapsed_ms = int((time.monotonic() - started) * 1000)
-    if elapsed_ms > settings.max_epub_archive_parse_time_ms:
+    if elapsed_ms > _ARCHIVE_MAX_PARSE_MS:
         return _resource_limit(
-            f"Parse time {elapsed_ms}ms exceeded limit {settings.max_epub_archive_parse_time_ms}ms",
+            f"Parse time {elapsed_ms}ms exceeded limit {_ARCHIVE_MAX_PARSE_MS}ms",
             dimension="Time",
         )
 
@@ -816,24 +813,17 @@ def _chapter_source_ref(chapter: _ChapterSpec) -> dict[str, object]:
 def _write_epub_assets(
     package: _Package,
     *,
-    session_factory: sessionmaker[Session],
     attempt_id: UUID,
     storage_client: StorageClient,
     attempt_directory: Path,
 ) -> dict[str, str]:
-    """Reserve, then write, every referenced image; the caller finalizes after commit."""
+    """Write every referenced image before the plan names it; an image whose plan never
+    publishes is unowned, and the storage sweep reclaims it."""
     asset_storage_paths: dict[str, str] = {}
     for asset_index, asset in enumerate(package.asset_entries):
         storage_key = build_epub_attempt_asset_storage_path(
             package.media_id, attempt_id, asset.asset_key
         )
-        reservation_db = session_factory()
-        try:
-            reserve_storage_object_write(
-                reservation_db, media_id=package.media_id, storage_path=storage_key
-            )
-        finally:
-            reservation_db.close()
         try:
             with package.zf.open(asset.epub_path) as asset_stream:
                 if asset.content_type == _SVG_IMAGE_TYPE:
@@ -844,11 +834,9 @@ def _write_epub_assets(
                         )
                         asset.size_bytes = sanitized_stream.tell()
                         sanitized_stream.seek(0)
-                        storage_client.put_object_stream(
-                            storage_key, sanitized_stream, asset.content_type
-                        )
+                        storage_client.put_object(storage_key, sanitized_stream, asset.content_type)
                 else:
-                    storage_client.put_object_stream(
+                    storage_client.put_object(
                         storage_key, cast(BinaryIO, asset_stream), asset.content_type
                     )
             asset_storage_paths[asset.asset_key] = storage_key
@@ -949,13 +937,11 @@ def publish_epub_extraction_plan(
                 label=nav.label,
                 fragment_idx=nav.fragment_idx,
                 href_path=nav.href_path,
-                href_fragment=nullable_from_presence(nav.href_fragment),
+                href_fragment=nav.href_fragment,
                 start_offset=nav.start_offset,
-                parent_section_id=nullable_from_presence(nav.parent_section_id),
-                end_fragment_idx=nav.end.value.fragment_idx
-                if isinstance(nav.end, Present)
-                else None,
-                end_offset=nav.end.value.offset if isinstance(nav.end, Present) else None,
+                parent_section_id=nav.parent_section_id,
+                end_fragment_idx=nav.end.fragment_idx if nav.end is not None else None,
+                end_offset=nav.end.offset if nav.end is not None else None,
                 source=nav.source,
                 created_at=plan.now,
             )
@@ -976,12 +962,12 @@ def publish_epub_extraction_plan(
     return plan.result, old_storage_paths
 
 
-def _check_archive_safety(zf: zipfile.ZipFile, settings: Settings) -> EpubExtractionError | None:
+def _check_archive_safety(zf: zipfile.ZipFile) -> EpubExtractionError | None:
     """Refuse unsafe entry paths and over-budget archives before reading entries."""
     infos = zf.infolist()
-    if len(infos) > settings.max_epub_archive_entries:
+    if len(infos) > _ARCHIVE_MAX_ENTRIES:
         return _resource_limit(
-            f"Archive has {len(infos)} entries (limit {settings.max_epub_archive_entries})",
+            f"Archive has {len(infos)} entries (limit {_ARCHIVE_MAX_ENTRIES})",
             dimension="Structure",
         )
 
@@ -1002,25 +988,25 @@ def _check_archive_safety(zf: zipfile.ZipFile, settings: Settings) -> EpubExtrac
             return _error(ApiErrorCode.E_ARCHIVE_UNSAFE, unsafe, terminal=True)
         seen_names.add(name)
 
-        limit = settings.max_epub_archive_single_entry_uncompressed_bytes
-        if info.file_size > limit:
+        if info.file_size > _ARCHIVE_MAX_ENTRY_UNCOMPRESSED_BYTES:
             return _resource_limit(
-                f"Entry '{name}' uncompressed size {info.file_size} exceeds limit {limit}",
+                f"Entry '{name}' uncompressed size {info.file_size} exceeds limit "
+                f"{_ARCHIVE_MAX_ENTRY_UNCOMPRESSED_BYTES}",
                 dimension="Output",
             )
         total_uncompressed += info.file_size
-        ratio_limit = settings.max_epub_archive_compression_ratio
-        if info.compress_size > 0 and info.file_size / info.compress_size > ratio_limit:
+        ratio = info.file_size / info.compress_size if info.compress_size > 0 else 0
+        if ratio > _ARCHIVE_MAX_COMPRESSION_RATIO:
             return _resource_limit(
-                f"Entry '{name}' compression ratio "
-                f"{info.file_size / info.compress_size:.1f} exceeds limit {ratio_limit}",
+                f"Entry '{name}' compression ratio {ratio:.1f} exceeds limit "
+                f"{_ARCHIVE_MAX_COMPRESSION_RATIO}",
                 dimension="Output",
             )
 
-    if total_uncompressed > settings.max_epub_archive_total_uncompressed_bytes:
+    if total_uncompressed > _ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES:
         return _resource_limit(
             f"Total uncompressed {total_uncompressed} exceeds limit "
-            f"{settings.max_epub_archive_total_uncompressed_bytes}",
+            f"{_ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES}",
             dimension="Output",
         )
     return None
@@ -1151,19 +1137,19 @@ def _extract_opf_metadata(opf: ET.Element) -> EpubExtractionResult:
     publication_dates: set[str] = set()
     for element in publication_elements:
         normalized = normalize_source_publication_date(element.text)
-        if isinstance(normalized, Present):
-            publication_dates.add(normalized.value)
+        if normalized is not None:
+            publication_dates.add(normalized)
 
     isbns: set[str] = set()
     primary_isbns: set[str] = set()
     primary_id = opf.get("unique-identifier")
     for identifier in opf.findall(".//opf:metadata/dc:identifier", _NS):
         value = normalize_source_isbn(identifier.text or "")
-        if not isinstance(value, Present):
+        if value is None:
             continue
-        isbns.add(value.value)
+        isbns.add(value)
         if primary_id is not None and identifier.get("id") == primary_id:
-            primary_isbns.add(value.value)
+            primary_isbns.add(value)
     selected = primary_isbns or isbns
 
     return EpubExtractionResult(
@@ -1173,10 +1159,10 @@ def _extract_opf_metadata(opf: ET.Element) -> EpubExtractionResult:
         publisher=publisher.strip() or None if publisher is not None else None,
         language=language.strip() or None if language is not None else None,
         description=description.strip() or None if description is not None else None,
-        edition_published_date=present(next(iter(publication_dates)))
+        edition_published_date=next(iter(publication_dates))
         if len(publication_dates) == 1
-        else absent(),
-        edition_isbn=present(next(iter(selected))) if len(selected) == 1 else absent(),
+        else None,
+        edition_isbn=next(iter(selected)) if len(selected) == 1 else None,
     )
 
 

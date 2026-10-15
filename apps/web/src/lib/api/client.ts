@@ -1,81 +1,31 @@
-/**
- * Client-side API fetch helper for browser components.
- *
- * This module provides typed fetch utilities for making API calls
- * from client components to the BFF API routes.
- */
-
+// The browser's one door to the api (docs/modules/api-edge.md): every call goes
+// to a same-origin /api path, carries this build's wire revision, and answers
+// the parsed json or throws ApiError. A 426 means this tab was built for
+// another wire: the tab reloads itself once per build.
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { isAbortError } from "@/lib/errors";
-import { compareStableString } from "@/lib/display/format";
 import { isRecord } from "@/lib/validation";
-import { TOOL_PROJECTION_REVISION } from "@/lib/chat/toolContractProjection";
+import { WIRE_REVISION } from "./wire.gen";
 
 export type ApiPath = `/api/${string}`;
-export const TOOL_PROJECTION_HEADER = "X-Nexus-Tool-Projection";
-export const CHAT_CONTRACT_HEADER = "X-Nexus-Chat-Contract";
-export const CHAT_CONTRACT_REVISION = "5";
-export const TOOL_PROJECTION_RELOAD_REQUIRED_CODE =
-  "E_TOOL_PROJECTION_RELOAD_REQUIRED";
+export const WIRE_HEADER = "X-Nexus-Wire";
+const RELOADED_FOR = "nexus.reloaded-for-wire";
 
-const CHAT_WIRE_PATHS = [
-  /^\/api\/chat-runs$/,
-  /^\/api\/chat-runs\/[^/]+$/,
-  /^\/api\/chat-runs\/[^/]+\/cancel$/,
-  /^\/api\/conversations\/[^/]+\/(?:tree|active-path)$/,
-  /^\/api\/messages\/[^/]+\/(?:rerun|regenerate)$/,
-] as const;
-
-function carriesChatWire(path: ApiPath): boolean {
-  const queryIndex = path.indexOf("?");
-  const pathname = queryIndex === -1 ? path : path.slice(0, queryIndex);
-  return CHAT_WIRE_PATHS.some((pattern) => pattern.test(pathname));
-}
-
-function jsonRequestHeaders(
-  path: ApiPath,
-  headersInit: HeadersInit | undefined,
-): Headers {
-  const headers = new Headers(headersInit);
-  headers.set("Content-Type", "application/json");
-  if (carriesChatWire(path)) {
-    headers.set(TOOL_PROJECTION_HEADER, TOOL_PROJECTION_REVISION);
-    headers.set(CHAT_CONTRACT_HEADER, CHAT_CONTRACT_REVISION);
-  }
-  return headers;
-}
-
-/**
- * API error with status code and message.
- */
 export class ApiError extends Error {
-  readonly status: number;
-  readonly code: string;
-  readonly requestId?: string;
-  readonly details?: Record<string, unknown>;
-
   constructor(
-    status: number,
-    code: string,
+    readonly status: number,
+    readonly code: string,
     message: string,
-    requestId?: string,
-    details?: Record<string, unknown>,
+    readonly requestId?: string,
+    readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "ApiError";
-    this.status = status;
-    this.code = code;
-    this.requestId = requestId;
-    this.details = details;
   }
 }
 
 /** The budget encloses the complete operation, including response bodies and retries. */
-export async function requestWithDeadline<T>({
-  request,
-  signal,
-  timeoutMs,
-}: {
+export async function requestWithDeadline<T>({ request, signal, timeoutMs }: {
   request: (signal: AbortSignal) => Promise<T>;
   signal: AbortSignal;
   timeoutMs: number;
@@ -93,9 +43,7 @@ export async function requestWithDeadline<T>({
   try {
     return await request(controller.signal);
   } catch (error) {
-    if (timedOut) {
-      throw new ApiError(504, "E_UPSTREAM_TIMEOUT", "Backend service timed out");
-    }
+    if (timedOut) throw new ApiError(504, "E_UPSTREAM_TIMEOUT", "Backend service timed out");
     throw error;
   } finally {
     clearTimeout(timer);
@@ -103,17 +51,11 @@ export async function requestWithDeadline<T>({
   }
 }
 
-/**
- * Type guard for ApiError.
- */
 export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError;
 }
 
-/**
- * The codes that turn a collection fetch failure into an "invalid view"
- * terminal state: the backend rejects a bad view or cursor with them.
- */
+/** A collection view or cursor the server rejected. */
 export function isInvalidViewError(error: unknown): boolean {
   return (
     isApiError(error) &&
@@ -125,6 +67,7 @@ export type SameSystemApiDefect = ApiError & {
   readonly code: "E_INVALID_RESPONSE" | "E_UNKNOWN" | "E_INTERNAL";
 };
 
+/** A same-system defect: never a modeled failure; it throws to the render boundary. */
 export function isSameSystemApiDefect(
   error: unknown,
 ): error is SameSystemApiDefect {
@@ -136,37 +79,6 @@ export function isSameSystemApiDefect(
   );
 }
 
-/**
- * Shared copy for the transport-level failures every command adapter answers
- * the same way. Returns null when the code is not a transport failure, so the
- * caller's own switch owns the domain arms.
- */
-export function apiTransportFeedback(
-  error: ApiError,
-  title: string,
-): FeedbackContent | null {
-  switch (error.code) {
-    case "E_NETWORK":
-      return {
-        tone: "Danger",
-        title,
-        message: "Check your connection and try again.",
-        requestId: error.requestId,
-      };
-    case "E_UPSTREAM":
-    case "E_UPSTREAM_TIMEOUT":
-    case "E_RATE_LIMITED":
-      return {
-        tone: "Danger",
-        title,
-        message: "Please wait a moment, then try again.",
-        requestId: error.requestId,
-      };
-    default:
-      return null;
-  }
-}
-
 export function isUnauthenticatedApiError(error: unknown): error is ApiError {
   return (
     isApiError(error) &&
@@ -175,270 +87,121 @@ export function isUnauthenticatedApiError(error: unknown): error is ApiError {
   );
 }
 
-export function isChatReloadRequired(error: unknown): error is ApiError {
-  return isApiError(error) && error.status === 409 &&
-    (error.code === "E_CHAT_CONTRACT_RELOAD_REQUIRED" ||
-      error.code === TOOL_PROJECTION_RELOAD_REQUIRED_CODE);
+/**
+ * A tab built for another wire (426) that did not reload: no defect, and every
+ * request fails alike until a reload. A caller that models it shows
+ * `apiTransportFeedback`; one that throws it reaches a render boundary, which
+ * shows the same copy.
+ */
+export function isStaleBuild(error: unknown): error is ApiError & { readonly code: "E_WIRE_MISMATCH" } {
+  return isApiError(error) && error.code === "E_WIRE_MISMATCH";
 }
 
-/**
- * Translate a strict same-system payload decoder failure into the API defect
- * taxonomy without weakening the decoder or misclassifying the failure as a
- * network problem.
- */
-export function decodeApiPayload<Input, Output>(
-  body: Input,
-  decode: (body: Input) => Output,
-  context: string,
-): Output {
-  try {
-    return decode(body);
-  } catch (error) {
-    if (isApiError(error)) throw error;
-    const reason = error instanceof Error ? error.message : "Invalid response";
-    throw new ApiError(
-      200,
-      "E_INVALID_RESPONSE",
-      `${context} returned an invalid response: ${reason}`,
-    );
+export const STALE_BUILD_COPY =
+  "Nexus was updated. Reload this page to continue.";
+
+/** Copy for the transport failures every command answers alike; null for domain codes. */
+export function apiTransportFeedback(
+  error: ApiError,
+  title: string,
+): FeedbackContent | null {
+  const { requestId } = error;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title,
+        message: "Check your connection and try again.",
+        requestId,
+      };
+    case "E_UPSTREAM":
+    case "E_UPSTREAM_TIMEOUT":
+    case "E_RATE_LIMITED":
+      return {
+        tone: "Danger",
+        title,
+        message: "Please wait a moment, then try again.",
+        requestId,
+      };
+    case "E_WIRE_MISMATCH":
+      return { tone: "Warning", title, message: STALE_BUILD_COPY, requestId };
+    default:
+      return null;
   }
 }
 
-/**
- * Response shape for API errors.
- */
-interface ErrorResponse {
-  error: {
-    code: string;
-    message: string;
-    request_id?: string;
-    details?: Record<string, unknown>;
-  };
-}
-
-/**
- * Check if a response body is an error response.
- */
-function isErrorResponse(body: unknown): body is ErrorResponse {
-  return (
-    isRecord(body) &&
-    isRecord(body.error) &&
-    typeof body.error.code === "string" &&
-    typeof body.error.message === "string" &&
-    (body.error.request_id === undefined ||
-      typeof body.error.request_id === "string") &&
-    (body.error.details === undefined || isRecord(body.error.details))
-  );
-}
-
-async function readApiResponseText(response: Response): Promise<string> {
+/** Reload once per (tab, build); a beforeunload guard may keep the page. */
+function reloadForNewBuild(): void {
   try {
-    return await response.text();
+    if (sessionStorage.getItem(RELOADED_FOR) === String(WIRE_REVISION)) return;
+    sessionStorage.setItem(RELOADED_FOR, String(WIRE_REVISION));
+  } catch {
+    // justify-ignore-error: without storage the tab still reloads at most once
+    // per page life; the reloaded page is the new build or refuses again.
+  }
+  window.location.reload();
+}
+
+/** The one reader of an api answer: its json, or the envelope's ApiError. */
+export async function readResponse<T>(response: Response): Promise<T> {
+  const { ok, status } = response;
+  const answerId = response.headers.get("x-request-id") ?? undefined;
+  let text: string;
+  try {
+    text = await response.text();
   } catch (error) {
     if (isAbortError(error)) throw error;
-    throw new ApiError(0, "E_NETWORK", "Network request failed");
+    // an incomplete body is transport, whatever the status (#604)
+    throw new ApiError(0, "E_NETWORK", "Network request failed", answerId);
   }
-}
-
-/** Decode the common API error envelope without flattening its closed code. */
-export async function apiErrorFromResponse(
-  response: Response,
-): Promise<ApiError> {
-  try {
-    const body: unknown = JSON.parse(await readApiResponseText(response));
-    if (isErrorResponse(body)) {
-      return new ApiError(
-        response.status,
-        body.error.code,
-        body.error.message,
-        body.error.request_id,
-        body.error.details,
-      );
+  if (ok) {
+    if (text === "") return undefined as T;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      const message = "API returned non-JSON";
+      throw new ApiError(status, "E_INVALID_RESPONSE", message, answerId);
     }
-  } catch (error) {
-    if (isAbortError(error)) throw error;
-    if (isApiError(error)) return error;
   }
-  return new ApiError(
-    response.status,
-    "E_UNKNOWN",
-    `Request failed with status ${response.status}`,
-  );
-}
-
-const inFlightGetRequests = new Map<string, Promise<unknown>>();
-const PLAIN_GET_COALESCING_OPTION_KEYS = new Set([
-  "cache",
-  "headers",
-  "method",
-]);
-
-function normalizeMethod(method: string | undefined): string {
-  return method?.toUpperCase() ?? "GET";
-}
-
-function sortedHeaderEntries(
-  headers: HeadersInit | undefined,
-): [string, string][] {
-  if (!headers) {
-    return [];
-  }
-  return Array.from(new Headers(headers).entries()).sort(([a], [b]) =>
-    compareStableString(a, b),
-  );
-}
-
-function coalescedGetKey(
-  path: string,
-  headers: HeadersInit | undefined,
-): string {
-  return JSON.stringify({
-    path,
-    headers: sortedHeaderEntries(headers),
-  });
-}
-
-function isPlainGetRequest(options: RequestInit): boolean {
-  const hasOnlyPlainGetOptions = Object.keys(options).every((key) =>
-    PLAIN_GET_COALESCING_OPTION_KEYS.has(key),
-  );
-  return (
-    hasOnlyPlainGetOptions &&
-    (options.cache === undefined || options.cache === "no-store") &&
-    normalizeMethod(options.method) === "GET" &&
-    options.body === undefined &&
-    options.signal === undefined
-  );
-}
-
-/**
- * Own the browser fetch boundary. Body acquisition has the same transport
- * policy; JSON parsing and contract decoders remain outside those boundaries.
- */
-async function fetchApiResponse(
-  path: ApiPath,
-  init: RequestInit,
-): Promise<Response> {
-  try {
-    return await fetch(path, init);
-  } catch (error) {
-    if (isAbortError(error)) throw error;
-    throw new ApiError(0, "E_NETWORK", "Network request failed");
-  }
-}
-
-async function parseApiResponse<T>(response: Response): Promise<T> {
-  const text = await readApiResponseText(response);
-  let body: unknown;
+  let body: unknown = null;
   try {
     body = JSON.parse(text);
-  } catch (err) {
-    if (isAbortError(err)) throw err;
-    if (!response.ok) {
-      throw new ApiError(
-        response.status,
-        "E_UNKNOWN",
-        `Request failed with status ${response.status}`,
-      );
-    }
-    if (response.status === 204 || response.status === 205) {
-      return undefined as T;
-    }
-    throw new ApiError(
-      response.status,
-      "E_INVALID_RESPONSE",
-      "API returned a non-JSON response",
-    );
+  } catch {
+    // not the envelope: the status speaks alone
   }
-
-  if (!response.ok) {
-    if (isErrorResponse(body)) {
-      throw new ApiError(
-        response.status,
-        body.error.code,
-        body.error.message,
-        body.error.request_id,
-        body.error.details,
-      );
-    }
-    throw new ApiError(
-      response.status,
-      "E_UNKNOWN",
-      `Request failed with status ${response.status}`,
-    );
-  }
-
-  return body as T;
+  const error = isRecord(body) && isRecord(body.error) ? body.error : {};
+  const failure = new ApiError(
+    status,
+    typeof error.code === "string" ? error.code : "E_UNKNOWN",
+    typeof error.message === "string"
+      ? error.message
+      : `Request failed with status ${status}`,
+    typeof error.request_id === "string" ? error.request_id : answerId,
+    isRecord(error.details) ? error.details : undefined,
+  );
+  if (status === 426 && typeof window !== "undefined") reloadForNewBuild();
+  throw failure;
 }
 
 /**
- * Fetch data from the API with typed response.
- *
- * @param path - API path (e.g., "/api/libraries")
- * @param options - Fetch options
- * @returns Parsed JSON response
- * @throws ApiError on non-2xx responses
+ * One api call. A string body is json; status 0 E_NETWORK is a transport
+ * failure. `keepalive: true` lets a write outlive the page (64 KB in flight).
  */
 export async function apiFetch<T>(
   path: ApiPath,
-  options: RequestInit = {},
+  init: RequestInit = {},
 ): Promise<T> {
-  const init = {
-    ...options,
-    method: normalizeMethod(options.method),
-    headers: jsonRequestHeaders(path, options.headers),
-  } satisfies RequestInit;
-
-  if (isPlainGetRequest(options)) {
-    const key = coalescedGetKey(path, init.headers);
-    const inFlight = inFlightGetRequests.get(key);
-    if (inFlight) {
-      return inFlight as Promise<T>;
-    }
-
-    const request = fetchApiResponse(path, init)
-      .then((response) => parseApiResponse<T>(response))
-      .finally(() => {
-        inFlightGetRequests.delete(key);
-      });
-    inFlightGetRequests.set(key, request);
-    return request;
+  const headers = new Headers(init.headers);
+  headers.set(WIRE_HEADER, String(WIRE_REVISION));
+  if (typeof init.body === "string") {
+    headers.set("Content-Type", "application/json");
   }
-
-  const response = await fetchApiResponse(path, init);
-  return parseApiResponse<T>(response);
-}
-
-/** Run a command whose owned wire contract is exactly HTTP 204. */
-export async function apiCommand204(
-  path: ApiPath,
-  options: RequestInit,
-): Promise<void> {
-  const response = await fetchApiResponse(path, {
-    ...options,
-    method: normalizeMethod(options.method),
-    headers: jsonRequestHeaders(path, options.headers),
-  });
-  await parseApiResponse<unknown>(response);
-  if (response.status !== 204) {
-    throw new ApiError(
-      response.status,
-      "E_INVALID_RESPONSE",
-      `API command returned status ${response.status}; expected 204`,
-    );
+  let response: Response;
+  try {
+    response = await fetch(path, { ...init, headers });
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    throw new ApiError(0, "E_NETWORK", "Network request failed");
   }
-}
-
-export async function apiKeepaliveJson(
-  path: ApiPath,
-  body: unknown,
-  method: "PUT" | "POST" = "PUT",
-): Promise<void> {
-  const response = await fetchApiResponse(path, {
-    method,
-    keepalive: true,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  await parseApiResponse<void>(response);
+  return readResponse<T>(response);
 }

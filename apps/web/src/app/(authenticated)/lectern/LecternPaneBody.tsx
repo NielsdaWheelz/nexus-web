@@ -1,344 +1,413 @@
 "use client";
 
+// Home: the Lectern in its custom order or a url-owned sort (`sort` ∈ added_desc, added_asc,
+// title_asc, title_desc; absent = custom), a local text filter, drag to move one row (custom
+// order, no filter), Play / Resume / Replay on episodes, then Quick reads and Suggestions.
+
 import { Play } from "lucide-react";
-import { useCallback, useId, useMemo, useState } from "react";
-import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
-import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
-import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
+import { useCallback, useId, useRef, useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
+import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
+import SuggestionsSection from "@/components/collections/SuggestionsSection";
 import QuickReadsSection from "@/components/collections/QuickReadsSection";
-import SuggestionsSection, {
-  type SuggestionAccept,
-} from "@/components/collections/SuggestionsSection";
+import { suggestionTargetId } from "@/lib/suggestions";
+import { useSuggestions } from "@/lib/useSuggestions";
 import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import PaneSurface from "@/components/ui/PaneSurface";
-import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
+import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
-import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
-import { useSuggestions } from "@/lib/useSuggestions";
 import {
   apiTransportFeedback,
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
-import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
+import { useThrowLater } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { presentMedia } from "@/lib/collections/presenters/media";
+import { viewHref, type ViewChanges } from "@/lib/collections/view";
 import {
-  playbackVerb,
-  presentLecternItem,
-} from "@/lib/collections/presenters/lectern";
-import {
-  assumeMediaId,
-  parseLecternItemId,
+  lecternItems,
+  placeOnLectern,
+  useLectern,
+  useLecternAdds,
   type LecternItem,
-} from "@/lib/lectern/contract";
-import { useLectern } from "@/lib/lectern/LecternProvider";
-import {
-  CANONICAL_LECTERN_VIEW,
-  LECTERN_SORT_OPTION_IDS,
-  decodeLecternView,
-  encodeLecternView,
-  lecternSortOptionLabel,
-  lecternSortOptionOf,
-  lecternViewForSortOption,
-  orderLecternItems,
-  type DecodedLecternView,
-  type LecternSortOptionId,
-} from "@/lib/lectern/view";
-import { usePlayerCommands } from "@/lib/player/playerRuntime";
-import { usePaneIsActive } from "@/lib/panes/paneRuntime";
+} from "@/lib/lectern/lectern";
+import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
+import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
+import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import {
   matchesPaneFilterQuery,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
-import { suggestionTargetId } from "@/lib/suggestions";
+import {
+  usePaneIsActive,
+  usePaneRouter,
+  usePaneSearchParams,
+} from "@/lib/panes/paneRuntime";
+import { usePlayerCommands } from "@/lib/player/playerRuntime";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./LecternPaneBody.module.css";
 
 const UNIT = { singular: "item", plural: "items" };
+const SORTS = [
+  { value: "", label: "Custom order" },
+  { value: "added_desc", label: "Newest added" },
+  { value: "added_asc", label: "Oldest added" },
+  { value: "title_asc", label: "Title A–Z" },
+  { value: "title_desc", label: "Title Z–A" },
+];
 
-/** What the local filter matches: the title and, for an episode, its show. */
-function filterFields(item: LecternItem): string[] {
-  const subtitle =
-    item.activation.kind === "FooterAudio"
-      ? item.activation.descriptor.subtitle
-      : null;
-  return subtitle?.kind === "Present"
-    ? [...mediaListFilterFields(item.mediaSummary), subtitle.value]
-    : [...mediaListFilterFields(item.mediaSummary)];
+// Code-unit order, never localeCompare: collation depends on the runtime's ICU data.
+const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+const titleKey = (item: LecternItem) =>
+  item.media_summary.title.trim().normalize("NFC").toLowerCase();
+
+/** The rendered order; the media id breaks remaining ties. */
+function ordered(
+  items: readonly LecternItem[],
+  sort: string,
+): readonly LecternItem[] {
+  if (sort === "") return items;
+  const sign = sort.endsWith("_asc") ? 1 : -1;
+  const id = (a: LecternItem, b: LecternItem) =>
+    compare(a.media_summary.media_id, b.media_summary.media_id);
+  return [...items].sort((a, b) =>
+    sort.startsWith("added")
+      ? sign * (Date.parse(a.added_at) - Date.parse(b.added_at)) || id(a, b)
+      : sign * compare(titleKey(a), titleKey(b)) ||
+        sign * compare(a.media_summary.title, b.media_summary.title) ||
+        id(a, b),
+  );
 }
 
-/** Modeled failures become notices; anything else is a defect for the error boundary. */
-function failureNotice(error: unknown, title: string): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+/** Title, contributors and, for an episode, its show. */
+function filterFields(item: LecternItem): string[] {
+  const fields = [...mediaListFilterFields(item.media_summary)];
+  const { activation } = item;
   if (
-    error.code === "E_INVALID_REQUEST" &&
-    title === "Lectern wasn’t reordered"
-  ) {
-    return {
-      tone: "Danger",
-      title,
-      message:
-        "Lectern changed while you were reordering. Review the order and try again.",
-      requestId: error.requestId,
-    };
-  }
-  const content = apiTransportFeedback(error, title);
+    activation.kind === "FooterAudio" &&
+    activation.descriptor.subtitle !== null
+  )
+    fields.push(activation.descriptor.subtitle);
+  return fields;
+}
+
+function playbackVerb(item: LecternItem): "Play" | "Resume" | "Replay" {
+  const { state } = item.media_summary.consumption;
+  return state === "InProgress"
+    ? "Resume"
+    : state === "Finished"
+      ? "Replay"
+      : "Play";
+}
+
+/** Modeled failures become notices; anything else is a defect for the boundary. */
+function failure(error: unknown, title: string): FeedbackContent {
+  const content =
+    isApiError(error) && !isSameSystemApiDefect(error)
+      ? apiTransportFeedback(error, title)
+      : null;
   if (content === null) throw error;
   return content;
 }
 
-const VIEW_CODEC = {
-  basePath: "/lectern",
-  decode: decodeLecternView,
-  encode: (decoded: DecodedLecternView, current: URLSearchParams) =>
-    encodeLecternView(
-      decoded.kind === "Valid" ? decoded.view : CANONICAL_LECTERN_VIEW,
-      current,
-    ),
-  replaceOptions: { viewTransition: { kind: "collection-reflow" as const } },
-};
-
 export default function LecternPaneBody() {
-  const { resource, busy, ensureItem, getCanonicalSnapshot, setOrder } = useLectern();
+  const lectern = useLectern();
+  const { add } = useLecternAdds();
   const { playAudio } = usePlayerCommands();
-  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const isPaneActive = usePaneIsActive();
-  const suggestions = useSuggestions({ kind: "Lectern" }, isPaneActive);
+  const isActive = usePaneIsActive();
+  const suggestions = useSuggestions({ kind: "Lectern" }, isActive);
   const { refresh: refreshSuggestionFeed } = suggestions;
   const refreshSuggestions = useCallback<PaneRefreshExecute>(async ({ signal }) => {
     const requested = await refreshSuggestionFeed(signal);
     return { kind: requested ? "Complete" : "Failed", announcement: requested ? "refresh requested" : "couldn’t request suggestions." };
   }, [refreshSuggestionFeed]);
-  const loadedItems = useMemo(
-    () => (resource.status === "ready" ? resource.data.items : []),
-    [resource],
+  const params = usePaneSearchParams();
+  const router = usePaneRouter();
+  const fail = useThrowLater();
+  const [notice, setNotice] = useState<FeedbackContent | null>(null);
+  const section = useRef<HTMLElement>(null);
+  // A dragged order shows until the first read started after the move lands.
+  const [dragged, setDragged] = useState<{
+    until: number;
+    ids: string[];
+  } | null>(null);
+  const summaries = useMediaSummaries(
+    lecternItems(lectern).map((item) => item.media_summary),
   );
-  const summaries = useMediaSummaries(loadedItems.map((item) => item.mediaSummary));
-  const items = useMemo(() => loadedItems.flatMap((item) => {
-    const mediaSummary = summaries.resolve(item.mediaSummary);
-    return mediaSummary.kind === "Absent" ? [] : [{ ...item, mediaSummary: mediaSummary.value }];
-  }), [loadedItems, summaries]);
-  const status =
-    resource.status === "ready" || resource.status === "error"
-      ? resource.status
-      : "loading";
-  usePaneReturnReady(status !== "loading");
+  const items = lecternItems(lectern).flatMap((item) => {
+    const summary = summaries.resolve(item.media_summary);
+    return summary === null ? [] : [{ ...item, media_summary: summary }];
+  });
+  const generation = lectern.status === "ready" ? lectern.generation : -1;
+  const pending =
+    dragged !== null && generation < dragged.until ? dragged.ids : null;
+  const sort = params.get("sort") ?? "";
+  const valid = SORTS.some((option) => option.value === sort);
+  const shown = pending
+    ? pending.flatMap((id) =>
+        items.filter((item) => item.media_summary.media_id === id),
+      )
+    : ordered(items, valid ? sort : "");
+  usePaneReturnReady(lectern.status !== "loading");
 
-  const { state: decodedView, setState: setDecodedView } =
-    usePaneUrlState(VIEW_CODEC);
-  const view = decodedView.kind === "Valid" ? decodedView.view : null;
-  const ordered = useMemo(
-    () => (view === null ? [] : orderLecternItems(view, items)),
-    [items, view],
-  );
-
-  const getRowStatus = useCallback(
-    (query: string) => {
-      const visibleCount = ordered.filter((item) =>
+  const filterRows = usePaneFilterRows({
+    sourceKey: "Lectern.Items",
+    getRowStatus: (query) => {
+      const visibleCount = shown.filter((item) =>
         matchesPaneFilterQuery(query, filterFields(item)),
       ).length;
-      const loadedCount = ordered.length;
-      if (status === "ready")
-        return {
-          kind: "Complete" as const,
-          visibleCount,
-          totalCount: loadedCount,
-          unit: UNIT,
-        };
-      return {
-        kind: status === "error" ? ("Failed" as const) : ("Partial" as const),
-        visibleCount,
-        loadedCount,
-        unit: UNIT,
-      };
+      return lectern.status === "ready"
+        ? {
+            kind: "Complete",
+            visibleCount,
+            totalCount: shown.length,
+            unit: UNIT,
+          }
+        : {
+            kind: lectern.status === "failed" ? "Failed" : "Partial",
+            visibleCount,
+            loadedCount: shown.length,
+            unit: UNIT,
+          };
     },
-    [ordered, status],
-  );
-  const { query, onQueryChange, clearQuery, rowStatus } = usePaneFilterRows({
-    sourceKey: "Lectern.Items",
-    getRowStatus,
   });
-  const resetView = useCallback(() => {
-    clearQuery();
-    setDecodedView({ kind: "Valid", view: CANONICAL_LECTERN_VIEW });
-  }, [clearQuery, setDecodedView]);
+  const change = useCallback(
+    (changes: ViewChanges) =>
+      router.replace(viewHref("/lectern", params, changes), {
+        viewTransition: { kind: "collection-reflow" },
+      }),
+    [params, router],
+  );
   const { inputRef, focusInput } = usePaneQueryInput();
   const queryStatusId = useId();
-  const queryControls = view === null ? undefined : {
-    kind: "Controls" as const,
-    label: "Filter Lectern",
-    focusInput,
-    content: (
-      <PaneQueryToolbar
-        inputRef={inputRef}
-        input={{ label: "Filter Lectern", placeholder: "Filter items", value: query, appliedValue: query, onChange: onQueryChange, onClear: clearQuery }}
-        sort={{
-          label: "Sort",
-          value: lecternSortOptionOf(view),
-          choices: LECTERN_SORT_OPTION_IDS.map((value) => ({ value, label: lecternSortOptionLabel(value) })),
-          onChange: (value) => setDecodedView({ kind: "Valid", view: lecternViewForSortOption(
-            // justify-type-assertion: the select offers exactly these ids.
-            value as LecternSortOptionId,
-          ) }),
-        }}
-        status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={rowStatus} query={query} /> }}
-        onReset={view.kind !== "Custom" || query ? resetView : undefined}
-      />
-    ),
-  };
   usePaneChrome({
-    query: queryControls,
     refresh: suggestions.state === null ? { kind: "Resolving" } : {
       kind: "Refreshable", sourceKey: "lectern:suggestions", execute: refreshSuggestions,
     },
+    query: valid
+      ? {
+          kind: "Controls",
+          label: "Filter Lectern",
+          focusInput,
+          content: (
+            <PaneQueryToolbar
+              inputRef={inputRef}
+              input={{
+                label: "Filter Lectern",
+                placeholder: "Filter items",
+                value: filterRows.query,
+                appliedValue: filterRows.query,
+                onChange: filterRows.onQueryChange,
+                onClear: filterRows.clearQuery,
+              }}
+              sort={{
+                label: "Sort",
+                value: sort,
+                choices: SORTS,
+                onChange: (value) => change({ sort: value || null }),
+              }}
+              status={{
+                id: queryStatusId,
+                content: (
+                  <PaneFilterRowsStatus
+                    id={queryStatusId}
+                    status={filterRows.rowStatus}
+                    query={filterRows.query}
+                  />
+                ),
+              }}
+              onReset={
+                sort || filterRows.query.trim()
+                  ? () => {
+                      filterRows.clearQuery();
+                      change({ sort: null });
+                    }
+                  : undefined
+              }
+            />
+          ),
+        }
+      : undefined,
     // The count is the whole Lectern, never the filtered subset.
     header: {
       kind: "Section",
       meta:
-        status === "loading"
+        lectern.status === "loading"
           ? { kind: "Pending" }
           : { kind: "Count", value: items.length, unit: "item" },
     },
   });
 
-  const acceptSuggestionTarget = useCallback<SuggestionAccept>(
-    async (target) => {
-      const mediaId = assumeMediaId(suggestionTargetId(target));
-      const receipt = await ensureItem({
-        mediaId,
-        title: target.kind === "Media" ? target.mediaSummary.title : target.title,
-      });
-      return receipt === "Acknowledged" && getCanonicalSnapshot()?.items.some((item) => item.mediaSummary.mediaId === mediaId)
-        ? "Accepted" : "Retained";
-    },
-    [ensureItem, getCanonicalSnapshot],
-  );
-
-  const visible = ordered.filter((item) =>
+  const query = filterRows.query.trim();
+  const visible = shown.filter((item) =>
     matchesPaneFilterQuery(query, filterFields(item)),
   );
-  const filtering = query.trim().length > 0;
-  const controls = Object.fromEntries(
-    visible.flatMap((item) => {
-      const activation = item.activation;
-      if (activation.kind !== "FooterAudio") return [];
-      const verb = playbackVerb(item.mediaSummary.consumption);
-      return [
-        [
-          item.itemId,
-          <Button
-            key="play"
-            variant="secondary"
-            size="sm"
-            className={styles.rowAction}
-            aria-label={`${verb} ${item.mediaSummary.title}`}
-            leadingIcon={<Play size={14} aria-hidden="true" />}
-            onClick={() => playAudio(activation.descriptor)}
-          >
-            {verb}
-          </Button>,
-        ],
-      ];
-    }),
-  );
+  // One drag moves one row: the first difference is either the row moved down or the row
+  // moved up; it goes after its new predecessor.
+  const move = (ids: string[]) => {
+    const old = shown.map((item) => item.media_summary.media_id);
+    const at = ids.findIndex((id, index) => id !== old[index]);
+    const mediaId = old[at + 1] === ids[at] ? old[at] : ids[at];
+    const before = ids[ids.indexOf(mediaId) - 1];
+    setNotice(null);
+    setDragged({ until: Infinity, ids });
+    void placeOnLectern(
+      mediaId,
+      before === undefined
+        ? { kind: "First" }
+        : { kind: "After", media_id: before },
+    ).then(
+      () =>
+        setDragged({
+          until:
+            generation +
+            (lectern.status === "ready" && lectern.refreshing ? 2 : 1),
+          ids,
+        }),
+      (error: unknown) => {
+        setDragged(null);
+        lectern.refetch();
+        if (handleUnauthenticatedApiError(error)) return;
+        try {
+          setNotice(failure(error, "Lectern wasn’t reordered"));
+        } catch (defect) {
+          fail({ error: defect });
+        }
+      },
+    );
+  };
 
-  if (defect) throw defect.error;
   return (
     <PaneSurface
       state={
-        feedback ? (
-          <FeedbackNotice content={feedback} announcement="Assertive" />
+        notice ? (
+          <FeedbackNotice content={notice} announcement="Assertive" />
         ) : undefined
       }
     >
-      <section aria-label="On the lectern" tabIndex={-1}>
-        {view === null ? (
+      <section ref={section} aria-label="On the lectern" tabIndex={-1}>
+        {valid ? null : (
           <FeedbackNotice
             content={{ tone: "Danger", title: "Invalid Lectern view" }}
             announcement="Assertive"
             actions={[
               {
                 label: "Reset view",
+                // The pressed button leaves with the notice: focus stays on the list it reset.
                 onClick: () => {
-                  resetView();
-                  requestAnimationFrame(() =>
-                    inputRef.current?.focus({ preventScroll: true }),
-                  );
+                  section.current?.focus({ preventScroll: true });
+                  router.replace("/lectern");
                 },
               },
             ]}
           />
-        ) : (
+        )}
+        {valid ? (
           <CollectionView
             returnScope="Lectern.Items"
-            rows={visible.map(presentLecternItem)}
-            status={status}
             ariaLabel="On the lectern"
-            notice={<MediaSummaryNotice error={summaries.error} retry={summaries.retry} />}
+            surface={false}
+            status={
+              lectern.status === "ready"
+                ? "ready"
+                : lectern.status === "failed"
+                  ? "error"
+                  : "loading"
+            }
+            rows={visible.map((item) =>
+              presentMedia(item.media_summary, {
+                id: item.media_summary.media_id,
+                primary: {
+                  kind: "link",
+                  href: `/media/${item.media_summary.media_id}`,
+                },
+                resourceRef: canonicalResourceRef({
+                  scheme: "media",
+                  id: item.media_summary.media_id,
+                }),
+                selected: false,
+              }),
+            )}
+            notice={
+              <MediaSummaryNotice
+                error={summaries.error}
+                retry={summaries.retry}
+              />
+            }
             error={
-              resource.status === "error" ? (
+              lectern.status === "failed" ? (
                 <FeedbackNotice
-                  content={failureNotice(
-                    resource.error,
-                    "Lectern couldn’t be loaded",
-                  )}
+                  content={failure(lectern.error, "Lectern couldn’t be loaded")}
                   announcement="Assertive"
-                  actions={[{ label: "Retry", onClick: resource.retry }]}
+                  actions={[{ label: "Retry", onClick: lectern.refetch }]}
                 />
               ) : undefined
             }
             empty={
               <p className={styles.emptyState}>
-                {filtering
+                {query
                   ? "No items match this filter."
                   : "Nothing on the lectern yet."}
               </p>
             }
-            rowControls={controls}
-            surface={false}
-            rowChangePresentation={{
-              kind: "ImmediateOnKeyChange",
-              key: query.trim(),
-            }}
-            // The server takes only the exact visible permutation: drag only the whole order.
+            rowControls={Object.fromEntries(
+              visible.flatMap((item) => {
+                const { activation } = item;
+                if (activation.kind !== "FooterAudio") return [];
+                const verb = playbackVerb(item);
+                return [
+                  [
+                    item.media_summary.media_id,
+                    <Button
+                      key="play"
+                      variant="secondary"
+                      size="sm"
+                      className={styles.rowAction}
+                      aria-label={`${verb} ${item.media_summary.title}`}
+                      leadingIcon={<Play size={14} aria-hidden="true" />}
+                      onClick={() => playAudio(activation.descriptor)}
+                    >
+                      {verb}
+                    </Button>,
+                  ],
+                ];
+              }),
+            )}
+            rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: query }}
             sortable={
-              view.kind === "Custom" && !filtering
+              sort === "" && !query
                 ? {
-                    disabled: busy,
-                    onReorder: (rows) => {
-                      setFeedback(null);
-                      void setOrder(
-                        rows.map((row) => parseLecternItemId(row.id)),
-                      ).catch((error) => {
-                        if (handleUnauthenticatedApiError(error)) return;
-                        try {
-                          setFeedback(
-                            failureNotice(error, "Lectern wasn’t reordered"),
-                          );
-                        } catch (caught) {
-                          setDefect({ error: caught });
-                        }
-                      });
-                    },
+                    disabled: pending !== null,
+                    onReorder: (rows) => move(rows.map((row) => row.id)),
                   }
                 : undefined
             }
           />
-        )}
+        ) : null}
       </section>
-      <QuickReadsSection isActive={isPaneActive} />
+      <QuickReadsSection isActive={isActive} />
       <SuggestionsSection
-        returnScope="Lectern.Suggestions"
         destination={{ kind: "Lectern" }}
         suggestions={suggestions}
-        accept={acceptSuggestionTarget}
+        returnScope="Lectern.Suggestions"
+        accept={async (target) =>
+          (await add({
+            mediaId: suggestionTargetId(target),
+            title:
+              target.kind === "Media"
+                ? target.media_summary.title
+                : target.title,
+          })) === "Acknowledged"
+            ? "Accepted"
+            : "Retained"
+        }
       />
     </PaneSurface>
   );

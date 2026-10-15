@@ -70,7 +70,6 @@ from nexus.schemas.conversation import (
     ChatRunToolCallStartEventOut,
     ChatRunToolResultEventOut,
 )
-from nexus.schemas.presence import Presence
 from nexus.services.chat import events
 from nexus.services.chat.citations import number_candidates
 from nexus.services.chat.retrievals import RetrievalCitation, insert_retrieval
@@ -110,14 +109,14 @@ class Plan:
 @dataclass(frozen=True, slots=True)
 class Toolbox:
     plans: dict[str, Plan]
-    memory_config: Presence[memory.MemoryClientConfig]
+    memory_config: memory.MemoryClientConfig | None
 
 
 def compose_tools(
     search: WebSearchProvider | None,
     *,
     embedding_available: bool,
-    memory_config: Presence[memory.MemoryClientConfig],
+    memory_config: memory.MemoryClientConfig | None,
 ) -> Toolbox:
     """The one process-owned catalogue and its frozen plans."""
 

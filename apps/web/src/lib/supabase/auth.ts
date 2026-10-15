@@ -614,7 +614,9 @@ export async function unlinkIdentity(
   const match = rows.find(
     (row) => row.identity_id === identityId && row.provider === provider,
   );
-  if (!match || rows.length < 2) return { outcome: "Failed", writes };
+  // idempotent: an identity already gone is unlinked
+  if (!match) return { outcome: "Unlinked", writes };
+  if (rows.length < 2) return { outcome: "Failed", writes };
   const unlinked = await call(auth.unlinkIdentity(match));
   if ("unavailable" in unlinked || unlinked.error) {
     return { outcome: identityFailure(unlinked), writes };

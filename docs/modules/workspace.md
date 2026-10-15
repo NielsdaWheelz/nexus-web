@@ -41,15 +41,14 @@ row is absent. invalid present state raises `500 E_INTERNAL` and remains intact;
 entry cannot install a default store over it.
 which inspector group a route offers is the web's rule, applied on every write.
 
-`GET /me/workspace-session?device_id=` returns
+`GET /me/workspace-session` returns
 `Data[WorkspaceSessionsOut]` = `{data:{own, most_recent_elsewhere}}`, each a
 `WorkspaceState` or null; elsewhere is the same user's newest other-device row
-(`updated_at DESC, id DESC`). `PUT /me/workspace-session?device_id=` takes a
-`WorkspaceState` body and answers 204; a model violation is 400
-`E_INVALID_REQUEST`. the browser
-[put](../../apps/web/src/app/api/me/workspace-session/route.ts) forwards the body
-untouched and sets the query from the server-owned httpOnly `nx_device` cookie, so
-a client cannot name a device; an absent cookie is a 500 `E_INTERNAL` defect.
+(`updated_at DESC, id DESC`). `PUT /me/workspace-session` takes a
+`WorkspaceState` body and answers 204 (last write wins); a model violation is
+400 `E_INVALID_REQUEST`. the device is `X-Nexus-Device`, which only the bff and
+`callFastAPI` stamp from the server-owned httpOnly `nx_device` cookie, so a
+client cannot name one; without it the api answers 400.
 
 [`bootstrap.server.ts`](../../apps/web/src/lib/workspace/bootstrap.server.ts)
 reads the account, reader profile and sessions concurrently on the normal 30 s
@@ -59,13 +58,15 @@ picks own-if-nontrivial, else elsewhere-if-nontrivial, else one Lectern pane, an
 merges a deep link: `/` and non-canonical request paths resume; bare `/daily` is
 today in the account zone; any other path reuses the pane on its routeKey or
 resource (keeping its visit id, width and inspector) or is appended, keeping the
-newest 11 at the cap. entry concurrently reads only the guaranteed visible active
-pane's registered resources, each with the existing 500 ms deadline and its own
-consume-once cache key. named transport failures and route-specific missing
-resources leave that resource's normal client read in charge without discarding
-successful sibling seeds; other seed errors terminate. inactive panes
-load through their existing owners. the authenticated group has one optional
-catch-all page (`[[...path]]/page.tsx`), so unknown paths render unsupported panes.
+newest 11 at the cap. entry awaits only the guaranteed visible active pane's
+first-paint reads (`paneSeeds`), with the existing 500 ms per-request deadline,
+seeded by that pane's id under the api paths its hooks read. named transport
+failures and route-specific missing resources use normal client reads; other seed
+errors terminate. library metadata, canonical entries and published suggestions
+seed independently: a named miss loses only its own result. inactive panes load
+through their existing owners. the
+authenticated group has one optional catch-all page (`[[...path]]/page.tsx`), so
+unknown paths render unsupported panes.
 
 required-data transport failures (`E_NETWORK`, `E_UPSTREAM`,
 `E_UPSTREAM_TIMEOUT`, `E_AUTH_UNAVAILABLE`) are classified before react serializes
@@ -75,7 +76,7 @@ containment without retry. only a missing stored row is null; invalid state retu
 `500 E_INTERNAL` without modifying its row or timestamp.
 
 `WorkspaceEntry` captures the first successful initializer for one verified viewer.
-a modeled later data reread failure retains the exact shell/store/reader/cache and
+a modeled later data reread failure retains the exact shell/store/reader/seeds and
 publishes "workspace update wasn’t confirmed" with one guarded `router.refresh()`
 action. success clears the notice without replacing live state; its focused action
 hands focus to the current pane before removal. viewer change discards the subtree.
@@ -148,8 +149,8 @@ a pane's resource is its route's own locator (`resource_ref` or
 runtime's `resourceRef` is that ref (null for authors and routes naming no
 resource). nothing resolves locators for open panes: the author body takes its
 contributor ref from the author it loaded, and a pane for deleted media shows the
-body's own not-found. `resourceLocators.ts` remains the one-locator transport
-for editors that resolve a typed link.
+body's own not-found. editors that open a typed link resolve it with
+`resolveResourceItem` (`lib/resources/items.ts`, `GET /resource-items/{ref}`).
 
 ## Pane Canvas
 
@@ -197,7 +198,7 @@ them.
 
 A body contributes to its shell by rendering, into a store that `PaneShell`
 creates for that mounted body (`lib/panes/paneChrome.tsx`), through three hooks:
-`usePaneChrome` (`{ header, navigation, query, menuActions, actionSubject,
+`usePaneChrome` (`{ header, navigation, query, menuActions, resourceRef,
 refresh }` with independent navigation and query capabilities),
 `usePaneCompanion` (the Companion's tabs and default) and `usePaneLayout` (a
 reader's intrinsic width and rail). Each writes its slot in a layout effect and
@@ -268,21 +269,25 @@ retires only its disclosure/results; ordinary clear preserves find preferences
 and a held return origin. publication replacement retains text/preferences,
 retires old geometry, then recaptures after restore. `FindBar` adapts the shared
 query toolbar; companion results remain transient. current capability and
-keyboard details are specified in [the pane controls plan](../pane-controls-plan.md).
+keyboard details are specified in [the pane controls plan](../pane-controls-plan.md);
+its chrome sketch's `actionSubject?: ResourceActionSubject` is now
+`resourceRef?: CanonicalResourceRef`.
 
-A resource pane publishes only its canonical `actionSubject`
-(`ResourceActionSubject`). `PaneShell` composes its pane commands and the body's
+A resource pane publishes only its canonical `resourceRef`
+(`CanonicalResourceRef`). `PaneShell` composes its pane commands and the body's
 `menuActions` through `ContextualActionMenu`; the unchanged canonical resource
 descriptors are one ordered contiguous suffix
 ([resource-action owner](resource-actions.md)). Membership, current verb,
-order, and danger-last come from the server action snapshot and direct menu projection,
+order, and danger-last come from the server's verbs, read when the menu opens,
 so the pane menu includes `Open`. Pane bodies never build resource action
-arrays.
+arrays. The mobile bar renders the active pane's menu outside that pane, so the
+pane publishes `onDefect` with its chrome: a defect while loading still breaks
+only that pane.
 
-Deletion updates panes and reconciles action snapshots after the command
-succeeds. Mounted owners still reconcile when their local projection fails.
-A failed or lost response reports the command error and leaves the view for
-refresh; the browser neither retries the delete nor reads a commit witness.
+A delete settles panes after the command succeeds: the active pane on the
+deleted ref adopts its collection and other panes on it close. A failed or lost
+response reports the command error and leaves the view for refresh; the browser
+neither retries the delete nor reads a commit witness.
 
 Desktop and mobile primary headers keep stable Back and Forward positions,
 expose exactly one **More** trigger when contextual commands exist, and render
@@ -379,7 +384,7 @@ focuses the pane's More trigger, else its landmark; it returns nothing and
 cannot reject. Desktop chrome is unaffected.
 
 `MobilePaneChrome` (the active pane's header, navigation, companion, actions and
-resource subject) is an external store slot: the mounted `PaneShell` publishes
+resource ref) is an external store slot: the mounted `PaneShell` publishes
 with `usePublishMobilePaneChrome`, and `MobilePaneBar` reads it with
 `useMobilePaneChrome`. Publication does not touch motion.
 
@@ -491,11 +496,16 @@ that date, a `/pages/{id}` target one naming that page. Today, quick note and
 add to Today therefore reuse an open daily pane under either href.
 
 Accepted activation may carry one pane-entry delivery addressed to the chosen
-pane and the exact visit the target lands on; the page body reads it through
-`usePaneEntryDelivery` and acknowledges it by activation id. A newer entry
-supersedes (cancels) the pane's previous delivery, a View cancels it, a rejected
-activation cancels itself, and a commit that changes the pane's visit cancels
-it; `MobileQuickNoteHandoff` watches `cancelledPaneEntryActivationIds`.
+pane and the exact visit the target lands on (`WorkspacePaneEntry`: a page's new
+empty row or one of its notes, or a resource menu's edit: page title, note body,
+highlight colour, note, bounds or delete, message fork, walk, rerun, regenerate or
+delete); the store mints its activation id. The
+pane body reads it through `usePaneEntryDelivery` and acts only once ready: it
+claims first and acts only when `claim` returned true (the one call that
+removed it); ready but unable to serve it (the subject is gone), it claims and
+says so in a hud; it owns every outcome. A newer entry supersedes (cancels) the
+pane's previous delivery, a rejected activation drops it, and a commit that changes
+the pane's visit drops it; nothing expires otherwise.
 
 Learn is one of the named Adopt workflows. It preserves the source reader and
 opens `/artifacts/artifact:<id>` as a standalone resource pane after its durable

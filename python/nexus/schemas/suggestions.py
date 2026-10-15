@@ -1,4 +1,4 @@
-"""Suggestion targets; viewer consumption belongs to the media summary."""
+"""Suggestion publications, current eligibility and refresh observation."""
 
 from datetime import datetime
 from typing import Annotated, Literal
@@ -7,40 +7,35 @@ from uuid import UUID
 from pydantic import ConfigDict, Field, RootModel, field_validator
 
 from nexus.jobs.queue import DurableExecutionPhase
-from nexus.schemas.consumption import CamelIn, CamelOut
+from nexus.schemas.consumption import Closed
 from nexus.schemas.media_summary import MediaSummaryOut
-from nexus.schemas.presence import Presence
 from nexus.services.resource_graph.refs import ResourceRef, parse_resource_ref
 
 
-class MediaSuggestionTargetOut(CamelOut):
-    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
-
-    kind: Literal["Media"] = "Media"
+class MediaSuggestionTargetOut(Closed):
+    kind: Literal["Media"]
     ref: str
     media_summary: MediaSummaryOut
-    image_url: Presence[str]
+    image_url: str | None
     href: str
 
 
-class PodcastSuggestionTargetOut(CamelOut):
-    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
-
-    kind: Literal["Podcast"] = "Podcast"
+class PodcastSuggestionTargetOut(Closed):
+    kind: Literal["Podcast"]
     ref: str
     title: str
-    subtitle: Presence[str]
-    image_url: Presence[str]
+    subtitle: str | None
+    image_url: str | None
     href: str
 
 
-class SuggestionItemOut(CamelOut):
+class SuggestionItemOut(Closed):
     target: Annotated[
         MediaSuggestionTargetOut | PodcastSuggestionTargetOut, Field(discriminator="kind")
     ]
 
 
-class SuggestionPublicationMetaOut(CamelOut):
+class SuggestionPublicationMetaOut(Closed):
     id: UUID
     as_of: datetime
     input_revision: int
@@ -50,29 +45,29 @@ class SuggestionPublicationOut(SuggestionPublicationMetaOut):
     items: list[SuggestionItemOut] = Field(max_length=80)
 
 
-class SuggestionRefreshNowOut(CamelOut):
+class SuggestionRefreshNowOut(Closed):
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
     kind: Literal["Now"] = "Now"
 
 
-class SuggestionRefreshAtOut(CamelOut):
+class SuggestionRefreshAtOut(Closed):
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
     kind: Literal["At"] = "At"
     at: datetime
 
 
-class SuggestionRefreshStoppedOut(CamelOut):
+class SuggestionRefreshStoppedOut(Closed):
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
     kind: Literal["Stopped"] = "Stopped"
 
 
-class SuggestionStateOut(CamelOut):
+class SuggestionStateOut(Closed):
     input_revision: int
-    latest: Presence[SuggestionPublicationMetaOut]
-    work: Presence[DurableExecutionPhase]
+    latest: SuggestionPublicationMetaOut | None
+    work: DurableExecutionPhase | None
     capability: Literal["Available", "LecternFull", "NotApplicable"]
     automatic_refresh: Annotated[
         SuggestionRefreshNowOut | SuggestionRefreshAtOut | SuggestionRefreshStoppedOut,
@@ -80,13 +75,13 @@ class SuggestionStateOut(CamelOut):
     ]
 
 
-class SuggestionsOut(CamelOut):
+class SuggestionsOut(Closed):
     observed_at: datetime
     state: SuggestionStateOut
-    publication: Presence[SuggestionPublicationOut]
+    publication: SuggestionPublicationOut | None
 
 
-class SuggestionViewIn(CamelIn):
+class SuggestionViewIn(Closed):
     refs: list[str] = Field(max_length=80)
 
     @field_validator("refs")
@@ -101,19 +96,19 @@ class SuggestionViewIn(CamelIn):
         return refs
 
 
-class SuggestionViewOut(CamelOut):
+class SuggestionViewOut(Closed):
     observed_at: datetime
     state: SuggestionStateOut
     items: list[SuggestionItemOut] = Field(max_length=80)
 
 
-class SuggestionEnsureFreshIn(CamelIn):
+class SuggestionEnsureFreshIn(Closed):
     kind: Literal["EnsureFresh"]
 
 
-class SuggestionExplicitRefreshIn(CamelIn):
+class SuggestionExplicitRefreshIn(Closed):
     kind: Literal["Explicit"]
-    observed_publication_id: Presence[UUID]
+    observed_publication_id: UUID | None
 
 
 type SuggestionRefreshIn = Annotated[
@@ -121,14 +116,14 @@ type SuggestionRefreshIn = Annotated[
 ]
 
 
-class SuggestionCurrentOut(CamelOut):
+class SuggestionCurrentOut(Closed):
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
     kind: Literal["Current"] = "Current"
     state: SuggestionStateOut
 
 
-class SuggestionWithdrawnOut(CamelOut):
+class SuggestionWithdrawnOut(Closed):
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
     kind: Literal["Withdrawn"] = "Withdrawn"
@@ -140,5 +135,5 @@ class SuggestionObservationOut(
     pass
 
 
-class QuickReadsOut(CamelOut):
+class QuickReadsOut(Closed):
     items: list[SuggestionItemOut] = Field(max_length=5)

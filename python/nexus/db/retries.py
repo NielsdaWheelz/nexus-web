@@ -18,15 +18,15 @@ from nexus.db.session import use_read_committed, use_serializable
 # Named uniqueness constraints whose violation is a legitimate concurrent-insert
 # race rather than a defect, owner-neutral across callers: the author
 # resolver's exact-batch operation (spec
-# lightweight-author-deduplication-hard-cutover.md §2.7), the repository-wide
-# replay-memo constraint, the reader profile's first-PATCH insert (spec
-# reader-profile-persistence-hard-cutover.md §6), the consumption
+# lightweight-author-deduplication-hard-cutover.md §2.7), the reader profile's
+# first-PATCH insert (spec reader-profile-persistence-hard-cutover.md §6), the consumption
 # ensure-membership insert (spec lectern-player-lifecycle-hard-cutover.md §5.3),
 # and the Link mutation's first inserts — passage-anchor identity, canonical
 # neutral-link pair and client-minted highlight id (docs/modules/connections.md)
-# — plus the daily page binding's first-capture date/Page assignment and the
-# first-login user/default library bootstrap all retry the whole operation on a
-# first-sight race.
+# — plus the daily page binding's first-capture date/Page assignment, the
+# first-login user/default library bootstrap, and the client-minted library
+# invitation and resource grant ids (with one pending invitation per invitee),
+# new-author ids and link ids all retry the whole operation on a first-sight race.
 RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
     {
         "uq_contributors_handle",
@@ -38,7 +38,8 @@ RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
         "uq_contributor_credits_podcast_contributor_role",
         "uq_contributor_credits_gutenberg_ordinal",
         "uq_contributor_credits_gutenberg_contributor_role",
-        "uix_resource_mutations_client_id",
+        "contributors_pkey",
+        "resource_edges_pkey",
         "uix_resource_versions_lane",
         "uix_resource_view_states_endpoint_order",
         "uix_resource_view_states_edge_occurrence",
@@ -67,6 +68,9 @@ RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
         "uq_resource_grants_link",
         "uq_suggestion_feeds_lectern",
         "uq_suggestion_feeds_library",
+        "pk_resource_grants",
+        "library_invitations_pkey",
+        "uix_library_invitations_pending_once",
     }
 )
 

@@ -1,4 +1,4 @@
-"""The atlas read model: the viewer's stars, constellations and edges in the one frame."""
+"""GET /atlas: the viewer's sky in the one frame (one read, one picture: not paginated)."""
 
 from typing import Annotated
 

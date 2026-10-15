@@ -1,6 +1,7 @@
 """The resource_grants table: a creator and one audience (a grantee user, or any holder of the
 row's raw share token) may read one media or one owned highlight. Rows are authorization paths
 and teardown references; each mutation invalidates audience visibility for the users it affects.
+Grants are addressed by their plain id; a create takes the client's id.
 """
 
 from __future__ import annotations
@@ -14,14 +15,8 @@ from nexus.db.errors import TransactionRestart
 from nexus.db.models import Highlight, Media, ResourceGrant, User
 from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
-from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.ids import new_uuid7
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.sealed_handles import (
-    InvalidSealedHandle,
-    new_share_token,
-    unseal_resource_grant,
-)
+from nexus.services.sealed_handles import new_share_token
 from nexus.services.suggestion_changes import record_input_change
 
 
@@ -200,14 +195,21 @@ def find_grant(
 
 
 def insert_grant(
-    db: Session, *, creator_id: UUID, subject: ResourceRef, grantee_id: UUID | None
+    db: Session,
+    *,
+    id: UUID,
+    creator_id: UUID,
+    subject: ResourceRef,
+    grantee_id: UUID | None,
+    grantee_email: str | None,
 ) -> ResourceGrant:
     grant = ResourceGrant(
-        id=new_uuid7(),
+        id=id,
         subject_scheme=subject.scheme,
         subject_id=subject.id,
         created_by_user_id=creator_id,
         grantee_user_id=grantee_id,
+        grantee_email=grantee_email,
         share_token=None if grantee_id is not None else str(new_share_token()),
     )
     db.add(grant)
@@ -217,31 +219,27 @@ def insert_grant(
     return grant
 
 
-def delete_grant(db: Session, *, viewer_user_id: UUID, handle: str) -> None:
-    """Revoke a grant the viewer created, or decline one they received.
+def delete_grant(db: Session, *, viewer_user_id: UUID, grant_id: UUID) -> None:
+    """Revoke a grant the viewer created, or decline one they received. Absent or not the
+    viewer's: success.
 
     READ COMMITTED: the grant is read before the subject lock wait and again after it,
     so a dedupe repoint that won the wait restarts the attempt.
     """
-    try:
-        grant_id = unseal_resource_grant(handle)
-    except InvalidSealedHandle as exc:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource grant not found") from exc
     by_id = select(ResourceGrant.__table__).where(ResourceGrant.id == grant_id)
 
     def attempt() -> None:
         with transaction(db):
             found = db.execute(by_id).one_or_none()
-            if found is None:
-                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource grant not found")
+            if found is None or viewer_user_id not in (
+                found.created_by_user_id,
+                found.grantee_user_id,
+            ):
+                return
             media_id = lock_subject(db, ResourceRef(found.subject_scheme, found.subject_id))
             grant = db.execute(by_id.with_for_update()).one_or_none()
-            if (
-                media_id is None
-                or grant is None
-                or viewer_user_id not in (grant.created_by_user_id, grant.grantee_user_id)
-            ):
-                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource grant not found")
+            if media_id is None or grant is None:
+                return
             if grant.subject_id != found.subject_id:
                 raise TransactionRestart("resource grant subject moved before delete")
             _delete(db, ResourceGrant.id == grant_id)

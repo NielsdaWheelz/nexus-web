@@ -17,12 +17,9 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.schemas.notes import DailyCaptureRequest
 from nexus.schemas.resource_graph import CitationSnapshot
-from nexus.schemas.resource_items import AbsentExpectedBody
 from nexus.services import highlights, library_entries, note_bodies, notes, text_quote, users
 from nexus.services.consumption import lectern
-from nexus.services.consumption import service as consumption
 from nexus.services.passage_anchors import normalize_quote_text
 from nexus.services.resource_graph.edges import EdgeCreate, create_edge, delete_edge
 from nexus.services.resource_graph.refs import (
@@ -146,15 +143,13 @@ def library_add(value: LibraryAddInput, call: Call) -> LibraryAddSuccess:
     else:
         target = library_entries.podcast_target(ref.id)
         inserted = library_entries.place_subscribed_podcast_in_named_library_in_current_transaction(
-            db, viewer_id=viewer, library_id=library_id, podcast_id=ref.id
+            db, viewer_id=viewer, library_id=library_id, podcast_id=ref.id, replace_episodes=False
         )
     name = db.execute(
         text("SELECT name FROM libraries WHERE id = :id"), {"id": library_id}
     ).scalar_one()
     if inserted:
-        entry_id = library_entries.entry_id_for_target_in_current_transaction(
-            db, library_id=library_id, target=target
-        )
+        entry_id = library_entries.entry_id(db, library_id, target)
         call.created_refs.append(
             {
                 "kind": "entry",
@@ -198,21 +193,17 @@ def note_create(value: NoteCreateInput, call: Call) -> NoteCreateSuccess:
     note_id = uuid5(call.id, "nexus.note.create:note_block")
     if value.page_uri:
         page = _ref(value.page_uri, ("page",))
-        note_id = notes.append_note_block_to_page_in_current_transaction(
+        notes.append_note_in_current_transaction(
             db, viewer, page_id=page.id, note_id=note_id, body_pm_json=body
-        ).id
+        )
         label = "page"
     else:
-        notes.capture_daily_page_note_in_current_transaction(
+        notes.capture_in_current_transaction(
             db,
             viewer,
             local_date=users.calendar_local_date(db, viewer),
-            request=DailyCaptureRequest(
-                note_id=note_id,
-                client_mutation_id=f"assistant:{uuid5(call.id, 'nexus.note.create:daily_capture')}",
-                body_pm_json=body,
-            ),
-            page_id_candidate=uuid5(call.id, "nexus.note.create:daily_page"),
+            note_id=note_id,
+            body_pm_json=body,
         )
         label = "today's note"
     call.created_refs.append({"kind": "note_block", "id": str(note_id), "label": label})
@@ -255,19 +246,18 @@ def highlight_create(value: HighlightCreateInput, call: Call) -> HighlightCreate
     call.created_refs.append({"kind": "highlight", "id": str(highlight.id), "label": exact})
     note_uri = None
     if value.note and value.note.strip():
-        block, _ = notes.set_highlight_note_body_pm_json_in_current_transaction(
+        note_id = uuid5(call.id, "nexus.highlight.create:note_block")
+        notes.attach_highlight_note_in_current_transaction(
             db,
             viewer,
             highlight_id=highlight.id,
-            block_id=uuid5(call.id, "nexus.highlight.create:note_block"),
+            note_id=note_id,
             body_pm_json=note_bodies.pm_doc_from_markdown_projection(value.note),
-            expected_body=AbsentExpectedBody(kind="absent"),
-            client_mutation_id=f"assistant:{uuid5(call.id, 'nexus.highlight.create:note_mutation')}",
         )
         call.created_refs.append(
-            {"kind": "note_block", "id": str(block.id), "label": "highlight note"}
+            {"kind": "note_block", "id": str(note_id), "label": "highlight note"}
         )
-        note_uri = f"note_block:{block.id}"
+        note_uri = f"note_block:{note_id}"
     return HighlightCreateSuccess(
         exact=exact, highlight_uri=f"highlight:{highlight.id}", note_uri=note_uri
     )
@@ -303,9 +293,7 @@ def queue_add(value: QueueAddInput, call: Call) -> QueueAddSuccess:
     media = _ref(value.media_uri, ("media",))
     assert_ref_visible(db, viewer_id=viewer, ref=media)
     # only the owner's lock-held inserted receipt makes the item the assistant's.
-    inserted = consumption.ensure_missing_items_for_assistant_in_current_transaction(
-        db, viewer_id=viewer, media_ids=[media.id]
-    )
+    inserted = lectern.append_missing_in_txn(db, viewer_id=viewer, media_ids=[media.id])
     found = lectern.find_item_for_media(db, viewer_id=viewer, media_id=media.id)
     if found is None:
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
@@ -327,11 +315,9 @@ def revert(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
         elif kind == "highlight":
             highlights.delete_highlight_in_current_transaction(db, viewer_id, target)
         elif kind == "note_block":
-            notes.remove_note_block_in_current_transaction(db, viewer_id, target)
+            note_bodies.delete_note(db, viewer_id=viewer_id, note_id=target)
         elif kind == "queue":
-            consumption.remove_lectern_item_in_current_transaction(
-                db, viewer_id=viewer_id, item_id=target
-            )
+            lectern.remove_item_in_txn(db, viewer_id=viewer_id, item_id=target)
         else:
             _unfile(db, viewer_id, ref)
     except ApiError as exc:
@@ -354,9 +340,7 @@ def _unfile(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
     else:
         db.execute(text("SELECT 1 FROM podcasts WHERE id = :id FOR UPDATE"), {"id": item_id})
     target = (library_entries.media_target if media else library_entries.podcast_target)(item_id)
-    current = library_entries.entry_id_for_target_in_current_transaction(
-        db, library_id=library_id, target=target
-    )
+    current = library_entries.entry_id(db, library_id, target)
     if current != UUID(ref["id"]):
         return
     if media:

@@ -64,6 +64,26 @@ class SortKey:
     value: KeysetValueKind
 
 
+_DATE, _ID, _TEXT = KeysetValueKind.DateTime, KeysetValueKind.Uuid, KeysetValueKind.Text
+
+# The updated/title index views (chats, pages) by (``sort``, ``direction``). Canonical
+# newest-first has no keys, so it keeps one URL; equal titles read newest first both
+# ways. A list projects ``updated_at``, ``id``, ``title_key`` and ``presented_title``.
+UPDATED_TITLE_PLANS: dict[tuple[str | None, str | None], list[SortKey]] = {
+    (None, None): [SortKey("updated_at", "desc", _DATE), SortKey("id", "desc", _ID)],
+    ("updated", "asc"): [SortKey("updated_at", "asc", _DATE), SortKey("id", "asc", _ID)],
+    **{
+        ("title", direction): [
+            SortKey("title_key", direction, _TEXT),
+            SortKey("presented_title", direction, _TEXT),
+            SortKey("updated_at", "desc", _DATE),
+            SortKey("id", "desc", _ID),
+        ]
+        for direction in ("asc", "desc")
+    },
+}
+
+
 def order_by_sql(plan: Sequence[SortKey], *, alias: str) -> str:
     return ", ".join(f"{alias}.{key.column} {key.direction.upper()}" for key in plan)
 

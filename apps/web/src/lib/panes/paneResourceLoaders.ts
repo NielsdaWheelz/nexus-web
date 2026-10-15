@@ -1,129 +1,47 @@
-// Independent first-paint resources keyed by route params. The server seeds
-// each existing cache key separately; one prefetch miss does not discard its
-// siblings. Client owners consume those same keys on their first mount.
+// The server's first-paint reads, per pane route: each names the reads a pane
+// makes from its route params alone, under the keys its hooks read, so the
+// workspace bootstrap seeds them and the pane body's first commit paints them
+// without a fetch (lib/api/serverState.tsx). A seeded key is the api path the
+// hook reads, a list's with its view query (canonical: empty), route params
+// unencoded; a seed no hook takes then is dropped unread. Panes keyed by
+// mutable ui state or streamed are absent.
 import type { ApiJson } from "@/lib/api/wire";
-import {
-  conversationsInitialResource,
-  librariesResource,
-  libraryEntriesResource,
-  libraryResource,
-  librarySuggestionsResource,
-  lecternSuggestionsResource,
-  mediaResource,
-  notePagesResource,
-  settingsAccountResource,
-  type ConversationIndexResourceParams,
-} from "@/lib/api/resource";
-import type { ResourceFetcher } from "@/lib/api/resourceTransport";
-import type { ListPage } from "@/lib/api/useServerList";
-import type { ConversationListItem } from "@/lib/chat/conversationIndex";
-import { libraryOutForId } from "@/lib/libraries/contract";
-import {
-  libraryEntryPageFromWire,
-  type LibraryEntryListItem,
-} from "@/lib/libraries/entryListItem";
-import { mediaDetailFromResponse, type MediaDetail } from "@/lib/media/mediaDetail";
-import { loadNotePages } from "@/lib/notes/pageContract";
+import { mediaDetailFromResponse } from "@/lib/media/mediaDetail";
 import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
 
-type Params = Record<string, string>;
+/** One GET of the api by its own path (no `/api`), parsed. */
+export type Get = <T>(path: `/${string}`) => Promise<T>;
+type Seeds = Record<string, (get: Get) => Promise<unknown>>;
 
-export interface PaneResourceLoader {
-  cacheKey: (params: Params) => string;
-  load: (request: ResourceFetcher, params: Params) => Promise<unknown>;
-}
+const data = (path: `/${string}`) => async (get: Get) =>
+  (await get<{ data: unknown }>(path)).data;
+const firstPage = (path: `/${string}`) => data(`${path}?limit=100`);
 
-export type ConversationsPaneSeed = ListPage<ConversationListItem>;
-export interface MediaPaneSeed {
-  readonly media: MediaDetail;
-}
-
-export async function loadMediaPane(
-  request: ResourceFetcher,
-  params: { id: string },
-): Promise<MediaPaneSeed> {
-  const response = await request<
-    { id: string },
-    ApiJson<"/media/{media_id}", "get">
-  >(mediaResource, params);
-  return { media: mediaDetailFromResponse(response, params.id) };
-}
-
-export const paneResourceLoaders: Partial<
-  Record<PaneRouteId, readonly PaneResourceLoader[]>
+export const paneSeeds: Partial<
+  Record<PaneRouteId, (params: Record<string, string>) => Seeds>
 > = {
-  lectern: [{
-    cacheKey: () => lecternSuggestionsResource.cacheKey({}),
-    load: async (request) => {
-      const response = await request<
-        Record<string, never>,
-        ApiJson<"/lectern/suggestions", "get">
-      >(lecternSuggestionsResource, {});
-      return response.data;
-    },
-  }],
-  libraries: [{
-    cacheKey: () => librariesResource.cacheKey({}),
-    load: async (request) => {
-      const response = await request<
-        { limit: number },
-        ApiJson<"/libraries", "get">
-      >(librariesResource, { limit: 100 });
-      return response.data;
-    },
-  }],
-  library: [
-    {
-      cacheKey: ({ id }) => libraryResource.cacheKey({ id }),
-      load: async (request, { id }) => {
-        const response = await request<{ id: string }, ApiJson<"/libraries/{library_id}", "get">>(
-          libraryResource,
-          { id },
-        );
-        return libraryOutForId(response.data, id, "Library pane response.data");
-      },
-    },
-    {
-      cacheKey: ({ id }) => libraryEntriesResource.cacheKey({ id }),
-      load: async (request, { id }): Promise<ListPage<LibraryEntryListItem>> => {
-        const response = await request<
-          { id: string },
-          ApiJson<"/libraries/{library_id}/entries", "get">
-        >(libraryEntriesResource, { id });
-        return libraryEntryPageFromWire(response.data);
-      },
-    },
-    {
-      cacheKey: ({ id }) => librarySuggestionsResource.cacheKey({ id }),
-      load: async (request, { id }) => {
-        const response = await request<
-          { id: string },
-          ApiJson<"/libraries/{library_id}/suggestions", "get">
-        >(librarySuggestionsResource, { id });
-        return response.data;
-      },
-    },
-  ],
-  media: [{
-    cacheKey: ({ id }) => mediaResource.cacheKey({ id }),
-    load: (request, { id }) => loadMediaPane(request, { id }),
-  }],
-  notes: [{
-    cacheKey: () => notePagesResource.cacheKey({}),
-    load: (request) => loadNotePages(request, {}),
-  }],
-  conversations: [{
-    cacheKey: () => conversationsInitialResource.cacheKey({}),
-    load: async (request): Promise<ConversationsPaneSeed> => {
-      const response = await request<
-        ConversationIndexResourceParams,
-        ApiJson<"/conversations", "get">
-      >(conversationsInitialResource, {});
-      return response.data;
-    },
-  }],
-  settingsAccount: [{
-    cacheKey: () => settingsAccountResource.cacheKey({}),
-    load: (request) => request(settingsAccountResource, {}),
-  }],
+  libraries: () => ({ "/libraries?": firstPage("/libraries") }),
+  library: ({ id }) => {
+    const path = `/libraries/${encodeURIComponent(id)}` as const;
+    return {
+      [`/libraries/${id}`]: data(path),
+      [`/libraries/${id}/entries?`]: firstPage(`${path}/entries`),
+      [`/libraries/${id}/suggestions`]: data(`${path}/suggestions`),
+    };
+  },
+  lectern: () => ({
+    "/lectern/suggestions": data("/lectern/suggestions"),
+    "/lectern/quick-reads": data("/lectern/quick-reads"),
+  }),
+  media: ({ id }) => ({
+    [`/media/${id}`]: async (get) =>
+      mediaDetailFromResponse(
+        await get<ApiJson<"/media/{media_id}", "get">>(
+          `/media/${encodeURIComponent(id)}`,
+        ),
+        id,
+      ),
+  }),
+  notes: () => ({ "/notes/pages?": firstPage("/notes/pages") }),
+  conversations: () => ({ "/conversations?": firstPage("/conversations") }),
 };

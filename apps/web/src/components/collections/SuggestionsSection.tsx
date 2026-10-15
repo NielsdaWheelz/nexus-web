@@ -7,13 +7,13 @@ import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect, isStaleBuild } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { assertNever } from "@/lib/assertNever";
 import { isAbortError } from "@/lib/errors";
 import { presentSuggestionItem, type SuggestionItem, type SuggestionsDestination, type SuggestionTarget } from "@/lib/suggestions";
-import { parseMediaId } from "@/lib/lectern/contract";
-import { useLectern } from "@/lib/lectern/LecternProvider";
+import { useLecternAdds } from "@/lib/lectern/lectern";
+import { usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
 import type { SuggestionsController } from "@/lib/useSuggestions";
 import styles from "./SuggestionsSection.module.css";
 import addStyles from "./LecternAddControl.module.css";
@@ -28,7 +28,7 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
   returnScope: string;
 }) {
   const lectern = destination.kind === "Lectern";
-  const { ensureRequests, onCanonicalInstall, getCanonicalSnapshot } = useLectern();
+  const { adds, onAcknowledged } = useLecternAdds();
   const atCapacity = lectern && suggestions.state?.capability === "LecternFull";
   const [adding, setAdding] = useState<string | null>(null);
   const [adopting, setAdopting] = useState(false);
@@ -36,32 +36,30 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const announced = useRef(new Set<string>());
+  const rootRef = useRef<HTMLElement>(null);
+  usePaneReturnDescendantReady({ rootRef, ready: suggestions.state !== null || suggestions.readError !== null || suggestions.withdrawn });
   const sectionId = `suggestions-${useId().replaceAll(":", "")}`;
   const summaries = useMediaSummaries(suggestions.rows.flatMap((item) =>
-    item.target.kind === "Media" ? [item.target.mediaSummary] : []));
+    item.target.kind === "Media" ? [item.target.media_summary] : []));
   const rows = suggestions.rows.flatMap<SuggestionItem>((item) => {
     if (item.target.kind !== "Media") return [item];
-    const summary = summaries.resolve(item.target.mediaSummary);
-    return summary.kind === "Absent" ? [] : [{ ...item, target: { ...item.target, mediaSummary: summary.value } }];
+    const summary = summaries.resolve(item.target.media_summary);
+    return summary === null ? [] : [{ ...item, target: { ...item.target, media_summary: summary } }];
   });
   const { acknowledge } = suggestions;
   useEffect(() => {
     if (!lectern) return;
-    return onCanonicalInstall((event) => {
-      if (event.kind === "ensureAcknowledged" && getCanonicalSnapshot()?.items.some((item) => item.mediaSummary.mediaId === event.mediaId)) {
-        acknowledge(`media:${event.mediaId}`);
-      }
-    });
-  }, [lectern, onCanonicalInstall, getCanonicalSnapshot, acknowledge]);
+    return onAcknowledged((mediaId) => acknowledge(`media:${mediaId}`));
+  }, [lectern, onAcknowledged, acknowledge]);
 
   const work = suggestions.state?.work;
   let preparing = false;
   let needsRepair = false;
-  if (work?.kind === "Present") {
-    switch (work.value) {
+  if (work != null) {
+    switch (work) {
       case "Queued": case "Running": case "Recovering": preparing = true; break;
       case "Suspended": needsRepair = true; break;
-      default: assertNever(work.value);
+      default: assertNever(work);
     }
   }
   const readFailure = suggestions.readError !== null || suggestions.observationInterrupted;
@@ -90,10 +88,10 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
     setAdding(item.target.ref);
     setNotice(null);
     try {
-      if (await accept(item.target) === "Accepted") acknowledge(item.target.ref);
+      if (await accept(item.target) === "Accepted" && !lectern) acknowledge(item.target.ref);
     } catch (error) {
       if (isAbortError(error) || handleUnauthenticatedApiError(error)) return;
-      if (!isApiError(error) || isSameSystemApiDefect(error)) return setDefect({ error });
+      if (!isApiError(error) || isSameSystemApiDefect(error) || isStaleBuild(error)) return setDefect({ error });
       setNotice({ text: lectern ? `couldn’t add to lectern. ${error.message}` : error.message, requestId: error.requestId });
     } finally {
       setAdding(null);
@@ -106,6 +104,7 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
   const ariaLabel = lectern ? "suggestions" : `suggestions for ${destination.name}`;
   return (
     <PaneSection
+      ref={rootRef}
       className={lectern ? addStyles.collection : undefined}
       id={sectionId}
       aria-label={ariaLabel}
@@ -157,9 +156,9 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
         </>}
         empty={suggestions.adopted !== null ? <p className={styles.quiet}>no suggestions right now.</p> : undefined}
         rowControls={Object.fromEntries(rows.map((item) => {
-          const itemTitle = item.target.kind === "Media" ? item.target.mediaSummary.title : item.target.title;
+          const itemTitle = item.target.kind === "Media" ? item.target.media_summary.title : item.target.title;
           const request = lectern && item.target.kind === "Media"
-            ? ensureRequests.get(parseMediaId(item.target.mediaSummary.mediaId)) : undefined;
+            ? adds.get(item.target.media_summary.media_id) : undefined;
           const busy = request ? request.kind !== "Unconfirmed" : adding !== null;
           const blocked = request === undefined && (atCapacity || suggestions.state?.capability !== "Available");
           const checking = request !== undefined && request.kind !== "Sending";

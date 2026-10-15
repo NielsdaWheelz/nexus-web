@@ -16,16 +16,13 @@ import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import type { AuthenticatedAccount } from "@/lib/account/contract";
-import { ResourceActionRuntimeProvider } from "@/lib/actions/resourceActionRuntime";
-import {
-  ResourceCacheProvider,
-  type DehydratedResources,
-} from "@/lib/api/resourceCache";
+import ResourceActionsProvider from "@/lib/actions/ResourceActionsProvider";
+import { ServerSeedsProvider } from "@/lib/api/serverState";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
-import ActivityCaptureLifecycle from "@/lib/consumption/ActivityCaptureLifecycle";
+import { ActivityCapture } from "@/lib/consumption/capture";
 import { readerSurfaceStyle } from "@/lib/documentReader/DocumentReader";
 import { ImportsProvider } from "@/lib/imports/ImportsProvider";
-import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { LecternProvider } from "@/lib/lectern/lectern";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { MediaSummaryProvider } from "@/lib/media/MediaSummaryProvider";
 import { MobileChromeProvider } from "@/lib/mobileShell/chrome";
@@ -39,10 +36,6 @@ import {
 } from "@/lib/reader/ReaderContext";
 import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
-import {
-  ResourceActionOverlays,
-  ResourceOverlaysProvider,
-} from "@/lib/resources/resourceOverlaysController";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import type { WorkspaceState } from "@/lib/workspace/model";
 import {
@@ -58,15 +51,15 @@ export default function AuthenticatedShell(props: {
   readerProfile: ReaderProfile;
   renderEnvironment: RenderEnvironment;
   initialState: WorkspaceState;
-  resources: DehydratedResources;
+  seeds: Record<string, Record<string, unknown>>;
   entryFailure: { requestId?: string } | null;
 }) {
   return (
     <AuthenticatedAccountProvider account={props.account}>
       <RenderEnvironmentProvider value={props.renderEnvironment}>
         <UnauthenticatedApiBoundary>
-          <ActivityCaptureLifecycle />
-          <ResourceCacheProvider value={props.resources}>
+          <ActivityCapture />
+          <ServerSeedsProvider seeds={props.seeds}>
             <ReaderProvider initialProfile={props.readerProfile}>
               <Workspace
                 accountId={props.account.accountId}
@@ -74,7 +67,7 @@ export default function AuthenticatedShell(props: {
                 entryFailure={props.entryFailure}
               />
             </ReaderProvider>
-          </ResourceCacheProvider>
+          </ServerSeedsProvider>
         </UnauthenticatedApiBoundary>
       </RenderEnvironmentProvider>
     </AuthenticatedAccountProvider>
@@ -124,28 +117,25 @@ function Workspace(props: {
           <MobileChromeProvider>
             {/* One Lectern owner wraps the workspace leaves and the player
                 runtime. The resource-action runtime reads every provider
-                above it; its overlays render inside the player runtime. */}
+                above it and renders the overlays its verbs open. */}
             <MediaSummaryProvider key={accountId}>
               <LecternProvider>
                 <LibraryPlacementControllerProvider>
                   <ShareControllerProvider>
-                    <ResourceOverlaysProvider>
-                      <GlobalPlayerProvider accountId={accountId}>
-                        <ResourceActionRuntimeProvider>
-                          <ImportsProvider>
-                            <Nexus />
-                            <ResourceActionOverlays />
-                            <div className={styles.layout}>
-                              <AppNav />
-                              <main className={styles.main}>
-                                <WorkspaceHost />
-                                <GlobalPlayerSurfaces />
-                              </main>
-                            </div>
-                          </ImportsProvider>
-                        </ResourceActionRuntimeProvider>
-                      </GlobalPlayerProvider>
-                    </ResourceOverlaysProvider>
+                    <GlobalPlayerProvider accountId={accountId}>
+                      <ResourceActionsProvider>
+                        <ImportsProvider>
+                          <Nexus />
+                          <div className={styles.layout}>
+                            <AppNav />
+                            <main className={styles.main}>
+                              <WorkspaceHost />
+                              <GlobalPlayerSurfaces />
+                            </main>
+                          </div>
+                        </ImportsProvider>
+                      </ResourceActionsProvider>
+                    </GlobalPlayerProvider>
                   </ShareControllerProvider>
                 </LibraryPlacementControllerProvider>
               </LecternProvider>
@@ -165,7 +155,7 @@ function WorkspaceEntryNotice({ failure }: { failure: { requestId?: string } | n
   const { state } = useWorkspaceStore();
   const [pending, startTransition] = useTransition();
   const inFlight = useRef(false);
-  const activePaneId = useRef(state.activePrimaryPaneId);
+  const activePaneId = useRef(state.active_primary_pane_id);
   const retry = useCallback(() => {
     if (inFlight.current) return;
     inFlight.current = true;
@@ -198,9 +188,9 @@ function WorkspaceEntryNotice({ failure }: { failure: { requestId?: string } | n
 
   useLayoutEffect(() => {
     // Keep the removal target current without republishing a dismissed notice.
-    activePaneId.current = state.activePrimaryPaneId;
+    activePaneId.current = state.active_primary_pane_id;
     if (failure === null) resolve(ENTRY_NOTICE);
-  }, [failure, resolve, state.activePrimaryPaneId]);
+  }, [failure, resolve, state.active_primary_pane_id]);
 
   // A keyed update keeps the existing notice and button. Only unmount cleans it up.
   useEffect(() => () => resolve(ENTRY_NOTICE), [resolve]);

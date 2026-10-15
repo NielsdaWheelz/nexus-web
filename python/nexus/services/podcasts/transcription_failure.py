@@ -28,7 +28,6 @@ def publish_podcast_transcription_failure(
     mark_media_failed_by_id(
         db,
         media_id=failure.media_id,
-        stage="transcribe",
         error_code=failure.error_code,
         error_message=failure.error_message[:1000],
         now=failure.now,

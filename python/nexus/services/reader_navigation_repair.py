@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.models import EpubNavLocation, EpubTocNode, Media, ProcessingStatus, ReaderPublication
 from nexus.ids import new_uuid7
-from nexus.schemas.presence import Present, nullable_from_presence
 from nexus.schemas.reader_apparatus import NoteRegion
 from nexus.schemas.source_issues import (
     SOURCE_ISSUES,
@@ -1220,18 +1219,14 @@ def _epub_metadata(plan: EpubNavigationRepairPlan) -> dict[str, Any]:
             {
                 "location_id": section.location_id,
                 "ordinal": ordinal,
-                "parent_section_id": nullable_from_presence(section.parent_section_id),
+                "parent_section_id": section.parent_section_id,
                 "label": section.label,
                 "fragment_idx": section.fragment_idx,
                 "href_path": section.href_path,
-                "href_fragment": nullable_from_presence(section.href_fragment),
+                "href_fragment": section.href_fragment,
                 "start_offset": section.start_offset,
-                "end_fragment_idx": section.end.value.fragment_idx
-                if isinstance(section.end, Present)
-                else None,
-                "end_offset": section.end.value.offset
-                if isinstance(section.end, Present)
-                else None,
+                "end_fragment_idx": section.end.fragment_idx if section.end is not None else None,
+                "end_offset": section.end.offset if section.end is not None else None,
                 "source": section.source,
             }
             for ordinal, section in enumerate(plan.nav_locations)
@@ -1261,7 +1256,7 @@ def _web_navigation_metadata(
                 {
                     "node_id": block.heading_id,
                     "label": block.heading_label,
-                    "parent_node_id": nullable_from_presence(block.toc_parent_id),
+                    "parent_node_id": block.toc_parent_id,
                     "fragment_id": str(fragment.id),
                     "offset": block.start_offset,
                     "section_id": block.section_id,
@@ -1272,7 +1267,7 @@ def _web_navigation_metadata(
                     {
                         "location_id": block.section_id,
                         "label": block.heading_label,
-                        "parent_section_id": nullable_from_presence(block.parent_section_id),
+                        "parent_section_id": block.parent_section_id,
                         "fragment_id": str(fragment.id),
                         "offset": block.start_offset,
                     }
@@ -1402,16 +1397,14 @@ def _install_epub_navigation(db: Session, media_id: UUID, plan: EpubNavigationRe
                 media_id=media_id,
                 location_id=section.location_id,
                 ordinal=ordinal,
-                parent_section_id=nullable_from_presence(section.parent_section_id),
+                parent_section_id=section.parent_section_id,
                 label=section.label,
                 fragment_idx=section.fragment_idx,
                 href_path=section.href_path,
-                href_fragment=nullable_from_presence(section.href_fragment),
+                href_fragment=section.href_fragment,
                 start_offset=section.start_offset,
-                end_fragment_idx=section.end.value.fragment_idx
-                if isinstance(section.end, Present)
-                else None,
-                end_offset=section.end.value.offset if isinstance(section.end, Present) else None,
+                end_fragment_idx=section.end.fragment_idx if section.end is not None else None,
+                end_offset=section.end.offset if section.end is not None else None,
                 source=section.source,
             )
         )

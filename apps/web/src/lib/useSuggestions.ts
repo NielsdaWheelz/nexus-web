@@ -1,11 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
-import { absent, present } from "@/lib/api/presence";
-import { lecternSuggestionsResource, librarySuggestionsResource } from "@/lib/api/resource";
-import { useResourceSeed } from "@/lib/api/resourceCache";
-import { sseClientDirect } from "@/lib/api/sse-client";
+import { isApiError, isSameSystemApiDefect, isStaleBuild, type ApiError, type ApiPath } from "@/lib/api/client";
+import { useServerSeed } from "@/lib/api/serverState";
+import { openStream } from "@/lib/api/stream";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { assertNever } from "@/lib/assertNever";
 import { isAbortError } from "@/lib/errors";
@@ -70,18 +68,16 @@ function sameRefs(left: SuggestionItem[], right: SuggestionItem[]): boolean {
  */
 export function useSuggestions(destination: SuggestionsDestination, isActive: boolean) {
   const libraryId = destination.kind === "Library" ? destination.id : null;
-  const path = libraryId === null
-    ? lecternSuggestionsResource.clientPath({})
-    : librarySuggestionsResource.clientPath({ id: libraryId });
-  const cacheKey = libraryId === null
-    ? lecternSuggestionsResource.cacheKey({})
-    : librarySuggestionsResource.cacheKey({ id: libraryId });
-  const seed = useResourceSeed<Suggestions>(cacheKey);
+  const key = libraryId === null ? "/lectern/suggestions" : `/libraries/${libraryId}/suggestions`;
+  const path: ApiPath = libraryId === null
+    ? "/api/lectern/suggestions"
+    : `/api/libraries/${encodeURIComponent(libraryId)}/suggestions`;
+  const seed = useServerSeed<Suggestions>(key)?.data ?? null;
   const [view, setView] = useState<SuggestionsView>(() => ({
     state: seed?.state ?? null,
-    adopted: seed?.publication.kind === "Present" ? {
-      publication: seed.publication.value,
-      displayed: displayedRefs(seed.publication.value.items, []),
+    adopted: seed?.publication != null ? {
+      publication: seed.publication,
+      displayed: displayedRefs(seed.publication.items, []),
     } : null,
     staged: null, readError: null, observationError: null,
     observationInterrupted: false, admissionError: null,
@@ -144,6 +140,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
       if (isAbortError(error) || controller.signal.aborted) return;
       if (handleUnauthenticatedApiError(error)) return withdraw();
       if (isApiError(error) && !isSameSystemApiDefect(error) && (error.status === 403 || error.status === 404)) return withdraw();
+      if (isStaleBuild(error)) return setDefect({ error });
       if (isApiError(error) && !isSameSystemApiDefect(error)) {
         commit((value) => input
           ? { ...value, admissionError: { input, error } }
@@ -151,32 +148,24 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
             : { ...value, observationError: error, observationInterrupted: true });
         return;
       }
-      if (area === "Observation" && !isApiError(error) && error instanceof Error &&
-          !error.message.startsWith("Invalid SSE") &&
-          !error.message.startsWith("Failed to parse SSE") &&
-          !error.message.startsWith("Unknown SSE") &&
-          !error.message.startsWith("SSE event exceeds")) {
-        commit((value) => ({ ...value, observationError: error, observationInterrupted: true }));
-        return;
-      }
       setDefect({ error });
     }
 
     function installState(state: SuggestionState, evidence: ReadEvidence = {}) {
       observationVersion += 1;
-      const inputsChanged = current.current.state?.inputRevision !== state.inputRevision;
+      const inputsChanged = current.current.state?.input_revision !== state.input_revision;
       commit((value) => ({
         ...value, state,
         ...(state.capability === "NotApplicable" ? { adopted: null, staged: null } : {}),
-        admissionError: state.work.kind === "Present" ||
-          (state.latest.kind === "Present" && value.state?.latest.kind === "Present" &&
-            state.latest.value.id !== value.state.latest.value.id)
+        admissionError: state.work !== null ||
+          (state.latest !== null && value.state?.latest != null &&
+            state.latest.id !== value.state.latest.id)
           ? null : value.admissionError,
       }));
       armTimer();
       const value = current.current;
-      const latest = state.latest.kind === "Present" && state.latest.value.id !== evidence.includedPublicationId &&
-        state.latest.value.id !== value.adopted?.publication.id && state.latest.value.id !== value.staged?.id;
+      const latest = state.latest !== null && state.latest.id !== evidence.includedPublicationId &&
+        state.latest.id !== value.adopted?.publication.id && state.latest.id !== value.staged?.id;
       const viewPool = inputsChanged && value.adopted !== null && value.adopted.publication.id !== evidence.validatedPoolId;
       if (latest || viewPool) {
         // HTTP can reveal new inputs or a publication before its stream event.
@@ -185,8 +174,8 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
       }
     }
 
-    function readState(response: { observedAt: string; state: SuggestionState }, version: number, evidence: ReadEvidence = {}) {
-      clock.current = { serverTime: Date.parse(response.observedAt), receivedAt: performance.now() };
+    function readState(response: Pick<Suggestions, "observed_at" | "state">, version: number, evidence: ReadEvidence = {}) {
+      clock.current = { serverTime: Date.parse(response.observed_at), receivedAt: performance.now() };
       if (version === observationVersion) installState(response.state, evidence);
       if (clearAdmissionAfterRead) {
         clearAdmissionAfterRead = false;
@@ -204,22 +193,22 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
       const version = observationVersion;
       const response = await getSuggestions(path, controller.signal);
       if (controller.signal.aborted) return;
-      readState(response, version, response.publication.kind === "Present" ? {
-        includedPublicationId: response.publication.value.id,
-        validatedPoolId: response.publication.value.id,
+      readState(response, version, response.publication !== null ? {
+        includedPublicationId: response.publication.id,
+        validatedPoolId: response.publication.id,
       } : {});
       const authoritative = current.current.state;
-      if (authoritative && (response.state.inputRevision < authoritative.inputRevision ||
-          (response.state.latest.kind === "Present" && authoritative.latest.kind === "Present" &&
-            response.state.latest.value.id !== authoritative.latest.value.id))) {
+      if (authoritative && (response.state.input_revision < authoritative.input_revision ||
+          (response.state.latest !== null && authoritative.latest !== null &&
+            response.state.latest.id !== authoritative.latest.id))) {
         pendingLatest = true;
         if (autoAt !== null) pendingAutoAdopt = autoAt;
         return;
       }
       commit((value) => {
-        if (response.publication.kind === "Absent") return { ...value, readError: null };
-        const publication = { ...response.publication.value,
-          items: eligibleReceiptItems(response.publication.value.items, beganAt) };
+        if (response.publication === null) return { ...value, readError: null };
+        const publication = { ...response.publication,
+          items: eligibleReceiptItems(response.publication.items, beganAt) };
         const adopted = value.adopted;
         if (adopted === null || publication.id === adopted.publication.id || sameRefs(publication.items, adopted.publication.items)) {
           return { ...value, readError: null, staged: null,
@@ -242,7 +231,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
       const response = await viewSuggestions(path, selected.items.map((item) => item.target.ref), controller.signal);
       if (controller.signal.aborted) return;
       readState(response, version, { validatedPoolId: selected.id });
-      if (current.current.state && response.state.inputRevision < current.current.state.inputRevision) {
+      if (current.current.state && response.state.input_revision < current.current.state.input_revision) {
         if (adopting) {
           pendingAdoption = true;
           pendingAutoAdopt = autoAt;
@@ -314,13 +303,13 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
           if (isAbortError(error)) throw error;
           if (controller.signal.aborted) return false;
           const state = current.current.state;
-          const publicationChanged = state?.latest.kind === "Present" &&
-            (latestAtAdmission?.kind !== "Present" || state.latest.value.id !== latestAtAdmission.value.id);
+          const publicationChanged = state?.latest != null &&
+            (latestAtAdmission == null || state.latest.id !== latestAtAdmission.id);
           // The observation can confirm admitted work before its HTTP receipt is
           // lost. Unrelated input changes do not establish that confirmation.
           if (isApiError(error) &&
               (error.code === "E_NETWORK" || error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT") &&
-              (state?.work.kind === "Present" || publicationChanged)) {
+              (state?.work != null || publicationChanged)) {
             commit((value) => ({ ...value, admissionError: null }));
             return true;
           }
@@ -345,7 +334,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
 
     function adviceKey() {
       const state = current.current.state;
-      return JSON.stringify([state?.inputRevision, state?.latest, state?.automaticRefresh]);
+      return JSON.stringify([state?.input_revision, state?.latest, state?.automatic_refresh]);
     }
 
     function armTimer() {
@@ -353,7 +342,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
       timer = null;
       const state = current.current.state;
       if (controller.signal.aborted || admitting !== null || current.current.admissionError !== null || state === null || attemptedAdvice === adviceKey()) return;
-      const advice = state.automaticRefresh;
+      const advice = state.automatic_refresh;
       switch (advice.kind) {
         case "Stopped": return;
         case "Now": timer = setTimeout(automaticRefresh, 0); return;
@@ -371,8 +360,8 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
     function observe() {
       stopObservation();
       const session = ++observationSession;
-      stopObservation = sseClientDirect<SuggestionObservation, SuggestionObservation>({
-        path: libraryId === null ? "/stream/lectern/suggestions" : `/stream/libraries/${encodeURIComponent(libraryId)}/suggestions`,
+      stopObservation = openStream<SuggestionObservation, SuggestionObservation>({
+        path: libraryId === null ? "/api/stream/lectern/suggestions" : `/api/stream/libraries/${encodeURIComponent(libraryId)}/suggestions`,
         signal: controller.signal,
         decode: (type, data) => {
           if (type !== "state" && type !== "done") throw new Error(`Unknown SSE event type: ${type}`);
@@ -390,12 +379,11 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
         onError: (error) => {
           if (session === observationSession) failed(error, "Observation");
         },
-        onReconnect: async () => {
-          if (controller.signal.aborted || session !== observationSession) return "stop";
+        onReconnect: () => {
+          if (controller.signal.aborted || session !== observationSession) return;
           const interrupted = current.current.observationInterrupted;
           commit((value) => ({ ...value, observationInterrupted: true }));
-          if (!interrupted) await queue({ latest: true, view: true });
-          return "continue";
+          if (!interrupted) void queue({ latest: true, view: true });
         },
       });
     }
@@ -413,8 +401,8 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
         if (current.current.state === null) await queue({ latest: true });
         const state = current.current.state;
         if (state === null || controller.signal.aborted) return false;
-        const requested = await sendRefresh({ kind: "Explicit", observedPublicationId:
-          state.latest.kind === "Present" ? present(state.latest.value.id) : absent() }, signal);
+        const requested = await sendRefresh({ kind: "Explicit", observed_publication_id:
+          state.latest?.id ?? null }, signal);
         if (requested) void queue({ latest: true, view: true });
         return requested;
       },
@@ -440,7 +428,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
     observe();
     if (seed !== null && !seedUsed.current) {
       seedUsed.current = true;
-      clock.current = { serverTime: Date.parse(seed.observedAt), receivedAt: performance.now() };
+      clock.current = { serverTime: Date.parse(seed.observed_at), receivedAt: performance.now() };
       clearAdmissionAfterRead = false;
       armTimer();
     } else {

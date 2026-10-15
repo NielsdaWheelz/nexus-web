@@ -18,7 +18,7 @@ rest on reading the code and on the queue sql smoke:
 - a teardown that fails five times over hours goes dead and voids its intent
   (`jobs/dead_letters.media_teardown`).
 
-the committed-success branch of `source_attempt_failures.on_failure` ran only
+the committed-success branch of `source_publication.on_failure` ran only
 through a lever (the attempt's success written by sql while its child was held,
 then the child SIGKILLed); its product producer, a parent x thread completing a
 running x-post child attempt (`media_source_ingest.complete_x_post_snapshot_attempt`),

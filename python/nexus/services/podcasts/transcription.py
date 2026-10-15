@@ -19,9 +19,9 @@ from nexus.auth.permissions import can_read_media
 from nexus.db.session import transaction
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas import podcast as wire
-from nexus.schemas.media import TranscriptCoverage, TranscriptRequestOut, TranscriptState
-from nexus.schemas.media import TranscriptRequestReason as RequestReason
 from nexus.schemas.media_summary import MediaProcessingStatus
+from nexus.schemas.podcast import TranscriptCoverage, TranscriptRequestOut, TranscriptState
+from nexus.schemas.podcast import TranscriptRequestReason as RequestReason
 from nexus.services.content_indexing import request_stale_media_content_reindex
 from nexus.services.rss_transcript_fetch import fetch_rss_transcript
 from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase

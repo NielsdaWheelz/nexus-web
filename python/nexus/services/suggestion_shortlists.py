@@ -21,7 +21,6 @@ from nexus.db.session import get_repeatable_read_db, get_session_factory
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.ids import new_uuid7
 from nexus.jobs import queue
-from nexus.schemas.presence import Absent, absent, present
 from nexus.schemas.suggestions import (
     SuggestionExplicitRefreshIn,
     SuggestionPublicationMetaOut,
@@ -36,7 +35,7 @@ from nexus.schemas.suggestions import (
     SuggestionViewOut,
 )
 from nexus.services import suggestion_changes, suggestions
-from nexus.services.consumption.service import lectern_has_capacity
+from nexus.services.consumption.lectern import has_capacity
 from nexus.services.resource_graph.refs import assert_resource_ref
 
 _MAX_AGE = timedelta(minutes=15)
@@ -63,15 +62,15 @@ def _read(
         return (
             SuggestionStateOut(
                 input_revision=revision,
-                latest=absent(),
-                work=absent(),
+                latest=None,
+                work=None,
                 capability="NotApplicable",
                 automatic_refresh=SuggestionRefreshStoppedOut(),
             ),
             None,
             observed_at,
         )
-    if surface == "lectern" and not lectern_has_capacity(db, viewer_id=viewer_id):
+    if surface == "lectern" and not has_capacity(db, viewer_id=viewer_id):
         capability = "LecternFull"
     feed = _feed(db, viewer_id=viewer_id, library_id=library_id)
     publication = (
@@ -79,29 +78,25 @@ def _read(
         if feed is None
         else db.scalar(select(SuggestionShortlist).where(SuggestionShortlist.feed_id == feed.id))
     )
-    work = absent()
+    work: queue.DurableExecutionPhase | None = None
     if feed is not None and feed.current_job_id is not None:
         job = queue.get_job(db, feed.current_job_id)
         assert job is not None  # the feed's queue foreign key proves reachability
-        work = present(
-            queue.project_execution_phase(
-                job_status=job.status,
-                attempts=job.attempts,
-                error_code=job.error_code,
-            )
+        work = queue.project_execution_phase(
+            job_status=job.status,
+            attempts=job.attempts,
+            error_code=job.error_code,
         )
     latest = (
-        absent()
+        None
         if publication is None
-        else present(
-            SuggestionPublicationMetaOut(
-                id=publication.id,
-                as_of=publication.ranked_at,
-                input_revision=publication.ranked_revision,
-            )
+        else SuggestionPublicationMetaOut(
+            id=publication.id,
+            as_of=publication.ranked_at,
+            input_revision=publication.ranked_revision,
         )
     )
-    if not isinstance(work, Absent):
+    if work is not None:
         advice = SuggestionRefreshStoppedOut()
     elif publication is None:
         advice = SuggestionRefreshNowOut()
@@ -134,7 +129,7 @@ def read_suggestions(
 ) -> SuggestionsOut:
     """One read-only repeatable-read snapshot of latest ranking and current eligibility."""
     state, publication, observed_at = _read(db, viewer_id=viewer_id, library_id=library_id)
-    hydrated = absent()
+    hydrated = None
     if publication is not None:
         # The owned stored value has the same bounded canonical-ref contract as a view.
         refs = SuggestionViewIn(refs=publication.target_refs).refs
@@ -144,13 +139,11 @@ def read_suggestions(
             library_id=library_id,
             refs=[assert_resource_ref(ref) for ref in refs],
         )
-        hydrated = present(
-            SuggestionPublicationOut(
-                id=publication.id,
-                as_of=publication.ranked_at,
-                input_revision=publication.ranked_revision,
-                items=items,
-            )
+        hydrated = SuggestionPublicationOut(
+            id=publication.id,
+            as_of=publication.ranked_at,
+            input_revision=publication.ranked_revision,
+            items=items,
         )
     return SuggestionsOut(observed_at=observed_at, state=state, publication=hydrated)
 
@@ -176,15 +169,12 @@ def request_suggestions_refresh(
 
     def attempt() -> SuggestionStateOut:
         state, publication, observed_at = _read(db, viewer_id=viewer_id, library_id=library_id)
-        if state.capability == "NotApplicable" or not isinstance(state.work, Absent):
+        if state.capability == "NotApplicable" or state.work is not None:
             db.commit()
             return state
         if isinstance(request, SuggestionExplicitRefreshIn):
-            observed = request.observed_publication_id
-            matches = (
-                isinstance(observed, Absent)
-                if publication is None
-                else not isinstance(observed, Absent) and observed.value == publication.id
+            matches = request.observed_publication_id == (
+                None if publication is None else publication.id
             )
             if not matches:
                 db.commit()

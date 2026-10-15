@@ -51,14 +51,14 @@ technology-ownership, import, and module-boundary model.
 - `apps/android/app/src/main/java/.../NexusOriginClient.kt` is the one
   authorized native product API client, shared by the player and offline. It
   may call only its fixed listening-state, consumption-command,
-  Consumption-activity, `me`,
-  stream-token and reader-state BFF paths with WebView cookies and the exact
-  owned Origin; it accepts no arbitrary URL, path, headers, or credentials.
+  Consumption-activity, `me`, reading-copy and reader-state BFF paths with
+  WebView cookies, the exact owned Origin and `X-Nexus-Wire`; it accepts no
+  arbitrary URL, path, headers, or credentials.
 - `apps/android/app/src/main/java/.../offline/` owns offline
   ([module](../modules/offline.md)): the store, the transfer and sync jobs, the
   `nexusDownloads` bridge and the shelf router. Its only direct calls are the
-  episode's https enclosure and `/stream/media/{id}/reading-copy` at the
-  `stream_base_url` a stream token names; it accepts no renderer-supplied URL,
+  episode's https enclosure and the signed storage url a reading copy names;
+  it accepts no renderer-supplied URL,
   path, headers, credentials, or filesystem location.
 - `apps/android/app/src/main/java/.../ShareActivity.kt` owns the
   system-share-sheet capture entry: the `ACTION_SEND` intent filter and the

@@ -48,11 +48,20 @@ export interface TocNode {
   readonly sectionId: string | null;
   readonly children: readonly TocNode[];
 }
-export interface PdfFile {
-  readonly url: string;
-  readonly headers: Readonly<Record<string, string>>;
-  readonly expiresAtMs: number | null;
-}
+/**
+ * Where a pdf's bytes come from: a url pdf.js fetches itself (with same-origin
+ * cookies), or the host's own range reads (`bytes=0-` streams the whole file,
+ * `bytes=a-b` one chunk), each answered 206 with its Content-Range (the public
+ * share's carry no credentials).
+ */
+export type PdfFile =
+  | { readonly url: string; readonly expiresAtMs: number | null }
+  | {
+      readonly ranges: (
+        range: string,
+        signal: AbortSignal,
+      ) => Promise<Response>;
+    };
 
 export type TextDocument = {
   readonly kind: "text";
@@ -141,7 +150,6 @@ export function readerDocument(out: ReaderDocumentOut): ReaderDocument {
       pages: out.page_count,
       file: {
         url,
-        headers: {},
         expiresAtMs: expires_at === null ? null : Date.parse(expires_at),
       },
     };
@@ -272,7 +280,7 @@ export function locatorAt(
       target: {
         fragment_id: at.unit,
         href_path: unit?.hrefPath ?? "",
-        anchor_id: { kind: "Absent" },
+        anchor_id: null,
       },
       locations,
       text,
@@ -308,12 +316,12 @@ export function targetOfLocator(
   if (
     offset === null &&
     locator.kind === "epub" &&
-    locator.target.anchor_id.kind === "Present"
+    locator.target.anchor_id !== null
   ) {
     return {
       kind: "anchor",
       unit: unit.id,
-      id: locator.target.anchor_id.value,
+      id: locator.target.anchor_id,
     };
   }
   return {

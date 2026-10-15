@@ -1,13 +1,12 @@
-"""The Share overlay's wire: camelCase, requests by alias only with no extra keys."""
+"""The Share overlay's wire: plain ids for users and grants; requests take no extra
+keys."""
 
 from typing import Annotated, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
-from pydantic.alias_generators import to_camel
 
-from nexus.schemas.presence import Presence
 from nexus.services.resource_items.capabilities import ShareMode
-from nexus.services.sealed_handles import ResourceGrantHandle, UserHandle
 
 AudienceUnavailableReason = Literal[
     "UnsupportedSubject",
@@ -20,16 +19,16 @@ AudienceUnavailableReason = Literal[
 
 
 class _In(BaseModel):
-    model_config = ConfigDict(alias_generator=to_camel, extra="forbid")
-
-
-class _Out(BaseModel):
-    model_config = ConfigDict(alias_generator=to_camel, validate_by_name=True)
+    model_config = ConfigDict(extra="forbid")
 
 
 class UserAudienceIn(_In):
+    """`email` is the email the sharer typed to find the user (theirs, in any case), or
+    null when found by name."""
+
     kind: Literal["User"]
-    user_handle: UserHandle
+    user_id: UUID
+    email: str | None
 
 
 class LinkAudienceIn(_In):
@@ -37,64 +36,71 @@ class LinkAudienceIn(_In):
 
 
 class CreateResourceShareRequest(_In):
+    """Retry: resend the same client-minted id."""
+
+    id: UUID
     audience: Annotated[UserAudienceIn | LinkAudienceIn, Field(discriminator="kind")]
 
 
-class ShareUserOut(_Out):
-    user_handle: UserHandle
-    email: Presence[str]
-    display_name: Presence[str]
+class ShareUserOut(BaseModel):
+    user_id: UUID
+    # a grantee's email only as the sharer typed it; a sharer's own email
+    email: str | None
+    display_name: str | None
 
 
-class AudienceAvailableOut(_Out):
+class AudienceAvailableOut(BaseModel):
     kind: Literal["Available"] = "Available"
 
 
-class AudienceUnavailableOut(_Out):
+class AudienceUnavailableOut(BaseModel):
     kind: Literal["Unavailable"] = "Unavailable"
     reason: AudienceUnavailableReason
 
 
-class CreationAvailabilityOut(_Out):
-    user: Annotated[AudienceAvailableOut | AudienceUnavailableOut, Field(discriminator="kind")]
-    link: Annotated[AudienceAvailableOut | AudienceUnavailableOut, Field(discriminator="kind")]
+Availability = Annotated[AudienceAvailableOut | AudienceUnavailableOut, Field(discriminator="kind")]
 
 
-class UserShareOut(_Out):
+class CreationAvailabilityOut(BaseModel):
+    user: Availability
+    link: Availability
+
+
+class UserShareOut(BaseModel):
     kind: Literal["User"] = "User"
-    handle: ResourceGrantHandle
+    id: UUID
     user: ShareUserOut
 
 
-class LinkShareOut(_Out):
+class LinkShareOut(BaseModel):
     kind: Literal["Link"] = "Link"
-    handle: ResourceGrantHandle
+    id: UUID
     public_href: str
 
 
 OwnedShareOut = Annotated[UserShareOut | LinkShareOut, Field(discriminator="kind")]
 
 
-class ReceivedUserShareOut(_Out):
+class ReceivedUserShareOut(BaseModel):
     kind: Literal["ReceivedUser"] = "ReceivedUser"
-    handle: ResourceGrantHandle
+    id: UUID
     shared_by: ShareUserOut
     subject: str
 
 
-class ShareMembersOut(_Out):
+class ShareMembersOut(BaseModel):
     can_manage: bool
 
 
-class ResourceShareSnapshotOut(_Out):
+class ResourceShareSnapshotOut(BaseModel):
     sharing: ShareMode
     authenticated_href: str
     creation_availability: CreationAvailabilityOut
     shares: list[OwnedShareOut]
     received_access: list[ReceivedUserShareOut]
-    members: Presence[ShareMembersOut]
+    members: ShareMembersOut | None
 
 
-class CreateResourceShareOut(_Out):
+class CreateResourceShareOut(BaseModel):
     share: OwnedShareOut
     created: bool

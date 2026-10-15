@@ -1,6 +1,6 @@
 {
   "name": "Nexus public resource sharing",
-  "description": "Rate limit anonymous resource-share reads by Vercel-validated source IP.",
+  "description": "Rate limit anonymous resource-share reads other than file bytes by Vercel-validated source IP.",
   "active": true,
   "conditionGroup": [
     {
@@ -9,6 +9,12 @@
           "type": "path",
           "op": "re",
           "value": "^/api/public/resource-share(?:/.*)?$"
+        },
+        {
+          "type": "path",
+          "op": "re",
+          "value": "^/api/public/resource-share/(?:file|assets/[0-9]{1,9})$",
+          "neg": true
         }
       ]
     }
