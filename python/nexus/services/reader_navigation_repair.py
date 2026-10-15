@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.models import EpubNavLocation, EpubTocNode, Media, ProcessingStatus, ReaderPublication
 from nexus.ids import new_uuid7
-from nexus.schemas.reader_apparatus import NoteRegion, ReaderApparatusStatus
+from nexus.schemas.reader_apparatus import NoteRegion, NotesGroup, ReaderApparatusStatus
 from nexus.schemas.source_issues import (
     SOURCE_ISSUES,
     UnresolvedNavigationTarget,
@@ -48,7 +48,10 @@ from nexus.services.reader_publication import (
     replace_reader_publication,
 )
 from nexus.services.sanitize_html import sanitize_html
-from nexus.services.web_article_structure import build_web_article_index_blocks
+from nexus.services.web_article_structure import (
+    WebArticleIndexBlockSpec,
+    build_web_article_index_blocks,
+)
 from nexus.storage.client import StorageClient
 
 
@@ -133,6 +136,15 @@ def apply_reader_navigation_repair(
     inspection = _inspection(snapshot, prepared)
     if inspection.inspection_digest != expected_inspection_digest:
         raise ValueError("Reader repair source or proposal differs from inspection")
+    reindex_article = False
+    if snapshot.kind == "web_article" and inspection.changed:
+        old_groups = [NotesGroup.model_validate(group) for group in snapshot.installed["groups"]]
+        new_groups = [NotesGroup.model_validate(group) for group in prepared.metadata["groups"]]
+        old_regions = note_regions_from_publication(snapshot.installed["items"], old_groups)
+        new_regions = note_regions_from_publication(prepared.metadata["items"], new_groups)
+        reindex_article = _web_index_projection(
+            snapshot.fragments, old_regions
+        ) != _web_index_projection(snapshot.fragments, new_regions)
 
     with session_factory() as db:
         media = db.scalar(select(Media).where(Media.id == media_id).with_for_update(key_share=True))
@@ -165,10 +177,9 @@ def apply_reader_navigation_repair(
             else:
                 items = list(prepared.metadata["items"])
                 edges = list(prepared.metadata["edges"])
-                from nexus.schemas.reader_apparatus import NotesGroup
-
                 groups = [NotesGroup.model_validate(group) for group in prepared.metadata["groups"]]
-                request_media_content_reindex(db, media_id=media_id, reason="reconciliation")
+                if reindex_article:
+                    request_media_content_reindex(db, media_id=media_id, reason="reconciliation")
             replace_media_apparatus(
                 db,
                 media_id=media_id,
@@ -385,8 +396,6 @@ def _prepare(snapshot: _Snapshot, storage_client: StorageClient) -> _Prepared:
             )
         )
         return _Prepared(metadata, plan)
-
-    from nexus.schemas.reader_apparatus import NotesGroup
 
     items: list[dict[str, object]] = []
     edges: list[dict[str, object]] = []
@@ -923,42 +932,51 @@ def _epub_metadata(plan: EpubNavigationRepairPlan) -> dict[str, Any]:
     return metadata
 
 
-def _web_navigation_metadata(
+def _web_index_projection(
     fragments: tuple[RetainedEpubFragment, ...], regions: Sequence[NoteRegion]
-) -> dict[str, list[dict[str, object]]]:
-    sections: list[dict[str, object]] = []
-    toc: list[dict[str, object]] = []
-    for fragment in fragments:
-        blocks = build_web_article_index_blocks(
+) -> tuple[tuple[UUID, WebArticleIndexBlockSpec], ...]:
+    """Full shared-builder output in retained fragment and block order."""
+    return tuple(
+        (fragment.id, block)
+        for fragment in fragments
+        for block in build_web_article_index_blocks(
             html_sanitized=fragment.html_sanitized,
             canonical_text=fragment.canonical_text,
             fragment_idx=fragment.idx,
             fragment_id=fragment.id,
             note_regions=regions,
         )
-        for block in blocks:
-            if block.heading_id is None:
-                continue
-            toc.append(
+    )
+
+
+def _web_navigation_metadata(
+    fragments: tuple[RetainedEpubFragment, ...], regions: Sequence[NoteRegion]
+) -> dict[str, list[dict[str, object]]]:
+    sections: list[dict[str, object]] = []
+    toc: list[dict[str, object]] = []
+    for fragment_id, block in _web_index_projection(fragments, regions):
+        if block.heading_id is None:
+            continue
+        toc.append(
+            {
+                "node_id": block.heading_id,
+                "label": block.heading_label,
+                "parent_node_id": block.toc_parent_id,
+                "fragment_id": str(fragment_id),
+                "offset": block.start_offset,
+                "section_id": block.section_id,
+            }
+        )
+        if block.section_id is not None:
+            sections.append(
                 {
-                    "node_id": block.heading_id,
+                    "location_id": block.section_id,
                     "label": block.heading_label,
-                    "parent_node_id": block.toc_parent_id,
-                    "fragment_id": str(fragment.id),
+                    "parent_section_id": block.parent_section_id,
+                    "fragment_id": str(fragment_id),
                     "offset": block.start_offset,
-                    "section_id": block.section_id,
                 }
             )
-            if block.section_id is not None:
-                sections.append(
-                    {
-                        "location_id": block.section_id,
-                        "label": block.heading_label,
-                        "parent_section_id": block.parent_section_id,
-                        "fragment_id": str(fragment.id),
-                        "offset": block.start_offset,
-                    }
-                )
     return {
         "sections": sorted(sections, key=lambda section: str(section["location_id"])),
         "toc": sorted(toc, key=lambda node: str(node["node_id"])),
