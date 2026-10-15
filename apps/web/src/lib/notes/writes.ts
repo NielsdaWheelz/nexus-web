@@ -13,7 +13,7 @@ import { apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
 
 export interface WriteRequest {
   readonly path: ApiPath;
-  readonly method: "POST" | "PUT" | "DELETE";
+  readonly method: "POST" | "PUT" | "PATCH" | "DELETE";
   readonly body: unknown;
 }
 

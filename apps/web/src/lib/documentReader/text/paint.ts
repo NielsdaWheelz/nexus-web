@@ -6,7 +6,7 @@
 // when its dom (re)mounts and when it enters or leaves the window; layout
 // changes need nothing (static ranges follow the text through every reflow).
 import type { Schema } from "@/lib/api/wire";
-import type { Decorations } from "../DocumentReader";
+import type { Decorations, Passage, TextRange } from "../DocumentReader";
 import type { TextPoint } from "../model";
 import type { TextGeometry } from "./geometry";
 
@@ -74,7 +74,7 @@ function textPosition(root: Element, utf16: number): [Node, number] {
 }
 
 export interface Painter {
-  paint(decorations: Decorations | undefined): void;
+  paint(decorations: Decorations | undefined, passage: Passage | null | undefined): void;
   focus(mode: FocusMode, at: TextPoint | null, suspended: boolean): void;
   /** The marks under a client point, topmost first. */
   hit(x: number, y: number): readonly string[];
@@ -94,6 +94,7 @@ export function createPainter(
   const painted = new Map<string, readonly string[]>();
   const index = new Map<string, Map<Node, Piece[]>>();
   let decorations: Decorations | null = null;
+  let passage: TextRange | null = null;
   let focus = { mode: "off" as FocusMode, at: null as TextPoint | null };
   let suspended = false;
   let pulseTimer = 0;
@@ -145,6 +146,11 @@ export function createPainter(
     const evidence = decorations?.evidence;
     if (near.has(unit) && evidence?.unit === unit)
       add("hl-evidence", pieces(unit, evidence.start, evidence.end));
+    if (near.has(unit) && passage?.unit === unit) {
+      const ranges = pieces(unit, passage.start, passage.end);
+      add("hl-focus", ranges);
+      add("hl-hover", ranges);
+    }
     for (const ref of near.has(unit) ? (decorations?.noteRefs ?? []) : []) {
       if (ref.unit !== unit) continue;
       const [range] = geometry.ranges(unit, ref.start, ref.end);
@@ -261,7 +267,7 @@ export function createPainter(
   return {
     near,
     onNear: (listener) => void (notify = listener),
-    paint(next) {
+    paint(next, activePassage) {
       const current = next?.identity === identity ? next : null;
       const pulse = current?.pulse;
       if (pulse && pulse !== decorations?.pulse) {
@@ -274,6 +280,9 @@ export function createPainter(
         );
       }
       decorations = current;
+      passage = activePassage?.identity === identity && activePassage.anchor.kind === "text"
+        ? activePassage.anchor
+        : null;
       for (const unit of new Set([...painted.keys(), ...near])) paintUnit(unit);
     },
     focus(mode, at, off) {
@@ -299,6 +308,7 @@ export function createPainter(
       observer.disconnect();
       window.clearTimeout(pulseTimer);
       decorations = null;
+      passage = null;
       near.clear();
       share(`${id}:pulse`, "reader-pulse", []);
       for (const unit of painted.keys()) paintUnit(unit);

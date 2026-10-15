@@ -300,7 +300,7 @@ export const ACTION_CATALOG = {
     group: "Danger",
     confirmation: {
       title: "Delete highlight?",
-      body: "Delete this highlight and its note? This can’t be undone.",
+      body: "Delete this highlight? Its note is kept. This can’t be undone.",
     },
   },
   DeletePage: {

@@ -46,7 +46,7 @@ def build_snapshot(
     media = db.get(Media, key.media_id)
     if highlight.anchor_media_id != key.media_id or media is None:
         raise ApiError(missing, "media_id does not match the highlight anchor media")
-    anchor = project_highlight(highlight, viewer_id).anchor.model_dump(mode="json")
+    anchor = project_highlight(db, highlight, viewer_id).anchor.model_dump(mode="json")
     resolved = resolve_ref(db, viewer_id=viewer_id, ref=ResourceRef("highlight", key.highlight_id))
     if resolved.missing or resolved.quote is None:
         raise ApiError(missing, "Highlight quote unresolved")

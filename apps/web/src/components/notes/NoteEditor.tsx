@@ -60,12 +60,17 @@ export interface NoteEditorProps {
   revision: number;
   editable: boolean;
   label: string;
+  placeholder?: string;
   compact?: boolean;
   pulse?: NotePulse | null;
-  focus?: { selection: FocusSelection; serial: number } | null;
+  focus?: { selection: FocusSelection; serial: number; preventScroll?: boolean } | null;
   history: { undo(): void; redo(): void; boundary(): void } | null;
   keys?: StructuralKeys | null;
   onEdit(edit: NoteEdit): void;
+  onSelectionChange?(selection: NoteEdit["selectionAfter"]): void;
+  onSave?(): void;
+  onNewChat?(): void;
+  onEmptyBackspace?(): void;
   onOpenEmbed(ref: string, disposition: WorkspaceTargetDisposition): void;
 }
 
@@ -167,7 +172,7 @@ export default function NoteEditor(props: NoteEditorProps) {
 
   const insertLink = () => {
     const view = viewRef.current;
-    if (!view || !link) return;
+    if (!view || !link || !latest.current.editable || busy.current || view.composing) return;
     const href = hrefFromInput(link.query);
     if (!href)
       return setLink({ ...link, error: "Enter a web address, email address, or local path." });
@@ -207,7 +212,7 @@ export default function NoteEditor(props: NoteEditorProps) {
       view.setProps({ editable: () => false });
       try {
         const upload = await uploadIngestFile({ file: files[0]!, libraryIds: [], id: crypto.randomUUID() });
-        if (view.isDestroyed || !replaceable(view))
+        if (view.isDestroyed || !latest.current.editable || !replaceable(view))
           return refuse("The note changed before the upload finished.");
         const embed = schema.nodes.object_embed!.create({
           objectType: "media",
@@ -239,8 +244,9 @@ export default function NoteEditor(props: NoteEditorProps) {
     if (!element) return;
     const outline = latest.current.history;
     const run = (action: () => boolean | void) => (_: EditorState, __?: unknown, view?: EditorView) =>
-      !view?.composing && action() !== false;
+      latest.current.editable && !busy.current && !view?.composing && action() !== false;
     const enter = (state: EditorState, dispatch?: (tr: Transaction) => void) => {
+      if (!latest.current.editable || busy.current) return false;
       const code = state.selection.$from.parent.type.spec.code;
       const tr = code
         ? state.tr.insertText("\n")
@@ -276,12 +282,14 @@ export default function NoteEditor(props: NoteEditorProps) {
           }),
         ],
       }),
-      attributes: {
+      attributes: (state) => ({
         class: latest.current.compact ? `${styles.view} ${styles.compact}` : styles.view,
         role: "textbox",
         "aria-label": latest.current.label,
         "aria-multiline": "true",
-      },
+        "data-placeholder": latest.current.placeholder ?? "",
+        "data-empty": String(state.doc.firstChild?.type === schema.nodes.paragraph && state.doc.firstChild?.content.size === 0),
+      }),
       editable: () => latest.current.editable && !busy.current,
       transformPasted: (slice, current) =>
         current.state.selection.$from.parent.type.spec.code ? slice : (oneBlock(slice) ?? slice),
@@ -296,11 +304,24 @@ export default function NoteEditor(props: NoteEditorProps) {
         return true;
       },
       handleDOMEvents: {
+        keydown(current, event) {
+          // Returning true leaves the browser event alone while stopping PM's
+          // keymap/capture fallback from turning composition into a newline.
+          if (current.composing || event.isComposing || event.keyCode === 229) return true;
+          if (event.target instanceof HTMLElement && event.target !== current.dom &&
+              event.target.closest("input, textarea, select, button")) return true;
+          // Without an outline command, Escape belongs to the containing overlay.
+          if (event.key === "Escape" && !latest.current.keys) return true;
+          if ((!latest.current.editable || busy.current) &&
+              !(embedOf(event.target) && (event.key === "Enter" || event.key === " "))) return true;
+          return false;
+        },
         // the browser's own undo (a menu, or Cmd-Z while no editor has focus) goes to ours.
         beforeinput(current, event) {
           const redo = event.inputType === "historyRedo";
           if (!redo && event.inputType !== "historyUndo") return false;
           event.preventDefault();
+          if (!latest.current.editable || busy.current || current.composing) return true;
           return (redo ? redoCommand : undoCommand)(current.state, current.dispatch, current);
         },
         focus(current) {
@@ -359,13 +380,35 @@ export default function NoteEditor(props: NoteEditorProps) {
           open(embed, { detail: 0, shiftKey: event.shiftKey });
           return true;
         }
-        const keys = latest.current.keys;
-        if (!keys || event.altKey || event.ctrlKey || event.metaKey) return false;
+        if (event.target instanceof HTMLElement && event.target !== current.dom &&
+            event.target.closest("input, textarea, select, button, [contenteditable='false']")) return false;
+        if (!latest.current.editable || busy.current) return false;
         const act = (action: () => void) => {
           event.preventDefault();
           action();
           return true;
         };
+        if (event.key === "Enter" && !event.altKey && !event.shiftKey) {
+          const command = event.metaKey || event.ctrlKey ? latest.current.onNewChat : latest.current.onSave;
+          if (command) {
+            event.preventDefault();
+            if (!event.repeat) {
+              latest.current.history?.boundary();
+              command();
+            }
+            return true;
+          }
+        }
+        if (event.key === "Backspace" && latest.current.onEmptyBackspace &&
+            !event.repeat && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+          syncNativeSelection(current);
+          const { selection } = current.state;
+          if (selection.empty && selection.$from.parent.type === schema.nodes.paragraph &&
+              selection.$from.parent.content.size === 0 && selection.$from.parentOffset === 0)
+            return act(latest.current.onEmptyBackspace);
+        }
+        const keys = latest.current.keys;
+        if (!keys || event.altKey || event.ctrlKey || event.metaKey) return false;
         if (event.key === "Escape") return act(keys.selectBlock);
         if (!["Tab", "Backspace", "Delete", "Enter"].includes(event.key)) return false;
         syncNativeSelection(current);
@@ -377,7 +420,7 @@ export default function NoteEditor(props: NoteEditorProps) {
         const paragraph = $from.parent.type === schema.nodes.paragraph;
         if (selection.empty && paragraph) {
           const size = $from.parent.content.size;
-          if (event.key === "Backspace" && $from.parentOffset === 0)
+          if (event.key === "Backspace" && !event.repeat && $from.parentOffset === 0)
             return act(size === 0 ? keys.emptyBackspace : () => keys.join("backward"));
           if (event.key === "Delete" && $from.parentOffset === size)
             return act(() => keys.join("forward"));
@@ -405,6 +448,8 @@ export default function NoteEditor(props: NoteEditorProps) {
             source,
           });
         } else if (!before.selection.eq(after.selection)) latest.current.history?.boundary();
+        if (!before.selection.eq(after.selection))
+          latest.current.onSelectionChange?.({ anchor: after.selection.anchor, head: after.selection.head });
         refreshMarks(after);
         if (view.hasFocus()) setToolbar(!after.selection.empty);
       },
@@ -419,7 +464,7 @@ export default function NoteEditor(props: NoteEditorProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.editorKey]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const view = viewRef.current;
     if (!view || view.composing || props.revision === applied.current) return;
     applied.current = props.revision;
@@ -427,7 +472,7 @@ export default function NoteEditor(props: NoteEditorProps) {
   }, [props.body, props.revision]);
 
   const focusSerial = props.focus?.serial;
-  useEffect(() => {
+  useLayoutEffect(() => {
     const view = viewRef.current;
     const focus = latest.current.focus;
     if (!view || !focus) return;
@@ -437,9 +482,10 @@ export default function NoteEditor(props: NoteEditorProps) {
     const anchor = focus.selection === "end" ? end : Math.min(focus.selection.anchor, end);
     const head = focus.selection === "end" ? end : Math.min(focus.selection.head, end);
     const at = block?.isTextblock ? TextSelection.create(view.state.doc, anchor, head) : Selection.atEnd(view.state.doc);
-    view.dispatch(view.state.tr.setSelection(at).scrollIntoView());
+    const tr = view.state.tr.setSelection(at);
+    view.dispatch(focus.preventScroll ? tr : tr.scrollIntoView());
     view.focus();
-  }, [focusSerial]);
+  }, [props.editorKey, focusSerial]);
 
   const { pulse } = props;
   useEffect(() => {
@@ -453,7 +499,7 @@ export default function NoteEditor(props: NoteEditorProps) {
     return () => window.clearTimeout(timer);
   }, [pulse]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     viewRef.current?.setProps({ editable: () => latest.current.editable && !busy.current });
     if (!props.editable) setLink(null);
   }, [props.editable]);

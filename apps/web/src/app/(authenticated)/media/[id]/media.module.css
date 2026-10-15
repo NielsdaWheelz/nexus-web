@@ -1,5 +1,5 @@
 /* The media pane around the reader: its states and banners, the pane-bar
- * navigation, the rail slot, the selection dock and quick note, evidence,
+ * navigation, the rail slot, the selection composer, evidence,
  * the transcript chrome and embed cards. */
 
 .layout {
@@ -84,27 +84,63 @@
 /* ===== Selection dock and annotation surfaces ===== */
 
 .dock {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-1);
 }
 
-.dock > * {
-  flex: none;
+.composerSurface {
+  flex-direction: column;
 }
 
-.dock .dockOverflowMobile {
-  min-inline-size: var(--size-xl);
-  min-block-size: var(--size-xl);
+.selectionComposer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(36rem, var(--floating-action-content-max-width));
+  max-height: var(--floating-action-content-max-height);
+  overflow-y: auto;
+  padding: var(--space-2);
 }
 
-.colourDialog {
-  padding: var(--space-2) 0 0;
+.selectionInput {
+  min-height: 4rem;
+  padding: var(--space-2);
+  border-top: var(--stroke-hairline) solid var(--edge-subtle);
+}
+
+.composerHint {
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+
+
+.selectionAction {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.passageCue {
+  display: none;
+  overflow: hidden;
+  max-height: 3em;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.composerSurface[data-anchor-state="offscreen"] .passageCue,
+.composerSurface[data-anchor-state="unavailable"] .passageCue {
+  display: block;
 }
 
 .colours {
   display: flex;
-  justify-content: center;
-  gap: var(--space-2);
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .colour {
@@ -119,7 +155,15 @@
   border-color: var(--ink);
 }
 
-.quickNote,
+.colour:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.colour:disabled {
+  cursor: default;
+}
+
 .noteEditor {
   display: flex;
   flex-direction: column;
@@ -127,16 +171,15 @@
   min-width: 0;
 }
 
-.quickNote {
-  min-width: min(24rem, 90vw);
-}
+@media (pointer: coarse) {
+  .selectionComposer {
+    --pane-control-size: var(--size-xl);
+  }
 
-.quickNote blockquote {
-  margin: 0;
-  padding-left: var(--space-2);
-  border-left: 2px solid var(--edge-strong);
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
+  .colour {
+    width: var(--size-xl);
+    height: var(--size-xl);
+  }
 }
 
 .chooser {

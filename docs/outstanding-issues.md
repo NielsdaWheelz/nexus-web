@@ -62,7 +62,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] web / workspace persistence · 2026-10-13 add/import live verification · p2 · context teardown can reach workspace save without its body: [ticket](tickets/workspace-session-unload-can-send-empty-body.md).
 - [deferred] nexus query / share extraction · 2026-10-13 add/import cutover · shared prose extraction still combines ambiguous urls and strips valid punctuation; add is repaired: [ticket](tickets/add-link-paste-mutates-url-input.md).
 
-- [open] reader / quote chat · 2026-10-14 final665 acceptance · ask before the saved-highlight map arrives can post a duplicate span and refuse409 without opening chat: [ticket](tickets/reader-ask-before-map-duplicates-highlight.md).
 - [open] android / auth availability · 2026-10-14 release · expired-session restoration needed one ordinary retry; login recovered, initial dependency failure uncaptured: [ticket](tickets/android-expired-session-needed-one-retry.md).
 - [open] deployment / database admission · 2026-10-14 · pool, listener, async and probe connections have no composed budget for the512mib database; the jit fix qualifies the measured workload, not every allowed connection: [ticket](tickets/production-database-connection-budgets-implicit.md).
 - [open] deployment / cgroups · 2026-10-14 release · daemon-reload reset all seven swap limits; proxies reconverged, scope persistence and post-reload/start validation remain for the deployer/runtime follow-up: [ticket](tickets/production-infrastructure-effective-swap-limits-differ.md).
@@ -353,8 +352,7 @@ unexpected timeouts. See
 - [open] workspace / verification · 2026-10-10 workspace host reauthor · artifact find results and the podcast Inspector are not driven live (no fixtures): [ticket](tickets/host-companion-artifact-and-podcast-unverified.md).
 - [deferred] web / overlays · 2026-10-10 overlay kernel reauthor · page-level menus, floating surfaces and citation cards on a phone do not own Back (the history entry exists only while a modal is open); product call pending: [ticket](tickets/mobile-page-menus-ignore-back.md).
 - [open] web / chat, overlays · 2026-10-10 overlay kernel reauthor · the desktop citation card is a tooltip holding a button (Open in context or Open source) that keyboard focus cannot reach: [ticket](tickets/citation-preview-actions-unreachable-by-keyboard.md).
-- [open] web / reader · 2026-10-10 overlay kernel reauthor (harness D8) · the selection dock anchors to the rect captured at the last selectionchange, so it does not follow a scroll: [ticket](tickets/selection-dock-does-not-follow-scroll.md).
-- [open] web / reader · 2026-10-10 overlay kernel reauthor (harness D9) · on firefox the dock's More menu taking focus collapses the selection and the dock closes: [ticket](tickets/firefox-selection-dock-closes-when-its-menu-takes-focus.md).
+- [open] web / chat · 2026-10-10 overlay kernel reauthor (harness D8), reader portion resolved 2026-10-15 · chat-answer selection still uses frozen rectangles: [ticket](tickets/selection-dock-does-not-follow-scroll.md).
 
 - [open] api / memory · 2026-10-14 release acceptance · 58c r2 reader/search passed under 384 mib; representative whole-host capacity remains open: [ticket](tickets/api-keats-reader-search-memory-limit.md).
 - [open] web / pane controls · 2026-10-14 absorb review · invalid-view Reset view leaves focus on the body in chats, authors and podcasts: [ticket](tickets/invalid-view-reset-drops-focus-to-body.md).
@@ -392,3 +390,10 @@ unexpected timeouts. See
 
 - [open] metadata actions / focus · 2026-10-14 imports experience review · preexisting retry/review refusal needs live focus-settlement evidence: [ticket](tickets/metadata-refusal-focus-needs-settlement-proof.md).
 - [open] workspace / browser history · 2026-10-14 physical imports qualification · mobile browser back stays in the followed reader; pane back is separate: [ticket](tickets/mobile-browser-back-does-not-restore-workspace-pane.md).
+
+- [open] local infrastructure · 2026-10-15 · default docker network pools are exhausted: [ticket](tickets/local-docker-default-address-pools-exhausted.md).
+- [open] reader / chat verification · 2026-10-15 · real generation lacks a configured isolated runtime: [ticket](tickets/selection-composer-live-generation-unconfigured.md).
+- [open] reader / native input · 2026-10-15 · selection handles and os ime need physical android/ios qualification: [ticket](tickets/selection-composer-native-input-unverified.md).
+- [open] workspace / mobile labels · 2026-10-15 · direct-url reader tabs revert to `Media` after unmount: [ticket](tickets/mobile-reader-tab-loses-runtime-title.md).
+
+- [open] reader / evidence editor · 2026-10-15 · externally detached notes can remain in the attached editor: [ticket](tickets/evidence-note-editor-survives-external-detachment.md).

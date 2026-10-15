@@ -9,10 +9,11 @@ losing their place. owners, under `apps/web/src/`:
   commands, light dismiss, the scrim rule, the Tab trap, return focus, the
   synthetic history entry.
 - `lib/ui/useAnchoredPosition.ts`: where a floating box goes (an element, a
-  rect or a text selection's lines; element placement above/below/right,
-  cross-axis alignment, flip, clamp, re-measure on scroll and
-  resize). a captured rect does not move with a scroll, so the selection
-  surfaces stay put ([ticket](../tickets/selection-dock-does-not-follow-scroll.md)).
+  rect, synchronous source-owned measurement or text-selection lines; element
+  placement above/below/right, cross-axis alignment, flip, clamp and re-measure
+  on scroll, resize, visual viewport and source layout notifications). hosted
+  reader composers use live source geometry; chat-answer selection rectangles
+  remain a [separate issue](../tickets/selection-dock-does-not-follow-scroll.md).
 - `lib/ui/useKeyboardInset.ts`: the ios keyboard geometry and its report to the
   mobile viewport (`lib/mobileShell/viewport.tsx` keeps the report stack).
 - `components/ui/ModalFrame.tsx`: the scrim + `role="dialog"` panel every modal
@@ -255,3 +256,19 @@ changes, check those by hand on a handset.
 `--vh`-style `innerHeight` polyfills, `setTimeout`-after-focus
 `scrollIntoView`, `maximum-scale=1`, global `touchmove` `preventDefault`,
 user-agent sniffing, the VirtualKeyboard API.
+
+## reader action placement
+
+`FloatingActionSurface` accepts a measured anchor callback plus an optional
+source subscription. measurements include the reader bounds and selected line
+boxes; null geometry with live bounds pins an unavailable draft without a
+caret. placement intersects those bounds with the usable visual viewport.
+`data-anchor-state` distinguishes visible, offscreen and unavailable. children
+may render from `(placed, anchorState)` so editor focus waits for actual visible
+placement, with no timer or duplicate host state. ordinary element/rect anchors
+remain for their existing consumers.
+
+the hosted composer is a nonmodal group with normal tab order. its rich editor
+consumes escape only for its own nested controls; otherwise the overlay kernel
+receives it. navigation deactivates the source overlay before the destination
+can own escape/focus.

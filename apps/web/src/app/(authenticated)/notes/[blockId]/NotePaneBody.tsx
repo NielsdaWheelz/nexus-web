@@ -24,6 +24,7 @@ import {
 import { usePassageResolution } from "@/lib/reader/passageResolution";
 import { consumePendingNoteActivation } from "@/lib/reader/pendingNoteActivation";
 import { useNotePulseHighlight, type NotePulseTarget } from "@/lib/reader/pulseEvent";
+import { isDeletedResource } from "@/lib/resourceGraph/links";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 
@@ -33,26 +34,27 @@ export default function NotePaneBody() {
   if (!blockId) throw new Error("note route requires a block id");
   const runtime = requirePaneRuntime(usePaneRuntime(), "NotePaneBody");
   const ref = `note_block:${blockId}`;
+  const deleted = isDeletedResource(ref);
   const outline = useOutline({ root: ref, dailyDate: null });
   const text = useText(ref);
   const titleRef = useRef<HTMLInputElement | null>(null);
   const { query, queryControls } = useOutlineFilter(outline, ref, "Filter note items");
-  usePaneReturnReady(outline.status !== "loading");
+  usePaneReturnReady(deleted || outline.status !== "loading");
   const firstLine = typeof text?.value === "object" ? text.value.body_text.split("\n")[0]!.trim() : "";
-  useSetPaneLabel(text || outline.status === "failed" ? firstLine || "Note" : null);
+  useSetPaneLabel(deleted ? "Deleted note" : text || outline.status === "failed" ? firstLine || "Note" : null);
 
   const { delivery, claim } = usePaneEntryDelivery();
   const feedback = useFeedback();
   useEffect(() => {
     if (delivery?.entry.kind !== "EditNoteBody" || outline.status !== "ready") return;
     if (!claim(delivery)) return;
-    if (delivery.entry.noteBlockId === blockId) outline.focusRow("", "end");
+    if (!deleted && delivery.entry.noteBlockId === blockId) outline.focusRow("", "end");
     else
       feedback.publish({
         kind: "Hud",
         content: { tone: "Neutral", title: "This note is no longer available." },
       });
-  }, [blockId, claim, delivery, feedback, outline]);
+  }, [blockId, claim, deleted, delivery, feedback, outline]);
 
   const [pulse, setPulse] = useState<NotePulse | null>(null);
   const pulseAt = useCallback(
@@ -92,6 +94,7 @@ export default function NotePaneBody() {
   const resourceRef = canonicalResourceRef({ scheme: "note_block", id: blockId });
   usePaneChrome(useMemo(() => ({ query: queryControls, resourceRef }), [resourceRef, queryControls]));
 
+  if (deleted) return <p role="status">This note was deleted.</p>;
   if (outline.status === "failed")
     return (
       <FeedbackNotice

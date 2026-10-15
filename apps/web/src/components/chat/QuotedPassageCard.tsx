@@ -7,10 +7,9 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import HighlightSnippet from "@/components/chat/HighlightSnippet";
-import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
-import type { ApiJson, Schema } from "@/lib/api/wire";
-import type { ReaderSelectionKey } from "@/lib/chat/readerIntent";
+import type { Schema } from "@/lib/api/wire";
+import { getReaderQuotePreview, type ReaderSelectionKey } from "@/lib/chat/readerIntent";
 import { failureDetail } from "@/lib/chat/wire";
 import type { ReaderSourceTarget } from "@/lib/resourceGraph/citations";
 import styles from "./ChatComposer.module.css";
@@ -31,12 +30,7 @@ export function useQuotePreview(key: ReaderSelectionKey | null) {
     stale: "",
     load: async (signal) => {
       if (!key) throw new Error("A quote preview needs its key");
-      const path = `/api/chat-reader-selections/highlights/${key.highlightId}?media_id=${key.mediaId}`;
-      type Read = ApiJson<
-        "/chat-reader-selections/highlights/{highlight_id}",
-        "get"
-      >;
-      return (await apiFetch<Read>(path as ApiPath, { signal })).data;
+      return getReaderQuotePreview({ key, signal });
     },
   });
   const retry = useCallback(() => setGeneration((value) => value + 1), []);

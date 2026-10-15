@@ -192,7 +192,7 @@ function MediaPane({ id }: { readonly id: string }) {
   );
   const canQuote = media?.capabilities?.can_quote === true;
   const marks = annotations.map.status === "ready" ? annotations.decorations.marks : null;
-  const verbs = useAnnotationVerbs({ mediaId: id, store, marks, canQuote, openEvidence });
+  const verbs = useAnnotationVerbs({ mediaId: id, reader, active: paneActive && paneVisible, store, marks, canQuote, openEvidence });
 
   // ---- playback: the global player, or a video's own embed ----
   const [videoAt, setVideoAt] = useState<number | null>(null);
@@ -432,6 +432,7 @@ function MediaPane({ id }: { readonly id: string }) {
         profile={profile}
         isMobile={isMobile}
         decorations={decorations}
+        activePassage={verbs.composer.activePassage}
         onSelection={media.capabilities?.can_highlight === false ? undefined : verbs.onSelection}
         onMarks={verbs.onMarks}
         onApparatus={(key, _rect, kind) => kind === "activate" && openEvidence(key)}
@@ -459,10 +460,10 @@ function MediaPane({ id }: { readonly id: string }) {
       {isMobile ? <PositionRibbon reader={reader} /> : null}
       <SelectionDock
         verbs={verbs}
+        reader={reader}
         store={store}
         isMobile={isMobile}
         canQuote={canQuote}
-        onOpenLink={(href, disposition) => activateTarget({ target: { href }, disposition })}
       />
     </div>
   );
