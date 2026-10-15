@@ -1,7 +1,6 @@
 "use client";
 
 // The mobile Nexus: a full-screen task whose Root is a search field over sections of button rows.
-import { MoreHorizontal } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, type MouseEvent } from "react";
 import AccountMenu from "@/components/appnav/AccountMenu";
 import { isAccountDestinationId, NAV_IMPORTS } from "@/components/appnav/navModel";
@@ -9,6 +8,7 @@ import { NexusRowBody, NexusRowMenu, NexusSourceFailures, useNexusRowMenus } fro
 import NexusPages from "@/components/nexus/NexusPages";
 import type { NexusController } from "@/components/nexus/useNexusController";
 import MobileFullScreenTask from "@/components/ui/MobileFullScreenTask";
+import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import type { NexusRow } from "@/lib/nexus/model";
 import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
 import styles from "@/components/nexus/Nexus.module.css";
@@ -154,9 +154,7 @@ export default function SwitchboardTask({
                         triggerRef: registerMenu(row.key),
                         onOpenChange: (open) => open && controller.setActive(row.key),
                         renderTrigger: (trigger) => (
-                          <button {...trigger} type="button" className={styles.rowMenu}>
-                            <MoreHorizontal size={18} aria-hidden="true" />
-                          </button>
+                          <OverflowMenuButton {...trigger} className={styles.rowMenu} />
                         ),
                       }}
                     />

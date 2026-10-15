@@ -92,6 +92,11 @@
   flex: none;
 }
 
+.dock .dockOverflowMobile {
+  min-inline-size: var(--size-xl);
+  min-block-size: var(--size-xl);
+}
+
 .colourDialog {
   padding: var(--space-2) 0 0;
 }

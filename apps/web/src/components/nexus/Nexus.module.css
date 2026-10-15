@@ -89,26 +89,11 @@
 .gridRow[data-nested="true"] .primaryCell { padding-left: calc(var(--space-3) + var(--space-6)); }
 .actionsCell { justify-content: flex-end; padding: var(--space-1) var(--space-2) var(--space-1) 0; }
 
-.actionsButton {
-  display: inline-flex;
-  min-width: 76px;
-  min-height: 32px;
-  align-items: center;
+.actionsCell .actionsButton {
+  min-inline-size: 76px;
   justify-content: flex-end;
   gap: var(--space-2);
   padding: 0 var(--space-2);
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  color: var(--ink-faint);
-  background: transparent;
-  cursor: pointer;
-}
-
-.actionsButton:hover,
-.actionsButton[aria-expanded="true"] {
-  color: var(--ink);
-  border-color: var(--edge-subtle);
-  background: var(--surface-hover);
 }
 
 .actionsButton kbd { font-family: var(--font-mono); font-size: var(--text-xs); }
@@ -203,19 +188,22 @@
 .headerActions { display: flex; align-items: center; gap: var(--space-2); }
 
 .textButton,
-.iconButton,
-.rowMenu {
+.iconButton {
   min-height: 48px;
   border: 0;
   background: transparent;
   color: var(--ink);
 }
 
-.iconButton,
-.rowMenu {
+.iconButton {
   display: inline-grid;
   min-width: 48px;
   place-items: center;
+}
+
+.row .rowMenu {
+  min-inline-size: 48px;
+  min-block-size: 48px;
 }
 
 .searchInput {
@@ -546,7 +534,6 @@
   .textButton:hover,
   .iconButton:hover,
   .rowMain:hover,
-  .rowMenu:hover,
   .actions button:hover,
   .form button:hover {
     background: var(--surface-hover);
@@ -571,5 +558,5 @@
   .backdrop { padding-inline: var(--space-3); }
   .surface { width: min(720px, calc(100vw - 24px)); }
   .gridRow { grid-template-columns: minmax(0, 1fr) minmax(72px, auto); }
-  .actionsButton { min-width: 64px; }
+  .actionsCell .actionsButton { min-inline-size: 64px; }
 }
