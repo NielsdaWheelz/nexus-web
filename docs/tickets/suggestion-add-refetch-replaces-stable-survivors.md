@@ -24,3 +24,10 @@ acceptance: after add and every request it triggers settles, the surviving rows
 retain order and at most one replacement is appended. a subsequent independent
 refresh still reconciles eligibility. this ticket records a source-level path,
 not an observed production incident.
+
+2026-10-14 latency diagnosis: current `SuggestionsSection.tsx:166` awaits
+`load()` without a cancellation signal before removing the acknowledged row
+and clearing `adding` at lines 185-186. the expensive refill therefore delays
+visible add completion as well as starting the duplicate hook read above.
+acceptance also requires immediate acknowledged row removal and independently
+owned, bounded refill, without reclaiming focus the user has moved.

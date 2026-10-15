@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from nexus.db.session import get_session_factory, transaction
 from nexus.ids import new_uuid7
 from nexus.jobs.queue import JobExecutionContext, JobResult, enqueue_unique_job
+from nexus.services.suggestion_changes import record_input_change
 
 from .feed import fetch_page, is_safe_url
 from .ingest import ingest_episodes
@@ -133,6 +134,8 @@ def run_step(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
         )
         if cursor is not None:
             _enqueue_step(db, backfill_id, step_no + 1)
+        if result.changed:
+            record_input_change(db)
         return {"status": "Applied", "processed": len(page.episodes), "added": result.added_to_all}
 
 

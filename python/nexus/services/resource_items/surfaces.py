@@ -68,6 +68,7 @@ from nexus.services.resource_items.capabilities import (
 )
 from nexus.services.resource_items.routing import resource_activations_for_refs
 from nexus.services.resource_mutation_replay import canonical_json_bytes, lookup_replay
+from nexus.services.suggestion_changes import record_input_change
 
 
 def get_surface(db: Session, *, viewer_id: UUID, source: ResourceRef) -> ResourceSurfaceOut:
@@ -407,6 +408,7 @@ def execute_surface_command(
                 effects_json={"before": before, "after": after},
             )
         )
+        record_input_change(db)
         db.commit()
         return response
 

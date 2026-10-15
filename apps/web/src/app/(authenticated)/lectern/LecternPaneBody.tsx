@@ -19,7 +19,8 @@ import PaneSurface from "@/components/ui/PaneSurface";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
-import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
+import { useSuggestions } from "@/lib/useSuggestions";
 import {
   apiTransportFeedback,
   isApiError,
@@ -50,7 +51,7 @@ import {
   type LecternSortOptionId,
 } from "@/lib/lectern/view";
 import { usePlayerCommands } from "@/lib/player/playerRuntime";
-import { usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import {
   matchesPaneFilterQuery,
   usePaneFilterRows,
@@ -108,8 +109,13 @@ export default function LecternPaneBody() {
   const { playAudio } = usePlayerCommands();
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const paneId = usePaneRuntime()?.paneId ?? "lectern";
   const isPaneActive = usePaneIsActive();
+  const suggestions = useSuggestions({ kind: "Lectern" }, isPaneActive);
+  const { refresh: refreshSuggestionFeed } = suggestions;
+  const refreshSuggestions = useCallback<PaneRefreshExecute>(async ({ signal }) => {
+    const requested = await refreshSuggestionFeed(signal);
+    return { kind: requested ? "Complete" : "Failed", announcement: requested ? "refresh requested" : "couldn’t request suggestions." };
+  }, [refreshSuggestionFeed]);
   const loadedItems = useMemo(
     () => (resource.status === "ready" ? resource.data.items : []),
     [resource],
@@ -189,6 +195,9 @@ export default function LecternPaneBody() {
   };
   usePaneChrome({
     query: queryControls,
+    refresh: suggestions.state === null ? { kind: "Resolving" } : {
+      kind: "Refreshable", sourceKey: "lectern:suggestions", execute: refreshSuggestions,
+    },
     // The count is the whole Lectern, never the filtered subset.
     header: {
       kind: "Section",
@@ -328,8 +337,7 @@ export default function LecternPaneBody() {
       <SuggestionsSection
         returnScope="Lectern.Suggestions"
         destination={{ kind: "Lectern" }}
-        paneId={paneId}
-        isActive={isPaneActive}
+        suggestions={suggestions}
         accept={acceptSuggestionTarget}
       />
     </PaneSurface>

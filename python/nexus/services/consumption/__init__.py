@@ -22,6 +22,7 @@ from nexus.services.resource_mutation_replay import (
     lookup_replay,
     record_replay,
 )
+from nexus.services.suggestion_changes import record_input_change
 
 
 class Command(Protocol):
@@ -76,6 +77,7 @@ def replayed_command[T](
         memo = apply(db)
         result = answer(db, memo)
         record_replay(db, **key, response_json=memo)
+        record_input_change(db)
         db.commit()
         return result
 

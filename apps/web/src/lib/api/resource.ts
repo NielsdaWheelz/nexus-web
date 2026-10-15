@@ -51,11 +51,7 @@ export interface ConversationIndexResourceParams
   titleSearch?: string;
 }
 
-export interface SuggestionsResourceParams {
-  refreshVersion: number;
-}
-
-export interface LibrarySuggestionsResourceParams extends SuggestionsResourceParams {
+export interface LibrarySuggestionsResourceParams {
   id: string;
 }
 
@@ -148,17 +144,16 @@ export const mediaResource: ResourceDescriptor<IdResourceParams> = {
   clientPath: ({ id }) => `/api/media/${encoded(id)}`,
 };
 
-export const lecternSuggestionsResource: ResourceDescriptor<SuggestionsResourceParams> =
+export const lecternSuggestionsResource: ResourceDescriptor<NoResourceParams> =
   {
-    cacheKey: ({ refreshVersion }) => `lectern:suggestions:${refreshVersion}`,
+    cacheKey: () => "lectern:suggestions",
     serverPath: () => "/lectern/suggestions",
     clientPath: () => "/api/lectern/suggestions",
   };
 
 export const librarySuggestionsResource: ResourceDescriptor<LibrarySuggestionsResourceParams> =
   {
-    cacheKey: ({ id, refreshVersion }) =>
-      `library:${id}:suggestions:${refreshVersion}`,
+    cacheKey: ({ id }) => `library:${id}:suggestions`,
     serverPath: ({ id }) => `/libraries/${encoded(id)}/suggestions`,
     clientPath: ({ id }) => `/api/libraries/${encoded(id)}/suggestions`,
   };

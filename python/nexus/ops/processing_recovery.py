@@ -24,6 +24,7 @@ from nexus.services.resource_mutation_replay import (
     lookup_replay,
     record_replay,
 )
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.web_article_structure import add_heading_anchors
 
 
@@ -137,6 +138,7 @@ def normalize_web(
             request_bytes=request_bytes,
             response_json=receipt,
         )
+        record_input_change(db)
         db.commit()
         return receipt
 

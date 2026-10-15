@@ -1,0 +1,471 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { absent, present } from "@/lib/api/presence";
+import { lecternSuggestionsResource, librarySuggestionsResource } from "@/lib/api/resource";
+import { useResourceSeed } from "@/lib/api/resourceCache";
+import { sseClientDirect } from "@/lib/api/sse-client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { assertNever } from "@/lib/assertNever";
+import { isAbortError } from "@/lib/errors";
+import {
+  getSuggestions, refreshSuggestions, viewSuggestions,
+  type SuggestionItem, type SuggestionObservation, type SuggestionPublication,
+  type SuggestionRefresh, type Suggestions, type SuggestionsDestination, type SuggestionState,
+} from "@/lib/suggestions";
+
+interface AdoptedPool {
+  publication: SuggestionPublication;
+  displayed: string[];
+}
+
+interface SuggestionsView {
+  state: SuggestionState | null;
+  adopted: AdoptedPool | null;
+  staged: SuggestionPublication | null;
+  readError: ApiError | null;
+  observationError: Error | null;
+  observationInterrupted: boolean;
+  admissionError: { input: SuggestionRefresh; error: ApiError } | null;
+  reconciling: boolean;
+  withdrawn: boolean;
+}
+
+interface ActiveSuggestions {
+  reconcile: () => Promise<void>;
+  retry: () => Promise<void>;
+  adopt: () => Promise<boolean>;
+  refresh: (signal: AbortSignal) => Promise<boolean>;
+  retryAdmission: () => void;
+}
+
+/** Keep survivors in place, then fill vacancies from the already hydrated pool. */
+function displayedRefs(items: SuggestionItem[], previous: string[]): string[] {
+  const eligible = new Set(items.map((item) => item.target.ref));
+  const next = previous.filter((ref) => eligible.has(ref));
+  const used = new Set(next);
+  for (const item of items) {
+    if (next.length === 10) break;
+    if (!used.has(item.target.ref)) {
+      next.push(item.target.ref);
+      used.add(item.target.ref);
+    }
+  }
+  return next;
+}
+
+function sameRefs(left: SuggestionItem[], right: SuggestionItem[]): boolean {
+  return left.length === right.length && left.every((item, index) => item.target.ref === right[index].target.ref);
+}
+
+/** One pane visit owns its adopted order; the server owns eligibility and work.
+ * PaneContent remounts on destination/visit changes. Inactivity retires only
+ * observation and requests, preserving the visit's hydrated pool.
+ */
+export function useSuggestions(destination: SuggestionsDestination, isActive: boolean) {
+  const libraryId = destination.kind === "Library" ? destination.id : null;
+  const path = libraryId === null
+    ? lecternSuggestionsResource.clientPath({})
+    : librarySuggestionsResource.clientPath({ id: libraryId });
+  const cacheKey = libraryId === null
+    ? lecternSuggestionsResource.cacheKey({})
+    : librarySuggestionsResource.cacheKey({ id: libraryId });
+  const seed = useResourceSeed<Suggestions>(cacheKey);
+  const [view, setView] = useState<SuggestionsView>(() => ({
+    state: seed?.state ?? null,
+    adopted: seed?.publication.kind === "Present" ? {
+      publication: seed.publication.value,
+      displayed: displayedRefs(seed.publication.value.items, []),
+    } : null,
+    staged: null, readError: null, observationError: null,
+    observationInterrupted: false, admissionError: null,
+    reconciling: false, withdrawn: false,
+  }));
+  const current = useRef(view);
+  const commit = useCallback((change: (value: SuggestionsView) => SuggestionsView) => {
+    current.current = change(current.current);
+    setView(current.current);
+  }, []);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const [visible, setVisible] = useState(false);
+  const runtime = useRef<ActiveSuggestions | null>(null);
+  const interaction = useRef(0);
+  const receiptSequence = useRef(0);
+  const accepted = useRef(new Map<string, number>());
+  const clock = useRef<{ serverTime: number; receivedAt: number } | null>(null);
+  const seedUsed = useRef(false);
+  const wasActive = useRef(false);
+  const revisit = useRef<number | null>(null);
+
+  useEffect(() => {
+    const update = () => setVisible(document.visibilityState === "visible");
+    update();
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
+  }, []);
+  useEffect(() => {
+    if (isActive && !wasActive.current) revisit.current = interaction.current;
+    wasActive.current = isActive;
+  }, [isActive]);
+
+  useEffect(() => {
+    if (!isActive || !visible) return;
+    const controller = new AbortController();
+    const autoAdoptAt = revisit.current;
+    revisit.current = null;
+    let observationVersion = 0;
+    let observationSession = 0;
+    let stopObservation = () => {};
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let reading: Promise<void> | null = null;
+    let admitting: Promise<boolean> | null = null;
+    let pendingLatest = false;
+    let pendingView = false;
+    let pendingAdoption = false;
+    let pendingExplicitAdoption = false;
+    let pendingAutoAdopt: number | null = null;
+    let clearAdmissionAfterRead = autoAdoptAt !== null;
+    let attemptedAdvice: string | null = null;
+
+    function withdraw() {
+      controller.abort();
+      stopObservation();
+      if (timer !== null) clearTimeout(timer);
+      commit((value) => ({ ...value, adopted: null, staged: null, withdrawn: true, reconciling: false }));
+    }
+
+    function failed(error: unknown, area: "Read" | "Observation", input?: SuggestionRefresh) {
+      if (isAbortError(error) || controller.signal.aborted) return;
+      if (handleUnauthenticatedApiError(error)) return withdraw();
+      if (isApiError(error) && (error.status === 403 || error.status === 404)) return withdraw();
+      if (isApiError(error) && !isSameSystemApiDefect(error)) {
+        commit((value) => input
+          ? { ...value, admissionError: { input, error } }
+          : area === "Read" ? { ...value, readError: error }
+            : { ...value, observationError: error, observationInterrupted: true });
+        return;
+      }
+      if (area === "Observation" && !isApiError(error) && error instanceof Error &&
+          !error.message.startsWith("Invalid SSE") &&
+          !error.message.startsWith("Failed to parse SSE") &&
+          !error.message.startsWith("Unknown SSE") &&
+          !error.message.startsWith("SSE event exceeds")) {
+        commit((value) => ({ ...value, observationError: error, observationInterrupted: true }));
+        return;
+      }
+      setDefect({ error });
+    }
+
+    function installState(state: SuggestionState) {
+      observationVersion += 1;
+      commit((value) => ({
+        ...value, state,
+        ...(state.capability === "NotApplicable" ? { adopted: null, staged: null } : {}),
+        admissionError: state.work.kind === "Present" ||
+          (state.latest.kind === "Present" && value.state?.latest.kind === "Present" &&
+            state.latest.value.id !== value.state.latest.value.id)
+          ? null : value.admissionError,
+      }));
+      armTimer();
+    }
+
+    function readState(response: { observedAt: string; state: SuggestionState }, version: number) {
+      clock.current = { serverTime: Date.parse(response.observedAt), receivedAt: performance.now() };
+      if (version === observationVersion) installState(response.state);
+      if (clearAdmissionAfterRead) {
+        clearAdmissionAfterRead = false;
+        commit((value) => ({ ...value, admissionError: null }));
+      }
+      armTimer();
+    }
+
+    function eligibleReceiptItems(items: SuggestionItem[], beganAt: number) {
+      return items.filter((item) => (accepted.current.get(item.target.ref) ?? 0) <= beganAt);
+    }
+
+    async function readLatest(autoAt: number | null) {
+      const beganAt = receiptSequence.current;
+      const version = observationVersion;
+      const response = await getSuggestions(path, controller.signal);
+      if (controller.signal.aborted) return;
+      readState(response, version);
+      const authoritative = current.current.state;
+      if (authoritative && (response.state.inputRevision < authoritative.inputRevision ||
+          (response.state.latest.kind === "Present" && authoritative.latest.kind === "Present" &&
+            response.state.latest.value.id !== authoritative.latest.value.id))) {
+        pendingLatest = true;
+        return;
+      }
+      commit((value) => {
+        if (response.publication.kind === "Absent") return { ...value, readError: null };
+        const publication = { ...response.publication.value,
+          items: eligibleReceiptItems(response.publication.value.items, beganAt) };
+        const adopted = value.adopted;
+        if (adopted === null || publication.id === adopted.publication.id || sameRefs(publication.items, adopted.publication.items)) {
+          return { ...value, readError: null, staged: null,
+            adopted: { publication, displayed: displayedRefs(publication.items, adopted?.displayed ?? []) } };
+        }
+        return { ...value, readError: null, staged: publication };
+      });
+      if (autoAt !== null && autoAt === interaction.current && current.current.staged !== null) {
+        pendingAdoption = true;
+        pendingAutoAdopt = autoAt;
+      }
+    }
+
+    async function reconcilePool(adopting: boolean, autoAt: number | null) {
+      const selected = adopting ? current.current.staged : current.current.adopted?.publication;
+      if (!selected || (adopting && autoAt !== null && autoAt !== interaction.current)) return;
+      const adoptedId = current.current.adopted?.publication.id ?? null;
+      const beganAt = receiptSequence.current;
+      const version = observationVersion;
+      const response = await viewSuggestions(path, selected.items.map((item) => item.target.ref), controller.signal);
+      if (controller.signal.aborted) return;
+      readState(response, version);
+      if (current.current.state && response.state.inputRevision < current.current.state.inputRevision) {
+        if (adopting) {
+          pendingAdoption = true;
+          pendingAutoAdopt = autoAt;
+        } else pendingView = true;
+        return;
+      }
+      commit((value) => {
+        if (value.adopted?.publication.id !== adoptedId) return value;
+        const items = eligibleReceiptItems(response.items, beganAt);
+        if (adopting) {
+          if (value.staged?.id !== selected.id || (autoAt !== null && autoAt !== interaction.current)) return value;
+          return { ...value, readError: null, staged: null,
+            adopted: { publication: { ...selected, items }, displayed: displayedRefs(items, []) } };
+        }
+        if (value.adopted === null) return value;
+        return { ...value, readError: null, adopted: {
+          publication: { ...value.adopted.publication, items },
+          displayed: displayedRefs(items, value.adopted.displayed),
+        } };
+      });
+    }
+
+    function queue(input: { latest?: boolean; view?: boolean; adopt?: boolean; autoAt?: number } = {}) {
+      pendingLatest ||= input.latest === true;
+      pendingView ||= input.view === true;
+      pendingAdoption ||= input.adopt === true;
+      pendingExplicitAdoption ||= input.adopt === true;
+      if (input.autoAt !== undefined) pendingAutoAdopt = input.autoAt;
+      if (reading !== null) return reading;
+      if (controller.signal.aborted) return Promise.resolve();
+      commit((value) => ({ ...value, reconciling: true }));
+      reading = (async () => {
+        try {
+          while (!controller.signal.aborted && (pendingLatest || pendingView || pendingAdoption)) {
+            const latest = pendingLatest;
+            const viewPool = pendingView;
+            const adopt = pendingAdoption;
+            const explicitAdoption = pendingExplicitAdoption;
+            const autoAt = pendingAutoAdopt;
+            pendingLatest = false; pendingView = false; pendingAdoption = false; pendingExplicitAdoption = false; pendingAutoAdopt = null;
+            if (latest) await readLatest(autoAt);
+            if (viewPool) await reconcilePool(false, null);
+            if (adopt) await reconcilePool(true, explicitAdoption ? null : autoAt);
+          }
+        } catch (error) {
+          failed(error, "Read");
+          pendingLatest = false; pendingView = false; pendingAdoption = false; pendingExplicitAdoption = false; pendingAutoAdopt = null;
+        } finally {
+          reading = null;
+          if (!controller.signal.aborted) commit((value) => ({ ...value, reconciling: false }));
+        }
+      })();
+      return reading;
+    }
+
+    function sendRefresh(input: SuggestionRefresh, signal: AbortSignal): Promise<boolean> {
+      if (admitting !== null) return admitting;
+      const version = observationVersion;
+      const latestAtAdmission = current.current.state?.latest;
+      admitting = (async () => {
+        try {
+          const state = await refreshSuggestions(path, input, AbortSignal.any([signal, controller.signal]));
+          if (controller.signal.aborted) return false;
+          if (version === observationVersion) installState(state);
+          else void queue({ latest: true });
+          commit((value) => ({ ...value, admissionError: null }));
+          return true;
+        } catch (error) {
+          if (isAbortError(error)) throw error;
+          if (controller.signal.aborted) return false;
+          const state = current.current.state;
+          const publicationChanged = state?.latest.kind === "Present" &&
+            (latestAtAdmission?.kind !== "Present" || state.latest.value.id !== latestAtAdmission.value.id);
+          // The observation can confirm admitted work before its HTTP receipt is
+          // lost. Unrelated input changes do not establish that confirmation.
+          if (isApiError(error) &&
+              (error.code === "E_NETWORK" || error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT") &&
+              (state?.work.kind === "Present" || publicationChanged)) {
+            commit((value) => ({ ...value, admissionError: null }));
+            return true;
+          }
+          failed(error, "Read", input);
+          return false;
+        } finally {
+          admitting = null;
+          armTimer();
+        }
+      })();
+      return admitting;
+    }
+
+    function automaticRefresh() {
+      attemptedAdvice = adviceKey();
+      void sendRefresh({ kind: "EnsureFresh" }, controller.signal).catch((error: unknown) => {
+        // justify-ignore-error: inactivity cancels this browser attempt, not admitted work.
+        if (isAbortError(error)) return;
+        setDefect({ error });
+      });
+    }
+
+    function adviceKey() {
+      const state = current.current.state;
+      return JSON.stringify([state?.inputRevision, state?.latest, state?.automaticRefresh]);
+    }
+
+    function armTimer() {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+      const state = current.current.state;
+      if (controller.signal.aborted || admitting !== null || current.current.admissionError !== null || state === null || attemptedAdvice === adviceKey()) return;
+      const advice = state.automaticRefresh;
+      switch (advice.kind) {
+        case "Stopped": return;
+        case "Now": timer = setTimeout(automaticRefresh, 0); return;
+        case "At": {
+          const sample = clock.current;
+          if (sample === null) return;
+          const remaining = Date.parse(advice.at) - sample.serverTime - (performance.now() - sample.receivedAt);
+          timer = setTimeout(automaticRefresh, Math.max(0, remaining));
+          return;
+        }
+        default: assertNever(advice);
+      }
+    }
+
+    function observe() {
+      stopObservation();
+      const session = ++observationSession;
+      stopObservation = sseClientDirect<SuggestionObservation, SuggestionObservation>({
+        path: libraryId === null ? "/stream/lectern/suggestions" : `/stream/libraries/${encodeURIComponent(libraryId)}/suggestions`,
+        signal: controller.signal,
+        decode: (type, data) => {
+          if (type !== "state" && type !== "done") throw new Error(`Unknown SSE event type: ${type}`);
+          // justify-defect: the snapshot tailer terminates only after withdrawal.
+          if (type === "done" && data.kind !== "Withdrawn") throw new Error("Invalid SSE suggestions terminal state");
+          return data;
+        },
+        isTerminal: (event) => event.kind === "Withdrawn",
+        onEvent: (event) => {
+          if (controller.signal.aborted || session !== observationSession) return;
+          if (event.kind === "Withdrawn") return withdraw();
+          const previous = current.current.state;
+          installState(event.state);
+          commit((value) => ({ ...value, observationError: null, observationInterrupted: false }));
+          const latestChanged = previous?.latest.kind !== event.state.latest.kind ||
+            (previous?.latest.kind === "Present" && event.state.latest.kind === "Present" && previous.latest.value.id !== event.state.latest.value.id);
+          const inputsChanged = previous?.inputRevision !== event.state.inputRevision;
+          if (latestChanged || inputsChanged) void queue({ latest: latestChanged, view: inputsChanged });
+        },
+        onError: (error) => {
+          if (session === observationSession) failed(error, "Observation");
+        },
+        onReconnect: async () => {
+          if (controller.signal.aborted || session !== observationSession) return "stop";
+          const interrupted = current.current.observationInterrupted;
+          commit((value) => ({ ...value, observationInterrupted: true }));
+          if (!interrupted) await queue({ latest: true, view: true });
+          return "continue";
+        },
+      });
+    }
+
+    runtime.current = {
+      reconcile: () => queue({ view: true }),
+      retry: () => { observe(); return queue({ latest: true, view: true }); },
+      adopt: async () => {
+        const stagedId = current.current.staged?.id ?? null;
+        if (stagedId === null) return false;
+        await queue({ adopt: true });
+        return current.current.adopted?.publication.id === stagedId;
+      },
+      refresh: async (signal) => {
+        if (current.current.state === null) await queue({ latest: true });
+        const state = current.current.state;
+        if (state === null || controller.signal.aborted) return false;
+        const requested = await sendRefresh({ kind: "Explicit", observedPublicationId:
+          state.latest.kind === "Present" ? present(state.latest.value.id) : absent() }, signal);
+        if (requested) void queue({ latest: true, view: true });
+        return requested;
+      },
+      retryAdmission: () => {
+        const failure = current.current.admissionError;
+        if (failure === null) return;
+        void sendRefresh(failure.input, controller.signal).then((requested) => {
+          if (requested) void queue({ latest: true, view: true });
+        }).catch((error: unknown) => {
+          // justify-ignore-error: a retired pane no longer owns this attempt.
+          if (isAbortError(error)) return;
+          setDefect({ error });
+        });
+      },
+    };
+    const wake = () => {
+      if (document.visibilityState !== "visible") return;
+      if (current.current.observationInterrupted) observe();
+      void queue({ latest: true, view: true });
+    };
+    window.addEventListener("focus", wake);
+    commit((value) => ({ ...value, withdrawn: false }));
+    observe();
+    if (seed !== null && !seedUsed.current) {
+      seedUsed.current = true;
+      clock.current = { serverTime: Date.parse(seed.observedAt), receivedAt: performance.now() };
+      clearAdmissionAfterRead = false;
+      armTimer();
+    } else {
+      void queue({ latest: true, view: current.current.adopted !== null,
+        ...(autoAdoptAt === null ? {} : { autoAt: autoAdoptAt }) });
+    }
+    return () => {
+      runtime.current = null;
+      window.removeEventListener("focus", wake);
+      controller.abort();
+      stopObservation();
+      if (timer !== null) clearTimeout(timer);
+    };
+  }, [path, libraryId, isActive, visible, seed, commit]);
+
+  const acknowledge = useCallback((ref: string) => {
+    accepted.current.set(ref, ++receiptSequence.current);
+    commit((value) => {
+      const adopted = value.adopted;
+      const items = adopted?.publication.items.filter((item) => item.target.ref !== ref) ?? [];
+      return { ...value,
+        adopted: adopted === null ? null : { publication: { ...adopted.publication, items }, displayed: displayedRefs(items, adopted.displayed) },
+        staged: value.staged === null ? null : { ...value.staged, items: value.staged.items.filter((item) => item.target.ref !== ref) },
+      };
+    });
+    void runtime.current?.reconcile();
+  }, [commit]);
+  const reconcile = useCallback(() => { void runtime.current?.retry(); }, []);
+  const adopt = useCallback(() => runtime.current?.adopt() ?? Promise.resolve(false), []);
+  const refresh = useCallback((signal: AbortSignal) => runtime.current?.refresh(signal) ?? Promise.resolve(false), []);
+  const retryAdmission = useCallback(() => runtime.current?.retryAdmission(), []);
+  const interact = useCallback(() => { interaction.current += 1; }, []);
+  if (defect) throw defect.error;
+  const byRef = new Map(view.adopted?.publication.items.map((item) => [item.target.ref, item]) ?? []);
+  const rows = view.adopted?.displayed.flatMap((ref) => {
+    const item = byRef.get(ref);
+    return item ? [item] : [];
+  }) ?? [];
+  return { ...view, rows, active: isActive && visible, acknowledge, reconcile, adopt, refresh, retryAdmission, interact };
+}
+
+export type SuggestionsController = ReturnType<typeof useSuggestions>;

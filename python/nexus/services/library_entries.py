@@ -47,6 +47,7 @@ from nexus.schemas.library import (
 from nexus.services import library_governance as governance
 from nexus.services.consumption import projection
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
+from nexus.services.suggestion_changes import record_input_change
 
 # Mirrors index ix_library_entries_library_order. The single definition of the
 # entry total order.
@@ -149,6 +150,47 @@ def destination_membership_rows_sql() -> str:
               AND destination.system_key IS NULL
         )
     """
+
+
+def engagement_anchor_library_ids(
+    db: Session, *, viewer_id: UUID, media_id: UUID
+) -> tuple[UUID, ...]:
+    """Editable destinations whose ordered anchors can change with this media's engagement.
+
+    Named libraries hold the media or its show. All holds physical media reached
+    through any non-system membership; it never has podcast anchors. Registration
+    is irrelevant: a destination's first suggestions request may overlap this write.
+    """
+    return tuple(
+        db.scalars(
+            text("""
+                SELECT l.id
+                FROM libraries l
+                JOIN memberships membership ON membership.library_id = l.id
+                WHERE membership.user_id = :viewer_id AND membership.role = 'admin'
+                  AND l.system_key IS NULL
+                  AND (
+                    (NOT l.is_default AND EXISTS (
+                        SELECT 1 FROM library_entries le
+                        WHERE le.library_id = l.id AND (
+                            le.media_id = :media_id OR le.podcast_id = (
+                                SELECT podcast_id FROM podcast_episodes
+                                WHERE media_id = :media_id
+                            )
+                        )
+                    )) OR (l.is_default AND l.owner_user_id = :viewer_id AND EXISTS (
+                        SELECT 1 FROM library_entries le
+                        JOIN memberships source_member ON source_member.library_id = le.library_id
+                        JOIN libraries source_library ON source_library.id = le.library_id
+                        WHERE le.media_id = :media_id AND source_member.user_id = :viewer_id
+                          AND source_library.system_key IS NULL
+                    ))
+                  )
+                ORDER BY l.id
+            """),
+            {"viewer_id": viewer_id, "media_id": media_id},
+        )
+    )
 
 
 def library_anchor_facts(
@@ -697,12 +739,14 @@ def ensure_media_in_library_in_current_transaction(
 def ensure_media_saved_in_nexus_for_viewer(db: Session, *, viewer_id: UUID, media_id: UUID) -> bool:
     """Idempotently create the identity-free `SavedInNexus` relation."""
     with transaction(db):
-        return ensure_media_in_library_in_current_transaction(
+        inserted = ensure_media_in_library_in_current_transaction(
             db,
             viewer_id=viewer_id,
             library_id=governance.default_library_id_for_user(db, viewer_id),
             media_id=media_id,
         )
+        record_input_change(db)
+        return inserted
 
 
 def remove_media_from_library(
@@ -721,6 +765,7 @@ def remove_media_from_library(
             remove_media_from_library_in_current_transaction(
                 db, viewer_id, media_id, library_id, allow_default=allow_default
             )
+            record_input_change(db)
 
     retry_read_committed(db, "remove_media_from_library", attempt)
 
@@ -848,6 +893,7 @@ def ensure_media_in_libraries_for_viewer(
             governance.resolve_writable_non_default_library_ids(db, viewer_id, library_ids),
             parent_podcast_id=parent_podcast_id,
         )
+        record_input_change(db)
 
 
 def assign_libraries_for_media_in_current_transaction(
@@ -1056,6 +1102,8 @@ def place_subscribed_podcast_in_named_library(
             added = place_subscribed_podcast_in_named_library_in_current_transaction(
                 db, viewer_id=viewer_id, library_id=library_id, podcast_id=podcast_id
             )
+            if added:
+                record_input_change(db)
             return PodcastPlacementAdditionOut(outcome="Added" if added else "AlreadyPresent")
 
     return retry_read_committed(db, "place_subscribed_podcast_in_named_library", attempt)
@@ -1086,9 +1134,12 @@ def remove_podcast_from_library(
 
     def attempt() -> PodcastPlacementRemovalOut:
         with transaction(db):
-            return undo_podcast_filing_for_viewer_in_current_transaction(
+            result = undo_podcast_filing_for_viewer_in_current_transaction(
                 db, viewer_id=viewer_id, library_id=library_id, podcast_id=podcast_id
             )
+            if result.outcome == "Removed":
+                record_input_change(db)
+            return result
 
     return retry_read_committed(db, "remove_podcast_from_library", attempt)
 

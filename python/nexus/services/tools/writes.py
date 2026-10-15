@@ -255,7 +255,7 @@ def highlight_create(value: HighlightCreateInput, call: Call) -> HighlightCreate
     call.created_refs.append({"kind": "highlight", "id": str(highlight.id), "label": exact})
     note_uri = None
     if value.note and value.note.strip():
-        block = notes.set_highlight_note_body_pm_json_in_current_transaction(
+        block, _ = notes.set_highlight_note_body_pm_json_in_current_transaction(
             db,
             viewer,
             highlight_id=highlight.id,

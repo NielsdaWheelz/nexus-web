@@ -78,6 +78,7 @@ from nexus.services.resource_mutation_replay import (
     record_replay,
 )
 from nexus.services.search.query import decode_cursor, encode_cursor
+from nexus.services.suggestion_changes import record_input_change
 from nexus.text import escape_like
 
 # One fresh session and one serializable operation per chunk: a 75k-row Gutenberg
@@ -442,13 +443,19 @@ def replace_observed_role_slices_batch(
 def _publish_chunk(
     db: Session, chunk: Sequence[tuple[CreditTarget, ContributorObservationBatch, str]]
 ) -> None:
+    changed = False
     for target, observation, source in chunk:
-        _write(
-            db,
-            prepare_observed_role_slices_in_current_transaction(
-                db, target=target, observation=observation, source=source
-            ),
+        changed = (
+            _write(
+                db,
+                prepare_observed_role_slices_in_current_transaction(
+                    db, target=target, observation=observation, source=source
+                ),
+            )
+            or changed
         )
+    if changed:
+        record_input_change(db)
     db.commit()
 
 
@@ -632,6 +639,7 @@ def _put_media_authors(
         request_bytes=request_bytes,
         response_json=response.model_dump(mode="json", by_alias=True),
     )
+    record_input_change(db)
     db.commit()
     return response
 

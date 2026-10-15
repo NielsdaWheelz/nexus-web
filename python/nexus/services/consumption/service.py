@@ -43,6 +43,7 @@ from nexus.services.consumption import (
     viewer_txn,
 )
 from nexus.services.reader_publication import lock_publication_generation
+from nexus.services.suggestion_changes import engagement_inputs, record_input_change
 
 _PODCAST = "podcast_episode"
 _COMMANDS = "Consumption.Commands"
@@ -96,7 +97,10 @@ def put_reader_cursor(viewer_id: UUID, media_id: UUID, write: CursorWrite) -> Re
     """Replace the cursor, engagement and any first completion atomically."""
 
     def run(db: Session) -> ReaderCursorSnapshot:
+        before = engagement_inputs(db, viewer_id=viewer_id, media_id=media_id)
         snapshot = put_reader_cursor_in_txn(db, viewer_id=viewer_id, media_id=media_id, write=write)
+        if engagement_inputs(db, viewer_id=viewer_id, media_id=media_id) != before:
+            record_input_change(db)
         db.commit()
         return snapshot
 
@@ -393,6 +397,7 @@ def record_listening(
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_KIND, "Listening state is podcast-episode only"
             )
+        before = engagement_inputs(db, viewer_id=viewer_id, media_id=media_id)
         heard = _write_listening(db, viewer_id, media_id, body)
         if heard is None:
             heard = listening.load_many(db, viewer_id=viewer_id, media_ids=[media_id]).get(media_id)
@@ -417,6 +422,8 @@ def record_listening(
                 projection.override_revision(db, viewer_id=viewer_id, media_id=media_id)
             ),
         )
+        if engagement_inputs(db, viewer_id=viewer_id, media_id=media_id) != before:
+            record_input_change(db)
         db.commit()
         return result
 
@@ -433,6 +440,7 @@ def install_preview_position(viewer_id: UUID, media_id: UUID, body: wire.Preview
             raise InvalidRequestError(
                 message="Preview position is supported only for Podcast episodes"
             )
+        before = engagement_inputs(db, viewer_id=viewer_id, media_id=media_id)
         duration_ms = nullable_from_presence(body.duration_ms)
         if listening.install_preview(
             db,
@@ -444,6 +452,8 @@ def install_preview_position(viewer_id: UUID, media_id: UUID, body: wire.Preview
             duration_ms=duration_ms,
         ):
             _resume(db, viewer_id, media_id)
+        if engagement_inputs(db, viewer_id=viewer_id, media_id=media_id) != before:
+            record_input_change(db)
         db.commit()
 
     viewer_txn("install_preview_position", viewer_id, run)

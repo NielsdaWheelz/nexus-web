@@ -31,6 +31,7 @@ from nexus.jobs.queue import (
     update_running_job_payload,
 )
 from nexus.services import media_deletion
+from nexus.services.suggestion_changes import record_input_change
 from nexus.storage.client import get_storage_client
 from nexus.tasks.storage_object_cleanup import (
     STORAGE_OBJECT_CLEANUP_JOB_KIND,
@@ -183,6 +184,8 @@ def _commit_or_void(
         )
         # retry_serializable requires op to commit: the deletes and the
         # checkpoint land atomically here.
+        if next_kind == _DELETION_COMMITTED:
+            record_input_change(db)
         db.commit()
         return next_kind
 

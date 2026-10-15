@@ -34,6 +34,7 @@ from nexus.schemas.dossier import DossierBuildOut
 from nexus.schemas.media import MediaProcessingSnapshotOut
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.podcast import PodcastSubscriptionLifecycleSnapshotOut
+from nexus.schemas.suggestions import SuggestionObservationOut
 
 # Every model whose JSON is an SSE `data:` frame as-is (api/routes/stream.py),
 # split by how the stream dumps it. Tool events use their public projections;
@@ -50,7 +51,7 @@ SSE_PAYLOADS_BY_NAME = (
     ChatRunExecutionOut,
     DossierBuildOut,
 )
-SSE_PAYLOADS_BY_ALIAS = (PodcastSubscriptionLifecycleSnapshotOut,)
+SSE_PAYLOADS_BY_ALIAS = (PodcastSubscriptionLifecycleSnapshotOut, SuggestionObservationOut)
 
 
 def wire_schema() -> dict:

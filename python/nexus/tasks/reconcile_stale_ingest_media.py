@@ -17,6 +17,7 @@ from nexus.jobs.queue import JobExecutionContext
 from nexus.services import media_source_types as source_types
 from nexus.services.content_indexing import ensure_media_content_reindex_job
 from nexus.services.media_source_ingest import ensure_stale_source_attempt_job
+from nexus.services.suggestion_changes import record_input_change
 
 _BATCH_LIMIT = 25
 
@@ -161,6 +162,8 @@ def _ensure_source(db: Session, *, media_id: UUID, attempt_id: UUID, request_id:
 
 def _ensure_index(db: Session, *, media_id: UUID) -> str:
     intent = ensure_media_content_reindex_job(db, media_id=media_id, reason="reconciliation")
+    if intent.enqueued:
+        record_input_change(db)
     db.commit()
     if intent.suspended:
         return "suspended"

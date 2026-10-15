@@ -28,6 +28,7 @@ import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
+import { useSuggestions } from "@/lib/useSuggestions";
 import type { CollectionRowView } from "@/lib/collections/types";
 import LibraryMembersSurface from "@/components/libraries/LibraryMembersSurface";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
@@ -124,7 +125,6 @@ export default function LibraryPaneBody() {
 function LibraryPane({ id }: { readonly id: string }) {
   const paneRuntime = usePaneRuntime();
   const isPaneActive = usePaneIsActive();
-  const paneId = paneRuntime?.paneId ?? `library-${id}`;
   const listRegionRef = useRef<HTMLDivElement | null>(null);
   const owner = useLibraryEntries({ id, active: isPaneActive });
   const {
@@ -133,6 +133,8 @@ function LibraryPane({ id }: { readonly id: string }) {
     refresh: refreshLibrary,
   } = owner;
   const knownLibrary = currentLibrary;
+  const suggestions = useSuggestions({ kind: "Library", id, name: currentLibrary ? libraryPresentation(currentLibrary).name : "library" }, isPaneActive && currentLibrary !== null);
+  const { refresh: refreshSuggestionFeed } = suggestions;
   const entries = list.items;
   const summaries = useMediaSummaries(entries.flatMap((entry) => entry.kind === "media" ? [entry.mediaSummary] : []));
   const installedEntries = useMemo(() => entries.flatMap<LibraryEntry>((entry) => {
@@ -439,42 +441,30 @@ function LibraryPane({ id }: { readonly id: string }) {
   retryLibraryRefreshRef.current = retryLibraryRefresh;
   const executeRefresh = useCallback<PaneRefreshExecute>(
     async ({ signal }) => {
-      try {
-        const requestedCount = await requestPodcastRefresh(
-          { kind: "Library", libraryId: id },
-          signal,
-        );
-        await refreshLibrary();
-        return {
-          kind: "Complete",
-          announcement: podcastRefreshRequestAnnouncement(requestedCount),
-        };
-      } catch (refreshError: unknown) {
+      const [podcasts, suggested] = await Promise.allSettled([
+        (async () => {
+          const count = await requestPodcastRefresh({ kind: "Library", libraryId: id }, signal);
+          await refreshLibrary();
+          return count;
+        })(),
+        refreshSuggestionFeed(signal),
+      ]);
+      if (suggested.status === "rejected") throw suggested.reason;
+      if (podcasts.status === "rejected") {
+        const refreshError: unknown = podcasts.reason;
         if (isAbortError(refreshError)) throw refreshError;
-        const content = libraryRequestErrorMessage(
-          refreshError,
-          {
-            title: "Library couldn’t be refreshed",
-            request: "PodcastMutation",
-          },
-        );
-        setError({
-          content,
-          announcement: "None",
-          actions: [
-            {
-              label: "Retry",
-              onClick: () => retryLibraryRefreshRef.current(),
-            },
-          ],
+        const content = libraryRequestErrorMessage(refreshError, {
+          title: "Library couldn’t be refreshed", request: "PodcastMutation",
         });
-        return {
-          kind: "Failed",
-          announcement: content.title,
-        };
+        setError({ content, announcement: "None", actions: [{ label: "Retry", onClick: () => retryLibraryRefreshRef.current() }] });
+        return { kind: suggested.value ? "Partial" : "Failed", announcement: suggested.value ? `refresh requested. ${content.title}` : content.title };
       }
+      return {
+        kind: suggested.value ? "Complete" : "Partial",
+        announcement: suggested.value ? `refresh requested. ${podcastRefreshRequestAnnouncement(podcasts.value)}` : "couldn’t request suggestions.",
+      };
     },
-    [id, refreshLibrary],
+    [id, refreshLibrary, refreshSuggestionFeed],
   );
   usePaneChrome({
     query: queryControls,
@@ -791,7 +781,7 @@ function LibraryPane({ id }: { readonly id: string }) {
         >
           {mainBody}
         </div>
-        {currentLibrary !== null && list.complete ? (
+        {currentLibrary !== null ? (
           <SuggestionsSection
             key={currentLibrary.id}
             returnScope="Library.Suggestions"
@@ -800,8 +790,7 @@ function LibraryPane({ id }: { readonly id: string }) {
               id: currentLibrary.id,
               name: libraryPresentation(currentLibrary).name,
             }}
-            paneId={paneId}
-            isActive={isPaneActive}
+            suggestions={suggestions}
             accept={async (target) => {
               await addLibraryPlacement({
                 target: { kind: target.kind, id: suggestionTargetId(target) },

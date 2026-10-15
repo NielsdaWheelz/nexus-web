@@ -69,6 +69,7 @@ from nexus.services.resource_mutation_replay import (
     lookup_replay,
     record_replay,
 )
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.web_article_structure import (
     add_heading_anchors,
     build_web_article_index_blocks,
@@ -546,7 +547,9 @@ def run_media_reindex_job(
         record(db, IndexExecutionStarted, job_id)
         _set_state(db, IndexOwner("media", media_id), "indexing", reason)
         source_kind = "transcript" if kind in _TRANSCRIPT_KINDS else kind
-        return source_kind, _media_blocks(db, media_id, kind, plain_text or "")
+        blocks = _media_blocks(db, media_id, kind, plain_text or "")
+        record_input_change(db)
+        return source_kind, blocks
 
     work = _phase("prepare_media_content_reindex", prepare)
     if work is None:
@@ -576,6 +579,7 @@ def run_media_reindex_job(
                 reason=reason,
             )
             record(db, IndexSucceeded, job_id)
+            record_input_change(db)
             return published
 
         published = _phase("publish_media_content_reindex", publish)

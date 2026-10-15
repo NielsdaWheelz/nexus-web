@@ -48,6 +48,7 @@ from nexus.services.resource_mutation_replay import (
     lookup_replay,
     record_replay,
 )
+from nexus.services.suggestion_changes import record_input_change
 
 NotesIndexView = Literal["updated_desc", "updated_asc", "title_asc", "title_desc"]
 
@@ -182,6 +183,7 @@ def create_page(db: Session, viewer_id: UUID, request: CreatePageRequest) -> Not
     def op() -> UUID:
         with transaction(db):
             page = db.get(Page, request.page_id)
+            created = page is None
             if page is None:
                 page = Page(id=request.page_id, user_id=viewer_id, title=request.title)
                 db.add(page)
@@ -192,6 +194,8 @@ def create_page(db: Session, viewer_id: UUID, request: CreatePageRequest) -> Not
                     "Page create id is already bound to a different resource",
                 )
             _ensure_page_versions(db, viewer_id, page.id)
+            if created:
+                record_input_change(db)
             return page.id
 
     page_id = retry_serializable(db, "create_page", op)
@@ -210,6 +214,7 @@ def update_page(
         page.title = request.title
         page.updated_at = func.now()
         versions.bump_version(db, viewer_id=viewer_id, ref=_page_ref(page.id), lane="title")
+        record_input_change(db)
     db.commit()
     db.refresh(page)
     return _page_out(db, viewer_id, page)
@@ -230,6 +235,7 @@ def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
         )
         delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
         db.delete(page)
+        record_input_change(db)
         db.commit()
 
     retry_read_committed(db, "delete_page", attempt)
@@ -263,13 +269,16 @@ def capture_daily_page_note(
 
     def op() -> DailyCaptureResult:
         with transaction(db):
-            return capture_daily_page_note_in_current_transaction(
+            response, changed = capture_daily_page_note_in_current_transaction(
                 db,
                 viewer_id,
                 local_date=local_date,
                 request=request,
                 page_id_candidate=page_id_candidate,
             )
+            if changed:
+                record_input_change(db)
+            return response
 
     return retry_serializable(db, "capture_daily_page_note", op)
 
@@ -281,7 +290,7 @@ def capture_daily_page_note_in_current_transaction(
     local_date: date,
     request: DailyCaptureRequest,
     page_id_candidate: UUID,
-) -> DailyCaptureResult:
+) -> tuple[DailyCaptureResult, bool]:
     """Append one capture to the end of the viewer's daily page surface."""
     if not note_bodies.text_from_pm_json(request.body_pm_json).strip():
         raise InvalidRequestError(
@@ -298,7 +307,7 @@ def capture_daily_page_note_in_current_transaction(
         request_bytes=request_bytes,
     )
     if replay is not None:
-        return DailyCaptureResult.model_validate(replay)
+        return DailyCaptureResult.model_validate(replay), False
 
     binding = db.scalar(
         select(DailyPageBinding).where(
@@ -335,7 +344,7 @@ def capture_daily_page_note_in_current_transaction(
         response_json=response.model_dump(mode="json", by_alias=True),
     )
     db.flush()
-    return response
+    return response, True
 
 
 def append_note_block_to_page_in_current_transaction(
@@ -379,7 +388,7 @@ def set_highlight_note_body_pm_json(
     client_mutation_id: str,
 ) -> NoteBlockOut:
     def op() -> NoteBlockOut:
-        response = set_highlight_note_body_pm_json_in_current_transaction(
+        response, changed = set_highlight_note_body_pm_json_in_current_transaction(
             db,
             viewer_id,
             highlight_id=highlight_id,
@@ -388,6 +397,8 @@ def set_highlight_note_body_pm_json(
             expected_body=expected_body,
             client_mutation_id=client_mutation_id,
         )
+        if changed:
+            record_input_change(db)
         db.commit()
         return response
 
@@ -403,7 +414,7 @@ def set_highlight_note_body_pm_json_in_current_transaction(
     body_pm_json: dict[str, Any],
     expected_body: ExpectedNoteBody,
     client_mutation_id: str,
-) -> NoteBlockOut:
+) -> tuple[NoteBlockOut, bool]:
     """Create or update exactly one attached note with a canonical body base."""
     scope = f"highlight_note:{highlight_id}"
     request_bytes = canonical_json_bytes(
@@ -423,7 +434,7 @@ def set_highlight_note_body_pm_json_in_current_transaction(
         request_bytes=request_bytes,
     )
     if replay is not None:
-        return NoteBlockOut.model_validate(replay)
+        return NoteBlockOut.model_validate(replay), False
 
     attached = graph_highlight_notes.note_blocks_for_highlight(db, viewer_id, highlight_id)
     if expected_body.kind == "absent":
@@ -459,7 +470,7 @@ def set_highlight_note_body_pm_json_in_current_transaction(
         response_json=response.model_dump(mode="json", by_alias=True),
     )
     db.flush()
-    return response
+    return response, True
 
 
 def detach_highlight_note(
@@ -471,13 +482,15 @@ def detach_highlight_note(
     client_mutation_id: str,
 ) -> None:
     def op() -> None:
-        detach_highlight_note_in_current_transaction(
+        changed = detach_highlight_note_in_current_transaction(
             db,
             viewer_id,
             highlight_id=highlight_id,
             note_block_id=note_block_id,
             client_mutation_id=client_mutation_id,
         )
+        if changed:
+            record_input_change(db)
         db.commit()
 
     retry_serializable(db, "detach_highlight_note", op)
@@ -490,7 +503,7 @@ def detach_highlight_note_in_current_transaction(
     highlight_id: UUID,
     note_block_id: UUID,
     client_mutation_id: str,
-) -> None:
+) -> bool:
     """Detach the exact annotation; its canonical note and other links survive."""
     scope = f"highlight_note:{highlight_id}"
     request_bytes = canonical_json_bytes({"operation": "detach", "noteBlockId": str(note_block_id)})
@@ -503,7 +516,7 @@ def detach_highlight_note_in_current_transaction(
         request_bytes=request_bytes,
     )
     if replay is not None:
-        return
+        return False
     edge_ids = list(
         db.scalars(
             select(ResourceEdge.id).where(
@@ -529,6 +542,7 @@ def detach_highlight_note_in_current_transaction(
         response_json={},
     )
     db.flush()
+    return True
 
 
 def _delete_note_block(db: Session, viewer_id: UUID, block: NoteBlock) -> None:

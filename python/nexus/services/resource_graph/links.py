@@ -39,6 +39,7 @@ from nexus.services.resource_mutation_replay import (
     record_replay,
 )
 from nexus.services.search.pickers import candidate_owner_and_quote
+from nexus.services.suggestion_changes import record_input_change
 
 _LINK_SCOPE = "resource_graph:link"
 
@@ -106,6 +107,7 @@ def delete_link(db: Session, *, viewer_id: UUID, link_id: UUID) -> None:
             )
         edges.detach_link_notes(db, viewer_id=viewer_id, link=edge)
         edges.delete_edge(db, viewer_id=viewer_id, edge_id=link_id)
+        record_input_change(db)
         db.commit()
 
     retry_serializable(db, "delete_link", op)
@@ -261,6 +263,7 @@ def _replayed[T: BaseModel | None](
             if isinstance(response, BaseModel)
             else {},
         )
+        record_input_change(db)
         db.commit()
         return response
 

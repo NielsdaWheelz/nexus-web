@@ -7,6 +7,7 @@ import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
 import { readBearer } from "@/lib/supabase/cookie";
 import { isRecord } from "@/lib/validation";
+import { isSuggestionJsonPath, SUGGESTIONS_REQUEST_TIMEOUT_MS } from "./suggestionPolicy";
 
 const FASTAPI_FETCH_TIMEOUT_MS = 30_000;
 
@@ -54,7 +55,9 @@ export async function callFastAPI<T>(
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
-    options?.timeoutMs ?? FASTAPI_FETCH_TIMEOUT_MS,
+    options?.timeoutMs ?? (
+      isSuggestionJsonPath(path) ? SUGGESTIONS_REQUEST_TIMEOUT_MS : FASTAPI_FETCH_TIMEOUT_MS
+    ),
   );
   // Only the exchange and body acquisition use this boundary. URL/header
   // validation, JSON parsing and callers' payload handling keep their defects.

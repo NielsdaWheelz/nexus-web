@@ -929,6 +929,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/lectern/suggestions/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh Lectern Suggestions */
+        post: operations["refresh_lectern_suggestions_lectern_suggestions_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lectern/suggestions/view": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reconcile Lectern Suggestions */
+        post: operations["reconcile_lectern_suggestions_lectern_suggestions_view_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/libraries": {
         parameters: {
             query?: never;
@@ -1227,6 +1261,40 @@ export interface paths {
         get: operations["get_library_suggestions_libraries__library_id__suggestions_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/suggestions/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh Library Suggestions */
+        post: operations["refresh_library_suggestions_libraries__library_id__suggestions_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/suggestions/view": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reconcile Library Suggestions */
+        post: operations["reconcile_library_suggestions_libraries__library_id__suggestions_view_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2770,6 +2838,40 @@ export interface paths {
         };
         /** Stream Chat Run Events */
         get: operations["stream_chat_run_events_stream_chat_runs__run_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stream/lectern/suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream Lectern Suggestions */
+        get: operations["stream_lectern_suggestions_stream_lectern_suggestions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stream/libraries/{library_id}/suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream Library Suggestions */
+        get: operations["stream_library_suggestions_stream_libraries__library_id__suggestions_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4853,6 +4955,14 @@ export interface components {
         /** Data[SourceRetryAdmission] */
         Data_SourceRetryAdmission_: {
             data: components["schemas"]["SourceRetryAdmission"];
+        };
+        /** Data[SuggestionStateOut] */
+        Data_SuggestionStateOut_: {
+            data: components["schemas"]["SuggestionStateOut"];
+        };
+        /** Data[SuggestionViewOut] */
+        Data_SuggestionViewOut_: {
+            data: components["schemas"]["SuggestionViewOut"];
         };
         /** Data[SuggestionsOut] */
         Data_SuggestionsOut_: {
@@ -9033,6 +9143,8 @@ export interface components {
         Presence_ShareMembersOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ShareMembersOut_"];
         Presence_SourceFailureProgress_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_SourceFailureProgress_"];
         Presence_SourceImportObligation_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_SourceImportObligation_"];
+        Presence_SuggestionPublicationMetaOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_SuggestionPublicationMetaOut_"];
+        Presence_SuggestionPublicationOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_SuggestionPublicationOut_"];
         "Presence_UUID_-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_UUID_-Input"];
         "Presence_UUID_-Output": components["schemas"]["Absent-Output"] | components["schemas"]["Present_UUID_-Output"];
         Presence_UndoRestoreIn_: components["schemas"]["Absent-Input"] | components["schemas"]["Present_UndoRestoreIn_"];
@@ -9667,6 +9779,24 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["SourceImportObligation"];
+        };
+        /** Present[SuggestionPublicationMetaOut] */
+        Present_SuggestionPublicationMetaOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["SuggestionPublicationMetaOut"];
+        };
+        /** Present[SuggestionPublicationOut] */
+        Present_SuggestionPublicationOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["SuggestionPublicationOut"];
         };
         /** Present[UUID] */
         "Present_UUID_-Input": {
@@ -12876,15 +13006,147 @@ export interface components {
              */
             kind: "Succeeded";
         };
+        /** SuggestionCurrentOut */
+        SuggestionCurrentOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Current";
+            state: components["schemas"]["SuggestionStateOut"];
+        };
+        /** SuggestionEnsureFreshIn */
+        SuggestionEnsureFreshIn: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "EnsureFresh";
+        };
+        /** SuggestionExplicitRefreshIn */
+        SuggestionExplicitRefreshIn: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Explicit";
+            observedPublicationId: components["schemas"]["Presence_UUID_-Input"];
+        };
         /** SuggestionItemOut */
         SuggestionItemOut: {
             /** Target */
             target: components["schemas"]["MediaSuggestionTargetOut"] | components["schemas"]["PodcastSuggestionTargetOut"];
         };
-        /** SuggestionsOut */
-        SuggestionsOut: {
+        /** SuggestionObservationOut */
+        SuggestionObservationOut: components["schemas"]["SuggestionCurrentOut"] | components["schemas"]["SuggestionWithdrawnOut"];
+        /** SuggestionPublicationMetaOut */
+        SuggestionPublicationMetaOut: {
+            /**
+             * Asof
+             * Format: date-time
+             */
+            asOf: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Inputrevision */
+            inputRevision: number;
+        };
+        /** SuggestionPublicationOut */
+        SuggestionPublicationOut: {
+            /**
+             * Asof
+             * Format: date-time
+             */
+            asOf: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Inputrevision */
+            inputRevision: number;
             /** Items */
             items: components["schemas"]["SuggestionItemOut"][];
+        };
+        /** SuggestionRefreshAtOut */
+        SuggestionRefreshAtOut: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "At";
+        };
+        /** SuggestionRefreshNowOut */
+        SuggestionRefreshNowOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Now";
+        };
+        /** SuggestionRefreshStoppedOut */
+        SuggestionRefreshStoppedOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Stopped";
+        };
+        /** SuggestionStateOut */
+        SuggestionStateOut: {
+            /** Automaticrefresh */
+            automaticRefresh: components["schemas"]["SuggestionRefreshNowOut"] | components["schemas"]["SuggestionRefreshAtOut"] | components["schemas"]["SuggestionRefreshStoppedOut"];
+            /**
+             * Capability
+             * @enum {string}
+             */
+            capability: "Available" | "LecternFull" | "NotApplicable";
+            /** Inputrevision */
+            inputRevision: number;
+            latest: components["schemas"]["Presence_SuggestionPublicationMetaOut_"];
+            work: components["schemas"]["Presence_DurableExecutionPhase_"];
+        };
+        /** SuggestionViewIn */
+        SuggestionViewIn: {
+            /** Refs */
+            refs: string[];
+        };
+        /** SuggestionViewOut */
+        SuggestionViewOut: {
+            /** Items */
+            items: components["schemas"]["SuggestionItemOut"][];
+            /**
+             * Observedat
+             * Format: date-time
+             */
+            observedAt: string;
+            state: components["schemas"]["SuggestionStateOut"];
+        };
+        /** SuggestionWithdrawnOut */
+        SuggestionWithdrawnOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Withdrawn";
+        };
+        /** SuggestionsOut */
+        SuggestionsOut: {
+            /**
+             * Observedat
+             * Format: date-time
+             */
+            observedAt: string;
+            publication: components["schemas"]["Presence_SuggestionPublicationOut_"];
+            state: components["schemas"]["SuggestionStateOut"];
         };
         /** SurfaceAfterPosition */
         SurfaceAfterPosition: {
@@ -15867,6 +16129,72 @@ export interface operations {
             };
         };
     };
+    refresh_lectern_suggestions_lectern_suggestions_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuggestionEnsureFreshIn"] | components["schemas"]["SuggestionExplicitRefreshIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_SuggestionStateOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reconcile_lectern_suggestions_lectern_suggestions_view_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuggestionViewIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_SuggestionViewOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_libraries_libraries_get: {
         parameters: {
             query?: never;
@@ -16497,6 +16825,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_SuggestionsOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_library_suggestions_libraries__library_id__suggestions_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuggestionEnsureFreshIn"] | components["schemas"]["SuggestionExplicitRefreshIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_SuggestionStateOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reconcile_library_suggestions_libraries__library_id__suggestions_view_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuggestionViewIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_SuggestionViewOut_"];
                 };
             };
             /** @description Validation Error */
@@ -19681,6 +20079,57 @@ export interface operations {
             };
             path: {
                 run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_lectern_suggestions_stream_lectern_suggestions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    stream_library_suggestions_stream_libraries__library_id__suggestions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
             };
             cookie?: never;
         };

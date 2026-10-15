@@ -37,6 +37,7 @@ from nexus.services.reader_apparatus import replace_media_apparatus
 from nexus.services.reader_publication import ReplaceSourceIssues, replace_reader_publication
 from nexus.services.source_outcome import SourceRunOutcome, source_contributor_observations
 from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.url_normalize import normalize_url_for_display
 from nexus.services.web_article_structure import (
     WebArticlePreparedFragment,
@@ -214,18 +215,23 @@ def publish_article(
                 media.edition_published_date = edition.value
         return fragment_id
 
-    return run_source_publication_phase(
-        session_factory=session_factory,
-        label="publish_web_article_artifacts",
-        fence=fence,
-        media_ids=(media_id,),
-        mutate=lambda db, attempt: replace_reader_publication(
+    def publish(db: Session, attempt: MediaSourceAttempt) -> UUID:
+        fragment_id = replace_reader_publication(
             db,
             media_id=media_id,
             expected_kind="web_article",
             issues=ReplaceSourceIssues(issues=()),
             replace_projection=lambda media: project(db, media, attempt),
-        ),
+        )
+        record_input_change(db)
+        return fragment_id
+
+    return run_source_publication_phase(
+        session_factory=session_factory,
+        label="publish_web_article_artifacts",
+        fence=fence,
+        media_ids=(media_id,),
+        mutate=publish,
         discover=discover,
     )
 

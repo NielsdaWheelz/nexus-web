@@ -65,6 +65,8 @@ RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
         "uq_daily_page_bindings_user_page",
         "uq_resource_grants_person",
         "uq_resource_grants_link",
+        "uq_suggestion_feeds_lectern",
+        "uq_suggestion_feeds_library",
     }
 )
 

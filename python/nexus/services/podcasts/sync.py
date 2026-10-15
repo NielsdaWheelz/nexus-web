@@ -29,6 +29,7 @@ from nexus.logging import get_logger
 from nexus.schemas import podcast as wire
 from nexus.services import library_governance
 from nexus.services.consumption import lectern
+from nexus.services.suggestion_changes import record_input_change
 
 from .feed import fetch_page, merge
 from .ingest import ingest_episodes
@@ -152,8 +153,9 @@ def run(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
             feed_url=sub.feed_url,
             episodes=merge(window, page.episodes),
         )
+        queued = False
         if held.auto_queue and held.auto_queue_watermark_at < sub.sync_started_at:
-            _auto_queue(db, subscription_id, sub, held.auto_queue_watermark_at)
+            queued = _auto_queue(db, subscription_id, sub, held.auto_queue_watermark_at)
         limited = len(window) >= WINDOW or page.next_url is not None or result.skipped > 0
         status = "SourceLimited" if limited else "Complete"
         jitter = int.from_bytes(hashlib.sha256(subscription_id.bytes).digest()[:8]) % 1801
@@ -167,10 +169,12 @@ def run(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
             """),
             {"id": subscription_id, "status": status, "delay": timedelta(hours=23, seconds=jitter)},
         )
+        if result.changed or queued:
+            record_input_change(db)
         return {"status": status, "inserted": result.inserted, "skipped": result.skipped}
 
 
-def _auto_queue(db: Session, subscription_id: UUID, sub: Any, watermark: datetime) -> None:
+def _auto_queue(db: Session, subscription_id: UUID, sub: Any, watermark: datetime) -> bool:
     """Put each episode published in (watermark, sync start] on the Lectern once. A full
     Lectern holds the watermark for a later sync instead of failing this one."""
     db.execute(text("SELECT 1 FROM users WHERE id = :id FOR UPDATE"), {"id": sub.user_id})
@@ -184,16 +188,19 @@ def _auto_queue(db: Session, subscription_id: UUID, sub: Any, watermark: datetim
         {"podcast_id": sub.podcast_id, "watermark": watermark, "cutoff": sub.sync_started_at},
     ).all()
     try:
-        lectern.ensure_missing_in_txn(db, viewer_id=sub.user_id, media_ids=list(media_ids))
+        inserted = lectern.ensure_missing_in_txn(
+            db, viewer_id=sub.user_id, media_ids=list(media_ids)
+        )
     except ApiError as exc:  # raised before it writes anything
         if exc.code is not ApiErrorCode.E_LIMIT:
             raise
         logger.warning("podcast_auto_queue_lectern_full", subscription_id=str(subscription_id))
-        return
+        return False
     db.execute(
         text("UPDATE podcast_subscriptions SET auto_queue_watermark_at = :at WHERE id = :id"),
         {"id": subscription_id, "at": sub.sync_started_at},
     )
+    return bool(inserted)
 
 
 def _fail(db: Session, subscription_id: UUID, code: str, message: str) -> None:

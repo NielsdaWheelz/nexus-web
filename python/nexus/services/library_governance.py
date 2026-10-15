@@ -30,6 +30,10 @@ from nexus.schemas.library import (
 from nexus.schemas.presence import presence_from_nullable
 from nexus.services.collection_keyset import Direction, KeysetValueKind, SortKey, keyset_page
 from nexus.services.sealed_handles import seal_user
+from nexus.services.suggestion_changes import (
+    delete_suggestion_feeds_for_library,
+    record_input_change,
+)
 from nexus.storage.client import StorageError, get_storage_client
 from nexus.text import escape_like
 
@@ -257,16 +261,18 @@ def ensure_system_library(db: Session, *, system_key: str, name: str, owner_user
         return library_id
 
 
-def join_system_library(db: Session, *, system_key: str, user_id: UUID) -> None:
+def join_system_library(db: Session, *, system_key: str, user_id: UUID) -> bool:
     """Make the user a member of an existing system library; flush only, no-op if already."""
-    db.execute(
+    inserted = db.execute(
         text("""
             INSERT INTO memberships (library_id, user_id, role)
             SELECT id, :user_id, 'member' FROM libraries WHERE system_key = :system_key
             ON CONFLICT DO NOTHING
+            RETURNING library_id
         """),
         {"system_key": system_key, "user_id": user_id},
-    )
+    ).scalar_one_or_none()
+    return inserted is not None
 
 
 def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) -> LibraryOut:
@@ -344,6 +350,7 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
                 db, library_id=library_id
             )
             library_entries.delete_library_entries(db, library_id)
+            delete_suggestion_feeds_for_library(db, library_id=library_id)
             db.execute(
                 text("DELETE FROM libraries WHERE id = :library_id"), {"library_id": library_id}
             )
@@ -355,6 +362,7 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
                     storage_paths.extend(paths)
             for user_id in affected_user_ids:
                 dossier_engine.on_visibility_lost(db, user_id=user_id)
+            record_input_change(db)
             return storage_paths
 
     storage_paths = retry_read_committed(db, "delete_library", attempt)

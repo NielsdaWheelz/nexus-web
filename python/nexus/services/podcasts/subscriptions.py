@@ -23,6 +23,7 @@ from nexus.services.library_entries import (
     place_podcast_in_named_libraries_in_current_transaction,
     remove_unsubscribed_podcast_placements,
 )
+from nexus.services.suggestion_changes import record_input_change
 
 from . import backfill, sync
 from .shows import upsert_show
@@ -174,7 +175,7 @@ def subscribe(
                 confirmation_fingerprint=fingerprint,
             )
             outcome = "DestinationsAdded" if added else "AlreadySubscribed"
-            return wire.PodcastSubscribeOut(
+            response = wire.PodcastSubscribeOut(
                 href=f"/podcasts/{podcast_id}",
                 podcast_id=podcast_id,
                 outcome="Subscribed" if created is not None else outcome,
@@ -187,6 +188,9 @@ def subscribe(
                 ],
                 backfill=_backfill(_require_row(db, viewer_id, podcast_id)),
             )
+            if created is not None or added or not isinstance(show, UUID):
+                record_input_change(db)
+            return response
 
     return retry_read_committed(db, "subscribe_to_podcast", attempt)
 
@@ -214,6 +218,7 @@ def unsubscribe(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.PodcastU
                 db, viewer_id=viewer_id, podcast_id=podcast_id
             )
             on_visibility_lost(db, user_id=viewer_id)
+            record_input_change(db)
             return wire.PodcastUnsubscribeOut(
                 outcome="Unsubscribed",
                 podcast_id=podcast_id,

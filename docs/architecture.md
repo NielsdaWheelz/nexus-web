@@ -1392,10 +1392,13 @@ the hide-finished completion filter for reads — no DML on
   policy-neutral read ports from consumption, libraries, the resource graph,
   contributors and the semantic index. it owns quick reads, lectern and library
   suggestions; fact owners retain their tables and mutations. library entry
-  ordering belongs to `library_entry_listing`. `GET /libraries/{id}/suggestions`
-  returns at most ten deterministic, destination-addable suggestions outside
-  complete membership. successful add preserves visible survivors and appends
-  at most one novel result. suggestion payloads carry target, factual publication date,
+  ordering belongs to `library_entry_listing`. `suggestion_shortlists` publishes
+  up to 80 ranked refs in the background; lectern/library get and view reads
+  revalidate current eligibility outside complete destination membership and
+  hydrate that bounded pool. the browser displays ten, preserves their order
+  and refills immediately after accepted adds. replacements wait for adoption
+  or revisit. see [suggestions](modules/suggestions.md) for admission, freshness
+  and repair. suggestion payloads carry target, factual publication date,
   consumption and shared reading estimate; relation reasons remain internal.
   inline related discovery and `/media/{id}/related` are retired; the resource
   graph and opened-resource connections remain.
@@ -1651,11 +1654,12 @@ origin, heartbeat, podcast preference, activity/completion writes, or
 previous/next behavior. After Episode Add, the
 consumption owner may install the observed Preview position once, only when
 owned progress is still empty. The shared
-`SuggestionsSection` consumes an optional Lectern first-paint seed and
-otherwise queries only while its pane is active. It delegates Add to the
-existing Lectern or library mutation owner and owns local removal/refill, not
-destination state. its known focus/refill defects remain tracked in the
-[connections module](modules/connections.md). the lectern section order is queue, quick reads,
+`useSuggestions` consumes an optional bounded publication seed and observes
+durable input/publication state while its pane is active and visible. it owns
+conditional refresh admission, retained order, staged replacements and local
+removal/refill. `SuggestionsSection` delegates add to the existing lectern or
+library mutation owner and preserves distinct preparation, empty, error and
+repair states. the lectern section order is queue, quick reads,
 then suggestions. `QuickReadsSection` uses an independent client `useResource` read,
 refreshing on active mount, reactivation and the Consumption and Entries
 change topics (§8.12).
@@ -1895,13 +1899,17 @@ through the media query revision some lists also follow).
 | topic | publishers | observers |
 | --- | --- | --- |
 | `Libraries` | create, rename, delete library; accept invitation | libraries index; library pane (detail); placement overlay |
-| `Entries` | placement add/remove; library delete; invitation accept; media delete; podcast subscribe, unsubscribe and episode add; upload, upload retry, URL add; entries reorder | library entries; placement overlay; quick reads; suggestions; imports summary |
-| `Consumption` | accepted listening heartbeat; native and offline engines; reader-state save; lectern commands; stats exclusions; episodes marked played | entries in consumption views; state-filtered episodes; quick reads; suggestions; stats; media summaries |
+| `Entries` | placement add/remove; library delete; invitation accept; media delete; podcast subscribe, unsubscribe and episode add; upload, upload retry, URL add; entries reorder | library entries; placement overlay; quick reads; imports summary |
+| `Consumption` | accepted listening heartbeat; native and offline engines; reader-state save; lectern commands; stats exclusions; episodes marked played | entries in consumption views; state-filtered episodes; quick reads; stats; media summaries |
 | `Metadata` | metadata research that changed a title, contributors or first publication, seen by an open view or by the tab that admitted the run | media summaries (the media query revision); lectern |
 | `Podcasts` | every podcast write in `lib/podcasts/api.ts` | followed podcasts; podcast detail and its episodes; author detail and works |
 | `Chats` | chat delete; message send and delete | chats index |
 
 Imports keeps its own window event (`Imports.Invalidated`, lib/imports/api.ts).
+suggestions observe their durable global input revision through snapshot sse,
+including non-browser writers; ordinary progress heartbeats with unchanged
+ordered anchors do not advance it. quick reads retain the direct topic-driven
+read above.
 ---
 
 ## 9. Frontend architecture

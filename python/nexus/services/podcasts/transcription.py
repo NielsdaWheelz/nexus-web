@@ -25,6 +25,7 @@ from nexus.schemas.media_summary import MediaProcessingStatus
 from nexus.services.content_indexing import request_stale_media_content_reindex
 from nexus.services.rss_transcript_fetch import fetch_rss_transcript
 from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.transcript_segments import normalize_transcript_segments
 from nexus.services.transcripts.current import publish_source_transcript, write_current_transcript
 from nexus.services.transcripts.request_reason import (
@@ -82,7 +83,10 @@ def request_transcript(
             "Transcript request is only supported for podcast episodes.",
         )
     with transaction(db):
-        return _admit(db, viewer_id, media_id, reason)
+        response = _admit(db, viewer_id, media_id, reason)
+        if response.request_enqueued:
+            record_input_change(db)
+        return response
 
 
 def forecast(
@@ -113,6 +117,8 @@ def request_batch(
         queued = sum(
             _admit(db, viewer_id, media_id, target.reason).request_enqueued for media_id in ids
         )
+        if queued:
+            record_input_change(db)
         return wire.PodcastEpisodeQueryTranscriptRequestOut(
             matched_count=len(ids), queued_count=queued
         )
@@ -257,6 +263,7 @@ def run_podcast_transcription_now(
             """),
             {"id": media_id, "diagnostic": diagnostic, "publisher": origin == "Publisher"},
         )
+        record_input_change(db)
 
     run_source_publication_phase(
         session_factory=session_factory,
@@ -305,4 +312,5 @@ def _import_youtube_captions(
             transcript_origin="Imported",
             now=datetime.now(UTC),
         )
+        record_input_change(db)
     return _out(media_id, "ready_for_reading", "ready", "full", reason)

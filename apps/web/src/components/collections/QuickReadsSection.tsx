@@ -9,7 +9,7 @@ import { useResource } from "@/lib/api/useResource";
 import { useChangeStamp } from "@/lib/api/changes";
 import { useMediaQueryRevision, useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import MediaSummaryNotice from "./MediaSummaryNotice";
-import { getSuggestions, presentSuggestionItem, type Suggestions } from "@/lib/suggestions";
+import { getQuickReads, presentSuggestionItem, type QuickReads } from "@/lib/suggestions";
 import { parseMediaId } from "@/lib/lectern/contract";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -21,11 +21,11 @@ export default function QuickReadsSection({ isActive }: { isActive: boolean }) {
   const lectern = useLectern();
   const changes = useChangeStamp("Consumption", "Entries");
   const queryRevision = useMediaQueryRevision();
-  const [retained, setRetained] = useState<Suggestions | null>(null);
+  const [retained, setRetained] = useState<QuickReads | null>(null);
   const factsRevision = `${changes}:${queryRevision}`;
-  const resource = useResource<{ snapshot: Suggestions; factsRevision: string }>({
+  const resource = useResource<{ snapshot: QuickReads; factsRevision: string }>({
     cacheKey: isActive ? `lectern:quick-reads:${factsRevision}` : null,
-    load: async (signal) => ({ snapshot: await getSuggestions("/api/lectern/quick-reads", signal), factsRevision }),
+    load: async (signal) => ({ snapshot: await getQuickReads(signal), factsRevision }),
   });
   useEffect(() => {
     if (resource.status === "ready" && resource.data.factsRevision === factsRevision) {

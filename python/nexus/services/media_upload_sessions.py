@@ -99,6 +99,7 @@ from nexus.services.resource_mutation_replay import (
 )
 from nexus.services.sealed_handles import seal_upload_session, unseal_upload_session
 from nexus.services.source_publication import latest_source_attempt_id
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.url_normalize import normalize_url_for_display
 from nexus.storage.client import StorageClient, StorageError, get_storage_client
 from nexus.storage.paths import (
@@ -710,6 +711,8 @@ def confirm_upload_session(
             ),
             stage="Upload",
         )
+
+        record_input_change(db)
 
     # A candidate the published media references is retained; a reused media
     # references none, so the finalizer rejects and reclaims it.

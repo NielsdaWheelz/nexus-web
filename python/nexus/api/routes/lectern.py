@@ -10,7 +10,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import RepeatableReadDbSession
+from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
 from nexus.schemas.consumption import (
@@ -20,7 +20,15 @@ from nexus.schemas.consumption import (
     LecternResult,
     LecternSnapshot,
 )
-from nexus.schemas.suggestions import QuickReadsOut, SuggestionsOut
+from nexus.schemas.suggestions import (
+    QuickReadsOut,
+    SuggestionRefreshIn,
+    SuggestionsOut,
+    SuggestionStateOut,
+    SuggestionViewIn,
+    SuggestionViewOut,
+)
+from nexus.services import suggestion_shortlists
 from nexus.services import suggestions as suggestions_service
 from nexus.services.consumption import service as consumption_service
 
@@ -32,8 +40,38 @@ def get_lectern_suggestions(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: RepeatableReadDbSession,
 ) -> Data[SuggestionsOut]:
-    slate = suggestions_service.build_lectern_suggestions(db, viewer_id=viewer.user_id)
+    slate = suggestion_shortlists.read_suggestions(db, viewer_id=viewer.user_id)
     return Data(data=slate)
+
+
+@router.post("/lectern/suggestions/view")
+def reconcile_lectern_suggestions(
+    request: SuggestionViewIn,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: RepeatableReadDbSession,
+) -> Data[SuggestionViewOut]:
+    return Data(
+        data=suggestion_shortlists.reconcile_suggestions_view(
+            db,
+            viewer_id=viewer.user_id,
+            request=request,
+        )
+    )
+
+
+@router.post("/lectern/suggestions/refresh", status_code=202)
+def refresh_lectern_suggestions(
+    request: SuggestionRefreshIn,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: DbSession,
+) -> Data[SuggestionStateOut]:
+    return Data(
+        data=suggestion_shortlists.request_suggestions_refresh(
+            db,
+            viewer_id=viewer.user_id,
+            request=request,
+        )
+    )
 
 
 @router.get("/lectern/quick-reads")

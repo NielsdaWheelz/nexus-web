@@ -36,14 +36,20 @@ from nexus.schemas.library import (
     UpdateLibraryRequest,
     ViewerLibraryInvitationOut,
 )
-from nexus.schemas.suggestions import SuggestionsOut
+from nexus.schemas.suggestions import (
+    SuggestionRefreshIn,
+    SuggestionsOut,
+    SuggestionStateOut,
+    SuggestionViewIn,
+    SuggestionViewOut,
+)
 from nexus.services import (
     library_entries,
     library_entry_listing,
     library_governance,
     library_sharing,
+    suggestion_shortlists,
 )
-from nexus.services import suggestions as suggestions_service
 from nexus.services.sealed_handles import InvalidSealedHandle, unseal_user
 
 router = APIRouter(tags=["libraries"])
@@ -314,10 +320,44 @@ def get_library_suggestions(
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "Reading Slate does not accept query parameters"
         )
-    slate = suggestions_service.build_library_suggestions(
+    slate = suggestion_shortlists.read_suggestions(
         db, viewer_id=viewer.user_id, library_id=library_id
     )
     return Data(data=slate)
+
+
+@router.post("/libraries/{library_id}/suggestions/view")
+def reconcile_library_suggestions(
+    library_id: UUID,
+    request: SuggestionViewIn,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: RepeatableReadDbSession,
+) -> Data[SuggestionViewOut]:
+    return Data(
+        data=suggestion_shortlists.reconcile_suggestions_view(
+            db,
+            viewer_id=viewer.user_id,
+            library_id=library_id,
+            request=request,
+        )
+    )
+
+
+@router.post("/libraries/{library_id}/suggestions/refresh", status_code=202)
+def refresh_library_suggestions(
+    library_id: UUID,
+    request: SuggestionRefreshIn,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: DbSession,
+) -> Data[SuggestionStateOut]:
+    return Data(
+        data=suggestion_shortlists.request_suggestions_refresh(
+            db,
+            viewer_id=viewer.user_id,
+            library_id=library_id,
+            request=request,
+        )
+    )
 
 
 @router.patch("/libraries/{library_id}/entries/reorder", status_code=204)

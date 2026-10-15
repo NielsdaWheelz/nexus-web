@@ -36,8 +36,9 @@ from nexus.db.session import get_repeatable_read_db, get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.schemas.conversation import EXECUTION_ADVISORY_EVENT_TYPE
+from nexus.schemas.suggestions import SuggestionCurrentOut, SuggestionWithdrawnOut
 from nexus.services import media as media_service
-from nexus.services import metadata_operations
+from nexus.services import metadata_operations, suggestion_changes, suggestion_shortlists
 from nexus.services.chat import events as chat_events
 from nexus.services.chat import reads as chat_reads
 from nexus.services.dossier import engine as dossier_engine
@@ -48,6 +49,52 @@ router = APIRouter(tags=["streaming"])
 logger = get_logger(__name__)
 
 _SSE_HEADERS = {"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"}
+
+
+@router.get("/stream/lectern/suggestions")
+async def stream_lectern_suggestions(
+    request: Request,
+    viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
+) -> StreamingResponse:
+    return await _stream_suggestions(request, viewer_id=viewer_id, library_id=None)
+
+
+@router.get("/stream/libraries/{library_id}/suggestions")
+async def stream_library_suggestions(
+    request: Request,
+    library_id: UUID,
+    viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
+) -> StreamingResponse:
+    return await _stream_suggestions(request, viewer_id=viewer_id, library_id=library_id)
+
+
+async def _stream_suggestions(
+    request: Request, *, viewer_id: UUID, library_id: UUID | None
+) -> StreamingResponse:
+    def read_snapshot(*, initial: bool = False) -> tuple[dict[str, Any], bool]:
+        try:
+            with get_session_factory()() as db:
+                get_repeatable_read_db(db)
+                state = suggestion_shortlists.read_suggestion_state(
+                    db,
+                    viewer_id=viewer_id,
+                    library_id=library_id,
+                )
+        except ApiError as exc:
+            if initial or exc.code != ApiErrorCode.E_LIBRARY_NOT_FOUND:
+                raise
+            return SuggestionWithdrawnOut().model_dump(mode="json", by_alias=True), True
+        if state.capability == "NotApplicable":
+            return SuggestionWithdrawnOut().model_dump(mode="json", by_alias=True), True
+        return SuggestionCurrentOut(state=state).model_dump(mode="json", by_alias=True), False
+
+    await run_in_threadpool(read_snapshot, initial=True)
+    listener = await open_sse_listener(suggestion_changes.CHANNEL, suggestion_changes.NOTIFY_KEY)
+    return StreamingResponse(
+        tail_snapshot_stream(request=request, listener=listener, read_snapshot=read_snapshot),
+        media_type="text/event-stream; charset=utf-8",
+        headers=_SSE_HEADERS,
+    )
 
 
 @router.get(

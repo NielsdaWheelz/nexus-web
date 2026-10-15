@@ -5,6 +5,9 @@ import { ended, finish, isSameOrigin, liveSession, type Effect } from "@/lib/aut
 import { isAbortError } from "@/lib/errors";
 import { PUBLIC_API_CSP } from "@/lib/security/csp";
 import { AuthUnavailable } from "@/lib/supabase/auth";
+import { isSuggestionJsonPath, SUGGESTIONS_REQUEST_TIMEOUT_MS } from "./suggestionPolicy";
+
+const UPSTREAM_HEADERS_TIMEOUT_MS = 30_000;
 
 const REQUEST_HEADERS = [
   "content-type", "accept", "range", "if-none-match", "if-modified-since",
@@ -73,13 +76,19 @@ async function forward({
 
   const controller = new AbortController();
   let timedOut = false;
+  const ownsBody = isSuggestionJsonPath(path);
+  let bodyTransferred = false;
   const timeout = setTimeout(() => {
     timedOut = true;
     controller.abort();
-  }, 30_000);
+  }, ownsBody ? SUGGESTIONS_REQUEST_TIMEOUT_MS : UPSTREAM_HEADERS_TIMEOUT_MS);
   const abort = () => controller.abort();
   if (request.signal.aborted) abort();
   else request.signal.addEventListener("abort", abort, { once: true });
+  const release = () => {
+    clearTimeout(timeout);
+    request.signal.removeEventListener("abort", abort);
+  };
 
   try {
     if (body === undefined && method !== "GET" && method !== "HEAD") {
@@ -110,8 +119,42 @@ async function forward({
     }
     const responseHeaders = pickHeaders(upstream.headers, responseHeaderNames, true);
     responseHeaders.set("x-request-id", responseId);
+    const noBody = method === "HEAD" || [204, 205, 304].includes(upstream.status);
+    if (ownsBody && !noBody && upstream.body !== null) {
+      const reader = upstream.body.getReader();
+      const response = new NextResponse(new ReadableStream<Uint8Array>({
+        async pull(target) {
+          try {
+            const chunk = await reader.read();
+            if (chunk.done) {
+              release();
+              reader.releaseLock();
+              target.close();
+            } else {
+              target.enqueue(chunk.value);
+            }
+          } catch (error) {
+            release();
+            reader.releaseLock();
+            target.error(error);
+          }
+        },
+        async cancel(reason) {
+          controller.abort();
+          release();
+          await reader.cancel(reason);
+          reader.releaseLock();
+        },
+      }), {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        headers: responseHeaders,
+      });
+      bodyTransferred = true;
+      return response;
+    }
     return new NextResponse(
-      method === "HEAD" || [204, 205, 304].includes(upstream.status) ? null : upstream.body,
+      noBody ? null : upstream.body,
       { status: upstream.status, statusText: upstream.statusText, headers: responseHeaders },
     );
   } catch (error) {
@@ -123,8 +166,7 @@ async function forward({
     console.error("FastAPI proxy error:", error);
     return proxyError(id, 502, "E_UPSTREAM", "Backend service unavailable");
   } finally {
-    clearTimeout(timeout);
-    request.signal.removeEventListener("abort", abort);
+    if (!bodyTransferred) release();
   }
 }
 

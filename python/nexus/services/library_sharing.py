@@ -47,6 +47,7 @@ from nexus.services.sealed_handles import (
     unseal_library_invitation,
     unseal_user,
 )
+from nexus.services.suggestion_changes import record_input_change
 
 _MAX_PAGE = 200
 _MEMBER_PLAN = (SortKey("user_id", "asc", KeysetValueKind.Uuid),)
@@ -236,6 +237,7 @@ def update_library_member_role(
                 ),
                 {"role": role, "lid": library_id, "uid": target_user_id},
             )
+            record_input_change(db)
             return _member_out(target, owner_user_id=ctx.owner_user_id, role=role)
 
     return retry_serializable(db, "update_library_member_role", attempt)
@@ -269,6 +271,7 @@ def remove_library_member(
             if removed is None:
                 return
             on_visibility_lost(db, user_id=target_user_id)
+            record_input_change(db)
 
     retry_serializable(db, "remove_library_member", attempt)
 
@@ -316,6 +319,7 @@ def transfer_library_ownership(
                 ),
                 {"new_owner": new_owner_user_id, "now": now, "lid": library_id},
             )
+            record_input_change(db)
             return governance.library_out(
                 ctx,
                 viewer_id=viewer_id,
@@ -526,6 +530,7 @@ def accept_library_invite(
                 {"lid": library_id, "uid": viewer_id, "role": invite["role"]},
             )
             responded_at = _set_invitation_status(db, invitation_id=invite["id"], status="accepted")
+            record_input_change(db)
             return AcceptLibraryInviteResponse(
                 invite=_invitation_out(invite, status="accepted", responded_at=responded_at),
                 membership=InviteAcceptMembershipOut(

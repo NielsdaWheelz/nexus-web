@@ -57,12 +57,12 @@ export const paneResourceLoaders: Partial<
   Record<PaneRouteId, PaneResourceLoader>
 > = {
   lectern: {
-    cacheKey: () => lecternSuggestionsResource.cacheKey({ refreshVersion: 0 }),
+    cacheKey: () => lecternSuggestionsResource.cacheKey({}),
     load: async (request) => {
       const response = await request<
-        { refreshVersion: number },
+        Record<string, never>,
         ApiJson<"/lectern/suggestions", "get">
-      >(lecternSuggestionsResource, { refreshVersion: 0 });
+      >(lecternSuggestionsResource, {});
       return response.data;
     },
   },

@@ -23,6 +23,7 @@ from nexus.services.resource_mutation_replay import (
     lookup_replay,
     record_replay,
 )
+from nexus.services.suggestion_changes import record_input_change
 
 
 def update_title(
@@ -73,6 +74,7 @@ def update_title(
             request_bytes=request_bytes,
             response_json=response.model_dump(mode="json", by_alias=True),
         )
+        record_input_change(db)
         db.commit()
         return response
 
@@ -133,6 +135,7 @@ def update_body(
             request_bytes=request_bytes,
             response_json=response.model_dump(mode="json", by_alias=True),
         )
+        record_input_change(db)
         db.commit()
         return response
 

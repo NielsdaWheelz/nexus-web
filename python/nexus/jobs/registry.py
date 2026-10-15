@@ -98,6 +98,12 @@ def registry() -> dict[str, JobDefinition]:
             on_dead="nexus.services.podcasts.sync:dead_letter",
         ),
         # Background lane: one fresh, memory-bounded child per job.
+        "suggestion_shortlist_refresh": JobDefinition(
+            "background",
+            "nexus.services.suggestion_shortlists:run_suggestion_refresh_job",
+            keep_dead=True,
+            on_history="nexus.services.suggestion_changes:on_suggestion_job_history",
+        ),
         "ingest_media_source": JobDefinition(
             "background",
             "nexus.services.media_source_ingest:run_job",

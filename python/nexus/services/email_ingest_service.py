@@ -39,6 +39,7 @@ from nexus.services.media_source_ingest import (
     create_attempt,
     enqueue_accepted_source_attempt_in_transaction,
 )
+from nexus.services.suggestion_changes import record_input_change
 from nexus.storage.client import StorageError, get_storage_client
 from nexus.storage.paths import build_source_artifact_storage_path
 from nexus.tasks.storage_object_cleanup import (
@@ -170,6 +171,7 @@ def accept_email_message(
         "has_content": bool(html_content),
     }
     library_entries.ensure_media_in_default_library(db, owner_user_id, media.id)
+    record_input_change(db)
     db.commit()
 
     # The sender credit is applied right after the media transaction commits so

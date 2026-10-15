@@ -22,6 +22,7 @@ from nexus.services.sealed_handles import (
     new_share_token,
     unseal_resource_grant,
 )
+from nexus.services.suggestion_changes import record_input_change
 
 
 def media_grant_path_exists_expr(
@@ -247,6 +248,7 @@ def delete_grant(db: Session, *, viewer_user_id: UUID, handle: str) -> None:
             from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
 
             claim_document_teardown_if_unreferenced_locked(db, media_id)
+            record_input_change(db)
 
     retry_read_committed(db, "delete_resource_grant", attempt)
 

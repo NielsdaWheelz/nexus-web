@@ -2,6 +2,7 @@ import {
   isApiError,
   isSameSystemApiDefect,
   isUnauthenticatedApiError,
+  requestWithDeadline,
 } from "@/lib/api/client";
 import { isAbortError } from "@/lib/errors";
 
@@ -47,27 +48,33 @@ function waitForRetry(delay: number, signal: AbortSignal): Promise<void> {
 export async function requestWithRetry<T>(
   request: (signal: AbortSignal) => Promise<T>,
   signal: AbortSignal,
+  options?: { timeoutMs?: number },
 ): Promise<T> {
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-    try {
-      return await request(signal);
-    } catch (error) {
-      if (signal.aborted || isAbortError(error)) {
-        throw error;
+  const run = async (attemptSignal: AbortSignal): Promise<T> => {
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+      try {
+        return await request(attemptSignal);
+      } catch (error) {
+        if (attemptSignal.aborted || isAbortError(error)) {
+          throw error;
+        }
+        if (isUnauthenticatedApiError(error)) {
+          throw error;
+        }
+        const retryable =
+          isApiError(error) &&
+          (error.code === "E_NETWORK" ||
+            (!isSameSystemApiDefect(error) && error.status >= 500));
+        if (!retryable || attempt === MAX_ATTEMPTS) {
+          throw error;
+        }
+        await waitForRetry(retryDelay(attempt), attemptSignal);
       }
-      if (isUnauthenticatedApiError(error)) {
-        throw error;
-      }
-      const retryable =
-        isApiError(error) &&
-        (error.code === "E_NETWORK" ||
-          (!isSameSystemApiDefect(error) && error.status >= 500));
-      if (!retryable || attempt === MAX_ATTEMPTS) {
-        throw error;
-      }
-      await waitForRetry(retryDelay(attempt), signal);
     }
-  }
 
-  throw new Error("Unreachable retry state");
+    throw new Error("Unreachable retry state");
+  };
+  return options?.timeoutMs === undefined
+    ? run(signal)
+    : requestWithDeadline({ request: run, signal, timeoutMs: options.timeoutMs });
 }

@@ -2,7 +2,7 @@
 
 connections inspects relationships. link… authors one neutral user connection.
 discovery writes machine connections. suggestions ranks items to read or file;
-it stores no recommendation and owns no destination membership.
+the publication owner retains a bounded pool and owns no destination membership.
 
 | owner | contract |
 | --- | --- |
@@ -10,6 +10,7 @@ it stores no recommendation and owns no destination membership.
 | `services/resource_items/{capabilities,targets}.py` | symmetric endpoint admission and read-only target search |
 | `services/connection_discovery.py` | queue, status, dismissal, retrieval, judgment and fenced publication |
 | `services/suggestions.py` | lectern, quick reads and library ranking in one snapshot |
+| `services/suggestion_shortlists.py` | background publication, conditional admission and bounded current reads |
 | `services/resource_graph/owners.py` | endpoint-to-work projection used by exclusions and ranking |
 | web `lib/resourceGraph/useLinkComposer.ts` | one composer for menus, panes, selections and saved uploads |
 | web `components/connections/ConnectionsSurface.tsx` | paginated facts, owner actions and verified creator navigation |
@@ -104,15 +105,15 @@ status is `idle | pending | running | failed`; outcome is null or
 `ok | skipped | terminal_failed`. a retryable failed job reads pending; dead or
 terminal model failure reads failed. both scan routes require a visible source.
 the job payload is `{user_id,ref,reason}`, result `{status,error_code,ref}`;
-the existing registry owns retries and its renewable 300-second lease.
+the existing registry owns retries and its renewable 30-second lease.
 
 ## suggestions
 
-all reads use one read-only repeatable-read snapshot and one `now()`. ranking
-performs no request-time model call, embedding, job or persistence. lectern
-suggestions exclude finished media and current members; library suggestions
-exclude destination members and require relational evidence; quick reads retain
-their separate unfinished-document/time eligibility.
+lectern and library reads hydrate a persisted pool in one read-only
+repeatable-read snapshot; ranking runs in the background. lectern suggestions
+exclude finished media and current members; library suggestions exclude
+destination members and require relational evidence. quick reads retain their
+direct unfinished-document/time query.
 
 sql assigns continuity, arrival, rediscovery or graph-thread families and order,
 with twenty candidates per family. lectern rotates families then backfills;
@@ -121,15 +122,10 @@ anchor and author caps while alternatives exist. continuity/arrival borrow no
 relation evidence. semantic neighbors use only the calibrated embedding identity
 and threshold before limiting rows. this cutover changes no ranking policy.
 
-`GET /lectern/suggestions` and `GET /libraries/{id}/suggestions` return
-`SuggestionsOut`; `GET /lectern/quick-reads` returns `QuickReadsOut`.
-add calls the existing destination owner. lectern uses ensure-membership; only
-acknowledgement plus current visible membership returns `Accepted` and runs the
-existing local removal/refill path. `Retained` leaves rows to ordinary query facts.
-quick reads retain queued documents and expose add/check/on-lectern through the
-shared control; opening never enqueues. inactive query keys are null; activation
-refreshes while retaining rows and truthful failure feedback. suggestions' existing
-[focus](../tickets/suggestion-add-can-reclaim-moved-focus.md) and
-[refill](../tickets/suggestion-add-refetch-replaces-stable-survivors.md) defects
-remain tracked. collection rows show factual item metadata; explanations
-of relationships remain in the opened resource's connections.
+the [suggestions module](suggestions.md) owns the publication, eligibility,
+observation, retained-order and repair contracts. add uses the existing
+destination owner; an accepted receipt removes/refills locally, while uncertain
+work remains with that owner. quick reads retain queued documents and expose
+add/check/on-lectern through the shared control; opening never enqueues.
+collection rows show factual item metadata; relationship explanations remain
+in the opened resource's connections.

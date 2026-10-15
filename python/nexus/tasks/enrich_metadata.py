@@ -74,6 +74,7 @@ from nexus.services.reader_publication import (
     lock_publication_generation,
     replace_reader_document_title,
 )
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.x_titles import (
     AcceptedXTitle,
     XTitleInput,
@@ -267,6 +268,11 @@ def _publish(
             # justify-defect: the exact running claim is locked until this
             # transaction commits; publication cannot lose it halfway through.
             raise AssertionError("locked metadata claim disappeared during publication")
+        if isinstance(
+            outcome, MetadataBibliographyCompletedOutcome | MetadataTitleCompletedOutcome
+        ):
+            if outcome.changed_fields:
+                record_input_change(db)
         db.commit()
         return result
 

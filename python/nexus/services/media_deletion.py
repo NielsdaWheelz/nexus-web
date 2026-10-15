@@ -47,6 +47,7 @@ from nexus.services.reader_apparatus import delete_media_apparatus
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.source_attempt_artifacts import source_attempt_storage_paths
+from nexus.services.suggestion_changes import record_input_change
 from nexus.storage.client import StorageError, get_storage_client
 
 if TYPE_CHECKING:
@@ -256,6 +257,7 @@ def _remove_media_for_viewer_attempt(
         )
         reconcile_document_embed_edges_for_viewer(db, viewer_id=viewer_id, media_id=media_id)
         dossier_engine.on_visibility_lost(db, user_id=viewer_id)
+        record_input_change(db)
 
         if result_kind == "Deleting":
             return MediaDeletingResult()

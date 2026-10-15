@@ -43,6 +43,7 @@ from nexus.services.sealed_handles import (
     seal_user,
     unseal_user,
 )
+from nexus.services.suggestion_changes import record_input_change
 
 
 def _href(path: str) -> str:
@@ -181,6 +182,8 @@ def create_share(
             grant = resource_grants.insert_grant(
                 db, creator_id=viewer_user_id, subject=subject, grantee_id=grantee_id
             )
-            return CreateResourceShareOut(share=_owned(grant, grantee), created=True)
+            response = CreateResourceShareOut(share=_owned(grant, grantee), created=True)
+            record_input_change(db)
+            return response
 
     return retry_serializable(db, "create_resource_grant", attempt)

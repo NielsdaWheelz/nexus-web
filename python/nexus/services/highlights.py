@@ -53,6 +53,7 @@ from nexus.services.resource_graph.cleanup import (
 from nexus.services.resource_graph.context import batch_conversations_with_any_edge_to_ref
 from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.text_quote import QuoteStatus
 
 logger = get_logger(__name__)
@@ -472,6 +473,7 @@ def create_text_highlight(
             end_offset=anchor.end_offset,
             color=color,
         )
+        record_input_change(db)
         db.commit()
     except IntegrityError as e:
         db.rollback()
@@ -658,6 +660,7 @@ def update_highlight(
                 .where(Highlight.id == highlight_id)
                 .values(color=req.color, updated_at=func.now())
             )
+            record_input_change(db)
             db.commit()
             db.refresh(highlight)
         return project_highlight(highlight, viewer_id)
@@ -706,6 +709,7 @@ def update_highlight(
             fragment_anchor.start_offset = start
             fragment_anchor.end_offset = end
         db.flush()
+        record_input_change(db)
         db.commit()
     except IntegrityError as e:
         db.rollback()
@@ -745,6 +749,7 @@ def delete_highlight_rows(db: Session, highlight: Highlight) -> None:
 def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:
     def attempt() -> None:
         delete_highlight_in_current_transaction(db, viewer_id, highlight_id)
+        record_input_change(db)
         db.commit()
 
     retry_read_committed(db, "delete_highlight", attempt)

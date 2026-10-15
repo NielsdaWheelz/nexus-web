@@ -33,6 +33,7 @@ from nexus.services.pdf_highlight_geometry import (
 )
 from nexus.services.pdf_readiness import is_pdf_quote_text_ready
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.text_quote import PREFIX_SUFFIX_WINDOW
 
 
@@ -53,6 +54,7 @@ def create_pdf_highlight(
         exact=anchor.exact,
         color=color,
     )
+    record_input_change(db)
     db.commit()
     db.refresh(highlight)
     return project_highlight(highlight, viewer_id)
@@ -198,6 +200,7 @@ def update_pdf_highlight_bounds(
     db.execute(delete(HighlightPdfQuad).where(HighlightPdfQuad.highlight_id == highlight.id))
     _write_quads(db, highlight.id, canonical)
     db.flush()
+    record_input_change(db)
     db.commit()
     db.refresh(highlight)
     return project_highlight(highlight, viewer_id)

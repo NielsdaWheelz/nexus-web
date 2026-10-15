@@ -114,6 +114,7 @@ from nexus.services.source_publication import (
     reset_source_progress,
     run_source_publication_phase,
 )
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.transcripts.request_reason import (
     TranscriptRequestReason,
     require_transcript_request_reason,
@@ -711,7 +712,7 @@ def accept_url_source(
     def admit() -> FromUrlResponse:
         with transaction(db):
             library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
-            return _accept_url(
+            response, changed = _accept_url(
                 db=db,
                 viewer_id=viewer_id,
                 url=url,
@@ -723,6 +724,9 @@ def accept_url_source(
                     {"ingest_purpose": ingest_purpose} if ingest_purpose is not None else None
                 ),
             )
+            if changed:
+                record_input_change(db)
+            return response
 
     return retry_read_committed(db, "accept_url_source", admit)
 
@@ -742,7 +746,7 @@ def accept_system_url_source(
     The owning system service attaches the media through its own explicit
     library-entry command after acceptance.
     """
-    return _accept_url(
+    response, _changed = _accept_url(
         db=db,
         viewer_id=actor_user_id,
         url=url,
@@ -753,6 +757,7 @@ def accept_system_url_source(
         expected_kind=expected_kind,
         payload_extra={"system_source": system_source},
     )
+    return response
 
 
 def _accept_url(
@@ -766,7 +771,7 @@ def _accept_url(
     assign_viewer_libraries: bool,
     expected_kind: str | None = None,
     payload_extra: dict[str, object] | None = None,
-) -> FromUrlResponse:
+) -> tuple[FromUrlResponse, bool]:
     validate_requested_url(url)
     spec = url_source_spec(url)
     if expected_kind is not None and spec.kind != expected_kind:
@@ -785,7 +790,7 @@ def _accept_url(
         db, viewer_id=viewer_id, idempotency_key=clean_key, intent_key=intent_key
     )
     if replay is not None:
-        return replay
+        return replay, False
 
     media = _find_reusable_url_media(db, spec)
     created = media is None
@@ -809,7 +814,7 @@ def _accept_url(
         if in_flight is not None and in_flight.status in IN_FLIGHT_STATUSES:
             # A second submission joins the run already crossing the fence rather
             # than accepting a newer attempt over it.
-            return _from_url_response(media, in_flight, "reused")
+            return _from_url_response(media, in_flight, "reused"), True
 
     source_payload: dict[str, object] = {"url": url, "kind": spec.kind, **spec.source_payload}
     if assign_viewer_libraries:
@@ -837,7 +842,7 @@ def _accept_url(
             attempt.error_code = media.last_error_code
             attempt.error_message = media.last_error_message
     if not created:
-        return _from_url_response(media, attempt, "reused", ingest_enqueued=False)
+        return _from_url_response(media, attempt, "reused", ingest_enqueued=False), True
     enqueue_accepted_source_attempt_in_transaction(
         db,
         media_id=media.id,
@@ -845,7 +850,7 @@ def _accept_url(
         actor_user_id=viewer_id,
         request_id=request_id,
     )
-    return _from_url_response(media, attempt, "created", ingest_enqueued=True)
+    return _from_url_response(media, attempt, "created", ingest_enqueued=True), True
 
 
 def _new_media_from_spec(db: Session, spec: UrlSourceSpec, *, url: str, viewer_id: UUID) -> Media:
@@ -1417,6 +1422,7 @@ def _admit_source_repeat[T: SourceRetryAdmission | SourceRefreshAdmission](
             request_bytes=request_bytes,
             response_json=admission.model_dump(mode="json"),
         )
+        record_input_change(db)
         db.commit()
         return admission
 
@@ -1546,6 +1552,7 @@ def reprocess_retained_epub(
                 "runtime_sha256": runtime_sha256,
             },
         )
+        record_input_change(db)
         db.commit()
         return receipt
 
@@ -1663,6 +1670,7 @@ def correct_source_type(
             request_bytes=request_bytes,
             response_json=receipt.model_dump(mode="json"),
         )
+        record_input_change(db)
         db.commit()
         return receipt
 
@@ -2063,6 +2071,7 @@ def _run_fenced_attempt(
                     execution_id=fence.execution_id,
                     request_id=request_id,
                 )
+                record_input_change(db)
 
             run_source_publication_phase(
                 session_factory=session_factory,
@@ -2112,6 +2121,7 @@ def _run_fenced_attempt(
                     execution_id=fence.execution_id,
                     request_id=request_id,
                 )
+                record_input_change(db)
                 return outcome
 
             outcome = run_source_publication_phase(
@@ -2141,6 +2151,7 @@ def _run_fenced_attempt(
                 execution_id=fence.execution_id,
                 request_id=request_id,
             )
+            record_input_change(db)
             return outcome, cleanup_paths
 
         outcome, cleanup_paths = run_source_publication_phase(
@@ -2338,6 +2349,7 @@ def _publish_terminal_failure(
                 failure_code=present(assume_safe_failure_code(error_code)),
             )
             mark_ready_for_reading(db, media)
+            record_input_change(db)
             return
         _fail_source_attempt(
             db,
@@ -2348,6 +2360,7 @@ def _publish_terminal_failure(
             execution_id=present(fence.execution_id),
         )
         _sync_document_embed_targets(db, media_id)
+        record_input_change(db)
 
     run_source_publication_phase(
         session_factory=session_factory,

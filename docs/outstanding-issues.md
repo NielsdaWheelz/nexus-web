@@ -29,6 +29,12 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+- [open] suggestions / feedback · 2026-10-14 latency diagnosis · loading, empty results and errors after empty success hide the whole section: [ticket](tickets/suggestions-hide-loading-empty-and-refresh-errors.md).
+- [open] suggestions / lifecycle · 2026-10-14 latency diagnosis · loaded inactive panes keep issuing expensive reads: [ticket](tickets/suggestions-refetch-inactive-panes.md).
+- [open] suggestions / entry · 2026-10-14 latency diagnosis · a 500 ms server seed starts multi-second ranking before the browser starts again: [ticket](tickets/suggestions-prefetch-restarts-expensive-read.md).
+- [open] web / read transport · 2026-10-14 latency diagnosis · ordinary browser reads have no total deadline through body consumption and retries: [ticket](tickets/browser-read-deadline-does-not-cover-response-body.md).
+- [open] library suggestions / entry · 2026-10-14 specification · suggestions wait for unrelated entry pagination to finish: [ticket](tickets/library-suggestions-wait-for-entry-pagination.md).
+- [open] local development / storage · 2026-10-15 suggestions qualification · shared docker storage lacks headroom; large corpus checks moved to an owned dev-server clone: [ticket](tickets/local-docker-storage-headroom.md).
 - [unverified] workspace / scrollbar input · 2026-10-14 · classic gutter passed; default overlay thumb produced no motion and remains unqualified: [ticket](tickets/canvas-overlay-scrollbar-release-unqualified.md).
 - [open] release / host storage · 2026-10-14 corrective rollout · image pulls can consume the preflight disk reserve: [ticket](tickets/release-image-cache-consumes-disk-reserve.md).
 - [deferred] x / saved positions · 2026-10-14 owner decision · inline quotation becomes an embedded document; preserve the saved copy and explicit refresh conflict: [ticket](tickets/x-inline-quote-refresh-loses-saved-position.md).
@@ -446,3 +452,4 @@ unexpected timeouts. See
 
 - [open] metadata actions / focus · 2026-10-14 imports experience review · preexisting retry/review refusal needs live focus-settlement evidence: [ticket](tickets/metadata-refusal-focus-needs-settlement-proof.md).
 - [open] workspace / browser history · 2026-10-14 physical imports qualification · mobile browser back stays in the followed reader; pane back is separate: [ticket](tickets/mobile-browser-back-does-not-restore-workspace-pane.md).
+- [open] web / api transport · 2026-10-15 suggestions review · proxy incoming post-body acquisition can outlive its upstream deadline: [ticket](tickets/proxy-incoming-body-is-outside-cancellation.md).

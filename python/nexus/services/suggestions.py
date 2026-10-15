@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
@@ -24,12 +25,10 @@ from nexus.schemas.suggestions import (
     PodcastSuggestionTargetOut,
     QuickReadsOut,
     SuggestionItemOut,
-    SuggestionsOut,
 )
 from nexus.services import highlights, library_entries, library_governance, notes, reading_time
 from nexus.services import media as media_service
 from nexus.services.consumption import projection
-from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_credits import visible_author_credit_rows_sql
 from nexus.services.podcasts.episodes import episode_publication_rows_sql
 from nexus.services.podcasts.subscriptions_query import (
@@ -39,7 +38,7 @@ from nexus.services.podcasts.subscriptions_query import (
 from nexus.services.resource_graph.owners import owner_rows_sql
 from nexus.services.resource_graph.refs import ResourceRef
 
-_ANCHORS = 5
+SUGGESTION_ANCHOR_LIMIT = 5
 _PER_FAMILY = 20
 _EDGE_ORIGINS = ["user", "citation", "note_body", "highlight_note", "document_embed", "discovery"]
 # Human-reviewed calibration: a neighbour ranks only under this exact embedding
@@ -64,39 +63,53 @@ class _Candidate:
     author: UUID | None
 
 
-def build_lectern_suggestions(db: Session, *, viewer_id: UUID) -> SuggestionsOut:
-    """Up to ten next reads; empty while the Lectern is at capacity."""
-    if not consumption_service.lectern_has_capacity(db, viewer_id=viewer_id):
-        return SuggestionsOut(items=[])
-    candidates = _candidates(db, viewer_id, _lectern_anchors(db, viewer_id), "lectern", {})
-    return SuggestionsOut(items=_hydrate(db, viewer_id, _rotate(candidates, limit=10)))
-
-
 def build_quick_reads(db: Session, *, viewer_id: UUID) -> QuickReadsOut:
     """Up to five unfinished documents with under ten minutes left."""
-    candidates = _candidates(db, viewer_id, _lectern_anchors(db, viewer_id), "quick_reads", {})
-    return QuickReadsOut(items=_hydrate(db, viewer_id, _rotate(candidates, limit=5)))
+    candidates = _candidates(
+        db, viewer_id, lectern_anchor_refs(db, viewer_id=viewer_id), "quick_reads", {}
+    )
+    return QuickReadsOut(
+        items=_hydrate(
+            db, viewer_id, [ResourceRef(c.scheme, c.id) for c in _rotate(candidates, limit=5)]
+        )
+    )
 
 
-def build_library_suggestions(db: Session, *, viewer_id: UUID, library_id: UUID) -> SuggestionsOut:
-    """Up to ten relational suggestions for an admin-owned, non-system library."""
+def suggestion_surface(db: Session, *, viewer_id: UUID, library_id: UUID | None) -> Surface | None:
+    """Authorize a destination before inspecting its publication or candidates."""
+    if library_id is None:
+        return "lectern"
     context = library_governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
     if context.system_key is not None or context.role != "admin":
-        return SuggestionsOut(items=[])
+        return None
+    return "default_library" if context.is_default else "library"
+
+
+def rank_suggestion_refs(
+    db: Session, *, viewer_id: UUID, library_id: UUID | None = None
+) -> list[ResourceRef]:
+    """Exact ranking for one worker snapshot; the original ten lead the bounded pool."""
+    surface = suggestion_surface(db, viewer_id=viewer_id, library_id=library_id)
+    if surface is None:
+        return []
+    if library_id is None:
+        candidates = _candidates(
+            db, viewer_id, lectern_anchor_refs(db, viewer_id=viewer_id), "lectern", {}
+        )
+        return [ResourceRef(c.scheme, c.id) for c in _rotate(candidates, limit=80)]
     anchors = library_entries.library_anchor_facts(
-        db, viewer_id=viewer_id, library_id=library_id, limit=_ANCHORS
+        db, viewer_id=viewer_id, library_id=library_id, limit=SUGGESTION_ANCHOR_LIMIT
     )
-    surface: Surface = "default_library" if context.is_default else "library"
     candidates = _candidates(db, viewer_id, anchors, surface, {"library_id": library_id})
     ordered = sorted(candidates, key=lambda c: (c.lane, c.lane_strength, c.scheme, c.id))
     picked: list[_Candidate] = []
     counts: Counter[tuple[str, object]] = Counter()
-    while len(picked) < 10 and _take(ordered, picked, counts):
+    while len(picked) < 80 and _take(ordered, picked, counts):
         pass
-    return SuggestionsOut(items=_hydrate(db, viewer_id, picked))
+    return [ResourceRef(c.scheme, c.id) for c in picked]
 
 
-def _lectern_anchors(db: Session, viewer_id: UUID) -> tuple[ResourceRef, ...]:
+def lectern_anchor_refs(db: Session, *, viewer_id: UUID) -> tuple[ResourceRef, ...]:
     """The five newest touched objects; engagement before highlights before notes."""
     media_reads = (
         projection.recent_engagement_anchor_facts,
@@ -105,14 +118,62 @@ def _lectern_anchors(db: Session, viewer_id: UUID) -> tuple[ResourceRef, ...]:
     facts = [
         (f.activity_at, tier, ResourceRef(scheme="media", id=f.media_id))
         for tier, read in enumerate(media_reads)
-        for f in read(db, viewer_id=viewer_id, limit=_ANCHORS)
+        for f in read(db, viewer_id=viewer_id, limit=SUGGESTION_ANCHOR_LIMIT)
     ]
     facts += [
         (f.activity_at, 2 if f.ref.scheme == "note_block" else 3, f.ref)
-        for f in notes.recent_note_anchor_facts(db, viewer_id=viewer_id, limit=_ANCHORS)
+        for f in notes.recent_note_anchor_facts(
+            db, viewer_id=viewer_id, limit=SUGGESTION_ANCHOR_LIMIT
+        )
     ]
     facts.sort(key=lambda fact: (-fact[0].timestamp(), fact[1], fact[2].uri))
-    return tuple(dict.fromkeys(ref for _, _, ref in facts))[:_ANCHORS]
+    return tuple(dict.fromkeys(ref for _, _, ref in facts))[:SUGGESTION_ANCHOR_LIMIT]
+
+
+def hydrate_current_suggestions(
+    db: Session, *, viewer_id: UUID, library_id: UUID | None, refs: Sequence[ResourceRef]
+) -> list[SuggestionItemOut]:
+    """Revalidate only supplied identities; no ranking, graph or embedding acquisition."""
+    surface = suggestion_surface(db, viewer_id=viewer_id, library_id=library_id)
+    if surface is None or not refs:
+        return []
+    media_ids = [ref.id for ref in refs if ref.scheme == "media"]
+    params = {"viewer_id": viewer_id, "library_id": library_id, "media_ids": media_ids}
+    if surface == "lectern":
+        eligibility = f"""LEFT JOIN ({projection.engagement_fact_rows_sql(media_ids_param="media_ids")}) e
+            ON e.media_id = m.id
+            WHERE m.id = ANY(:media_ids) AND COALESCE(e.read_state, 'Unread') <> 'Finished'
+              AND m.id NOT IN ({projection.lectern_membership_rows_sql()})"""
+    else:
+        eligibility = f"""WHERE m.id = ANY(:media_ids) AND m.id NOT IN (
+            SELECT media_id FROM ({library_entries.destination_membership_rows_sql()}) membership
+            WHERE media_id IS NOT NULL)"""
+    eligible = {
+        ResourceRef("media", id_)
+        for id_ in db.scalars(
+            text(f"""
+        SELECT m.id FROM media m
+        JOIN ({visible_media_ids_cte_sql()}) visible ON visible.media_id = m.id
+        {eligibility}
+    """),
+            params,
+        )
+    }
+    if surface == "library":
+        eligible.update(
+            ResourceRef("podcast", id_)
+            for id_ in db.scalars(
+                text(f"""
+            SELECT s.podcast_id FROM ({active_subscription_rows_sql()}) s
+            JOIN ({visible_podcast_ids_cte_sql()}) visible USING (podcast_id)
+            WHERE s.podcast_id = ANY(:podcast_ids) AND s.podcast_id NOT IN (
+                SELECT podcast_id FROM ({library_entries.destination_membership_rows_sql()}) membership
+                WHERE podcast_id IS NOT NULL)
+        """),
+                {**params, "podcast_ids": [ref.id for ref in refs if ref.scheme == "podcast"]},
+            )
+        )
+    return _hydrate(db, viewer_id, [ref for ref in refs if ref in eligible])
 
 
 def _targets_sql(surface: Surface) -> str:
@@ -468,12 +529,17 @@ def _rotate(candidates: list[_Candidate], *, limit: int) -> list[_Candidate]:
     }
     picked: list[_Candidate] = []
     counts: Counter[tuple[str, object]] = Counter()
-    for family in (tuple(by_family) * 3)[:limit]:
+    for family in (tuple(by_family) * 3)[: min(limit, 10)]:
         _take(by_family[family], picked, counts)
-    while len(picked) < limit:
-        backfill = ("GraphThread", "Continuity", "Rediscovery", "Arrival")
-        if not any([_take(by_family[f], picked, counts) for f in backfill if len(picked) < limit]):
-            break
+    # Finish the original ten before extending: otherwise empty initial-family
+    # turns can move the old backfill rows and change the first page.
+    for stop in (min(limit, 10), limit):
+        while len(picked) < stop:
+            backfill = ("GraphThread", "Continuity", "Rediscovery", "Arrival")
+            if not any(
+                [_take(by_family[f], picked, counts) for f in backfill if len(picked) < stop]
+            ):
+                break
     return picked
 
 
@@ -503,7 +569,9 @@ def _take(
     return True
 
 
-def _hydrate(db: Session, viewer_id: UUID, picked: list[_Candidate]) -> list[SuggestionItemOut]:
+def _hydrate(
+    db: Session, viewer_id: UUID, picked: Sequence[ResourceRef]
+) -> list[SuggestionItemOut]:
     media_ids = [c.id for c in picked if c.scheme == "media"]
     media = media_service.hydrate_compact_media_targets(
         db, viewer_id=viewer_id, media_ids=media_ids

@@ -32,6 +32,7 @@ from nexus.services.source_publication import (
     record_source_finalizing,
     run_source_publication_phase,
 )
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.transcripts.request_reason import require_transcript_request_reason
 from nexus.services.url_normalize import normalize_url_for_display
 from nexus.services.web_article import (
@@ -230,7 +231,10 @@ def _begin_source_extraction(
                 ApiErrorCode.E_INVALID_KIND,
                 f"{label} requires {'/'.join(sorted(expected_kinds))} media.",
             )
+        previous_status = media.processing_status
         mark_extracting(db, media)
+        if media.processing_status != previous_status:
+            record_input_change(db)
         return media.kind
 
     return run_source_publication_phase(
@@ -304,13 +308,17 @@ def _run_existing_file(
             raise InvalidRequestError(
                 ApiErrorCode.E_STORAGE_MISSING, "Source file metadata missing."
             )
+        previous_status = media.processing_status
         mark_extracting(db, media)
-        return (
+        source = (
             media.kind,
             media_file.storage_path,
             int(media_file.size_bytes),
             str(media_file.source_sha256),
         )
+        if media.processing_status != previous_status:
+            record_input_change(db)
+        return source
 
     kind, storage_path, source_size_bytes, source_sha256 = run_source_publication_phase(
         session_factory=session_factory,
