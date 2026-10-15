@@ -9,7 +9,11 @@ import type { ContributorCredit } from "@/lib/contributors/credits";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { Schema } from "@/lib/api/wire";
-import type { PositiveCount } from "@/lib/consumption/activityFacts";
+
+/** Source-decoder or source-owned derivation guarantee: integer >= 1. */
+export interface PositiveCount {
+  readonly value: number;
+}
 
 export type CollectionItemKind =
   | "media"

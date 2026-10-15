@@ -7,13 +7,12 @@ bounded reading, listening, and video-pane spans; client delivery;
 exact-session exclusion and restore; first observed canonical completion facts; and the factual `/stats` and
 session reads. It does not own
 the reader cursor, current reader engagement, audio heartbeat state, explicit
-consumption state, or user-authored time. The implementing cutover is
-`docs/cutovers/observed-consumption-activity-hard-cutover.md` at `ebd648197`.
+consumption state, or user-authored time.
 
 ## Facts and semantics
 
 - `consumption_activity_spans` is the sole positive-duration fact family. It
-  stores bounded observations; stable client capture keys make regrouped retry
+  stores bounded observations; stable client capture keys make a resent batch
   idempotent.
 - `consumption_activity_exclusions` stores a viewer's decision not to count one
   exact observed gap-and-island session. Restore reactivates the underlying
@@ -52,81 +51,71 @@ All breakdowns, sessions, streaks, and Year presentation derive from effective
 
 | Concern | Owner |
 | --- | --- |
-| Viewer-locked write transactions and replayed commands | `python/nexus/services/consumption/__init__.py` |
-| Span ingest | `python/nexus/services/consumption/activity.py` (route: `api/routes/playback.py`) |
-| Exclusion writes | `python/nexus/services/consumption/exclusions.py` |
+| Viewer-locked write transactions | `python/nexus/services/consumption/__init__.py` |
+| Span ingest and session exclusions | `python/nexus/services/consumption/activity.py` |
 | Current state writes, completion facts and public reads | `python/nexus/services/consumption/service.py` |
 | Aggregation, filtering, sessions and the Stats and Sessions payloads | `python/nexus/services/consumption/stats.py` |
 | The read-state derivation | `python/nexus/services/consumption/projection.py` |
-| Strict transport shapes | capture in `python/nexus/schemas/consumption.py`, stats and exclusions in `consumption_activity.py`; the web reads them as generated wire types |
-| Browser capture | `apps/web/src/lib/consumption/activityRecorder.ts` |
-| Browser delivery | `activityUploader.ts` (in memory) |
-| Android listening capture | `playback/ListeningRecorder.kt` |
-| Android listening durability | `playback/ActivityOutbox.kt` |
-| Presentation | authenticated Stats pane; session continuations on the shared list owner `apps/web/src/lib/api/useServerList.ts` |
+| Wire shapes and routes | `python/nexus/schemas/consumption_activity.py`, `api/routes/consumption_activity.py`; the web reads generated wire types |
+| Browser capture and delivery | `apps/web/src/lib/consumption/capture.tsx` (in memory) |
+| Android listening capture and durability | `playback/ListeningRecorder.kt`, `playback/ActivityOutbox.kt` |
+| Presentation | the authenticated Stats pane (`app/(authenticated)/stats/`) |
 
-## Boundaries
+## Contract
 
-`POST /consumption/activity` is the observation endpoint. The device is the
-private `nx_device`, which only the bff names (`X-Nexus-Device`); a body naming
-one is refused. FastAPI is the sole validator of the body (at most 120 spans).
-Each
-span's `captureKey` provides fact identity, so a retried batch inserts nothing
-and a reused key with different facts conflicts.
+Devices are the opaque stored id the bff stamps from the httpOnly `nx_device`
+cookie (`X-Nexus-Device`); no body or query names the caller's device. Stats,
+sessions and exclusions carry that raw id as `device_id` (any of the viewer's
+devices), works their `media_id`, exclusions their uuid `id`. Nothing is sealed.
 
-`POST /consumption/activity-exclusions` is a strict replayable `Exclude |
-Restore` lifecycle union. Exclude names one exact, un-clipped session by media,
-modality, sealed device handle, and interval. Restore names one sealed exclusion
-handle. The service resolves viewer ownership, re-derives the session inside
-the write transaction, and memoizes the result under
-`Consumption.ActivityExclusions`. No command accepts a duration.
+- `POST /consumption/activity {media_id, device_class, batch{modality, spans[1..120]}}`
+  → 204. Retry: each span's `capture_key` is its identity, so a resent batch
+  stores nothing new; a key reused with other facts refuses the batch (409
+  `E_ACTIVITY_CAPTURE_CONFLICT`). Spans older than 30 days, more than 5 minutes
+  ahead or overlapping their predecessor are skipped; the rest land.
+- `PUT /consumption/exclusions/{id} {media_id, modality, device_id, started_at, ended_at}`
+  → 204: stop counting one exact, unclipped, all-time session. The id is
+  client-minted once per session and resent on retry: the same id answers
+  success, a session already excluded under another id answers success, another
+  viewer's id is 409, an interval that is not one current session is 400.
+- `DELETE /consumption/exclusions/{id}` → 204: count the session again,
+  restoring every active exclusion of it; already restored is success, an
+  unknown id 404.
+- `GET /consumption/stats` (`end`, `time_zone`, `bucket` Hour | Day | Month |
+  Year, optional `start`, `modality`, `media_id`, `contributor_handle`,
+  `device_id`) and `GET /consumption/sessions` (the same scope, `cursor`,
+  `limit` 1..200) are no-store reads. Sessions page by keyset `(started_at,
+  media_id, modality, device_id)` under the first page's `as_of`; a cursor
+  carries a hash of its scope and is refused (400) under another.
+- Writers publish the `Consumption` change topic; the Stats pane rereads on it
+  only while active, on activation and when the page returns to the screen.
 
-`GET /consumption/stats` and `GET /consumption/sessions` are private,
-`no-store` factual reads. finite requests supply exact `YYYY-MM-DD` start and
-exclusive end dates in `timeZone`; timestamp and numeric inputs are rejected.
-one service resolver and calendar buckets share the existing sql three-hour
-midnight rule. the resolved Scope remains utc instants; absent start remains
-`None`, with the existing utc floor used by activity queries. equivalent
-canonical browser-issued utc scopes retain their cursor identity.
+## Invariants
 
-equal civil dates and dates the zone skips entirely return empty facts,
-sessions and buckets. unrepresentable endpoints or derived edges are refused
-before driver decoding; thirty-minute context expansion saturates at datetime
-bounds. timeline instants encode utc. PostgreSQL owns range and bucket edges
-and local day/hour aggregation; Python ZoneInfo retains zone validation,
-streak today, timeline labels/offsets and device first-seen dates. these retained
-projections agree on the verified named calendar fixtures. session device
-summaries are required because every session is observed. raw device ids and
-span payloads never reach presentation.
-both embedded and continuation session pages use the same `items,nextCursor` contract.
-The Stats pane binds a session continuation to the exact committed Stats path
-and decoded URL state, never the still-pending requested view. The shared manual
-cursor owner atomically adopts first-page rows, cursor, loading, and expected
-request failure; it aborts and generation-rejects an older continuation when a
-new first page commits. A failed continuation preserves committed rows and
-offers Retry. A `null` cursor ends the list.
-
-The browser recorder has one tab-local owner. Reader, non-Android global-audio,
-and visible-video adapters publish observations to it; none persists, retries,
-or sends its own request. Closed spans go to an in-tab uploader that batches by
-(media, modality, device class) in occurrence order (≤ 120 spans, ≤ 40 kB),
-retries network, 408, 429 and 5xx failures with backoff, drops a batch any other
-refusal answers, and hands what it holds to the browser with `keepalive` on
-pagehide. Spans of a tab closed while offline are lost; capture cannot be
-paused. Android listening is durable: the service writes spans to a json outbox
-file and uploads them oldest first when the network returns.
-
-Current state remains separate: `reader_media_state`,
-`reader_engagement_states`, and `podcast_listening_states` serve resume,
-progress, and heartbeat behavior. `ResetProgress` replaces only current state;
-it preserves activity spans and completion facts. Historical reads re-check
-current media visibility. Media teardown removes exclusions and both fact
-families through Consumption before deleting the parent media row.
+- Spans are bounded (1..30,000 ms) observations; `capture_key` is unique per
+  viewer. Exclusions never edit or create spans; at most one exclusion of a
+  session is active (the viewer lock serializes the check); Stats lists older
+  duplicates once.
+- Every Stats read projects one `as_of` snapshot over currently visible media;
+  `activeMs = recordedActiveMs - excludedActiveMs`.
+- Civil ranges resolve once to utc instants in the request's zone (the sql
+  three-hour midnight rule); dates a zone skips return empty facts.
+- Browser capture has one tab-local owner: each (media, modality) group accrues
+  at most one span, from its single eligible observer (an observer is its
+  handle); two eligible observers record nothing. Spans close at 10 s
+  checkpoints, on ineligibility, observer or device-class change and pagehide;
+  batches are one lane (≤ 120 spans, ≤ 40 kB); network, 408, 429 and 5xx
+  failures retry with backoff, other refusals drop the batch; pagehide hands
+  at most 60 kB to the browser with `keepalive`. A tab closed offline loses
+  what it held. Android listening is durable in its outbox.
+- Current state (`reader_media_state`, `reader_engagement_states`,
+  `podcast_listening_states`) stays separate; resets keep spans and completion
+  facts. Media teardown removes exclusions and both fact families before the
+  parent media row.
 
 ## Operations
 
-Real-PostgreSQL proof owns replay, exclusions, filtering, teardown, and
-deterministic projection. There is no rollup or cache.
+There is no rollup or cache: every figure is projected at read time.
 
 ## Non-goals
 

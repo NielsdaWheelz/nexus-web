@@ -9,8 +9,6 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
-}
-.header {
   padding-bottom: 1rem;
   border-bottom: 1px solid var(--edge-subtle);
 }
@@ -181,7 +179,12 @@
   height: 8rem;
   margin-top: 1rem;
   border-radius: 0.65rem;
-  background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2));
+  background: linear-gradient(
+    90deg,
+    var(--surface-2),
+    var(--surface-3),
+    var(--surface-2)
+  );
   background-size: 200% 100%;
   animation: shimmer 1.2s linear infinite;
 }
@@ -225,7 +228,11 @@
   aspect-ratio: 0.68;
   border: 1px solid var(--brand-fg-on-dark);
   border-radius: 0.25rem;
-  background: linear-gradient(135deg, var(--surface-3), var(--brand-fg-on-light));
+  background: linear-gradient(
+    135deg,
+    var(--surface-3),
+    var(--brand-fg-on-light)
+  );
   color: var(--brand-bg-light);
   font-family: Georgia, serif;
   font-size: 2.25rem;
@@ -257,11 +264,21 @@
     animation: none;
   }
 }
+/* forced colors: Reading is solid, Listening outlined, Viewing a dashed outline. */
 @media (forced-colors: active) {
   .heatmap span,
   .hours span,
-  .chart rect {
+  .barReading {
     background: CanvasText;
     fill: CanvasText;
+  }
+  .barListening,
+  .barViewing {
+    fill: Canvas;
+    stroke: CanvasText;
+    vector-effect: non-scaling-stroke;
+  }
+  .barViewing {
+    stroke-dasharray: 3 2;
   }
 }

@@ -386,23 +386,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/consumption/activity-exclusions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Post Activity Exclusion */
-        post: operations["post_activity_exclusion_consumption_activity_exclusions_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/consumption/commands": {
         parameters: {
             query?: never;
@@ -415,6 +398,24 @@ export interface paths {
         /** Post Consumption Command */
         post: operations["post_consumption_command_consumption_commands_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/consumption/exclusions/{exclusion_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Exclude Session */
+        put: operations["exclude_session_consumption_exclusions__exclusion_id__put"];
+        post?: never;
+        /** Restore Session */
+        delete: operations["restore_session_consumption_exclusions__exclusion_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2920,8 +2921,11 @@ export interface components {
             device: components["schemas"]["DeviceSummaryOut"];
             /** Excluded Active Ms */
             excluded_active_ms: number;
-            /** Exclusion Handle */
-            exclusion_handle: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
             /**
              * Modality
              * @enum {string}
@@ -2935,17 +2939,11 @@ export interface components {
             /** Title */
             title: string;
         };
-        /** ActivityExclusionResultOut */
-        ActivityExclusionResultOut: {
-            /** Exclusion Handle */
-            exclusion_handle: string;
-            /**
-             * Outcome
-             * @enum {string}
-             */
-            outcome: "Excluded" | "Restored";
-        };
-        /** ActivityRecordIn */
+        /**
+         * ActivityRecordIn
+         * @description A batch of one media, modality and device class; the device is the header the bff
+         *     stamps (I13).
+         */
         ActivityRecordIn: {
             /** Batch */
             batch: components["schemas"]["ReadingActivityBatchIn"] | components["schemas"]["ListeningActivityBatchIn"] | components["schemas"]["ViewingActivityBatchIn"];
@@ -2954,8 +2952,11 @@ export interface components {
              * @enum {string}
              */
             device_class: "Desktop" | "Mobile";
-            /** Media Ref */
-            media_ref: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
         };
         /** ActivitySessionOut */
         ActivitySessionOut: {
@@ -2975,8 +2976,11 @@ export interface components {
             forward_media_position_ms: number;
             /** Forward Word Position */
             forward_word_position: number;
-            /** Media Ref */
-            media_ref: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
             /**
              * Modality
              * @enum {string}
@@ -3014,7 +3018,6 @@ export interface components {
             local_hours: components["schemas"]["LocalHourOut"][];
             longest_session: components["schemas"]["ActivitySessionOut"] | null;
             media: components["schemas"]["MediaActivityBreakdownOut"];
-            sessions: components["schemas"]["ActivitySessionPageOut"];
             /** Timeline */
             timeline: components["schemas"]["ActivityTimelineRowOut"][];
             totals: components["schemas"]["ActivityTotalsOut"];
@@ -4396,10 +4399,6 @@ export interface components {
             materialized: boolean;
             outline: components["schemas"]["OutlineOut"];
         };
-        /** Data[ActivityExclusionResultOut] */
-        Data_ActivityExclusionResultOut_: {
-            data: components["schemas"]["ActivityExclusionResultOut"];
-        };
         /** Data[ActivitySessionPageOut] */
         Data_ActivitySessionPageOut_: {
             data: components["schemas"]["ActivitySessionPageOut"];
@@ -4842,8 +4841,8 @@ export interface components {
         DeviceActivityOut: {
             /** Active Ms */
             active_ms: number;
-            /** Device Handle */
-            device_handle: string;
+            /** Device Id */
+            device_id: string;
             /** Is Current */
             is_current: boolean;
             /** Label */
@@ -4851,8 +4850,8 @@ export interface components {
         };
         /** DeviceSummaryOut */
         DeviceSummaryOut: {
-            /** Device Handle */
-            device_handle: string;
+            /** Device Id */
+            device_id: string;
             /** Label */
             label: string;
         };
@@ -5386,27 +5385,23 @@ export interface components {
             target: components["schemas"]["ReaderEpubTarget"];
             text: components["schemas"]["ReaderQuoteContext"];
         };
-        /** ExcludeActivityIn */
-        ExcludeActivityIn: {
-            /**
-             * Client Mutation Id
-             * Format: uuid
-             */
-            client_mutation_id: string;
-            /** Device Handle */
-            device_handle: string;
+        /**
+         * ExcludeSessionIn
+         * @description One exact all-time session (``PUT /consumption/exclusions/{id}``).
+         */
+        ExcludeSessionIn: {
+            /** Device Id */
+            device_id: string;
             /**
              * Ended At
              * Format: date-time
              */
             ended_at: string;
             /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
+             * Media Id
+             * Format: uuid
              */
-            kind: "Exclude";
-            /** Media Ref */
-            media_ref: string;
+            media_id: string;
             /**
              * Modality
              * @enum {string}
@@ -6683,8 +6678,11 @@ export interface components {
             forward_media_position_ms: number;
             /** Forward Word Position */
             forward_word_position: number;
-            /** Media Ref */
-            media_ref: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
             /** Title */
             title: string;
         };
@@ -6698,8 +6696,11 @@ export interface components {
         };
         /** MediaCompletionOut */
         MediaCompletionOut: {
-            /** Media Ref */
-            media_ref: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
             /** Title */
             title: string;
             /** Total */
@@ -10164,21 +10165,6 @@ export interface components {
             /** Targets */
             targets: (components["schemas"]["ResourceTargetResourceOut"] | components["schemas"]["ResourceTargetPassageOut"])[];
         };
-        /** RestoreActivityExclusionIn */
-        RestoreActivityExclusionIn: {
-            /**
-             * Client Mutation Id
-             * Format: uuid
-             */
-            client_mutation_id: string;
-            /** Exclusion Handle */
-            exclusion_handle: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Restore";
-        };
         /** RetainedArtifactsOut */
         RetainedArtifactsOut: {
             /** Applied Filters */
@@ -13396,39 +13382,6 @@ export interface operations {
             };
         };
     };
-    post_activity_exclusion_consumption_activity_exclusions_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ExcludeActivityIn"] | components["schemas"]["RestoreActivityExclusionIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_ActivityExclusionResultOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     post_consumption_command_consumption_commands_post: {
         parameters: {
             query?: never;
@@ -13462,6 +13415,68 @@ export interface operations {
             };
         };
     };
+    exclude_session_consumption_exclusions__exclusion_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exclusion_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExcludeSessionIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_session_consumption_exclusions__exclusion_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exclusion_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_sessions_consumption_sessions_get: {
         parameters: {
             query: {
@@ -13471,9 +13486,9 @@ export interface operations {
                 time_zone: string;
                 start?: string | null;
                 modality?: ("Reading" | "Listening" | "Viewing") | null;
-                media_ref?: string | null;
+                media_id?: string | null;
                 contributor_handle?: string | null;
-                device_handle?: string | null;
+                device_id?: string | null;
             };
             header: {
                 "X-Nexus-Device": string;
@@ -13506,14 +13521,14 @@ export interface operations {
     get_stats_consumption_stats_get: {
         parameters: {
             query: {
-                bucket: "Hour" | "Day" | "Week" | "Month" | "Year";
+                bucket: "Hour" | "Day" | "Month" | "Year";
                 end: string;
                 time_zone: string;
                 start?: string | null;
                 modality?: ("Reading" | "Listening" | "Viewing") | null;
-                media_ref?: string | null;
+                media_id?: string | null;
                 contributor_handle?: string | null;
-                device_handle?: string | null;
+                device_id?: string | null;
             };
             header: {
                 "X-Nexus-Device": string;

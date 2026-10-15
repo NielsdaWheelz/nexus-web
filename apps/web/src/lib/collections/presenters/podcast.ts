@@ -1,8 +1,7 @@
 /** One followed-podcast row, shared by the podcasts and library panes. */
 
 import type { Schema } from "@/lib/api/wire";
-import type { CollectionRowView } from "@/lib/collections/types";
-import type { PositiveCount } from "@/lib/consumption/activityFacts";
+import type { CollectionRowView, PositiveCount } from "@/lib/collections/types";
 import type { ContributorCredit } from "@/lib/contributors/credits";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 

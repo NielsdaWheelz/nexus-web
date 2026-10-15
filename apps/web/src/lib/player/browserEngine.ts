@@ -19,10 +19,10 @@ import { apiFetch, isApiError } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
-  parseMediaRef,
-  type ActivityDeviceClass,
-} from "@/lib/consumption/activityContract";
-import { activityRecorder } from "@/lib/consumption/activityRecorder";
+  registerActivityObserver,
+  type ActivityObservation,
+  type ActivityObserver,
+} from "@/lib/consumption/capture";
 import { publishChange } from "@/lib/api/changes";
 import type {
   ConsumptionResult,
@@ -48,7 +48,7 @@ export interface BrowserEngineDeps {
   ): Promise<ConsumptionResult>;
   /** The server's descriptor now; null when it does not answer in time. */
   fresh(mediaId: MediaId): Promise<PlayerDescriptor | null>;
-  deviceClass(): ActivityDeviceClass;
+  deviceClass(): ActivityObservation["deviceClass"];
   onPrevious(): void;
   onNext(): void;
 }
@@ -72,7 +72,7 @@ interface Episode {
   queued: ListeningIn | null; // the newest sample not yet sent
   writing: Promise<void> | null;
   stopped: boolean; // 404 or a refused body: write no more
-  observer: (() => void) | null;
+  observer: ActivityObserver | null;
   fenced: boolean;
   active: boolean; // a play or explicit seek, never an authority installation
 }
@@ -217,7 +217,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     episode = null;
     audio.pause();
     if (current === null) return;
-    current.observer?.();
+    current.observer?.close();
     current.observer = null;
     await Promise.race([
       current.writing,
@@ -226,12 +226,10 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
   };
 
   // ---- activity ----
-  const observation = (current: Episode, eligible: boolean) => {
+  const observation = (eligible: boolean): ActivityObservation => {
     const duration = durationMs();
     const positionMs = ms(audio.currentTime);
     return {
-      mediaRef: parseMediaRef(`media:${current.descriptor.media_id}`),
-      modality: "Listening" as const,
       deviceClass: deps.deviceClass(),
       eligible,
       measurement: {
@@ -240,14 +238,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       },
     };
   };
-  const observe = (current: Episode, eligible: boolean) => {
-    if (current.observer !== null) {
-      activityRecorder().observe(
-        `audio:${current.descriptor.media_id}`,
-        observation(current, eligible),
-      );
-    }
-  };
+  const observe = (current: Episode, eligible: boolean) =>
+    current.observer?.observe(observation(eligible));
 
   // ---- natural end ----
   const settle = async (current: Episode, mine: number) => {
@@ -519,9 +511,10 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         active: false,
       };
       if (!(await start(streamUrl, playbackRate, positionMs, next))) return;
-      next.observer = activityRecorder().registerObserver(
-        `audio:${mediaId}`,
-        observation(next, false),
+      next.observer = registerActivityObserver(
+        mediaId,
+        "Listening",
+        observation(false),
       );
       set({ source: { kind: "Episode", descriptor } });
       showSession();
@@ -648,7 +641,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       window.removeEventListener("online", onOnline);
       for (const [name, handler] of Object.entries(events))
         audio.removeEventListener(name, handler);
-      episode?.observer?.();
+      episode?.observer?.close();
       audio.pause();
       audio.remove();
       listeners.clear();
