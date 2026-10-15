@@ -1,16 +1,16 @@
 # session entry: implementation contract
 
-status: implemented in `codex/session-entry-20261014`; isolated qualification
-recorded below. coordinated production release and its smoke remain pending.
+status: implementation merged in pr #607; coordinated production release at
+`0bd6619236` and consumer qualification accepted with the limits recorded below.
 origin: 2026-10-14; reviewed head
 `b6768bee2469cbc3a43902302836a44d07a11ea7` plus the working tree, captured as
 `fb6c5b1bd7bdae63204fdd28a735524bb3d4c932`. initial tracked patch sha256:
 `5c1a84af8c5cb656ac67074157e3c9dbc11c269f993d1e1dadf2b890ec523ea2`.
 the snapshot includes prior working changes and is retained under
-`proof/session-entry-20261014-isolated` (`83791a509`). the feature branch now replays
-only its feature commits onto pinned main `f30a844a5`; review its delta against
-that main revision. concurrent work advanced main; this campaign did not edit the
-original checkout.
+`proof/session-entry-20261014-isolated` (`83791a509`). the qualified implementation
+commit is `8076f177dd7967e24e01c7c033255144dc67679c`, replayed onto pinned main
+`f30a844a5` before pr #607. subsequent reader/layout corrections shipped in pr #614.
+these commits retain provenance independently of the retired implementation branch.
 
 user decisions: usable active content takes precedence over earlier chrome;
 retain mounted work through expected server-rerender failures; use an isolated
@@ -410,7 +410,7 @@ keep unrelated findings, including pane-failure copy/ownership, in their tickets
 the [issue register](outstanding-issues.md) links their source evidence and acceptance.
 
 
-## qualification receipt
+## isolated qualification receipt
 
 initial application head: `e9741da69` (feature commits follow the captured baseline).
 integrated application head: `8076f177dd7967e24e01c7c033255144dc67679c`, atop
@@ -474,11 +474,10 @@ release lint/build and signature verification passed. apk sha256:
 signer sha256: `40e566dc0cde3b63ea8bf8f0779802938c0ba19d5c32d4810f28fdc546fd8b17`,
 matching published 0.3.0/code 20. physical failure injection used identical
 `MainActivity.kt` source in a separate debug app id; the installed personal app was not
-replaced. installing the exact signed production apk, App Links/provider checks,
-coordinated publication and production smoke are release gates under
+replaced. at this initial candidate, exact signed installation, App Links/provider
+checks, coordinated publication and production smoke remained release gates under
 [the runbook](../deployment.md) and [distribution rules](../README.md#android-release-distribution).
-
-release evidence remains tracked in [the release ticket](tickets/session-entry-release-qualification.md).
+the production receipt below records their later disposition.
 
 cleanup confirmed: the temporary campaign directory, frozen worktree, test runners,
 proxies, dependencies, credentials, raw logs/screenshots and owned browser profiles
@@ -487,3 +486,54 @@ volumes and networks were removed; synthetic identities were destroyed with them
 the device proof app and its adb forward/reverse were removed. all owned ports
 were checked released. source worktree and normal signed build artifact remain.
 no test harness, test-only production seam, dependency or ci job was retained.
+
+## production qualification
+
+accepted on 2026-10-15 at deployed source
+`0bd6619236ae911bb35741aa2017a4a44312cdf2`. api, workers and web agreed on this
+source at schema `0278`; the canonical release and independent audits are recorded
+in [the combined release receipt](x-import-titles-verification.md#reader-correction).
+the accepted session handoff is
+`/tmp/nexus-book-repair-20261014/session-release-handoff.json`, sha256
+`4fba4debfc461a72b08dca8952860eeec0533f37720c3f253c1922c5e68cce13`.
+the earlier isolated results and failed `3839` reader arrival remain historical.
+
+- android: the exact signed `app.nexus.android` 0.3.1/code 21 was installed with
+  data retained and published as latest `android-v0.3.1`, pinned to `0bd6619236`.
+  installed apk sha256:
+  `cc50b1c6a90f0447696d811d4159b50866226e9dd7ce247c4656301ceb92076c`.
+  all six downloaded release assets matched. authenticated cold libraries entry,
+  editable draft, unscoped canonical link to the running app, packaged offline
+  reading and online return passed. network/link preferences and the empty
+  downloads shelf were restored.
+- firefox: authenticated bare `114a` arrival exposed the whole pane and endpoint
+  134's authored glyph 133 at the valid bottom clamp, including after image/font
+  completion. the ordinary cursor read retained the full locator at revision 6;
+  `03` title, body, metadata and expanded history passed. the original-context
+  observer covered preboot through 03:02:48.751 utc: zero reader-state puts and
+  reading-activity posts, with one workspace autosave put. this is a scoped
+  interval, not an absence-of-all-writes claim.
+- extension: the temporary unsigned `capture@nexus.local` 1.0.0 archive sha256 was
+  `3e8bab77294eaf3daaa61bf5b48ebaa571e53d4ce7c59735479bbc7ef4bdc172`;
+  all ten installed payloads matched. the actual toolbar showed the same account
+  through contract-supported retained-session validation. no fresh handshake or
+  separately captured extension auth response is claimed. the ordinary `3839`
+  handshake remains historical evidence on byte-identical payloads and auth owners.
+
+accepted limits: signed-production password and natural expiry/renewal were not
+observed. isolated genuine 130-second expiry and physical-password proof remain
+applicable to unchanged owners; native google proof is historical `3839` evidence.
+general cold automatic App Link routing remains unestablished; the user's disabled
+host selection was preserved. the [natural-expiry investigation](tickets/android-expired-session-needed-one-retry.md)
+stays open. [production capture](tickets/session-entry-extension-cutover.md) is
+explicitly deferred; [persistent signed extension distribution](tickets/extension-firefox-distribution-consent-is-undeclared.md)
+remains separate. spoken screen-reader output was waived; overlay-thumb motion
+and native swipe movement were not established. these limits were accepted for
+representative production smoke, not relabeled as successful checks.
+
+owned browser, driver and observer processes stopped; one-off execution helpers
+were removed. actual profiles, artifacts, screenshots, receipts and installed app
+data were preserved. temporary extension activation ended with normal browser
+close. the observer cutoff precedes cleanup; no later absence-of-writes claim is
+made. the obsolete coordinated-release ticket is closed by this accepted evidence;
+the linked unresolved items retain their own acceptance.
