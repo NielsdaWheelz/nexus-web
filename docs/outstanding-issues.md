@@ -1,5 +1,8 @@
 # Outstanding Issues & Follow-ups
 
+- [open] local development / setup · 2026-10-14 navbar qualification · bucket initializer image pull fails: [ticket](tickets/local-minio-init-image-unavailable.md).
+- [open] nexus / query editing · 2026-10-14 navbar review · result-cell arrows intercept native text editing; outside launcher scope: [ticket](tickets/nexus-query-arrows-intercept-text-editing.md).
+
 A register of **open code-level work** — issues found but left out of scope, bugs,
 refactors deferred because they were too much churn, and things that warrant a
 closer look later. **Add entries as they surface; delete them once resolved (record
