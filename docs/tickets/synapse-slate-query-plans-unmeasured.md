@@ -76,7 +76,7 @@ local evidence (retained from prior qualification, not rerun in this session):
 - `/tmp/nexus-full-readmodels-20261014T2030/readback/full-readmodels-20261014T2030/artifacts/off-lectern-suggestions/receipt.json` and the `off-quick-reads` sibling;
 - `/Users/nnandal/Documents/code/nexus-web-campaign-artifacts/2026-10-13/release/suggestions-query-qualification/final-source/plan-0.json` and `plan-1.json`.
 
-approved serving contract, not implemented: publish a bounded
+implemented serving contract, 2026-10-15: publish a bounded
 candidate shortlist outside the read path; permit stale ranking while
 rechecking current visibility, completion, membership and capacity on delivery.
 this deliberately relaxes exact request-snapshot ranking. reuse the existing
@@ -85,8 +85,10 @@ not guarantee a prompt first build. approximate or work-level vector retrieval
 changes relevance policy and needs separate quality qualification.
 
 the [suggestions implementation plan](../suggestions-plan.md) owns the approved
-background publication cutover. its serving proof does not close the separate
-graph-lane and synapse-exclusion work above.
+background publication cutover. [its verification](../suggestions-verification.md) records cheap published reads
+on the owned 717,006-embedding copy. this does not close the separate
+graph-lane and synapse-exclusion work above; those costs remain in background
+ranking and discovery.
 
 fresh production observation, 2026-10-14 pacific / 2026-10-15 utc: read-only
 inspection of `nexus-api-1` reports source

@@ -1,0 +1,501 @@
+{
+  "recorded_date": "2026-10-15",
+  "scope": "backend publication, bounded current reads, ranking preservation, durable queue lifecycle and authenticated snapshot streams",
+  "identity": {
+    "runtime": {
+      "expected_database_revision": "0279",
+      "source_sha": "fde33a16367b4d04bb4fcf92d7dc47962897675d"
+    },
+    "baseline_source_sha": "367da80e0c1beb1c426f6d2d72201b0733809b50",
+    "reviewed_web_candidate_sha": "e8312f80e7a282532ca69808f94d9c09257f69a2",
+    "backend_api_worker_and_migration_diff_from_runtime_to_web_candidate": [],
+    "ordinary_worker": {
+      "image_reference": "c3nt-worker:dev",
+      "image_id": "sha256:529ecf1c553bd876a7a0e23a05b858fef7c1905f5d473095a1bbc4e2c421d91a",
+      "first_cold_publication_container_id": "31b36f480f700d03bcdf626297fe1c190e8d3b6d7352b748eadd9c5883d8199f",
+      "memory_bytes": 469762048,
+      "memory_swap_bytes": 469762048,
+      "database_statement_timeout_ms": 300000,
+      "source": "read-only bind of the exact backend source; canonical runtime identity mounted",
+      "qualification_container_id": "acc710e9ce574a86350d9b62434e86058ad6a936902d0391e3116ad2f139758b",
+      "database_lock_timeout_ms": 10000,
+      "database_idle_in_transaction_timeout_ms": 0,
+      "lock_timeout_source": "no environment override; unchanged configured default in nexus/config.py"
+    },
+    "final_candidate_sha": "2a856b824e22736d7176b1d900e5c4df04080569",
+    "backend_api_worker_and_migration_diff_from_runtime_to_final_candidate": []
+  },
+  "environment": {
+    "database": "owned disposable local postgres, schema 0279; no production writes",
+    "authentication": "ordinary invited Supabase password session; actual stream token mint and bearer SSE",
+    "input_setup": "owned database input fixtures; no fabricated publication, fake success, patched application output or authentication bypass"
+  },
+  "behavioral_red_green": {
+    "embedding_relation_independence": {
+      "held_relation": "content_embeddings",
+      "lock_mode": "access exclusive",
+      "lock_seconds": 3.0,
+      "baseline": {
+        "status": 200,
+        "seconds": 3.046022125054151,
+        "items": 10,
+        "independence_pass": false
+      },
+      "implementation": {
+        "status": 200,
+        "seconds": 0.02272216696292162,
+        "items": 20,
+        "checks": {
+          "all_requests_succeeded": true,
+          "published_read_independent_of_embedding_relation": true,
+          "published_reads_present": true,
+          "suggestion_p95_at_most_500ms": true
+        }
+      }
+    },
+    "full_lectern_baseline": {
+      "physical_membership_count": 2000,
+      "eligible_visible_targets_outside_membership": 24,
+      "status": 200,
+      "returned_items": 0,
+      "pass": false,
+      "failure": "legacy capacity shortcut erased browsable suggestions",
+      "limits": "latency discarded because an independent relay fault overlapped; built-browser capacity green is recorded by the frontend campaign"
+    }
+  },
+  "independent_rank_comparison": [
+    {
+      "input_shape": "arrival-only with depleted initial-family turns",
+      "snapshot_id": "00000009-00000105-1",
+      "checks": {
+        "default_library_id": true,
+        "lectern": true,
+        "ordinary_library_id": true,
+        "quick_reads_byte_equal": true
+      },
+      "limits": "same MVCC snapshot, separate real-process transaction clocks; fixture dates are away from rank time thresholds",
+      "surfaces": {
+        "default_library_id": {
+          "old_first_ten_count": 10,
+          "new_pool_count": 20,
+          "old_first_ten_sha256": "7008c8e429be6aa10e385b629449d6b3a60335daa5ce5f6308c341d703fd9215",
+          "new_first_ten_sha256": "7008c8e429be6aa10e385b629449d6b3a60335daa5ce5f6308c341d703fd9215"
+        },
+        "lectern": {
+          "old_first_ten_count": 10,
+          "new_pool_count": 20,
+          "old_first_ten_sha256": "7008c8e429be6aa10e385b629449d6b3a60335daa5ce5f6308c341d703fd9215",
+          "new_first_ten_sha256": "7008c8e429be6aa10e385b629449d6b3a60335daa5ce5f6308c341d703fd9215"
+        },
+        "ordinary_library_id": {
+          "old_first_ten_count": 10,
+          "new_pool_count": 20,
+          "old_first_ten_sha256": "7008c8e429be6aa10e385b629449d6b3a60335daa5ce5f6308c341d703fd9215",
+          "new_first_ten_sha256": "7008c8e429be6aa10e385b629449d6b3a60335daa5ce5f6308c341d703fd9215"
+        }
+      },
+      "quick_reads_old_sha256": "0403eec0862750283c4d823e7f7785bf49072700f51022da820ca11ac6f0ed27",
+      "quick_reads_new_sha256": "0403eec0862750283c4d823e7f7785bf49072700f51022da820ca11ac6f0ed27"
+    },
+    {
+      "input_shape": "25 targets per four actual families",
+      "snapshot_id": "0000000A-00000228-1",
+      "checks": {
+        "default_library_id": true,
+        "lectern": true,
+        "ordinary_library_id": true,
+        "quick_reads_byte_equal": true
+      },
+      "limits": "same MVCC snapshot, separate real-process transaction clocks; fixture dates are away from rank time thresholds",
+      "surfaces": {
+        "default_library_id": {
+          "old_first_ten_count": 10,
+          "new_pool_count": 40,
+          "old_first_ten_sha256": "d1c103ad0d1c91df312997c00828eb94ce8841bf11e73ea4bf245ef43af696c8",
+          "new_first_ten_sha256": "d1c103ad0d1c91df312997c00828eb94ce8841bf11e73ea4bf245ef43af696c8"
+        },
+        "lectern": {
+          "old_first_ten_count": 10,
+          "new_pool_count": 80,
+          "old_first_ten_sha256": "dd62386be9bdd06190321dd2cd0706cd6e190b006ea3d1bee826a107fa343ac6",
+          "new_first_ten_sha256": "dd62386be9bdd06190321dd2cd0706cd6e190b006ea3d1bee826a107fa343ac6"
+        },
+        "ordinary_library_id": {
+          "old_first_ten_count": 10,
+          "new_pool_count": 40,
+          "old_first_ten_sha256": "d1c103ad0d1c91df312997c00828eb94ce8841bf11e73ea4bf245ef43af696c8",
+          "new_first_ten_sha256": "d1c103ad0d1c91df312997c00828eb94ce8841bf11e73ea4bf245ef43af696c8"
+        }
+      },
+      "quick_reads_old_sha256": "4aa6e1266182f55222469c40710a8f1edb3b0cbc7d935495767727d456f9ac95",
+      "quick_reads_new_sha256": "4aa6e1266182f55222469c40710a8f1edb3b0cbc7d935495767727d456f9ac95"
+    }
+  ],
+  "queue_and_current_facts": {
+    "case_count": 31,
+    "checks": {
+      "read_does_not_register": true,
+      "eight_admissions_one_job": true,
+      "fenced_publication_finishes_clears": true,
+      "read_view_no_rank_acquisition": true,
+      "view_preserves_order": true,
+      "finished_and_lectern_membership_filtered": true,
+      "library_keeps_finished": true,
+      "library_complete_membership_filtered": true,
+      "thirty_second_admission_bound": true,
+      "explicit_delivery_coalesces": true,
+      "old_explicit_delivery_no_new_budget": true,
+      "old_pool_independent_of_latest": true,
+      "view_never_intersects_latest": true,
+      "successful_empty_publication_distinct": true,
+      "bounded_failure_suspends_preserves": true,
+      "new_inputs_and_explicit_cannot_replace_dead": true,
+      "same_job_operator_repair": true,
+      "reclaimed_execution_publishes_nothing": true,
+      "current_execution_publishes": true,
+      "subscribed_show_in_actual_publication": true,
+      "lectern_and_all_reject_show_refs": true,
+      "show_destination_membership_revalidated": true,
+      "removed_show_placement_reappears_same_pool": true,
+      "unsubscribed_show_revalidated": true,
+      "view_rejects_over80": true,
+      "view_rejects_duplicate": true,
+      "view_rejects_noncanonical": true,
+      "role_loss_supersedes_without_exposing": true,
+      "authority_restore_retains_publication": true,
+      "deleted_feed_job_finishes_superseded": true,
+      "no_succeeded_job_referenced": true
+    },
+    "actual_failure_types": [
+      "OperationalError",
+      "OperationalError",
+      "OperationalError"
+    ],
+    "read_and_view_statement_count": 30,
+    "limits": "real transaction/domain/queue APIs; fixture queue due times and reclaim lease accelerated, declared 30s admission timestamp verified; ordinary 448MiB worker process and authenticated SSE verified separately; the isolated direct-handler fault process used DATABASE_LOCK_TIMEOUT_MS=250 ms to provoke actual relation-lock failures promptly. this is state/fence verification, not deployed lock-timeout qualification; ordinary worker settings remained unchanged.",
+    "discarded_harness_attempt": "an initial finished-target assertion accidentally selected an existing destination member; corrected input-only fixture, reran every case, no application change and no claimed product red"
+  },
+  "authenticated_sse": {
+    "case_count": 13,
+    "checks": {
+      "initial_nonmember_http404": true,
+      "notification_before_listener_not_lost": true,
+      "admission_wakeup": true,
+      "publication_wakeup": true,
+      "unchanged_wakeup_has_no_false_change": true,
+      "source_wakeup": true,
+      "retry_and_dead_history_wakeups": true,
+      "same_job_repair_wakeup": true,
+      "role_loss_state_and_done_withdrawn": true,
+      "role_loss_hides_publication": true,
+      "deletion_state_and_done_withdrawn": true,
+      "stable_stream_payload_excludes_observed_at": true,
+      "withdrawn_has_no_content": true
+    },
+    "frame_count": 14,
+    "limits": "owned local database; direct authenticated API; due times accelerated for isolated queue transitions, actual lock failures and real handler publications; actual direct-handler relation-lock faults used DATABASE_LOCK_TIMEOUT_MS=250 ms; the API and ordinary worker retained their normal settings."
+  },
+  "current_target_visibility": {
+    "case_count": 6,
+    "checks": {
+      "real_delete_hides_target_keeps_shared_reference": true,
+      "old_pool_filters_current_visibility_in_order": true,
+      "stored_latest_also_filters_current_visibility": true,
+      "visibility_change_does_not_replace_publication": true,
+      "ordinary_restore_reappears_in_same_old_pool": true,
+      "ordinary_restore_keeps_publication_identity": true
+    },
+    "retained_old_pool_count": 20,
+    "scenario": "a real shared-library member target is deleted from the viewer workspace; another owner retains its reference, then the ordinary saved-in-nexus owner clears the tombstone",
+    "limits": "owned separate fixture viewer; actual domain writers and repeatable-read service JSON, not fabricated publication or target output"
+  },
+  "ordinary_worker_full_pool": {
+    "checks": {
+      "lectern_full80_all_four_families": true,
+      "library_full40_both_relational_families": true,
+      "reads_views_never_acquire_graph_embeddings": true,
+      "all_local_service_p95_under_500ms": true
+    },
+    "classification_checks": {
+      "lectern_20_per_four_families": true,
+      "libraries_20_per_two_families": true
+    },
+    "surfaces": {
+      "lectern": {
+        "pool_count": 80,
+        "actual_rank_family_counts": {
+          "Continuity": 20,
+          "GraphThread": 20,
+          "Arrival": 20,
+          "Rediscovery": 20
+        },
+        "ordinary_worker_admission_to_observed_publication_seconds": 1.8755104998126626,
+        "sequential_reads_and_views": 20,
+        "p95_seconds": 0.0221817079000175,
+        "concurrent_views": 3,
+        "concurrent_max_seconds": 0.0410776250064373,
+        "max_json_bytes": 69102
+      },
+      "ordinary_library": {
+        "pool_count": 40,
+        "actual_rank_family_counts": {
+          "GraphThread": 20,
+          "Rediscovery": 20
+        },
+        "ordinary_worker_admission_to_observed_publication_seconds": 1.8515353749971837,
+        "sequential_reads_and_views": 20,
+        "p95_seconds": 0.02602770901285112,
+        "concurrent_views": 3,
+        "concurrent_max_seconds": 0.028537083184346557,
+        "max_json_bytes": 34862
+      },
+      "default_library": {
+        "pool_count": 40,
+        "actual_rank_family_counts": {
+          "GraphThread": 20,
+          "Rediscovery": 20
+        },
+        "ordinary_worker_admission_to_observed_publication_seconds": 1.6013626249041408,
+        "sequential_reads_and_views": 20,
+        "p95_seconds": 0.02264800015836954,
+        "concurrent_views": 3,
+        "concurrent_max_seconds": 0.05670650000683963,
+        "max_json_bytes": 34862
+      }
+    },
+    "read_and_view_statement_count": 1104,
+    "limits": "real source input fixtures; actual ordinary448MiB worker; service JSON serialization timings over owned small database, separately qualified authenticated HTTP on717006-embedding corpus"
+  },
+  "verification_limits": [
+    "the 31 queue cases use actual services, transactions and queue claims; isolated due times and lease expiration are accelerated, and the direct-handler fault process uses a 250 ms database lock timeout. the 30-second admission timestamp itself is verified. ordinary worker settings are unchanged.",
+    "ordinary worker startup and actual publication are independently exercised with 448 mib; this receipt does not claim an operating-system kill/restart during a ranking computation",
+    "natural clean age admission is independently proven in inputs-and-corpus.json: publications aged 20–21 minutes without timestamp edits; each visited destination admitted one job and an unvisited aged destination admitted none. this is not a foreground 15-minute soak.",
+    "local small-fixture timing includes service hydration and JSON serialization, not network; separate remote API evidence owns the 717006-embedding corpus qualification",
+    "source writer coverage and source/publication snapshot races belong to the source-integration receipt; browser state transitions, total transport deadline and production-shaped browser rows belong to their owner receipts"
+  ],
+  "final_binding": {
+    "runtime": {
+      "expected_database_revision": "0279",
+      "source_sha": "2a856b824e22736d7176b1d900e5c4df04080569"
+    },
+    "checks": {
+      "api_ready": true,
+      "api_exact_identity": true,
+      "worker_ready_and_exact_identity": true,
+      "all_authenticated_reads200": true,
+      "all_suggestion_reads_published_and_under500ms": true,
+      "ordinary_worker_memory_bound": true
+    },
+    "status": {
+      "/readyz": {
+        "status": 200,
+        "body": {
+          "data": {
+            "status": "ready"
+          }
+        }
+      },
+      "/version": {
+        "status": 200,
+        "body": {
+          "data": {
+            "source_sha": "2a856b824e22736d7176b1d900e5c4df04080569",
+            "expected_database_revision": "0279"
+          }
+        }
+      }
+    },
+    "authenticated_reads": [
+      {
+        "status": 200,
+        "headers_seconds": 0.0293781659565866,
+        "seconds": 0.02942220796830952,
+        "bytes": 32701,
+        "sha256": "59e02e05320a3d4361cf2a096d64cd160c90e04b37916fffdbedcf854ccb53b1",
+        "surface": "lectern",
+        "items": 40,
+        "publication_present": true
+      },
+      {
+        "status": 200,
+        "headers_seconds": 0.024040540913119912,
+        "seconds": 0.02407729090191424,
+        "bytes": 16701,
+        "sha256": "927e0de9b63763e443533d71be78850e8ecd38a3f304ae18b818736efa1410a3",
+        "surface": "ordinary_library",
+        "items": 20,
+        "publication_present": true
+      },
+      {
+        "status": 200,
+        "headers_seconds": 0.02063766587525606,
+        "seconds": 0.020668332930654287,
+        "bytes": 16674,
+        "sha256": "541e32495394a9d9576ad633f2bfb268412ea566d883c48d6e8cf109d76c5a38",
+        "surface": "default_library",
+        "items": 20,
+        "publication_present": true
+      },
+      {
+        "status": 200,
+        "headers_seconds": 0.03541574999690056,
+        "seconds": 0.035437083104625344,
+        "bytes": 4057,
+        "sha256": "c4b4581c8ae099f0159ca24352baf1aad4f1305abe6dcb840f5853f43319e930",
+        "surface": "quick_reads",
+        "items": 5
+      }
+    ],
+    "ordinary_worker": {
+      "container_id": "06782ea700f5cc8c6c8c2b2e1994c6c81e1b10ae2f77c4585574c60a408c826e",
+      "image_id": "sha256:529ecf1c553bd876a7a0e23a05b858fef7c1905f5d473095a1bbc4e2c421d91a",
+      "health": {
+        "expected_database_revision": "0279",
+        "lane": "background",
+        "source_sha": "2a856b824e22736d7176b1d900e5c4df04080569",
+        "status": "ready"
+      },
+      "memory_bytes": 469762048,
+      "memory_swap_bytes": 469762048,
+      "database_statement_timeout_ms": 300000,
+      "database_lock_timeout_ms": 10000,
+      "database_idle_in_transaction_timeout_ms": 0
+    },
+    "limits": "compact read and identity check after a frontend-only application change; no new publication admission. earlier actual ordinary-worker publications retain their e831 source identity."
+  },
+  "browser_suspension_fault": {
+    "runtime": {
+      "expected_database_revision": "0279",
+      "source_sha": "fde33a16367b4d04bb4fcf92d7dc47962897675d"
+    },
+    "actual_failures": [
+      {
+        "exception": "OperationalError",
+        "code": "E_WORKER_HANDLER_FAILED"
+      },
+      {
+        "exception": "OperationalError",
+        "code": "E_WORKER_HANDLER_FAILED"
+      },
+      {
+        "exception": "OperationalError",
+        "code": "E_WORKER_HANDLER_FAILED"
+      }
+    ],
+    "terminal_status_before_repair": "dead",
+    "attempts_before_repair": 3,
+    "fault_removed": true,
+    "operator_same_job_repaired": true,
+    "browser_evidence": "frontend.json owns retained usable rows, absence of a product retry loop and normal-publication recovery after operator repair",
+    "limits": "actual authenticated explicit admission and real lock failures under a 250 ms direct-handler database lock timeout; owned queue due times accelerated for browser state proof; normal worker held, no fake payload or success"
+  },
+  "prior_candidate_publication_smoke": {
+    "runtime": {
+      "expected_database_revision": "0279",
+      "source_sha": "e8312f80e7a282532ca69808f94d9c09257f69a2"
+    },
+    "api_ready_status": 200,
+    "api_version_status": 200,
+    "api_version": {
+      "source_sha": "e8312f80e7a282532ca69808f94d9c09257f69a2",
+      "expected_database_revision": "0279"
+    },
+    "ordinary_worker": {
+      "container_id": "d0e777fc71e12a7d65cfe8b93df99b51e8189596c1f3834c56c94f2756b7e0e6",
+      "image_id": "sha256:529ecf1c553bd876a7a0e23a05b858fef7c1905f5d473095a1bbc4e2c421d91a",
+      "health": {
+        "status": "ready",
+        "lane": "background",
+        "expected_database_revision": "0279",
+        "source_sha": "e8312f80e7a282532ca69808f94d9c09257f69a2"
+      },
+      "memory_bytes": 469762048,
+      "memory_swap_bytes": 469762048,
+      "database_statement_timeout_ms": 300000,
+      "database_lock_timeout_ms": 10000,
+      "database_idle_in_transaction_timeout_ms": 0
+    },
+    "checks": {
+      "ordinary_worker_respects_actual_30s_snapshot_gap": true,
+      "all_authenticated_reads200": true,
+      "all_suggestion_reads_published_and_under500ms": true,
+      "quick_reads_still_direct_and_successful": true,
+      "api_version_matches_runtime": true,
+      "three_surfaces_published_by_normal_worker": true
+    },
+    "authenticated_reads": [
+      {
+        "status": 200,
+        "headers_seconds": 0.02298862487077713,
+        "seconds": 0.023018915904685855,
+        "bytes": 32701,
+        "sha256": "a472fb6309dda2d43c412c748017bdcec6f9f22a27347e2b14e573c60dbe2a2c",
+        "surface": "lectern",
+        "items": 40
+      },
+      {
+        "status": 200,
+        "headers_seconds": 0.021732541965320706,
+        "seconds": 0.02176016685552895,
+        "bytes": 16701,
+        "sha256": "69a178098c6d438dc30c924e250b93b9c45ebab3d14099d0f26115f148ae23d8",
+        "surface": "ordinary_library",
+        "items": 20
+      },
+      {
+        "status": 200,
+        "headers_seconds": 0.01848725019954145,
+        "seconds": 0.01851641619578004,
+        "bytes": 16674,
+        "sha256": "52b7678b823e0d9314c27bb8906d497e2606da9c1fb42889355377f777daefba",
+        "surface": "default_library",
+        "items": 20
+      },
+      {
+        "status": 200,
+        "headers_seconds": 0.03433912503533065,
+        "seconds": 0.034371084067970514,
+        "bytes": 4057,
+        "sha256": "c4b4581c8ae099f0159ca24352baf1aad4f1305abe6dcb840f5853f43319e930",
+        "surface": "quick_reads",
+        "items": 5
+      }
+    ],
+    "normal_worker_publications": {
+      "lectern": {
+        "previous_as_of": "2026-10-15T08:49:42.921559Z",
+        "admission_status": 202,
+        "admission_seconds": 0.02107975003309548,
+        "new_as_of": "2026-10-15T08:50:37.475662Z",
+        "item_count": 40,
+        "observed_elapsed_seconds": 4.261154166888446,
+        "input_revision": 116,
+        "previous_publication_present": true,
+        "publication_identity_changed": true
+      },
+      "ordinary_library": {
+        "previous_as_of": "2026-10-15T08:45:31.075566Z",
+        "admission_status": 202,
+        "admission_seconds": 0.020460084080696106,
+        "new_as_of": "2026-10-15T08:50:39.496790Z",
+        "item_count": 20,
+        "observed_elapsed_seconds": 6.272922249976546,
+        "input_revision": 116,
+        "previous_publication_present": true,
+        "publication_identity_changed": true
+      },
+      "default_library": {
+        "previous_as_of": null,
+        "admission_status": 202,
+        "admission_seconds": 0.019603708991780877,
+        "new_as_of": "2026-10-15T08:50:41.388305Z",
+        "item_count": 20,
+        "observed_elapsed_seconds": 8.124028583057225,
+        "input_revision": 116,
+        "previous_publication_present": false,
+        "publication_identity_changed": true
+      }
+    },
+    "limits": "small final real-flow smoke after identity alignment; no repetition of the completed race/cost campaigns; the default-library publication was initially absent. existing publications were already older than the 30-second floor when admitted, so this smoke verifies observed snapshot gaps, not a forced real-time 30-second wait."
+  }
+}

@@ -1,8 +1,8 @@
 # suggestions publication plan
 
-status: implementation specification; product decisions confirmed 2026-10-14.
-this change writes documentation only. application changes and the verification
-campaign follow separately.
+status: implemented; product decisions confirmed 2026-10-14.
+[verification](suggestions-verification.md) records the live red/green/refactor
+campaign, final artifact, limits and cleanup. deployment is separate.
 
 publish ranking outside the read path; serve current eligible choices without
 waiting for computation. [production observations](tickets/synapse-slate-query-plans-unmeasured.md)
@@ -294,6 +294,13 @@ request-time builders from suggestion routes, per-add full refetch, refresh
 counters/facts keys, inactive-pane reads, hidden empty/loading branches and the
 library `list.complete` mounting gate. retain shared ranking/hydration used by
 quick reads. do not rewrite unrelated shared components or queue infrastructure.
+
+seed library metadata, canonical first-page entries and published suggestions
+independently under their existing resource keys. load them concurrently; a
+named prefetch miss discards only its own seed. keep the existing 500ms budget
+and error policy. filtered entry queries cannot consume the canonical seed as
+their result. this adds one cheap server read, avoiding a second browser round
+trip and preventing entry acquisition from hiding completed sibling resources.
 
 ## acceptance and red green refactor
 

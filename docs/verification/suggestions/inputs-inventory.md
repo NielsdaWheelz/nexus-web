@@ -63,7 +63,7 @@ named destinations containing the media or its parent show, plus All when the me
 physical entry through a non-system membership. unrelated destinations cannot change anchors.
 comparing only registered feeds is insufficient: a concurrent first registration can otherwise miss a library-specific
 anchor change. select refs only; never acquire graph or embeddings. same-anchor heartbeat
-with unchanged read state does not increment. the initial all-library comparison cost 40 queries and 0.84–0.89 seconds per snapshot on 34 admin libraries; the affected-destination selector reduced this to 8 queries and 0.185–0.196 seconds for two libraries. two comparisons still add roughly 0.38 seconds to a corpus-sized cursor write. this preserves the shared exact anchor policy without another dependency cache or schema. the small local proof measured one unchanged-anchor cursor write at 45 milliseconds; it is not the production-shaped latency claim.
+with unchanged read state does not increment. the initial all-library comparison cost 40 queries and 0.84–0.89 seconds per snapshot on 34 admin libraries; the affected-destination selector reduced this to 8 queries and 0.185–0.196 seconds for two libraries. those isolated fingerprint timings do not measure a complete write. actual authenticated warm api cursor writes on the production-shaped clone measured 203–245 milliseconds for ordered-anchor changes and 214–260 milliseconds for unchanged heartbeats; the latter left the revision unchanged. this preserves the shared exact anchor policy without another dependency cache or schema. the small local proof measured one unchanged-anchor cursor write at 45 milliseconds.
 
 ## graph exclusions
 
@@ -89,6 +89,17 @@ registered the first feed, and paused the worker's real embedding query after it
 after the source committed, the worker published revision 1 while current state exposed
 revision 2. source data and counter were invisible before their common commit. publication
 cleared its job pointer and admitted no inactive successor.
+
+an actual fenced reader-source replacement also overlapped a cursor save. the publisher
+held the media/publication rows and waited at the global counter; the cursor held its viewer
+row and waited on that publication. database blocking identities confirmed both edges.
+after release, the publisher committed generation 2 and its final revision increment;
+the cursor's normal serializable retry refused generation 1 with `E_READER_CONTENT_CHANGED`
+without writing. a fresh generation-2 cursor succeeded. unchanged 30-second statement,
+10-second lock and one-minute idle limits applied; no lock wait or transaction remained.
+prepared local article content replaced network acquisition only. actual source admission,
+refresh, queue claims, publication fences and terminal settlement ran; source jobs succeeded
+and only the fixture's provider-index jobs were retired through fenced failure.
 
 library deletion removed its publication and feed before its library. physical media deletion
 advanced the counter only at the deletion checkpoint. campaign-owned provider side effects

@@ -1,28 +1,28 @@
-# browser reads lack a total deadline through response consumption
+# ordinary browser reads lack a total deadline
 
-status: open (source-confirmed hazard; no live stall reproduction)
+status: open; suggestions are repaired
 origin: 2026-10-14 lectern latency diagnosis, source `367da80e0`
-area: web / read transport
+area: web / ordinary read transport
 
-`apps/web/src/lib/api/proxy.ts:74-82` starts a 30-second upstream timer, then
-returns `upstream.body` at lines 113-116 and clears that timer in `finally`
-at lines 125-127. browser `apiFetch` awaits `response.text()`
-(`client.ts:201-206`) with no deadline of its own. `useResource.ts:143-191`
-supplies lifecycle cancellation, not a time budget. body stalls therefore
-have no application-owned total bound; proxy session resolution also happens
-before its upstream timer. the server-side `callFastAPI` already keeps its
-timer through body consumption and is a separate transport.
+ordinary `apiFetch` reads await the full response body without an operation
+budget. `useResource` supplies lifecycle cancellation only. the unselected
+proxy still releases its upstream timer after headers. retry policy permits
+three attempts; individual header timeouts do not bound the logical operation.
+proxy session resolution also precedes that upstream timer.
 
-`retryPolicy.ts:8-10,54-83` permits three attempts, including upstream
-timeouts. three header timeouts can spend roughly 91 seconds before section
-failure. this calculation does not bound stalled bodies or prove that this
-caused the reported production absence.
+2026-10-15: suggestions now opt into one ten-second browser budget through
+headers, body and retry waits, with a matching bff body-lifetime owner. actual
+header/body stalls, retries, caller cancellation and unchanged ordinary/media/sse
+controls pass; see [verification](../suggestions-verification.md) and its
+[transport receipt](../verification/suggestions/transport.json). this deliberately
+leaves other pages' budgets unchanged. an ordinary `/me` body held twelve seconds
+still returns 200; that control confirms scope, not ordinary-read protection.
 
-prerequisite: define a total ordinary-read budget and cancellation ownership.
-own the deadline across browser acquisition, body consumption, retry and
-backoff. keep lifecycle cancellation distinct from timeout; preserve genuine
-stream/media transfer contracts and existing mutation reconciliation.
+prerequisite: choose budgets for the remaining ordinary reads. reuse the shared
+operation-deadline mechanism at each responsible owner; preserve stream/media
+lifetimes and mutation reconciliation. incoming post-body intake is separately
+tracked in [its ticket](proxy-incoming-body-is-outside-cancellation.md).
 
-acceptance: delayed headers, a stalled body after headers, and retryable
-failures all settle within the declared total read budget with truthful
-feedback; cancellation releases owned transport work. no code changes here.
+acceptance: remaining ordinary reads settle within declared total budgets under
+header/body stalls and transient retries, with truthful feedback and distinct
+caller cancellation. verify their affected user journeys independently.
