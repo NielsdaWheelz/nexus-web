@@ -346,7 +346,7 @@ def detach_highlight_note(
         ).first()
         if removed is not None:
             versions.bump_version(db, viewer_id=viewer_id, ref=source, lane="links")
-        record_input_change(db)
+            record_input_change(db)
         db.commit()
 
     retry_serializable(db, "detach_highlight_note", op)

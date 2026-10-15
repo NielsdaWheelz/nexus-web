@@ -516,7 +516,8 @@ def ensure_highlight(
             created=highlight.id == highlight_id,
             highlight=project_highlights_with_links(db, viewer_id, [highlight])[0],
         )
-        record_input_change(db)
+        if response.created:
+            record_input_change(db)
         db.commit()
         return response
 
