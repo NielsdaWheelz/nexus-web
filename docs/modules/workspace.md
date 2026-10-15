@@ -295,6 +295,12 @@ empty groups disappear. Route Share is omitted for a resource pane because its
 canonical plan owns Share. A single marker on More represents hidden status.
 Owner separation never creates a second trigger.
 
+the overflow control uses `OverflowMenuButton`: 32px desktop, at least 44px with a
+coarse pointer, and 48px in the mobile bar. its glyph and open/disabled/focus
+paint belong to the [visual system](visual-system.md#overflow-buttons).
+headers own only placement and the decorative status marker. the menu retains
+its existing commands, composition, refs and focus policy.
+
 Every primary identity projection uses one 60px track. The mobile safe area is
 additive.
 

@@ -29,7 +29,12 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+
 - [open] deployment / postgres maintenance · 2026-10-15 platform restack · the 64 MiB default /dev/shm fails a parallel VACUUM DiskFull under the 512 MiB cap; autovacuum is unaffected: [issue](issues/postgres-shm-blocks-parallel-maintenance.md).
+- [open] shared action menu / keyboard · 2026-10-14 menu design audit · tab cycles inside a nonmodal menu: [ticket](tickets/action-menu-tab-keeps-focus-inside.md).
+- [open] resource actions / accessibility · 2026-10-14 menu design audit · inverse command labels carry checkbox state: [ticket](tickets/resource-menu-inverse-verbs-use-checkbox-state.md).
+- [open] shared action menu / feedback · 2026-10-14 menu design audit · disabled explanations are visually hidden: [ticket](tickets/action-menu-disabled-reasons-are-visually-hidden.md).
+- [deferred] collections / reorder affordance · 2026-10-14 menu design audit · ellipsis also serves as drag handle; outside appearance scope: [ticket](tickets/collection-menu-trigger-doubles-as-drag-handle.md).
 - [unverified] workspace / scrollbar input · 2026-10-14 · classic gutter passed; default overlay thumb produced no motion and remains unqualified: [ticket](tickets/canvas-overlay-scrollbar-release-unqualified.md).
 - [open] release / host storage · 2026-10-14 corrective rollout · image pulls can consume the preflight disk reserve: [ticket](tickets/release-image-cache-consumes-disk-reserve.md).
 - [deferred] x / saved positions · 2026-10-14 owner decision · inline quotation becomes an embedded document; preserve the saved copy and explicit refresh conflict: [ticket](tickets/x-inline-quote-refresh-loses-saved-position.md).
