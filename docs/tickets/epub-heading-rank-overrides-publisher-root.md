@@ -1,6 +1,6 @@
 # heading rank overrides an authored publisher root
 
-status: open; whole-book repair unsafe, not applied
+status: open; three whole-book repairs unsafe, not applied
 origin: 2026-10-15 book-repair original-source review, operator `150328b65`
 area: epub semantic hierarchy
 
@@ -47,9 +47,30 @@ source `c0a780a9617c39166ac21d5e69cd2ed13d3c449df0f863511d01a4c7ffe9b80f`;
 full proposal `dedfff2b973c7d5253665f8c097d39f9ed62c58866b37c0362f7d3604da15a60`.
 the whole proposal is unsafe and unapplied; stored text is intact.
 
+row232, media `09f34c39-5c2c-481a-a713-9d83f7bbf320`, has the same
+defect. its original nested ncx declares both parts and publisher history
+(`OPS/xhtml/fmatter.html`) as roots beside the title; chapter 15 belongs to
+part two. the proposal instead parents both parts under the title heading and
+publisher history under chapter 15. chapter 15's previous end is null; its
+new `24:0` end includes publisher history at fragment 23. this proves new
+containment, not a measured expansion from a known old endpoint.
+
+third-case evidence: `b-reader/row232-navigation-original-review-v1.json`,
+sha256 `5ef0767c7c40053b98d5c4dec9b6f56bba7b09a1eec66f35d5c560fd67ecb593`;
+independent `c-sources/row232-navigation-original-independent-review.json`,
+sha256 `66be276f25b9a8d214ebcb91446506de6aaaca855ffd0f364fa7c5704ef954d8`.
+source `74fa6340b64edcb05cd2738993354155f00552d0dcd1b19344cd31bc5a3fa3c9`;
+full proposal `9098a147db40c56dd0d37a721e6ca3c95616b5d7b9ba8b8895dc85b471d588e0`,
+generation 3. the receipts bind the original opf/ncx, six requested source
+documents and complete final proposal. the separately proved one-note
+opener/return pair remains valid; it cannot approve this unsafe whole-book
+navigation change. no apply or consumer acceptance is claimed.
+
 acceptance: the real-source full proposal preserves appendix sibling ancestry
 and chapter 14's authored scope, and keeps chapter eleven a peer of chapter
-four with four ending at `43:0`, while retaining genuine source nesting.
+four with four ending at `43:0`. row232 preserves both part roots, their
+authored chapter nesting and publisher history outside chapter 15. retain
+genuine source nesting in all cases.
 qualify installed hierarchy/extents and reader consumers before applying this
 scope. this shared hierarchy fix is outside the bounded repair campaign and is
 separate from local title-container clipping.
