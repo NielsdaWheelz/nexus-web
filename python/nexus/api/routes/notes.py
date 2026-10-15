@@ -1,4 +1,4 @@
-"""Notes routes. The index parses its own query keys."""
+"""Notes routes."""
 
 from datetime import date
 from typing import Annotated
@@ -7,8 +7,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import DbSession
+from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.responses import Data
+from nexus.schemas.collection_page import CollectionPage
 from nexus.schemas.notes import (
     CreatePageRequest,
     DailyCaptureRequest,
@@ -16,7 +17,7 @@ from nexus.schemas.notes import (
     DailyPageDescriptor,
     NoteBlockOut,
     NotePageOut,
-    NotePagesOut,
+    NotePageSummaryOut,
     UpdatePageRequest,
 )
 from nexus.services import notes as notes_service
@@ -27,13 +28,19 @@ ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 
 
 @router.get("/pages")
-def list_pages(request: Request, viewer: ViewerDep, db: DbSession) -> Data[NotePagesOut]:
-    view = notes_service.parse_notes_index_query(request.query_params.multi_items())
-    return Data(data=NotePagesOut(pages=notes_service.list_pages(db, viewer.user_id, view=view)))
+def list_pages(
+    request: Request, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[CollectionPage[NotePageSummaryOut]]:
+    """Keyset pages of the viewer's pages in the shared updated/title views."""
+    items = request.query_params.multi_items()
+    return Data(data=notes_service.list_pages(db, viewer.user_id, items))
 
 
 @router.post("/pages", status_code=201)
-def create_page(request: CreatePageRequest, viewer: ViewerDep, db: DbSession) -> Data[NotePageOut]:
+def create_page(
+    request: CreatePageRequest, viewer: ViewerDep, db: DbSession
+) -> Data[NotePageSummaryOut]:
+    """Create by the client's id; a retry returns the page, another owner's id is 409."""
     return Data(data=notes_service.create_page(db, viewer.user_id, request))
 
 
@@ -51,6 +58,7 @@ def update_page(
 
 @router.delete("/pages/{page_id}", status_code=204)
 def delete_page(page_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
+    """Idempotent: a missing page is 204; the page's notes stay."""
     notes_service.delete_page(db, viewer.user_id, page_id)
     return Response(status_code=204)
 

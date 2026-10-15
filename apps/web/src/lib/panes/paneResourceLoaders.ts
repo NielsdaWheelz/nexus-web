@@ -13,6 +13,7 @@ import {
   notePagesResource,
   settingsAccountResource,
   type ConversationIndexResourceParams,
+  type NotePagesResourceParams,
 } from "@/lib/api/resource";
 import type { ResourceFetcher } from "@/lib/api/resourceTransport";
 import type { ListPage } from "@/lib/api/useServerList";
@@ -23,7 +24,7 @@ import {
   type LibraryEntryListItem,
 } from "@/lib/libraries/entryListItem";
 import { mediaDetailFromResponse, type MediaDetail } from "@/lib/media/mediaDetail";
-import { loadNotePages } from "@/lib/notes/pageContract";
+import type { NotePageSummary } from "@/lib/notes/api";
 import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
 
 type Params = Record<string, string>;
@@ -34,6 +35,7 @@ export interface PaneResourceLoader {
 }
 
 export type ConversationsPaneSeed = ListPage<ConversationListItem>;
+export type NotesPaneSeed = ListPage<NotePageSummary>;
 export interface LibraryPaneSeed {
   readonly library: LibraryOut;
   readonly entries: ListPage<LibraryEntryListItem>;
@@ -101,7 +103,13 @@ export const paneResourceLoaders: Partial<
   },
   notes: {
     cacheKey: () => notePagesResource.cacheKey({}),
-    load: (request) => loadNotePages(request, {}),
+    load: async (request): Promise<NotesPaneSeed> => {
+      const response = await request<
+        NotePagesResourceParams,
+        ApiJson<"/notes/pages", "get">
+      >(notePagesResource, {});
+      return response.data;
+    },
   },
   conversations: {
     cacheKey: () => conversationsInitialResource.cacheKey({}),

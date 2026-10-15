@@ -24,6 +24,7 @@ from nexus.schemas.conversation import ConversationListItemOut, ConversationOut,
 from nexus.schemas.resource_graph import LinkPassageEndpoint, LinkResourceEndpoint
 from nexus.services.chat import quotes, reads
 from nexus.services.collection_keyset import (
+    UPDATED_TITLE_PLANS,
     KeysetValueKind,
     SortKey,
     decode_keyset_cursor,
@@ -44,27 +45,7 @@ from nexus.services.resource_graph.refs import (
 from nexus.services.resource_items.capabilities import capability
 
 DEFAULT_TITLE = "Chat"
-_DATE, _ID, _TEXT, _INT = (
-    KeysetValueKind.DateTime,
-    KeysetValueKind.Uuid,
-    KeysetValueKind.Text,
-    KeysetValueKind.Int,
-)
-# Each view's total order (``sort``, ``direction``): the canonical newest-first view
-# has no keys, so it keeps one URL; equal titles read newest first in both directions.
-_VIEWS: dict[tuple[str | None, str | None], list[SortKey]] = {
-    (None, None): [SortKey("updated_at", "desc", _DATE), SortKey("id", "desc", _ID)],
-    ("updated", "asc"): [SortKey("updated_at", "asc", _DATE), SortKey("id", "asc", _ID)],
-    **{
-        ("title", direction): [
-            SortKey("title_key", direction, _TEXT),
-            SortKey("presented_title", direction, _TEXT),
-            SortKey("updated_at", "desc", _DATE),
-            SortKey("id", "desc", _ID),
-        ]
-        for direction in ("asc", "desc")
-    },
-}
+_ID, _TEXT, _INT = KeysetValueKind.Uuid, KeysetValueKind.Text, KeysetValueKind.Int
 
 
 def create(
@@ -107,7 +88,9 @@ def index(
 
     query = parse_collection_query(items, domain_keys={"sort", "direction", "title_search"})
     search = query.parameters.get("title_search", "").strip()
-    plan = _VIEWS.get((query.parameters.get("sort"), query.parameters.get("direction")))
+    plan = UPDATED_TITLE_PLANS.get(
+        (query.parameters.get("sort"), query.parameters.get("direction"))
+    )
     if plan is None or len(search) > 200:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
