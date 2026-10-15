@@ -47,6 +47,17 @@ retained stderr sha256
 `d3930cd53727d1843efc11eee32de400b5601fde803180aafb3a64be00c5c59d`.
 the bounded local/archive search above covered the first original only.
 
+the ordinary reader inspection independently returned `NoSuchKey` for
+`37273127` at 2026-10-15 01:37:26 utc on operator source `150328b65`.
+its source row still matched the earlier inspection. the final 230-book batch
+stopped after 55 proposals, this one failure and 174 unrun items; it did not pass.
+private terminal receipt: the `056-37273127` item under
+`b-reader/final-review-150328-stopped56-evidence-v1/final-review-150328-v1/`,
+sha256 `8b0c8d2a4602ccc83a399945db9ca8f990f8d8efe71461427fc8a25bf7648474`.
+root independently reconciled terminal execution and absent database backends:
+`coordinator/reader-final230-stopped-backend-reconciliation.json`, sha256
+`8fafa5fe1aeb79b9b4c14fba97b8724298489b42ad57cec7302ef3735cb1263b`.
+
 both audits used the real storage client and verified bytes before parsing;
 neither mounted a substitute archive. retained invocation/source reconciliation:
 `book-repair/c-sources/contributor-audit-storage-path-reconciliation.json`,
