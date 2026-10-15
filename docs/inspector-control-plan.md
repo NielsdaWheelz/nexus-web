@@ -226,8 +226,8 @@ register. close the inspector ticket only after implementation and qualification
   geometry/arbitration instead of another dependency or parallel overlay system.
   normal focus restoration may show help again; accept that repetition without
   adding focus-origin tracking.
-- keep [navigation tooltip repair](tickets/collapsed-navigation-tooltip-not-hoverable.md)
-  separate, knowingly leaving that defect open. do not migrate `HoverPreview`,
+- navigation tooltip repair stayed separate and was resolved by
+  [pr #625](navbar-launcher-verification.md). do not migrate `HoverPreview`,
   other icon controls, reader shortcuts or unrelated overlay behavior.
 - no inspector content redesign, replacement state model, new shortcut, global
   icon registry, theme overhaul, telemetry, backend work or deployment changes.

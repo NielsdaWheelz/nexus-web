@@ -2460,7 +2460,8 @@
         "exit_code": 0,
         "migration_head": "0286"
       },
-      "live_qualification": "historical; no new screenshot/live claim"
+      "live_qualification": "historical; no new screenshot/live claim",
+      "resolved_ticket": "collapsed-navigation-tooltip-not-hoverable; pr625 destination-hover/focus proof; obsolete ticket/register entry removed"
     }
   ]
 }

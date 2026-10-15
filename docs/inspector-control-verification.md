@@ -40,6 +40,8 @@ neither help surface owns commands. no conflicts or source edits were needed.
 `./scripts/test` passed at head `0286`. the web-source digest is
 `50ff0f7d5fd118c526c0d749b9267280b30601d04d443c37cc44f358fce1dca4`
 over 732 paths. live evidence remains at its recorded candidates.
+pr #625's recorded destination-hover/focus qualification resolves the separate
+navigation tooltip ticket; its stale ticket and register entry are removed.
 
 disposable playwright 1.59.1 drove browser → next/bff `:3198` → api `:8198`
 → isolated auth, database and storage. one article used ordinary extension
