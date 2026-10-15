@@ -1,4 +1,4 @@
-# three previously verified epub originals now return nosuchkey
+# four previously verified epub originals now return nosuchkey
 
 status: open; original source availability unresolved
 origin: 2026-10-14 retained-book rehearsal storage preparation
@@ -90,6 +90,23 @@ the exact source row, generation and installed projection are unchanged in
 the clone: `b-reader/c747-source-availability-comparison.json`, sha256
 `9b8dda3b94c168062ce4d847e7fdf638a832d734482171755d240e901a63acc7`.
 current production pointers and the cause remain unqueried and unknown.
+
+the next continuation found a fourth missing original:
+`fdb13b31-4ee1-41ba-976d-d8ce7a27e702`, at
+`media/fdb13b31-4ee1-41ba-976d-d8ce7a27e702/original.epub`.
+contributor audit 242 verified the same 184,687-byte `213296ac…` source at
+2026-10-15 00:24:51 utc; the earlier reader inspection succeeded at 00:43:20.
+the final inspection returned `NoSuchKey` at 03:14:32. the clone's source row,
+generation 2 and installed projection are unchanged. the 57-item continuation
+stopped after 54 proposals, this failure and two unrun items; no missing-key
+retry occurred. private comparison: `b-reader/fdb-source-availability-comparison.json`,
+sha256 `3a3175eab6ed7571944411d909cb1d056a1ffe7bf9bd5dbfcf8628f9b29eb3e4`;
+terminal receipt sha256
+`c0ff48654df5c12c7df82ea4da21f1ba617f56d0984b025901e361c7658ed5ed`.
+root reconciled stopped execution and absent clone backends in
+`coordinator/reader-remaining57-stopped55-backend-reconciliation.json`, sha256
+`8770d264850176e237e3bf82f05f6fbb6af4ca5c3c36cb92e46079778b561b59`.
+matching bytes at distinct keys do not establish a deletion cause.
 
 next: after the production owner hands off, reconcile the current source row
 and ordinary storage-cleanup history.
