@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -22,7 +23,6 @@ from nexus.services.contributor_writes import (
     plan_observation_credits,
     planned_contributor_identity,
 )
-from nexus.services.resource_mutation_replay import canonical_json_bytes
 
 if TYPE_CHECKING:
     from nexus.services.epub_ingest import EpubExtractionResult
@@ -386,10 +386,9 @@ def _prepare_reviewed_repair(
             for identity, authority, key in selected.new_keys
         ],
     }
+    preview_bytes = json.dumps(preview, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return _PreparedRepair(
-        EpubContributorRepairPreview(
-            report, preview, hashlib.sha256(canonical_json_bytes(preview)).hexdigest()
-        ),
+        EpubContributorRepairPreview(report, preview, hashlib.sha256(preview_bytes).hexdigest()),
         rows,
         selected,
     )
