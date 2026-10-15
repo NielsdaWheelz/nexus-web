@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import cast
 from uuid import UUID
 
-from nexus.schemas.media import DocumentEmbedOut
+from nexus.schemas.document_embeds import DocumentEmbedOut
 from nexus.schemas.reader_document_map import (
     ReaderDocumentMapMarkerKind,
     ReaderDocumentMapMarkerOut,

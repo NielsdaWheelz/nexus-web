@@ -1687,7 +1687,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Enrich Media Metadata */
+        /**
+         * Enrich Media Metadata
+         * @description A resend after the job landed answers that job (it is newer than ``expected_job_id``).
+         */
         post: operations["enrich_media_metadata_media__media_id__metadata_enrichment_post"];
         delete?: never;
         options?: never;
@@ -1704,7 +1707,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Review Media Metadata Result */
+        /**
+         * Review Media Metadata Result
+         * @description Idempotent: an existing review stands.
+         */
         post: operations["review_media_metadata_result_media__media_id__metadata_enrichment__job_id__review_post"];
         delete?: never;
         options?: never;
@@ -2780,7 +2786,10 @@ export interface paths {
         };
         /**
          * Stream Metadata Events
-         * @description Metadata enrichment state; never terminal, so later automatic jobs still show.
+         * @description Metadata enrichment state until nothing is unfinished (an idle media: one frame).
+         *
+         *     Only a new run changes the view then; the client reopens the stream on admission and
+         *     on every read that can follow one.
          */
         get: operations["stream_metadata_events_stream_media__media_id__metadata_events_get"];
         put?: never;
@@ -4641,10 +4650,6 @@ export interface components {
         /** Data[MetadataEnrichmentAccepted] */
         Data_MetadataEnrichmentAccepted_: {
             data: components["schemas"]["MetadataEnrichmentAccepted"];
-        };
-        /** Data[MetadataResultReviewed] */
-        Data_MetadataResultReviewed_: {
-            data: components["schemas"]["MetadataResultReviewed"];
         };
         /** Data[NexusHistoryOut] */
         Data_NexusHistoryOut_: {
@@ -7061,20 +7066,27 @@ export interface components {
              * Format: uuid
              */
             job_id: string;
+            /** Last Enriched At */
+            last_enriched_at: string | null;
             /**
              * Media Id
              * Format: uuid
              */
             media_id: string;
         };
-        /** MetadataEnrichmentRequest */
+        /**
+         * MetadataEnrichmentRequest
+         * @description The latest job the viewer saw; null when they saw none.
+         */
         MetadataEnrichmentRequest: {
-            /** Client Mutation Id */
-            client_mutation_id: string;
             /** Expected Job Id */
             expected_job_id: string | null;
         };
-        /** MetadataEnrichmentView */
+        /**
+         * MetadataEnrichmentView
+         * @description The latest operation, the oldest unfinished one, and whether the viewer may start one;
+         *     the metadata stream ends once ``unfinished_count`` is 0 (only a new run changes it).
+         */
         MetadataEnrichmentView: {
             /** Last Enriched At */
             last_enriched_at: string | null;
@@ -7216,24 +7228,6 @@ export interface components {
              */
             status: "recovering";
         };
-        /** MetadataResultReviewRequest */
-        MetadataResultReviewRequest: {
-            /** Client Mutation Id */
-            client_mutation_id: string;
-        };
-        /** MetadataResultReviewed */
-        MetadataResultReviewed: {
-            /**
-             * Job Id
-             * Format: uuid
-             */
-            job_id: string;
-            /**
-             * Reviewed At
-             * Format: date-time
-             */
-            reviewed_at: string;
-        };
         MetadataRetry: components["schemas"]["MetadataRetryAllowed"] | components["schemas"]["MetadataRetryBlocked"];
         /** MetadataRetryAllowed */
         MetadataRetryAllowed: {
@@ -7284,14 +7278,17 @@ export interface components {
              */
             status: "running";
         };
-        /** MetadataSelection */
+        /**
+         * MetadataSelection
+         * @description The generation's route, model (a provider route's ``model_ref``) and reasoning.
+         */
         MetadataSelection: {
             /** Model */
             model: string;
-            /** Provider */
-            provider: string;
             /** Reasoning */
             reasoning: string;
+            /** Route */
+            route: string;
         };
         /** MetadataTitleCompletedOutcome */
         MetadataTitleCompletedOutcome: {
@@ -15641,20 +15638,14 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["MetadataResultReviewRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["Data_MetadataResultReviewed_"];
-                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

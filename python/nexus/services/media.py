@@ -10,15 +10,15 @@ from datetime import UTC, datetime
 from typing import Literal, cast
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.engine import RowMapping
-from sqlalchemy.orm import Session, load_only
+from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
     non_system_media_ref_exists_sql,
     visible_media_ids_cte_sql,
 )
-from nexus.db.models import Media, MediaKind, TranscriptCoverage, TranscriptState
+from nexus.db.models import MediaKind, TranscriptCoverage, TranscriptState
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.media import (
@@ -35,7 +35,7 @@ from nexus.schemas.media_summary import (
     MediaProcessingStatus,
     MediaSummaryOut,
 )
-from nexus.schemas.metadata_enrichment import MetadataEnrichmentView, MetadataRetry
+from nexus.schemas.metadata_enrichment import MetadataRetry
 from nexus.schemas.reading_time import ReadingTimeEstimateOut
 from nexus.services.capabilities import (
     SearchRecoveryAnswer,
@@ -439,7 +439,7 @@ def list_collection_media_for_viewer_by_ids(
         ],
     )
 
-    metadata_views = _metadata_views(db, viewer_id=viewer_id, media_ids=visible_ids)
+    metadata_views = metadata_enrichment_views(db, viewer_id=viewer_id, media_ids=visible_ids)
     collection: list[CollectionMedia] = []
     for media_id in visible_ids:
         row = row_by_media_id[media_id]
@@ -584,26 +584,6 @@ def _load_chapters(
     return chapters
 
 
-def _metadata_views(
-    db: Session, *, viewer_id: UUID, media_ids: Sequence[UUID]
-) -> dict[UUID, MetadataEnrichmentView]:
-    items = db.scalars(
-        select(Media)
-        .options(
-            load_only(
-                Media.id,
-                Media.kind,
-                Media.provider,
-                Media.processing_status,
-                Media.created_by_user_id,
-                Media.metadata_enriched_at,
-            )
-        )
-        .where(Media.id.in_(media_ids))
-    ).all()
-    return metadata_enrichment_views(db, viewer_id=viewer_id, media=items)
-
-
 def _hydrate_media_out(
     db: Session, *, viewer_id: UUID, rows: Sequence[RowMapping]
 ) -> list[MediaOut]:
@@ -642,7 +622,7 @@ def _hydrate_media_out(
         else {}
     )
 
-    metadata_views = _metadata_views(db, viewer_id=viewer_id, media_ids=media_ids)
+    metadata_views = metadata_enrichment_views(db, viewer_id=viewer_id, media_ids=media_ids)
     media_list: list[MediaOut] = []
     for media_id, row in zip(media_ids, rows, strict=True):
         kind_value = _status_to_str(row["kind"])

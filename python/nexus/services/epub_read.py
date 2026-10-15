@@ -11,7 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.media import (
+from nexus.schemas.reader import (
     MediaNavigationOut,
     NavigationTextPointOut,
     NavigationTextRangeOut,

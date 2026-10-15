@@ -32,7 +32,7 @@ every read is a pane-free `usePaneFreeServerValue` (`lib/api/serverState.tsx`): 
 - the server stamps `observed_at` on every read; the newest successful summary's stamp is the only observation token. the list, inspector and mounted history put it in their `stale`, so they reread when an observation lands. collapsing history retains its loaded prefix; there is no history poller.
 - polling: every 5 s while the newest summary read succeeded, `unfinished_work_count > 0`, the document is visible, and the pane is open or a wake happened within the last 15 minutes. this count covers distinct unfinished source/index/metadata jobs across attempts and revisions, plus active uploads or applicable obligations without such a job. attention precedence and inapplicable older work cannot stop observation. a failed summary read stops polling until the next wake or Refresh.
 - invalidation is in-tab only: other tabs catch up on their next wake or poll.
-- metadata admission and personal review invalidate imports on success or replay, so an idle summary wakes. review reconnects the media's metadata observer without a bibliography change event.
+- metadata admission (answered or lost) and personal review invalidate imports, so an idle summary wakes. both restart the media's metadata stream without a bibliography change event.
 - upload commands (`dispatchUpload`) are pending per `session id|command`, so the row and the inspector both show "Starting…"; a duplicate in flight is ignored and a refusal is the caller's to report.
 
 ## lists
@@ -49,7 +49,7 @@ foreign focus retires list ownership immediately, even if it returns to body bef
 
 stored upload/processing events keep their existing write grammar. `HistoryEntry.facts` additionally projects one metadata operation per retained job; no metadata events are invented. the metadata owner decodes each job with that job's latest generation in a batch. ids are namespaced text (`upload:`, `processing:`, `metadata:`), ordered by `(occurred_at desc, id desc)`. terminal metadata uses completion time; live metadata uses creation time. cursor bindings were cut over with this grammar; old cursors are rejected. the “recorded failures” filter includes metadata failures but excludes no-findings results.
 
-mark reviewed records a personal acknowledgement of one exact no-findings job. any current reader may acknowledge it; only the creator can request research. older results remain reviewable, and reviewing them never clears newer attention. review decorates the existing history entry without changing its identity, time, or durable outcome. each attempt sends a fresh mutation id; a repeat after an uncertain response gets the review already recorded. no generic failure dismissal or unreview exists.
+mark reviewed records a personal acknowledgement of one exact no-findings job. any current reader may acknowledge it; only the creator can request research. older results remain reviewable, and reviewing them never clears newer attention. review decorates the existing history entry without changing its identity, time, or durable outcome. each attempt sends no body; a repeat after an uncertain response finds the review already recorded (204). no generic failure dismissal or unreview exists.
 
 item `updated_at` includes owner job updates and the viewer's review. a heartbeat may refresh live history, but never creates a history entry.
 

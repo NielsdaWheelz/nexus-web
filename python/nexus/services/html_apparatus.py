@@ -22,7 +22,7 @@ from lxml.etree import ParserError
 from lxml.html import HtmlElement
 
 from nexus.errors import ResourceFailureDimension
-from nexus.schemas.media import NavigationTextPointOut, NavigationTextRangeOut
+from nexus.schemas.reader import NavigationTextPointOut, NavigationTextRangeOut
 from nexus.schemas.reader_apparatus import NotesGroup
 from nexus.services.canonicalize import (
     HEADING_TAGS,

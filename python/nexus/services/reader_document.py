@@ -17,8 +17,8 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.schemas.media import (
-    DocumentEmbedOut,
+from nexus.schemas.document_embeds import DocumentEmbedOut
+from nexus.schemas.reader import (
     NavigationTextPointOut,
     ReaderNavigationSectionOut,
     ReaderNavigationTocNodeOut,

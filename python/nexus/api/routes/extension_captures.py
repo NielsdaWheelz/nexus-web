@@ -18,7 +18,7 @@ from nexus.responses import Data
 from nexus.schemas.collection_page import CollectionPage
 from nexus.schemas.extension_capture import BrowserCapture, CreateCaptureRequest
 from nexus.schemas.library import LibraryDestinationOut
-from nexus.schemas.media import ConfirmUploadRequest, Published, UploadSessionOut
+from nexus.schemas.media_sources import ConfirmUploadRequest, Published, UploadSessionOut
 from nexus.services import libraries, media_upload_sessions
 
 router = APIRouter(prefix="/extension", tags=["extension"])

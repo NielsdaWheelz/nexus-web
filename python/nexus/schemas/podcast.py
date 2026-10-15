@@ -1,4 +1,4 @@
-"""Podcast wire: subscriptions, episodes, refresh and episode transcript batches."""
+"""Podcast wire: subscriptions, episodes, refresh, episode transcript batches and requests."""
 
 from datetime import datetime
 from typing import Annotated, Literal
@@ -6,10 +6,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from nexus.db.models import TranscriptState
+from nexus.db.models import TranscriptState as MediaTranscriptState
 from nexus.schemas.consumption import PauseShorteningMode, PlaybackRate
 from nexus.schemas.contributor_credit import ContributorCreditOut
-from nexus.schemas.media_summary import MediaSummaryOut
+from nexus.schemas.media_summary import MediaProcessingStatus, MediaSummaryOut
 from nexus.services.sealed_handles import DiscoveryTargetHandle
 
 # The web reads exact key sets, so each model's casing is load-bearing.
@@ -178,7 +178,7 @@ class PodcastSubscriptionListItemOut(BaseModel):
 class PodcastEpisodeListItemOut(BaseModel):
     id: UUID
     media_summary: MediaSummaryOut
-    transcript_state: TranscriptState
+    transcript_state: MediaTranscriptState
     has_show_notes: bool
 
     model_config = ConfigDict(extra="forbid")
@@ -266,3 +266,33 @@ class PodcastRefreshAcceptedOut(BaseModel):
     requested_count: int = Field(ge=0)
 
     model_config = _CLOSED
+
+
+class _Strict(BaseModel):
+    """Base for every closed model on this wire: an unknown key is rejected."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+TranscriptState = Literal[
+    "not_requested", "queued", "running", "ready", "partial", "unavailable", "failed_provider"
+]
+TranscriptCoverage = Literal["none", "partial", "full"]
+
+
+TranscriptRequestReason = Literal[
+    "episode_open", "search", "highlight", "quote", "background_warming", "operator_requeue"
+]
+
+
+class TranscriptRequestRequest(_Strict):
+    reason: TranscriptRequestReason = "episode_open"
+
+
+class TranscriptRequestOut(BaseModel):
+    media_id: str
+    processing_status: MediaProcessingStatus
+    transcript_state: TranscriptState
+    transcript_coverage: TranscriptCoverage
+    request_reason: TranscriptRequestReason
+    request_enqueued: bool

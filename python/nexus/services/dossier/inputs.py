@@ -290,8 +290,7 @@ def ensure(scheme: Members, db: Session, subject_id: UUID, viewer_id: UUID) -> R
     reasons = {item.reason for item in projections if isinstance(item, MediaOmission)}
     if MediaOmissionReason.ProjectionPending in reasons:
         return "Pending"
-    failed = {MediaOmissionReason.ProjectionFailed, MediaOmissionReason.ProjectionSuspended}
-    return "Failed" if reasons & failed else "Ready"
+    return "Failed" if MediaOmissionReason.ProjectionFailed in reasons else "Ready"
 
 
 def _members(scheme: Members, db: Session, subject_id: UUID, viewer_id: UUID) -> list[UUID]:

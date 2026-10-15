@@ -78,12 +78,14 @@ Hooks (by path in the registry):
 - `on_dead(db, job)` runs in the transaction that makes the job dead:
   `chat.worker.on_dead_letter` (ends the run `interrupted`, or `cancelled` when a
   stop was asked), `generation.ledger.on_dead_letter` (closes the open generation;
-  dossier, metadata, oracle, media units, connection scans),
+  dossier, metadata, oracle, connection scans),
   `podcasts.sync.dead_letter` (settles the sync Failed),
   `source_publication.on_dead_letter` (a resource-limited or podcast
   transcript attempt publishes its terminal failure), and the three statements in
   `jobs/dead_letters.py` whose owners are heavy (note index `failed` with the job's
-  code, teardown intent voided, backfill failed at its step).
+  code, teardown intent voided, backfill failed at its step, and a media unit's open
+  generation closed with the exact head it was building, by id and fingerprint,
+  `failed` with the job's code: no reader ever sees a unit "suspended").
 - `on_history(db, job, execution_id)` runs after each retry, dead, reclaim and
   reschedule: `import_history.on_source_job_outcome` and `on_index_job_outcome`.
   History is total (`queue_failure_code`), skips an attempt its owner already
@@ -234,7 +236,7 @@ hook `generation.ledger.on_dead_letter` closes a dead job's open row
 (`enrich_metadata`, `media_unit_build`, `oracle_reading_generate`,
 `connection_discovery_scan`, `dossier_build`), and `revoke_jobs_by_dedupe_keys`
 closes a revoked job's. The domain row of a dead background job is not touched by
-that hook
+that hook, except a media unit's (`dead_letters.media_unit_build` fails its head)
 ([ticket](../tickets/dead-background-jobs-leave-domain-rows-pending.md)). A
 background generation that never reached its model (a refused selection, a
 Codex session that did not open, a turn Codex did not submit) raises

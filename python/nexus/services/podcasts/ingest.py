@@ -30,7 +30,7 @@ from nexus.services.contributor_credits import load_contributor_credits_for_podc
 from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
 from nexus.services.contributor_writes import MediaTarget
 from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
-from nexus.services.metadata_dispatch import enqueue_metadata_enrichment
+from nexus.services.metadata_operations import enqueue_metadata_enrichment
 from nexus.services.resource_mutation_replay import canonical_json_bytes
 from nexus.services.transcripts.state import ensure_media_transcript_state_row
 from nexus.services.url_normalize import normalize_url_for_display

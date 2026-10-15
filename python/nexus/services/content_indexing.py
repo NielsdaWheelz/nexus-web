@@ -42,7 +42,7 @@ from nexus.schemas.import_history import (
     IndexSuperseded,
 )
 from nexus.schemas.imports import RepairSearchOffer
-from nexus.schemas.media import SearchRepairAdmission
+from nexus.schemas.media_sources import SearchRepairAdmission
 from nexus.services import media_intelligence_lifecycle
 from nexus.services.capabilities import SearchRecoveryAnswer
 from nexus.services.content_chunking import (

@@ -126,7 +126,7 @@ def registry() -> dict[str, JobDefinition]:
             "background",
             "nexus.tasks.media_unit_build:run_job",
             keep_dead=True,
-            on_dead=_GENERATION_DEAD,
+            on_dead="nexus.jobs.dead_letters:media_unit_build",
         ),
         "connection_discovery_scan": JobDefinition(
             "background",

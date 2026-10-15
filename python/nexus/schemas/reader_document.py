@@ -10,7 +10,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from nexus.schemas.media import DocumentEmbedOut
+from nexus.schemas.document_embeds import DocumentEmbedOut
 from nexus.schemas.source_issues import SourceIssue
 
 

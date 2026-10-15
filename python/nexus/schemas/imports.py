@@ -30,7 +30,7 @@ from nexus.schemas.import_history import (
     Stage,
 )
 from nexus.schemas.import_refs import ImportRef
-from nexus.schemas.media import SourceProgress
+from nexus.schemas.media_sources import SourceProgress
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.source_issues import SourceIssue
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref

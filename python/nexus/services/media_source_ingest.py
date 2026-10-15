@@ -52,7 +52,7 @@ from nexus.schemas.import_history import (
 )
 from nexus.schemas.import_refs import MediaImportRef, format_import_ref
 from nexus.schemas.imports import RepairSourceOffer, RetrySourceOffer
-from nexus.schemas.media import FromUrlOut, SourceAdmission, SourceRepairAdmission
+from nexus.schemas.media_sources import FromUrlOut, SourceAdmission, SourceRepairAdmission
 from nexus.services import libraries, library_entries
 from nexus.services import source_attempts as sa
 from nexus.services import source_types as st

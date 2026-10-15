@@ -1,31 +1,45 @@
-"""Metadata activity: one setwise projection of durable jobs, no shadow state."""
+"""Metadata operations: admission, the projection of kept jobs, and per-viewer reviews.
+
+An operation is one ``enrich_metadata`` job, kept forever (I10); its typed outcome is the
+job's result, and a view projects the jobs: the latest and the oldest unfinished by
+``(created_at, id)``. Admission is the creator's, for an eligible media with nothing
+unfinished, from the latest job the viewer saw (I8). A request from an older view answers
+the latest job: the work it asked for, research after what the viewer saw, exists (a
+resend after a lost answer lands here). The media row lock serializes admission with
+automatic enqueues; job rows are never locked.
+
+Every job freezes its purpose: an x article's title, from the source attempt whose capture
+it names, or any other media's bibliography. A request answers only a run of the media's own
+purpose, so a bibliography run from before x articles took titles never answers a title
+request (a conflict: the refreshed view expects it, and admits).
+"""
 
 from __future__ import annotations
 
-import json
-from collections import defaultdict
 from collections.abc import Sequence
-from typing import get_args
+from typing import Any
 from uuid import UUID
 
-from pydantic import TypeAdapter
 from sqlalchemy import text
 from sqlalchemy.engine import RowMapping
-from sqlalchemy.orm import Session, defer
+from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.db.models import LLMCall, Media
-from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.jobs.queue import JobRow
+from nexus.db.models import LLMCall
+from nexus.db.retries import retry_read_committed
+from nexus.db.session import transaction
+from nexus.errors import ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
+from nexus.ids import new_uuid7
+from nexus.jobs.queue import JobRow, enqueue_job
 from nexus.schemas.metadata_enrichment import (
+    BibliographyMetadataJobPayload,
+    MetadataBibliographyCompletedOutcome,
     MetadataCompletedOperation,
+    MetadataEnrichmentAccepted,
     MetadataEnrichmentView,
     MetadataFailedOperation,
-    MetadataFailureCode,
-    MetadataJobPayload,
     MetadataNoFindingsOperation,
     MetadataOperationOut,
-    MetadataOutcome,
     MetadataPurpose,
     MetadataQueuedOperation,
     MetadataRecoveringOperation,
@@ -34,54 +48,50 @@ from nexus.schemas.metadata_enrichment import (
     MetadataRetryBlocked,
     MetadataRunningOperation,
     MetadataSelection,
-    MetadataUnfinishedOperation,
+    MetadataTitleCompletedOutcome,
     MetadataWaitingOperation,
+    TitleMetadataJobPayload,
 )
 from nexus.services.generation.ledger import latest_job_generations
-from nexus.services.media_processing_state import is_metadata_enrichment_eligible
 from nexus.services.x_source import x_source_attempt_ids
 
-_OUTCOME = TypeAdapter(MetadataOutcome)
-_JOB_PAYLOAD = TypeAdapter(MetadataJobPayload)
-_FAILURE_CODE = TypeAdapter(MetadataFailureCode)
-_FAILURE_CODES: dict[str, MetadataFailureCode] = {
-    **{f"E_METADATA_{code.upper()}": code for code in get_args(MetadataFailureCode.__value__)},
-    "E_GENERATION_AUTH": "authentication_failed",
-    "E_GENERATION_QUOTA": "quota_unavailable",
-    "E_GENERATION_TIMEOUT": "research_timeout",
-    "E_GENERATION_OUTPUT_LIMIT": "output_limit",
-    "E_GENERATION_INVALID_OUTPUT": "invalid_output",
-    "E_GENERATION_POLICY_VIOLATION": "policy_violation",
-    "E_GENERATION_RUNTIME_UNAVAILABLE": "model_unavailable",
-    "E_GENERATION_CONTEXT_TOO_LARGE": "input_too_large",
-    "E_GENERATION_CANCELLED": "cancelled",
-    "E_GENERATION_SOURCE_CHANGED": "stale_input",
-    "E_WORKER_INTERRUPTED": "worker_interrupted",
-    "E_WORKER_LEASE_EXPIRED": "worker_interrupted",
+_BLOCKED_COPY = {
+    "not_creator": "only the creator can research metadata",
+    "not_eligible": "metadata research is unavailable for this media state",
+    "active": "metadata research is already in progress",
+    "source_context_missing": "refresh source to generate a title",
 }
 
 
-def metadata_operations_sql() -> str:
-    """Per-job domain facts for authorized query composition; binds ``viewer_id``.
+def metadata_purpose(*, provider: str | None, kind: str) -> MetadataPurpose:
+    """An x article's metadata is its generated title; every other media's, its bibliography."""
+    return "title" if provider == "x" and kind == "web_article" else "bibliography"
 
-    Imports owns population, latest selection and filtering. This owner alone
-    translates queue state and settled outcomes, using the caller's snapshot time.
-    ``failure_code`` is the closed metadata vocabulary, never raw exception text.
-    """
-    queue_reason = (
-        "CASE error_code "
-        + " ".join(f"WHEN '{raw}' THEN '{safe}'" for raw, safe in _FAILURE_CODES.items())
-        + " ELSE 'execution_failed' END"
+
+def is_metadata_enrichment_eligible(*, kind: str, processing_status: str) -> bool:
+    """Readable, or an episode or video waiting on a transcript research does not need."""
+    return processing_status == "ready_for_reading" or (
+        processing_status == "pending" and kind in ("video", "podcast_episode")
     )
-    return f"""
+
+
+def metadata_operations_sql() -> str:
+    """Per-job facts for authorized composition (views, Imports, history); binds ``viewer_id``.
+
+    A job its run settled carries its outcome; a dead job without one (its worker died, or
+    its handler raised) reads ``worker_interrupted``, ``model_unavailable`` or
+    ``execution_failed`` from the queue's code.
+    """
+    return """
         SELECT projected.*,
             status IN ('pending', 'running', 'failed') AS is_unfinished,
             effective_status = 'failed'
-                OR (effective_status = 'no_findings' AND reviewed_at IS NULL)
-                AS needs_attention,
+                OR (effective_status = 'no_findings' AND reviewed_at IS NULL) AS needs_attention,
             CASE WHEN effective_status = 'failed' THEN
                 CASE WHEN result ? 'completed_at' THEN result->>'reason'
-                     ELSE {queue_reason} END
+                     WHEN error_code = 'E_WORKER_INTERRUPTED' THEN 'worker_interrupted'
+                     WHEN error_code = 'E_GENERATION_RUNTIME_UNAVAILABLE' THEN 'model_unavailable'
+                     ELSE 'execution_failed' END
             END AS failure_code,
             COALESCE(completed_at, created_at) AS occurred_at,
             GREATEST(updated_at, reviewed_at) AS lifecycle_updated_at
@@ -96,7 +106,7 @@ def metadata_operations_sql() -> str:
                     WHEN job.status = 'failed'
                       OR (job.status = 'pending' AND job.available_at > now()) THEN 'waiting'
                     WHEN job.status = 'running' THEN 'recovering'
-                    WHEN job.status = 'pending' THEN 'queued'
+                    ELSE 'queued'
                 END AS effective_status,
                 CASE WHEN job.status IN ('succeeded', 'dead') THEN
                     COALESCE((job.result->>'completed_at')::timestamptz, job.finished_at)
@@ -109,124 +119,148 @@ def metadata_operations_sql() -> str:
     """
 
 
-def metadata_purpose(media: Media) -> MetadataPurpose:
-    return "title" if media.provider == "x" and media.kind == "web_article" else "bibliography"
-
-
-def metadata_retry(
-    db: Session, *, media: Media, viewer_id: UUID, jobs: Sequence[JobRow]
-) -> MetadataRetry:
-    """Admission and snapshots share the creator, eligibility and active-work barrier."""
-    latest = max(jobs, key=lambda job: (job.created_at, job.id), default=None)
-    return _retry(
-        media=media,
-        viewer_id=viewer_id,
-        unfinished_count=sum(job.status in {"pending", "running", "failed"} for job in jobs),
-        latest_job_id=latest.id if latest else None,
-        has_source_context=media.id in x_source_attempt_ids(db, media_ids=[media.id])
-        if metadata_purpose(media) == "title"
-        else False,
+def _operations(db: Session, rows: Sequence[RowMapping]) -> dict[UUID, MetadataOperationOut]:
+    calls = latest_job_generations(
+        db, kind="media_enrichment", job_ids=[row["job_id"] for row in rows]
     )
+    return {row["job_id"]: _operation(row, calls.get(row["job_id"])) for row in rows}
+
+
+def _operation(row: RowMapping, call: LLMCall | None) -> MetadataOperationOut:
+    selected: Any = None if call is None else call.generation_spec["selection"]
+    common: dict[str, Any] = {
+        "job_id": row["job_id"],
+        "created_at": row["created_at"],
+        "started_at": row["started_at"],
+        "generation_id": None if call is None else call.id,
+        "purpose": row["payload"]["purpose"],
+        "selection": None
+        if selected is None
+        else MetadataSelection(
+            route=selected["route"],
+            model=selected.get("model") or selected["model_ref"],
+            reasoning=selected["reasoning"],
+        ),
+    }
+    result = row["result"]
+    match row["effective_status"]:
+        case "completed" if common["purpose"] == "title":
+            outcome = MetadataTitleCompletedOutcome(
+                purpose="title",
+                completed_at=row["completed_at"],
+                changed_fields=result["changed_fields"],
+                disposition=result["disposition"],
+            )
+            return MetadataCompletedOperation(**common, outcome=outcome)
+        case "completed":
+            outcome = MetadataBibliographyCompletedOutcome(
+                purpose="bibliography",
+                completed_at=row["completed_at"],
+                changed_fields=result["changed_fields"],
+                unresolved_fields=result["unresolved_fields"],
+                retained_manual_authors=result["retained_manual_authors"],
+            )
+            return MetadataCompletedOperation(**common, outcome=outcome)
+        case "no_findings":
+            return MetadataNoFindingsOperation(
+                **common, completed_at=row["completed_at"], reviewed_at=row["reviewed_at"]
+            )
+        case "failed":
+            return MetadataFailedOperation(
+                **common, completed_at=row["completed_at"], code=row["failure_code"]
+            )
+        case "running":
+            return MetadataRunningOperation(**common)
+        case "waiting":
+            return MetadataWaitingOperation(**common, reason="retry", until=row["available_at"])
+        case "recovering":
+            return MetadataRecoveringOperation(**common)
+        case _:
+            return MetadataQueuedOperation(**common)
 
 
 def _retry(
-    *,
-    media: Media,
-    viewer_id: UUID,
-    unfinished_count: int,
-    latest_job_id: UUID | None,
-    has_source_context: bool,
+    media: Any, *, viewer_id: UUID, unfinished: int, latest: UUID | None, has_source: bool
 ) -> MetadataRetry:
-    purpose = metadata_purpose(media)
+    purpose = metadata_purpose(provider=media.provider, kind=media.kind)
     if media.created_by_user_id != viewer_id:
         return MetadataRetryBlocked(purpose=purpose, reason="not_creator")
-    if not is_metadata_enrichment_eligible(
-        kind=media.kind, processing_status=media.processing_status
-    ):
+    if not is_metadata_enrichment_eligible(kind=media.kind, processing_status=media.status):
         return MetadataRetryBlocked(purpose=purpose, reason="not_eligible")
-    if unfinished_count:
+    if unfinished:
         return MetadataRetryBlocked(purpose=purpose, reason="active")
-    if purpose == "title" and not has_source_context:
+    if purpose == "title" and not has_source:
         return MetadataRetryBlocked(purpose=purpose, reason="source_context_missing")
-    return MetadataRetryAllowed(purpose=purpose, expected_job_id=latest_job_id)
+    return MetadataRetryAllowed(purpose=purpose, expected_job_id=latest)
 
 
 def metadata_enrichment_views(
-    db: Session, *, viewer_id: UUID, media: Sequence[Media]
+    db: Session, *, viewer_id: UUID, media_ids: Sequence[UUID]
 ) -> dict[UUID, MetadataEnrichmentView]:
-    """Latest and oldest unfinished operations in one caller-owned read snapshot.
-
-    Only those representatives cross the query boundary; retained history is
-    counted setwise, not loaded into each media detail or collection row.
-    """
-    if not media:
+    """Each existing media's view in the caller's snapshot; history is counted, not loaded."""
+    if not media_ids:
         return {}
-    source_attempts = x_source_attempt_ids(
-        db, media_ids=[item.id for item in media if metadata_purpose(item) == "title"]
+    media = db.execute(
+        text("""
+            SELECT id, kind::text AS kind, provider, processing_status::text AS status,
+                created_by_user_id, metadata_enriched_at
+            FROM media WHERE id = ANY(:ids)
+        """),
+        {"ids": list(media_ids)},
+    ).all()
+    sources = x_source_attempt_ids(
+        db,
+        media_ids=[
+            item.id
+            for item in media
+            if metadata_purpose(provider=item.provider, kind=item.kind) == "title"
+        ],
     )
     rows = (
         db.execute(
             text(f"""
-            WITH operations AS ({metadata_operations_sql()}), ranked AS (
-                SELECT operations.*,
-                    row_number() OVER (
-                        PARTITION BY media_id ORDER BY created_at DESC, id DESC
-                    ) AS latest_position,
-                    count(*) FILTER (WHERE is_unfinished) OVER (
-                        PARTITION BY media_id
-                    )::integer AS unfinished_count,
-                    row_number() OVER (
-                        PARTITION BY media_id, is_unfinished ORDER BY created_at, id
-                    ) AS unfinished_position
-                FROM operations WHERE media_id = ANY(:media_ids)
-            )
-            SELECT * FROM ranked
-            WHERE latest_position = 1 OR (is_unfinished AND unfinished_position = 1)
-        """),
-            {"viewer_id": viewer_id, "media_ids": [item.id for item in media]},
+                WITH ranked AS (
+                    SELECT ops.*,
+                        row_number() OVER (PARTITION BY media_id ORDER BY created_at DESC, id DESC)
+                            AS latest_position,
+                        count(*) FILTER (WHERE is_unfinished) OVER (PARTITION BY media_id)
+                            AS unfinished_count,
+                        row_number() OVER (
+                            PARTITION BY media_id, is_unfinished ORDER BY created_at, id
+                        ) AS unfinished_position
+                    FROM ({metadata_operations_sql()}) ops WHERE media_id = ANY(:ids)
+                )
+                SELECT * FROM ranked
+                WHERE latest_position = 1 OR (is_unfinished AND unfinished_position = 1)
+            """),
+            {"viewer_id": viewer_id, "ids": list(media_ids)},
         )
         .mappings()
         .all()
     )
-    operations = _decode_operations(db, rows)
-    by_media: dict[UUID, list[RowMapping]] = defaultdict(list)
+    operations = _operations(db, rows)
+    latest: dict[UUID, RowMapping] = {}
+    # An unfinished job (pending, running, failed) projects to an unfinished operation.
+    unfinished: dict[UUID, Any] = {}
     for row in rows:
-        by_media[row["media_id"]].append(row)
+        if row["latest_position"] == 1:
+            latest[row["media_id"]] = row
+        if row["is_unfinished"] and row["unfinished_position"] == 1:
+            unfinished[row["media_id"]] = operations[row["job_id"]]
     views: dict[UUID, MetadataEnrichmentView] = {}
     for item in media:
-        operation: MetadataOperationOut | None = None
-        unfinished: MetadataUnfinishedOperation | None = None
-        unfinished_count = 0
-        latest_job_id: UUID | None = None
-        for row in by_media[item.id]:
-            decoded = operations[row["job_id"]]
-            unfinished_count = row["unfinished_count"]
-            if row["latest_position"] == 1:
-                operation = decoded
-                latest_job_id = row["job_id"]
-            if row["is_unfinished"] and row["unfinished_position"] == 1:
-                match decoded:
-                    case (
-                        MetadataQueuedOperation()
-                        | MetadataRunningOperation()
-                        | MetadataRecoveringOperation()
-                        | MetadataWaitingOperation()
-                    ):
-                        unfinished = decoded
-                    case _:
-                        # justify-defect: queue unfinished facts and this owner's
-                        # decoder must describe the same operation.
-                        raise AssertionError("unfinished metadata job decoded as terminal")
+        head = latest.get(item.id)
+        count = 0 if head is None else head["unfinished_count"]
         views[item.id] = MetadataEnrichmentView(
-            operation=operation,
-            unfinished_count=unfinished_count,
-            unfinished_operation=unfinished,
+            operation=None if head is None else operations[head["job_id"]],
+            unfinished_count=count,
+            unfinished_operation=unfinished.get(item.id),
             retry=_retry(
-                media=item,
+                item,
                 viewer_id=viewer_id,
-                unfinished_count=unfinished_count,
-                latest_job_id=latest_job_id,
-                has_source_context=item.id in source_attempts,
+                unfinished=count,
+                latest=None if head is None else head["job_id"],
+                has_source=item.id in sources,
             ),
             last_enriched_at=item.metadata_enriched_at,
         )
@@ -236,95 +270,198 @@ def metadata_enrichment_views(
 def metadata_operations_for_jobs(
     db: Session, *, viewer_id: UUID, job_ids: Sequence[UUID]
 ) -> dict[UUID, MetadataOperationOut]:
-    """Batch exact operations for an already-authorized history page or command."""
+    """Exact operations for an already-authorized history page."""
     if not job_ids:
         return {}
     rows = (
         db.execute(
-            text(
-                f"SELECT * FROM ({metadata_operations_sql()}) operations WHERE job_id = ANY(:job_ids)"
-            ),
-            {"viewer_id": viewer_id, "job_ids": list(job_ids)},
+            text(f"SELECT * FROM ({metadata_operations_sql()}) ops WHERE job_id = ANY(:ids)"),
+            {"viewer_id": viewer_id, "ids": list(job_ids)},
         )
         .mappings()
         .all()
     )
-    return _decode_operations(db, rows)
+    return _operations(db, rows)
 
 
 def metadata_enrichment_for_viewer(
     db: Session, *, viewer_id: UUID, media_id: UUID
 ) -> MetadataEnrichmentView:
+    """The metadata stream's frame; an unreadable media is ``E_MEDIA_NOT_FOUND``."""
     if not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "media not found")
-    item = db.get(Media, media_id, options=(defer(Media.plain_text),))
-    if item is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "media not found")
-    return metadata_enrichment_views(db, viewer_id=viewer_id, media=[item])[media_id]
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    return metadata_enrichment_views(db, viewer_id=viewer_id, media_ids=[media_id])[media_id]
 
 
-def _decode_operations(db: Session, rows: Sequence[RowMapping]) -> dict[UUID, MetadataOperationOut]:
-    calls = latest_job_generations(
-        db, kind="media_enrichment", job_ids=[row["job_id"] for row in rows]
-    )
-    return {row["job_id"]: _operation(row, calls.get(row["job_id"])) for row in rows}
-
-
-def _operation(row: RowMapping, call: LLMCall | None) -> MetadataOperationOut:
-    payload = _JOB_PAYLOAD.validate_json(json.dumps(row["payload"]))
-    selection: MetadataSelection | None = None
-    if call is not None:
-        selected = call.generation_spec["selection"]
-        assert isinstance(selected, dict)
-        selection = MetadataSelection(
-            provider="codex", model=str(selected["model"]), reasoning=str(selected["reasoning"])
-        )
-    common = {
-        "job_id": row["job_id"],
-        "created_at": row["created_at"],
-        "started_at": row["started_at"],
-        "generation_id": call.id if call else None,
-        "selection": selection,
-        "purpose": payload.purpose,
-    }
-    # Validate the immutable durable outcome as well as projecting its state.
-    if row["status"] in {"succeeded", "dead"} and row["result"] and "completed_at" in row["result"]:
-        outcome = _OUTCOME.validate_json(json.dumps(row["result"]))
-        # justify-defect: a retained outcome belongs to its job's frozen purpose.
-        if outcome.purpose != payload.purpose:
-            raise AssertionError("metadata outcome purpose differs from its job")
-        match outcome.status:
-            case "completed":
-                return MetadataCompletedOperation(**common, outcome=outcome)
-            case "no_findings":
-                return MetadataNoFindingsOperation(
-                    **common,
-                    completed_at=outcome.completed_at,
-                    reviewed_at=row["reviewed_at"],
-                )
-            case "failed":
-                return MetadataFailedOperation(
-                    **common, completed_at=outcome.completed_at, code=outcome.reason
-                )
-    match row["effective_status"]:
-        case "running":
-            return MetadataRunningOperation(**common)
-        case "failed":
-            if row["completed_at"] is None:
-                # justify-defect: the queue always stamps a terminal job.
-                raise AssertionError("dead metadata job requires finished_at")
-            return MetadataFailedOperation(
-                **common,
-                completed_at=row["completed_at"],
-                code=_FAILURE_CODE.validate_python(row["failure_code"]),
+def enqueue_metadata_enrichment(
+    db: Session, *, media_id: UUID, requester_user_id: UUID, request_id: str | None
+) -> JobRow:
+    """In the caller's transaction, under the media lock, strictly after the latest job; an
+    x article without its captured source cannot take a title job."""
+    media = db.execute(
+        text("SELECT kind::text AS kind, provider FROM media WHERE id = :m FOR UPDATE"),
+        {"m": media_id},
+    ).one()
+    payload: BibliographyMetadataJobPayload | TitleMetadataJobPayload
+    if metadata_purpose(provider=media.provider, kind=media.kind) == "title":
+        source_attempt_id = x_source_attempt_ids(db, media_ids=[media_id]).get(media_id)
+        if source_attempt_id is None:
+            raise ConflictError(
+                ApiErrorCode.E_RETRY_NOT_ALLOWED, _BLOCKED_COPY["source_context_missing"]
             )
-        case "waiting":
-            return MetadataWaitingOperation(**common, reason="retry", until=row["available_at"])
-        case "recovering":
-            return MetadataRecoveringOperation(**common)
-        case "queued":
-            return MetadataQueuedOperation(**common)
-        case _:
-            # justify-defect: settled metadata must carry its published outcome;
-            # other queue states are exhaustively projected above.
-            raise AssertionError("metadata job has no valid operation state")
+        payload = TitleMetadataJobPayload(
+            purpose="title",
+            media_id=media_id,
+            requester_user_id=requester_user_id,
+            request_id=request_id,
+            source_attempt_id=source_attempt_id,
+        )
+    else:
+        payload = BibliographyMetadataJobPayload(
+            purpose="bibliography",
+            media_id=media_id,
+            requester_user_id=requester_user_id,
+            request_id=request_id,
+        )
+    created_at = db.scalar(
+        text("""
+            SELECT greatest(clock_timestamp(), max(created_at) + interval '1 microsecond')
+            FROM background_jobs WHERE kind = 'enrich_metadata' AND payload->>'media_id' = :m
+        """),
+        {"m": str(media_id)},
+    )
+    return enqueue_job(
+        db, kind="enrich_metadata", payload=payload.model_dump(mode="json"), created_at=created_at
+    )
+
+
+def admit_metadata_enrichment(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    expected_job_id: UUID | None,
+    request_id: str | None,
+) -> MetadataEnrichmentAccepted:
+    """The creator's research request (I8, Q1).
+
+    Retry rule: once the run a request admitted exists, a resend names a job older than
+    the latest and answers the latest. An ``expected_job_id`` that is no job of this media,
+    or a latest job of another purpose than the media's, is a conflict.
+    """
+
+    def admit() -> MetadataEnrichmentAccepted:
+        media = db.execute(
+            text("""
+                SELECT kind::text AS kind, provider, processing_status::text AS status,
+                    created_by_user_id, metadata_enriched_at
+                FROM media WHERE id = :m FOR UPDATE
+            """),
+            {"m": media_id},
+        ).one_or_none()
+        if media is None or not can_read_media(db, viewer_id, media_id):
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        if media.created_by_user_id != viewer_id:
+            raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "only the creator can research metadata")
+        jobs = db.execute(
+            text("""
+                SELECT id, status, payload->>'purpose' AS purpose FROM background_jobs
+                WHERE kind = 'enrich_metadata' AND payload->>'media_id' = :m
+                ORDER BY created_at DESC, id DESC
+            """),
+            {"m": str(media_id)},
+        ).all()
+        latest = jobs[0].id if jobs else None
+        purpose = metadata_purpose(provider=media.provider, kind=media.kind)
+        if latest != expected_job_id:
+            if (
+                latest is None
+                or jobs[0].purpose != purpose
+                or (expected_job_id is not None and all(job.id != expected_job_id for job in jobs))
+            ):
+                raise ConflictError(
+                    ApiErrorCode.E_RESOURCE_CONFLICT,
+                    "metadata activity changed; refresh and try again",
+                )
+            db.rollback()
+            return MetadataEnrichmentAccepted(
+                media_id=media_id, job_id=latest, last_enriched_at=media.metadata_enriched_at
+            )
+        unfinished = sum(job.status in ("pending", "running", "failed") for job in jobs)
+        has_source = purpose == "title" and media_id in x_source_attempt_ids(
+            db, media_ids=[media_id]
+        )
+        retry = _retry(
+            media, viewer_id=viewer_id, unfinished=unfinished, latest=latest, has_source=has_source
+        )
+        if isinstance(retry, MetadataRetryBlocked):
+            raise ConflictError(ApiErrorCode.E_RETRY_NOT_ALLOWED, _BLOCKED_COPY[retry.reason])
+        job = enqueue_metadata_enrichment(
+            db, media_id=media_id, requester_user_id=viewer_id, request_id=request_id
+        )
+        db.commit()
+        return MetadataEnrichmentAccepted(
+            media_id=media_id, job_id=job.id, last_enriched_at=media.metadata_enriched_at
+        )
+
+    return retry_read_committed(db, "metadata_enrichment.admit", admit)
+
+
+def review_metadata_result(db: Session, *, viewer_id: UUID, media_id: UUID, job_id: UUID) -> None:
+    """Mark one no-findings result reviewed for this viewer (I11); an existing review stands."""
+
+    def review() -> None:
+        with transaction(db):
+            db.execute(text("SELECT 1 FROM media WHERE id = :m FOR UPDATE"), {"m": media_id})
+            if not can_read_media(db, viewer_id, media_id):
+                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+            row = (
+                db.execute(
+                    text(f"""
+                        SELECT effective_status, reviewed_at FROM ({metadata_operations_sql()}) ops
+                        WHERE job_id = :job AND media_id = :m
+                    """),
+                    {"viewer_id": viewer_id, "job": job_id, "m": media_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Metadata result not found")
+            if row["effective_status"] != "no_findings":
+                raise ConflictError(
+                    ApiErrorCode.E_RESOURCE_CONFLICT,
+                    "only a no-findings metadata result can be marked reviewed",
+                )
+            if row["reviewed_at"] is None:
+                db.execute(
+                    text("""
+                        INSERT INTO metadata_result_reviews (id, viewer_id, job_id, reviewed_at)
+                        VALUES (:id, :viewer, :job, clock_timestamp())
+                        ON CONFLICT (viewer_id, job_id) DO NOTHING
+                    """),
+                    {"id": new_uuid7(), "viewer": viewer_id, "job": job_id},
+                )
+                db.execute(text("SELECT pg_notify('media_events', :m)"), {"m": str(media_id)})
+
+    retry_read_committed(db, "metadata_result.review", review)
+
+
+_MEDIA_REVIEWS = """
+    DELETE FROM metadata_result_reviews review USING background_jobs job
+    WHERE review.job_id = job.id AND job.kind = 'enrich_metadata'
+      AND job.payload->>'media_id' = :m
+"""
+
+
+def delete_viewer_media_reviews(db: Session, *, viewer_id: UUID, media_id: UUID) -> None:
+    """Removal clears this viewer's reviews; the jobs stay (I10, I11)."""
+    db.execute(
+        text(_MEDIA_REVIEWS + " AND review.viewer_id = :viewer"),
+        {"m": str(media_id), "viewer": viewer_id},
+    )
+
+
+def delete_media_reviews(db: Session, *, media_id: UUID) -> None:
+    """Teardown clears every review of the media; the jobs stay (I10)."""
+    db.execute(text(_MEDIA_REVIEWS), {"m": str(media_id)})

@@ -12,7 +12,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession
 from nexus.logging import get_request_id
 from nexus.responses import Data
-from nexus.schemas.media import (
+from nexus.schemas.media_sources import (
     FromUrlOut,
     FromUrlRequest,
     MediaRepairAdmission,

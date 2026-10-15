@@ -11,8 +11,8 @@ from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.schemas.document_embeds import DocumentEmbedOut
 from nexus.schemas.highlights import HIGHLIGHT_COLORS, FragmentAnchorOut, TypedHighlightOut
-from nexus.schemas.media import DocumentEmbedOut
 from nexus.schemas.reader_apparatus import (
     ReaderApparatusConfidence,
     ReaderApparatusItemKind,

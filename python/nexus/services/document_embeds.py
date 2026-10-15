@@ -23,8 +23,7 @@ from nexus.db.models import (
     ResourceEdge,
 )
 from nexus.errors import InvalidRequestError
-from nexus.schemas.media import (
-    DocumentEmbedAggregateStatus,
+from nexus.schemas.document_embeds import (
     DocumentEmbedDisplayActionOut,
     DocumentEmbedDisplayOut,
     DocumentEmbedKind,
@@ -34,11 +33,11 @@ from nexus.schemas.media import (
     DocumentEmbedProviderRefOut,
     DocumentEmbedResolutionStatus,
     DocumentEmbedSourceShape,
-    DocumentEmbedSummaryOut,
     DocumentEmbedTargetOut,
     DocumentEmbedTextOut,
     DocumentEmbedUrlOut,
 )
+from nexus.schemas.media import DocumentEmbedAggregateStatus, DocumentEmbedSummaryOut
 from nexus.services import library_entries
 from nexus.services.playback_source import derive_playback_source
 from nexus.services.resource_graph.edges import EdgeCreate, replace_edges_for_origin

@@ -56,7 +56,7 @@ from nexus.schemas.import_history import (
     UploadVerificationFailureCode,
 )
 from nexus.schemas.import_refs import UploadImportRef, format_import_ref
-from nexus.schemas.media import (
+from nexus.schemas.media_sources import (
     CreateUploadRequest,
     Published,
     Rejected,

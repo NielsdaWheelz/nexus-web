@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.jobs.queue import JobRow
+from nexus.services.generation import ledger
 
 
 def note_index(db: Session, job: JobRow) -> None:
@@ -41,6 +42,23 @@ def media_teardown(db: Session, job: JobRow) -> None:
             WHERE id = :intent_id AND media_id = :media_id
               AND EXISTS (SELECT 1 FROM media WHERE id = :media_id)"""),
         {"intent_id": UUID(job.payload["intentId"]), "media_id": UUID(job.payload["mediaId"])},
+    )
+
+
+def media_unit_build(db: Session, job: JobRow) -> None:
+    """Media intelligence: the open generation closes and the exact head the job was building
+    fails with its code (I16); a head re-ensured since (another fingerprint) stays."""
+    ledger.on_dead_letter(db, job)
+    db.execute(
+        text("""UPDATE media_summaries
+            SET status = 'failed', error_code = :code, error_detail = :detail, updated_at = now()
+            WHERE id = :id AND status = 'building' AND content_fingerprint = :fingerprint"""),
+        {
+            "id": UUID(job.payload["summary_id"]),
+            "fingerprint": job.payload["content_fingerprint"],
+            "code": job.error_code,
+            "detail": job.last_error,
+        },
     )
 
 
