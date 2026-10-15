@@ -137,6 +137,8 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
           row.unavailable = true;
           row.data = null;
           row.queue.splice(0).forEach(change => change.complete?.(false));
+          row.conflict?.complete?.(false);
+          row.conflict = null;
         }
       }
       return false;
@@ -169,7 +171,10 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
           if (!active || lifetime !== run || run.signal.aborted) return;
           if (isApiError(error) && error.code === "E_PODCAST_REPLACES_EPISODES") {
             // A later choice for this library supersedes this confirmation.
-            if (!row.queue.slice(1).some(next => next.libraryId === change.libraryId)) row.conflict = change;
+            if (!row.queue.slice(1).some(next => next.libraryId === change.libraryId)) {
+              row.conflict?.complete?.(false);
+              row.conflict = change;
+            }
           } else {
             const uncertain = isAbortError(error) || (isApiError(error) && apiTransportFeedback(error, "") !== null);
             const content = isAbortError(error)
@@ -188,7 +193,8 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
         row.queue.shift();
         row.reconciling = confirmed ? change : null;
         row.dirty = true;
-        change.complete?.(confirmed);
+        // A replacement offer retains this command's acknowledgement until settled.
+        if (row.conflict !== change) change.complete?.(confirmed);
         emit();
         // Even a refusal can mean permissions or inherited membership changed.
         // An unknown answer is retired; this read never retries that write.
@@ -210,7 +216,10 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
   };
   const enqueue = (row: Target, change: Change) => {
     row.failures.delete(change.libraryId);
-    if (row.conflict?.libraryId === change.libraryId) row.conflict = null;
+    if (row.conflict?.libraryId === change.libraryId) {
+      row.conflict.complete?.(false);
+      row.conflict = null;
+    }
     row.queue.push(change);
   };
 
@@ -312,11 +321,18 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
         name: row.data?.find(item => item.library_id === row.conflict?.libraryId)?.name ?? "this library",
         confirm: () => {
           if (!active || defect !== null || row.conflict !== offered) return;
-          enqueue(row, { ...offered, replaceEpisodes: true, complete: null });
+          row.conflict = null;
+          enqueue(row, { ...offered, replaceEpisodes: true });
           emit();
           void drain(row);
         },
-        cancel: () => { if (row.conflict === offered) { row.conflict = null; emit(); } },
+        cancel: () => {
+          if (row.conflict === offered) {
+            row.conflict = null;
+            offered.complete?.(false);
+            emit();
+          }
+        },
       }];
       }),
     };
@@ -342,7 +358,11 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
     stop() {
       active = false;
       lifetime.abort();
-      targets.forEach(row => row.queue.forEach(change => change.complete?.(false)));
+      targets.forEach(row => {
+        row.queue.forEach(change => change.complete?.(false));
+        row.conflict?.complete?.(false);
+        row.conflict = null;
+      });
     },
     invalidate() {
       for (const row of targets.values()) {
