@@ -1,6 +1,8 @@
 # inspector control implementation plan
 
-status: implemented; live qualification in progress.
+status: implemented; local qualification passed with recorded device and
+assistive-technology limits. disposable resources deleted; final static gate
+passed. normal post-release smoke remains.
 origin: 2026-10-14; surveyed baseline `367da80e0`.
 
 recover pane-title space with an icon-only inspector control. preserve its
@@ -38,6 +40,7 @@ sheet behavior.
 - keep help visible while the pointer is over trigger/help or keyboard focus
   remains on the trigger. leaving both pointer areas closes after 150ms unless
   keyboard focus retains it. blur closes when no pointer engagement remains.
+  a removed help surface no longer counts as pointer engagement.
   leaving during the opening delay cancels it immediately. no automatic expiry.
 - trigger pointerdown/activation, outside press, escape, window blur, unmount
   or an interactive overlay appearing cancels pending work and closes help.

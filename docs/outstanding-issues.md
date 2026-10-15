@@ -29,6 +29,8 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+- [open] workspace / pane chrome · 2026-10-14 inspector design review · icon-only inspector locally qualified and cleaned up; normal post-release smoke pending: [ticket](tickets/inspector-trigger-visible-label.md).
+- [open] web / navigation accessibility · 2026-10-14 inspector design review · collapsed navigation captions cannot retain pointer hover; repair remains separate: [ticket](tickets/collapsed-navigation-tooltip-not-hoverable.md).
 - [unverified] workspace / scrollbar input · 2026-10-14 · classic gutter passed; default overlay thumb produced no motion and remains unqualified: [ticket](tickets/canvas-overlay-scrollbar-release-unqualified.md).
 - [open] release / host storage · 2026-10-14 corrective rollout · image pulls can consume the preflight disk reserve: [ticket](tickets/release-image-cache-consumes-disk-reserve.md).
 - [deferred] x / saved positions · 2026-10-14 owner decision · inline quotation becomes an embedded document; preserve the saved copy and explicit refresh conflict: [ticket](tickets/x-inline-quote-refresh-loses-saved-position.md).
