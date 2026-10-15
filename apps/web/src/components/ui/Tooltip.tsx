@@ -48,7 +48,7 @@ export default function Tooltip({
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const timer = useRef<number | null>(null);
-  const pointerInside = useRef(false);
+  const pointerTarget = useRef<HTMLElement | null>(null);
   const keyboardFocus = useRef(false);
   const [phase, setPhase] = useState<"Pending" | "Visible" | null>(null);
   const owned = useHasActiveInteractionOwner();
@@ -88,7 +88,7 @@ export default function Tooltip({
   }, [close, clearTimer]);
 
   const leave = () => {
-    pointerInside.current = false;
+    pointerTarget.current = null;
     clearTimer();
     setPhase((current) => (current === "Pending" ? null : current));
     if (phase === "Visible" && !keyboardFocus.current) {
@@ -103,7 +103,7 @@ export default function Tooltip({
         "aria-describedby": visible ? id : undefined,
         onPointerEnter: (event) => {
           if (event.pointerType === "touch" || event.buttons !== 0) return;
-          pointerInside.current = true;
+          pointerTarget.current = event.currentTarget;
           if (hasActiveInteractionOwner() || !topmost) return;
           clearTimer();
           if (phase === "Visible") return;
@@ -125,7 +125,7 @@ export default function Tooltip({
         },
         onBlur: () => {
           keyboardFocus.current = false;
-          if (!pointerInside.current) close();
+          if (!pointerTarget.current?.isConnected) close();
         },
         onClickCapture: close,
       })}
@@ -138,7 +138,7 @@ export default function Tooltip({
               style={position.style}
               onPointerEnter={(event) => {
                 if (event.pointerType === "touch") return;
-                pointerInside.current = true;
+                pointerTarget.current = event.currentTarget;
                 clearTimer();
               }}
               onPointerLeave={leave}
