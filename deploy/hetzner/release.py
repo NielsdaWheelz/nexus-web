@@ -461,14 +461,14 @@ def backup(candidate: CandidateManifest, starting_revision: str) -> BackupEviden
 def migrate(candidate: CandidateManifest, reviewed: ReviewedModelCutover | None) -> None:
     note(f"migrating to {candidate.expected_database_revision}")
     if reviewed is None:
-        compose(
+        output = compose(
             candidate,
             "run --rm --no-deps --no-TTY migration",
             profile="release",
             timeout=1800,
         )
     else:
-        compose(
+        output = compose(
             candidate,
             "run --rm --no-deps --no-TTY --interactive migration"
             " /app/.venv/bin/python -m nexus.ops.model_cutover",
@@ -476,6 +476,7 @@ def migrate(candidate: CandidateManifest, reviewed: ReviewedModelCutover | None)
             stdin=reviewed.model_dump_json().encode(),
             timeout=1800,
         )
+    print(output, end="", flush=True)
     reached = database_revision()
     if reached != candidate.expected_database_revision:
         raise Failure(f"the database is at {reached}, not {candidate.expected_database_revision}")

@@ -438,3 +438,6 @@ unexpected timeouts. See
 - [open] web / nexus launch · 2026-10-15 chooser integration · a click on the server-rendered add control before hydration is lost before reaching the existing receiver queue: [ticket](tickets/nexus-launch-click-before-hydration-is-lost.md).
 - [open] web / read transport · 2026-10-14 latency diagnosis · ordinary browser reads have no total deadline through body consumption and retries: [ticket](tickets/browser-read-deadline-does-not-cover-response-body.md).
 - [open] web / api transport · 2026-10-15 suggestions review · proxy incoming post-body acquisition can outlive its upstream deadline: [ticket](tickets/proxy-incoming-body-is-outside-cancellation.md).
+
+- [deferred] release / vercel firewall · 2026-10-15 owner disposition · retain the public-share 120/minute rule; the higher byte allowance needs another plan: [ticket](tickets/public-share-byte-rate-limit-plan.md).
+- [open] email ingest / activation · 2026-10-15 · production post room remains unconfigured; delivery behavior is unqualified: [ticket](tickets/production-post-room-unconfigured.md).

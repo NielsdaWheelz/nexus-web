@@ -7,16 +7,21 @@
   wheel (2.5.3) is the one pgvector already pulled in. rebuild the backend image.
 - wire: `AtlasEdgeOut` loses `origin` (no client read it). no `X-Nexus-Wire` bump: web and
   api deploy together.
-- preflight on the rehearsal restore: time one `project_all` (issue
-  `atlas-sweep-cost-unmeasured`).
-- after deploy: run `atlas_project_job` once (or wait for the 86,400 s period) and read
+- preflight passed on the rehearsal restore at source `1c07b5ae543644f5c9f79ae72f54c43b2e77fcd7`:
+  one real `project_all` took 10.23734 s and positioned 452 media under 448 mib,
+  one cpu and the normal 30 s statement limit. rollback preserved the exact original
+  500-row atlas hash. root receipt `coordinator/final1c07/atlas-rollback-v3/root-review.json`
+  in the book-repair campaign artifacts is
+  `1e3043981753f591238741b29279bf73d9e6f92e3c7d3290cbf22f0c8496a2ad`.
+  this proves owner cost on that restore; worker admission and lease renewal remain unproved.
+- after deploy (pending): run `atlas_project_job` once (or wait for the 86,400 s period) and read
   `{"positioned": n}` and its duration from the job row. every position is rewritten; values
   change only by float rounding (≤ 1e-15), so no star moves visibly.
 - the oracle panes now show transport copy for a gateway timeout, an unavailable upstream,
   a rate limit or a stale build, and "Something went wrong. Try again." with the request id
   for any other answer (a 503 `E_AUTH_UNAVAILABLE` while auth is down), instead of
   crashing to the pane boundary (shared `failureCopy`).
-- owner smoke: `/atlas` turns, Readings layer, a folio's two taps on a phone (the first
+- owner smoke (pending): `/atlas` turns, Readings layer, a folio's two taps on a phone (the first
   shows its label), a failed load's Retry.
 
 ## public share links (cleanup/atlas-share-reauthor, commit "reauthor public share links")
@@ -27,9 +32,12 @@
   bff). handed-out links (`nxshr1_` tokens) are untouched and keep working.
 - share asset fetches no longer depend on `NEXUS_HANDLE_KEY` (release-edge's key carry-over
   is still needed for the other sealed handles).
-- vercel WAF (cleanup/share-bytes-waf-limit, commit "give share byte reads their own rate
+- vercel WAF: the owner deferred the higher byte-read allowance for this release;
+  the existing 120/minute rule remains enabled for all share paths. this is not a
+  release blocker; see [the disposition and remaining acceptance](../tickets/public-share-byte-rate-limit-plan.md).
+  the intended future configuration (cleanup/share-bytes-waf-limit, commit "give share byte reads their own rate
   limit"): byte reads (`/file`, `/assets/{n}`) get their own 600-a-minute rule; the existing
-  120 rule now excludes them. apply before or with the deploy (the paths do not change).
+  120 rule excludes them. apply only after the deferred change is admitted (the paths do not change).
   the project must allow two rate-limit rules (hobby allows one, pro forty). from
   `apps/web` (linked project, authenticated cli), stage both, then publish once, so byte
   reads are never unlimited between the two changes:

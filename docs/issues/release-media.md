@@ -1,7 +1,7 @@
 # release: media (A metadata + intelligence; B media core)
 
 The media slice changes these contracts at once; the api refuses the old forms and
-there is no compatibility arm. `X-Nexus-Wire` stays 1 (conventions): web and api deploy
+there is no compatibility arm. `X-Nexus-Wire` is 2 (conventions): web and api deploy
 together from the release sha; a tab open across the deploy sends no wire header and is
 refused (426 `E_WIRE_MISMATCH`, [release-edge](release-edge.md)) until reloaded. The apk reads
 none of these keys natively (`NexusOriginClient.kt` calls `me`, reading-copy,
@@ -27,8 +27,16 @@ the table.
 
 - `0284_media_units_by_generation` runs after `0283` with writers stopped, in the one end
   release; api, workers and web deploy together.
-- the unit census below is the gate, on the rehearsal and again in production right
-  before and right after the real 0284 (writers still stopped). owner decision
+- before committing, 0284 compares the exact ready-head identities on ready indexes
+  and their current subset under the retired and new rules. either difference aborts
+  the migration transaction. it emits counts, sorted-identity digests and the newest
+  old-stale head timestamp; the canonical release controller retains that output.
+  this guard changes the undeployed migration and requires a new artifact and
+  exact-source migration proof. earlier
+  rehearsal receipts still describe their original bytes.
+- the in-transaction identity and age checks are the gate, in rehearsal and production
+  with writers stopped. the SQL below is diagnostic; it requires no pause inside the
+  migration and does not replace the identity comparison. owner decision
   2026-10-15: current after 0284 = current under the retired rule before 0284. 0284
   rewrites exactly the units the retired rule calls current and leaves the rest, so the
   ready units still stale after it are the ones already stale before it. on the
@@ -37,8 +45,12 @@ the table.
   put the index generation into the fingerprint, and read stale under both rules. they
   stay stale until a reindex or a dossier rebuilds them; nothing rebuilds a stale unit
   proactively. the second query lists the stale ones: every row must predate
-  `d4665bc31`'s deploy. a newer stale unit means 0284 did not recognise it: in
-  production, restore the backup (its abstract would hide from citations).
+  `d4665bc31`'s deploy. its actual deployment timestamp is unavailable, so the migration
+  uses that commit's timestamp, `2026-07-23T18:25:47Z`, as a conservative bound: an
+  old-stale ready head at or after it aborts the transaction for review. this is stricter
+  than a deployment cutoff and may refuse a legitimate predeployment row. it is not
+  evidence of the deployment time. the identity and stale-age checks are separate;
+  neither silently rebuilds or accepts a recent stale unit.
 
 ### unit census (rehearsal on a restored backup, mac only; then production)
 
@@ -54,8 +66,9 @@ SELECT count(*) AS ready_units, count(*) FILTER (WHERE h.content_fingerprint =
 FROM media_summaries h
 JOIN content_index_states s ON s.owner_kind = 'media' AND s.owner_id = h.media_id
 WHERE h.status = 'ready' AND s.status = 'ready';
--- after 0284: the ready units still stale, newest first; each must predate d4665bc31's
--- deploy (15 on the 0bd6619236 backup, newest 2026-07-23 17:08 UTC)
+-- after 0284: the ready units still stale, newest first; the migration requires each
+-- to predate the conservative source-commit cutoff 2026-07-23T18:25:47Z
+-- (15 on the 0bd6619236 backup, newest 2026-07-23 17:08 UTC).
 SELECT h.media_id, h.updated_at FROM media_summaries h
 JOIN content_index_states s ON s.owner_kind = 'media' AND s.owner_id = h.media_id
 WHERE h.status = 'ready' AND s.status = 'ready' AND h.content_fingerprint <>
