@@ -23,9 +23,7 @@ export function presentBrowseCandidate(
         kind: "link",
         href: resolution.href,
       },
-      actionSubject: {
-        ref: assumeCanonicalResourceRef(resolution.action_subject_ref),
-      },
+      resourceRef: assumeCanonicalResourceRef(resolution.action_ref),
       selected: false,
     });
   }
@@ -57,9 +55,9 @@ export function presentBrowseCandidate(
     },
     activity: null,
     exceptionalStatus: null,
-    actionSubject: preview
+    resourceRef: preview
       ? null
-      : { ref: assumeCanonicalResourceRef(resolution.action_subject_ref) },
+      : assumeCanonicalResourceRef(resolution.action_ref),
     selected: false,
   };
 }
@@ -84,7 +82,7 @@ export function presentPreviewEpisode(
     },
     activity: null,
     exceptionalStatus: null,
-    actionSubject: null,
+    resourceRef: null,
     selected: false,
   };
 }

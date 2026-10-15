@@ -81,7 +81,7 @@ function ObjectActions({
         <ExternalLink size={14} aria-hidden="true" />
       </button>
       <ResourceActionMenu
-        actionSubject={{ ref: assumeCanonicalResourceRef(object.ref) }}
+        resourceRef={assumeCanonicalResourceRef(object.ref)}
         label={`Actions for ${object.label}`}
       />
       {remove ? (
@@ -218,7 +218,7 @@ export default function EvidenceRow({
         <span className={styles.kind}>{kind}</span>
         {highlight ? (
           <ResourceActionMenu
-            actionSubject={{ ref: assumeCanonicalResourceRef(`highlight:${highlight.highlight_id}`) }}
+            resourceRef={assumeCanonicalResourceRef(`highlight:${highlight.highlight_id}`)}
             label="Highlight actions"
           />
         ) : null}

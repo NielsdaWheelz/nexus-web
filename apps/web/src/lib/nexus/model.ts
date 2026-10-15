@@ -4,7 +4,7 @@ import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { Schema } from "@/lib/api/wire";
 import type { LibraryDestination } from "@/lib/libraries/api";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
-import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type {
   WorkspacePaneEntry,
@@ -96,7 +96,7 @@ export interface NexusRow {
   readonly parent?: { readonly key: string; readonly label: string };
   readonly action: NexusAction;
   readonly menu?:
-    | { readonly kind: "Resource"; readonly subject: ResourceActionSubject }
+    | { readonly kind: "Resource"; readonly resourceRef: CanonicalResourceRef }
     | { readonly kind: "Tab"; readonly paneId: string };
   /** Present iff an accepted selection of this row is remembered in Nexus history. */
   readonly source?: NexusHistorySource;

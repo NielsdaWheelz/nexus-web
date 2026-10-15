@@ -12,7 +12,7 @@ export function presentLecternItem(item: LecternItem): CollectionRowView {
   return presentMedia(item.mediaSummary, {
     id: item.itemId,
     primary: { kind: "link", href: item.href },
-    actionSubject: item.actionSubject,
+    resourceRef: item.resourceRef,
     selected: false,
   });
 }

@@ -19,9 +19,7 @@ export function presentNote(item: NotePageSummary): CollectionRowView {
     context: null,
     activity: null,
     exceptionalStatus: null,
-    actionSubject: {
-      ref: canonicalResourceRef({ scheme: "page", id: item.id }),
-    },
+    resourceRef: canonicalResourceRef({ scheme: "page", id: item.id }),
     selected: false,
   };
 }

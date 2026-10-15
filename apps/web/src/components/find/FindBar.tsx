@@ -207,7 +207,7 @@ export function FindResults({
       publicationDate: null,
       activity: null,
       exceptionalStatus: null,
-      actionSubject: null,
+      resourceRef: null,
       selected: current,
     };
   });

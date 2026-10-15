@@ -344,7 +344,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     refresh: library
       ? { kind: "Refreshable", sourceKey: `Library:${id}?${query}`, execute }
       : undefined,
-    actionSubject: { ref: canonicalResourceRef({ scheme: "library", id }) },
+    resourceRef: canonicalResourceRef({ scheme: "library", id }),
     menuActions,
     header: {
       kind: "Section",

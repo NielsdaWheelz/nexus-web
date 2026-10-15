@@ -192,15 +192,10 @@ export default function OracleReadingPaneBody() {
     reading?.question_text ?? (loadError === null ? null : "Reading"),
   );
   usePaneChrome({
-    actionSubject:
+    resourceRef:
       reading === null
         ? undefined
-        : {
-            ref: canonicalResourceRef({
-              scheme: "oracle_reading",
-              id: readingId,
-            }),
-          },
+        : canonicalResourceRef({ scheme: "oracle_reading", id: readingId }),
   });
   if (defect) throw defect.error;
 

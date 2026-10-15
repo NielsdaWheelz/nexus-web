@@ -4,7 +4,7 @@ import type { Schema } from "@/lib/api/wire";
 import {
   type MediaSummary,
 } from "@/lib/media/mediaSummary";
-import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { isCanonicalUuid } from "@/lib/validation";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
@@ -53,7 +53,7 @@ export interface LecternItem {
   href: AppHref;
   addedAt: string;
   activation: Activation;
-  actionSubject: ResourceActionSubject;
+  resourceRef: CanonicalResourceRef;
 }
 export interface LecternSnapshot {
   items: LecternItem[];
@@ -117,9 +117,7 @@ export function lecternItemFromWire(
             descriptor: playerDescriptorFromWire(activation.descriptor),
           }
         : activation,
-    actionSubject: {
-      ref: canonicalResourceRef({ scheme: "media", id: mediaSummary.media_id }),
-    },
+    resourceRef: canonicalResourceRef({ scheme: "media", id: mediaSummary.media_id }),
   };
 }
 

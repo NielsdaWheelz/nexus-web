@@ -40,7 +40,7 @@ class SearchResultBaseOut(BaseModel):
     snippet: str
     resource_ref: str
     owner_resource_ref: str
-    action_subject_ref: str
+    action_ref: str
     activation: ResourceActivationOut
     citation_target: str | None
     context_ref: SearchResultContextRefOut

@@ -108,16 +108,12 @@ class ContributorSearchPageOut(_Out):
     next_cursor: str | None
 
 
-class ResourceActionSubjectOut(_Out):
-    ref: str
-
-
 class ContributorDetailOut(_Out):
     handle: str
     href: str
     display_name: str
     other_names: list[str]
-    action_subject: ResourceActionSubjectOut
+    action_ref: str
 
 
 class ContributorRoleFactOut(_Out):
@@ -131,7 +127,7 @@ class MediaContributorWorkItemOut(_Out):
     media_summary: MediaSummaryOut
     href: str
     role_facts: list[ContributorRoleFactOut]
-    action_subject: ResourceActionSubjectOut
+    action_ref: str
 
 
 class PodcastContributorWorkItemOut(_Out):
@@ -140,11 +136,11 @@ class PodcastContributorWorkItemOut(_Out):
     href: str
     content_kind: str
     role_facts: list[ContributorRoleFactOut]
-    action_subject: ResourceActionSubjectOut
+    action_ref: str
 
 
 class ExternalContributorWorkItemOut(_Out):
-    """A catalogue ebook: not a Nexus resource, so it has no action subject."""
+    """A catalogue ebook: not a Nexus resource, so it has no action ref."""
 
     kind: Literal["ExternalWork"] = "ExternalWork"
     title: str

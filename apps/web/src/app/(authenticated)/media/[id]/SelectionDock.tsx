@@ -176,7 +176,7 @@ export default function SelectionDock({
       {menu?.ids.length === 1 ? (
         <ResourceActionMenu
           key={`${menu.ids[0]}:${menu.rect.x}:${menu.rect.y}`}
-          actionSubject={{ ref: canonicalResourceRef({ scheme: "highlight", id: menu.ids[0] }) }}
+          resourceRef={canonicalResourceRef({ scheme: "highlight", id: menu.ids[0] })}
           label="Highlight actions"
           align="center"
           anchored={{ anchor: menu.rect, onDismiss: () => verbs.openMenu([], menu.rect) }}

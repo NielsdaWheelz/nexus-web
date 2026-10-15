@@ -141,9 +141,7 @@ export function projectSearchResult(
     resourceRef: result.resource_ref,
     ownerResourceRef: result.owner_resource_ref,
     activation: { ...result.activation, href },
-    actionSubject: {
-      ref: assumeCanonicalResourceRef(result.action_subject_ref),
-    },
+    actionRef: assumeCanonicalResourceRef(result.action_ref),
     snippetSegments: parseSnippetSegments(result.snippet),
   };
   if ("media_summary" in result)

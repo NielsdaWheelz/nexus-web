@@ -68,14 +68,14 @@ class BrowsePreviewQuery(BaseModel):
 class InNexusMediaResolution(_Out):
     kind: Literal["InNexusMedia"] = "InNexusMedia"
     href: str
-    action_subject_ref: str
+    action_ref: str
     media_summary: MediaSummaryOut
 
 
 class InNexusPodcastResolution(_Out):
     kind: Literal["InNexusPodcast"] = "InNexusPodcast"
     href: str
-    action_subject_ref: str
+    action_ref: str
 
 
 class PreviewResolution(_Out):

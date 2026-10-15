@@ -27,7 +27,7 @@ export function suggestionTargetId(target: SuggestionTarget): string {
 }
 
 export function presentSuggestionItem({ target }: SuggestionItem): CollectionRowView {
-  const actionSubject = { ref: assumeCanonicalResourceRef(target.ref) };
+  const resourceRef = assumeCanonicalResourceRef(target.ref);
   if (target.kind === "Media") {
     return presentMedia(target.media_summary, {
       id: target.ref,
@@ -35,7 +35,7 @@ export function presentSuggestionItem({ target }: SuggestionItem): CollectionRow
         kind: "link",
         href: target.href,
       },
-      actionSubject,
+      resourceRef,
       selected: false,
     });
   }
@@ -52,7 +52,7 @@ export function presentSuggestionItem({ target }: SuggestionItem): CollectionRow
         : null,
     activity: null,
     exceptionalStatus: null,
-    actionSubject,
+    resourceRef,
     selected: false,
   };
 }

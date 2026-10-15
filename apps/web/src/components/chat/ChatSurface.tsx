@@ -199,7 +199,7 @@ const Row = memo(function Row({
       </div>
       <div className={styles.actions}>
         <ResourceActionMenu
-          actionSubject={{ ref }}
+          resourceRef={ref}
           label="Actions for this message"
           align="start"
         />

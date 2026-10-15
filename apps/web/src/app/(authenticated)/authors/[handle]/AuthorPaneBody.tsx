@@ -100,16 +100,14 @@ function authorError(error: unknown, title: string): FeedbackContent {
 
 function presentWork(work: ContributorWork): CollectionRowView {
   if (work.kind === "Media") {
-    const actionSubject = {
-      ref: assumeCanonicalResourceRef(work.action_subject.ref),
-    };
+    const resourceRef = assumeCanonicalResourceRef(work.action_ref);
     return presentMedia(work.media_summary, {
-      id: actionSubject.ref,
+      id: resourceRef,
       primary: {
         kind: "link",
         href: work.href,
       },
-      actionSubject,
+      resourceRef,
       selected: false,
     });
   }
@@ -129,20 +127,20 @@ function presentWork(work: ContributorWork): CollectionRowView {
       mediaIdentity: "External",
       contributors: selectMediaAuthors(work.contributors),
       context: null,
-      actionSubject: null,
+      resourceRef: null,
     };
   }
   const roles = work.role_facts.map((fact) =>
     contributorRoleLabel(fact.role, 1),
   );
   const text = [...new Set(roles), "Publication date unknown"].join(" · ");
-  const ref = assumeCanonicalResourceRef(work.action_subject.ref);
+  const resourceRef = assumeCanonicalResourceRef(work.action_ref);
   return {
     ...row,
-    id: ref,
+    id: resourceRef,
     contributors: [],
     context: { kind: "Text", text },
-    actionSubject: { ref },
+    resourceRef,
   };
 }
 
@@ -263,7 +261,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
 
   const ref =
     detail.status === "ready"
-      ? parseResourceRef(detail.data.action_subject.ref)
+      ? parseResourceRef(detail.data.action_ref)
       : null;
   const contributorId = ref?.scheme === "contributor" ? ref.id : null;
   const linkedItems = useMemo(
@@ -306,9 +304,9 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   }, [refetchDetail, refetchWorks]);
   usePaneChrome({
     query: queryControls,
-    actionSubject:
+    resourceRef:
       detail.status === "ready"
-        ? { ref: assumeCanonicalResourceRef(detail.data.action_subject.ref) }
+        ? assumeCanonicalResourceRef(detail.data.action_ref)
         : undefined,
     refresh: {
       kind: "Refreshable",

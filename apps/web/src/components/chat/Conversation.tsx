@@ -229,14 +229,12 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
             : ready && find
               ? { kind: "Find" as const, find }
               : undefined,
-        actionSubject:
+        resourceRef:
           conversationId && ready
-            ? {
-                ref: canonicalResourceRef({
-                  scheme: "conversation",
-                  id: conversationId,
-                }),
-              }
+            ? canonicalResourceRef({
+                scheme: "conversation",
+                id: conversationId,
+              })
             : undefined,
       }),
       [conversationId, find, loading, ready],

@@ -3,7 +3,7 @@ import type { ContributorCredit } from "@/lib/contributors/credits";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type { MediaSummary } from "@/lib/media/mediaSummary";
 import type { ResourceActivation } from "@/lib/resources/activation";
-import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 
 export type SearchType = ApiJson<"/search", "get">["results"][number]["type"];
@@ -15,7 +15,7 @@ export type SearchResultRowViewModel = {
   resourceRef: string;
   ownerResourceRef: string;
   activation: ResourceActivation & { href: string };
-  actionSubject: ResourceActionSubject;
+  actionRef: CanonicalResourceRef;
   snippetSegments: readonly EmphasisSegment[];
 } & (
   | { type: "media" | "episode" | "video"; mediaSummary: MediaSummary }

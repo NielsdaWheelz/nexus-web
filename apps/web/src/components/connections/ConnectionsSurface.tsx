@@ -180,7 +180,7 @@ function ConnectionRow({ connection, onChanged }: {
     supporting={<>{missing ? "Unavailable · " : ""}{reason}{connection.origin === "discovery" ? " · Connection discovery" : connection.origin === "assistant" ? " · Assistant" : ""}</>}
     evidence={typeof excerpt === "string" && excerpt ? machine ? <MachineText variant="inline" as="span" origin={{ label: connection.origin === "discovery" ? "Connection discovery" : "Assistant" }}>{excerpt}</MachineText> : excerpt : undefined}
     actions={<>
-      <ResourceActionMenu actionSubject={{ ref: assumeCanonicalResourceRef(endpoint.ref) }} label={`Actions for ${endpoint.label ?? endpoint.ref}`} />
+      <ResourceActionMenu resourceRef={assumeCanonicalResourceRef(endpoint.ref)} label={`Actions for ${endpoint.label ?? endpoint.ref}`} />
       {mutation ? <ContextEdgeMenu mutationKind={mutation.kind} label={`Edit connection ${endpoint.label ?? endpoint.ref}`} retryable execute={async () => { await mutateConnection(connection.edge_id, mutation); onChanged(); }} presentFailure={connectionMutationErrorMessage} /> : null}
     </>}
     expanded={<>
