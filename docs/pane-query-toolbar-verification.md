@@ -180,11 +180,16 @@ live-qualified versions. domain controllers, wire shapes and text-reader
 positioning keep current upstream ownership. new library-sort raw-value content
 is a separate [source-audit follow-up](tickets/library-unknown-sort-label-is-unbounded.md).
 
-fresh `./scripts/test` on the combined tree passed, exit 0; migration head
-`0286`. current-base source identity (1077 files, same method as above):
-`f42346c76f7e12b2dfdc3727a6b8d72123029c47856732b750cc8779ceca5242`.
-web delta sha256 against `7bc7c8a13d7f0c866bef49ad1fc218b603393594`:
+fresh `./scripts/test` passed, exit 0; migration head `0286`. the first
+integration also passed remote ci and the preview build. concurrent navbar/menu
+prs then advanced main to `69c00182c`; that integration changed no
+file in the toolbar's app delta, and its only manual conflict was the issue
+register. the full local gate passed again on that combined tree.
+
+final source identity (1081 files, same method as above):
+`e0e027ea768cf27265fcf0d88ad470e9611b50fcee760e61fe885d1968b93e09`.
+web delta sha256 against `69c00182c8328f46cec893517971f87f03cdbf16`:
 `f8220de5a0f3ed6d1cefdae144960bde794c3647302b99de7acb960e8c79f7bd`.
-no additional provider/data journey is claimed from the rebase; unchanged
-shared mechanisms plus adapter review and the fresh static gate establish this
-integration's bounded evidence.
+no additional provider/data journey is claimed from these integrations;
+unchanged shared mechanisms, adapter review and fresh gates establish their
+bounded evidence.

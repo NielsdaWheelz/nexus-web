@@ -21,6 +21,7 @@ import { useWorkspaceStore } from "@/lib/workspace/store";
 import type { WorkspaceTargetActivationResult } from "@/lib/workspace/targetActivation";
 import AccountMenu from "./AccountMenu";
 import MobilePaneBar from "./MobilePaneBar";
+import { useRailTooltip } from "./useRailTooltip";
 import {
   isAccountDestinationId,
   NAV_ACCENT,
@@ -49,7 +50,7 @@ export default function AppNav() {
 
 function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const { state, activateWorkspaceTarget } = useWorkspaceStore();
-  const [tip, setTip] = useState<{ label: string; top: number } | null>(null);
+  const railTooltip = useRailTooltip(collapsed);
   const [indicator, setIndicator] = useState<{ top: number; height: number } | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const { platform } = useRenderEnvironment();
@@ -95,12 +96,6 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
     return "handled-destination-focus";
   }
 
-  // The collapsed rail's tooltip sits beside the item, centred on it.
-  function showTip(event: { currentTarget: HTMLElement }, label: string) {
-    const box = event.currentTarget.getBoundingClientRect();
-    setTip({ label, top: box.top + box.height / 2 });
-  }
-
   const home = NAV_RAIL[0];
   const ImportsIcon = NAV_IMPORTS.icon;
   return (
@@ -120,8 +115,8 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
           className={styles.collapseButton}
           aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
           onClick={() => {
+            railTooltip.dismiss();
             onToggle();
-            setTip(null);
           }}
         >
           {collapsed ? (
@@ -133,15 +128,19 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       </div>
 
       <button
+        {...railTooltip.trigger("Nexus.Open", `Search (${hint})`)}
         type="button"
         className={styles.command}
         aria-haspopup="dialog"
         aria-keyshortcuts={shortcutAriaKeys(shortcut, platform)}
-        aria-label="Search or ask anything"
-        onClick={() => requestNexusOpen({ kind: "Root" })}
+        aria-label="Search"
+        onClick={() => {
+          railTooltip.dismiss();
+          requestNexusOpen({ kind: "Root" });
+        }}
       >
-        <Search size={16} aria-hidden="true" />
-        <span className={styles.commandText}>Search or ask anything…</span>
+        <Search className={styles.icon} size={20} aria-hidden="true" />
+        <span className={styles.commandText}>Search</span>
         <kbd className={styles.commandKbd}>{hint}</kbd>
       </button>
 
@@ -160,16 +159,16 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
             return (
               <li key={item.id}>
                 <Link
+                  {...railTooltip.trigger(item.id, item.label)}
                   href={item.href}
                   className={cx(styles.item, active && styles.active)}
                   data-accent={item.id === NAV_ACCENT || undefined}
                   aria-label={item.label}
                   aria-current={active ? "page" : undefined}
-                  onClick={(event) => navigate(event, item)}
-                  onMouseEnter={(event) => showTip(event, item.label)}
-                  onFocus={(event) => showTip(event, item.label)}
-                  onMouseLeave={() => setTip(null)}
-                  onBlur={() => setTip(null)}
+                  onClick={(event) => {
+                    railTooltip.dismiss();
+                    navigate(event, item);
+                  }}
                 >
                   <Icon className={styles.icon} size={20} aria-hidden="true" />
                   <span className={styles.label}>{item.label}</span>
@@ -228,11 +227,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         />
       </div>
 
-      {collapsed && tip ? (
-        <div className={styles.tooltip} style={{ top: tip.top }} role="tooltip">
-          {tip.label}
-        </div>
-      ) : null}
+      {railTooltip.tooltip}
     </nav>
   );
 }

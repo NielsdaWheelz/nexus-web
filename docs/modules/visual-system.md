@@ -111,6 +111,23 @@ scrolling. see [workspace controls](workspace.md), the
 includes native firefox 158 page/text zoom at 200% in a 320px pane; it makes
 no spoken assistive-technology claim.
 
+## overflow buttons
+
+`OverflowMenuButton` owns ellipsis trigger appearance: one native button,
+centered 18px lucide glyph, 6px corners, a persistent neutral border and
+hover/press/open/disabled/focus paint. it forwards native attributes, handlers
+and refs without owning interaction state. `ActionMenu` supplies behavior and
+aria bindings, not a visual class. semantic custom triggers own their appearance;
+`ContextEdgeMenu` retains its distinct relationship-control styling.
+
+default targets are 32px, at least 44px with any coarse pointer. consumer classes
+adjust geometry and noninteractive adornments only: mobile chrome/switchboard
+retain 48px and desktop nexus retains its wider shortcut-bearing button.
+disabled paint overrides engagement; focus remains visible. forced colors use
+system colors, including a contrasting focus ring for disabled expanded controls.
+theme colors and motion come from existing tokens; reduced motion removes the
+color transitions. no geometry motion or state-dependent sizing.
+
 ## the lint
 
 `lint:css-tokens` runs in `./scripts/test` after `build:shelf` and

@@ -1,0 +1,32 @@
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  min-width: 32px;
+  min-height: 32px;
+}
+
+.trigger:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+@media (any-pointer: coarse) {
+  .trigger {
+    min-width: var(--size-xl);
+    min-height: var(--size-xl);
+  }
+}

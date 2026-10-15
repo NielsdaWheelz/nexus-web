@@ -101,22 +101,7 @@
 }
 
 .command {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
   margin: 0 var(--space-2) var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--surface-1);
-  color: var(--ink-faint);
-  font-size: var(--text-sm);
-  cursor: pointer;
-  transition: border-color var(--duration-fast) var(--ease-glide);
-}
-
-.command:hover {
-  border-color: var(--edge);
 }
 
 .commandText {
@@ -130,6 +115,7 @@
   border: 1px solid var(--edge-subtle);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
+  color: var(--ink-faint);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
 }
@@ -151,12 +137,12 @@
   list-style: none;
 }
 
-/* Rail links, Add and the Account trigger. */
-.item {
+/* Rail links, Search, Add and the Account trigger share one row geometry. */
+.item,
+.command {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  width: 100%;
   min-height: var(--size-lg);
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
   border: none;
@@ -172,8 +158,13 @@
     color var(--duration-fast) var(--ease-glide);
 }
 
+.item {
+  width: 100%;
+}
+
 .collapseButton:hover,
 .item:hover,
+.command:hover,
 .topBarButton:hover {
   background: var(--surface-hover);
   color: var(--ink);
@@ -185,7 +176,8 @@
   font-weight: var(--weight-semibold);
 }
 
-.item:active {
+.item:active,
+.command:active {
   background: var(--surface-active);
   transition-duration: var(--duration-instant);
 }
@@ -195,7 +187,8 @@
   transition: transform var(--duration-base) var(--ease-bloom);
 }
 
-.item:hover .icon {
+.item:hover .icon,
+.command:hover .icon {
   transform: translateY(-1px) scale(1.06);
 }
 
@@ -316,10 +309,14 @@
   }
 }
 
+.tooltipHost {
+  z-index: var(--z-popover);
+  display: flex;
+  align-items: center;
+  padding-left: var(--space-2);
+}
+
 .tooltip {
-  position: fixed;
-  left: calc(var(--navbar-collapsed-width) + var(--space-2));
-  z-index: var(--z-modal);
   padding: var(--space-1) var(--space-2);
   border: 1px solid var(--edge);
   border-radius: var(--radius-sm);
@@ -328,8 +325,6 @@
   color: var(--ink);
   font-size: var(--text-sm);
   white-space: nowrap;
-  transform: translateY(-50%);
-  pointer-events: none;
 }
 
 /* ── Mobile top bar: fixed; moved only by lib/mobileShell/chrome ── */
@@ -372,6 +367,11 @@
   color: var(--ink-muted);
 }
 
+.topBarControls .overflowButton {
+  min-inline-size: 48px;
+  min-block-size: 48px;
+}
+
 /* An open inspector stays pressed; ties :hover (sticky on touch) and wins by order. */
 .topBarButton.topBarButtonActive {
   background: var(--surface-active);
@@ -390,13 +390,15 @@
 
 .statusMarker {
   position: absolute;
-  top: calc(var(--space-3) - var(--stroke-hairline));
-  right: calc(var(--space-3) - var(--stroke-hairline));
+  /* Keep the dot in place inside the overflow button's new 1px border. */
+  top: calc(var(--space-3) - var(--stroke-hairline) - 1px);
+  right: calc(var(--space-3) - var(--stroke-hairline) - 1px);
   width: calc(var(--space-1) + 2 * var(--stroke-hairline));
   height: calc(var(--space-1) + 2 * var(--stroke-hairline));
   border: var(--stroke-hairline) solid var(--surface-2);
   border-radius: 50%;
   background: var(--accent);
+  pointer-events: none;
 }
 
 @media (forced-colors: active) {
@@ -425,14 +427,15 @@
 
   .statusMarker {
     border-color: Canvas;
-    background: Highlight;
+    background: currentColor;
     forced-color-adjust: none;
   }
 }
 
 /* Durations are already zero under reduced motion; only the hover lift remains. */
 @media (prefers-reduced-motion: reduce) {
-  .item:hover .icon {
+  .item:hover .icon,
+  .command:hover .icon {
     transform: none;
   }
 }
