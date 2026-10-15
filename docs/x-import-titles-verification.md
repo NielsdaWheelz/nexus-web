@@ -92,7 +92,7 @@ the approved `8e08` cursor/publication/fragments/title stayed byte-identical.
 three engagement rows, two completion facts and two overrides were conserved.
 
 complete review read all 65 native x items: 64 current strict snapshots and one
-approved retained-copy exception. every current title passed source/stamp/shape,
+approved retained-copy exception. all 64 current naming completions passed source/stamp/shape,
 one-generation and zero-tool checks. all six original content defects, 30 recovery
 parents and two children passed meaning review. the 32 new generations used
 53,508 input and 765 output tokens. two untouched old titles still reversed

@@ -114,8 +114,8 @@ one usable primary language hint guides naming; primary prose overrides it, and
 quoted/reply language never selects it. absent/conflicting hints imply no default.
 quoted claims are context, never assumed endorsement. absent context and undescribed
 images do not supply a subject. source instructions are untrusted evidence.
-labels preserve actor, speaker and listener roles as well as names; reported
-speech uses the speaker's possessive and distinguishes recipient/work relations.
+labels preserve actor, speaker and listener roles as well as names; any possessive
+for reported speech identifies the speaker, with recipient/work relations distinct.
 accepted
 generated labels are trimmed, nonblank, one line and at most 120 unicode code points;
 a standalone literal `null` string is invalid. actual json null successfully
