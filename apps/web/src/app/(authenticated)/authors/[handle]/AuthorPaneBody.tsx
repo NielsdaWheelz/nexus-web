@@ -25,7 +25,6 @@ import {
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
-import { absent, present } from "@/lib/api/presence";
 import { useChangeStamp } from "@/lib/api/changes";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import {
@@ -101,16 +100,14 @@ function authorError(error: unknown, title: string): FeedbackContent {
 
 function presentWork(work: ContributorWork): CollectionRowView {
   if (work.kind === "Media") {
-    const actionSubject = {
-      ref: assumeCanonicalResourceRef(work.actionSubject.ref),
-    };
-    return presentMedia(work.mediaSummary, {
-      id: actionSubject.ref,
+    const resourceRef = assumeCanonicalResourceRef(work.action_ref);
+    return presentMedia(work.media_summary, {
+      id: resourceRef,
       primary: {
         kind: "link",
         href: work.href,
       },
-      actionSubject,
+      resourceRef,
       selected: false,
     });
   }
@@ -118,9 +115,9 @@ function presentWork(work: ContributorWork): CollectionRowView {
     kind: "contributor_work",
     primary: { kind: "link", href: work.href, paneLabelHint: work.title },
     title: { text: work.title },
-    publicationDate: absent<string>(),
-    activity: absent<never>(),
-    exceptionalStatus: absent<never>(),
+    publicationDate: null,
+    activity: null,
+    exceptionalStatus: null,
     selected: false,
   } as const;
   if (work.kind === "ExternalWork") {
@@ -129,21 +126,21 @@ function presentWork(work: ContributorWork): CollectionRowView {
       id: work.href,
       mediaIdentity: "External",
       contributors: selectMediaAuthors(work.contributors),
-      context: absent(),
-      actionSubject: null,
+      context: null,
+      resourceRef: null,
     };
   }
-  const roles = work.roleFacts.map((fact) =>
+  const roles = work.role_facts.map((fact) =>
     contributorRoleLabel(fact.role, 1),
   );
   const text = [...new Set(roles), "Publication date unknown"].join(" · ");
-  const ref = assumeCanonicalResourceRef(work.actionSubject.ref);
+  const resourceRef = assumeCanonicalResourceRef(work.action_ref);
   return {
     ...row,
-    id: ref,
+    id: resourceRef,
     contributors: [],
-    context: present({ kind: "Text", text }),
-    actionSubject: { ref },
+    context: { kind: "Text", text },
+    resourceRef,
   };
 }
 
@@ -184,7 +181,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   const loaded = works.items;
   const summaries = useMediaSummaries(
     loaded.flatMap((work) =>
-      work.kind === "Media" ? [work.mediaSummary] : [],
+      work.kind === "Media" ? [work.media_summary] : [],
     ),
   );
   // A media work whose summary is no longer visible drops out.
@@ -192,10 +189,10 @@ function AuthorPane({ handle }: { readonly handle: string }) {
     () =>
       loaded.flatMap((work) => {
         if (work.kind !== "Media") return [presentWork(work)];
-        const summary = summaries.resolve(work.mediaSummary);
-        return summary.kind === "Absent"
+        const summary = summaries.resolve(work.media_summary);
+        return summary === null
           ? []
-          : [presentWork({ ...work, mediaSummary: summary.value })];
+          : [presentWork({ ...work, media_summary: summary })];
       }),
     [loaded, summaries],
   );
@@ -264,7 +261,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
 
   const ref =
     detail.status === "ready"
-      ? parseResourceRef(detail.data.actionSubject.ref)
+      ? parseResourceRef(detail.data.action_ref)
       : null;
   const contributorId = ref?.scheme === "contributor" ? ref.id : null;
   const linkedItems = useMemo(
@@ -292,7 +289,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   });
   useSetPaneLabel(
     detail.status === "ready"
-      ? detail.data.displayName
+      ? detail.data.display_name
       : detail.status === "failed"
         ? "Author"
         : null,
@@ -307,9 +304,9 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   }, [refetchDetail, refetchWorks]);
   usePaneChrome({
     query: queryControls,
-    actionSubject:
+    resourceRef:
       detail.status === "ready"
-        ? { ref: assumeCanonicalResourceRef(detail.data.actionSubject.ref) }
+        ? assumeCanonicalResourceRef(detail.data.action_ref)
         : undefined,
     refresh: {
       kind: "Refreshable",
@@ -369,7 +366,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
     );
   }
 
-  const { otherNames } = detail.data;
+  const { other_names: otherNames } = detail.data;
   return (
     <PaneSurface>
       <div className={styles.detail}>

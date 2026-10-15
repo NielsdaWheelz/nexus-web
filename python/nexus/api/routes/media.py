@@ -1,43 +1,23 @@
-"""Media catalog routes. Transport only: validate, call one service, envelope.
-
-``MediaOut.player_descriptor`` is the sole aliased field on this wire, so every
-route that serializes one dumps ``by_alias=True``.
-"""
+"""Media routes. Transport only: validate, call one service, envelope."""
 
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
-from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.responses import Data, ok
+from nexus.logging import get_request_id
+from nexus.responses import Data
 from nexus.schemas.contributors import MediaAuthorsOut, MediaAuthorsPutRequest
-from nexus.schemas.library import LibraryPlacementOptionOut
-from nexus.schemas.media import (
-    MediaDeleteResult,
-    MediaLibrariesRequest,
-    MediaOut,
-    RefreshSourceRequest,
-    SourceRefreshAdmission,
-)
+from nexus.schemas.media import MediaOut
 from nexus.schemas.media_summary import (
     MediaSummaryResolutionOut,
     ResolvedMediaSummariesOut,
     ResolveMediaSummariesIn,
 )
-from nexus.schemas.metadata_enrichment import (
-    MetadataEnrichmentAccepted,
-    MetadataEnrichmentRequest,
-    MetadataResultReviewed,
-    MetadataResultReviewRequest,
-)
-from nexus.schemas.presence import absent, present
-from nexus.services import contributors as contributors_service
-from nexus.services import library_entries, media_source_ingest, metadata_dispatch, metadata_reviews
-from nexus.services import media as media_service
-from nexus.services import media_deletion as media_deletion_service
+from nexus.schemas.metadata_enrichment import MetadataEnrichmentAccepted, MetadataEnrichmentRequest
+from nexus.services import contributors, media, media_deletion, metadata_operations
 
 router = APIRouter(tags=["media"])
 
@@ -48,161 +28,61 @@ ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 def resolve_media_summaries(
     body: ResolveMediaSummariesIn, viewer: ViewerDep, db: RepeatableReadDbSession
 ) -> Data[ResolvedMediaSummariesOut]:
-    summaries = {
-        media.id: media.summary
-        for media in media_service.list_collection_media_for_viewer_by_ids(
-            db, viewer_id=viewer.user_id, media_ids=body.media_ids
-        )
-    }
-    return Data(
-        data=ResolvedMediaSummariesOut(
-            items=[
-                MediaSummaryResolutionOut(
-                    media_id=media_id,
-                    summary=present(summaries[media_id]) if media_id in summaries else absent(),
-                )
-                for media_id in body.media_ids
-            ]
-        )
-    )
-
-
-@router.get("/media")
-def list_media(
-    viewer: ViewerDep,
-    db: DbSession,
-    kind: str | None = Query(
-        default=None,
-        description="Comma-separated media kind filter (web_article, epub, pdf, video, podcast_episode)",
-    ),
-    search: str | None = Query(default=None, description="Optional title substring filter"),
-    cursor: str | None = Query(default=None, description="Pagination cursor"),
-    limit: int = Query(default=50, ge=1, le=200, description="Maximum results per page"),
-) -> dict:
-    media_list, next_cursor = media_service.list_visible_media(
-        db=db, viewer_id=viewer.user_id, kind=kind, search=search, cursor=cursor, limit=limit
-    )
-    return {**ok(media_list, by_alias=True), "page": {"next_cursor": next_cursor}}
+    """Input order; an id the viewer cannot read resolves to null."""
+    found = media.media_summaries(db, viewer_id=viewer.user_id, media_ids=body.media_ids)
+    items = [
+        MediaSummaryResolutionOut(media_id=media_id, summary=found.get(media_id))
+        for media_id in body.media_ids
+    ]
+    return Data(data=ResolvedMediaSummariesOut(items=items))
 
 
 @router.get("/media/{media_id}")
 def get_media(media_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession) -> Data[MediaOut]:
-    """404 if the media does not exist or the viewer cannot read it."""
-    return Data(data=media_service.get_media_for_viewer(db, viewer.user_id, media_id))
+    """404 when the media does not exist or the viewer cannot read it."""
+    return Data(data=media.get_media_for_viewer(db, viewer.user_id, media_id))
 
 
 @router.post("/media/{media_id}/metadata-enrichment", status_code=202)
 def enrich_media_metadata(
-    media_id: UUID,
-    body: MetadataEnrichmentRequest,
-    viewer: ViewerDep,
-    db: DbSession,
-    request: Request,
+    media_id: UUID, body: MetadataEnrichmentRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[MetadataEnrichmentAccepted]:
+    """A resend after the job landed answers that job (it is newer than ``expected_job_id``)."""
     return Data(
-        data=metadata_dispatch.admit_metadata_enrichment(
+        data=metadata_operations.admit_metadata_enrichment(
             db,
             viewer_id=viewer.user_id,
             media_id=media_id,
-            request=body,
-            request_id=getattr(request.state, "request_id", None),
+            expected_job_id=body.expected_job_id,
+            request_id=get_request_id(),
         )
     )
 
 
-@router.post("/media/{media_id}/metadata-enrichment/{job_id}/review")
+@router.post("/media/{media_id}/metadata-enrichment/{job_id}/review", status_code=204)
 def review_media_metadata_result(
-    media_id: UUID,
-    job_id: UUID,
-    body: MetadataResultReviewRequest,
-    viewer: ViewerDep,
-    db: DbSession,
-) -> Data[MetadataResultReviewed]:
-    return Data(
-        data=metadata_reviews.review_metadata_result(
-            db, viewer_id=viewer.user_id, media_id=media_id, job_id=job_id, request=body
-        )
+    media_id: UUID, job_id: UUID, viewer: ViewerDep, db: DbSession
+) -> Response:
+    """Idempotent: an existing review stands."""
+    metadata_operations.review_metadata_result(
+        db, viewer_id=viewer.user_id, media_id=media_id, job_id=job_id
     )
+    return Response(status_code=204)
 
 
 @router.put("/media/{media_id}/authors")
 def put_media_authors(
     media_id: UUID, request: MediaAuthorsPutRequest, viewer: ViewerDep
 ) -> Data[MediaAuthorsOut]:
-    """The contributors facade owns its own session, re-check, replay and mutation."""
-    result = contributors_service.put_media_authors(
-        viewer=viewer, media_id=media_id, request=request
-    )
-    return Data(data=result)
-
-
-@router.delete("/media/{media_id}")
-def remove_media(
-    media_id: UUID, request: Request, viewer: ViewerDep, db: DbSession
-) -> Data[MediaDeleteResult]:
-    if request.query_params:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Whole-resource media deletion does not accept query parameters",
-        )
-    return Data(data=media_deletion_service.remove_media_for_viewer(db, viewer.user_id, media_id))
-
-
-@router.get("/media/{media_id}/libraries")
-def get_media_libraries(
-    media_id: UUID, viewer: ViewerDep, db: DbSession
-) -> Data[list[LibraryPlacementOptionOut]]:
-    rows = library_entries.list_item_libraries(
-        db, viewer_id=viewer.user_id, target=library_entries.media_target(media_id)
-    )
-    return Data(data=rows)
-
-
-@router.post("/media/{media_id}/libraries", status_code=204)
-def add_media_libraries(
-    media_id: UUID, body: MediaLibrariesRequest, viewer: ViewerDep, db: DbSession
-) -> Response:
-    library_entries.ensure_media_in_libraries_for_viewer(
-        db, viewer.user_id, media_id, body.library_ids
-    )
-    return Response(status_code=204)
-
-
-@router.put("/media/{media_id}/saved-in-nexus", status_code=204)
-def add_media_saved_in_nexus(media_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
-    library_entries.ensure_media_saved_in_nexus_for_viewer(
-        db, viewer_id=viewer.user_id, media_id=media_id
-    )
-    return Response(status_code=204)
-
-
-@router.delete("/media/{media_id}/saved-in-nexus", status_code=204)
-def remove_media_saved_in_nexus(media_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
-    library_entries.ensure_media_absent_from_saved_in_nexus_for_viewer(
-        db, viewer_id=viewer.user_id, media_id=media_id
-    )
-    return Response(status_code=204)
-
-
-@router.delete("/media/{media_id}/libraries/{library_id}", status_code=204)
-def remove_media_library(
-    media_id: UUID, library_id: UUID, viewer: ViewerDep, db: DbSession
-) -> Response:
-    library_entries.remove_media_from_library(db, viewer.user_id, media_id, library_id)
-    return Response(status_code=204)
-
-
-@router.post("/media/{media_id}/refresh", status_code=202)
-def refresh_media_source(
-    media_id: UUID, body: RefreshSourceRequest, viewer: ViewerDep, db: DbSession, request: Request
-) -> Data[SourceRefreshAdmission]:
+    """The contributors facade owns its own session, re-check and mutation."""
     return Data(
-        data=media_source_ingest.refresh_source_for_viewer(
-            db=db,
-            viewer_id=viewer.user_id,
-            media_id=media_id,
-            request_id=getattr(request.state, "request_id", None),
-            client_mutation_id=body.client_mutation_id,
-            expected_attempt_id=body.expected_attempt_id,
-        )
+        data=contributors.put_media_authors(viewer=viewer, media_id=media_id, request=request)
     )
+
+
+@router.delete("/media/{media_id}", status_code=204)
+def remove_media(media_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
+    """Idempotent: a media the viewer cannot read is already removed (204); one reachable
+    only through a system library is 403."""
+    media_deletion.remove_media_for_viewer(db, viewer.user_id, media_id)
+    return Response(status_code=204)

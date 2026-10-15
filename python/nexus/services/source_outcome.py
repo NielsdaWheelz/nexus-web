@@ -1,10 +1,9 @@
 """Native source facts and their one public job-result projection."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal, TypedDict
 from uuid import UUID
 
-from nexus.schemas.presence import Presence, Present, absent
 from nexus.services.contributor_taxonomy import ContributorObservationBatch, ObservedRoleSlices
 from nexus.services.transcripts.request_reason import TranscriptRequestReason
 
@@ -41,11 +40,11 @@ type SourceContributorObservation = tuple[UUID, ObservedRoleSlices, str]
 class SourceRunOutcome:
     diagnostics: SourceDiagnostics
     observations: tuple[SourceContributorObservation, ...] = ()
-    superseded_by_media_id: Presence[UUID] = field(default_factory=absent)
+    superseded_by_media_id: UUID | None = None
     additional_reindex_media_ids: tuple[UUID, ...] = ()
-    metadata_enrichment: Presence[bool] = field(default_factory=absent)
-    transcript_request_reason: Presence[TranscriptRequestReason] = field(default_factory=absent)
-    pdf_has_text: Presence[bool] = field(default_factory=absent)
+    metadata_enrichment: bool | None = None
+    transcript_request_reason: TranscriptRequestReason | None = None
+    pdf_has_text: bool | None = None
 
 
 def source_contributor_observations(
@@ -60,14 +59,14 @@ def source_contributor_observations(
 def source_outcome_to_job_result(outcome: SourceRunOutcome) -> dict[str, object]:
     """Serialize the existing operator protocol, excluding every private fact."""
     result: dict[str, object] = dict(outcome.diagnostics)
-    if isinstance(outcome.superseded_by_media_id, Present):
-        result["superseded_by_media_id"] = str(outcome.superseded_by_media_id.value)
-    if isinstance(outcome.metadata_enrichment, Present):
-        result["metadata_enrichment"] = outcome.metadata_enrichment.value
-    if isinstance(outcome.transcript_request_reason, Present):
-        result["transcript_request_reason"] = outcome.transcript_request_reason.value
-    if isinstance(outcome.pdf_has_text, Present):
-        result["has_text"] = outcome.pdf_has_text.value
-        if not outcome.pdf_has_text.value:
+    if outcome.superseded_by_media_id is not None:
+        result["superseded_by_media_id"] = str(outcome.superseded_by_media_id)
+    if outcome.metadata_enrichment is not None:
+        result["metadata_enrichment"] = outcome.metadata_enrichment
+    if outcome.transcript_request_reason is not None:
+        result["transcript_request_reason"] = outcome.transcript_request_reason
+    if outcome.pdf_has_text is not None:
+        result["has_text"] = outcome.pdf_has_text
+        if not outcome.pdf_has_text:
             result["warning_error_code"] = "E_PDF_TEXT_UNAVAILABLE"
     return result

@@ -1,7 +1,12 @@
 // The oracle transport: ask, and follow one reading until it leaves pending.
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { sseClientDirect } from "@/lib/api/sse-client";
+import {
+  apiFetch,
+  apiTransportFeedback,
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
+import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 
 export type OracleReading = Schema<"OracleReadingOut">;
@@ -47,11 +52,11 @@ export function watchReading(
   onState: (reading: OracleReading) => void,
   onLost: () => void,
 ): () => void {
-  return sseClientDirect<OracleReading, OracleReading>({
-    path: `/stream/oracle-readings/${encodeURIComponent(id)}/events`,
+  return openStream<OracleReading, OracleReading>({
+    path: `/api/stream/oracle-readings/${encodeURIComponent(id)}/events`,
     decode: (type, reading) => {
       if (type !== "state" && type !== "done")
-        throw new Error(`Unknown SSE event type: ${type}`);
+        throw new Error(`Unknown oracle event type: ${type}`);
       return reading;
     },
     isTerminal: (reading) =>
@@ -61,15 +66,20 @@ export function watchReading(
   });
 }
 
-/** A lost connection or a missing reading is a modeled failure; anything else is a defect. */
+/**
+ * Copy for a modeled failure: a missing reading, a transport failure (offline,
+ * gateway, rate limit, a stale build: every request's copy), or any other
+ * answer ("Something went wrong", with its request id). A defect throws.
+ */
 export function failureCopy(error: unknown, title: string): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  const message =
-    error.code === "E_NETWORK"
-      ? "Check your connection and retry."
-      : error.code === "E_NOT_FOUND"
-        ? "This reading is no longer available."
-        : null;
-  if (message === null) throw error;
-  return { tone: "Danger", title, message, requestId: error.requestId };
+  const { requestId } = error;
+  if (error.code === "E_NOT_FOUND") {
+    const message = "This reading is no longer available.";
+    return { tone: "Danger", title, message, requestId };
+  }
+  const copy = apiTransportFeedback(error, title);
+  if (copy !== null) return copy;
+  const message = "Something went wrong. Try again.";
+  return { tone: "Danger", title, message, requestId };
 }

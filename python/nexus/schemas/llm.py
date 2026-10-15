@@ -8,7 +8,6 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from nexus.config import GenerationApiProvider
-from nexus.schemas.presence import Presence
 
 
 class _Frozen(BaseModel):
@@ -148,13 +147,13 @@ class GenerationModelRow(_Frozen):
     key: ModelKey
     label: str = Field(min_length=1, max_length=256)
     description: str = Field(min_length=1, max_length=1_000)
-    source_context_window: Presence[int]
-    source_max_output_tokens: Presence[int]
+    source_context_window: int | None
+    source_max_output_tokens: int | None
     effective_chat_context_budget_tokens: int = Field(gt=0)
     effective_chat_output_budget_tokens: int = Field(gt=0)
     readiness: Readiness
     input_modalities: tuple[Literal["text", "image"], ...] = Field(min_length=1)
-    source_default_reasoning: Presence[str]
+    source_default_reasoning: str | None
     reasoning: tuple[GenerationReasoningRow, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -163,7 +162,7 @@ class GenerationModelRow(_Frozen):
         if len(set(keys)) != len(keys):
             raise ValueError("generation reasoning rows must be unique")
         default = self.source_default_reasoning
-        if default.kind == "Present" and default.value not in keys:
+        if default is not None and default not in keys:
             raise ValueError("source default must name a reasoning row")
         return self
 
@@ -200,7 +199,7 @@ class RunSelectionOut(_Frozen):
 
 class InvalidGenerationSelection(_Frozen):
     code: Literal["InvalidGenerationSelection"] = "InvalidGenerationSelection"
-    field: Presence[str]
+    field: str | None
     explanation: str = Field(min_length=1, max_length=1_000)
 
 

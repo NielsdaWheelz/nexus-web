@@ -15,7 +15,6 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Contributor, ContributorAlias, ContributorCredit, ContributorExternalId
-from nexus.schemas.presence import Present
 from nexus.services.contributor_taxonomy import (
     CONTRIBUTOR_ROLES_ORDERED,
     ContributorObservation,
@@ -101,16 +100,14 @@ def plan_observation_credits(
     """
     if not credits:
         return ObservationIdentityPlan((), (), ())
-    handles = {
-        c.contributor_handle.value for c in credits if isinstance(c.contributor_handle, Present)
-    }
+    handles = {c.contributor_handle for c in credits if c.contributor_handle is not None}
     bound = {
         row.handle: ResolvedCredit(row.id, row.handle, row.display_name)
         for row in db.scalars(select(Contributor).where(Contributor.handle.in_(handles)))
     }
     if set(bound) != handles:
         raise ContributorObservationRejected("A bound contributor no longer exists")
-    if any(isinstance(c.contributor_handle, Present) and c.identity_key for c in credits):
+    if any(c.contributor_handle is not None and c.identity_key for c in credits):
         raise ContributorObservationRejected(
             "A contributor handle cannot be combined with an identity key"
         )
@@ -169,8 +166,8 @@ def plan_observation_credits(
     for match_key, pair, credit in zip(match_keys, pairs, credits, strict=True):
         winner = name_winner.get(match_key) or alias_winner.get(match_key)
         winner_keys = keys_of.get(planned_contributor_identity(winner), {}) if winner else {}
-        if isinstance(credit.contributor_handle, Present):
-            chosen: PlannedContributor = bound[credit.contributor_handle.value]
+        if credit.contributor_handle is not None:
+            chosen: PlannedContributor = bound[credit.contributor_handle]
         elif pair in key_owner:
             chosen = key_owner[pair]
         elif pair is not None and winner_keys.get(pair[0], set()) - {pair[1]}:
@@ -208,12 +205,17 @@ def materialize_observation_credits(
     return resolved
 
 
-def create_contributor(db: Session, *, display_name: str) -> ResolvedCredit:
-    """A new person with a resolving display alias, at the base handle while it is free."""
+def create_contributor(
+    db: Session, *, display_name: str, contributor_id: UUID | None = None
+) -> ResolvedCredit:
+    """A new person with a resolving display alias, at the base handle while it is free;
+    it takes ``contributor_id`` when given (an author editor's client-minted id)."""
     handle = new_contributor_handle(display_name, distinct=False)
     if db.scalar(select(Contributor.id).where(Contributor.handle == handle)) is not None:
         handle = new_contributor_handle(display_name, distinct=True)
     contributor = Contributor(handle=handle, display_name=display_name)
+    if contributor_id is not None:
+        contributor.id = contributor_id
     db.add(contributor)
     db.flush()  # assigns the id; a uniqueness race retries the whole operation
     ensure_alias(db, contributor_id=contributor.id, alias=display_name, resolves_identity=True)

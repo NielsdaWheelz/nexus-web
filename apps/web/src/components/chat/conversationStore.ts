@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { apiCommand204, apiFetch, type ApiPath } from "@/lib/api/client";
-import { requestWithRetry } from "@/lib/api/retryPolicy";
+import { apiFetch, type ApiPath } from "@/lib/api/client";
+import { requestWithRetry } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { publishChange } from "@/lib/api/changes";
 import {
@@ -42,7 +42,6 @@ export type ChatState = Readonly<{
   /** Assistant ids with a rerun or regenerate in flight. */
   busy: ReadonlySet<string>;
   error: FeedbackContent | null;
-  reloadRequestId: string | null;
   /** Rethrown by the pane during render. */
   defect: { error: unknown } | null;
   /** Bumps whenever a read settles a pending answer (its context refs commit with it). */
@@ -63,7 +62,6 @@ export function createChatStore(conversationId: string | null) {
     live: {},
     busy: new Set(),
     error: null,
-    reloadRequestId: null,
     defect: null,
     contextVersion: 0,
   };
@@ -94,8 +92,7 @@ export function createChatStore(conversationId: string | null) {
     if (live) setLive(id, { ...live, link });
   };
   const report = (failure: ChatFailure) => {
-    if (failure.kind === "Reload") set({ reloadRequestId: failure.requestId });
-    else if (failure.kind === "Defect")
+    if (failure.kind === "Defect")
       set({ defect: { error: failure.error } });
     else if (failure.kind === "Feedback") set({ error: failure.feedback });
   };
@@ -253,7 +250,7 @@ export function createChatStore(conversationId: string | null) {
       set({ leafId, error: null });
       const path = `/api/conversations/${conversationId}/active-path` as const;
       const body = JSON.stringify({ active_leaf_message_id: leafId });
-      const post = () => apiCommand204(path, { method: "POST", body });
+      const post = () => apiFetch<void>(path, { method: "POST", body });
       // no snapshot to restore on failure: the server tree is the truth
       if (!(await attempt("This fork couldn’t be opened.", post)))
         await store.load();
@@ -372,7 +369,7 @@ export function createChatStore(conversationId: string | null) {
           method: "DELETE",
         });
         publishChange("Chats");
-        if (!data.conversationDeleted) await store.load();
+        if (!data.conversation_deleted) await store.load();
         return data;
       } catch (error) {
         report(chatFailure(error, "This message couldn’t be deleted."));
@@ -383,7 +380,7 @@ export function createChatStore(conversationId: string | null) {
     /** True once saved; a failure is reported and leaves the title as it was. */
     renameFork: (userMessageId: string, title: string | null) =>
       attempt("This fork couldn’t be renamed.", async () => {
-        await apiCommand204(`/api/messages/${userMessageId}/fork-title`, {
+        await apiFetch<void>(`/api/messages/${userMessageId}/fork-title`, {
           method: "PATCH",
           body: JSON.stringify({ title }),
         });

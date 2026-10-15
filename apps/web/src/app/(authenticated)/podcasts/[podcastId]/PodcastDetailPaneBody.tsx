@@ -12,7 +12,7 @@ import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import PodcastOverview from "@/components/podcasts/PodcastOverview";
-import { podcastViewHref } from "@/lib/podcasts/view";
+import { viewHref } from "@/lib/collections/view";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import RadioGroup from "@/components/ui/RadioGroup";
@@ -22,9 +22,8 @@ import PaneSection from "@/components/ui/PaneSection";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
-import { presenceValueOr } from "@/lib/api/presence";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
-import { listLibraryPlacements } from "@/lib/libraries/libraryPlacement";
+import { placements as libraryPlacements } from "@/lib/libraries/api";
 import {
   useMediaQueryRevision,
   useMediaSummaries,
@@ -115,8 +114,8 @@ const UPDATES: Readonly<Record<PodcastSubscription["sync_status"], string>> = {
 
 function backfillFact({
   state,
-  processedCount,
-  addedCount,
+  processed_count: processedCount,
+  added_count: addedCount,
 }: PodcastSubscription["backfill"]) {
   const label =
     state === "Running"
@@ -128,7 +127,7 @@ function backfillFact({
 }
 
 function subscriptionFacts(subscription: PodcastSubscription) {
-  const speed = presenceValueOr(subscription.default_playback_speed, 1);
+  const speed = subscription.default_playback_speed ?? 1;
   const queue = subscription.auto_queue ? "on" : "off";
   return [
     UPDATES[subscription.sync_status],
@@ -142,8 +141,8 @@ const sameLifecycle = (
   snapshot: PodcastLifecycle,
 ) =>
   subscription !== null &&
-  subscription.sync_status === snapshot.syncStatus &&
-  (["id", "state", "processedCount", "addedCount"] as const).every(
+  subscription.sync_status === snapshot.sync_status &&
+  (["id", "state", "processed_count", "added_count"] as const).every(
     (field) => subscription.backfill[field] === snapshot.backfill[field],
   );
 
@@ -170,9 +169,9 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     load: async (signal) => {
       const [detail, placements] = await Promise.all([
         getPodcastDetail(podcastId, signal),
-        listLibraryPlacements({ kind: "Podcast", id: podcastId }, { signal }),
+        libraryPlacements({ kind: "Podcast", id: podcastId }, signal),
       ]);
-      const placed = placements.filter((row) => row.relation.kind !== "Absent");
+      const placed = placements.filter((row) => row.relation !== "Absent");
       return { detail, libraryCount: placed.length };
     },
   });
@@ -191,15 +190,15 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   });
   const loaded = episodes.status === "ready" ? episodes.items : null;
   const summaries = useMediaSummaries(
-    (loaded ?? []).map((episode) => episode.mediaSummary),
+    (loaded ?? []).map((episode) => episode.media_summary),
   );
   const resolved = useMemo(
     () =>
       (loaded ?? []).flatMap((episode) => {
-        const summary = summaries.resolve(episode.mediaSummary);
-        return summary.kind === "Absent"
+        const summary = summaries.resolve(episode.media_summary);
+        return summary === null
           ? []
-          : [{ ...episode, mediaSummary: summary.value }];
+          : [{ ...episode, media_summary: summary }];
       }),
     [loaded, summaries],
   );
@@ -260,7 +259,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
       const visible = resolved.filter((episode) =>
         matchesPaneFilterQuery(
           text,
-          mediaListFilterFields(episode.mediaSummary),
+          mediaListFilterFields(episode.media_summary),
         ),
       );
       return listRowStatus(episodes, resolved.length, visible.length, {
@@ -277,7 +276,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const replaceView = useCallback(
     (changes: Readonly<Record<string, string | null>>) =>
       router.replace(
-        podcastViewHref(`/podcasts/${podcastId}`, params, changes),
+        viewHref(`/podcasts/${podcastId}`, params, changes),
         {
           viewTransition: { kind: "collection-reflow" },
         },
@@ -311,7 +310,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     />,
   };
   const execute = useMemo(
-    () => podcastRefresh({ kind: "Podcast", podcastId }),
+    () => podcastRefresh({ kind: "Podcast", podcast_id: podcastId }),
     [podcastId],
   );
   const connections = useMemo(
@@ -337,9 +336,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
         : head.status === "loading"
           ? { kind: "Resolving" }
           : undefined,
-    actionSubject: {
-      ref: canonicalResourceRef({ scheme: "podcast", id: podcastId }),
-    },
+    resourceRef: canonicalResourceRef({ scheme: "podcast", id: podcastId }),
     header: {
       kind: "Section",
       meta: complete
@@ -362,7 +359,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const text = filterRows.query.trim();
   const known = STATES.find((option) => option.value === state)?.value;
   const visible = resolved.filter((episode) =>
-    matchesPaneFilterQuery(text, mediaListFilterFields(episode.mediaSummary)),
+    matchesPaneFilterQuery(text, mediaListFilterFields(episode.media_summary)),
   );
   return (
     <div className={styles.page}>
@@ -376,9 +373,9 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
             subscribed={subscription !== null}
             commit={async (acquisition) => {
               const result = await subscribeToPodcast({
-                target: { kind: "Canonical", podcastId },
+                target: { kind: "Canonical", podcast_id: podcastId },
                 namedLibraryIds: acquisition.namedLibraryIds,
-                replacementConfirmation: acquisition.replacementConfirmation,
+                replaceEpisodes: acquisition.replaceEpisodes,
               });
               return { href: result.href };
             }}

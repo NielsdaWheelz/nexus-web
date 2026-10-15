@@ -1,0 +1,156 @@
+.trigger {
+  display: grid;
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--size-lg);
+  padding: var(--space-2) 0;
+  border: 0;
+  color: var(--ink-muted);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.trigger:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.trigger:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.label {
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trigger svg {
+  transition: transform var(--duration-fast) var(--ease-glide);
+}
+
+.trigger svg[data-open="true"] {
+  transform: rotate(180deg);
+}
+
+@media (any-pointer: coarse) {
+  .trigger {
+    min-height: var(--size-xl);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trigger svg {
+    transition: none;
+  }
+}
+
+/* Checkbox mode: several items, some libraries partial. */
+.mixed {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.searchHeader {
+  flex: 0 0 auto;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--edge-subtle);
+}
+
+.search {
+  width: 100%;
+  min-height: var(--size-lg);
+  font-size: 16px;
+}
+
+.search:focus-visible {
+  outline: var(--focus-ring-width) solid var(--accent);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.choices {
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-1);
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--size-lg);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.choice:hover {
+  background: var(--surface-hover);
+}
+
+.choice:focus-within {
+  outline: var(--focus-ring-width) solid var(--accent);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.choice:has(input:disabled) {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.choice input {
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action {
+  width: 100%;
+  height: auto;
+  min-height: var(--size-lg);
+  justify-content: flex-start;
+  padding: var(--space-2);
+  overflow-wrap: anywhere;
+  text-align: left;
+  white-space: normal;
+}
+
+.empty {
+  margin: 0;
+  padding: var(--space-3);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+}
+
+@media (any-pointer: coarse) {
+  .search,
+  .choice,
+  .action {
+    min-height: var(--size-xl);
+  }
+}

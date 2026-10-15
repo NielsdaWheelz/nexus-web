@@ -6,14 +6,12 @@
 import { useEffect, useState } from "react";
 import { useFeedback } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { absent } from "@/lib/api/presence";
-import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
-import { useResource } from "@/lib/api/useResource";
+import { apiFetch, apiTransportFeedback, isApiError } from "@/lib/api/client";
+import { usePaneFreeServerValue, useSettled, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { searchOpenableResources } from "@/lib/resources/openableResources";
-import type { ResourceItem } from "@/lib/resources/resourceItems";
+import { searchOpenableResources } from "@/lib/resources/items";
+import type { ResourceItem } from "@/lib/resources/items";
 import { SEARCH_KINDS } from "@/lib/search/kinds";
 import { fetchSearchResultPage } from "@/lib/search/searchApi";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
@@ -34,57 +32,53 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   const feedback = useFeedback();
   const [historyWanted, setHistoryWanted] = useState(false);
   const [revision, setRevision] = useState(0);
-  const [openablesRetry, setOpenablesRetry] = useState(0);
-  const [ownedRetry, setOwnedRetry] = useState(0);
   const [showBusy, setShowBusy] = useState(false);
-  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const fail = useThrowLater();
   useEffect(() => {
     if (open) setHistoryWanted(true);
   }, [open]);
 
   const text = query.text;
-  const base = useResource<History>({
-    cacheKey: historyWanted ? `${accountId}:nexus-history:${revision}` : null,
+  const base = usePaneFreeServerValue<History>({
+    key: historyWanted ? `${accountId}:nexus-history:${revision}` : null,
+    stale: "",
     load: (signal) => apiFetch<History>("/api/me/nexus-history", { signal }),
   });
 
+  // Each search reads once its text has held still, and shows only for that text.
   const openablesId = open && text ? text : null;
-  const openables = useDebouncedFetch(
-    openablesId === null ? null : `${openablesId}\0${openablesRetry}`,
-    (signal) => searchOpenableResources({ q: text, schemes: absent(), signal }),
-    { debounceMs: text.length === 1 ? 0 : 80, identity: openablesId },
-  );
-  const openablesSettled =
-    openablesId !== null && (openables.dataIdentity === openablesId || openables.errorIdentity === openablesId);
+  const openablesAsked = useSettled(openablesId, text.length === 1 ? 0 : 80);
+  const openables = usePaneFreeServerValue({
+    key: openablesAsked === openablesId ? openablesId : null,
+    stale: "",
+    load: (signal) => searchOpenableResources({ q: text, schemes: null, signal }),
+  });
+  const openablesSettled = openables.status !== "loading";
   const ownedId = open && text.length >= 2 && openablesSettled ? text : null;
-  const owned = useDebouncedFetch(
-    ownedId === null ? null : `${ownedId}\0${ownedRetry}`,
-    (signal) => {
+  const ownedAsked = useSettled(ownedId, 160);
+  const owned = usePaneFreeServerValue({
+    key: ownedAsked === ownedId ? ownedId : null,
+    stale: "",
+    load: (signal) => {
       const kinds = query.searchQuery.requestedKinds ?? new Set(SEARCH_KINDS);
       return fetchSearchResultPage(
         { ...query.searchQuery, requestedKinds: new Set([...kinds].filter((kind) => kind !== "web")) },
         { limit: 40, cursor: null, signal },
       );
     },
-    { debounceMs: 160, identity: ownedId },
-  );
-  const ownedSettled = ownedId !== null && (owned.dataIdentity === ownedId || owned.errorIdentity === ownedId);
+  });
+  const ownedSettled = owned.status !== "loading";
   const typedId = openablesId !== null && (text.length === 1 ? openablesSettled : ownedSettled) ? text : null;
-  const typed = useResource<History>({
-    cacheKey: typedId === null ? null : `${accountId}:nexus-history:${revision}:${typedId}`,
+  const typed = usePaneFreeServerValue<History>({
+    key: typedId === null ? null : `${accountId}:nexus-history:${revision}:${typedId}`,
+    stale: "",
     load: (signal) => apiFetch<History>(`/api/me/nexus-history?${new URLSearchParams({ query: text })}`, { signal }),
   });
 
-  const openablesError = openables.errorIdentity === openablesId ? openables.error : null;
-  const ownedError = owned.errorIdentity === ownedId ? owned.error : null;
-  const contractDefect = [openablesError, ownedError].find(
-    (error) =>
-      error !== null && (!isApiError(error) || isSameSystemApiDefect(error)),
-  );
-  if (contractDefect) throw contractDefect;
-  if (defect) throw defect.error;
+  const openablesError = openables.status === "failed" ? openables.error : null;
+  const ownedError = owned.status === "failed" ? owned.error : null;
 
-  const remoteBusy = openables.loading || owned.loading;
+  const remoteBusy = (openablesId !== null && !openablesSettled) || (ownedId !== null && !ownedSettled);
   useEffect(() => {
     if (!remoteBusy) {
       setShowBusy(false);
@@ -100,9 +94,9 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   const baseData = base.status === "ready" ? base.data.data : null;
   const typedFrecency = text && typed.status === "ready" ? typed.data.data.frecency_by_href : null;
 
-  /** Record an accepted selection now; a transport failure offers Retry with the same mutation id. */
-  const remember = (selection: Omit<Schema<"NexusSelectionRecordRequest">, "client_mutation_id">) => {
-    const body = JSON.stringify({ client_mutation_id: crypto.randomUUID(), ...selection });
+  /** Record an accepted selection now; a transport failure offers Retry (a retry after a lost answer counts twice). */
+  const remember = (selection: Schema<"NexusSelectionRecordRequest">) => {
+    const body = JSON.stringify(selection);
     const send = () =>
       apiFetch<ApiJson<"/me/nexus-selections", "post">>("/api/me/nexus-selections", { method: "POST", keepalive: true, body }).then(
         () => {
@@ -111,12 +105,10 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
         },
         (error: unknown) => {
           if (handleUnauthenticatedApiError(error)) return;
-          const content = isApiError(error) && TRANSPORT_CODES.includes(error.code)
-            ? apiTransportFeedback(error, "Nexus history wasn’t saved")
-            : null;
+          const content = isApiError(error) ? apiTransportFeedback(error, "Nexus history wasn’t saved") : null;
           if (content === null) {
-            // justify-defect: history admits only auth recovery and declared transport feedback.
-            setDefect({ error });
+            // justify-defect: history admits only auth recovery and transport feedback (a stale build too).
+            fail({ error });
             return;
           }
           feedback.publish({
@@ -142,12 +134,12 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   return {
     recent: baseData?.recent ?? EMPTY_RECENT,
     frecency: typedFrecency ?? baseData?.frecency_by_href ?? EMPTY_FRECENCY,
-    openables: (openables.dataIdentity === openablesId ? openables.data?.items : null) ?? EMPTY_ITEMS,
-    search: (owned.dataIdentity === ownedId ? owned.data?.rows : null) ?? EMPTY_SEARCH,
+    openables: openables.status === "ready" ? openables.data.items : EMPTY_ITEMS,
+    search: owned.status === "ready" ? owned.data.rows : EMPTY_SEARCH,
     busy: showBusy && remoteBusy,
     pending: remoteBusy,
     failures,
-    retry: (source: NexusSource) => (source === "Openables" ? setOpenablesRetry : setOwnedRetry)((value) => value + 1),
+    retry: (source: NexusSource) => (source === "Openables" ? openables : owned).refetch(),
     remember,
   };
 }

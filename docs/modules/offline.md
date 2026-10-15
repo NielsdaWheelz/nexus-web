@@ -26,8 +26,8 @@ owns one route and one optional field.
 | bridge | `offline/OfflineBridge.kt` ⇄ `apps/web/src/lib/offline/bridge.ts` | `window.nexusDownloads` on the hosted and shelf origins |
 | router | `offline/ShelfRouter.kt` | serves `https://appassets.androidplatform.net/shelf/**`; 404s every other subresource while the shelf is the main document |
 | shelf | `apps/web/src/shelf/` (`Shelf.tsx`, `ShelfReader.tsx`) | the Downloads screen and the shared reader core over a copy; built by `bun run build:shelf` into the git-ignored `assets/shelf` |
-| hosted | `lib/actions/resourceActionMenu.tsx` (`Download`), `components/appnav/AccountMenu.tsx` | menu commands, *Downloads* entry, purge before sign-out |
-| server | `python/nexus/services/reading_copy.py`, `GET /stream/media/{id}/reading-copy`, `PUT /media/{id}/reader-state` + `expected_reader_generation` | builds copies; fences offline position writes |
+| hosted | `lib/actions/project.tsx` (`Download`), `components/appnav/AccountMenu.tsx` | menu commands, *Downloads* entry, purge before sign-out |
+| server | `python/nexus/services/reading_copy.py`, `POST /media/{id}/reading-copy`, `PUT /media/{id}/reader-state` + `expected_reader_generation` | builds copies; fences offline position writes |
 
 the player plays a ready episode from its file: `NexusPlaybackService` takes a
 lease (`store.open`) and plays `file://`, else streams.
@@ -46,9 +46,10 @@ lease (`store.open`) and plays `file://`, else streams.
   `If-Range` set to the first answer's strong ETag, appending only a 206 for
   exactly the rest of the recorded length; anything else restarts from zero,
   and a server without a strong ETag always restarts. a reading copy checks
-  `GET /api/me` against the bound account, mints `POST /api/stream-token`,
-  fetches `{stream_base_url}/stream/media/{id}/reading-copy` with the bearer,
-  unzips into staging (zip-slip guard, CRC, drained length), reads
+  `GET /api/me` against the bound account, asks
+  `POST /api/media/{id}/reading-copy` for a stored copy, fetches its signed url
+  without credentials, unzips into staging (zip-slip guard, CRC, drained
+  length), reads
   `GET /api/media/{id}/reader-state` as its baseline, and publishes by rename.
 - **read offline.** cold start without a validated network, the "could not
   connect" terminal and the account menu's *Downloads* all load the shelf.
@@ -105,11 +106,14 @@ without resuming unread; genuine equal-position activity at the matching base
 still sends a real save. The reader adopts `Pending → Canonical` even when the
 revision is unchanged.
 
-**reading copy** `GET /stream/media/{id}/reading-copy`, `Authorization: Bearer
-<stream token>` → 200 `application/zip` with `Content-Length`,
-`Nexus-Reader-Generation`, `Cache-Control: private, no-store`; 401
-`E_STREAM_TOKEN_INVALID|EXPIRED`, 404 `E_MEDIA_NOT_FOUND`, 409
-`E_MEDIA_NOT_READY|E_READER_CONTENT_CHANGED`. members: `reader.json` =
+**reading copy** `POST /media/{id}/reading-copy` (the bff's copy lane: 280 s,
+`maxDuration = 300`) builds the zip, stores it at
+`media/{id}/reading-copies/{uuid}.zip` (no row owns it; the orphan sweep
+reclaims it after a day) and answers `{data: {url, expires_at, generation}}`:
+a signed url fetched without credentials, and the publication generation the
+copy was built from. 404 `E_MEDIA_NOT_FOUND`, 409
+`E_MEDIA_NOT_READY|E_READER_CONTENT_CHANGED`. a retry builds another copy.
+members: `reader.json` =
 `{media: {id, title, kind}, document: ReaderDocumentOut}`, the document as
 `GET /media/{id}/reader` builds it except that a pdf's `file.url` is the member
 `document.pdf` and web article images are text placeholders; plus

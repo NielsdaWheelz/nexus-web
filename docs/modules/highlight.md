@@ -14,8 +14,9 @@ Backend owners are `python/nexus/services/highlights.py`,
 `python/nexus/schemas/highlights.py`.
 
 Frontend owners are the hosted media pane's `annotations.ts` (reads and
-writes), `useAnnotationVerbs.ts` and `SelectionDock.tsx` (the verbs), and
-`apps/web/src/lib/highlights/actionIntent.ts` (app-global highlight intents).
+writes) and `useAnnotationVerbs.ts` and `SelectionDock.tsx` (the verbs;
+`useAnnotationVerbs` also serves the highlight pane entries a resource menu
+hands the pane).
 Paint and hit-testing live in the reader module, and chat run assembly lives in
 the chat module.
 
@@ -126,10 +127,11 @@ owner and require the selection's `exact` quote.
 
 Attached notes are note blocks linked to highlights through `resource_edges`
 with `origin='highlight_note'`. There is no separate highlight-note table.
-`PUT /highlights/{highlight_id}/note` accepts exactly `note_block_id`,
-`client_mutation_id`, and `body_pm_json`; it has no camel-case or generic `id`
-aliases. The frontend converts its camel-case internal values only at this
-outgoing transport boundary.
+`PUT /highlights/{highlight_id}/note {note_id, body_pm_json}` creates the
+highlight's one note and attaches it (that note already attached has landed; another
+note attached is 409); later edits are ordinary note writes. `DELETE
+/highlights/{highlight_id}/note/{note_id}` detaches it idempotently and keeps the
+note.
 Ordinary highlight deletion is explicit and child-first: graph/view-state
 attachments (including any `link_note` motif and user links naming the
 highlight), then PDF quads, then the PDF/fragment anchor, then the highlight
@@ -148,12 +150,11 @@ The quick-note composer is a frontend presentation owner. It may create a
 highlight and then attach a note in one gesture, but persistence still flows
 through the canonical highlight and note paths.
 
-the selection Note action focuses the quick-note textbox. enter flushes the
-existing save queue and closes only after the latest body is saved; shift+enter
-inserts a newline. composition and reference selection retain their enter
-handling. editing during submission cancels dismissal, and save failure keeps
-the draft open. inline highlight notes retain multiline enter. desktop and
-mobile composers own back dismissal throughout the selection-to-editor handoff.
+the selection Note action focuses the quick-note textbox (`AnnotationNoteEditor`).
+enter and shift+enter insert a line break; there is no flush-and-close: the note
+saves 1.5 s after typing stops (at once when the tab hides), and "Done editing
+note" closes the composer. desktop and mobile composers own back dismissal
+throughout the selection-to-editor handoff.
 
 ## Learn
 
@@ -195,8 +196,8 @@ mutation behavior.
 
 A fresh reader selection has no Highlight yet: the pane's `SelectionDock` offers
 this pre-resource gesture. Materialized Highlights mount `ResourceActionMenu`,
-whose snapshot, catalog, planner, and runtime own the same action list in every
-representation. Clicking one mark in reader text or a PDF opens that menu at the
+which reads the highlight's verbs when it opens, so every representation lists
+the same actions. Clicking one mark in reader text or a PDF opens that menu at the
 click; where marks overlap, a *Highlights here* chooser lists them topmost
 first. Rows in Evidence retain their overflow trigger.
 The selection actions use the fixed names

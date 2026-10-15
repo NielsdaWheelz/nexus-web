@@ -454,36 +454,6 @@ def requeue_dead_job(db: Session, *, job_id: UUID) -> bool:
     return kind is not None
 
 
-def update_unclaimed_job(
-    db: Session,
-    *,
-    job_id: UUID,
-    kind: str,
-    expected_payload_match: Mapping[str, Any],
-    payload: Mapping[str, Any],
-    available_at: datetime | None = None,
-) -> bool:
-    """Storage cleanup: rewrite a still-pending job whose payload still matches."""
-    return (
-        db.execute(
-            text(
-                "UPDATE background_jobs SET payload = CAST(:payload AS jsonb),"
-                " available_at = COALESCE(:available_at, available_at), updated_at = now()"
-                " WHERE id = :job_id AND kind = :kind AND status = 'pending'"
-                " AND payload @> CAST(:match AS jsonb) RETURNING id"
-            ),
-            {
-                "job_id": job_id,
-                "kind": kind,
-                "match": json.dumps(dict(expected_payload_match)),
-                "payload": json.dumps(dict(payload)),
-                "available_at": available_at,
-            },
-        ).first()
-        is not None
-    )
-
-
 def reset_unclaimed_job(
     db: Session, *, job_id: UUID, kind: str, payload: Mapping[str, Any]
 ) -> JobRow:

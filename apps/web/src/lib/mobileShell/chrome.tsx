@@ -22,7 +22,7 @@ import type {
   PanePrimaryAction,
 } from "@/lib/panes/paneChrome";
 import type { TargetLinkMouseEvent } from "@/lib/panes/targetLinkActivation";
-import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { isInteractiveTarget } from "@/lib/ui/eventTarget";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -44,7 +44,9 @@ export interface MobilePaneChrome {
   readonly companionAction?: PaneCompanionAction;
   readonly paneActions: readonly ActionDescriptor[];
   readonly menuActions: readonly ActionDescriptor[];
-  readonly actionSubject?: ResourceActionSubject;
+  readonly resourceRef?: CanonicalResourceRef;
+  /** Breaks this pane at its own boundary; the bar renders outside it. */
+  readonly onDefect: (defect: { readonly error: unknown }) => void;
 }
 
 export interface MobileChrome {

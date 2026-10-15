@@ -11,7 +11,6 @@ NexusHistorySource = Literal["Static", "Workspace", "Recent", "Oracle", "Search"
 class NexusSelectionRecordRequest(BaseModel):
     """One accepted internal Nexus selection. The stored label is cut to 120 characters."""
 
-    client_mutation_id: str = Field(min_length=1, max_length=120)
     query: str | None = Field(default=None, max_length=500)
     target_href: str = Field(min_length=1, max_length=2000)
     label_snapshot: str = Field(min_length=1)

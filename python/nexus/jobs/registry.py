@@ -100,13 +100,13 @@ def registry() -> dict[str, JobDefinition]:
         # Background lane: one fresh, memory-bounded child per job.
         "ingest_media_source": JobDefinition(
             "background",
-            "nexus.services.media_source_ingest:run_job",
+            "nexus.services.source_runner:run_job",
             retry_delays=(60, 300),
             heavy=True,
             keep_dead=True,
             parser_temp_key="attempt_id",
-            on_failure="nexus.services.source_attempt_failures:on_failure",
-            on_dead="nexus.services.source_attempt_failures:on_dead_letter",
+            on_failure="nexus.services.source_publication:on_failure",
+            on_dead="nexus.services.source_publication:on_dead_letter",
             on_history="nexus.services.import_history:on_source_job_outcome",
         ),
         "media_content_reindex_job": JobDefinition(
@@ -126,7 +126,7 @@ def registry() -> dict[str, JobDefinition]:
             "background",
             "nexus.tasks.media_unit_build:run_job",
             keep_dead=True,
-            on_dead=_GENERATION_DEAD,
+            on_dead="nexus.jobs.dead_letters:media_unit_build",
         ),
         "connection_discovery_scan": JobDefinition(
             "background",
@@ -141,28 +141,13 @@ def registry() -> dict[str, JobDefinition]:
         ),
         "media_teardown": JobDefinition(
             "background",
-            "nexus.tasks.media_teardown:media_teardown",
+            "nexus.services.media_deletion:run_teardown_job",
             max_attempts=5,
             retry_delays=_HOURS,
             keep_dead=True,
             on_dead="nexus.jobs.dead_letters:media_teardown",
         ),
-        "storage_object_cleanup": JobDefinition(
-            "background",
-            "nexus.tasks.storage_object_cleanup:storage_object_cleanup",
-            max_attempts=5,
-            retry_delays=_HOURS,
-            keep_dead=True,
-        ),
         # Background upkeep, one job per slot.
-        "reconcile_stale_ingest_media_job": JobDefinition(
-            "background",
-            "nexus.tasks.reconcile_stale_ingest_media:run_job",
-            max_attempts=1,
-            retry_delays=(0,),
-            periodic_seconds=s.ingest_reconcile_schedule_seconds or None,
-            periodic_priority=-1000,  # recovery runs ahead of every other kind
-        ),
         "podcast_refresh_due_job": JobDefinition(
             "background",
             "nexus.services.podcasts.sync:run_due_job",
@@ -180,7 +165,7 @@ def registry() -> dict[str, JobDefinition]:
             "background",
             "nexus.tasks.storage_orphan_sweep:storage_orphan_sweep",
             retry_delays=(300, 900, 3600),
-            periodic_seconds=s.storage_orphan_sweep_interval_seconds,
+            periodic_seconds=6 * 3600,
             keep_dead=True,
         ),
         "prune_background_jobs_job": JobDefinition(

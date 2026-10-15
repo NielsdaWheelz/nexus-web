@@ -40,7 +40,6 @@ from nexus.schemas.dossier import (
     LearnDossierOpenedOut,
     MediaAbstractOut,
 )
-from nexus.schemas.presence import absent, presence_from_nullable, present
 from nexus.services.dossier import research, subjects
 from nexus.services.dossier.inputs import Coverage, InputTooLarge
 from nexus.services.dossier.synthesis import Published
@@ -76,14 +75,6 @@ class BuildFacts:
     instruction: str | None
 
 
-@dataclass(frozen=True, slots=True)
-class ArtifactActionCandidate:
-    """An audience-visible head's lifecycle fact and the subject still needing authz."""
-
-    has_active_build: bool
-    subject_ref: ResourceRef | None
-
-
 def read_subject_head(db: Session, *, scheme: str, handle: str, viewer_id: UUID) -> DossierHeadOut:
     """A routable subject's dossier for this viewer; never inserts a head."""
     subject_id = subjects.resolve(db, scheme, handle, viewer_id)
@@ -103,33 +94,10 @@ def build_state(db: Session, *, build_id: UUID, viewer_id: UUID) -> DossierBuild
     return _build_out(db, _visible_build(db, build_id, viewer_id))
 
 
-def action_candidates(
-    db: Session, *, viewer_id: UUID, artifact_ids: Sequence[UUID], revision_ids: Sequence[UUID]
-) -> tuple[dict[UUID, ArtifactActionCandidate], dict[UUID, ResourceRef | None]]:
-    """Audience-visible heads and revisions; the subject's own visibility is the caller's."""
-    audience = subjects.audience_sql("a")
-    heads: dict[UUID, ArtifactActionCandidate] = {}
-    revisions: dict[UUID, ResourceRef | None] = {}
-    if artifact_ids:
-        rows = _sql(
-            db,
-            "SELECT a.id, a.subject_scheme, a.subject_id, EXISTS (SELECT 1 FROM artifact_builds "
-            "b WHERE b.artifact_id = a.id AND b.status = 'active') AS active FROM artifacts a "
-            f"WHERE a.id = ANY(:ids) AND {audience}",
-            ids=list(artifact_ids),
-            viewer_id=viewer_id,
-        )
-        heads = {row.id: ArtifactActionCandidate(row.active, _subject_ref(row)) for row in rows}
-    if revision_ids:
-        rows = _sql(
-            db,
-            "SELECT a.revision_id AS id, a.subject_scheme, a.subject_id FROM artifacts a "
-            f"WHERE a.revision_id = ANY(:ids) AND {audience}",
-            ids=list(revision_ids),
-            viewer_id=viewer_id,
-        )
-        revisions = {row.id: _subject_ref(row) for row in rows}
-    return heads, revisions
+def has_active_build(db: Session, *, artifact_id: UUID) -> bool:
+    """Whether a build of this artifact is running; visibility is the caller's."""
+    sql = "SELECT 1 FROM artifact_builds WHERE artifact_id = :id AND status = 'active'"
+    return _sql(db, sql, id=artifact_id).first() is not None
 
 
 def start_build(
@@ -380,13 +348,13 @@ def _head_out(
     if scheme == "idea":
         title_sql = "SELECT display_title FROM artifact_idea_subjects WHERE id = :id"
         title = _sql(db, title_sql, id=subject_id).scalar_one()
-        activation = absent()
+        activation = None
     else:
         ref = ResourceRef(cast(ResourceScheme, scheme), subject_id)
         resolved = resolve_ref(db, viewer_id=viewer_id, ref=ref)
         title = resolved.label
-        activation = present(
-            resource_activation_for_ref(db, viewer_id=viewer_id, ref=ref, missing=resolved.missing)
+        activation = resource_activation_for_ref(
+            db, viewer_id=viewer_id, ref=ref, missing=resolved.missing
         )
     builds = (
         []
@@ -400,23 +368,22 @@ def _head_out(
     )
     active = next((build for build in builds if build.status == "active"), None)
     failure = next((build for build in builds if build.status != "active"), None)
-    abstract = absent()
+    abstract = None
     if scheme == "media":
         projection = read_single(db, media_id=subject_id, requester_user_id=viewer_id)
         if projection.status != "not_available":
-            status = "Failed" if projection.status == "suspended" else projection.status.title()
-            summary = presence_from_nullable(projection.summary_md)
-            abstract = present(MediaAbstractOut(status=cast(Any, status), summary_md=summary))
+            status = cast(Any, projection.status.title())
+            abstract = MediaAbstractOut(status=status, summary_md=projection.summary_md)
     revision = (
         None if head is None or head.revision_id is None else _revision_out(db, head, viewer_id)
     )
     return DossierHeadOut(
-        artifact_ref=absent() if head is None else present(f"artifact:{head.id}"),
+        artifact_ref=None if head is None else f"artifact:{head.id}",
         title=title,
         subject_activation=activation,
-        revision=absent() if revision is None else present(revision),
-        active_build=absent() if active is None else present(_build_out(db, active)),
-        last_failure=absent() if failure is None else present(_build_out(db, failure)),
+        revision=revision,
+        active_build=None if active is None else _build_out(db, active),
+        last_failure=None if failure is None else _build_out(db, failure),
         media_abstract=abstract,
     )
 
@@ -443,23 +410,23 @@ def _revision_out(db: Session, head: Any, viewer_id: UUID) -> DossierRevisionOut
         citations=citations[source.uri],
         coverage=DossierCoverageOut(**coverage.model_dump(include={"unit", "included", "omitted"})),
         stale=live != coverage.fingerprint,
-        instruction=presence_from_nullable(head.instruction),
+        instruction=head.instruction,
         by_viewer=head.creator_user_id == viewer_id,
-        model=presence_from_nullable(head.model_name),
-        total_tokens=presence_from_nullable(head.total_tokens),
+        model=head.model_name,
+        total_tokens=head.total_tokens,
         generated_at=head.generated_at,
     )
 
 
 def _build_out(db: Session, build: Any) -> DossierBuildOut:
-    phase = absent()
+    phase = None
     if build.status == "active":
         job = _sql(
             db,
             "SELECT status, attempts, error_code FROM background_jobs WHERE dedupe_key = :key",
             key=_job_key(build.id),
         ).first()
-        phase = present(
+        phase = (
             DurableExecutionPhase.Queued
             if job is None
             else project_execution_phase(
@@ -471,8 +438,8 @@ def _build_out(db: Session, build: Any) -> DossierBuildOut:
         handle=str(build.id),
         status=cast(Any, build.status.capitalize()),
         phase=phase,
-        failure_code=presence_from_nullable(code),
-        instruction=presence_from_nullable(build.instruction),
+        failure_code=code,
+        instruction=build.instruction,
     )
 
 
@@ -588,11 +555,6 @@ def _require_web_research() -> None:
             ApiErrorCode.E_DOSSIER_WEB_RESEARCH_NOT_CONFIGURED,
             "Dossier web research is not configured",
         )
-
-
-def _subject_ref(row: Any) -> ResourceRef | None:
-    scheme = cast(ResourceScheme, row.subject_scheme)
-    return None if row.subject_scheme == "idea" else ResourceRef(scheme, row.subject_id)
 
 
 def _job_key(build_id: UUID) -> str:

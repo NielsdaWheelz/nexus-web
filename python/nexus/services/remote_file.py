@@ -90,7 +90,7 @@ def fetch_remote_file(
             )
         spool.seek(0)
         try:
-            storage.put_object_stream(storage_path, spool, content_type)
+            storage.put_object(storage_path, spool, content_type)
         except StorageError as exc:
             raise ApiError(ApiErrorCode.E_STORAGE_ERROR, "Failed to store remote file.") from exc
     return RemoteFile(

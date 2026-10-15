@@ -1,8 +1,8 @@
 /** Pure semantic projection for one note page row. */
 
-import { absent } from "@/lib/api/presence";
 import type { CollectionRowView } from "@/lib/collections/types";
-import type { NotePageSummary } from "@/lib/notes/pageContract";
+import type { NotePageSummary } from "@/lib/notes/api";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 
 export function presentNote(item: NotePageSummary): CollectionRowView {
   return {
@@ -15,11 +15,11 @@ export function presentNote(item: NotePageSummary): CollectionRowView {
     },
     title: { text: item.title },
     contributors: [],
-    publicationDate: absent(),
-    context: absent(),
-    activity: absent(),
-    exceptionalStatus: absent(),
-    actionSubject: item.actionSubject,
+    publicationDate: null,
+    context: null,
+    activity: null,
+    exceptionalStatus: null,
+    resourceRef: canonicalResourceRef({ scheme: "page", id: item.id }),
     selected: false,
   };
 }

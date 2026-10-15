@@ -26,10 +26,9 @@ from nexus.schemas.suggestions import (
     SuggestionItemOut,
     SuggestionsOut,
 )
-from nexus.services import highlights, library_entries, library_governance, notes, reading_time
+from nexus.services import highlights, libraries, library_entries, notes, reading_time
 from nexus.services import media as media_service
-from nexus.services.consumption import projection
-from nexus.services.consumption import service as consumption_service
+from nexus.services.consumption import lectern, projection
 from nexus.services.contributor_credits import visible_author_credit_rows_sql
 from nexus.services.podcasts.episodes import episode_publication_rows_sql
 from nexus.services.podcasts.subscriptions_query import (
@@ -47,7 +46,7 @@ _EDGE_ORIGINS = ["user", "citation", "note_body", "highlight_note", "document_em
 _EMBEDDING = ("openai", "openai_text_embedding_3_small_256_v1", 256)
 _MIN_SIMILARITY = 0.80
 
-Surface = Literal["lectern", "quick_reads", "library", "default_library"]
+Surface = Literal["lectern", "library", "default_library"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,21 +65,40 @@ class _Candidate:
 
 def build_lectern_suggestions(db: Session, *, viewer_id: UUID) -> SuggestionsOut:
     """Up to ten next reads; empty while the Lectern is at capacity."""
-    if not consumption_service.lectern_has_capacity(db, viewer_id=viewer_id):
+    if not lectern.has_capacity(db, viewer_id=viewer_id):
         return SuggestionsOut(items=[])
     candidates = _candidates(db, viewer_id, _lectern_anchors(db, viewer_id), "lectern", {})
     return SuggestionsOut(items=_hydrate(db, viewer_id, _rotate(candidates, limit=10)))
 
 
 def build_quick_reads(db: Session, *, viewer_id: UUID) -> QuickReadsOut:
-    """Up to five unfinished documents with under ten minutes left."""
-    candidates = _candidates(db, viewer_id, _lectern_anchors(db, viewer_id), "quick_reads", {})
-    return QuickReadsOut(items=_hydrate(db, viewer_id, _rotate(candidates, limit=5)))
+    """Up to five visible unfinished documents with under ten minutes left, Lectern members
+    included: in progress first (most recently read), then newest added."""
+    media_ids = db.scalars(
+        text(f"""
+            SELECT d.media_id
+            FROM ({reading_time.reading_time_rows_sql()}) d
+            JOIN ({visible_media_ids_cte_sql()}) v ON v.media_id = d.media_id
+            JOIN media m ON m.id = d.media_id
+            LEFT JOIN ({projection.engagement_fact_rows_sql()}) e ON e.media_id = d.media_id
+            WHERE d.remaining_seconds > 0 AND d.remaining_seconds < 600
+              AND COALESCE(e.read_state, 'Unread') <> 'Finished'
+            ORDER BY e.read_state = 'InProgress' DESC NULLS LAST,
+                     e.last_engaged_at DESC NULLS LAST, m.created_at DESC, d.media_id
+            LIMIT 5
+        """),
+        {"viewer_id": viewer_id},
+    ).all()
+    picked = [
+        _Candidate("media", media_id, "", 3, None, 0, "", None, None, None)
+        for media_id in media_ids
+    ]
+    return QuickReadsOut(items=_hydrate(db, viewer_id, picked))
 
 
 def build_library_suggestions(db: Session, *, viewer_id: UUID, library_id: UUID) -> SuggestionsOut:
     """Up to ten relational suggestions for an admin-owned, non-system library."""
-    context = library_governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
+    context = libraries.access(db, viewer_id, library_id, lock=False)
     if context.system_key is not None or context.role != "admin":
         return SuggestionsOut(items=[])
     anchors = library_entries.library_anchor_facts(
@@ -118,13 +136,10 @@ def _lectern_anchors(db: Session, viewer_id: UUID) -> tuple[ResourceRef, ...]:
 def _targets_sql(surface: Surface) -> str:
     """Eligible targets with their facts and their one family. Binds :viewer_id
     (and :library_id for the library surfaces)."""
-    lectern = surface in ("lectern", "quick_reads")
+    on_lectern = surface == "lectern"
     eligibility = {
         "lectern": f"""COALESCE(e.read_state, 'Unread') <> 'Finished'
-            AND m.id NOT IN (SELECT media_id FROM ({projection.lectern_membership_rows_sql()}) q)""",
-        "quick_reads": f"""COALESCE(e.read_state, 'Unread') <> 'Finished'
-            AND m.id IN (SELECT media_id FROM ({reading_time.reading_time_rows_sql()}) d
-                         WHERE d.remaining_seconds > 0 AND d.remaining_seconds < 600)""",
+            AND m.id NOT IN (SELECT media_id FROM ({lectern.membership_rows_sql()}) q)""",
         "library": "m.id NOT IN (SELECT media_id FROM membership WHERE media_id IS NOT NULL)",
         "default_library": "m.id NOT IN (SELECT media_id FROM membership WHERE media_id IS NOT NULL)",
     }[surface]
@@ -184,9 +199,9 @@ def _targets_sql(surface: Surface) -> str:
         SELECT dated.*,
                GREATEST(added_day, episode_day, published_day) AS arrival_day,
                CASE
-                   WHEN {str(lectern).lower()} AND read_state = 'InProgress'
+                   WHEN {str(on_lectern).lower()} AND read_state = 'InProgress'
                         AND engaged_at >= now() - interval '30 days' THEN 'Continuity'
-                   WHEN {str(lectern).lower()}
+                   WHEN {str(on_lectern).lower()}
                         AND COALESCE(added_day, episode_day, published_day) IS NOT NULL
                         THEN 'Arrival'
                    WHEN GREATEST(CASE WHEN created_at <= now() THEN created_at END,
@@ -381,20 +396,9 @@ def _similar(
 
 
 def _media_neighbor_rows_sql(eligible_media_relation: str) -> str:
-    """Exact neighbours per anchor and eligible candidate partition.
-
-    The checked-in relation supplies ``media_id`` and ``candidate_partition``.
-    ``:media_anchors`` supplies the bounded ``id``/``rank`` records; the other
-    binds are the calibrated embedding identity, chunk limit and max distance.
-    Each anchor's first active chunk is chosen by ``(chunk_idx, id)``. Peers
-    must have that same active embedding identity and pass target eligibility
-    before ranking. The result retains the anchor rank, partition, peer id and
-    minimum cosine distance.
-
-    Filter distance before ranking: larger distances cannot displace an admitted
-    chunk or change its peer's minimum. Sharing one embedding scan across the
-    anchors avoids rereading the entire eligible corpus for each of five vectors.
-    """
+    """Exact neighbours per anchor and eligible partition under one embedding scan: each
+    anchor's first active chunk stands for its work; distance filters before ranking, so a
+    farther chunk cannot displace an admitted one (binds documented at :func:`_similar`)."""
     return f"""
         WITH eligible_media AS (
             {eligible_media_relation}
@@ -504,38 +508,30 @@ def _take(
 
 
 def _hydrate(db: Session, viewer_id: UUID, picked: list[_Candidate]) -> list[SuggestionItemOut]:
-    media_ids = [c.id for c in picked if c.scheme == "media"]
     media = media_service.hydrate_compact_media_targets(
-        db, viewer_id=viewer_id, media_ids=media_ids
+        db, viewer_id=viewer_id, media_ids=[c.id for c in picked if c.scheme == "media"]
     )
     podcasts = hydrate_compact_podcast_targets(
         db, viewer_id=viewer_id, podcast_ids=[c.id for c in picked if c.scheme == "podcast"]
     )
-    items: list[SuggestionItemOut] = []
-    for c in picked:
-        if c.scheme == "media":
-            target = media[c.id]
-            items.append(
-                SuggestionItemOut(
-                    target=MediaSuggestionTargetOut(
-                        ref=f"{c.scheme}:{c.id}",
-                        media_summary=target.summary,
-                        image_url=target.image_url,
-                        href=target.href,
-                    ),
-                )
+    return [
+        SuggestionItemOut(
+            target=MediaSuggestionTargetOut(
+                kind="Media",
+                ref=f"media:{c.id}",
+                media_summary=media[c.id].summary,
+                image_url=media[c.id].image_url,
+                href=media[c.id].href,
             )
-        else:
-            podcast = podcasts[c.id]
-            items.append(
-                SuggestionItemOut(
-                    target=PodcastSuggestionTargetOut(
-                        ref=f"{c.scheme}:{c.id}",
-                        title=podcast.title,
-                        subtitle=podcast.subtitle,
-                        image_url=podcast.image_url,
-                        href=podcast.href,
-                    ),
-                )
+            if c.scheme == "media"
+            else PodcastSuggestionTargetOut(
+                kind="Podcast",
+                ref=f"podcast:{c.id}",
+                title=podcasts[c.id].title,
+                subtitle=podcasts[c.id].subtitle,
+                image_url=podcasts[c.id].image_url,
+                href=podcasts[c.id].href,
             )
-    return items
+        )
+        for c in picked
+    ]

@@ -20,8 +20,6 @@ from nexus.schemas.browse import (
     WebArticlePreview,
     WebArticlePreviewFacts,
 )
-from nexus.schemas.presence import absent
-from nexus.schemas.presence import presence_from_nullable as maybe
 from nexus.services.browse.targets import (
     BraveWebArticleTarget,
     BrowseFailureKind,
@@ -72,11 +70,11 @@ async def search(
                 ),
                 title=hit.title,
                 contributors=[],
-                description=maybe(hit.snippet or None),
-                published_at=maybe(published),
-                image=absent(),
+                description=(hit.snippet or None),
+                published_at=published,
+                image=None,
                 kind_facts=WebArticleFacts(
-                    site_name=maybe(hit.source_name or urlsplit(url).hostname or "")
+                    site_name=(hit.source_name or urlsplit(url).hostname or "")
                 ),
             )
         )
@@ -108,13 +106,13 @@ def preview(target: BraveWebArticleTarget, handle: DiscoveryTargetHandle) -> Web
         target=handle,
         title=title,
         contributors=single_credit(_meta(document, "name", "author"), "author"),
-        description=maybe(description),
-        published_at=maybe(None if published is None else instant(published)),
-        image=maybe(proxied_image(image and public_url(urljoin(source_href, image)))),
+        description=description,
+        published_at=None if published is None else instant(published),
+        image=proxied_image(image and public_url(urljoin(source_href, image))),
         source_href=source_href,
         resolution=PreviewResolution(target=handle),
         kind_facts=WebArticlePreviewFacts(
-            canonical_url=target.canonical_url, site_name=maybe(urlsplit(source_href).hostname)
+            canonical_url=target.canonical_url, site_name=urlsplit(source_href).hostname
         ),
     )
 

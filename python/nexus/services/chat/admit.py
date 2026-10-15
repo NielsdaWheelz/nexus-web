@@ -1,20 +1,19 @@
-"""Chat admission: one send or repeat is one committed receipt and one queued run.
+"""Chat admission: one send or repeat is one queued run, named by the client.
 
-The envelope: an advisory lock per (viewer, key), a replay lookup, one savepoint with
-every domain check and write, and the receipt recorded beside it. Modeled rejections
-replay like acceptances; volatile catalog unreadiness leaves the key unsettled. Every
+The ``Idempotency-Key`` is a uuid and becomes the run's id. The envelope: an advisory
+lock on the key, then the run with that id answers a resend (any body); another user's
+run is 409; else every domain check and write commits run ``K``. A modeled rejection is
+not stored, so a resend decides again; volatile catalog unreadiness is an error. Every
 existing-chat insertion locks the conversation before it reads a parent, as deletion
 does. Admission freezes everything the worker needs: spec, prompt, attached evidence.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Literal, cast, get_args
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -22,7 +21,7 @@ from starlette.concurrency import run_in_threadpool
 
 from nexus.db.models import ChatRun, Conversation, Message
 from nexus.db.session import get_session_factory
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.jobs.queue import enqueue_job, jobs_for_payload
 from nexus.schemas.conversation import (
     MAX_MESSAGE_CONTENT_LENGTH,
@@ -44,7 +43,6 @@ from nexus.schemas.llm import (
     Ineligible,
     InvalidGenerationSelection,
 )
-from nexus.schemas.presence import Present
 from nexus.services.chat import citations, context, events, quotes, reads
 from nexus.services.chat.conversations import DEFAULT_TITLE
 from nexus.services.generation.catalog import (
@@ -61,11 +59,9 @@ from nexus.services.generation.policy import chat_tool_plan
 from nexus.services.resource_graph.context import add_context_ref_without_commit, list_context_refs
 from nexus.services.resource_graph.edges import create_link
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_mutation_replay import lookup_replay, record_replay
 from nexus.services.seq import assign_next_message_seq
 from nexus.services.tools.run import Toolbox
 
-SCOPE = "chat:admission"
 _REJECTABLE = frozenset(get_args(RejectionCode))
 
 
@@ -77,20 +73,10 @@ async def create_chat_run(
     catalog: Catalog,
     tools: Toolbox,
 ) -> ChatAdmissionReceipt:
-    """Admit one send. Never a domain error: the outcome is a committed receipt."""
+    """Admit one send. A modeled rejection is a receipt, not an error."""
 
-    key = _key(idempotency_key)
-    quote = (
-        request.reader_selection.value if isinstance(request.reader_selection, Present) else None
-    )
-    # The quote's revision is a precondition, not identity: a replay after the
-    # highlight changed must still find its receipt.
-    identity = {
-        "destination": request.destination.model_dump(mode="json"),
-        "content": request.content,
-        "selection": request.selection.model_dump(mode="json"),
-        "reader_selection_key": quote.key.model_dump(mode="json") if quote else None,
-    }
+    run_id = _run_id(idempotency_key)
+    quote = request.reader_selection
     row = await _catalog_row(catalog, request.selection)
 
     def build(db: Session, resolved: Row) -> ChatRun:
@@ -113,9 +99,9 @@ async def create_chat_run(
         )
         if user.seq == 1 and conversation.title == DEFAULT_TITLE:
             conversation.title = " ".join(request.content.split())[:120].rstrip()
-        return _start_run(db, viewer_id, user, assistant, resolved, tools)
+        return _start_run(db, viewer_id, run_id, user, assistant, resolved, tools)
 
-    return await run_in_threadpool(_settle, viewer_id, key, identity, row, build, _REJECTABLE)
+    return await run_in_threadpool(_settle, viewer_id, run_id, row, build, _REJECTABLE)
 
 
 async def repeat(
@@ -130,12 +116,7 @@ async def repeat(
 ) -> ChatRunResponse:
     """A sibling turn under the source turn's parent, copied from its frozen user turn."""
 
-    key = _key(idempotency_key)
-    identity = {
-        "operation": operation,
-        "source_assistant_message_id": str(assistant_message_id),
-        "selection": selection.model_dump(mode="json"),
-    }
+    run_id = _run_id(idempotency_key)
     row = await _catalog_row(catalog, selection)
 
     def build(db: Session, resolved: Row) -> ChatRun:
@@ -179,10 +160,10 @@ async def repeat(
             dict(user.branch_anchor),
             dict(snapshot) if snapshot is not None else None,
         )
-        return _start_run(db, viewer_id, sibling, assistant, resolved, tools)
+        return _start_run(db, viewer_id, run_id, sibling, assistant, resolved, tools)
 
-    receipt = await run_in_threadpool(_settle, viewer_id, key, identity, row, build, frozenset())
-    accepted = cast(AcceptedChatAdmission, receipt.outcome)  # a repeat records no rejections
+    receipt = await run_in_threadpool(_settle, viewer_id, run_id, row, build, frozenset())
+    accepted = cast(AcceptedChatAdmission, receipt.outcome)  # a repeat models no rejections
     return await run_in_threadpool(_read, viewer_id, accepted.run_id)
 
 
@@ -210,13 +191,13 @@ def _read(viewer_id: UUID, run_id: UUID) -> ChatRunResponse:
         return reads.run_response(db, viewer_id=viewer_id, run_id=run_id)
 
 
-def _key(raw: str | None) -> str:
-    key = (raw or "").strip()
-    if not key:
+def _run_id(raw: str | None) -> UUID:
+    if not raw:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Idempotency-Key is required")
-    if len(key) > 128:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Idempotency-Key is too long")
-    return key
+    try:
+        return UUID(raw.strip())
+    except ValueError:
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Idempotency-Key must be a uuid") from None
 
 
 async def _catalog_row(catalog: Catalog, selection: GenerationSelection) -> Row | ApiError:
@@ -231,7 +212,7 @@ async def _catalog_row(catalog: Catalog, selection: GenerationSelection) -> Row 
         )
     except InvalidSelection:
         failure = InvalidGenerationSelection(
-            field=Present(value="selection"),
+            field="selection",
             explanation="The exact generation selection is not in the configured catalog.",
         )
         return ApiError(
@@ -258,51 +239,46 @@ async def _catalog_row(catalog: Catalog, selection: GenerationSelection) -> Row 
 
 def _settle(
     viewer_id: UUID,
-    key: str,
-    identity: dict[str, object],
+    run_id: UUID,
     row: Row | ApiError,
     build: Callable[[Session, Row], ChatRun],
     rejectable: frozenset[str],
 ) -> ChatAdmissionReceipt:
-    """One committed decision per (viewer, key), on one worker-thread session.
+    """One decision per run id, on one worker-thread session.
 
     A client disconnect cannot close the session mid-transaction, and lock waits
-    never hold the event loop.
+    never hold the event loop. The lock is on the id alone (run ids are global), under
+    its own namespace: the generation ledger locks ``chat_run:{id}``.
     """
 
-    memo = {
-        "viewer_id": viewer_id,
-        "scope": SCOPE,
-        "client_mutation_id": hashlib.sha256(key.encode()).hexdigest(),
-        "request_bytes": json.dumps(identity, sort_keys=True, separators=(",", ":")).encode(),
-    }
     with get_session_factory()() as db:
         db.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
-            {"lock_key": f"chat_run:{viewer_id}:{key}"},
+            {"lock_key": f"chat_admission:{run_id}"},
         )
-        stored = lookup_replay(db, **memo)
-        if stored is not None:
-            return ChatAdmissionReceipt.model_validate(stored)
-        try:
-            with db.begin_nested():
+        run = db.get(ChatRun, run_id)
+        if run is not None and run.owner_user_id != viewer_id:
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Run id is taken")
+        if run is None:
+            try:
                 if isinstance(row, ApiError):
                     raise row
                 run = build(db, row)
-            outcome = AcceptedChatAdmission(
-                conversation_id=run.conversation_id,
-                run_id=run.id,
-                assistant_message_id=run.assistant_message_id,
-            )
-        except ApiError as error:
-            if error.code.value not in rejectable:
-                raise
-            code = cast(RejectionCode, error.code.value)
-            outcome = RejectedChatAdmission(reason=ChatAdmissionRejection(code=code))
-        receipt = ChatAdmissionReceipt(idempotency_key=key, outcome=outcome)
-        record_replay(db, **memo, response_json=receipt.model_dump(mode="json"))
-        db.commit()
-        return receipt
+            except ApiError as error:
+                if error.code.value not in rejectable:
+                    raise
+                # Closing the session rolls the attempt back: nothing is stored.
+                reason = ChatAdmissionRejection(code=cast(RejectionCode, error.code.value))
+                return ChatAdmissionReceipt(
+                    idempotency_key=str(run_id), outcome=RejectedChatAdmission(reason=reason)
+                )
+            db.commit()
+        outcome = AcceptedChatAdmission(
+            conversation_id=run.conversation_id,
+            run_id=run.id,
+            assistant_message_id=run.assistant_message_id,
+        )
+        return ChatAdmissionReceipt(idempotency_key=str(run_id), outcome=outcome)
 
 
 def _destination(
@@ -437,6 +413,7 @@ def _insert_pair(
 def _start_run(
     db: Session,
     viewer_id: UUID,
+    run_id: UUID,
     user: Message,
     assistant: Message,
     row: Row,
@@ -481,7 +458,7 @@ def _start_run(
         output_budget_tokens=output_budget,
     )
     run = ChatRun(
-        id=uuid4(),
+        id=run_id,
         owner_user_id=viewer_id,
         conversation_id=conversation_id,
         user_message_id=user.id,

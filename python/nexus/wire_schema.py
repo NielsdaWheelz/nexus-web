@@ -1,8 +1,9 @@
 """The wire schema: FastAPI's OpenAPI document plus the SSE event payload models.
 
-``python -m nexus.wire_schema`` prints it as sorted JSON; ``bun run gen:wire`` in
-apps/web renders it to ``src/lib/api/wire.gen.ts``. It is built from the routers,
-not the app, so it needs no settings, database, network or secrets.
+``python -m nexus.wire_schema`` prints it as sorted JSON, with ``WIRE_REVISION`` as
+``info["x-nexus-wire"]``; ``bun run gen:wire`` in apps/web renders it to
+``src/lib/api/wire.gen.ts``. It is built from the routers, not the app, so it needs no
+settings, database, network or secrets.
 """
 
 import json
@@ -20,6 +21,7 @@ from fastapi.openapi.utils import get_fields_from_routes, get_openapi_path
 from fastapi.routing import APIRoute
 from pydantic.fields import FieldInfo
 
+from nexus.api.edge import WIRE_REVISION
 from nexus.api.routes import create_api_router
 from nexus.schemas.conversation import (
     ChatRunAssistantTextDeltaEventPayload,
@@ -54,7 +56,7 @@ SSE_PAYLOADS_BY_ALIAS = (PodcastSubscriptionLifecycleSnapshotOut,)
 
 
 def wire_schema() -> dict:
-    router = create_api_router(podcasts=True, email_ingest=True)
+    router = create_api_router()
     fields = get_fields_from_routes(router.routes)
     # current by-name SSE models have no aliased fields, including nested models.
     # one native batch coordinates their refs with HTTP's input/output schemas.
@@ -96,7 +98,7 @@ def wire_schema() -> dict:
         OpenAPI.model_validate(
             {
                 "openapi": "3.1.0",
-                "info": {"title": "Nexus API", "version": "0.1.0"},
+                "info": {"title": "Nexus API", "version": "0.1.0", "x-nexus-wire": WIRE_REVISION},
                 "paths": paths,
                 "components": components,
             }

@@ -17,7 +17,7 @@ def _csv(value: str | None) -> list[str] | None:
     return None if value is None else [item.strip() for item in value.split(",") if item.strip()]
 
 
-@router.get("/search", response_model=SearchResponse, response_model_by_alias=True)
+@router.get("/search", response_model=SearchResponse)
 def search(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,

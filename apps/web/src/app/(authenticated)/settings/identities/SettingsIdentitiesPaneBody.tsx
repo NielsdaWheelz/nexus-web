@@ -1,241 +1,193 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useState } from "react";
+import CollectionView from "@/components/collections/CollectionView";
 import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { useResource } from "@/lib/api/useResource";
+import { ApiError, apiTransportFeedback } from "@/lib/api/client";
 import {
-  OAUTH_PROVIDERS,
-  oauthPath,
-  PROVIDER_NAMES,
-  type OAuthProvider,
-} from "@/lib/auth/urls";
+  modeledApiError,
+  useServerValue,
+  useThrowLater,
+  type Visit,
+} from "@/lib/api/serverState";
+import { OAUTH_PROVIDERS, oauthPath, PROVIDER_NAMES } from "@/lib/auth/urls";
+import { presentSettingsRow } from "@/lib/collections/presenters/settings";
+import { formatDisplayDate } from "@/lib/display/format";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { LinkedIdentity } from "@/lib/supabase/auth";
 import {
-  loadLinkedIdentities,
-  unlinkLinkedIdentity,
-} from "./actions";
-import { formatDisplayDate } from "@/lib/display/format";
-import { presentSettingsRow } from "@/lib/collections/presenters/settings";
-import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
-import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
+  definePaneVisitDataKey,
+  usePaneReturnReady,
+} from "@/lib/workspace/paneReturnMemento";
+import { runSettingsAction } from "../settingsAction";
+import { loadLinkedIdentities, unlinkLinkedIdentity } from "./actions";
 import styles from "./page.module.css";
 
-const LOAD_FAILED_MESSAGE = "Failed to load identities";
-const UNLINK_FAILED_MESSAGE =
-  "We couldn't unlink this identity. Please try again.";
-const KEEP_ONE_IDENTITY_MESSAGE =
-  "Link at least one additional identity before unlinking.";
+const VISIT = definePaneVisitDataKey<Visit<LinkedIdentity[]>>(
+  "Settings.Identities",
+);
+const LOAD_FAILED = "Linked identities couldn’t be loaded";
+const UNLINK_FAILED = "We couldn't unlink this identity. Please try again.";
 
-function linkedDate(identity: LinkedIdentity, display: RenderEnvironment): string {
-  if (!identity.createdAt) {
-    return "linked date unavailable";
-  }
-  const formatted = formatDisplayDate(identity.createdAt, display);
-  return formatted ? `linked ${formatted}` : "linked date unavailable";
+async function readIdentities(): Promise<LinkedIdentity[]> {
+  const identities = await runSettingsAction(loadLinkedIdentities);
+  if (identities === "Failed")
+    throw new ApiError(503, "E_AUTH_UNAVAILABLE", "Identities are unavailable");
+  return identities;
 }
 
-// Identity linking is OAuth initiation: a link to the server /auth/oauth
-// route, which asks Supabase for the provider URL and redirects there. A link,
-// not a GET form: chromium holds a form submission's whole redirect chain to
-// the csp's form-action 'self', so the redirect to the Supabase origin would be
-// refused. role="button" keeps the control's accessible role. The browser never
-// holds a Supabase client.
-function ConnectProviderLink({ provider }: { provider: OAuthProvider }) {
-  return (
-    <Button asChild variant="pill">
-      <a href={oauthPath(provider, "link")} role="button">
-        {`Connect ${PROVIDER_NAMES[provider]}`}
-      </a>
-    </Button>
-  );
-}
-
+/**
+ * The viewer's Google and GitHub sign-in methods. Connect is OAuth initiation:
+ * a link (not a GET form: chromium holds a form's whole redirect chain to the
+ * csp's form-action 'self') to /auth/oauth, which redirects to the provider and
+ * returns here. Unlink is offered only while two remain (I5); the action re-checks.
+ */
 export default function SettingsIdentitiesPaneBody() {
   const display = useRenderEnvironment();
-  const initialIdentities = useResource({
-    cacheKey: "settings-identities:list",
-    load: () => loadLinkedIdentities(),
+  const fail = useThrowLater();
+  const identities = useServerValue({
+    key: "identities",
+    stale: "",
+    visit: VISIT,
+    load: readIdentities,
   });
-  const [identities, setIdentities] = useState<LinkedIdentity[]>([]);
-  const [error, setError] = useState<FeedbackContent | null>(null);
-  const [loadFailure, setLoadFailure] = useState(false);
-  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const [unlinkingIdentityId, setUnlinkingIdentityId] = useState<string | null>(
-    null
-  );
-  const loading = initialIdentities.status === "loading";
-  usePaneReturnReady(
-    initialIdentities.status === "ready" ||
-      initialIdentities.status === "error",
-  );
+  const [unlinking, setUnlinking] = useState<string | null>(null);
+  const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  usePaneReturnReady(identities.status !== "loading");
 
-  // Imperative refresh after an unlink. The initial load is owned by
-  // useResource above; this re-reads the server action.
-  const loadIdentities = useCallback(async () => {
+  const unlink = async (identity: LinkedIdentity) => {
+    setUnlinking(identity.id);
+    setFailure(null);
     try {
-      const result = await loadLinkedIdentities();
-      if (!result.ok) {
-        setError({ tone: "Danger", title: LOAD_FAILED_MESSAGE });
-        setLoadFailure(true);
-        setIdentities([]);
-        return;
-      }
-
-      setIdentities(result.identities);
-      setError(null);
-      setLoadFailure(false);
-    } catch (caughtDefect) {
-      setDefect({ error: caughtDefect });
-    }
-  }, []);
-
-  useEffect(() => {
-    if (initialIdentities.status !== "ready") return;
-    if (initialIdentities.data.ok) {
-      setIdentities(initialIdentities.data.identities);
-      setError(null);
-      setLoadFailure(false);
-    } else {
-      setError({ tone: "Danger", title: LOAD_FAILED_MESSAGE });
-      setLoadFailure(true);
-      setIdentities([]);
-    }
-  }, [initialIdentities]);
-
-  const connectableProviders = useMemo(
-    () =>
-      OAUTH_PROVIDERS.filter(
-        (provider) => !identities.some((i) => i.provider === provider),
-      ),
-    [identities]
-  );
-  // the provider keeps the last identity: unlink only while two remain.
-  const mayUnlink = identities.length > 1;
-
-  const handleUnlinkIdentity = useCallback(
-    async (identity: LinkedIdentity) => {
-      if (!mayUnlink) {
-        setError({ tone: "Danger", title: KEEP_ONE_IDENTITY_MESSAGE });
-        setLoadFailure(false);
-        return;
-      }
-
-      setError(null);
-      setLoadFailure(false);
-      setUnlinkingIdentityId(identity.id);
-
-      try {
-        const result = await unlinkLinkedIdentity(
-          identity.id,
-          identity.provider
+      const outcome = await runSettingsAction(() =>
+        unlinkLinkedIdentity(identity.id, identity.provider),
+      );
+      if (outcome === "Unlinked") identities.refetch();
+      else setFailure({ tone: "Danger", title: UNLINK_FAILED });
+    } catch (error) {
+      const modeled = modeledApiError(error, fail);
+      if (modeled !== null)
+        setFailure(
+          apiTransportFeedback(modeled, UNLINK_FAILED) ?? {
+            tone: "Danger",
+            title: UNLINK_FAILED,
+          },
         );
-        if (!result.ok) {
-          setError({ tone: "Danger", title: UNLINK_FAILED_MESSAGE });
-          setLoadFailure(false);
-          return;
-        }
+    } finally {
+      setUnlinking(null);
+    }
+  };
 
-        await loadIdentities();
-      } catch (caughtDefect) {
-        setDefect({ error: caughtDefect });
-      } finally {
-        setUnlinkingIdentityId(null);
-      }
-    },
-    [mayUnlink, loadIdentities]
+  const loadError = identities.status === "loading" ? null : identities.error;
+  const ready = identities.status === "ready" ? identities : null;
+  const missing = OAUTH_PROVIDERS.filter(
+    (provider) =>
+      !ready?.data.some((identity) => identity.provider === provider),
   );
-
-  if (initialIdentities.status === "error") throw initialIdentities.error;
-  if (defect !== null) throw defect.error;
-
   return (
     <PaneSurface>
       <PaneSection>
         <div className={styles.content}>
-        {loading && (
-          <PaneLoadingState label="Loading identities…" announcement="Polite" />
-        )}
-        {error ? (
-          <FeedbackNotice
-            content={error}
-            announcement="Assertive"
-            actions={
-              loadFailure
-                ? [
-                    {
-                      label: "Retry",
-                      onClick: () => void loadIdentities(),
-                    },
-                  ]
-                : undefined
-            }
-          />
-        ) : null}
-
-        {!loading && !loadFailure && identities.length === 0 && (
-          <FeedbackNotice
-            content={{
-              tone: "Neutral",
-              title: "No Google or GitHub identities are linked.",
-            }}
-            announcement="Polite"
-          />
-        )}
-
-        {!loading && !loadFailure && identities.length > 0 && (
-          <CollectionView
-            returnScope="Settings.Identities.Linked"
-            rows={identities.map((identity) => {
-              const pendingUnlink = unlinkingIdentityId === identity.id;
-              return presentSettingsRow({
-                id: identity.id,
-                title: PROVIDER_NAMES[identity.provider],
-                description: identity.email ?? "provider did not return an email",
-                meta: linkedDate(identity, display),
-                actions: mayUnlink
-                  ? [
-                      {
-                        kind: "command",
-                        id: "unlink-identity",
-                        label: pendingUnlink ? "Unlinking..." : "Unlink",
-                        tone: "danger",
-                        disabled: pendingUnlink,
-                        onSelect: () => void handleUnlinkIdentity(identity),
-                      },
-                    ]
-                  : [],
-              });
-            })}
-            status="ready"
-            ariaLabel="Linked identities"
-            surface={false}
-          />
-        )}
-
-        {loading || loadFailure ? null : connectableProviders.length === 0 ? (
-          <FeedbackNotice
-            content={{
-              tone: "Neutral",
-              title: "Google and GitHub are already linked for this account.",
-            }}
-            announcement="None"
-          />
-        ) : (
-          <div className={styles.linkButtons}>
-            {connectableProviders.map((provider) => (
-              <ConnectProviderLink key={provider} provider={provider} />
-            ))}
-          </div>
-        )}
+          {identities.status === "loading" ? (
+            <PaneLoadingState
+              label="Loading identities…"
+              announcement="Polite"
+            />
+          ) : null}
+          {loadError ? (
+            <FeedbackNotice
+              content={
+                apiTransportFeedback(loadError, LOAD_FAILED) ?? {
+                  tone: "Danger",
+                  title: LOAD_FAILED,
+                  requestId: loadError.requestId,
+                }
+              }
+              announcement="Assertive"
+              actions={[{ label: "Retry", onClick: identities.refetch }]}
+            />
+          ) : null}
+          {failure ? (
+            <FeedbackNotice content={failure} announcement="Assertive" />
+          ) : null}
+          {ready === null ? null : (
+            <>
+              {ready.data.length === 0 ? (
+                <FeedbackNotice
+                  content={{
+                    tone: "Neutral",
+                    title: "No Google or GitHub identities are linked.",
+                  }}
+                  announcement="Polite"
+                />
+              ) : (
+                <CollectionView
+                  returnScope="Settings.Identities.Linked"
+                  ariaLabel="Linked identities"
+                  status="ready"
+                  surface={false}
+                  rows={ready.data.map((identity) => {
+                    const linkedOn = identity.createdAt
+                      ? formatDisplayDate(identity.createdAt, display)
+                      : null;
+                    return presentSettingsRow({
+                      id: identity.id,
+                      title: PROVIDER_NAMES[identity.provider],
+                      description:
+                        identity.email ?? "provider did not return an email",
+                      meta: linkedOn
+                        ? `linked ${linkedOn}`
+                        : "linked date unavailable",
+                      actions:
+                        ready.data.length > 1
+                          ? [
+                              {
+                                kind: "command",
+                                id: "unlink-identity",
+                                label:
+                                  unlinking === identity.id
+                                    ? "Unlinking..."
+                                    : "Unlink",
+                                tone: "danger",
+                                disabled:
+                                  unlinking !== null || ready.refreshing,
+                                onSelect: () => void unlink(identity),
+                              },
+                            ]
+                          : [],
+                    });
+                  })}
+                />
+              )}
+              {missing.length === 0 ? (
+                <FeedbackNotice
+                  content={{
+                    tone: "Neutral",
+                    title:
+                      "Google and GitHub are already linked for this account.",
+                  }}
+                  announcement="None"
+                />
+              ) : (
+                <div className={styles.linkButtons}>
+                  {missing.map((provider) => (
+                    <Button key={provider} asChild variant="pill">
+                      <a href={oauthPath(provider, "link")} role="button">
+                        {`Connect ${PROVIDER_NAMES[provider]}`}
+                      </a>
+                    </Button>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
         </div>
       </PaneSection>
     </PaneSurface>

@@ -94,7 +94,7 @@ transaction it settles every tool call of the answer still `pending` or
 `running`: `cancelled` for a cancelled run, else `error`. No tool call outlives
 its run as `running`.
 
-Trust-run `execution` is a required `Presence` value.
+Trust-run `execution` is a required, nullable value.
 nonterminal runs project `Queued | Running | Recovering | Suspended` plus
 `cancel_requested`, derived from the run's persisted stop intent. terminal
 runs project `Absent`. sse sends the same value as an unsequenced
@@ -110,9 +110,10 @@ generation.
 
 ## Stream, Reconnect, Recovery
 
-A tail opens `GET /stream/chat-runs/{run_id}/events?after=N` through the shared
-`openGenerationRunStream` (eight automatic reconnects, 1–8 s backoff with
-jitter, `Last-Event-ID` resume inside one tail). A pending answer found on a
+A tail opens `GET /api/stream/chat-runs/{run_id}/events?after=N` through the
+shared `openStream` (eight automatic reconnects, 1–8 s backoff with jitter,
+`?after=` resume inside one tail; the bff's planned cut at 280 s resumes at
+once; [api edge](api-edge.md)). A pending answer found on a
 tree read is tailed from event 0: a reload replays the run's whole durable event
 log, so the overlay rebuilds itself without a server fold. Events at or below
 the overlay's last sequence are ignored.
@@ -125,7 +126,8 @@ shows it or tails it again from the overlay's last sequence; it never calls
 `/rerun`. A modeled read failure during Reconnect shows **Couldn’t reconnect**
 with its request id, and retry only when the failure was ambiguous. The
 browser's `online` event reconnects every `Lost` overlay. A `429` from the
-LISTEN cap is an ordinary lost stream: the answer recovers through Reconnect.
+LISTEN cap backs off and reconnects like a network failure; a `401` is final and
+goes to login.
 
 ## Pane, Inspector And Dossier
 
@@ -157,14 +159,14 @@ edits the Dossier.
 
 There is no inline reader-chat adapter. Reader Highlight quotes launch through
 the typed intent owned by `Conversation` (see Reader Quote-To-Chat below);
-generic resource-context chats go through `executeResourceChat`
-(`lib/resources/resourceActionExecution.ts`), which creates a context-bearing
-conversation via `POST /conversations` and opens it as a `Conversation` pane.
+generic resource-context chats go through `createConversationAbout`
+(`lib/chat/conversationIndex.ts`), which creates a context-bearing
+conversation via `POST /conversations`; the menu opens it as a `Conversation` pane.
 
 A missing or foreign conversation is `404 E_CONVERSATION_NOT_FOUND`; the pane
 shows "This chat couldn’t be opened." with the server's copy. `chatFailure`
 (`lib/chat/wire.ts`) is total over `ApiError`: auth goes to the auth boundary,
-a contract mismatch to the reload notice, a same-system defect to the error
+a wire mismatch (426) to the "Nexus was updated" copy, a same-system defect to the error
 boundary, and every other code to quiet feedback from one copy table
 (`failureDetail`), which also words modeled send rejections.
 
@@ -264,7 +266,7 @@ The request:
 - `content`
 - `selection` — exact tagged route/model/reasoning, validated against the
   current catalog at admission
-- `reader_selection` — `Presence<{ key: ReaderSelectionKey; revision }>`
+- `reader_selection` — `{ key: ReaderSelectionKey; revision } | null`
 
 The fork being composed wins over a plain reply; a plain reply is an
 `assistant_message` anchor on the leaf. New-chat sends use
@@ -273,15 +275,18 @@ send; a failed first send leaves no conversation. The request carries no
 top-level `conversation_id`, no `chat_subject`, and no client
 `exact`/`prefix`/`suffix` (`extra="forbid"`).
 
-`POST /chat-runs` is a receipt boundary. Under the viewer/key advisory lock it
-first replays the immutable `ResourceMutation(scope="chat:admission")` decision
-or validates a new admission. Accepted chat (when New), messages, run, attached
-evidence, job and the receipt commit atomically,
-and admission sets the conversation's active leaf to the new assistant. A modeled rejection rolls provisional writes back to a savepoint and
-commits only its closed reason. The response is
-`{data:{idempotency_key,outcome:Accepted|Rejected}}`; it contains no run
-projection. Every chat route requires `X-Nexus-Chat-Contract: 5`; an older tab
-gets `409 E_CHAT_CONTRACT_RELOAD_REQUIRED` and the reload notice.
+`POST /chat-runs` names its run: the `Idempotency-Key` must be a uuid (else 400
+`E_INVALID_REQUEST`) and becomes `chat_runs.id`. Under an advisory lock on
+`chat_admission:{key}` (apart from the generation ledger's `chat_run:{id}`), the
+viewer's run with that id answers the send whatever the body; another
+user's run with it is 409 `E_RESOURCE_CONFLICT`; otherwise the admission is
+validated and the chat (when New), messages, run, attached evidence and job commit
+atomically, and admission sets the conversation's active leaf to the new
+assistant. A modeled rejection rolls everything back and is not stored: a resend
+decides again. The response is `{data:{idempotency_key,outcome:Accepted|Rejected}}`;
+it contains no run projection. A send refused with 426 `E_WIRE_MISMATCH` was never admitted: it is
+a definite failure, so the draft stays a plain unsent draft across the tab's
+reload.
 
 ### Drafts
 
@@ -299,8 +304,9 @@ view in the tab.
   refreshes its preview; `E_CONVERSATION_NO_LONGER_EMPTY` rereads the tree.
 - A definite failure clears `pending`. An ambiguous failure (network, upstream,
   5xx) keeps it: the composer locks the text and selection and shows "Send
-  status unknown"; **Retry send** replays the same key and bytes, and the
-  server answers with the original receipt. The lock survives reload.
+  status unknown"; **Retry send** resends the same key and bytes, and the
+  server answers with the run that key named if it landed. The lock survives
+  reload.
 
 The `new` draft is one per account per tab, so a reload of
 `/conversations/new` restores it; two new-chat panes in one tab share it. The
@@ -337,9 +343,9 @@ hide both actions.
 Without an explicit choice the store reuses the source run's selection only
 while the current catalog still offers it; otherwise it says "The original model
 is unavailable" and the user picks one through **Rerun / Regenerate with a
-different model**. Each command is idempotent under `Idempotency-Key`; the
-store keeps the key per source and operation across an ambiguous failure, so an
-identical retry replays it, and mints a new key otherwise. Rerun (failed turn),
+different model**. Each command's uuid `Idempotency-Key` is its run's id, as for
+a send; the store keeps the key per source and operation across an ambiguous
+failure, so a retry that landed answers that run, and mints a new key otherwise. Rerun (failed turn),
 Regenerate (completed answer), Reconnect (lost stream), suspended (operator
 recovery) and Fork stay distinct.
 
@@ -549,7 +555,7 @@ the live Highlight.
 
 | module | owns |
 |---|---|
-| `admit` | send, rerun/regenerate, cancel: the receipt envelope (advisory key lock, replay, one savepoint, memo), destination, anchor, quote, message pair, run freeze, job |
+| `admit` | send, rerun/regenerate, cancel: the run-id envelope (advisory key lock, the run that id names), destination, anchor, quote, message pair, run freeze, job |
 | `context` | the system prompt, the turn's context blocks, two-budget history, the frozen intent |
 | `quotes` | the reader-quote snapshot: build (locked highlight), encode/decode, revision, projection, preview, the XML quote renderer |
 | `citations` | candidate numbering, attached evidence (retrievals with no call), publication |

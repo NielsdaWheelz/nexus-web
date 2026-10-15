@@ -116,8 +116,8 @@ internal class ListeningRecorder(
     /** A reset elsewhere: later writes carry the new epoch, queued ones are stale. */
     fun adopt(position: JSONObject) {
         val ep = episode ?: return
-        ep.resetEpoch = position.getLong("resetEpoch")
-        ep.overrideRevision = position.getJSONObject("consumptionOverrideRevision").opt("value")?.let { (it as Number).toLong() }
+        ep.resetEpoch = position.getLong("reset_epoch")
+        ep.overrideRevision = position.nullableLong("consumption_override_revision")
         ep.active = false
         ep.fenced = false
         lane.removeAll { !it.settle && it.mediaId == ep.mediaId }
@@ -172,11 +172,11 @@ internal class ListeningRecorder(
         tick?.cancel()
         closeSpan(ep)
         val body = JSONObject()
-            .put("clientMutationId", UUID.randomUUID().toString())
+            .put("client_mutation_id", UUID.randomUUID().toString())
             .put("kind", "SettleNaturalEnd")
-            .put("mediaId", ep.mediaId.toString())
-            .put("terminalListening", listening(ep))
-            .put("expectedConsumptionOverrideRevision", presence(ep.overrideRevision))
+            .put("media_id", ep.mediaId.toString())
+            .put("terminal_listening", listening(ep))
+            .put("expected_consumption_override_revision", ep.overrideRevision ?: JSONObject.NULL)
         val accountId = account ?: return
         lane.addLast(Write(accountId, ep.mediaId, body, settle = true))
         send()
@@ -238,22 +238,22 @@ internal class ListeningRecorder(
             if (!write.settle) {
                 val position = origin.putListening(write.mediaId, write.body)
                 if (account != write.accountId) return true
-                val epoch = position.getLong("resetEpoch")
-                val override = position.getJSONObject("consumptionOverrideRevision")
+                val epoch = position.getLong("reset_epoch")
+                val override = position.get("consumption_override_revision")
                 episode?.takeIf { it.mediaId == write.mediaId && it.resetEpoch == epoch }?.overrideRevision =
-                    override.opt("value")?.let { (it as Number).toLong() }
+                    position.nullableLong("consumption_override_revision")
                 // Its own preceding heartbeat may have just completed it. The end retains
                 // its captured epoch, so unread/reset still supersede the queued event.
                 for (queued in lane) {
                     if (queued.settle && queued.mediaId == write.mediaId &&
-                        queued.body.getJSONObject("terminalListening").getLong("expectedResetEpoch") == epoch) {
-                        queued.body.put("expectedConsumptionOverrideRevision", override)
+                        queued.body.getJSONObject("terminal_listening").getLong("expected_reset_epoch") == epoch) {
+                        queued.body.put("expected_consumption_override_revision", override)
                     }
                 }
                 onAccepted()
                 return true
             }
-            val next = origin.consumptionCommand(write.body).getJSONObject("nextItem").optJSONObject("value")
+            val next = origin.consumptionCommand(write.body).optJSONObject("next_item")
             if (account != write.accountId) return true
             onAccepted()
             onSettled(write.mediaId, next?.getJSONObject("activation")?.optJSONObject("descriptor"))
@@ -287,7 +287,7 @@ internal class ListeningRecorder(
                 val batch = outbox.next(accountId) ?: break
                 try {
                     val spans = JSONObject().put("modality", "Listening").put("spans", JSONArray(batch.spans))
-                    val body = JSONObject().put("mediaRef", "media:${batch.mediaId}").put("deviceClass", "Mobile")
+                    val body = JSONObject().put("media_ref", "media:${batch.mediaId}").put("device_class", "Mobile")
                     origin.postActivity(body.put("batch", spans))
                 } catch (error: NexusOriginError) {
                     if (retryable(error.status)) return@launch retryLater()
@@ -301,7 +301,9 @@ internal class ListeningRecorder(
         }
     }
 
-    private fun retryable(status: Int): Boolean = status == 401 || status == 408 || status == 429 || status >= 500
+    // 426: this app was built for another wire; the queue waits for its update
+    private fun retryable(status: Int): Boolean =
+        status == 401 || status == 408 || status == 426 || status == 429 || status >= 500
 
     private fun retryLater() {
         failures += 1
@@ -329,14 +331,14 @@ internal class ListeningRecorder(
         val now = sample()
         val endMs = endPositionMs ?: now.positionMs
         val record = JSONObject()
-            .put("captureKey", UUID.randomUUID().toString())
+            .put("capture_key", UUID.randomUUID().toString())
             // one clock for start and duration, so consecutive spans never overlap
-            .put("occurredAt", SPAN_INSTANT.format(Instant.ofEpochMilli(wallOffsetMs + span.startElapsed)))
-            .put("durationMs", elapsedMs)
-            .put("progressStart", progress(span.startPositionMs, now.durationMs))
-            .put("progressEnd", progress(endMs, now.durationMs))
-            .put("mediaPositionStartMs", presence(span.startPositionMs))
-            .put("mediaPositionEndMs", presence(endMs))
+            .put("occurred_at", SPAN_INSTANT.format(Instant.ofEpochMilli(wallOffsetMs + span.startElapsed)))
+            .put("duration_ms", elapsedMs)
+            .put("progress_start", progress(span.startPositionMs, now.durationMs))
+            .put("progress_end", progress(endMs, now.durationMs))
+            .put("media_position_start_ms", span.startPositionMs)
+            .put("media_position_end_ms", endMs)
         outbox.add(accountId, ep.mediaId, record)
         upload()
     }
@@ -344,15 +346,15 @@ internal class ListeningRecorder(
     private fun listening(ep: Episode): JSONObject {
         val now = sample()
         return JSONObject()
-            .put("positionMs", now.positionMs)
-            .put("durationMs", presence(now.durationMs))
-            .put("episodePlaybackRate", presence(ep.rate))
-            .put("expectedResetEpoch", ep.resetEpoch)
+            .put("position_ms", now.positionMs)
+            .put("duration_ms", now.durationMs ?: JSONObject.NULL)
+            .put("episode_playback_rate", ep.rate ?: JSONObject.NULL)
+            .put("expected_reset_epoch", ep.resetEpoch)
     }
 
-    private fun progress(positionMs: Long, durationMs: Long?): JSONObject =
-        presence(durationMs?.takeIf { it > 0 }?.let { minOf(1.0, positionMs.toDouble() / it) })
-
-    private fun presence(value: Any?): JSONObject =
-        JSONObject().put("kind", if (value == null) "Absent" else "Present").putOpt("value", value)
+    private fun progress(positionMs: Long, durationMs: Long?): Any =
+        durationMs?.takeIf { it > 0 }?.let { minOf(1.0, positionMs.toDouble() / it) } ?: JSONObject.NULL
 }
+
+/** A nullable JSON integer: null for JSON null. */
+internal fun JSONObject.nullableLong(key: String): Long? = if (isNull(key)) null else getLong(key)

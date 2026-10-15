@@ -1,4 +1,5 @@
-"""Revocable browser extension session tokens."""
+"""Extension sessions: a revocable bearer (``nx_ext_…``, stored as its sha256) that
+authorizes only its own session route and ``/extension/*`` (I6)."""
 
 from __future__ import annotations
 
@@ -16,53 +17,37 @@ from nexus.schemas.extension_capture import (
     CaptureLimits,
     ExtensionSessionOut,
 )
-from nexus.schemas.presence import presence_from_nullable
-from nexus.services.sealed_handles import seal_user
 
-_TOKEN_PREFIX = "nx_ext_"
+_PREFIX = "nx_ext_"
 
 
-def create_extension_session(
-    db: Session,
-    user_id: UUID,
-) -> tuple[ExtensionSession, str]:
-    token = f"{_TOKEN_PREFIX}{secrets.token_urlsafe(32)}"
-    session = ExtensionSession(user_id=user_id, token_hash=_hash_extension_token(token))
+def create_extension_session(db: Session, user_id: UUID) -> tuple[ExtensionSession, str]:
+    token = f"{_PREFIX}{secrets.token_urlsafe(32)}"
+    session = ExtensionSession(user_id=user_id, token_hash=_hash(token))
     db.add(session)
-    db.flush()
-    db.refresh(session)
     db.commit()
+    db.refresh(session)
     return session, token
 
 
 def resolve_extension_session_user(db: Session, token: str) -> UUID | None:
-    if not token.startswith(_TOKEN_PREFIX):
-        return None
-
-    session = db.execute(
-        select(ExtensionSession).where(
-            ExtensionSession.token_hash == _hash_extension_token(token),
-            ExtensionSession.revoked_at.is_(None),
-        )
-    ).scalar_one_or_none()
+    session = _live(db, token)
     if session is None:
         return None
-
     session.last_used_at = func.now()
     db.flush()
     return session.user_id
 
 
 def describe_extension_session(db: Session, user_id: UUID) -> ExtensionSessionOut:
-    """The account identity a bearer resolves to, and the capture byte limits."""
     row = db.execute(
-        text("SELECT email, display_name FROM users WHERE id = :user_id"), {"user_id": user_id}
+        text("SELECT email, display_name FROM users WHERE id = :id"), {"id": user_id}
     ).one()
     settings = get_settings()
     return ExtensionSessionOut(
-        user_handle=seal_user(user_id),
-        email=presence_from_nullable(row.email),
-        display_name=presence_from_nullable(row.display_name),
+        user_id=user_id,
+        email=row.email,
+        display_name=row.display_name,
         limits=CaptureLimits(
             max_pdf_bytes=settings.max_pdf_bytes,
             max_epub_bytes=settings.max_epub_bytes,
@@ -72,22 +57,23 @@ def describe_extension_session(db: Session, user_id: UUID) -> ExtensionSessionOu
 
 
 def revoke_extension_session_token(db: Session, token: str) -> bool:
-    if not token.startswith(_TOKEN_PREFIX):
-        return False
-
-    session = db.execute(
-        select(ExtensionSession).where(
-            ExtensionSession.token_hash == _hash_extension_token(token),
-            ExtensionSession.revoked_at.is_(None),
-        )
-    ).scalar_one_or_none()
+    session = _live(db, token)
     if session is None:
         return False
-
     session.revoked_at = func.now()
     db.commit()
     return True
 
 
-def _hash_extension_token(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+def _live(db: Session, token: str) -> ExtensionSession | None:
+    if not token.startswith(_PREFIX):
+        return None
+    return db.scalar(
+        select(ExtensionSession).where(
+            ExtensionSession.token_hash == _hash(token), ExtensionSession.revoked_at.is_(None)
+        )
+    )
+
+
+def _hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()

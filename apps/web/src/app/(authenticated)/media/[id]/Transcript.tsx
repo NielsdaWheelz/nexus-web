@@ -13,11 +13,9 @@ import LecternAddControl from "@/components/collections/LecternAddControl";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { activityRecorder } from "@/lib/consumption/activityRecorder";
-import { parseMediaRef } from "@/lib/consumption/activityContract";
+import { registerActivityObserver } from "@/lib/consumption/capture";
 import { clock } from "@/lib/documentReader/model";
-import { parseMediaId } from "@/lib/lectern/contract";
-import { useLectern } from "@/lib/lectern/LecternProvider";
+import { lecternFull, placeOnLectern, useLectern } from "@/lib/lectern/lectern";
 import type { MediaDetail } from "@/lib/media/mediaDetail";
 import {
   playingEpisode,
@@ -165,7 +163,7 @@ export function TranscriptChrome({
   const { playAudio } = usePlayerCommands();
   const { state } = usePlayerSession();
   const { positionMs } = usePlayerTimeline();
-  const { placeItems, resource } = useLectern();
+  const lectern = useLectern();
   const paneId = usePaneRuntime()?.paneId;
   const playRef = useRef<HTMLButtonElement | null>(null);
   const [notes] = useState(() => showNotes(media));
@@ -173,30 +171,23 @@ export function TranscriptChrome({
   const frame = useRef<HTMLIFrameElement>(null);
   const source = media.playback_source;
   const embed = source?.kind === "external_video" && source.embed_url && isAllowedYoutubeEmbedUrl(source.embed_url) ? source.embed_url : null;
-  const descriptor = media.playerDescriptor.kind === "Present" ? media.playerDescriptor.value : null;
-  const ready = resource.status === "ready";
-  // "Play next" goes after the playing episode's lectern row, else first.
-  const playing = playingEpisode(state)?.mediaId ?? null;
-  const playingRow = ready ? resource.data.items.find((item) => item.mediaSummary.mediaId === playing) : undefined;
+  const descriptor = media.playerDescriptor;
+  // "Play next" goes after the playing episode's lectern row (the server puts it first without one).
+  const playing = playingEpisode(state)?.media_id ?? null;
   const active = media.chapters.findLast((chapter) => chapter.t_start_ms <= (positionMs ?? -1));
 
   // A visible, loaded video in the active pane is watching time.
   useEffect(() => {
     const iframe = frame.current;
     if (!iframe || !embed) return;
-    const key = `video:${media.id}`;
     const observation = (eligible: boolean) => ({
-      mediaRef: parseMediaRef(`media:${media.id}`),
-      modality: "Viewing" as const,
       deviceClass: window.matchMedia("(max-width: 768px)").matches ? ("Mobile" as const) : ("Desktop" as const),
       eligible,
     });
-    const recorder = activityRecorder();
-    const unregister = recorder.registerObserver(key, observation(false));
+    const activity = registerActivityObserver(media.id, "Viewing", observation(false));
     let visible = false;
     const update = () =>
-      recorder.observe(
-        key,
+      activity.observe(
         observation(visible && paneActive && !videoFailed && document.visibilityState === "visible" && (document.hasFocus() || document.activeElement === iframe)),
       );
     const observer = new IntersectionObserver(([entry]) => {
@@ -210,7 +201,7 @@ export function TranscriptChrome({
       observer.disconnect();
       for (const [target, name] of [[document, "visibilitychange"], [window, "focus"], [window, "blur"]] as const)
         target.removeEventListener(name, update);
-      unregister();
+      activity.close();
     };
   }, [embed, media.id, paneActive, videoFailed]);
 
@@ -225,26 +216,25 @@ export function TranscriptChrome({
       ) : descriptor ? (
         <div className={styles.playback}>
           <p>Playback continues in the global player.</p>
-          <Button ref={playRef} variant="secondary" size="sm" disabled={!ready} onClick={() => playAudio(descriptor)}>
+          <Button ref={playRef} variant="secondary" size="sm" onClick={() => playAudio(descriptor)}>
             Play
           </Button>
           <Button
             variant="secondary"
             size="sm"
-            disabled={!ready || (playingRow !== undefined && playing === media.id)}
             onClick={() =>
-              void placeItems({
-                mediaIds: [parseMediaId(media.id)],
-                placement: playingRow ? { kind: "After", itemId: playingRow.itemId } : { kind: "First" },
-              })
+              void placeOnLectern(
+                media.id,
+                playing !== null && playing !== media.id ? { kind: "After", media_id: playing } : { kind: "First" },
+              )
             }
           >
             Play next
           </Button>
-          <LecternAddControl mediaId={parseMediaId(media.id)} title={media.title}
-            returnFocus={() => playRef.current?.isConnected && !playRef.current.disabled && !playRef.current.closest("[inert]")
+          <LecternAddControl mediaId={media.id} title={media.title}
+            returnFocus={() => playRef.current?.isConnected && !playRef.current.closest("[inert]")
               ? playRef.current : findPaneLandmarkFocusTarget(paneId)} />
-          {ready && resource.data.atCapacity ? <FeedbackNotice
+          {lecternFull(lectern) ? <FeedbackNotice
             content={{ tone: "Neutral", title: "lectern is full", message: "remove an item to add another." }}
             announcement="None" /> : null}
         </div>

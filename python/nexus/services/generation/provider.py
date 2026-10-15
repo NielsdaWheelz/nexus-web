@@ -101,18 +101,12 @@ def build_provider_runtime(settings: Settings, client: httpx.AsyncClient) -> Pro
 
     from provider_runtime import Credentials, ProviderRuntime
 
-    keys = {
-        "openai": settings.openai_generation_api_key,
-        "anthropic": settings.anthropic_generation_api_key,
-        "gemini": settings.gemini_generation_api_key,
-        "deepseek": settings.deepseek_generation_api_key,
-        "xai": settings.xai_generation_api_key,
-    }
-    configured = settings.generation_api_provider_list
+    configured = settings.generation_api_providers
     if not configured:
         return None
     credentials: dict[str, Any] = {
-        provider: cast(Any, keys[provider]).get_secret_value() for provider in configured
+        provider: cast(Any, settings.generation_api_key(provider)).get_secret_value()
+        for provider in configured
     }
     return ProviderRuntime(Credentials(**credentials), http_client=client)
 

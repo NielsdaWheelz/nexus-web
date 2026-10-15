@@ -39,7 +39,6 @@ shellcheck "${shell_files[@]}"
     ../deploy/hetzner/qualify_model_cutover.py
     ../deploy/hetzner/release.py
   )
-  uv run --frozen --no-sync python scripts/generate_tool_contract_projection.py --check
   uv run --frozen --no-sync ruff format --check "${python_files[@]}"
   uv run --frozen --no-sync ruff check "${python_files[@]}"
   uv run --frozen --no-sync pyright

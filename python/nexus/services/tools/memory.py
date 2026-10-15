@@ -1,6 +1,6 @@
 """Owner-only shared memory: the private client config, the MCP call and the tool bindings.
 
-Production runs without a config (``Absent``): every memory tool is unavailable and no
+Production runs without a config (``null``): every memory tool is unavailable and no
 plan grants one. Generation core grants a memory plan only to the config's owner, in a
 chat, on a processor chain the config allows; the handler re-checks the owner.
 """
@@ -58,8 +58,6 @@ from universal_memory.tools import (
     MemoryToolFailure,
 )
 
-from nexus.schemas.presence import Absent, Presence
-
 if TYPE_CHECKING:
     from nexus.services.tools.run import Call
 
@@ -111,13 +109,11 @@ class MemoryClientConfig(BaseModel):
         )
 
 
-def load_memory_client_config(path: Path | None) -> Presence[MemoryClientConfig]:
+def load_memory_client_config(path: Path | None) -> MemoryClientConfig | None:
     if path is None:
-        return Absent()
+        return None
     try:
-        return TypeAdapter(Presence[MemoryClientConfig]).validate_json(
-            path.read_bytes(), strict=True
-        )
+        return TypeAdapter(MemoryClientConfig | None).validate_json(path.read_bytes(), strict=True)
     except (OSError, ValueError):
         # an explicitly configured private declaration must be valid.
         raise RuntimeError("invalid private memory client configuration") from None
@@ -336,18 +332,18 @@ def _handler(spec: ToolSpec[Any, Any, Any], config: MemoryClientConfig) -> Any:
     return handler
 
 
-def family(config: Presence[MemoryClientConfig]) -> ToolFamily:
+def family(config: MemoryClientConfig | None) -> ToolFamily:
     """The memory bindings: available when configured and connected; saves when admitted."""
 
     specs = (*MEMORY_READ_SPECS, MEMORY_SAVE_NOTE_SPEC)
     bindings = []
     for spec in specs:
-        if isinstance(config, Absent):
+        if config is None:
             execute: Any = Unavailable("shared memory is not configured")
-        elif not config.value.connect or (spec is MEMORY_SAVE_NOTE_SPEC and not config.value.admit):
+        elif not config.connect or (spec is MEMORY_SAVE_NOTE_SPEC and not config.admit):
             execute = Unavailable("shared memory is not connected or admitted")
         else:
-            execute = Available(_handler(spec, config.value))
+            execute = Available(_handler(spec, config))
         bindings.append(
             ToolBinding(
                 spec=spec,

@@ -67,6 +67,10 @@
   gap: var(--space-2);
 }
 
+.trailing .primaryAction {
+  height: var(--size-md);
+}
+
 .primaryActionContent {
   display: inline-flex;
   align-items: center;
@@ -85,8 +89,7 @@
 
 /* Pane chrome's 32px control, taller than Button's sm; pressed outranks
    Button's ghost hover, whatever the stylesheet order. */
-.trailing .companion,
-.trailing .primaryAction {
+.trailing .companion {
   height: var(--size-md);
 }
 

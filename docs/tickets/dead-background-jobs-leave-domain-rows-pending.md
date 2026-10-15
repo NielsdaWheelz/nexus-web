@@ -7,7 +7,8 @@ attempt, or a defect on every attempt) closes its open `llm_calls` row
 `interrupted` through its `on_dead` hook (`generation.ledger.on_dead_letter`, named
 per kind in `python/nexus/jobs/registry.py`), but its domain row stays where
 it was: an `oracle_readings` row stays `pending`, an `artifact_builds` row stays
-`active` (the head reads Suspended), a `media_summaries` row stays `building`.
+`active` (the head reads Suspended). (a `media_summaries` head is failed by its own
+hook, `jobs/dead_letters.media_unit_build`, since migration 0284.)
 migration 0269 fails the rows that were stuck this way at the release, once.
 metadata needs nothing: a dead job already projects `failed`.
 

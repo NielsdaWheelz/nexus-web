@@ -6,8 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
-from nexus.schemas.media import NavigationTextPointOut, NavigationTextRangeOut
-from nexus.schemas.presence import Presence, Present
+from nexus.schemas.reader import NavigationTextPointOut, NavigationTextRangeOut
 from nexus.schemas.retrieval import RetrievalLocator
 
 ReaderApparatusStatus = Literal["ready", "empty", "partial", "unsupported", "failed"]
@@ -39,7 +38,7 @@ ReaderApparatusLocatorStatus = Literal["exact", "container", "missing"]
 
 class NotesGroup(BaseModel):
     range: NavigationTextRangeOut
-    heading: Presence[NavigationTextPointOut]
+    heading: NavigationTextPointOut | None
     provenance: Literal["Declared", "Inferred"]
 
     model_config = ConfigDict(extra="forbid")
@@ -49,15 +48,9 @@ class NotesGroup(BaseModel):
         start, end = self.range.start, self.range.end
         if start.fragment_id == end.fragment_id and start.offset >= end.offset:
             raise ValueError("note group requires a nonempty range")
-        if isinstance(self.heading, Present) and (
-            (
-                self.heading.value.fragment_id == start.fragment_id
-                and self.heading.value.offset < start.offset
-            )
-            or (
-                self.heading.value.fragment_id == end.fragment_id
-                and self.heading.value.offset >= end.offset
-            )
+        if self.heading is not None and (
+            (self.heading.fragment_id == start.fragment_id and self.heading.offset < start.offset)
+            or (self.heading.fragment_id == end.fragment_id and self.heading.offset >= end.offset)
         ):
             raise ValueError("note group heading must lie within its range")
         return self
@@ -82,7 +75,7 @@ class NoteBodyRegion(BaseModel):
 class NoteGroupRegion(BaseModel):
     kind: Literal["Group"] = "Group"
     range: NavigationTextRangeOut
-    heading: Presence[NavigationTextPointOut]
+    heading: NavigationTextPointOut | None
     provenance: Literal["Declared", "Inferred"]
 
     model_config = ConfigDict(extra="forbid")

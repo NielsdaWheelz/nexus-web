@@ -1,15 +1,15 @@
-"""The per-media intelligence unit build: one grounded synthesis per fingerprint.
+"""The ``media_unit_build`` job: one grounded synthesis per content fingerprint (I12).
 
-The claimed job attempt generates once and writes the head it owns. Both head
-writes are fenced on the captured content fingerprint and this exact running
-lease, so a superseded attempt can neither publish nor fail the live head. A
-retry after a dead worker generates again from scratch.
+An attempt writes only the head it was enqueued for, while that head is building at its
+fingerprint under this attempt's claim: one that lost it (a re-index re-ensured the head, a
+deletion dropped it, the job was reclaimed) writes nothing. A retry generates again. A head
+whose index moved on before its build ran fails, as does one whose job dies (I16).
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal, NamedTuple, cast
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -17,7 +17,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.retries import retry_serializable
-from nexus.jobs.queue import JobExecutionContext, get_job, running_job_claim_is_current
+from nexus.jobs.queue import JobExecutionContext
 from nexus.services.connection_discovery import queue_connection_discovery_scan
 from nexus.services.generation.contract import Failed, InvalidOutput, Owner, Succeeded
 from nexus.services.generation.run import generate
@@ -30,11 +30,12 @@ from nexus.services.generation.synthesis import (
     ground_indices,
     strict,
 )
-from nexus.services.media_intelligence import Candidate, load_candidates, media_summary_orm_or_none
+from nexus.services.media_intelligence import Candidate, load_candidates
 from nexus.services.media_intelligence_lifecycle import current_content_fingerprint
 from nexus.services.resource_graph.refs import ResourceRef
 
 
+# The docstrings below are model-facing (schema descriptions, kept verbatim); notes are comments.
 class MediaUnitClaimOut(BaseModel):
     """One claim in the model's strict-JSON output."""
 
@@ -70,133 +71,118 @@ _SYSTEM_PROMPT = build_synthesis_prompt(
     json_shape='{"summary_md": string, "claims": [{"claim_text": string, "candidate_index": int}]}',
 )
 
+# The head this attempt owns: building at its fingerprint, under this exact claim.
+_OWNED_HEAD = """
+    WHERE id = :summary_id AND status = 'building' AND content_fingerprint = :fingerprint
+      AND EXISTS (SELECT 1 FROM background_jobs
+                  WHERE id = :job_id AND status = 'running' AND execution_id = :execution_id)
+"""
 
-class _Claim(NamedTuple):
-    claim_text: str
-    evidence_span_id: UUID
-    ordinal: int
-
-
-class _Memo(BaseModel):
-    """The outcome of one unit synthesis, applied to the head this attempt owns."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    kind: Literal["success", "failure"]
-    summary_md: str = ""
-    claims: tuple[_Claim, ...] = ()
-    error_code: str = ""
-    error_detail: str | None = None
-
-
-class _Head(NamedTuple):
-    """The unit head version this attempt owns."""
-
-    media_id: UUID
-    summary_id: UUID
-    content_fingerprint: str
+type _Outcome = Literal["ok", "failed"]
 
 
 def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> dict:
-    """Worker entry: synthesize one media unit."""
-    media_id, content_fingerprint = payload["media_id"], payload["content_fingerprint"]
-    media_uuid = UUID(media_id)
+    media_id = UUID(payload["media_id"])
+    fence = {
+        "summary_id": UUID(payload["summary_id"]),
+        "fingerprint": payload["content_fingerprint"],
+        "job_id": context.job_id,
+        "execution_id": context.execution_id,
+    }
 
     async def handler(db: Session, runtime: Runtime) -> dict:
-        outcome = await _build(
-            db,
-            media_id=media_uuid,
-            content_fingerprint=content_fingerprint,
-            ctx=context,
-            runtime=runtime,
-        )
-        # A modeled domain failure is a completed durable job, not a queue
-        # infrastructure failure.
-        return {"status": "ok", "outcome": outcome, "media_id": media_id}
+        outcome = await _build(db, runtime, context, media_id, fence)
+        # A modeled failure is a completed job, not a queue failure.
+        return {"status": "ok", "outcome": outcome, "media_id": str(media_id)}
 
     return run_generation_job("media_unit_build", context, handler)
 
 
 async def _build(
     db: Session,
-    *,
-    media_id: UUID,
-    content_fingerprint: str,
-    ctx: JobExecutionContext,
     runtime: Runtime,
-) -> Literal["ok", "failed"]:
-    job = get_job(db, ctx.job_id)
-    if job is None:
-        return "ok"
-    head = _Head(media_id, UUID(str(job.payload["summary_id"])), content_fingerprint)
-    if not running_job_claim_is_current(db, context=ctx):
+    context: JobExecutionContext,
+    media_id: UUID,
+    fence: dict[str, Any],
+) -> _Outcome:
+    owned = db.scalar(text("SELECT 1 FROM media_summaries " + _OWNED_HEAD), fence)
+    if owned is None:
         db.rollback()
         return "ok"
-    current = media_summary_orm_or_none(db, media_id=head.media_id)
-    if (
-        current is None
-        or current.id != head.summary_id
-        or current.status != "building"
-        or current.content_fingerprint != head.content_fingerprint
-        or current_content_fingerprint(db, media_id=head.media_id) != head.content_fingerprint
-    ):
-        db.commit()
-        return "ok"
-    owner_row = db.execute(
-        text("SELECT created_by_user_id FROM media WHERE id = :media_id"),
-        {"media_id": head.media_id},
-    ).scalar_one_or_none()
-    candidates = [] if owner_row is None else load_candidates(db, media_id=head.media_id)
-    if owner_row is None or not candidates:
-        _fail_head(
-            db,
-            ctx=ctx,
-            head=head,
-            memo=_Memo(
-                kind="failure",
-                error_code="no_owner",
-                error_detail="media has no owning user to attribute the generation to",
-            )
-            if owner_row is None
-            else _Memo(
-                kind="failure",
-                error_code="no_candidates",
-                error_detail="media has no indexed content chunks with evidence spans",
-            ),
+    if current_content_fingerprint(db, media_id=media_id) != fence["fingerprint"]:
+        db.rollback()  # the index moved on (marked pending, or published without text)
+        return _fail(db, fence, "superseded", None)
+    owner = db.scalar(text("SELECT created_by_user_id FROM media WHERE id = :m"), {"m": media_id})
+    candidates = [] if owner is None else load_candidates(db, media_id=media_id)
+    db.commit()  # every request-shaping read is done: no transaction spans the model call
+    if owner is None:
+        return _fail(
+            db, fence, "no_owner", "media has no owning user to attribute the generation to"
         )
-        return "failed"
-    owner_user_id = UUID(str(owner_row))
-    intent = build_synthesis_intent(
-        system_prompt=_SYSTEM_PROMPT,
-        user_content=build_synthesis_user_content(
-            candidates_header="CANDIDATES",
-            rendered_candidates="\n\n".join(
-                f"[{index}] {candidate.text}" for index, candidate in enumerate(candidates)
-            ),
-            extra_user_block=None,
-        ),
-        schema=MediaUnitSynthesis,
-    )
-    # Every request-shaping read is complete; no transaction crosses the model call.
-    db.commit()
+    if not candidates:
+        return _fail(db, fence, "no_candidates", "media has no indexed chunks with evidence spans")
     terminal = await generate(
         runtime,
-        owner=Owner("media_summary", head.summary_id, owner_user_id, ctx),
+        owner=Owner("media_summary", fence["summary_id"], owner, context),
         operation="media_summary",
-        intent=intent,
-        decode=strict(MediaUnitSynthesis, lambda value: _accept(value, candidates)),
+        intent=build_synthesis_intent(
+            system_prompt=_SYSTEM_PROMPT,
+            user_content=build_synthesis_user_content(
+                candidates_header="CANDIDATES",
+                rendered_candidates="\n\n".join(
+                    f"[{index}] {candidate.text}" for index, candidate in enumerate(candidates)
+                ),
+                extra_user_block=None,
+            ),
+            schema=MediaUnitSynthesis,
+        ),
+        decode=strict(MediaUnitSynthesis, lambda value: _ground(value, candidates)),
     )
-    if isinstance(terminal, Succeeded):
-        memo = terminal.value
-    elif isinstance(terminal, Failed):
-        memo = _Memo(kind="failure", error_code=terminal.code, error_detail=terminal.detail)
-    else:
-        memo = _Memo(kind="failure", error_code="cancelled")
-    return _apply(db, ctx=ctx, head=head, owner_user_id=owner_user_id, memo=memo)
+    if isinstance(terminal, Failed):
+        return _fail(db, fence, terminal.code, terminal.detail)
+    if not isinstance(terminal, Succeeded):
+        return _fail(db, fence, "cancelled", None)
+    summary_md, claims = terminal.value
+
+    def publish() -> None:
+        updated: Any = db.execute(
+            text(
+                "UPDATE media_summaries SET summary_md = :summary_md, status = 'ready',"
+                " error_code = NULL, error_detail = NULL, updated_at = now()" + _OWNED_HEAD
+            ),
+            {**fence, "summary_md": summary_md},
+        )
+        if updated.rowcount == 0:  # superseded during the model call: write nothing
+            db.rollback()
+            return
+        db.execute(
+            text("DELETE FROM media_claims WHERE summary_id = :s"), {"s": fence["summary_id"]}
+        )
+        if claims:
+            db.execute(
+                text("""
+                    INSERT INTO media_claims (media_id, summary_id, claim_text, evidence_span_id,
+                        ordinal)
+                    VALUES (:media_id, :summary_id, :claim_text, :span_id, :ordinal)
+                """),
+                [{"media_id": media_id, "summary_id": fence["summary_id"], **c} for c in claims],
+            )
+        queue_connection_discovery_scan(
+            db,
+            user_id=owner,
+            ref=ResourceRef(scheme="media", id=media_id),
+            reason="media_unit_ready",
+        )
+        db.commit()
+
+    retry_serializable(db, "media_unit_publish", publish)
+    return "ok"
 
 
-def _accept(value: MediaUnitSynthesis, candidates: list[Candidate]) -> _Memo:
-    """Ground every claim on an offered passage; survivors take dense ordinals in order."""
+def _ground(
+    value: MediaUnitSynthesis, candidates: list[Candidate]
+) -> tuple[str, list[dict[str, Any]]]:
+    """Every claim cites an offered passage; survivors take dense ordinals in order."""
     grounded = ground_indices(
         value.claims, candidates, index_of=lambda claim: claim.candidate_index
     )
@@ -204,136 +190,24 @@ def _accept(value: MediaUnitSynthesis, candidates: list[Candidate]) -> _Memo:
         raise InvalidOutput(
             "media summary output references a candidate index that was not offered"
         )
-    return _Memo(
-        kind="success",
-        summary_md=value.summary_md,
-        claims=tuple(
-            _Claim(claim.claim_text, candidate.evidence_span_id, ordinal)
-            for ordinal, (claim, candidate) in enumerate(grounded)
-        ),
-    )
+    return value.summary_md, [
+        {"claim_text": claim.claim_text, "span_id": candidate.evidence_span_id, "ordinal": ordinal}
+        for ordinal, (claim, candidate) in enumerate(grounded)
+    ]
 
 
-def _apply(
-    db: Session,
-    *,
-    ctx: JobExecutionContext,
-    head: _Head,
-    owner_user_id: UUID,
-    memo: _Memo,
-) -> Literal["ok", "failed"]:
-    """Write the memo's outcome to the head this attempt owns."""
-    if memo.kind == "failure":
-        _fail_head(db, ctx=ctx, head=head, memo=memo)
-        return "failed"
+def _fail(db: Session, fence: dict[str, Any], code: str, detail: str | None) -> _Outcome:
+    """A modeled failure on the owned head; ``error_detail`` is operator-only, never rendered."""
 
     def op() -> None:
-        if not _update_head(
-            db,
-            ctx=ctx,
-            head=head,
-            assignments=(
-                "summary_md = :summary_md, status = 'ready', error_code = NULL, error_detail = NULL"
-            ),
-            values={"summary_md": memo.summary_md},
-        ):
-            db.rollback()
-            return
-        queue_connection_discovery_scan(
-            db,
-            user_id=owner_user_id,
-            ref=ResourceRef(scheme="media", id=head.media_id),
-            reason="media_unit_ready",
-        )
         db.execute(
-            text("DELETE FROM media_claims WHERE summary_id = :summary_id"),
-            {"summary_id": head.summary_id},
-        )
-        if memo.claims:
-            db.execute(
-                text(
-                    """
-                    INSERT INTO media_claims (
-                        media_id, summary_id, claim_text, evidence_span_id, ordinal
-                    )
-                    VALUES (:media_id, :summary_id, :claim_text, :evidence_span_id, :ordinal)
-                    """
-                ),
-                [
-                    {
-                        "media_id": head.media_id,
-                        "summary_id": head.summary_id,
-                        "claim_text": claim.claim_text,
-                        "evidence_span_id": claim.evidence_span_id,
-                        "ordinal": claim.ordinal,
-                    }
-                    for claim in memo.claims
-                ],
-            )
-        db.commit()
-
-    retry_serializable(db, "media_unit_publish", op)
-    return "ok"
-
-
-def _fail_head(db: Session, *, ctx: JobExecutionContext, head: _Head, memo: _Memo) -> None:
-    """Record the modeled failure; ``error_detail`` is operator-only, never rendered."""
-
-    def op() -> None:
-        _update_head(
-            db,
-            ctx=ctx,
-            head=head,
-            assignments=(
-                "status = 'failed', error_code = :error_code, error_detail = :error_detail"
+            text(
+                "UPDATE media_summaries SET status = 'failed', error_code = :code,"
+                " error_detail = :detail, updated_at = now()" + _OWNED_HEAD
             ),
-            values={"error_code": memo.error_code, "error_detail": memo.error_detail},
+            {**fence, "code": code, "detail": detail},
         )
         db.commit()
 
     retry_serializable(db, "media_unit_fail", op)
-
-
-def _update_head(
-    db: Session,
-    *,
-    ctx: JobExecutionContext,
-    head: _Head,
-    assignments: str,
-    values: dict[str, object],
-) -> bool:
-    """Update the owned head version, or match nothing and write nothing.
-
-    A concurrent re-ingest commits a new fingerprint (replacing the evidence
-    spans the claims reference) or a deletion drops the head during the model
-    window: the fence then matches no row, so a superseded attempt bails before
-    its FK-violating claim inserts and never clobbers the live head.
-    """
-    result = cast(
-        "Any",
-        db.execute(
-            text(
-                f"""
-                UPDATE media_summaries
-                SET {assignments}, updated_at = now()
-                WHERE id = :summary_id
-                  AND media_id = :media_id
-                  AND status = 'building'
-                  AND content_fingerprint = :expected_fingerprint
-                  AND EXISTS (
-                      SELECT 1 FROM background_jobs
-                      WHERE id = :job_id AND status = 'running' AND execution_id = :execution_id
-                  )
-                """
-            ),
-            {
-                **values,
-                "summary_id": head.summary_id,
-                "media_id": head.media_id,
-                "expected_fingerprint": head.content_fingerprint,
-                "job_id": ctx.job_id,
-                "execution_id": ctx.execution_id,
-            },
-        ),
-    )
-    return result.rowcount > 0
+    return "failed"

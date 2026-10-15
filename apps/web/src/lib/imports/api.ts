@@ -6,8 +6,10 @@
  * a payload by hand; the invalidation signal is this tab's own.
  */
 
-import { apiFetch, type ApiPath } from "@/lib/api/client";
+import type { FeedbackContextValue } from "@/components/feedback/Feedback";
+import { apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 
 export type ImportSummary = ApiJson<"/imports/summary", "get">["data"];
 export type ImportPage = ApiJson<"/imports", "get">["data"];
@@ -17,29 +19,23 @@ export type ImportStage = Schema<"ImportStateNeedsAttention">["stage"];
 export type ImportDetail = ApiJson<"/imports/{ref}", "get">["data"];
 export type HistoryPage = ApiJson<"/imports/{ref}/history", "get">["data"];
 export type HistoryEntry = Schema<"HistoryEntry">;
-export type ImportFailureCode = Extract<
-  Schema<"ImportStateNeedsAttention">["failure_code"],
-  { kind: "Present" }
->["value"];
+export type ImportFailureCode = NonNullable<
+  Schema<"ImportStateNeedsAttention">["failure_code"]
+>;
 export type SafeFailureCode = Exclude<
   ImportFailureCode,
   Schema<"MetadataFailureCode">
 >;
 export type SourceImportObligation = Schema<"SourceImportObligation">;
 export type SearchImportObligation = Schema<"SearchImportObligation">;
-export type RecoveryOffer = Extract<
-  SourceImportObligation["recovery"] | SearchImportObligation["recovery"],
-  { kind: "Present" }
->["value"];
-export type RecoveryRestriction = Extract<
-  SourceImportObligation["unavailable_reason"],
-  { kind: "Present" }
->["value"];
+export type RecoveryOffer = NonNullable<
+  SourceImportObligation["recovery"] | SearchImportObligation["recovery"]
+>;
+export type RecoveryRestriction = NonNullable<
+  SourceImportObligation["unavailable_reason"]
+>;
 export type ImportsView = "NeedsAttention" | "InProgress" | "History";
-export type UploadVerificationCode = Extract<
-  Schema<"NeedsAttention">["failure"],
-  { kind: "VerificationFailed" }
->["code"];
+export type UploadVerificationCode = Schema<"Rejected">["code"];
 
 /**
  * The closed set of outcomes the upload-session endpoints declare. Each
@@ -53,21 +49,16 @@ export type UploadSessionOutcome =
       readonly code: UploadVerificationCode;
     }
   | {
-      readonly kind: /** Imports owns an unresolved obligation for this session. */
-      | "NeedsAttention"
-        /** No staged bytes for this generation; send the same file again. */
-        | "BytesMissing"
+      readonly kind: /** The bytes never landed; sending the same id again re-opens the upload. */
+      | "BytesMissing"
         /** This attempt no longer owns the session; Imports is authoritative. */
         | "Superseded"
-        /** The identity this command named is stale. */
-        | "Conflicted"
-        /** Acceptance is unknown; replaying the same intent converges. */
+        /** Acceptance is unknown; sending the same id again converges. */
         | "Unresolved"
         /** Terminal for this intent; only a new import can succeed. */
         | "UnsupportedFileType"
         | "FileTooLarge"
         | "LibraryForbidden"
-        | "IntentChanged"
         | "FileMismatch"
         /** This client composed a request the endpoint forbids: a defect. */
         | "IntentMalformed";
@@ -142,64 +133,106 @@ export function fetchImportHistory(
   return read(withCursor(`${refPath(ref)}/history`, cursor), signal);
 }
 
-/** Admit one media recovery; the admission changes what Imports owes. */
-async function admit<T>(
+/** A recovery of a media's own work (not a re-upload). */
+export type MediaRecoveryOffer = Exclude<RecoveryOffer, { kind: "RetryUpload" }>;
+
+/**
+ * Admit the recovery `offer` authorizes, sent with the attempt, job or revision
+ * the reader saw: a stale one conflicts (409) instead of acting on work the
+ * reader never saw, and a resend after the first landed answers it again. The
+ * admission changes what Imports owes.
+ */
+export async function recoverMedia(
   mediaId: string,
-  verb: "retry" | "repair" | "refresh",
-  body: object,
-): Promise<T> {
-  const response = await apiFetch<{ data: T }>(
-    `/api/media/${encodeURIComponent(mediaId)}/${verb}`,
-    { method: "POST", body: JSON.stringify(body) },
-  );
+  offer: MediaRecoveryOffer,
+): Promise<void> {
+  const body =
+    offer.kind === "RetrySource"
+      ? ({
+          expected_attempt_id: offer.expected_attempt_id,
+        } satisfies Schema<"RetrySourceRequest">)
+      : offer.kind === "RepairSource"
+        ? ({
+            kind: "Source",
+            expected_attempt_id: offer.expected_attempt_id,
+            expected_job_id: offer.expected_job_id,
+          } satisfies Schema<"SourceRepairRequest">)
+        : ({
+            kind: "Search",
+            expected_revision: offer.expected_revision,
+            expected_job_id: offer.expected_job_id,
+          } satisfies Schema<"SearchRepairRequest">);
+  const verb = offer.kind === "RetrySource" ? "retry" : "repair";
+  await apiFetch(`/api/media/${encodeURIComponent(mediaId)}/${verb}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
   publishImportsInvalidation();
-  return response.data;
 }
 
-export function retrySourceImport(input: {
-  readonly mediaId: string;
-  readonly expectedAttemptId: string;
-  readonly clientMutationId: string;
-}): Promise<Schema<"SourceRetryAdmission">> {
-  return admit(input.mediaId, "retry", {
-    from_stage: "source",
-    client_mutation_id: input.clientMutationId,
-    expected_attempt_id: input.expectedAttemptId,
-  } satisfies Schema<"RetrySourceRequest">);
-}
-
-export function repairSourceImport(input: {
-  readonly mediaId: string;
-  readonly expectedAttemptId: string;
-  readonly expectedJobId: string;
-  readonly clientMutationId: string;
-}): Promise<Schema<"SourceRepairAdmission">> {
-  return admit(input.mediaId, "repair", {
-    kind: "Source",
-    client_mutation_id: input.clientMutationId,
-    expected_attempt_id: input.expectedAttemptId,
-    expected_job_id: input.expectedJobId,
-  } satisfies Schema<"SourceRepairRequest">);
-}
-
-export function repairSearchImport(input: {
-  readonly mediaId: string;
-  readonly expectedRevision: number;
-  readonly expectedJobId: string;
-  readonly clientMutationId: string;
-}): Promise<Schema<"SearchRepairAdmission">> {
-  return admit(input.mediaId, "repair", {
-    kind: "Search",
-    client_mutation_id: input.clientMutationId,
-    expected_revision: input.expectedRevision,
-    expected_job_id: input.expectedJobId,
-  } satisfies Schema<"SearchRepairRequest">);
-}
-
-/** Re-fetch a media's source; the refreshed facts arrive through Imports. */
-export function refreshMediaSource(
+/**
+ * Re-fetch a media's source from the attempt the viewer saw; the refreshed facts
+ * arrive through Imports. A refusal throws; acceptance and an unknown outcome are
+ * huds. "confirm request" resends the same expectation, which answers the refresh
+ * that landed. An access reply (401/403/404) settles nothing.
+ */
+export async function requestSourceRefresh(
   mediaId: string,
-  request: Schema<"RefreshSourceRequest">,
-): Promise<Schema<"SourceRefreshAdmission">> {
-  return admit(mediaId, "refresh", request);
+  expectedAttemptId: string | null,
+  hud: { feedback: FeedbackContextValue; showMetadata: () => void },
+): Promise<void> {
+  if (expectedAttemptId === null) {
+    // justify-defect: an available refresh carries the attempt it replaces.
+    throw new TypeError("Source refresh lost its inspected expectation");
+  }
+  const hudKey = `source-refresh:${mediaId}`;
+  const metadata = { label: "metadata…", onClick: hud.showMetadata };
+  try {
+    await apiFetch<ApiJson<"/media/{media_id}/refresh", "post">>(
+      `/api/media/${encodeURIComponent(mediaId)}/refresh`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          expected_attempt_id: expectedAttemptId,
+        } satisfies Schema<"RefreshSourceRequest">),
+      },
+    );
+  } catch (error) {
+    if (isApiError(error) && error.status >= 400 && error.status < 500) {
+      if (![401, 403, 404].includes(error.status)) hud.feedback.resolve(hudKey);
+      throw error;
+    }
+    const confirm = () =>
+      void requestSourceRefresh(mediaId, expectedAttemptId, hud).catch(
+        (refused: unknown) => {
+          if (handleUnauthenticatedApiError(refused)) return;
+          hud.feedback.publish({
+            kind: "Hud",
+            content: {
+              tone: "Danger",
+              title: "could not confirm source refresh",
+              message: isApiError(refused) ? refused.message : undefined,
+            },
+          });
+        },
+      );
+    hud.feedback.publish({
+      kind: "Hud",
+      key: hudKey,
+      content: {
+        tone: "Danger",
+        title: "source refresh unconfirmed",
+        message: "confirm this request to safely check whether it was accepted",
+      },
+      actions: [{ label: "confirm request", onClick: confirm }, metadata],
+    });
+    return;
+  }
+  publishImportsInvalidation();
+  hud.feedback.publish({
+    kind: "Hud",
+    key: hudKey,
+    content: { tone: "Neutral", title: "source refresh request confirmed" },
+    actions: [metadata],
+  });
 }

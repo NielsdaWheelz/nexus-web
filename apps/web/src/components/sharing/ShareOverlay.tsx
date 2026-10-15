@@ -1,33 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ComponentProps, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { Copy, Send, Share2 } from "lucide-react";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import MobileSheet from "@/components/ui/MobileSheet";
-import PeopleSearchCombobox from "@/components/users/PeopleSearchCombobox";
+import PeopleSearch, { personLabel } from "@/components/users/PeopleSearch";
 import {
-  apiCommand204,
   apiFetch,
   apiTransportFeedback,
   isApiError,
   isSameSystemApiDefect,
   type ApiPath,
 } from "@/lib/api/client";
-import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ShareSession } from "@/lib/sharing/controller";
 import type { CanonicalResourceRef, ShareMode } from "@/lib/sharing/types";
 import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { searchUsers } from "@/lib/users/search";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import styles from "./ShareOverlay.module.css";
 
 type Snapshot = Schema<"ResourceShareSnapshotOut">;
-type Person = Pick<Schema<"ShareUserOut">, "userHandle" | "email" | "displayName">;
 type SharesJson<M extends "get" | "post"> = ApiJson<"/resource-items/{resource_ref}/shares", M>;
 
 const MODE_INTRO: Record<ShareMode, string> = {
@@ -53,11 +49,6 @@ const UNAVAILABLE: Record<Schema<"AudienceUnavailableOut">["reason"], string> = 
 
 function sharesPath(ref: CanonicalResourceRef): ApiPath {
   return `/api/resource-items/${encodeURIComponent(ref)}/shares`;
-}
-
-function personLabel(person: Person): string {
-  if (person.displayName.kind === "Present") return person.displayName.value;
-  return person.email.kind === "Present" ? person.email.value : person.userHandle;
 }
 
 /** The notice for a failed load or change, or null after a 401 went to the auth boundary. */
@@ -90,7 +81,7 @@ export default function ShareOverlay(props: { session: ShareSession | null; onCl
   const fallback = session?.options.returnFocusFallback;
   const focus = {
     returnFocusTo: session?.options.returnFocusTo,
-    returnFocusFallback: fallback?.kind === "Present" ? fallback.value : undefined,
+    returnFocusFallback: fallback ?? undefined,
   };
   const panel = session && <SharePanel key={session.key} session={session} onClose={onClose} />;
   return (
@@ -207,16 +198,16 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
   const href =
     target.kind === "Route"
       ? new URL(target.href, process.env.NEXT_PUBLIC_APP_PUBLIC_ORIGIN).toString()
-      : (snapshot?.authenticatedHref ?? null);
+      : (snapshot?.authenticated_href ?? null);
   const label = target.kind === "Route" ? target.label : `${target.ref.split(":")[0]} link`;
-  const members = snapshot?.members.kind === "Present" ? snapshot.members.value : null;
+  const members = snapshot?.members != null ? snapshot.members : null;
 
   const manageMembers = () => {
     if (!snapshot) return;
     const result = workspace.activateWorkspaceTarget({
-      originPaneId: workspace.state.activePrimaryPaneId,
+      originPaneId: workspace.state.active_primary_pane_id,
       target: {
-        href: snapshot.authenticatedHref,
+        href: snapshot.authenticated_href,
         secondaryActivation: { surfaceId: "resource-members" },
       },
       disposition: { kind: "Follow" },
@@ -279,11 +270,11 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
           id="share-library-members"
           title="People"
           note={
-            members.canManage
+            members.can_manage
               ? "Manage people, invitations, roles, and ownership in the Library pane."
               : "Members are managed by library admins."
           }
-          aside={members.canManage ? <Small onClick={manageMembers}>Manage members</Small> : null}
+          aside={members.can_manage ? <Small onClick={manageMembers}>Manage members</Small> : null}
         />
       ) : null}
       {actionError ? <FeedbackNotice content={actionError} announcement="Assertive" /> : null}
@@ -326,23 +317,15 @@ function GrantEditor(props: {
   actions: PanelActions;
 }) {
   const { snapshot, onChange, actions } = props;
-  const [query, setQuery] = useState("");
   // One change at a time: `busy` names the change in flight and disables every other one.
   const [busy, setBusy] = useState<string | null>(null);
-  // One question at a time: a grant's handle, or "Native" / "X" for a bearer-link warning.
+  // One question at a time: a grant's id, or "Native" / "X" for a bearer-link warning.
   const [confirm, setConfirm] = useState<string | null>(null);
-  const trimmed = query.trim();
-  const searchKey = trimmed.length >= 3 ? trimmed : null;
-  const search = useDebouncedFetch(searchKey, (signal) => searchUsers(trimmed, signal), {
-    debounceMs: 250,
-  });
-  const searchFailed = search.error !== null && search.errorIdentity === searchKey;
-  if (searchFailed && (!isApiError(search.error) || isSameSystemApiDefect(search.error))) {
-    throw search.error;
-  }
+  // A retried share resends the id minted for its audience until one lands.
+  const attempts = useRef(new Map<string, string>());
   const link = snapshot.shares.find((s): s is Schema<"LinkShareOut"> => s.kind === "Link");
   const people = snapshot.shares.filter((s): s is Schema<"UserShareOut"> => s.kind === "User");
-  const { user: userAvailability, link: linkAvailability } = snapshot.creationAvailability;
+  const { user: userAvailability, link: linkAvailability } = snapshot.creation_availability;
   const includesHighlight = snapshot.sharing === "HighlightGrants";
 
   const create = async (
@@ -352,12 +335,15 @@ function GrantEditor(props: {
     errorTitle: string,
   ) => {
     setBusy(key);
+    const id = attempts.current.get(key) ?? crypto.randomUUID();
+    attempts.current.set(key, id);
     try {
       const { data } = await apiFetch<SharesJson<"post">>(sharesPath(props.subject), {
         method: "POST",
-        body: JSON.stringify({ audience }),
+        body: JSON.stringify({ id, audience }),
       });
-      const known = snapshot.shares.some((share) => share.handle === data.share.handle);
+      attempts.current.delete(key);
+      const known = snapshot.shares.some((share) => share.id === data.share.id);
       onChange({ ...snapshot, shares: known ? snapshot.shares : [...snapshot.shares, data.share] });
       actions.announce(data.created ? created : existing);
       return true;
@@ -369,16 +355,14 @@ function GrantEditor(props: {
     }
   };
 
-  const revoke = async (handle: string, message: string, errorTitle: string) => {
-    setBusy(handle);
+  const revoke = async (id: string, message: string, errorTitle: string) => {
+    setBusy(id);
     try {
-      await apiCommand204(`/api/resource-shares/${encodeURIComponent(handle)}`, {
-        method: "DELETE",
-      });
+      await apiFetch(`/api/resource-shares/${id}`, { method: "DELETE" });
       onChange({
         ...snapshot,
-        shares: snapshot.shares.filter((share) => share.handle !== handle),
-        receivedAccess: snapshot.receivedAccess.filter((share) => share.handle !== handle),
+        shares: snapshot.shares.filter((share) => share.id !== id),
+        received_access: snapshot.received_access.filter((share) => share.id !== id),
       });
       setConfirm(null);
       actions.announce(message);
@@ -420,17 +404,17 @@ function GrantEditor(props: {
 
   /** Remove, Decline or Turn off: a ghost button that asks, then deletes the grant. */
   const revocation = (
-    handle: string,
+    id: string,
     copy: { label: string; prompt: string; yes?: string; no: string; done: string; failed: string },
   ) =>
     guarded(
-      handle,
-      <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => setConfirm(handle)}>
+      id,
+      <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => setConfirm(id)}>
         {copy.label}
       </Button>,
       copy.prompt,
       [copy.yes ?? copy.label, copy.no],
-      () => void revoke(handle, copy.done, copy.failed),
+      () => void revoke(id, copy.done, copy.failed),
     );
 
   return (
@@ -448,23 +432,20 @@ function GrantEditor(props: {
                 ? " This share also includes this exact highlight and its source media."
                 : ""}
             </p>
-            <PeopleSearchCombobox
+            <PeopleSearch
               label="Search people to share with"
               placeholder="Search people…"
-              status={searchFailed ? "People could not be searched." : undefined}
-              query={query}
-              results={search.dataIdentity === searchKey ? (search.data ?? []) : []}
-              searching={searchKey !== null && search.loading}
+              description="Search display names, or enter an account’s exact email."
               disabled={busy !== null}
-              onQueryChange={setQuery}
               onSelect={(person) => {
+                if (person === null) return;
                 const name = personLabel(person);
-                void create(
-                  { kind: "User", userHandle: person.userHandle },
-                  person.userHandle,
+                return create(
+                  { kind: "User", user_id: person.user_id, email: person.email },
+                  person.user_id,
                   [`Shared with ${name}.`, `${name} already has this share.`],
                   "Access could not be shared.",
-                ).then((created) => created && setQuery(""));
+                );
               }}
             />
           </>
@@ -475,9 +456,9 @@ function GrantEditor(props: {
           <p className={styles.note}>You have not shared this directly.</p>
         ) : null}
         {people.map((share) => (
-          <div key={share.handle} className={styles.row}>
+          <div key={share.id} className={styles.row}>
             <span>{personLabel(share.user)}</span>
-            {revocation(share.handle, {
+            {revocation(share.id, {
               label: "Remove",
               prompt: "Remove only this direct share?",
               no: "Keep",
@@ -488,18 +469,18 @@ function GrantEditor(props: {
         ))}
       </Section>
 
-      {snapshot.receivedAccess.length > 0 ? (
+      {snapshot.received_access.length > 0 ? (
         <Section
           id="share-received"
           title="Shared with you"
           note="Declining removes only the access path shown here."
         >
-          {snapshot.receivedAccess.map((share) => (
-            <div key={share.handle} className={styles.row}>
+          {snapshot.received_access.map((share) => (
+            <div key={share.id} className={styles.row}>
               <span>
-                {personLabel(share.sharedBy)} shared this {share.subject.split(":")[0]}
+                {personLabel(share.shared_by)} shared this {share.subject.split(":")[0]}
               </span>
-              {revocation(share.handle, {
+              {revocation(share.id, {
                 label: "Decline",
                 prompt: "Decline only this access path?",
                 no: "Keep",
@@ -522,21 +503,25 @@ function GrantEditor(props: {
             <span className={styles.actions}>
               <Small
                 icon={<Copy size={15} />}
-                onClick={() => void actions.copy(link.publicHref, "Public link")}
+                onClick={() => void actions.copy(link.public_href, "Public link")}
               >
                 Copy public link
               </Small>
               {typeof navigator.share === "function"
                 ? guarded(
                     "Native",
-                    <Small icon={<Share2 size={15} />} onClick={() => setConfirm("Native")}>
+                    <Small
+                      icon={<Share2 size={15} />}
+                      disabled={busy !== null}
+                      onClick={() => setConfirm("Native")}
+                    >
                       Share public link
                     </Small>,
                     "Sharing sends this bearer link to the app you choose. That destination gains read access and may retain the credential.",
                     ["Continue to share", "Cancel"],
                     async () => {
                       setBusy("Native");
-                      const shared = actions.nativeShare(link.publicHref, "Shared from Nexus");
+                      const shared = actions.nativeShare(link.public_href, "Shared from Nexus");
                       if (await shared) setConfirm(null);
                       setBusy(null);
                     },
@@ -545,21 +530,25 @@ function GrantEditor(props: {
                 : null}
               {guarded(
                 "X",
-                <Small icon={<Send size={15} />} onClick={() => setConfirm("X")}>
+                <Small
+                  icon={<Send size={15} />}
+                  disabled={busy !== null}
+                  onClick={() => setConfirm("X")}
+                >
                   Post to X
                 </Small>,
                 "Posting sends this bearer link to X. X gains read access and may retain the credential. Posting also makes an unlisted link effectively published.",
                 ["Continue to X", "Cancel"],
                 () => {
                   // With noopener, window.open returns null whether or not the tab opened.
-                  const intent = `https://x.com/intent/post?url=${encodeURIComponent(link.publicHref)}`;
+                  const intent = `https://x.com/intent/post?url=${encodeURIComponent(link.public_href)}`;
                   window.open(intent, "_blank", "noopener,noreferrer");
                   setConfirm(null);
                 },
                 "primary",
               )}
             </span>
-            {revocation(link.handle, {
+            {revocation(link.id, {
               label: "Turn off public link",
               prompt:
                 "Turn off only your public link? Existing copies and other access paths are unaffected.",

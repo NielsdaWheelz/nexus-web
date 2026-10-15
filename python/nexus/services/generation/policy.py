@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Final, Literal, get_args
 from uuid import UUID
 
 from nexus.schemas.llm import CodexPersonalSelection, GenerationSelection
-from nexus.schemas.presence import Presence, Present
 from nexus.services.generation.contract import BackgroundOperation, Operation, OwnerKind
 
 if TYPE_CHECKING:
@@ -95,12 +94,12 @@ def policy(operation: Operation) -> OperationPolicy:
 
 
 def chat_tool_plan(
-    memory: Presence[MemoryClientConfig], *, user_id: UUID, processors: tuple[str, ...]
+    memory: MemoryClientConfig | None, *, user_id: UUID, processors: tuple[str, ...]
 ) -> str:
     """The chat plan: shared memory only for its owner on a route its config allows."""
 
-    if isinstance(memory, Present) and memory.value.allows(user_id, processors):
-        return "ChatMemoryReadSave" if memory.value.admit else "ChatMemoryRead"
+    if memory is not None and memory.allows(user_id, processors):
+        return "ChatMemoryReadSave" if memory.admit else "ChatMemoryRead"
     return "ChatReadAdditiveWrite"
 
 

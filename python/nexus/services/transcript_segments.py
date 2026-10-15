@@ -12,7 +12,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.coerce import coerce_non_negative_int
+from nexus.coerce import coerce_int
 from nexus.text import normalize_whitespace
 
 
@@ -40,8 +40,8 @@ def normalize_transcript_segments(raw_segments: Any) -> Sequence[TranscriptSegme
         if not isinstance(segment, dict):
             continue
         canonical_text = normalize_whitespace(str(segment.get("text") or ""))
-        t_start_ms = coerce_non_negative_int(segment.get("t_start_ms"))
-        t_end_ms = coerce_non_negative_int(segment.get("t_end_ms"))
+        t_start_ms = coerce_int(segment.get("t_start_ms"), minimum=0)
+        t_end_ms = coerce_int(segment.get("t_end_ms"), minimum=0)
         if not canonical_text or t_start_ms is None or t_end_ms is None:
             continue
         if t_start_ms >= t_end_ms:

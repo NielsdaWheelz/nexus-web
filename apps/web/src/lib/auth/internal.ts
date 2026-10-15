@@ -3,6 +3,8 @@
 // field) is one public outcome per caller: null.
 import "server-only";
 
+import { WIRE_HEADER } from "@/lib/api/client";
+import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import { createRandomId } from "@/lib/createRandomId";
 import { getEnv } from "@/lib/env";
 import type { Tokens } from "@/lib/supabase/auth";
@@ -19,6 +21,7 @@ async function post(
       method: "POST",
       headers: {
         "X-Request-ID": requestId ?? createRandomId(),
+        [WIRE_HEADER]: String(WIRE_REVISION),
         ...(body ? { "Content-Type": "application/json" } : {}),
         ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         ...(internalSecret ? { "X-Nexus-Internal": internalSecret } : {}),

@@ -26,10 +26,7 @@ from nexus.services.generation.policy import policy
 from nexus.services.resource_graph.context import list_context_refs
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from nexus.services.resource_graph.resolve import ResolvedResource
-from nexus.services.resource_items.capabilities import (
-    resource_citation_result_type,
-    resource_prompt_render_policy,
-)
+from nexus.services.resource_items.capabilities import capability
 from nexus.services.search.service import get_search_result
 
 BLOCK_OVERHEAD_TOKENS = 4
@@ -267,10 +264,10 @@ def _attached_citation(
     if (
         resource.quote is None
         and resource.inline_body is None
-        and resource_prompt_render_policy(ref) not in ("inline_body", "quote")
+        and capability(ref.scheme).prompt_render not in ("inline_body", "quote")
     ):
         return None
-    result_type = resource_citation_result_type(ref)
+    result_type = capability(ref.scheme).citable_result_type
     if result_type is None:
         return None
     try:
@@ -292,7 +289,7 @@ def _resource(
         return f'<resource uri="{uri}" missing="true">resource unavailable</resource>'
     ref = parse_resource_ref(resource.uri)
     if not isinstance(ref, ResourceRefParseFailure):
-        compact = compact or resource_prompt_render_policy(ref) in ("label", "none")
+        compact = compact or capability(ref.scheme).prompt_render in ("label", "none")
     n_attr = f' n="{n}"' if n is not None and not compact else ""
     head = (
         f'<resource uri="{uri}"{n_attr} label="{quotes.attribute(resource.label)}" '

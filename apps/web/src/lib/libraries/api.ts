@@ -1,0 +1,236 @@
+"use client";
+
+// Typed calls for libraries, their entries, placements, destinations, members and
+// invitations, on the generated wire types. A committed write publishes the change
+// topics it moved for the viewer; readers reread. Retry rules (the server's
+// contract): a create or an invitation resends its client id, a rename or a role
+// change carries the value it expects to replace, and deletes, placements, moves,
+// leaving, revoking and answering are absolute, so resending one that already
+// landed changes nothing.
+
+import { apiFetch } from "@/lib/api/client";
+import { publishChange } from "@/lib/api/changes";
+import { pageQuery, type ListPage } from "@/lib/api/useServerList";
+import type { Schema } from "@/lib/api/wire";
+
+export type Library = Schema<"LibraryOut">;
+export type LibraryEntry =
+  | Schema<"LibraryMediaEntryOut">
+  | Schema<"LibraryPodcastEntryOut">;
+export type LibraryPlacement = Schema<"LibraryPlacementOut">;
+export type LibraryDestination = Schema<"LibraryDestinationOut">;
+export type LibraryMember = Schema<"LibraryMemberOut">;
+export type LibraryInvitation = Schema<"LibraryInvitationOut">;
+export type ViewerInvitation = Schema<"ViewerInvitationOut">;
+export type LibraryRole = LibraryMember["role"];
+export interface LibraryPlacementTarget {
+  readonly kind: "Media" | "Podcast";
+  readonly id: string;
+}
+
+const libraryPath = (id: string) =>
+  `/api/libraries/${encodeURIComponent(id)}` as const;
+const itemPath = (target: LibraryPlacementTarget, libraryId: string) =>
+  `${libraryPath(libraryId)}/items/${target.kind === "Media" ? "media" : "podcast"}:${target.id}` as const;
+
+async function data<T>(path: `/api/${string}`, signal?: AbortSignal) {
+  return (await apiFetch<{ data: T }>(path, { signal })).data;
+}
+
+export function librariesPage(query: URLSearchParams, signal?: AbortSignal) {
+  return data<ListPage<Library>>(`/api/libraries?${query}`, signal);
+}
+
+/** Every library the viewer belongs to, oldest first. */
+export async function memberLibraries(signal?: AbortSignal) {
+  const all: Library[] = [];
+  let cursor: string | null = null;
+  do {
+    const query = new URLSearchParams({ limit: "200" });
+    if (cursor !== null) query.set("cursor", cursor);
+    const page = await librariesPage(query, signal);
+    all.push(...page.items);
+    cursor = page.next_cursor;
+  } while (cursor !== null);
+  return all;
+}
+
+export function getLibrary(id: string, signal?: AbortSignal) {
+  return data<Library>(libraryPath(id), signal);
+}
+
+export async function createLibrary(
+  input: { readonly id: string; readonly name: string },
+  signal?: AbortSignal,
+): Promise<Library> {
+  const response = await apiFetch<{ data: Library }>("/api/libraries", {
+    method: "POST",
+    body: JSON.stringify(input),
+    signal,
+  });
+  if (response.data.id !== input.id) {
+    // justify-defect: this acknowledgement must name the command's library.
+    throw new Error(
+      `Create library response id ${JSON.stringify(response.data.id)} does not match requested library ${JSON.stringify(input.id)}`,
+    );
+  }
+  publishChange("Libraries");
+  return response.data;
+}
+
+export async function renameLibrary(
+  id: string,
+  name: string,
+  expectedName: string,
+): Promise<Library> {
+  const response = await apiFetch<{ data: Library }>(libraryPath(id), {
+    method: "PATCH",
+    body: JSON.stringify({ name, expected_name: expectedName }),
+  });
+  publishChange("Libraries");
+  return response.data;
+}
+
+export async function deleteLibrary(id: string): Promise<void> {
+  await apiFetch(libraryPath(id), { method: "DELETE" });
+  publishChange("Libraries", "Entries");
+}
+
+export function entriesPage(
+  id: string,
+  query: URLSearchParams,
+  signal?: AbortSignal,
+) {
+  return data<ListPage<LibraryEntry>>(
+    `${libraryPath(id)}/entries?${query}`,
+    signal,
+  );
+}
+
+/** Put an entry before another (null: last). */
+export async function moveEntry(
+  libraryId: string,
+  entryId: string,
+  beforeEntryId: string | null,
+): Promise<void> {
+  await apiFetch(`${libraryPath(libraryId)}/entries/${entryId}/position`, {
+    method: "PUT",
+    body: JSON.stringify({ before_entry_id: beforeEntryId }),
+  });
+  publishChange("Entries");
+}
+
+export function placements(
+  target: LibraryPlacementTarget,
+  signal?: AbortSignal,
+) {
+  const ref = `${target.kind === "Media" ? "media" : "podcast"}:${target.id}`;
+  return data<LibraryPlacement[]>(`/api/libraries/placements/${ref}`, signal);
+}
+
+/** File a target into a library; the viewer's All is Saved in Nexus. */
+export async function addPlacement(
+  target: LibraryPlacementTarget,
+  libraryId: string,
+  replaceEpisodes = false,
+): Promise<void> {
+  await apiFetch(itemPath(target, libraryId), {
+    method: "PUT",
+    body: JSON.stringify({ replace_episodes: replaceEpisodes }),
+  });
+  publishChange("Entries");
+}
+
+export async function removePlacement(
+  target: LibraryPlacementTarget,
+  libraryId: string,
+): Promise<void> {
+  await apiFetch(itemPath(target, libraryId), { method: "DELETE" });
+  publishChange("Entries");
+}
+
+export function destinationsPage(
+  q: string,
+  cursor: string | null,
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams({ q, limit: "25" });
+  if (cursor !== null) query.set("cursor", cursor);
+  return data<ListPage<LibraryDestination>>(
+    `/api/libraries/destinations?${query}`,
+    signal,
+  );
+}
+
+function page<T>(path: string, cursor: string | null, limit: number, signal: AbortSignal) {
+  return data<ListPage<T>>(`/api/libraries/${path}?${pageQuery("", cursor, limit)}`, signal);
+}
+
+export const membersPage = (id: string, cursor: string | null, limit: number, signal: AbortSignal) =>
+  page<LibraryMember>(`${encodeURIComponent(id)}/members`, cursor, limit, signal);
+
+/** A library's pending invitations, newest first. */
+export const invitationsPage = (
+  id: string,
+  cursor: string | null,
+  limit: number,
+  signal: AbortSignal,
+) => page<LibraryInvitation>(`${encodeURIComponent(id)}/invites`, cursor, limit, signal);
+
+/** The invitations waiting for the viewer, newest first. */
+export const viewerInvitationsPage = (cursor: string | null, limit: number, signal: AbortSignal) =>
+  page<ViewerInvitation>("invites", cursor, limit, signal);
+
+export async function invite(
+  libraryId: string,
+  body: Schema<"CreateInvitationRequest">,
+): Promise<void> {
+  await apiFetch(`${libraryPath(libraryId)}/invites`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function setMemberRole(
+  libraryId: string,
+  userId: string,
+  role: LibraryRole,
+  expectedRole: LibraryRole,
+): Promise<void> {
+  await apiFetch(`${libraryPath(libraryId)}/members/${userId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ role, expected_role: expectedRole }),
+  });
+}
+
+/** Removing the viewer's own row is leaving, so their libraries and All may change. */
+export async function removeMember(libraryId: string, userId: string): Promise<void> {
+  await apiFetch(`${libraryPath(libraryId)}/members/${userId}`, { method: "DELETE" });
+  publishChange("Libraries", "Entries");
+}
+
+export async function leaveLibrary(id: string): Promise<void> {
+  await apiFetch(`${libraryPath(id)}/membership`, { method: "DELETE" });
+  publishChange("Libraries", "Entries");
+}
+
+/** The viewer stays an admin; the new owner may delete and transfer. */
+export async function transferOwnership(libraryId: string, userId: string): Promise<void> {
+  await apiFetch(`${libraryPath(libraryId)}/transfer-ownership`, {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId }),
+  });
+  publishChange("Libraries");
+}
+
+export async function revokeInvitation(id: string): Promise<void> {
+  await apiFetch(`/api/libraries/invites/${id}`, { method: "DELETE" });
+}
+
+/** Accepting joins the library, so the viewer's libraries and All change. */
+export async function respondToInvitation(id: string, accept: boolean): Promise<void> {
+  await apiFetch(`/api/libraries/invites/${id}/${accept ? "accept" : "decline"}`, {
+    method: "POST",
+  });
+  if (accept) publishChange("Libraries", "Entries");
+}

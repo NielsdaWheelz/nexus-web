@@ -6,8 +6,6 @@ from typing import Annotated
 
 from pydantic import AfterValidator, StringConstraints
 
-from nexus.schemas.presence import Presence, absent, present
-
 _DATE_PATTERN = r"^[0-9]{4}(?:-[0-9]{2}(?:-[0-9]{2})?)?$"
 _SOURCE_INSTANT = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
@@ -28,14 +26,14 @@ PublicationDate = Annotated[
 ]
 
 
-def normalize_source_publication_date(value: str | None) -> Presence[PublicationDate]:
+def normalize_source_publication_date(value: str | None) -> PublicationDate | None:
     """Ignore unusable source dates; reduce qualified instants to their UTC day."""
     candidate = (value or "").strip()
     try:
         if re.fullmatch(_DATE_PATTERN, candidate):
-            return present(_validate_calendar_date(candidate))
+            return _validate_calendar_date(candidate)
         if _SOURCE_INSTANT.fullmatch(candidate):
-            return present(datetime.fromisoformat(candidate).astimezone(UTC).date().isoformat())
+            return datetime.fromisoformat(candidate).astimezone(UTC).date().isoformat()
     except (ValueError, OverflowError):
-        return absent()
-    return absent()
+        return None
+    return None

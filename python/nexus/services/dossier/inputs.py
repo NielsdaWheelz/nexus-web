@@ -25,6 +25,7 @@ from nexus.schemas.resource_graph import (
     ConnectionFiltersRequest,
     ConnectionQueryRequest,
 )
+from nexus.services import outline
 from nexus.services.contributor_credits import load_visible_contributor_media_ids
 from nexus.services.media_intelligence import (
     MediaOmission,
@@ -33,7 +34,6 @@ from nexus.services.media_intelligence import (
     ensure_current_many,
     get_media_unit,
 )
-from nexus.services.resource_graph.adjacency import load_page_surface
 from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.context import list_context_refs
 from nexus.services.resource_graph.refs import (
@@ -177,7 +177,7 @@ def conversation(db: Session, conversation_id: UUID, viewer_id: UUID) -> Collect
 
 def page(db: Session, page_id: UUID, viewer_id: UUID) -> Collected:
     """The page's blocks in reading order, then its one-hop connections."""
-    surface = load_page_surface(db, user_id=viewer_id, page_id=page_id)
+    surface = outline.page_note_tree(db, viewer_id=viewer_id, page_id=page_id)
     candidates: list[Candidate] = []
     blocks = chars = 0
     stack = list(reversed(surface.roots))
@@ -290,8 +290,7 @@ def ensure(scheme: Members, db: Session, subject_id: UUID, viewer_id: UUID) -> R
     reasons = {item.reason for item in projections if isinstance(item, MediaOmission)}
     if MediaOmissionReason.ProjectionPending in reasons:
         return "Pending"
-    failed = {MediaOmissionReason.ProjectionFailed, MediaOmissionReason.ProjectionSuspended}
-    return "Failed" if reasons & failed else "Ready"
+    return "Failed" if MediaOmissionReason.ProjectionFailed in reasons else "Ready"
 
 
 def _members(scheme: Members, db: Session, subject_id: UUID, viewer_id: UUID) -> list[UUID]:

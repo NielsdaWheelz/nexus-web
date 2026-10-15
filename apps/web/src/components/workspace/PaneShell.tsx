@@ -22,7 +22,7 @@ import Companion, {
 import PaneRouteBoundary from "@/components/workspace/PaneRouteBoundary";
 import ResizeHandle from "@/components/workspace/ResizeHandle";
 import { usePaneRefresh } from "@/components/workspace/usePaneRefresh";
-import { present } from "@/lib/api/presence";
+import { useThrowLater } from "@/lib/api/serverState";
 import {
   useMobileChrome,
   useMobileChromeHold,
@@ -286,7 +286,7 @@ function PaneView({
   }
   if (refresh.command) paneActions.push(refresh.command);
   const share = resolvePaneRouteShareIdentity(route, label);
-  if (share && !body?.actionSubject) {
+  if (share && !body?.resourceRef) {
     paneActions.push({
       kind: "command",
       id: "RouteAction.Share",
@@ -295,9 +295,8 @@ function PaneView({
       onSelect: ({ triggerEl }) =>
         openShare(share, {
           returnFocusTo: () => triggerEl,
-          returnFocusFallback: present(() =>
-            findPaneLandmarkFocusTarget(paneId),
-          ),
+          returnFocusFallback: (() =>
+            findPaneLandmarkFocusTarget(paneId)),
         }),
     });
   }
@@ -312,6 +311,7 @@ function PaneView({
   const hasVisibleControls = Boolean(
     body?.navigation || query?.kind === "Controls" || findVisible,
   );
+  const onDefect = useThrowLater();
   usePublishMobilePaneChrome(
     isMobile
       ? {
@@ -325,7 +325,8 @@ function PaneView({
           companionAction: inspector,
           paneActions,
           menuActions: body?.menuActions ?? [],
-          actionSubject: body?.actionSubject,
+          resourceRef: body?.resourceRef,
+          onDefect,
         }
       : null,
   );
@@ -403,7 +404,7 @@ function PaneView({
   // ---- geometry: desktop only; clamping is render-only ---------------------
   const layout = isMobile ? null : state.layout;
   const width = primaryWidth({
-    storedPx: pane.primaryWidthPx,
+    storedPx: pane.primary_width_px,
     columnPx: columnWidthPx,
     routeMaxPx: route.width.maxWidthPx,
     intrinsicPx: route.width.allowsIntrinsicPrimaryWidth
@@ -445,7 +446,7 @@ function PaneView({
               companionAction={inspector}
               paneActions={paneActions}
               menuActions={body?.menuActions}
-              actionSubject={body?.actionSubject}
+              resourceRef={body?.resourceRef}
               navigation={historyNavigation}
               onMouseDown={onChromeMouseDown}
             />
@@ -527,7 +528,7 @@ function PaneView({
         controller={controller}
         secondary={pane.secondary}
         find={find}
-        actionSubject={body?.actionSubject}
+        resourceRef={body?.resourceRef}
       />
     </section>
   );

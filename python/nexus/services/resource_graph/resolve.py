@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
@@ -17,10 +17,9 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import (
     highlight_readability_sql,
     visible_media_ids_cte_sql,
-    visible_podcast_ids_cte_sql,
 )
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.services import library_entries, library_entry_listing
+from nexus.services import library_entries, library_listing
 from nexus.services.contributor_credits import (
     media_author_credits_join_sql,
     media_author_names_agg_sql,
@@ -31,7 +30,7 @@ from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 
 INLINE_THRESHOLD_CHARS = 1500
 
-# The viewer gates, shared by the loaders and ``visible_ids`` so the two cannot drift.
+# The viewer gates the loaders share.
 _VISIBLE_MEDIA = f"({visible_media_ids_cte_sql()})"
 # Evidence spans and content chunks belong to a visible media or to the viewer's note.
 _OWNED_JOINS = """
@@ -121,24 +120,6 @@ def load_resource_batch(
             found = [build(group[row.id], row) for row in rows]
         out.update({item.uri: item for item in found})
     return out
-
-
-def visible_ids(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    scheme: Literal["fragment", "evidence_span", "content_chunk"],
-    ids: Sequence[UUID],
-) -> set[UUID]:
-    """The supplied ids the viewer can read, under the loader's own gate."""
-    if not ids:
-        return set()
-    if scheme == "fragment":
-        sql = f"SELECT t.id FROM fragments t WHERE t.id = ANY(:ids) AND {_FRAGMENT_GATE}"
-    else:
-        table = "evidence_spans" if scheme == "evidence_span" else "content_chunks"
-        sql = f"SELECT t.id FROM {table} t {_OWNED_JOINS} WHERE t.id = ANY(:ids) AND {_OWNED_GATE}"
-    return set(db.scalars(text(sql), {"ids": list(set(ids)), "viewer_id": viewer_id}))
 
 
 def parent_media_id_for_read_pointer(
@@ -246,7 +227,7 @@ def _library(db: Session, ids: list[UUID], viewer_id: UUID) -> list[ResolvedReso
     out = []
     for row in rows:
         if row.is_default and row.own:
-            count = library_entry_listing.count_default_root_inventory(
+            count = library_listing.count_default_root_inventory(
                 db, viewer_id=viewer_id, library_id=row.id
             )
         else:
@@ -516,8 +497,8 @@ _LOADERS: dict[str, tuple[str, Callable[[ResourceRef, Any], ResolvedResource]]] 
         lambda ref, row: _plain(ref, str(row.display_name), ""),
     ),
     "podcast": (
-        f"""SELECT id, title, description FROM podcasts
-        WHERE id = ANY(:ids) AND id IN ({visible_podcast_ids_cte_sql()})""",
+        # A show is a public catalog row: its pane reads any persisted show.
+        "SELECT id, title, description FROM podcasts WHERE id = ANY(:ids)",
         lambda ref, row: _plain(
             ref, str(row.title), _first_line(row.description or ""), row.description
         ),

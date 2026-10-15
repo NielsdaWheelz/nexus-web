@@ -8,8 +8,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from nexus.schemas.presence import Presence
-
 _INT32 = (1 << 31) - 1
 TargetKind = Literal["library_entry", "note_block", "highlight", "resource_edge", "queue_item"]
 _LONGEST_PATH = f"generation/{_INT32}/tool/{_INT32}"
@@ -61,4 +59,4 @@ class AssistantWriteOut(_Out):
 
 class AssistantWritePage(_Out):
     items: list[AssistantWriteOut]
-    next_cursor: Presence[UUID]
+    next_cursor: UUID | None

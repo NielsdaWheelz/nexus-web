@@ -49,9 +49,10 @@ Code: `python/nexus/services/tools/` (`contract`, `run`, `reads`, `writes`,
   `running`, not cancel-requested. The row is committed, with the chat's start
   frames, before the handler runs.
 - I2 one call in flight per generation; positions dense from 1 in dispatch order.
-- I3 a name outside the frozen plan never runs and leaves no row; it answers
-  `ToolUnavailable` (provider route; on codex see ticket
-  `codex-unpublished-tool-call-ends-the-answer`).
+- I3 a name outside the frozen plan never runs and leaves no row, and the answer
+  goes on. the provider route answers `ToolUnavailable`; on codex the binary
+  answers its own refusal (`unsupported call: <name>`), a model error, not
+  authority.
 - I4 lock order: generation -> chat run -> job claim -> `tool_calls` row; chat's
   finalize takes run -> rows. generation closure locks its generation rows before
   settling their unfinished tool rows in the same transaction.
@@ -105,7 +106,7 @@ attempts (result present), newest first, 30 a page, keyed by `(created_at, id)`;
 an unknown cursor is 400 `E_INVALID_CURSOR`. `POST /assistant-writes/{id}/undo`
 answers 204; 404 `E_NOT_FOUND` when the row is not the viewer's write; 409
 `E_RESOURCE_CONFLICT` for a failed write or one that created nothing; domain 409s
-pass through. Neither carries the chat contract headers.
+pass through.
 
 Coordinator defaults the owner may reverse: one undo route (D-T3; reversing
 restores a chat-scoped route), and rows outlive the conversation (D-T4;
@@ -114,7 +115,7 @@ at `?generation_id=&tool_call_id=`).
 
 ## Shared memory
 
-Production runs with memory `Absent`. `MEMORY_CLIENT_CONFIG_PATH` names the private
+Production runs with memory unconfigured (the config file holds `null`). `MEMORY_CLIENT_CONFIG_PATH` names the private
 owner declaration (`memory.MemoryClientConfig`); policy grants a memory plan only
 to its owner on a processor chain it allows. One MCP session per call, never
 resent; the server must answer one bounded text item. `memory.save_note` is a Write
@@ -150,7 +151,6 @@ completion and undo cannot reverse a central note.
 
 ## Stale tabs
 
-The browser sends `X-Nexus-Chat-Contract` ("5") and `X-Nexus-Tool-Projection` (the
-generated `contract.PROJECTION_REVISION`, a hash of the effects, error types and
-presentation) on chat paths; a mismatch is 409 "Reload Nexus to continue".
-`scripts/generate_tool_contract_projection.py` writes and checks the revision.
+A change to the tool vocabulary the browser reads (effects, error types,
+presentation) breaks a tab built before it, so it bumps `WIRE_REVISION`
+([api edge](api-edge.md)).

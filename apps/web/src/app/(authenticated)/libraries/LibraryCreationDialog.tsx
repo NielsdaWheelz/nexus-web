@@ -8,7 +8,7 @@ import {
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
-import type { LibraryOut } from "@/lib/libraries/contract";
+import type { Library } from "@/lib/libraries/api";
 import styles from "./page.module.css";
 
 export type Attempt = Readonly<{ libraryId: string; name: string }>;
@@ -17,7 +17,7 @@ export type Creation =
   | { kind: "Draft"; text: string; feedback: DraftFeedback | null }
   | { kind: "Sending"; attempt: Attempt; wasUnconfirmed: boolean }
   | { kind: "Unconfirmed"; attempt: Attempt; feedback: FeedbackContent }
-  | { kind: "Created"; library: LibraryOut };
+  | { kind: "Created"; library: Library };
 
 /** Presentation only: the pane retains the command when this dialog closes. */
 export default function LibraryCreationDialog({

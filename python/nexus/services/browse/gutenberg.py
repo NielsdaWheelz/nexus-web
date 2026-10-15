@@ -14,8 +14,6 @@ from nexus.schemas.browse import (
     EpubPreviewFacts,
     PreviewResolution,
 )
-from nexus.schemas.presence import absent, present
-from nexus.schemas.presence import presence_from_nullable as maybe
 from nexus.services.browse.targets import (
     BrowseTargetNotFound,
     ProjectGutenbergEpubTarget,
@@ -39,10 +37,10 @@ def candidates(db: Session, viewer_id: UUID, ebook_ids: Sequence[int]) -> list[E
             ),
             title=rows[ebook_id]["label"] or "Untitled ebook",
             contributors=credits.get(ebook_id, []),
-            description=maybe(rows[ebook_id]["text"]),
-            published_at=absent(),
-            image=absent(),
-            kind_facts=EpubFacts(ebook_ref=present(str(ebook_id))),
+            description=rows[ebook_id]["text"],
+            published_at=None,
+            image=None,
+            kind_facts=EpubFacts(ebook_ref=str(ebook_id)),
         )
         for ebook_id in ebook_ids
         if ebook_id in rows
@@ -66,8 +64,8 @@ def preview(
         title=found[0].title,
         contributors=found[0].contributors,
         description=found[0].description,
-        published_at=absent(),
-        image=absent(),
+        published_at=None,
+        image=None,
         source_href=landing,
         resolution=PreviewResolution(target=handle),
         kind_facts=EpubPreviewFacts(ebook_ref=ref, import_href=f"{landing}.epub.noimages"),

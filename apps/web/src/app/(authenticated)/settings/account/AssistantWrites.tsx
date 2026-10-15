@@ -11,7 +11,7 @@ import { usePagePrefix } from "@/lib/api/pagePrefix";
 import type { ApiJson } from "@/lib/api/wire";
 import { undoAssistantWrite, undoFailureMessage } from "@/lib/assistantWrites";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import styles from "./page.module.css";
+import styles from "./AssistantWrites.module.css";
 
 type Page = ApiJson<"/assistant-writes", "get">;
 type Write = Page["data"]["items"][number];

@@ -1,350 +1,197 @@
-"""Cloudflare R2 storage client (S3-compatible API)."""
+"""The process's one R2 client (S3 API). A key authorizes nothing: callers reach bytes
+only after their owner row's check.
+
+Every SDK call that can open or use a connection, and every body read, holds one process
+lock and never yields to a caller while holding it: botocore reloads CA certificates into
+the client's shared TLS context whenever it opens a connection (#576). Presigning signs in
+memory and sends nothing, so it stays outside the lock. Botocore retries a transient failure
+itself (standard mode, three attempts in all) inside the lock, rewinding a file body to byte 0.
+"""
 
 import atexit
-import io
-import time
 from collections.abc import Generator
-from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
-from functools import lru_cache
 from threading import Lock
-from typing import BinaryIO
+from typing import Any, BinaryIO, Literal
 
 from boto3.session import Session
-from botocore.client import BaseClient, Config
+from botocore.client import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
 from nexus.config import get_settings
 
-_PUT_OBJECT_ATTEMPTS = 3
-_READ_CHUNK_BYTES = 8 * 1024 * 1024
-_client_lock = Lock()
-
-
-@dataclass(frozen=True)
-class SignedUpload:
-    path: str
-    upload_url: str
+_CHUNK_BYTES = 8 * 1024 * 1024
+type StorageErrorCode = Literal["E_STORAGE_ERROR", "E_STORAGE_MISSING"]
 
 
 @dataclass(frozen=True)
 class ObjectMetadata:
-    """Advisory object metadata. Existence is None vs not-None from head_object."""
-
     content_type: str
     size_bytes: int
 
 
-@dataclass(frozen=True)
-class StorageObjectEntry:
-    path: str
-    last_modified: datetime
-    size_bytes: int
-
-
-@dataclass(frozen=True)
-class ObjectPage:
-    objects: tuple[StorageObjectEntry, ...]
-    next_continuation_token: str | None
-
-
 class StorageError(Exception):
-    def __init__(self, message: str, code: str = "E_STORAGE_ERROR"):
+    """Not an ApiError: each caller maps it. ``E_STORAGE_MISSING`` is a 404 on read/copy."""
+
+    def __init__(self, message: str, code: StorageErrorCode = "E_STORAGE_ERROR"):
         super().__init__(message)
         self.message = message
-        self.code = code
+        self.code: StorageErrorCode = code
 
 
-def _client_error_is_missing(exc: ClientError) -> bool:
-    response = getattr(exc, "response", {})
-    error_code = str(response.get("Error", {}).get("Code") or "")
-    return error_code in {"404", "NoSuchKey", "NotFound"}
+def _missing(exc: Exception) -> bool:
+    code = isinstance(exc, ClientError) and exc.response.get("Error", {}).get("Code")
+    return code in ("404", "NoSuchKey", "NotFound")
 
 
 class StorageClient:
-    def __init__(
-        self,
-        endpoint_url: str,
-        access_key_id: str,
-        secret_access_key: str,
-        bucket: str,
-        region: str = "auto",
-        s3_client: BaseClient | None = None,
-    ):
-        self._bucket = bucket
-        # Botocore reloads CA certificates into its shared TLS context when it
-        # opens a connection. Serialize SDK calls and streaming-body I/O so
-        # context mutation cannot race another operation's TLS use. Never hold
-        # the lock while yielding bytes to a caller.
-        self._operation_lock = Lock()
-        self._client = s3_client or Session().client(
+    def __init__(self) -> None:
+        s = get_settings()
+        if not (
+            s.r2_s3_api_origin and s.r2_access_key_id and s.r2_secret_access_key and s.r2_bucket
+        ):
+            raise StorageError("R2 storage is not configured (R2_* settings)")
+        self._bucket = s.r2_bucket
+        self._lock = Lock()
+        self._s3 = Session().client(
             "s3",
-            endpoint_url=endpoint_url.rstrip("/"),
-            aws_access_key_id=access_key_id,
-            aws_secret_access_key=secret_access_key,
-            region_name=region,
+            endpoint_url=s.r2_s3_api_origin.rstrip("/"),
+            aws_access_key_id=s.r2_access_key_id,
+            aws_secret_access_key=s.r2_secret_access_key.get_secret_value(),
+            region_name=s.r2_region,
             config=Config(
                 signature_version="s3v4",
                 s3={"addressing_style": "path"},
                 request_checksum_calculation="when_required",
                 response_checksum_validation="when_required",
-                connect_timeout=get_settings().r2_connect_timeout_seconds,
-                read_timeout=get_settings().r2_read_timeout_seconds,
+                connect_timeout=5,
+                read_timeout=30,
+                retries={"mode": "standard", "total_max_attempts": 3},
             ),
         )
 
+    def _call(self, operation: str, what: str, **params: object) -> Any:
+        try:
+            with self._lock:
+                return getattr(self._s3, operation)(Bucket=self._bucket, **params)
+        except (BotoCoreError, ClientError) as exc:
+            code = "E_STORAGE_MISSING" if _missing(exc) else "E_STORAGE_ERROR"
+            raise StorageError(f"Failed to {what}", code) from exc
+
     def close(self) -> None:
-        with self._operation_lock:
-            self._client.close()
+        with self._lock:
+            self._s3.close()
 
-    def sign_upload(
-        self, path: str, *, content_type: str, size_bytes: int, expires_in: int = 300
-    ) -> SignedUpload:
-        try:
-            with self._operation_lock:
-                upload_url = self._client.generate_presigned_url(
-                    "put_object",
-                    Params={
-                        "Bucket": self._bucket,
-                        "Key": path,
-                        "ContentType": content_type,
-                        "ContentLength": int(size_bytes),
-                    },
-                    ExpiresIn=expires_in,
-                    HttpMethod="PUT",
-                )
-        except (BotoCoreError, ClientError) as exc:
-            raise StorageError(f"Failed to sign upload for {path}") from exc
-        return SignedUpload(path=path, upload_url=upload_url)
+    def sign_upload(self, path: str, *, content_type: str, size_bytes: int, expires_in: int) -> str:
+        """A PUT url that admits exactly these bytes' type and length (I8)."""
+        params = {"ContentType": content_type, "ContentLength": size_bytes}
+        return self._sign("put_object", path, expires_in, params)
 
-    def sign_download(self, path: str, *, expires_in: int = 300) -> str:
+    def sign_download(self, path: str, *, expires_in: int) -> str:
+        return self._sign("get_object", path, expires_in, {})
+
+    def _sign(self, operation: str, path: str, expires_in: int, params: dict[str, object]) -> str:
         try:
-            with self._operation_lock:
-                return self._client.generate_presigned_url(
-                    "get_object",
-                    Params={"Bucket": self._bucket, "Key": path},
-                    ExpiresIn=expires_in,
-                    HttpMethod="GET",
-                )
+            return self._s3.generate_presigned_url(
+                operation,
+                Params={"Bucket": self._bucket, "Key": path, **params},
+                ExpiresIn=expires_in,
+            )
         except (BotoCoreError, ClientError) as exc:
-            raise StorageError(f"Failed to sign download for {path}") from exc
+            raise StorageError(f"Failed to sign {path}") from exc
 
     def head_object(self, path: str) -> ObjectMetadata | None:
         try:
-            with self._operation_lock:
-                response = self._client.head_object(Bucket=self._bucket, Key=path)
-        except ClientError as exc:
-            if _client_error_is_missing(exc):
+            head = self._call("head_object", f"read metadata of {path}", Key=path)
+        except StorageError as exc:
+            if exc.code == "E_STORAGE_MISSING":
                 return None
-            raise StorageError(f"Failed to read object metadata for {path}") from exc
-        except BotoCoreError as exc:
-            raise StorageError(f"Failed to read object metadata for {path}") from exc
+            raise
         return ObjectMetadata(
-            content_type=str(response.get("ContentType") or "application/octet-stream"),
-            size_bytes=int(response.get("ContentLength") or 0),
+            str(head.get("ContentType") or "application/octet-stream"),
+            int(head.get("ContentLength") or 0),
         )
 
-    def stream_object(self, path: str) -> Generator[bytes, None, None]:
-        return self._stream(path, remaining=None)
-
-    def stream_object_range(
-        self, path: str, *, start: int, end_inclusive: int
+    def stream_object(
+        self,
+        path: str,
+        *,
+        expected_size: int | None = None,
+        byte_range: tuple[int, int] | None = None,
     ) -> Generator[bytes, None, None]:
-        if start < 0 or end_inclusive < start:
-            raise ValueError("invalid inclusive object range")
-        return self._stream(
-            path, remaining=end_inclusive - start + 1, range_header=f"bytes={start}-{end_inclusive}"
-        )
-
-    def _stream(
-        self, path: str, *, remaining: int | None, range_header: str | None = None
-    ) -> Generator[bytes, None, None]:
-        what = "object" if range_header is None else "object range"
-        params = {"Bucket": self._bucket, "Key": path}
-        if range_header is not None:
-            params["Range"] = range_header
-        try:
-            with self._operation_lock:
-                response = self._client.get_object(**params)
-        except ClientError as exc:
-            if _client_error_is_missing(exc):
-                raise StorageError(f"Object not found: {path}", code="E_STORAGE_MISSING") from exc
-            raise StorageError(f"Failed to stream {what} {path}") from exc
-        except BotoCoreError as exc:
-            raise StorageError(f"Failed to stream {what} {path}") from exc
-
+        """Chunks of at most 8 MiB, lazily. The object's stored size is proven before the
+        first chunk (a mismatch with ``expected_size`` raises then, not mid-body), and a
+        body that ends short raises. ``byte_range`` is inclusive."""
+        params = {"Key": path}
+        if byte_range is not None:
+            start, end = byte_range
+            if start < 0 or end < start:
+                raise ValueError("invalid inclusive byte range")
+            params["Range"] = f"bytes={start}-{end}"
+        response = self._call("get_object", f"read {path}", **params)
         body = response["Body"]
         try:
-            try:
-                while remaining is None or remaining > 0:
-                    want = (
-                        _READ_CHUNK_BYTES
-                        if remaining is None
-                        else min(_READ_CHUNK_BYTES, remaining)
-                    )
-                    with self._operation_lock:
-                        chunk = body.read(want)
-                    if not chunk:
-                        if remaining is None:
-                            return
-                        raise StorageError("Stored object range ended before persisted metadata")
-                    if remaining is not None:
-                        remaining -= len(chunk)
-                    yield chunk
-            except (BotoCoreError, ClientError, OSError) as exc:
-                raise StorageError(f"Failed to stream {what} {path}") from exc
+            remaining = int(response["ContentLength"])
+            total = int(response["ContentRange"].rsplit("/", 1)[1]) if byte_range else remaining
+            if expected_size is not None and total != expected_size:
+                raise StorageError(f"{path} holds {total} bytes, its row says {expected_size}")
+            while remaining > 0:
+                try:
+                    with self._lock:
+                        chunk = body.read(min(_CHUNK_BYTES, remaining))
+                except (BotoCoreError, ClientError, OSError) as exc:
+                    raise StorageError(f"Failed to read {path}") from exc
+                if not chunk:
+                    raise StorageError(f"{path} ended {remaining} bytes short")
+                remaining -= len(chunk)
+                yield chunk
         finally:
-            close = getattr(body, "close", None)
-            if close:
-                with self._operation_lock:
-                    close()
+            with self._lock:
+                body.close()
+
+    def read_object(self, path: str, *, expected_size: int | None = None) -> bytes:
+        return b"".join(self.stream_object(path, expected_size=expected_size))
 
     def put_object(
-        self, path: str, content: bytes, content_type: str = "application/octet-stream"
+        self, path: str, body: bytes | BinaryIO, content_type: str = "application/octet-stream"
     ) -> None:
-        # A whole-bytes put is idempotent, and single-request transient failures
-        # have terminally failed captures. Bounded retry, ~0.8s worst case.
-        delay_seconds = 0.2
-        for attempt in range(1, _PUT_OBJECT_ATTEMPTS + 1):
-            try:
-                with self._operation_lock:
-                    self._client.put_object(
-                        Bucket=self._bucket, Key=path, Body=content, ContentType=content_type
-                    )
-                return
-            except (BotoCoreError, ClientError) as exc:
-                if attempt == _PUT_OBJECT_ATTEMPTS:
-                    raise StorageError(f"Failed to upload object {path}: {exc}") from exc
-                time.sleep(delay_seconds)
-                delay_seconds *= 3
+        """Whole bytes, or a file at byte 0: botocore takes the length from the file's
+        position and rewinds it to 0 before a retry."""
+        self._call("put_object", f"write {path}", Key=path, Body=body, ContentType=content_type)
 
-    def put_object_stream(
-        self, path: str, content: BinaryIO, content_type: str = "application/octet-stream"
-    ) -> None:
-        # No retry: the stream body is not replayable after a partial send.
-        try:
-            with self._operation_lock:
-                self._client.put_object(
-                    Bucket=self._bucket, Key=path, Body=content, ContentType=content_type
-                )
-        except (BotoCoreError, ClientError) as exc:
-            raise StorageError(f"Failed to upload object {path}: {exc}") from exc
-
-    def copy_object(self, source_path: str, destination_path: str) -> None:
-        try:
-            with self._operation_lock:
-                self._client.copy_object(
-                    Bucket=self._bucket,
-                    Key=destination_path,
-                    CopySource={"Bucket": self._bucket, "Key": source_path},
-                )
-        except ClientError as exc:
-            if _client_error_is_missing(exc):
-                raise StorageError(
-                    f"Object not found: {source_path}", code="E_STORAGE_MISSING"
-                ) from exc
-            raise StorageError(
-                f"Failed to copy object {source_path} to {destination_path}"
-            ) from exc
-        except BotoCoreError as exc:
-            raise StorageError(
-                f"Failed to copy object {source_path} to {destination_path}"
-            ) from exc
+    def copy_object(self, source: str, destination: str) -> None:
+        self._call(
+            "copy_object",
+            f"copy {source} to {destination}",
+            Key=destination,
+            CopySource={"Bucket": self._bucket, "Key": source},
+        )
 
     def delete_object(self, path: str) -> None:
-        try:
-            with self._operation_lock:
-                self._client.delete_object(Bucket=self._bucket, Key=path)
-        except (BotoCoreError, ClientError) as exc:
-            raise StorageError(f"Failed to delete object {path}") from exc
+        self._call("delete_object", f"delete {path}", Key=path)
 
-    def list_objects(self, prefix: str, *, continuation_token: str | None = None) -> ObjectPage:
-        params: dict[str, str] = {"Bucket": self._bucket, "Prefix": prefix}
+    def list_objects(
+        self, prefix: str, *, continuation_token: str | None = None
+    ) -> tuple[list[tuple[str, datetime]], str | None]:
+        """One page: (key, last modified) pairs and the token of the next page, if any."""
+        params = {"Prefix": prefix}
         if continuation_token is not None:
             params["ContinuationToken"] = continuation_token
-        try:
-            with self._operation_lock:
-                response = self._client.list_objects_v2(**params)
-        except (BotoCoreError, ClientError) as exc:
-            raise StorageError(f"Failed to list objects under {prefix}") from exc
-
-        objects = tuple(
-            StorageObjectEntry(
-                path=str(item["Key"]),
-                last_modified=item["LastModified"],
-                size_bytes=int(item.get("Size", 0)),
-            )
-            for item in response.get("Contents", [])
-        )
-        next_token = None
-        if bool(response.get("IsTruncated", False)):
-            candidate = response.get("NextContinuationToken")
-            if not isinstance(candidate, str) or not candidate or candidate != candidate.strip():
-                raise StorageError("Storage listing returned an invalid next continuation token")
-            if candidate == continuation_token:
-                raise StorageError(
-                    "Storage listing returned a non-advancing next continuation token"
-                )
-            next_token = candidate
-        return ObjectPage(objects=objects, next_continuation_token=next_token)
+        page = self._call("list_objects_v2", f"list {prefix}", **params)
+        objects = [(str(item["Key"]), item["LastModified"]) for item in page.get("Contents", [])]
+        return objects, page.get("NextContinuationToken") if page.get("IsTruncated") else None
 
 
-def read_object_checked(storage: StorageClient, storage_path: str, *, expected_size: int) -> bytes:
-    """Stream an object fully, verifying its byte size before returning."""
-    with io.BytesIO() as output:
-        write_object_checked(storage, storage_path, output=output, expected_size=expected_size)
-        return output.getvalue()
-
-
-def write_object_checked(
-    storage: StorageClient, storage_path: str, *, output: BinaryIO, expected_size: int
-) -> None:
-    """Copy one object into caller-owned storage; success proves its exact byte size."""
-    total = 0
-    with closing(storage.stream_object(storage_path)) as chunks:
-        for chunk in chunks:
-            total += len(chunk)
-            if total > expected_size:
-                raise StorageError("Stored object is larger than persisted metadata")
-            output.write(chunk)
-    if total != expected_size:
-        raise StorageError("Stored object integrity mismatch")
+_client: StorageClient | None = None
+_client_lock = Lock()
 
 
 def get_storage_client() -> StorageClient:
-    """One process-owned S3 client with serialized operations and a final close.
-
-    Serialize cold creation too: lru_cache alone can run its factory concurrently.
-    """
+    """The process singleton, created on first use and closed at exit."""
+    global _client
     with _client_lock:
-        return _configured_storage_client()
-
-
-@lru_cache(maxsize=1)
-def _configured_storage_client() -> StorageClient:
-    settings = get_settings()
-    resolved: dict[str, str] = {}
-    missing: list[str] = []
-    for key, value in (
-        ("R2_S3_API_ORIGIN", settings.r2_s3_api_origin),
-        ("R2_ACCESS_KEY_ID", settings.r2_access_key_id),
-        ("R2_SECRET_ACCESS_KEY", settings.r2_secret_access_key),
-        ("R2_BUCKET", settings.r2_bucket),
-    ):
-        if value:
-            resolved[key] = value
-        else:
-            missing.append(key)
-    if missing:
-        raise StorageError(f"Missing R2 storage settings: {', '.join(missing)}")
-
-    client = StorageClient(
-        endpoint_url=resolved["R2_S3_API_ORIGIN"],
-        access_key_id=resolved["R2_ACCESS_KEY_ID"],
-        secret_access_key=resolved["R2_SECRET_ACCESS_KEY"],
-        bucket=resolved["R2_BUCKET"],
-        region=settings.r2_region or "auto",
-    )
-    atexit.register(client.close)
-    return client
+        if _client is None:
+            _client = StorageClient()
+            atexit.register(_client.close)
+        return _client

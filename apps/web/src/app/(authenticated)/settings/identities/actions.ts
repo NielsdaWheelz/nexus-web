@@ -7,24 +7,28 @@ import {
   type LinkedIdentity,
 } from "@/lib/supabase/auth";
 
-// the provider's identity operations, as the viewer (lib/auth/session.ts
-// withActionSession refreshes and publishes). the browser holds no client.
+// The provider's identity operations as the viewer (withActionSession refreshes
+// and publishes the session). The browser holds no provider client.
 
 export async function loadLinkedIdentities(): Promise<
-  { ok: true; identities: LinkedIdentity[] } | { ok: false }
+  LinkedIdentity[] | "Failed" | "Ended"
 > {
   const result = await withActionSession(listIdentities);
-  return result?.outcome === "Listed"
-    ? { ok: true, identities: result.identities }
-    : { ok: false };
+  if (result === "Ended") return "Ended";
+  if (result === "Unavailable" || result.outcome !== "Listed") return "Failed";
+  return result.identities;
 }
 
+/** Idempotent: an identity already gone answers Unlinked (lib/supabase/auth.ts). */
 export async function unlinkLinkedIdentity(
   identityId: string,
   provider: string,
-): Promise<{ ok: boolean }> {
+): Promise<"Unlinked" | "Failed" | "Ended"> {
   const result = await withActionSession((cookies) =>
     unlinkIdentity(cookies, identityId, provider),
   );
-  return { ok: result?.outcome === "Unlinked" };
+  if (result === "Ended") return "Ended";
+  return result !== "Unavailable" && result.outcome === "Unlinked"
+    ? "Unlinked"
+    : "Failed";
 }

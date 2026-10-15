@@ -32,11 +32,7 @@ const copyUrl = (mediaId: string, path: string) =>
   new URL(`/shelf/copies/${mediaId}/${path}`, window.location.href).href;
 
 function shelfSource(mediaId: string): ReaderSource {
-  const pdf = {
-    url: copyUrl(mediaId, "document.pdf"),
-    headers: {},
-    expiresAtMs: null,
-  };
+  const pdf = { url: copyUrl(mediaId, "document.pdf"), expiresAtMs: null };
   return {
     async load(signal) {
       const response = await fetch(copyUrl(mediaId, "reader.json"), { signal });

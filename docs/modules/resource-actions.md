@@ -1,25 +1,64 @@
 # resource actions
 
-status: typed read boundary implemented; candidate runtime qualification passed; final static gate passed.
+## purpose
 
-## contract and owners
+one place answers "what can i do with this resource, now?" for any canonical ref
+(`<scheme>:<uuid>`) and does it. the server says which verbs exist and whether it blocks
+them; the web labels, orders, confirms and runs them through each verb's owner. the same
+menu appears on every row, header, dock and pane chrome that shows a resource.
 
-`POST /resource-items/action-snapshots/resolve` authenticates the viewer and accepts 1–100 unique canonical refs. `services/resource_items/action_snapshots.py` reads scoped facts without executing actions. every requested ref keeps its position; missing or invisible resources return a missing snapshot with empty capabilities and none activation. the route returns `Data[ResourceActionSnapshotResolveResponse]` directly. outer camel aliases, nullable fields, values and array order stay. activation uses the required snake fields `resource_ref,kind,href,unresolved_reason`; its closed model refuses extras and requires null href exactly for none.
+## contract
 
-`schemas/resource_action_snapshots.py` owns the closed capability/availability unions. capabilities are always sent and required. its output-only serialization config requires always-sent default tags without repeating tags in constructors or changing input defaults. lectern membership and highlight note use named state unions: absent omits its id; present requires a non-null uuid. names give the nested state discriminator a schema reference inside the outer kind discriminator; no custom serializer remains.
+- `GET /resource-items/{ref}/actions` → `ResourceActionsOut {ref, label, activation, missing,
+  actions}` (`services/resource_items/actions.py`). each action is `{kind, blocked, …facts}`;
+  `blocked` is `PermissionDenied | Locked | Processing | TemporarilyUnavailable | null`.
+  inapplicable verbs are omitted; forbidden ones are present and blocked. an invisible ref
+  answers 200 `missing: true`, no actions, a `none` activation. a bad ref is 400. a media
+  carries at most one `Recovery` per import obligation (source, then search); the web keys
+  each by its offer kind. `RefreshSource` carries the `expected_attempt_id` it replaces
+  (blocked `PermissionDenied` for a non-creator, `TemporarilyUnavailable` while no refresh is
+  offered); `RetryMetadata` carries the retry with its `purpose` (title or bibliography).
+- `GET /resource-items/{ref}` → `ResourceItemOut {ref, scheme, id, label, summary, activation,
+  missing}` (`services/resource_items/items.py`); open an item with
+  `activateResource(item.activation, …)`, never by handing its href to the workspace.
+- `services/resource_items/capabilities.py` is the static policy, one row per scheme, read
+  through `capability(scheme)`; `make generate-resource-capabilities` writes the columns the
+  web reads (`link_mode`, `sharing`, `app_search_scope`, `inspector`) and the discovery source
+  schemes to `lib/resources/resourceCapabilities.ts`.
+- web: a menu calls `useResourceActionMenu(ref)` and fetches when it opens (a loading row,
+  then the verbs, or an error row with Retry); `lib/actions/catalog.ts` owns copy, icons,
+  groups, order and confirmations, keyed by the server's kind; `project.tsx` turns facts into
+  descriptors; `ResourceActionsProvider` confirms, tracks busy, reports failures and hosts the
+  overlays (authors, metadata, library settings, podcast settings, subscribe, link).
+- an edit whose state lives in a mounted pane (page title, note body, highlight colour, note,
+  bounds and delete, message fork, walk, rerun, regenerate and delete) is a pane entry: the
+  menu navigates with `paneEntryActivation` and is done; the landing pane claims and serves
+  it ([workspace](workspace.md)).
+- an inline button outside a menu sends the identity its own view shows: an import's
+  recovery runs the menu's `Recovery` verb through the provider with that obligation's offer
+  (`recoverMedia`); metadata research (import row, inspector, metadata overlay) runs the
+  menu's `RetryMetadata` with the view's `expected_job_id`; each shares the menu's busy key.
+  a title blocked on missing x source context reads the media's verbs while blocked and offers
+  its first available source remedy (refresh, retry or repair). an import's open reads the
+  item's current activation when pressed (`resolveResourceItem`).
+- lectern add is the Lectern's ensure (`useLecternAdds().add`, a null placement) with the
+  resource's `label` as its title; while that add is unanswered the verb reads "adding…" or
+  "check add" and checks it instead of sending another. the quick-read and transcript add
+  controls read the media's verbs on mount and whenever its lectern membership changes; only
+  that read says "on lectern".
+- source refresh and metadata research send the expectation the viewer saw, so a lost
+  answer's "confirm request" hud resends it and the run that landed answers (metadata: the
+  retry rule, [media metadata](media-metadata.md), and its view is read again either way);
+  an access reply (401/403/404) settles nothing.
 
-media offline is one `Download{mediaKind, title, audioUrl}` capability: an episode with an https enclosure, or a pdf, epub or web article ready for reading. the menu projects it against Android's device snapshot (`lib/offline/bridge.ts`): download, cancel, remove (confirmed when a reading position has not synced) or retry, and *Not supported on this device* where the bridge is absent. commands go straight to the bridge; a refusal is a hud. see [offline](offline.md).
+## invariants
 
-snapshot construction enforces ref/activation identity, no capabilities for missing resources, and none activation for missing resources. `ResourceActivationOut` owns kind/href coherence. `PlaybackRateResolution` owns podcast source/preference equality; product rate is 1 with no saved preference value (outer present with inner absent is valid). episode overrides retain their existing freedom. these previously decoded relations reject impossible producer construction before publication.
-
-`resourceActionSnapshot.ts` consumes the generated contract and adapts only canonical-ref and playback-media-id brands. it retains native object field order; consumers neither enumerate nor serialize snapshots, so the old decoder's internal offline-reading key reorder retires. the runtime still batches at 100, resolves batches concurrently and flattens in request order. the cache keeps request-relative count/order checks, retained entries, generations, retry and reconciliation.
-
-`resourceActions.ts` owns the action catalog: labels, icons, groups/order and default confirmation copy. `resourceActionMenu.tsx` projects capabilities and local facts into descriptors and executable commands; `resourceActionRuntime.tsx` dispatches them. pane/row menus present the descriptors. mutation dispatch, leases, mounted handoff, cache invalidation and recovery request/admission/replay behavior retain their owners. recovery offers use the imports owner's generated camel output; the orphan camel decoder is gone. no current producer advertises the retired make-current capability.
-
-## qualification and limits
-
-88 frozen model envelopes preserve exact actual route serializer bytes across all 44 capability kinds and nested alternatives. 18 malformed output models reject at their owners; required fields and genuine omission are qualified. actual exported menu/selected-command metadata match literally: 1,919 descriptors across 23 declared environments, including labels/order, blocking/checked state, separators, confirmations and reconciliation. full adapted snapshots remain structurally equal; only incidental internal offline-reading key insertion order changes. five simulated recovery callbacks preserve request/offer identity, normalizing only minted mutation ids.
-
-10 real route cases preserve scoped two-viewer results, ordered/missing placeholders, request limits/errors and literal success bodies (error comparison excludes only request ids). three actual loaded browser menus match; retained reopening adds no resolve request and opening executes no mutation. real lectern add/remove each dispatch once, succeed with authoritative readback and restore original membership/menu; two reconciliation reads per command and their ordered batches match baseline. no page errors.
-
-receipts: `/tmp/nexus-action-snapshot-candidate-{model,api,callback,browser}-receipt.json`; presentation: `/tmp/nexus-action-snapshot-menu-receipt.json`. rare variants and declared environments are model simulations, not provider/worker/native execution. audio/storage, whole lectern lifecycle and deployment remain unqualified. the read cut removes 518 handwritten production lines, excluding generated wire/docs; remaining substrate reauthoring stays open. final static gate passed.
+- nothing is cached: every open asks again; closing aborts and forgets.
+- a tracked verb is busy per `(ref, kind)` until it settles; a reopened menu shows it busy.
+- a 401 hands off to sign-in; a modeled error is a hud (`actionFailure`: a recovery 409 is
+  the conflict notice); a defect while loading breaks the menu's pane (the mobile bar's menu,
+  rendered outside it, through the pane's `onDefect`), while running breaks the shell.
+- confirmations quote the resource's `label` (a media's bare title, without authors).
+- visibility is the resolver's verdict for every scheme, so the actions read and the item read
+  agree on `missing` and activation; a podcast is a public catalog row (any persisted show
+  resolves, as its pane reads it). routing decides no visibility.

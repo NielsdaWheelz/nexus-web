@@ -1,135 +1,92 @@
 # Storage
 
-Storage objects are owned by capability-specific DB rows. A storage key by itself
-does not authorize access and must not encode user identity.
+## Purpose
 
-## Owners
+Private bytes (sources, epub assets, reading copies, staged uploads) live in one R2
+bucket. A key authorizes nothing: a viewer reaches bytes only after the owning row's
+check, then through a short-lived signed url or a server stream.
 
-| Object family | DB owner | Key shape | Access lane |
-| --- | --- | --- | --- |
-| Original PDF/EPUB sources | `media_file` | `media/{media_id}/original.{pdf,epub}` or `media/{media_id}/candidates/{token}/original.{pdf,epub}` | viewer-authenticated media/file services |
-| Browser article packets | `media_source_attempts.source_payload.storage_path` | `media/{media_id}/candidates/{token}/original.json` or `media/{media_id}/source/{attempt_id}.json` | private source lifecycle only; never a `media_file` row |
-| Upload staging | `media_upload_sessions` | `uploads/sessions/{session_id}/{generation}/original.{pdf,epub,json}` | private upload lifecycle only |
-| Media source artifacts | `media_source_attempts.source_payload` | `media/{media_id}/source/{attempt_id}.{html,tar}` | private source lifecycle only |
-| Pre-cutover browser-article blobs | `media_source_attempts.source_payload.retained_legacy_paths` (until the rollback window closes; `docs/tickets/remove-browser-capture-conversion-command.md`) | `media/{media_id}/source/{attempt_id}.{html,source-html}` | none; retained for rollback, swept once the key is dropped |
-| Extracted EPUB resources | `epub_resources` | `media/{media_id}/assets/{asset_key}` | viewer-authenticated EPUB asset route |
+## Contract
 
-All storage path construction goes through `python/nexus/storage/paths.py`.
-Extension-taking builders accept only bare extensions: no leading dot, dot,
-slash, backslash, or empty value. Storage keys are owner IDs or stable source
-keys, not content hashes. Object reads enforce DB-owned byte-size metadata at
-read time.
+`python/nexus/storage/client.py`, `get_storage_client()` (the process singleton,
+closed at exit; unconfigured R2 raises `StorageError`):
 
-The Oracle public-domain corpus is ordinary media: its source files
-(EPUB/PDF/web-article) use the normal `media_file` / `epub_resources` lanes above.
-Oracle plates are not stored objects; they are static web assets
-(`apps/web/public/oracle-plates/<key>.jpg`).
+| call | answer |
+| --- | --- |
+| `sign_upload(path, *, content_type, size_bytes, expires_in)` | a PUT url that admits exactly that type and length |
+| `sign_download(path, *, expires_in)` | a GET url |
+| `head_object(path)` | `ObjectMetadata{content_type, size_bytes}`, or `None` when missing |
+| `stream_object(path, *, expected_size=None, byte_range=None)` | lazy chunks of at most 8 MiB; `byte_range` is inclusive |
+| `read_object(path, *, expected_size=None)` | the whole object |
+| `put_object(path, body, content_type)` | bytes, or a file at byte 0 |
+| `copy_object(source, destination)`, `delete_object(path)` | |
+| `list_objects(prefix, *, continuation_token=None)` | one page: `([(key, last_modified)], next_token)` |
 
-## Public vs Private Assets
+Failures raise `StorageError(message, code)`, which is not an `ApiError`: each caller
+maps it. `code` is `E_STORAGE_MISSING` for a missing object on read or copy (head
+answers `None`), else `E_STORAGE_ERROR`. Botocore retries a transient failure (a 5xx,
+throttling, a request timeout, a dropped connection) itself, three attempts in all,
+inside the lock, and resends a file body from byte 0; any other failure (a 403, say)
+is not retried.
 
-Private media assets require a viewer authorization check before metadata is
-resolved. They must not be added to Next Image `images.localPatterns`.
+Key shapes, all built in `python/nexus/storage/paths.py`:
 
-Static web assets (the Oracle plates under `/oracle-plates/**`) are the only
-Next Image local pattern; they are public files, not storage objects.
+| key | owner row |
+| --- | --- |
+| `media/{media_id}/source/{attempt_id}.{html,original-pdf,original-epub}` | the attempt's `source_payload.storage_path` (a Post Room body), or `media_file` (a file fetched from a url) |
+| `media/{media_id}/candidates/{candidate_id}/original.{pdf,epub,json}` | `media_file`, or for an article packet the attempt's `source_payload.storage_path` |
+| `media/{media_id}/source/{attempt_id}/assets/{asset_key}` | `epub_resources` |
+| `media/{media_id}/reading-copies/{copy_id}.zip` | none: built per request, handed back signed |
+| `uploads/sessions/{session_id}/{generation}/original.{pdf,epub,json}` | `media_upload_sessions` (staging) |
 
-## Media Teardown & Lifecycle
+## Invariants
+
+- Keys are built from owner ids and our own extensions, never a content hash or a user
+  identity; an epub asset key comes from the archive and is refused with a leading
+  `/` or an empty, `.` or `..` part.
+- Bytes come first, then the row that names them; nothing reserves a path. The
+  periodic `storage_orphan_sweep` (every six hours) deletes a `media/` object only when
+  it is older than `STORAGE_ORPHAN_SWEEP_MIN_AGE_SECONDS` (24 h) and no `media_file`,
+  `epub_resources` row or attempt payload names it. The min age must outlast the
+  longest store-then-commit window (the 900 s background wall) and a reading copy's
+  signed url (`SIGNED_URL_EXPIRY_S`). Config refuses only values below 30 s
+  (mistakes); a deployed environment must keep it above both.
+- `uploads/` is reclaimed only by the R2 one-day lifecycle rule
+  (`deploy/cloudflare/r2-lifecycle.example.json`, applied with
+  `deploy/cloudflare/apply-r2-lifecycle.sh`); confirmation copies staged bytes to a
+  candidate under `media/`.
+- Every SDK call that can open or use a connection, and every body read, holds one
+  process lock, never held while yielding to a caller: botocore reloads CA
+  certificates into the shared TLS context when it opens a connection (#576).
+  Presigning sends nothing and runs outside the lock.
+- A read given `expected_size` proves the stored size before its first byte (a
+  mismatch raises then, not mid-body); a body that ends short raises.
+- Oracle plates are static web assets (`apps/web/public/oracle-plates/`), not stored
+  objects, and the only Next Image local pattern; private media never is one.
+
+## Media teardown
 
 Full contract: `docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §3.1 at `ebd648197`.
 
 Canonical member removal never deletes the final lifetime reference: it returns
-`409 E_MEDIA_LAST_REFERENCE`. Whole-resource deletion of document media
-(`WebArticle`, `Epub`, `Pdf`) uses `media_deletion.claim_media_teardown`, which
-locks the media row, checks zero committed references, inserts a
-`media_teardown_intents` row (application-generated UUIDv7 via
-`nexus.ids.new_uuid7`, not a database default — Python 3.12 has no standard
-UUIDv7 generator), and enqueues one addressable `media_teardown` job in that
-same transaction. Intent presence excludes the media from every public
-visibility query and makes new references fail with `E_MEDIA_DELETING` (409).
-The administrative whole-library teardown is the narrow exception: while its
-complete media lock set is held, it deletes a newly zero-reference document and
-child state transactionally, then deletes storage objects after commit. The one
-actual reference owner (`library_entries.py`) enforces the media-before-library
-barrier for reference writes. Whether any reference remains is a count of
-physical `library_entries` rows for that media, and nothing else.
+`409 E_MEDIA_LAST_REFERENCE`. Removing a media (`DELETE /media/{id}`: 204, idempotent;
+`media_deletion.remove_media_for_viewer`) drops it from the viewer's whole workspace at
+once. A document (`web_article`, `epub`, `pdf`) left with no reference (no library entry,
+no grant) gets a `media_teardown_intents` row (one per media; UUIDv7 from
+`nexus.ids.new_uuid7`) and one `media_teardown` job `{media_id, intent_id}` in the same
+transaction, under the media row lock; so do a duplicate document
+(`delete_duplicate_document_media`) and a document whose last grant or highlight goes
+(`claim_document_teardown_if_unreferenced_locked`). The intent excludes the media from
+every visibility query and makes new references fail with `E_MEDIA_DELETING` (409).
 
-Three durable task modules own all teardown/lifecycle storage deletion
-(`python/nexus/tasks/`):
-
-- **`media_teardown.py`** — the claimed job. Reloads the current job row and
-  transitions its checkpoint: `Unprepared` -> `PathsPrepared` (lease-fenced,
-  reuses the existing path enumerator) -> `DeletionCommitted` (zero
-  references: deletes child state through owners — the one consumption call
-  `delete_media_consumption_state_in_txn` — then intent/media, all in one
-  `retry_serializable` transaction) or `Voided`
-  (a reference reappeared: deletes only the intent). Absent intent + present
-  media records `NoOp`; a stale (non-matching) intent records `Stale`. Every
-  intent lookup/delete matches both `intentId` and `mediaId`, so an old job
-  never acts on a later intent. `DeletionCommitted` reschedules itself until
-  `cleanupNotBefore`, then deletes its persisted paths; deletion is
-  idempotent and failure retries.
-- **`storage_object_cleanup.py`** — the browser-direct-upload backstop. Every
-  in-process object write (`media_source_ingest.py`, `email_ingest_service.py`,
-  `epub_ingest.py`) and each candidate copy (fenced by a fresh candidate id) in
-  `media_upload_sessions.py` first locks its owner and reserves at most one
-  nonterminal `StorageObjectCleanupJob` per `(owner, storagePath)` before the bounded
-  external call: `Armed` -> `Retained` (a short post-write transaction rechecks
-  media + no-intent + committed path ownership) or, after both `retainUntil`
-  and `writeMayLandUntil`, `DeleteRequired` -> `Deleted` (an exclusive queue-owned
-  hold on the path; installed only when no other nonterminal writer targets it). Only
-  `Retained`/`Deleted` is prunable. Browser-direct writes (local PDF/EPUB uploads
-  and extension captures of PDF, EPUB or article packets) are owned by a durable
-  `media_upload_sessions` row whose immutable `input_origin` names the writer's
-  provenance, and by a generation-scoped staging path. Capability expiry changes
-  the session projection to `CapabilityExpired`; it never deletes accepted intent.
-  Each confirmation reserves a fresh candidate path, copies staging into it and
-  verifies that candidate's size, content type, SHA-256 and file signature or
-  strict article packet (a browser capture must also match its intent digest);
-  then one transaction reuses the account's oldest readable media holding exactly
-  those bytes or creates the media, revalidates and adds every placement, creates
-  the source attempt and exact queue job for new media only, and publishes the
-  receipt. Success and failure writes are fenced by the inspected generation and
-  the unpublished state, and one media may carry several receipts. Retry mints a
-  new generation; explicit removal reserves cleanup. Every capture mutation
-  (status, transport failure, retry, confirm) loads the session by viewer and
-  provenance: extension routes reach only `BrowserCapture` sessions, web upload
-  routes only `LocalFile`. Removal is not a capture mutation: the web route
-  removes the viewer's own unpublished session of either origin, since a browser
-  capture's bytes live in the extension, which alone can retry it, so Imports
-  offers Remove but no retry for such a session. A losing or failed candidate
-  is reclaimed by its own reservation, and a reused-media candidate has no owner
-  and is rejected at finalization. The reservation CAS reports one owner-agnostic
-  in-flight-cleanup condition rather than constructing a domain error: `Media` maps
-  it to `E_MEDIA_DELETING`, while removal reads an already-claimed sweep of a staged
-  generation as the durable cleanup intent it needs and still returns `204`.
-  Browser PUTs abort at the earlier of the capability's `expires_at` or the fixed
-  240-second client horizon and report `Timeout`; server configuration requires
-  the cleanup write margin to be strictly longer than that horizon.
-- **`storage_orphan_sweep.py`** — the singleton recurring backstop for writes
-  that complete after a signed-URL expiry or an earlier delete. Durably pages
-  the `media/` prefix, ignores objects modified within
-  `storage_orphan_sweep_min_age_seconds` (default 24h — a write completing
-  after one pass gets a fresh modified time and is caught by a later pass),
-  and deletes only paths with no live DB owner and no Armed cleanup writer.
-  Runs on the job registry's `periodic_interval_seconds` mechanism (default
-  `storage_orphan_sweep_interval_seconds` = 21600s / six hours) rather than the
-  spec's self-chained successor — the registry's per-slot `enqueue_unique_job`
-  dedupe already guarantees an at-most-one run per slot, and
-  `never_prune_dead=True` keeps a failed run operator-discoverable via
-  `requeue_dead_job` without inventing chain-restart bookkeeping.
-
-On dead-letter, a live media row causes only the exact matching intent to be
-voided; `DeletionCommitted` media jobs and failed path-cleanup jobs are never
-pruned, so paths stay operator-discoverable via `requeue_dead_job`. Domain code
-never writes `background_jobs` raw — every checkpoint write goes through the
-queue owner's exact-attempt/claimant/lease-fenced CAS methods.
-
-The one-day R2 lifecycle rule on the `uploads/` direct-upload staging prefix is
-an independent durable backstop for late browser writes. The repository-owned
-rule is `deploy/cloudflare/r2-lifecycle.example.json`; operators apply that exact
-file with `deploy/cloudflare/apply-r2-lifecycle.sh`.
-
-## Deployment
-
-Object-storage preconditions that migrations depend on are established by deploy
-or operator code, not app startup.
+The job (`media_deletion.run_teardown_job`) is one step and acts only on its exact
+(intent, media). In one `retry_serializable` transaction under the media lock: no intent
+or another one is `Stale`; a reference that reappeared voids the intent and keeps the
+media (`Voided`); otherwise every row of the media goes in the load-bearing order (owner
+hooks before the rows they own, the content index before the media, highlight children
+before their roots), and the objects those rows named (`media_file`, `epub_resources`,
+the attempts' stored artifacts) are enumerated inside that transaction (`Deleted`).
+After commit it deletes those objects best-effort; an object it fails to delete, or one
+written after the deletion, is unowned and the orphan sweep reclaims it. There is no
+grace and no checkpoint. A dead job voids its exact intent while the media lives
+(`jobs/dead_letters.media_teardown`), so the media is readable again.

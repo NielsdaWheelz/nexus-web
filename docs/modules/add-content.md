@@ -23,21 +23,23 @@ through 50 MiB. rejected files remain rows. file selection/drop appends in order
 recognized drops prevent native navigation even while intake is unavailable.
 
 `useAddContentSession` owns the immutable snapshot and its synchronous ref. the
-panel renders its commands; it never calls acquisition or allocates replay keys.
+panel renders its commands; it never calls acquisition or allocates request ids.
 row destinations, the new-item seed and the bulk header have separate scopes.
 header deltas add/remove one library on populated drafts and seed, preserving
 other selections. mixed coverage is derived; sent/saved rows are excluded.
 `All` membership is implicit.
 
-`LibraryDestinationPicker` owns shared search/create, with item selection or native
-all/some/none checkboxes. query changes synchronously retire continuation authority;
-every settlement belongs to its query, cursor and generation. deactivation clears
-loading and fences late replies. the shared chooser keeps keyboard-active options
-inside its own scrollport. busy search is read-only, preserving focus.
+`DestinationChooser` (`components/libraries`) owns shared search/create, with item
+selection or, given the libraries only some drafts are in, native all/some/none
+checkboxes whose toggle adds or removes one library. a new query aborts the read in
+flight and a page belongs to the query it answered, so load more never continues
+another query; closing unmounts the chooser and ends its read. `LibraryChooser`
+keeps keyboard-active options inside its own scrollport. busy search is read-only,
+preserving focus.
 
-one active picker belongs to a row or header. desktop uses the responsive anchored
-surface; add on mobile uses an inline region in the scrolling body. header chooser
-content sits at the body's top. escape/back closes the picker first. inline
+one active picker belongs to a row or header. desktop uses the anchored
+`ChooserSurface`; add on mobile uses its inline region in the scrolling body. header
+chooser content sits at the body's top. escape/back closes the picker first. inline
 regions omit outside-pointerdown dismissal so the intended click can complete.
 retarget resets search; removal/submission/session replacement cannot revive an
 old target or restore focus to its removed anchor. creation locks picker dismissal
@@ -45,8 +47,8 @@ while task close retains the stop guard. other picker consumers remain responsiv
 
 ## acceptance and leaving
 
-submission revalidates the ready subset, captures destinations and a new key per
-row synchronously, then admits two at a time within one mutation slot. invalid and
+submission revalidates the ready subset, captures destinations and a new id per
+row synchronously (a url's attempt id or an upload's session id), then admits two at a time within one mutation slot. invalid and
 empty drafts send nothing. saved receipts remain in the task; ordinary completion
 neither navigates nor closes it. acceptance proves saving; upload publication
 proves verified bytes. neither proves completed extraction.
@@ -54,12 +56,12 @@ proves verified bytes. neither proves completed extraction.
 known refusals stay on their row, including revoked destination access. auth and
 sent defects retain their frozen request before the existing handoff. check/retry
 replays exactly that intent; edit/new attempt returns to draft and receives a new
-key only on submission. stopped unsent rows return to drafts; started urls remain
+id only on submission. stopped unsent rows return to drafts; started urls remain
 unconfirmed and files retain the existing upload/imports recovery semantics.
 accepted file rows release browser file handles. stop/reset/discard/unmount fence
 all older callbacks. reload loses browser drafts/files.
 
-`leaveReason` prioritizes active stop, unresolved acceptance/placement, unfinished
+`leaveReason` prioritizes active stop, unresolved acceptance, unfinished
 draft/refused work, then no warning. empty drafts, seed-only changes and settled
 receipts are clean. normal and defect-boundary dismissal use the same confirmation.
 explicit leave discards browser state and never promises to undo a server commit.
@@ -67,50 +69,46 @@ add has no back-to-launcher step.
 
 ## saved placement
 
-accepted aliases share actual placement inventory by media id. reads are lazy;
-submitted destinations never substitute for inventory. bulk work deduplicates
-media ids, rereads eligibility and excludes unavailable targets. only admitted
-direct/absent relations change. closing a picker leaves uncertain changes visible
-on their receipts and in the attention count. admission/check closes saved-item
-pickers; reopening performs the existing authoritative read.
-
-one placement read/write owner per media excludes stale completion. send is
-recorded synchronously; acknowledgement installs the confirmed relation before
-another await. a transport failure, sent defect or stop after send retains the
-exact media/destination/verb and inventory. retry sends those retained commands
-without an inventory prerequisite or changed-selection inference. reads never
-erase uncertainty. queued retries preserve the prior uncertain command; retry
-auth restores it. refused changes settle with feedback; media-not-found is terminal
-unavailable. this remains the existing placement controller, without a new cache
-or consolidation layer.
+accepted items are filed through the shared "Libraries…" overlay
+(`components/libraries/PlacementOverlay.tsx`), which the panel hosts as its row or
+header picker (inline on mobile): a receipt's libraries… opens it for that media,
+the saved-items header's libraries for all… for every accepted media
+(deduplicated). with several items a library is chosen when it holds all of them;
+choosing files those that lack it, unchoosing unfiles them all, and a partial
+library reads "In n of m"; an item deleted since it was added is left out. reads
+are the overlay's own; submitted destinations never substitute for inventory.
+every placement write is idempotent (keyed by library and item), so the overlay's
+Retry resends a write a transport failure left unknown; refusals show their copy
+and every committed filing rereads it. admission/check closes saved-item pickers.
+the session owns no placement state.
 
 ## acquisition boundary
 
 `lib/imports/ingest.ts` owns the public url/upload protocol and one
 `AcceptedIngest { kind, mediaId, importRef, processing }` result. imports copy is
 owned by `lib/imports/copy.ts`; native success shapes come from generated types.
-the independent extension owns its capture decoding.
+the extension shares only the generated wire types.
 
 url receipts name the admitted media import; every upload receipt names its exact
-session import, including attention and replay. `uploadIngestFile` publishes each
-successful create's ref through `onImportRef` before transfer or confirmation can
-fail. the add owner retains it under the existing callback fence through phase
-changes, uncertain acceptance and stop. restaging clears the old key/ref. known
-identity does not prove acceptance: unresolved rows retain check-status/retry.
+session import. `uploadIngestFile` publishes the create's ref through `onImportRef`
+before transfer or confirmation can fail. the add owner retains it under the
+existing callback fence through phase changes, uncertain acceptance and stop.
+restaging clears the old key/ref. known identity does not prove acceptance:
+unresolved rows retain check-status/retry.
 
 every known-ref row offers `view import`. it uses the existing guarded leave and
 an exact selected imports url with explicit `import-detail` activation. cancellation
 preserves browser work; confirmation may stop/discard it. blocked navigation keeps
 the existing retained-target flow. there is no resumable add session. receipts say
-`saved`; request replay is not evidence of content duplication.
+`saved`; a resend is not evidence of content duplication.
 
-an upload capability whose signing round trip exhausts its window is re-signed
-once by replaying the same key. the storage put runs under the lesser of 240 s and
-capability expiry. timeout, caller abort, network failure and non-2xx are reported
-to the transport-failure endpoint; confirmation publishes verified bytes. storage
-requests carry no nexus credentials. exceptional durable recovery remains in
-imports. backend source execution/publication/replay defects retain their own
-owners and tickets.
+an upload's id is its session id: the storage put runs until the signed url's
+`expires_at`; a timeout, network failure or non-2xx reads "Upload didn’t complete"
+(`BytesMissing`) and Retry upload sends the same id, which opens a fresh url for a
+new generation; confirmation publishes verified bytes. the size limit is the
+server's (refused at create). storage requests carry no nexus credentials.
+exceptional durable recovery remains in imports. backend source
+execution/publication defects retain their own owners and tickets.
 
 `./scripts/test` remains the permanent static gate. temporary isolated live tests
 are removed after green and review; the plan links retained observations and limits.

@@ -3,9 +3,7 @@
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
-from pydantic.alias_generators import to_camel
 
-DEVICE_ID_MAX_LENGTH = 200
 MAX_PANES = 12
 MAX_PANE_HISTORY = 12
 MAX_TOTAL_HISTORY = 48
@@ -23,7 +21,7 @@ SURFACE_GROUP = {
 
 
 class _Model(BaseModel):
-    model_config = ConfigDict(alias_generator=to_camel, extra="forbid")
+    model_config = ConfigDict(extra="forbid")
 
 
 class PaneVisit(_Model):

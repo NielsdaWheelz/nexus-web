@@ -1,16 +1,17 @@
-// The frontend SearchQuery value object, shared by the /search page and Nexus results.
+// What to find (python services/search/query.py SearchQuery), shared by the
+// search pane and Nexus.
 
 import { SEARCH_KINDS, type MediaFormat, type SearchKind } from "./kinds";
 import type { ParsedSearchInput } from "./parseSearchInput";
 
 export interface SearchQuery {
   text: string;
-  // null ⇒ all kinds (param omitted); empty set ⇒ no results (explicitly cleared).
+  /** null: every kind (`kinds` omitted); empty: none (`kinds=`). */
   requestedKinds: ReadonlySet<SearchKind> | null;
   formats: MediaFormat[];
   authors: string[];
   roles: string[];
-  // "all" | "media:<id>" | "library:<id>" | "conversation:<id>"
+  /** "all", or a media, library or conversation ref. */
   scope: string;
 }
 
@@ -25,65 +26,28 @@ export function emptySearchQuery(): SearchQuery {
   };
 }
 
-export function hasFormatFilter(query: SearchQuery): boolean {
-  return query.formats.length > 0;
-}
-
-export function hasCreditFilter(query: SearchQuery): boolean {
-  return query.authors.length > 0 || query.roles.length > 0;
-}
-
-export function hasActiveFilters(query: SearchQuery): boolean {
-  return (
-    query.requestedKinds !== null ||
-    hasFormatFilter(query) ||
-    hasCreditFilter(query) ||
-    query.scope !== "all"
-  );
-}
-
-// A query that would return nothing without producing a request: no text and no
-// structured filter. The kind selection alone (with text) still searches.
-export function isBlankQuery(query: SearchQuery): boolean {
-  return (
-    query.text.trim().length === 0 &&
-    !hasFormatFilter(query) &&
-    !hasCreditFilter(query)
-  );
-}
-
-// Merge parsed operator chips into a base query (absorbing operators into filters).
+/** `base` with the parsed text, and its chips added to its filters. */
 export function applyParsedInput(
   base: SearchQuery,
   parsed: ParsedSearchInput,
 ): SearchQuery {
-  const formats = new Set(base.formats);
-  const authors = new Set(base.authors);
-  const roles = new Set(base.roles);
-  let requestedKinds = base.requestedKinds;
-  let scope = base.scope;
+  const next = { ...base, text: parsed.text };
   for (const chip of parsed.chips) {
     if (chip.dim === "kind") {
-      const set =
-        requestedKinds === null ? new Set<SearchKind>() : new Set(requestedKinds);
-      set.add(chip.value);
-      requestedKinds = set.size === SEARCH_KINDS.length ? null : set;
+      const kinds = new Set(next.requestedKinds ?? []).add(chip.value);
+      next.requestedKinds = kinds.size === SEARCH_KINDS.length ? null : kinds;
     } else if (chip.dim === "format") {
-      formats.add(chip.value);
+      if (!next.formats.includes(chip.value))
+        next.formats = [...next.formats, chip.value];
     } else if (chip.dim === "author") {
-      authors.add(chip.value);
+      if (!next.authors.includes(chip.value))
+        next.authors = [...next.authors, chip.value];
     } else if (chip.dim === "role") {
-      roles.add(chip.value);
-    } else if (chip.dim === "scope") {
-      scope = chip.value;
+      if (!next.roles.includes(chip.value))
+        next.roles = [...next.roles, chip.value];
+    } else {
+      next.scope = chip.value;
     }
   }
-  return {
-    text: parsed.text,
-    requestedKinds,
-    formats: [...formats] as MediaFormat[],
-    authors: [...authors],
-    roles: [...roles],
-    scope,
-  };
+  return next;
 }

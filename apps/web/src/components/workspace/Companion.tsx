@@ -33,7 +33,7 @@ import {
   SECONDARY_SURFACES,
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
-import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { WorkspaceSecondaryPane } from "@/lib/workspace/model";
 import {
   findPaneChromeFocusTarget,
@@ -69,8 +69,8 @@ function shownSurface(
   companion: PaneCompanion,
   secondary: WorkspaceSecondaryPane,
 ): WorkspaceSecondarySurfaceId {
-  return published(companion, secondary.activeSurfaceId)
-    ? secondary.activeSurfaceId
+  return published(companion, secondary.active_surface_id)
+    ? secondary.active_surface_id
     : companion.defaultSurfaceId;
 }
 
@@ -119,7 +119,7 @@ export function createCompanionController(input: {
       const { secondary } = latest();
       const target =
         surfaceId ??
-        (companion && secondary?.groupId === companion.groupId
+        (companion && secondary?.group_id === companion.groupId
           ? shownSurface(companion, secondary)
           : companion?.defaultSurfaceId);
       if (!target || !published(companion, target)) return;
@@ -157,12 +157,12 @@ export function createCompanionController(input: {
       const { companion, results } = chrome.get();
       if (!published(companion, surfaceId)) return;
       if (results) open(surfaceId);
-      else update({ activeSurfaceId: surfaceId });
+      else update({ active_surface_id: surfaceId });
     },
     /** One width per pane: the durable record's once it exists. */
     resize(widthPx: number) {
       const { results } = chrome.get();
-      if (latest().secondary) update({ widthPx });
+      if (latest().secondary) update({ width_px: widthPx });
       else if (results) chrome.set({ results: { ...results, widthPx } });
     },
     showResults(opener: HTMLElement) {
@@ -233,7 +233,7 @@ export function companionExpanded(
       chrome.query.find !== null
     ) &&
     companion !== null &&
-    secondary?.groupId === companion.groupId &&
+    secondary?.group_id === companion.groupId &&
     secondary.visibility === "visible"
   );
 }
@@ -250,7 +250,7 @@ export default function Companion(props: {
   readonly controller: CompanionController;
   readonly secondary: WorkspaceSecondaryPane | null;
   readonly find: FindController | null;
-  readonly actionSubject: ResourceActionSubject | undefined;
+  readonly resourceRef: CanonicalResourceRef | undefined;
 }): ReactNode {
   const { paneId, isMobile, chrome, controller, secondary, find } = props;
   const { companion, results } = usePaneChromeState(chrome);
@@ -259,7 +259,7 @@ export default function Companion(props: {
   const asideRef = useRef<HTMLElement>(null);
   const resultsShown = results !== null && find !== null;
   const durable =
-    companion && secondary?.groupId === companion.groupId ? companion : null;
+    companion && secondary?.group_id === companion.groupId ? companion : null;
   const activeId: TabId | null = resultsShown
     ? "find-results"
     : durable && secondary
@@ -280,7 +280,7 @@ export default function Companion(props: {
     ? controller.closeResults
     : () => controller.closeSecondaryPane();
   const widthPx = secondary
-    ? companionWidthPx(secondary.widthPx)
+    ? companionWidthPx(secondary.width_px)
     : (results?.widthPx ?? 0);
 
   // a command opening the desktop column scrolls it into the canvas, so its ✕
@@ -288,7 +288,7 @@ export default function Companion(props: {
   // a mount, a late publication or a breakpoint round trip reveals nothing.
   const opened = results
     ? results.expanded && "find-results"
-    : secondary?.visibility === "visible" && secondary.groupId;
+    : secondary?.visibility === "visible" && secondary.group_id;
   const wasOpened = useRef(opened);
   useLayoutEffect(() => {
     if (opened && opened !== wasOpened.current && !isMobile)
@@ -373,11 +373,8 @@ export default function Companion(props: {
       ) : (
         <span className={styles.soloTitle}>{title(activeId)}</span>
       )}
-      {isMobile && props.actionSubject ? (
-        <ResourceActionMenu
-          actionSubject={props.actionSubject}
-          label="Actions"
-        />
+      {isMobile && props.resourceRef ? (
+        <ResourceActionMenu resourceRef={props.resourceRef} label="Actions" />
       ) : null}
       <Button
         variant="ghost"
