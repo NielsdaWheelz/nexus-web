@@ -425,6 +425,7 @@ unexpected timeouts. See
 - [open] epub reciprocal roles · 2026-10-15 source review · two proposals add reversed duplicate pairs between inline references and note-return links; whole books remain unapplied: [ticket](tickets/epub-backlinks-create-reversed-note-pairs.md).
 - [open] contributor repair output · 2026-10-15 clone rehearsal · raw-role correction is summarized as author→author despite an accurate full preview: [ticket](tickets/contributor-repair-summary-hides-raw-role-change.md).
 - [open] epub navigation · 2026-10-15 source review · ncx selection drops independently authored package landmarks in two books; whole proposals remain unapplied: [ticket](tickets/epub-navigation-drops-authored-landmarks.md).
+- [open] epub note bodies · 2026-10-15 source review · one proposal reduces 34 authored notes to return labels because text and rich content use different body owners; whole book remains unapplied: [ticket](tickets/epub-rich-note-body-collapses-to-return-label.md).
 - [open] reader maintenance · 2026-10-14 plan review · inspection exposes changed apparatus keys but lacks full diffs and separate projection hashes for review and uncertain-commit reconciliation: [ticket](tickets/reader-repair-inspection-lacks-complete-projection-evidence.md).
 
 - [planned] reader apparatus · 2026-10-14 repair plan · re-scope draft #584 for strict enrichment, no identity deletion and complete proposal evidence; no merge/apply: [plan](book-repair-plan.md) · [ticket](tickets/reader-repair-existing-apparatus-correspondence.md).
