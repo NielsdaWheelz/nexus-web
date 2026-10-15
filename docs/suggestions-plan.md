@@ -1,6 +1,7 @@
 # suggestions publication plan
 
-status: implemented; current-main integration in progress; product decisions confirmed 2026-10-14.
+status: implemented and qualified; pr #626 stays open during the release freeze.
+product decisions confirmed 2026-10-14.
 [verification](suggestions-verification.md) records the live red/green/refactor
 campaign, final artifact, limits and cleanup. deployment is separate.
 
