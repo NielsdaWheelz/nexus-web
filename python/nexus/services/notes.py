@@ -249,7 +249,7 @@ def set_highlight_note(
 ) -> NoteBlockOut:
     def op() -> NoteBlockOut:
         if expected.kind == "absent":
-            attach_highlight_note_in_current_transaction(
+            changed = attach_highlight_note_in_current_transaction(
                 db,
                 viewer_id,
                 highlight_id=highlight_id,
@@ -263,7 +263,7 @@ def set_highlight_note(
                 block.id for block in note_blocks_for_highlight(db, viewer_id, highlight_id)
             }:
                 raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Highlight note changed")
-            note_bodies.write_body(
+            changed = note_bodies.write_body(
                 db,
                 viewer_id=viewer_id,
                 note_id=note_id,
@@ -272,7 +272,8 @@ def set_highlight_note(
                 reason="highlight_note_update",
             )
         out = note_bodies.read_note(db, viewer_id=viewer_id, note_id=note_id)
-        record_input_change(db)
+        if changed:
+            record_input_change(db)
         db.commit()
         return out
 
@@ -287,12 +288,12 @@ def attach_highlight_note_in_current_transaction(
     note_id: UUID,
     body_pm_json: dict[str, Any],
     expected_version: int,
-) -> None:
-    """Create in the loaded empty slot; the same attached note id has already landed."""
+) -> bool:
+    """Create in the loaded empty slot; return false when the same note is attached."""
     source = _lock_highlight_note_source(db, viewer_id, highlight_id)
     attached = [block.id for block in note_blocks_for_highlight(db, viewer_id, highlight_id)]
     if note_id in attached:
-        return
+        return False
     if attached or note_bodies.note_exists(db, viewer_id=viewer_id, note_id=note_id):
         raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Highlight already has a note")
     current = versions.versions_for_ref(db, viewer_id=viewer_id, ref=source).get("links", 1)
@@ -316,6 +317,7 @@ def attach_highlight_note_in_current_transaction(
         ),
     )
     versions.bump_version(db, viewer_id=viewer_id, ref=source, lane="links")
+    return True
 
 
 def _lock_highlight_note_source(db: Session, viewer_id: UUID, highlight_id: UUID) -> ResourceRef:
