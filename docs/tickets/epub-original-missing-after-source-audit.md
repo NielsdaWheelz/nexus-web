@@ -1,4 +1,4 @@
-# two previously verified epub originals now return nosuchkey
+# three previously verified epub originals now return nosuchkey
 
 status: open; original source availability unresolved
 origin: 2026-10-14 retained-book rehearsal storage preparation
@@ -58,7 +58,7 @@ root independently reconciled terminal execution and absent database backends:
 `coordinator/reader-final230-stopped-backend-reconciliation.json`, sha256
 `8fafa5fe1aeb79b9b4c14fba97b8724298489b42ad57cec7302ef3735cb1263b`.
 
-both audits used the real storage client and verified bytes before parsing;
+the first two audits used the real storage client and verified bytes before parsing;
 neither mounted a substitute archive. retained invocation/source reconciliation:
 `book-repair/c-sources/contributor-audit-storage-path-reconciliation.json`,
 sha256 `accfd73f9a78e9c75f93747e0adad7e870cd60e50bcf9540f90ca0d7b3916b41`.
@@ -69,6 +69,27 @@ configuration; no evident path/config mismatch was found. private codec receipt:
 `aee11084ad434f17ffdce43204c921bc79857d3f3d543c3c230cb32f8c702010`.
 these checks do not establish the cause or current production source pointers.
 further source reads require a separately reviewed exact scope.
+
+the remaining-reader continuation found a third missing original:
+`c7472673-4834-45ff-bb3c-0930f710009d`, at
+`media/c7472673-4834-45ff-bb3c-0930f710009d/original.epub`.
+contributor audit 187 verified 184,687 bytes at 2026-10-15 00:16:49–57 utc,
+sha256 `213296ac178edbbbbce57c8a33cf56f9d8913d343cfa1626d07e10f9e4823f5d`;
+the old reader inspection also succeeded at 00:29:30 utc. these bytes match
+`37273127`, but their storage keys are distinct. the current clone snapshot
+still names that same hash. ordinary inspection failed with `NoSuchKey` at
+02:45:08 utc; no retry or source substitution followed.
+the 174-item continuation stopped after 116 proposals, one failure and 57 unrun.
+private terminal receipt under
+`b-reader/final-review-remaining174-stopped117-evidence-v1/final-review-150328-remaining174-v1/117-c7472673-4834-45ff-bb3c-0930f710009d/`,
+sha256 `c6cfc807acd001415d978c2f4bd3c48faa210171b23fbd045a40ce7bc03db89c`.
+root verified all 2,106 artifact hashes and absent database backends:
+`coordinator/reader-remaining174-stopped117-root-reconciliation.json`, sha256
+`5fee569f9489e5e9393383921cda103a68f9470d5078d856710fcb4fc974bdca`.
+the exact source row, generation and installed projection are unchanged in
+the clone: `b-reader/c747-source-availability-comparison.json`, sha256
+`9b8dda3b94c168062ce4d847e7fdf638a832d734482171755d240e901a63acc7`.
+current production pointers and the cause remain unqueried and unknown.
 
 next: after the production owner hands off, reconcile the current source row
 and ordinary storage-cleanup history.
