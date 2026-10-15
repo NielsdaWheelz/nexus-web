@@ -29,15 +29,17 @@ header deltas add/remove one library on populated drafts and seed, preserving
 other selections. mixed coverage is derived; sent/saved rows are excluded.
 `All` membership is implicit.
 
-`LibraryDestinationPicker` owns shared search/create, with item selection or native
-all/some/none checkboxes. query changes synchronously retire continuation authority;
-every settlement belongs to its query, cursor and generation. deactivation clears
-loading and fences late replies. the shared chooser keeps keyboard-active options
-inside its own scrollport. busy search is read-only, preserving focus.
+`DestinationChooser` (`components/libraries`) owns shared search/create, with item
+selection or, given the libraries only some drafts are in, native all/some/none
+checkboxes whose toggle adds or removes one library. a new query aborts the read in
+flight and a page belongs to the query it answered, so load more never continues
+another query; closing unmounts the chooser and ends its read. `LibraryChooser`
+keeps keyboard-active options inside its own scrollport. busy search is read-only,
+preserving focus.
 
-one active picker belongs to a row or header. desktop uses the responsive anchored
-surface; add on mobile uses an inline region in the scrolling body. header chooser
-content sits at the body's top. escape/back closes the picker first. inline
+one active picker belongs to a row or header. desktop uses the anchored
+`ChooserSurface`; add on mobile uses its inline region in the scrolling body. header
+chooser content sits at the body's top. escape/back closes the picker first. inline
 regions omit outside-pointerdown dismissal so the intended click can complete.
 retarget resets search; removal/submission/session replacement cannot revive an
 old target or restore focus to its removed anchor. creation locks picker dismissal
@@ -59,7 +61,7 @@ unconfirmed and files retain the existing upload/imports recovery semantics.
 accepted file rows release browser file handles. stop/reset/discard/unmount fence
 all older callbacks. reload loses browser drafts/files.
 
-`leaveReason` prioritizes active stop, unresolved acceptance/placement, unfinished
+`leaveReason` prioritizes active stop, unresolved acceptance, unfinished
 draft/refused work, then no warning. empty drafts, seed-only changes and settled
 receipts are clean. normal and defect-boundary dismissal use the same confirmation.
 explicit leave discards browser state and never promises to undo a server commit.
@@ -67,22 +69,18 @@ add has no back-to-launcher step.
 
 ## saved placement
 
-accepted aliases share actual placement inventory by media id. reads are lazy;
-submitted destinations never substitute for inventory. bulk work deduplicates
-media ids, rereads eligibility and excludes unavailable targets. only admitted
-direct/absent relations change. closing a picker leaves uncertain changes visible
-on their receipts and in the attention count. admission/check closes saved-item
-pickers; reopening performs the existing authoritative read.
-
-one placement read/write owner per media excludes stale completion. send is
-recorded synchronously; acknowledgement installs the confirmed relation before
-another await. a transport failure, sent defect or stop after send retains the
-exact media/destination/verb and inventory. retry sends those retained commands
-without an inventory prerequisite or changed-selection inference. reads never
-erase uncertainty. queued retries preserve the prior uncertain command; retry
-auth restores it. refused changes settle with feedback; media-not-found is terminal
-unavailable. this remains the existing placement controller, without a new cache
-or consolidation layer.
+accepted items are filed through the shared "Libraries…" overlay
+(`components/libraries/PlacementOverlay.tsx`), which the panel hosts as its row or
+header picker (inline on mobile): a receipt's libraries… opens it for that media,
+the saved-items header's libraries for all… for every accepted media
+(deduplicated). with several items a library is chosen when it holds all of them;
+choosing files those that lack it, unchoosing unfiles them all, and a partial
+library reads "In n of m"; an item deleted since it was added is left out. reads
+are the overlay's own; submitted destinations never substitute for inventory.
+every placement write is idempotent (keyed by library and item), so the overlay's
+Retry resends a write a transport failure left unknown; refusals show their copy
+and every committed filing rereads it. admission/check closes saved-item pickers.
+the session owns no placement state.
 
 ## acquisition boundary
 

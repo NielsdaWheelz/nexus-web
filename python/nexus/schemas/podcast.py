@@ -36,18 +36,13 @@ class PodcastCanonicalCommitTarget(BaseModel):
     model_config = _CLOSED
 
 
-class PodcastReplacementConfirmation(BaseModel):
-    conflict_fingerprint: str = Field(min_length=64, max_length=64)
-
-    model_config = _CLOSED
-
-
 class PodcastSubscribeRequest(BaseModel):
     target: Annotated[
         PodcastDiscoveryCommitTarget | PodcastCanonicalCommitTarget, Field(discriminator="kind")
     ]
     named_library_ids: list[UUID] = Field(default_factory=list)
-    replacement_confirmation: PodcastReplacementConfirmation | None
+    # confirms that a show replaces episodes some destination files directly.
+    replace_episodes: bool
 
     model_config = _CLOSED
 

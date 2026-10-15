@@ -1,5 +1,12 @@
 "use client";
 
+// Where a library chooser shows: on desktop a panel anchored below its trigger
+// (a transient layer: Escape, an outside press and, inside a modal, Back close
+// it), on phones the shared MobileSheet. Inline, it is a region in the caller's
+// layout instead: Escape and Back close it, an outside press does not (collapsing
+// would move the control the press meant to reach). It owns no chooser content;
+// the chooser's search takes focus once the desktop panel is placed.
+
 import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
@@ -12,35 +19,11 @@ import {
 } from "@/lib/ui/overlay";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import styles from "./LibraryChooserSurface.module.css";
+import styles from "./ChooserSurface.module.css";
 
-export interface LibraryChooserSurfaceProps {
-  /** Render/behaviour gate. */
-  active: boolean;
-  presentation: "Responsive" | "Inline";
-  /** null locks dismissal while the caller completes creation. */
-  onClose: (() => void) | null;
-  /** Anchor element for positioning AND primary return focus. */
-  anchor: ReturnFocusTarget;
-  returnFocusFallback?: ReturnFocusTarget;
-  skipReturnFocus?: () => boolean;
-  /** Accessible name (mobile sheet and desktop panel). */
-  title: string;
-  /** Re-focus on session change (mobile sheet). */
-  focusKey?: unknown;
-  panelId?: string;
-  /** The LibraryChooser. */
-  children: ReactNode;
-}
-
-/**
- * Responsive keeps the anchored desktop panel and mobile sheet. Inline stays
- * in the caller's layout; an outside press must not collapse it before the
- * intended click lands. Both use the existing Escape/Back/focus contract.
- */
-export default function LibraryChooserSurface({
+export default function ChooserSurface({
   active,
-  presentation,
+  inline = false,
   onClose,
   anchor,
   returnFocusFallback,
@@ -49,14 +32,30 @@ export default function LibraryChooserSurface({
   focusKey,
   panelId,
   children,
-}: LibraryChooserSurfaceProps) {
+}: {
+  readonly active: boolean;
+  /** A region in the caller's layout, not the anchored panel or the sheet. */
+  readonly inline?: boolean;
+  /** Null while the caller finishes a creation: nothing closes it. */
+  readonly onClose: (() => void) | null;
+  /** Positions the panel and takes focus back on close. */
+  readonly anchor: ReturnFocusTarget;
+  readonly returnFocusFallback?: ReturnFocusTarget;
+  /** Read at close: true when the caller already moved focus elsewhere. */
+  readonly skipReturnFocus?: () => boolean;
+  /** The surface's accessible name. */
+  readonly title: string;
+  /** A new key refocuses the sheet or region (a new session). */
+  readonly focusKey?: unknown;
+  readonly panelId?: string;
+  readonly children: ReactNode;
+}) {
   const isMobile = useIsMobileViewport();
-  const inline = active && presentation === "Inline";
-  const desktop = active && presentation === "Responsive" && !isMobile;
-  const inlineRef = useRef<HTMLDivElement>(null);
+  const region = active && inline;
+  const desktop = active && !inline && !isMobile;
+  const regionRef = useRef<HTMLDivElement>(null);
   const target = desktop ? anchor() : null;
-  const anchorEl =
-    target === null || target instanceof HTMLElement ? target : target.element;
+  const anchorEl = target === null || target instanceof HTMLElement ? target : target.element;
   const panel = useAnchoredPosition<HTMLDivElement>(anchorEl, {
     enabled: desktop,
     placement: "below",
@@ -64,39 +63,34 @@ export default function LibraryChooserSurface({
     flip: true,
   });
   const container = useOverlayContainer();
-  useOverlay(desktop || inline, {
+  useOverlay(desktop || region, {
     kind: "transient",
     onDismiss: () => onClose?.(),
-    inside: inline ? undefined : () => [panel.ref.current, anchorEl],
+    inside: region ? undefined : () => [panel.ref.current, anchorEl],
     returnFocus: true,
     returnFocusTo: anchor,
     returnFocusFallback,
     skipReturnFocus,
   });
-
-  // Focus the search once placed.
   useEffect(() => {
     if (!desktop || !panel.placed) return;
     const frame = requestAnimationFrame(() =>
-      panel.ref.current
-        ?.querySelector<HTMLInputElement>("input")
-        ?.focus(),
+      panel.ref.current?.querySelector<HTMLInputElement>("input")?.focus(),
     );
     return () => cancelAnimationFrame(frame);
   }, [desktop, panel.placed, panel.ref]);
-
   useEffect(() => {
-    if (!inline) return;
-    // Opening a region should not summon the phone's keyboard unasked.
-    const frame = requestAnimationFrame(() => inlineRef.current?.focus());
+    if (!region) return;
+    // The region takes focus, not its search: no phone keyboard unasked.
+    const frame = requestAnimationFrame(() => regionRef.current?.focus());
     return () => cancelAnimationFrame(frame);
-  }, [inline, focusKey]);
+  }, [region, focusKey]);
 
-  if (inline) {
+  if (region) {
     return (
       <div
         id={panelId}
-        ref={inlineRef}
+        ref={regionRef}
         role="region"
         aria-label={title}
         tabIndex={-1}
@@ -119,7 +113,6 @@ export default function LibraryChooserSurface({
       </div>
     );
   }
-
   return (
     <>
       {desktop && anchorEl && container
@@ -128,9 +121,9 @@ export default function LibraryChooserSurface({
               id={panelId}
               ref={panel.ref}
               role="dialog"
+              aria-label={title}
               className={styles.surface}
               style={panel.style}
-              aria-label={title}
             >
               {children}
             </div>,
@@ -138,9 +131,9 @@ export default function LibraryChooserSurface({
           )
         : null}
       <MobileSheet
-        active={active && presentation === "Responsive" && isMobile}
+        active={active && !inline && isMobile}
         onDismiss={() => onClose?.()}
-        onDismissRequest={() => onClose === null ? "blocked" : "accepted"}
+        onDismissRequest={() => (onClose === null ? "blocked" : "accepted")}
         ariaLabel={title}
         focusKey={focusKey}
         panelId={panelId}

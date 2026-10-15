@@ -7,10 +7,9 @@
 import { WIRE_HEADER } from "@/lib/api/client";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import { isAbortError } from "@/lib/errors";
-import {
-  decodeWritableLibraryDestinationPage,
-  type LibraryDestinationPage,
-} from "@/lib/libraries/destinationContract";
+import type { ListPage } from "@/lib/api/useServerList";
+import type { ApiJson } from "@/lib/api/wire";
+import type { LibraryDestination } from "@/lib/libraries/api";
 import {
   decodeUploadResponse,
   type PublishedUpload,
@@ -59,7 +58,7 @@ export interface CaptureClient {
   session(signal?: AbortSignal): Promise<ExtensionSession>;
   /** resolves on 204, and on 401: a token nexus no longer honours is revoked */
   revokeSession(signal?: AbortSignal): Promise<void>;
-  searchDestinations(q: string, cursor: string | null, signal?: AbortSignal): Promise<LibraryDestinationPage>;
+  searchDestinations(q: string, cursor: string | null, signal?: AbortSignal): Promise<ListPage<LibraryDestination>>;
   createCapture(intent: CaptureIntent, operationKey: string, signal?: AbortSignal): Promise<UploadResponse>;
   captureStatus(handle: string, signal?: AbortSignal): Promise<UploadResponse>;
   confirmCapture(handle: string, generation: number, signal?: AbortSignal): Promise<PublishedUpload>;
@@ -177,9 +176,11 @@ export function captureClient(token: string): CaptureClient {
       if (q !== "") query.set("q", q);
       if (cursor !== null) query.set("cursor", cursor);
       const suffix = query.size === 0 ? "" : `?${query}`;
+      type Body = ApiJson<"/extension/library-destinations", "get">;
+      // the generated type is the contract; skew is the wire header's to refuse.
       return decoded(
         await call("GET", `/library-destinations${suffix}`, { signal }),
-        decodeWritableLibraryDestinationPage,
+        (raw) => (raw as Body).data,
       );
     },
 

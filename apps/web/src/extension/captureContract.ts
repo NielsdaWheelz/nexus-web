@@ -8,10 +8,8 @@
 // `requiredOrigins` lives on the state, not the draft: login needs the nexus
 // origin before any draft exists. One list, one prompt.
 
-import type {
-  LibraryDestinationPage,
-  LibraryDestinationSelection,
-} from "@/lib/libraries/destinationContract";
+import type { ListPage } from "@/lib/api/useServerList";
+import type { LibraryDestination } from "@/lib/libraries/api";
 import {
   expectExactRecord,
   expectNonemptyString,
@@ -56,7 +54,7 @@ export interface CaptureDraftView {
   target: CaptureTargetView;
   phase: CapturePhase;
   /** selected additional libraries; empty is valid */
-  destinations: readonly LibraryDestinationSelection[];
+  destinations: readonly LibraryDestination[];
   /** true after browser restart: the popup shows explicit "resume" before any network work */
   resumable: boolean;
 }
@@ -82,7 +80,7 @@ export type CaptureViewState = {
 export type CaptureCommand =
   | { kind: "activate" }                       // popup opened by toolbar: pin active tab if no draft is active
   | { kind: "resume" }                         // explicit resume of a restart-recovered draft
-  | { kind: "set_destinations"; destinations: readonly LibraryDestinationSelection[] }
+  | { kind: "set_destinations"; destinations: readonly LibraryDestination[] }
   | { kind: "search_destinations"; q: string; cursor: string | null }
   | { kind: "login" }                          // hosted login; background refocuses window and reopens the popup
   | { kind: "save" }                           // popup has already requested `requiredOrigins`
@@ -92,7 +90,7 @@ export type CaptureCommand =
 
 export type CommandResult =
   | { kind: "state"; state: CaptureViewState }
-  | { kind: "page"; state: CaptureViewState; page: LibraryDestinationPage }   // search_destinations only
+  | { kind: "page"; state: CaptureViewState; page: ListPage<LibraryDestination> }   // search_destinations only
   | { kind: "failure"; failure: CaptureFailure; state: CaptureViewState };
 
 /** background → popup push over `runtime.connect({ name: "nexus-capture-view" })` */
@@ -226,6 +224,15 @@ interface CaptureLimits {
 export interface ExtensionSession {
   account: CaptureAccount;
   limits: CaptureLimits;
+}
+
+/** One chosen destination crossing the popup/background boundary: exactly {id, name}. */
+export function decodeDestination(raw: unknown, name: string): LibraryDestination {
+  const destination = expectExactRecord(raw, ["id", "name"], name);
+  return {
+    id: expectNonemptyString(destination.id, `${name}.id`),
+    name: expectNonemptyString(destination.name, `${name}.name`),
+  };
 }
 
 /** Strict decoder for the enveloped `ExtensionSessionOut` of `GET /session`. */

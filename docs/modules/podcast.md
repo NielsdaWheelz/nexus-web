@@ -123,14 +123,14 @@ Four durable facts, every other surface a read model over them:
   with it) — `backfill.py`: the pre-subscription history walk.
 
 Named placement is only `library_entries(podcast_id)`, with `library_entries.py`
-as sole writer. `GET /podcasts/{podcastId}/libraries` is registered by the
-always-available Library relationship router. `PUT
-/libraries/{libraryId}/podcasts/{podcastId}` is placement-only and never
-creates a subscription. Default/All stores no Podcast entry: each subscription
-projects one virtual Podcast root and suppresses its child episode roots.
-Subscribe adds named destinations (a Library holding direct episodes of the show
-answers 409 `E_PODCAST_REPLACES_EPISODES` with a fingerprint; resending it
-replaces them); unsubscribe deletes the row (the backfill cascades), removes the
+as sole writer. `GET /libraries/placements/podcast:{podcastId}` lists where a
+show sits; `PUT /libraries/{libraryId}/items/podcast:{podcastId}` is
+placement-only and never creates a subscription. Default/All stores no Podcast
+entry: each subscription projects one virtual Podcast root and suppresses its
+child episode roots. Subscribe adds named destinations (a Library holding direct
+episodes of the show answers 409 `E_PODCAST_REPLACES_EPISODES` with the counts;
+resending with `replace_episodes: true` replaces them; placement through
+Libraries… takes the same flag); unsubscribe deletes the row (the backfill cascades), removes the
 viewer's sole-owned placements and keeps shared ones; episodes resurface in All
 with their progress.
 

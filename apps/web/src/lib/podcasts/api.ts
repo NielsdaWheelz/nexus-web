@@ -84,18 +84,17 @@ export function observeSubscription(
 export async function subscribeToPodcast(input: {
   readonly target: Schema<"PodcastSubscribeRequest">["target"];
   readonly namedLibraryIds: readonly string[];
-  readonly replacementConfirmation: {
-    readonly conflict_fingerprint: string;
-  } | null;
+  /** Confirms that the show replaces episodes a destination files directly. */
+  readonly replaceEpisodes: boolean;
 }): Promise<ApiJson<"/podcasts/subscriptions", "post">["data"]> {
-  const { target, namedLibraryIds, replacementConfirmation } = input;
+  const { target, namedLibraryIds, replaceEpisodes } = input;
   type Body = ApiJson<"/podcasts/subscriptions", "post">;
   const response = await apiFetch<Body>("/api/podcasts/subscriptions", {
     method: "POST",
     body: JSON.stringify({
       target,
       named_library_ids: namedLibraryIds,
-      replacement_confirmation: replacementConfirmation,
+      replace_episodes: replaceEpisodes,
     }),
   });
   publishChange("Podcasts", "Entries");

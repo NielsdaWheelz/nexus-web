@@ -7,7 +7,7 @@ import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { apiTransportFeedback, isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { createLibrary } from "@/lib/libraries/client";
+import { createLibrary } from "@/lib/libraries/api";
 import { useNexusOpenRequests } from "@/lib/nexus/events";
 import {
   type MaterializedOpenDailyPageTarget,
@@ -265,7 +265,7 @@ export function useNexusController() {
     if (page.kind !== "CreateLibrary" || page.submit.kind === "Running" || !page.name.trim()) return;
     const running = { ...page, name: page.name.trim(), submit: { kind: "Running" } } as const;
     setPage(running);
-    createLibrary({ libraryId: running.libraryId, name: running.name }).then(
+    createLibrary({ id: running.libraryId, name: running.name }).then(
       (library) =>
         run({ kind: "InternalHref", href: `/libraries/${library.id}`, labelHint: library.name }, running.activation, undefined, "Library"),
       (error: unknown) => {

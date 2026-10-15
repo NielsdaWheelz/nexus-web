@@ -158,16 +158,11 @@
 }
 
 .itemStatus,
-.placementStatus,
 .itemFeedback {
   color: var(--ink-faint);
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
   overflow-wrap: anywhere;
-}
-
-.placementStatus {
-  color: var(--accent);
 }
 
 .itemFeedback,

@@ -12,7 +12,7 @@ import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import PodcastOverview from "@/components/podcasts/PodcastOverview";
-import { podcastViewHref } from "@/lib/podcasts/view";
+import { viewHref } from "@/lib/collections/view";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import RadioGroup from "@/components/ui/RadioGroup";
@@ -23,7 +23,7 @@ import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
-import { listLibraryPlacements } from "@/lib/libraries/libraryPlacement";
+import { placements as libraryPlacements } from "@/lib/libraries/api";
 import {
   useMediaQueryRevision,
   useMediaSummaries,
@@ -169,9 +169,9 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     load: async (signal) => {
       const [detail, placements] = await Promise.all([
         getPodcastDetail(podcastId, signal),
-        listLibraryPlacements({ kind: "Podcast", id: podcastId }, { signal }),
+        libraryPlacements({ kind: "Podcast", id: podcastId }, signal),
       ]);
-      const placed = placements.filter((row) => row.relation.kind !== "Absent");
+      const placed = placements.filter((row) => row.relation !== "Absent");
       return { detail, libraryCount: placed.length };
     },
   });
@@ -276,7 +276,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const replaceView = useCallback(
     (changes: Readonly<Record<string, string | null>>) =>
       router.replace(
-        podcastViewHref(`/podcasts/${podcastId}`, params, changes),
+        viewHref(`/podcasts/${podcastId}`, params, changes),
         {
           viewTransition: { kind: "collection-reflow" },
         },
@@ -377,7 +377,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               const result = await subscribeToPodcast({
                 target: { kind: "Canonical", podcast_id: podcastId },
                 namedLibraryIds: acquisition.namedLibraryIds,
-                replacementConfirmation: acquisition.replacementConfirmation,
+                replaceEpisodes: acquisition.replaceEpisodes,
               });
               return { href: result.href };
             }}

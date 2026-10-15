@@ -1,54 +1,56 @@
 "use client";
 
+// The app's one "Libraries…" session: opening replaces it, closing is always
+// allowed. Anything that files items (an action menu, the Add panel) opens it
+// with the items it means.
+
 import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from "react";
-import LibraryPlacementOverlay from "@/components/libraries/LibraryPlacementOverlay";
-import type { LibraryPlacementTarget } from "@/lib/libraries/libraryPlacement";
+import PlacementOverlay from "@/components/libraries/PlacementOverlay";
+import type { LibraryPlacementTarget } from "@/lib/libraries/api";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 
 export interface LibraryPlacementOpenOptions {
-  anchor: ReturnFocusTarget;
-  returnFocusFallback: ReturnFocusTarget | null;
+  readonly anchor: ReturnFocusTarget;
+  readonly returnFocusFallback: ReturnFocusTarget | null;
 }
 
 export interface LibraryPlacementSession {
-  key: number;
-  target: LibraryPlacementTarget;
-  options: LibraryPlacementOpenOptions;
+  readonly key: number;
+  readonly targets: readonly LibraryPlacementTarget[];
+  readonly options: LibraryPlacementOpenOptions;
 }
 
 interface LibraryPlacementController {
-  openLibraryPlacement: (
-    target: LibraryPlacementTarget,
+  readonly openLibraryPlacement: (
+    targets: readonly LibraryPlacementTarget[],
     options: LibraryPlacementOpenOptions,
   ) => void;
 }
 
-const LibraryPlacementControllerContext = createContext<LibraryPlacementController | null>(null);
+const Context = createContext<LibraryPlacementController | null>(null);
 
-/** Owns the app's one placement session: opening replaces it, and closing is always allowed. */
 export function LibraryPlacementControllerProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<LibraryPlacementSession | null>(null);
   const lastKey = useRef(0);
   const value = useMemo<LibraryPlacementController>(
     () => ({
-      openLibraryPlacement(target, options) {
+      openLibraryPlacement(targets, options) {
         lastKey.current += 1;
-        setSession({ key: lastKey.current, target, options });
+        setSession({ key: lastKey.current, targets, options });
       },
     }),
     [],
   );
-
   return (
-    <LibraryPlacementControllerContext.Provider value={value}>
+    <Context.Provider value={value}>
       {children}
-      <LibraryPlacementOverlay session={session} onClose={() => setSession(null)} />
-    </LibraryPlacementControllerContext.Provider>
+      <PlacementOverlay session={session} onClose={() => setSession(null)} />
+    </Context.Provider>
   );
 }
 
 export function useLibraryPlacementController(): LibraryPlacementController {
-  const value = useContext(LibraryPlacementControllerContext);
+  const value = useContext(Context);
   if (!value) throw new Error("LibraryPlacementControllerProvider is missing");
   return value;
 }

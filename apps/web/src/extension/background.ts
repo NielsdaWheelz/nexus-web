@@ -32,10 +32,7 @@
 //   nexus as its bound account
 
 import { isAbortError } from "@/lib/errors";
-import {
-  decodeLibraryDestinationSelection,
-  type LibraryDestinationSelection,
-} from "@/lib/libraries/destinationContract";
+import type { LibraryDestination } from "@/lib/libraries/api";
 import {
   UPLOAD_VERIFICATION_CODES,
   type PublishedUpload,
@@ -62,6 +59,7 @@ import {
   serializeArticlePacket,
   sha256Hex,
   urlFilename,
+  decodeDestination,
   type CaptureCommand,
   type CaptureFailure,
   type CaptureIntent,
@@ -263,7 +261,7 @@ function decodeCommand(raw: unknown): CaptureCommand {
         kind,
         destinations: expectArray(
           sent.destinations,
-          (value, index) => decodeLibraryDestinationSelection(value, `command.destinations[${index}]`),
+          (value, index) => decodeDestination(value, `command.destinations[${index}]`),
           "command.destinations",
         ),
       };
@@ -829,7 +827,7 @@ async function inject(
 
 // --- save / transfer --------------------------------------------------------
 
-async function setDestinations(destinations: readonly LibraryDestinationSelection[]): Promise<void> {
+async function setDestinations(destinations: readonly LibraryDestination[]): Promise<void> {
   const current = requireDraft();
   if (current.phase.kind !== "draft") throw failure("E_CAPTURE_FROZEN", "Libraries cannot change once a capture is saved.");
   await setDraft({ ...current, destinations });

@@ -3,14 +3,6 @@ import {
   type UpdatedTitleIndexView,
   updatedTitleIndexViewQuery,
 } from "@/lib/collections/updatedTitleIndexView";
-import {
-  librariesIndexViewQuery,
-  type LibrariesIndexView,
-} from "@/lib/libraries/libraryIndexView";
-import {
-  buildLibraryEntriesQuery,
-  type LibraryEntryView,
-} from "@/lib/libraries/libraryView";
 
 export interface ResourceDescriptor<TParams> {
   cacheKey: (params: TParams) => string;
@@ -26,22 +18,14 @@ interface CollectionPageParams {
   limit?: number;
 }
 
-export interface LibraryListResourceParams extends CollectionPageParams {
-  // The current Libraries index view. Canonical emits no sort/direction keys.
-  view?: LibrariesIndexView;
-}
-
 interface IdResourceParams {
   id: string;
 }
 
+// A library's own order (no view keys): the pane seed's first page.
 export interface LibraryEntriesResourceParams
   extends IdResourceParams,
-    CollectionPageParams {
-  // The current library view (order + completion). A canonical/all view emits no
-  // sort/direction/completion keys; a factual view emits exactly its three keys.
-  view?: LibraryEntryView;
-}
+    CollectionPageParams {}
 
 // The primary chats index uses 100 rows; the destination picker uses 25.
 export interface ConversationIndexResourceParams
@@ -82,20 +66,6 @@ function collectionPageQuery(params: CollectionPageParams, view = ""): string {
   return suffix ? `?${suffix}` : "";
 }
 
-function libraryListPageQuery(params: LibraryListResourceParams): string {
-  return collectionPageQuery(
-    params,
-    params.view ? librariesIndexViewQuery(params.view) : "",
-  );
-}
-
-function libraryEntriesPageQuery(params: LibraryEntriesResourceParams): string {
-  return collectionPageQuery(
-    params,
-    params.view ? buildLibraryEntriesQuery(params.view) : "",
-  );
-}
-
 const CONVERSATION_INDEX_LIMIT = 100;
 
 function conversationIndexViewQuery(
@@ -119,12 +89,12 @@ function conversationIndexPageQuery(
   );
 }
 
-export const librariesResource: ResourceDescriptor<LibraryListResourceParams> =
-  {
-    cacheKey: (params) => `libraries${libraryListPageQuery(params)}`,
-    serverPath: (params) => `/libraries${libraryListPageQuery(params)}`,
-    clientPath: (params) => `/api/libraries${libraryListPageQuery(params)}`,
-  };
+// The libraries index in its own order (the pane seed's first page).
+export const librariesResource: ResourceDescriptor<CollectionPageParams> = {
+  cacheKey: (params) => `libraries${collectionPageQuery(params)}`,
+  serverPath: (params) => `/libraries${collectionPageQuery(params)}`,
+  clientPath: (params) => `/api/libraries${collectionPageQuery(params)}`,
+};
 
 export const libraryResource: ResourceDescriptor<IdResourceParams> = {
   cacheKey: ({ id }) => id,
@@ -135,11 +105,11 @@ export const libraryResource: ResourceDescriptor<IdResourceParams> = {
 export const libraryEntriesResource: ResourceDescriptor<LibraryEntriesResourceParams> =
   {
     cacheKey: (params) =>
-      `library:${params.id}:entries${libraryEntriesPageQuery(params)}`,
+      `library:${params.id}:entries${collectionPageQuery(params)}`,
     serverPath: (params) =>
-      `/libraries/${encoded(params.id)}/entries${libraryEntriesPageQuery(params)}`,
+      `/libraries/${encoded(params.id)}/entries${collectionPageQuery(params)}`,
     clientPath: (params) =>
-      `/api/libraries/${encoded(params.id)}/entries${libraryEntriesPageQuery(params)}`,
+      `/api/libraries/${encoded(params.id)}/entries${collectionPageQuery(params)}`,
   };
 
 export const mediaResource: ResourceDescriptor<IdResourceParams> = {

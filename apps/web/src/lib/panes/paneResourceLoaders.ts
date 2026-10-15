@@ -18,11 +18,7 @@ import {
 import type { ResourceFetcher } from "@/lib/api/resourceTransport";
 import type { ListPage } from "@/lib/api/useServerList";
 import type { ConversationListItem } from "@/lib/chat/conversationIndex";
-import { libraryOutForId, type LibraryOut } from "@/lib/libraries/contract";
-import {
-  libraryEntryPageFromWire,
-  type LibraryEntryListItem,
-} from "@/lib/libraries/entryListItem";
+import type { Library, LibraryEntry } from "@/lib/libraries/api";
 import { mediaDetailFromResponse, type MediaDetail } from "@/lib/media/mediaDetail";
 import type { NotePageSummary } from "@/lib/notes/api";
 import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
@@ -37,8 +33,8 @@ export interface PaneResourceLoader {
 export type ConversationsPaneSeed = ListPage<ConversationListItem>;
 export type NotesPaneSeed = ListPage<NotePageSummary>;
 export interface LibraryPaneSeed {
-  readonly library: LibraryOut;
-  readonly entries: ListPage<LibraryEntryListItem>;
+  readonly library: Library;
+  readonly entries: ListPage<LibraryEntry>;
 }
 export interface MediaPaneSeed {
   readonly media: MediaDetail;
@@ -91,10 +87,7 @@ export const paneResourceLoaders: Partial<
           ApiJson<"/libraries/{library_id}/entries", "get">
         >(libraryEntriesResource, { id }),
       ]);
-      return {
-        library: libraryOutForId(library.data, id, "Library pane response.data"),
-        entries: libraryEntryPageFromWire(entries.data),
-      };
+      return { library: library.data, entries: entries.data };
     },
   },
   media: {

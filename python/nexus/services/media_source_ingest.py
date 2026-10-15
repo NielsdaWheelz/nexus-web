@@ -68,7 +68,7 @@ from nexus.schemas.media import (
     SourceRepairAdmission,
     SourceRetryAdmission,
 )
-from nexus.services import library_entries, library_governance
+from nexus.services import libraries, library_entries
 from nexus.services import media_source_types as source_types
 from nexus.services.capabilities import (
     SourceRecoveryAnswer,
@@ -721,7 +721,7 @@ def accept_url_source(
 
     def admit() -> FromUrlResponse:
         with transaction(db):
-            library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
+            libraries.resolve_writable_destinations(db, viewer_id, library_ids)
             return _accept_url(
                 db=db,
                 viewer_id=viewer_id,
@@ -2396,12 +2396,12 @@ def _supersede_source_media(
     library_entries.lock_media_rows_in_order(db, [loser_media_id, winner_media_id])
     if attempt.created_by_user_id is not None:
         target_library_ids = _library_ids_from_payload(attempt.source_payload)
-        library_governance.lock_library_rows_in_order(
+        libraries.lock_library_rows_in_order(
             db,
             [
                 *library_entries.library_ids_for_media(db, loser_media_id),
-                library_governance.default_library_id_for_user(db, attempt.created_by_user_id),
-                *library_governance.resolve_writable_non_default_library_ids(
+                libraries.default_library_id(db, attempt.created_by_user_id),
+                *libraries.resolve_writable_destinations(
                     db, attempt.created_by_user_id, target_library_ids
                 ),
             ],

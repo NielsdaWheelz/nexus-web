@@ -7,6 +7,7 @@ status in one transaction; that commit alone changes the invitee's All on the
 very next read, with no backfill job or projection to catch up.
 """
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -23,7 +24,8 @@ from nexus.errors import (
     ForbiddenError,
     NotFoundError,
 )
-from nexus.schemas.library import (
+from nexus.schemas.library import LibraryOut, LibraryRole
+from nexus.schemas.library_members import (
     AcceptLibraryInviteResponse,
     DeclineLibraryInviteResponse,
     InviteAcceptMembershipOut,
@@ -31,12 +33,10 @@ from nexus.schemas.library import (
     LibraryInvitationOut,
     LibraryInvitationStatusValue,
     LibraryMemberOut,
-    LibraryOut,
-    LibraryRole,
     UserLibraryInvitee,
     ViewerLibraryInvitationOut,
 )
-from nexus.services import library_governance as governance
+from nexus.services import libraries
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
 from nexus.services.sealed_handles import (
     InvalidSealedHandle,
@@ -107,8 +107,10 @@ def _invitation_out(
 
 
 def _require_mutable(row: Any) -> None:
-    governance.require_non_default(row["is_default"])
-    governance.require_not_system(row["system_key"])
+    if row["is_default"]:
+        raise ForbiddenError(ApiErrorCode.E_DEFAULT_LIBRARY_FORBIDDEN, "Not on the default library")
+    if row["system_key"] is not None:
+        raise ForbiddenError(ApiErrorCode.E_LIBRARY_FORBIDDEN, "System library")
 
 
 def _locked_invitation(
@@ -165,8 +167,8 @@ def list_library_members(
     limit: int = 100,
 ) -> tuple[list[LibraryMemberOut], LibraryGovernancePageInfo]:
     """One keyset page of a library's members over `user_id ASC`. Admin-only."""
-    ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
-    governance.require_admin(ctx.role)
+    ctx = libraries.access(db, viewer_id, library_id, lock=False)
+    ctx.require_admin()
     page_rows, next_cursor = keyset_page(
         db,
         binding={"list": "LibraryMembers", "viewer": viewer_id, "library": library_id},
@@ -197,10 +199,9 @@ def update_library_member_role(
 
     def attempt() -> LibraryMemberOut:
         with transaction(db):
-            ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
-            governance.require_admin(ctx.role)
-            governance.require_non_default(ctx.is_default)
-            governance.require_not_system(ctx.system_key)
+            ctx = libraries.access(db, viewer_id, library_id, lock=False)
+            ctx.require_admin()
+            ctx.require_mutable()
             if target_user_id == ctx.owner_user_id:
                 raise ForbiddenError(
                     ApiErrorCode.E_OWNER_EXIT_FORBIDDEN,
@@ -244,10 +245,9 @@ def remove_library_member(
 
     def attempt() -> None:
         with transaction(db):
-            ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
-            governance.require_admin(ctx.role)
-            governance.require_non_default(ctx.is_default)
-            governance.require_not_system(ctx.system_key)
+            ctx = libraries.access(db, viewer_id, library_id, lock=False)
+            ctx.require_admin()
+            ctx.require_mutable()
             if target_user_id == ctx.owner_user_id:
                 raise ForbiddenError(
                     ApiErrorCode.E_OWNER_EXIT_FORBIDDEN,
@@ -275,15 +275,14 @@ def transfer_library_ownership(
 
     def attempt() -> LibraryOut:
         with transaction(db):
-            ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
-            governance.require_non_default(ctx.is_default)
-            governance.require_not_system(ctx.system_key)
+            ctx = libraries.access(db, viewer_id, library_id, lock=False)
+            ctx.require_mutable()
             if ctx.owner_user_id != viewer_id:
                 raise ForbiddenError(
                     ApiErrorCode.E_OWNER_REQUIRED, "Only the library owner can transfer ownership"
                 )
             if new_owner_user_id == ctx.owner_user_id:
-                return governance.library_out(ctx, viewer_id=viewer_id)
+                return ctx.out(viewer_id)
 
             target = db.execute(
                 text("SELECT role FROM memberships WHERE library_id = :lid AND user_id = :uid"),
@@ -311,12 +310,8 @@ def transfer_library_ownership(
                 ),
                 {"new_owner": new_owner_user_id, "now": now, "lid": library_id},
             )
-            return governance.library_out(
-                ctx,
-                viewer_id=viewer_id,
-                owner_user_id=new_owner_user_id,
-                role="admin",
-                updated_at=now,
+            return replace(ctx, owner_user_id=new_owner_user_id, role="admin", updated_at=now).out(
+                viewer_id
             )
 
     return retry_serializable(db, "transfer_library_ownership", attempt)
@@ -333,10 +328,9 @@ def create_library_invite(
 
     def attempt() -> LibraryInvitationOut:
         with transaction(db):
-            ctx = governance.lock_library_for_member(db, viewer_id, library_id)
-            governance.require_admin(ctx.role)
-            governance.require_non_default(ctx.is_default)
-            governance.require_not_system(ctx.system_key)
+            ctx = libraries.access(db, viewer_id, library_id, lock=True)
+            ctx.require_admin()
+            ctx.require_mutable()
 
             try:
                 invitee_user_id = unseal_user(invitee.user_handle)
@@ -423,9 +417,9 @@ def list_library_invites(
     limit: int = 100,
 ) -> tuple[list[LibraryInvitationOut], LibraryGovernancePageInfo]:
     """One keyset page of a library's invitations, newest first. Admin-only."""
-    ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
-    governance.require_admin(ctx.role)
-    governance.require_not_system(ctx.system_key)
+    ctx = libraries.access(db, viewer_id, library_id, lock=False)
+    ctx.require_admin()
+    ctx.require_not_system()
     page_rows, next_cursor = keyset_page(
         db,
         binding={
@@ -572,7 +566,8 @@ def revoke_library_invite(
             ).fetchone()
             if membership is None:
                 raise NotFoundError(ApiErrorCode.E_INVITE_NOT_FOUND, "Invitation not found")
-            governance.require_admin(membership[0])
+            if membership[0] != "admin":
+                raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
 
             if invite["status"] == "revoked":
                 return

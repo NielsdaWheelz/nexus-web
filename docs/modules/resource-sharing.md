@@ -31,7 +31,7 @@ first failing reason wins. The create command re-runs it under the subject's row
 locks, returns an existing grant for the same audience, and inserts under
 SERIALIZABLE.
 Library subjects carry `members` (can the viewer manage them) from
-`library_governance.library_out`.
+`libraries.access(…).out(…).can_manage`.
 
 ## Anonymous reader
 

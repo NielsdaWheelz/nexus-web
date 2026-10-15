@@ -20,11 +20,14 @@ import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import LibraryChooser from "@/components/libraries/LibraryChooser";
-import LibraryDestinationTrigger from "@/components/libraries/LibraryDestinationTrigger";
+import DestinationChooser, {
+  DestinationTrigger,
+  type DestinationSource,
+} from "@/components/libraries/DestinationChooser";
 import Button from "@/components/ui/Button";
 import {
   VIEW_PORT,
+  decodeDestination,
   type CaptureCommand,
   type CaptureConnection,
   type CaptureDraftView,
@@ -35,12 +38,8 @@ import {
   type CaptureViewState,
   type CommandResult,
 } from "@/extension/captureContract";
-import { useLibraryDestinationSearch } from "@/components/libraries/useLibraryDestinationSearch";
-import {
-  decodeLibraryDestinationSelection,
-  decodeWritableLibraryDestinationPage,
-  type LibraryDestinationSelection,
-} from "@/lib/libraries/destinationContract";
+import type { ListPage } from "@/lib/api/useServerList";
+import type { LibraryDestination } from "@/lib/libraries/api";
 import {
   expectArray,
   expectBoolean,
@@ -274,12 +273,10 @@ function Popup() {
 }
 
 /**
- * The additional-library trigger and its inline chooser. It runs the shared
- * destination search over the background (sendMessage cannot be aborted; the
- * search's generation drops stale replies) and turns a toggle into the whole
- * next selection for the background. Toggles are serialized: each is computed
- * from the selection the background last pushed, so the chooser stays busy
- * from a toggle until the next pushed selection arrives (every push decodes
+ * The additional-library trigger and its inline chooser, searching over the
+ * background (sendMessage cannot be aborted; the chooser drops a superseded
+ * reply). A toggle sends the whole next selection; the chooser stays busy from
+ * a toggle until the background pushes the next selection (every push decodes
  * into a fresh array) or the command fails.
  */
 function Destinations({
@@ -287,128 +284,55 @@ function Destinations({
   enabled,
   onFailure,
 }: {
-  selected: readonly LibraryDestinationSelection[];
+  selected: readonly LibraryDestination[];
   enabled: boolean;
   onFailure: (failure: CaptureFailure) => void;
 }) {
   const regionId = useId();
   const regionRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const [toggledFrom, setToggledFrom] = useState<
-    readonly LibraryDestinationSelection[] | null
-  >(null);
-  const search = useLibraryDestinationSearch<CaptureFailure>({
-    active: open,
-    search: ({ q, cursor }) =>
-      command({ kind: "search_destinations", q, cursor }).then((result) =>
-        result.kind === "state"
-          ? { kind: "failure", failure: popupFailure(new Error("search answered without a page")) }
-          : result,
-      ),
-  });
-
-  // A chooser that loses its enablement closes for good: it never reopens
-  // unasked. Focus it held is not moved; the trigger is disabled with it.
+  const [toggledFrom, setToggledFrom] = useState<readonly LibraryDestination[] | null>(null);
+  // A chooser that loses its enablement closes for good: it never reopens unasked.
   useEffect(() => {
-    if (enabled) return;
-    setOpen(false);
+    if (!enabled) setOpen(false);
   }, [enabled]);
-
   useEffect(() => {
     if (open) regionRef.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
   }, [open]);
 
-  function toggle(id: string) {
-    const added = search.results.find((destination) => destination.id === id);
-    const destinations = selected.some((destination) => destination.id === id)
-      ? selected.filter((destination) => destination.id !== id)
-      : added === undefined
-        ? null
-        : [...selected, { id: added.id, name: added.name }];
-    if (destinations === null) return;
+  const change = (destinations: readonly LibraryDestination[]) => {
     setToggledFrom(selected);
     void command({ kind: "set_destinations", destinations }).then((result) => {
       if (result.kind !== "failure") return;
       setToggledFrom(null);
       onFailure(result.failure);
     });
-  }
-
-  const selectedIds = new Set(selected.map((destination) => destination.id));
-  const others = search.results.filter((destination) => !selectedIds.has(destination.id));
-  const count = selected.length + others.length;
+  };
 
   return (
     <section className={styles.destinations}>
       {/* The chooser closes through its trigger only: Firefox closes a
           browser-action popup on Escape at the chrome level, before any key
           event reaches this document. */}
-      <LibraryDestinationTrigger
+      <DestinationTrigger
         label="Libraries"
         accessibleLabel="Libraries"
         emptyLabel="No additional libraries"
-        selected={selected}
+        chosen={selected}
         expanded={open}
         disabled={!enabled}
         onToggle={() => setOpen(!open)}
-        discloses={{ kind: "region", id: regionId }}
+        controls={{ kind: "region", id: regionId }}
       />
       {open ? (
         <div id={regionId} ref={regionRef} className={styles.chooser}>
-          <LibraryChooser
-            query={search.query}
-            onQueryChange={search.setQuery}
-            searchPlaceholder="Search libraries"
-            searchLabel="Search libraries"
-            listLabel="Library options"
-            selectedGroup={{
-              label: "Selected",
-              items: selected.map((destination) => ({
-                id: destination.id,
-                name: destination.name,
-                selected: true,
-                interaction: { kind: "Enabled" },
-              })),
-            }}
-            otherGroup={{
-              label: "Other libraries",
-              items: others.map((destination) => ({
-                id: destination.id,
-                name: destination.name,
-                selected: false,
-                interaction: { kind: "Enabled" },
-              })),
-            }}
-            onToggle={toggle}
-            busy={toggledFrom === selected}
-            loading={search.loading}
-            status={
-              search.loading
-                ? "Loading libraries…"
-                : search.loadingMore
-                  ? "Loading more libraries…"
-                  : count === 1
-                    ? "1 library"
-                    : `${count} libraries`
-            }
-            emptyState={
-              search.loading || count > 0
-                ? null
-                : search.normalizedQuery === ""
-                  ? "No other libraries you can add to."
-                  : "No libraries match your search."
-            }
-            error={
-              search.failure === null
-                ? null
-                : { content: failureContent(search.failure), onRetry: search.retry }
-            }
-            create={null}
-            loadMore={
-              search.nextCursor === null
-                ? null
-                : { pending: search.loadingMore, onLoadMore: search.loadMore }
-            }
+          <DestinationChooser
+            chosen={selected}
+            onChange={change}
+            source={BACKGROUND_DESTINATIONS}
+            onCreate={null}
+            disabled={toggledFrom === selected}
+            emptyLabel="No other libraries you can add to."
           />
         </div>
       ) : null}
@@ -416,6 +340,19 @@ function Destinations({
     </section>
   );
 }
+
+/** Destination pages through the background; a failure is the background's copy. */
+const BACKGROUND_DESTINATIONS: DestinationSource = {
+  search: async (q, cursor) => {
+    const result = await command({ kind: "search_destinations", q, cursor });
+    if (result.kind === "page") return result.page;
+    throw result.kind === "failure"
+      ? result.failure
+      : popupFailure(new Error("search answered without a page"));
+  },
+  // justify-type-assertion: the background search rejects only with a CaptureFailure.
+  describe: (error) => failureContent(error as CaptureFailure),
+};
 
 /** A command that cannot reach the background, or whose reply breaks the
     contract, answers as a failure like any other: the popup never guesses. */
@@ -500,7 +437,7 @@ function decodeCommandResult(raw: unknown): CommandResult {
       return {
         kind,
         state: decodeViewState(result.state),
-        page: decodeWritableLibraryDestinationPage(result.page),
+        page: decodePage(result.page),
       };
     }
     case "failure": {
@@ -581,6 +518,14 @@ function decodeView(raw: unknown): CaptureViewState["view"] {
   }
 }
 
+function decodePage(raw: unknown): ListPage<LibraryDestination> {
+  const page = expectExactRecord(raw, ["items", "next_cursor"], "page");
+  return {
+    items: expectArray(page.items, (value, i) => decodeDestination(value, `page.items[${i}]`), "page.items"),
+    next_cursor: expectNullableString(page.next_cursor, "page.next_cursor"),
+  };
+}
+
 function decodeDraft(raw: unknown): CaptureDraftView {
   const draft = expectExactRecord(raw, ["id", "target", "phase", "destinations", "resumable"], "draft");
   return {
@@ -589,7 +534,7 @@ function decodeDraft(raw: unknown): CaptureDraftView {
     phase: decodePhase(draft.phase),
     destinations: expectArray(
       draft.destinations,
-      (value, index) => decodeLibraryDestinationSelection(value, `draft.destinations[${index}]`),
+      (value, index) => decodeDestination(value, `draft.destinations[${index}]`),
       "draft.destinations",
     ),
     resumable: expectBoolean(draft.resumable, "draft.resumable"),

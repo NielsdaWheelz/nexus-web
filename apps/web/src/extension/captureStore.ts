@@ -6,7 +6,7 @@
 // failure. The record shapes are the background's own; the popup never sees
 // them and nothing here interprets them.
 
-import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
+import type { LibraryDestination } from "@/lib/libraries/api";
 import { expectExactRecord, expectNonemptyString } from "@/lib/validation";
 import {
   CaptureFailureError,
@@ -60,7 +60,7 @@ export interface CaptureDraftRecord {
   target: CaptureTarget;
   view: CaptureTargetView;
   phase: CapturePhase;
-  destinations: readonly LibraryDestinationSelection[];
+  destinations: readonly LibraryDestination[];
   /** bound by the first identity lookup; only this account may resume */
   account: CaptureAccount | null;
   /** frozen by save: the operation key is the Idempotency-Key of every create

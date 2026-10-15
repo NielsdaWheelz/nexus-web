@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.models import Media, OracleCorpusSource, OraclePassageAnchor, ProcessingStatus
 from nexus.db.session import get_session_factory
-from nexus.services import library_entries, library_governance
+from nexus.services import libraries, library_entries
 from nexus.services.content_indexing import request_stale_media_content_reindex
 from nexus.services.embeddings import EMBEDDING_PROVIDER, embedding_model
 from nexus.services.media_source_ingest import (
@@ -291,7 +291,7 @@ def seed(session_factory: sessionmaker[Session], *, owner_user_id: UUID) -> dict
     """Converge the database on corpus.json, one transaction per work; idempotent and safe
     while the app is live. Workers ingest and index; the next reading resolves anchors."""
     with session_factory() as db:
-        library_id = library_governance.ensure_system_library(
+        library_id = libraries.ensure_system_library(
             db, system_key=SYSTEM_KEY, name="Oracle Corpus", owner_user_id=owner_user_id
         )
     counts: Counter[str] = Counter()
@@ -338,11 +338,8 @@ def _seed_work(db: Session, *, work: Work, library_id: UUID, owner: UUID) -> Cou
         elif source.media_id != accepted.media_id:
             superseded = source.media_id
             library_entries.lock_media_rows_in_order(db, [superseded, accepted.media_id])
-            library_governance.lock_library_rows_in_order(db, [library_id])
-            if library_entries.delete_entry(
-                db, library_id, library_entries.media_target(superseded)
-            ):
-                library_entries.normalize_positions(db, library_id)
+            libraries.lock_library_rows_in_order(db, [library_id])
+            library_entries.delete_entry(db, library_id, library_entries.media_target(superseded))
             source.media_id = accepted.media_id
     source.title = work.title
     source.author_text = work.author

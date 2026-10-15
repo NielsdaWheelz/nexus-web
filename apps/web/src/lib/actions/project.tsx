@@ -29,7 +29,7 @@ import {
   assumeMediaId,
   playerDescriptorFromWire,
 } from "@/lib/lectern/contract";
-import { deleteMemberLibrary } from "@/lib/libraries/client";
+import { deleteLibrary } from "@/lib/libraries/api";
 import { deleteMedia } from "@/lib/media/mediaLibraries";
 import {
   metadataResearchLabel,
@@ -263,7 +263,7 @@ export function projectResourceActions(
       () => {
         const { anchor, fallback } = focusReturn();
         ctx.openLibraryPlacement(
-          { kind: ref.startsWith("podcast:") ? "Podcast" : "Media", id },
+          [{ kind: ref.startsWith("podcast:") ? "Podcast" : "Media", id }],
           { anchor, returnFocusFallback: fallback },
         );
       },
@@ -306,7 +306,7 @@ export function projectResourceActions(
     ],
     RetryPodcastBackfill: [() => retryPodcastSubscriptionBackfill(id)],
     RemoveMedia: deleted(() => deleteMedia(id), "/libraries"),
-    DeleteLibrary: deleted(() => deleteMemberLibrary(id), "/libraries"),
+    DeleteLibrary: deleted(() => deleteLibrary(id), "/libraries"),
     DeleteConversation: deleted(() => deleteConversation(id), "/conversations"),
     DeletePage: deleted(() => deletePage(id), "/notes"),
     LearnHighlight: [

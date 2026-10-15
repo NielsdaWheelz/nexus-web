@@ -80,7 +80,7 @@ from nexus.schemas.upload_failures import (
     UploadTransportTimeoutFailure,
     UploadVerificationFailureCode,
 )
-from nexus.services import library_entries, library_governance, media_source_ingest
+from nexus.services import libraries, library_entries, media_source_ingest
 from nexus.services import media_source_types as source_types
 from nexus.services.file_ingest_validation import (
     has_valid_file_signature,
@@ -266,9 +266,7 @@ def create_upload_session(
         ).scalar_one_or_none()
         now = _db_now(db)
         if session is None:
-            library_governance.validate_writable_library_destinations(
-                db, viewer_id, list(intent.library_ids)
-            )
+            libraries.resolve_writable_destinations(db, viewer_id, list(intent.library_ids))
             session = MediaUploadSession(
                 id=new_uuid7(),
                 created_by_user_id=viewer_id,
@@ -630,7 +628,7 @@ def confirm_upload_session(
                 db, viewer_id=viewer_id, kind=capability.kind, sha256=capture.sha256
             )
         destination_ids = list(_destinations(db, session.id))
-        library_governance.validate_writable_library_destinations(db, viewer_id, destination_ids)
+        libraries.resolve_writable_destinations(db, viewer_id, destination_ids)
         created = media is None
         if media is None:
             media = Media(
