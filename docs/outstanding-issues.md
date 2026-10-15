@@ -29,6 +29,7 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+- [open] content index / saved evidence · 2026-10-15 book-repair qualification · reindex replaces spans and can invalidate saved jumps/graph links; exact selected dependencies and preservation admission remain unproved: [ticket](tickets/reindex-invalidates-saved-evidence-targets.md).
 - [open] x / title fidelity · 2026-10-14 full production review · two untouched labels reverse speaker/listener roles; normal repair follows the generic attribution correction: [ticket](tickets/x-title-biblical-speaker-attribution.md).
 - [open] release / host storage · 2026-10-14 corrective rollout · image pulls can consume the preflight disk reserve: [ticket](tickets/release-image-cache-consumes-disk-reserve.md).
 - [deferred] x / saved positions · 2026-10-14 owner decision · inline quotation becomes an embedded document; preserve the saved copy and explicit refresh conflict: [ticket](tickets/x-inline-quote-refresh-loses-saved-position.md).
