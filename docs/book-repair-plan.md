@@ -272,7 +272,7 @@ the independent reviewer rejects plausible-looking but unproved output.
 
 | feature / existing schema owner | what good content means |
 | --- | --- |
-| navigation / `schemas/media_navigation.py:MediaNavigationOut` | routine sections are reading divisions; full `toc_nodes` preserve publisher hierarchy/destinations. notes remain reachable without becoming routine chapters merely because they have headings. keep authored labels; repeated numbers stay distinct; no global label/filename blacklist |
+| navigation / `schemas/reader.py:MediaNavigationOut` | routine sections are reading divisions; full `toc_nodes` preserve publisher hierarchy/destinations. notes remain reachable without becoming routine chapters merely because they have headings. keep authored labels; repeated numbers stay distinct; no global label/filename blacklist |
 | notes / `schemas/reader_apparatus.py` | source-faithful sanitized prose and structure, correct marker/body pairing and note groups. ambiguous targets stay explicitly unresolved. no generated prose or invented location |
 | reader / `schemas/reader_document.py:ReaderDocumentOut` | note inspection/jump preserves departure and progress; return restores it; only explicit continue-reading changes position. verify epub and article consumers |
 | credits / existing contributor taxonomy and `credits.ts` | preserve source spelling, punctuation and order; author/editor/translator stay distinct. unsupported roles retain unknown/raw-role semantics; never a plausible guessed author |
