@@ -392,3 +392,4 @@ unexpected timeouts. See
 
 - [open] metadata actions / focus · 2026-10-14 imports experience review · preexisting retry/review refusal needs live focus-settlement evidence: [ticket](tickets/metadata-refusal-focus-needs-settlement-proof.md).
 - [open] workspace / browser history · 2026-10-14 physical imports qualification · mobile browser back stays in the followed reader; pane back is separate: [ticket](tickets/mobile-browser-back-does-not-restore-workspace-pane.md).
+- [open] web / nexus launch · 2026-10-15 chooser integration · a click on the server-rendered add control before hydration is lost before reaching the existing receiver queue: [ticket](tickets/nexus-launch-click-before-hydration-is-lost.md).
