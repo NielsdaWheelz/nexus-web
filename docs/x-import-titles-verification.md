@@ -68,8 +68,11 @@ the first frozen census settled 54 targets: 52 refreshed, two saved-position
 refusals, nine additional child titles; zero unfinished/unaccounted obligations.
 this established accounting, not acceptance. production content review found an
 implicit 30-day archive range, five mistranslated titles and one literal `null`
-title. corrective publication/reacquisition remains required before handoff.
-one position becomes exactly mappable after historical acquisition; the other
+title. release `3a80349b8` corrected acquisition and language/null handling;
+its fresh 1,270,981,168-byte backup starts at `0278`, sha256
+`e83b604711845fe2550d75972273dc65682a6a066bf1bf001649549a2163294d`.
+both releases used the canonical controller and aligned api/worker/web.
+one position became exactly mappable after historical acquisition; the other
 crosses an inline-quotation/embed boundary and is the owner's explicit
 [preserved-copy exception](tickets/x-inline-quote-refresh-loses-saved-position.md).
 
@@ -78,11 +81,31 @@ detached real acquisition of the recoverable saved position. nine real-db langua
 input checks and nine ordinary native naming calls qualified the title correction:
 seven faithful titles, one preserved invalid-output rejection, then one actual
 json-null completion after explicit json instructions. no tools; 220 output tokens.
-these local checks do not certify the currently published production captures.
+the original 54-request manifest remained byte-for-byte unchanged. a fresh
+filtered manifest admitted 29 original threads plus one mistranslated standalone
+post; all 30 source/title obligations and two new child titles settled successfully,
+with zero unfinished/unaccounted work. the 29 threads retain 56 primary posts,
+13 multi-post, largest 10; every primary predates the implicit 30-day window.
+all enumerations exhausted; that does not prove missing-root ancestry is complete.
+the exact cursor windows each match once: `00619` offset 67, `114a` offset 134.
+the approved `8e08` cursor/publication/fragments/title stayed byte-identical.
+three engagement rows, two completion facts and two overrides were conserved.
+
+complete review read all 65 native x items: 64 current strict snapshots and one
+approved retained-copy exception. every current title passed source/stamp/shape,
+one-generation and zero-tool checks. all six original content defects, 30 recovery
+parents and two children passed meaning review. the 32 new generations used
+53,508 input and 765 output tokens. two untouched old titles still reversed
+speaker/listener roles; final content acceptance remains blocked on their repair.
+an isolated generic actor sentence failed one real call. explicit reported-speech
+grammar then passed the two native cases and independent content review, preserving
+non-title metadata, nonempty manual credits, source and reader rows. three calls
+total, zero tools; the failed first result remains recorded. the final attribution
+release and two ordinary production naming jobs are pending;
 see [the release item](tickets/x-title-production-cutover.md).
 
 sanitized receipts are retained outside the repository at
-`/private/tmp/nexus-x-titles-proof-20261014/`. sanitized receipt/review/screenshot files are retained. temporary tests, proof
+`/private/tmp/nexus-x-titles-proof-20261014/`. temporary tests, proof
 credentials, isolated containers, volumes and setup were deleted after final green;
 shared account state and standard development dependencies were preserved. no
 runtime test seam or harness remains. `./scripts/test` passed after deletion and

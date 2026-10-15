@@ -110,10 +110,16 @@ oversized complete input fails before dispatch; there is no prefix summary or mo
 substitution. [imports](imports.md) owns acquisition and source replacement.
 
 preserve the primary author's language, stance, negation, uncertainty and quantities.
+one usable primary language hint guides naming; primary prose overrides it, and
+quoted/reply language never selects it. absent/conflicting hints imply no default.
 quoted claims are context, never assumed endorsement. absent context and undescribed
-images do not supply a subject. source instructions are untrusted evidence. accepted
-generated labels are trimmed, nonblank, one line and at most 120 unicode code points.
-null successfully restores the source excerpt/author label; it creates no attention
+images do not supply a subject. source instructions are untrusted evidence.
+labels preserve actor, speaker and listener roles as well as names; reported
+speech uses the speaker's possessive and distinguishes recipient/work relations.
+accepted
+generated labels are trimmed, nonblank, one line and at most 120 unicode code points;
+a standalone literal `null` string is invalid. actual json null successfully
+restores the source excerpt/author label; it creates no attention
 or review obligation. generated/source-label completions write only title and the
 successful stamp. explicit rerun may restore an excerpt over an earlier model title.
 

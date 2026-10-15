@@ -29,9 +29,10 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+- [open] x / title fidelity · 2026-10-14 full production review · two untouched labels reverse speaker/listener roles; normal repair follows the generic attribution correction: [ticket](tickets/x-title-biblical-speaker-attribution.md).
+- [open] release / host storage · 2026-10-14 corrective rollout · image pulls can consume the preflight disk reserve: [ticket](tickets/release-image-cache-consumes-disk-reserve.md).
 - [deferred] x / saved positions · 2026-10-14 owner decision · inline quotation becomes an embedded document; preserve the saved copy and explicit refresh conflict: [ticket](tickets/x-inline-quote-refresh-loses-saved-position.md).
 - [open] x / thread selection · 2026-10-14 archive review · an absent conversation root drops available preceding same-author posts: [ticket](tickets/x-thread-missing-root-drops-available-ancestors.md).
-- [open] x / source acquisition · 2026-10-14 production qualification · archive query's implicit 30-day range truncates old threads; corrective reacquisition pending: [ticket](tickets/x-author-thread-search-defaults-to-last-month.md).
 - [open] web / android release · 2026-10-14 session-entry implementation · exact signed-apk qualification, coordinated cutover and production smoke remain: [ticket](tickets/session-entry-release-qualification.md).
 - [deferred] imports / live metadata proof · 2026-10-14 · owner waived provider-dependent no-findings/review proof; available search settings reject research: [ticket](tickets/imports-live-metadata-proof-needs-working-search.md).
 - [open] metadata lifecycle / migration · 2026-10-14 imports qualification · deleted-media metadata jobs remain pending and block title cutover: [ticket](tickets/deleted-media-metadata-jobs-block-title-migration.md).
