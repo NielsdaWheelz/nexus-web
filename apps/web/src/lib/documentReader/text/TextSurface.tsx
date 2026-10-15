@@ -100,6 +100,7 @@ export default function TextSurface({
     painter.current = paint;
     paint.paint(viewRef.current.decorations);
     const handle: SurfaceHandle = {
+      identity,
       find: createTextFind(
         { identity, format, sections, units, length }, structure, text, paint, runtime,
       ),

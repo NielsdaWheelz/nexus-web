@@ -41,7 +41,7 @@ export interface Navigator {
   continueHere(): Placement | null;
   /** Restore, remote, reset: fenced, ends Reading. */
   apply(to: To): Promise<NavOutcome>;
-  /** Preserve the reading line through a synchronous layout change. An active jump wins. */
+  /** Preserve the last explicit target, or measured passage, through a layout change. */
   reflow(input: {
     readonly placement: Placement | null;
     change(): void;
@@ -59,13 +59,10 @@ const READING: NavState = {
 };
 
 interface Request {
+  readonly kind: "inspect" | "entry" | "return" | "apply" | "reflow";
   readonly controller: AbortController;
   readonly departure: Placement | null;
   readonly previous: NavState;
-  /** Return and apply end in Reading; inspect stays exploring. */
-  readonly completes: boolean;
-  readonly entry: boolean;
-  readonly returning: boolean;
 }
 
 export function createNavigator(
@@ -79,6 +76,9 @@ export function createNavigator(
 ): Navigator {
   let state = READING;
   let request: Request | null = null;
+  // A completed jump can be clamped before late layout expands. Keep its
+  // intent until a newer decision; measuring the reading line cannot replace it.
+  let reflowTarget: To | null = null;
   const publish = (next: NavState) => {
     state = next;
     hooks.changed();
@@ -89,9 +89,10 @@ export function createNavigator(
   };
 
   function begin(
-    kind: "inspect" | "entry" | "return" | "apply" | "reflow",
+    kind: Request["kind"],
     saved: Locator | null = null,
   ): Request | null {
+    if (kind !== "reflow") reflowTarget = null;
     // A superseded request keeps its departure: the viewport may be mid-move.
     const departure =
       kind === "entry" || kind === "apply" || kind === "reflow"
@@ -104,12 +105,10 @@ export function createNavigator(
     const previous = request?.previous ?? state;
     request?.controller.abort();
     const next: Request = {
+      kind,
       controller: new AbortController(),
       departure,
       previous,
-      completes: kind === "return" || kind === "apply",
-      entry: kind === "entry",
-      returning: kind === "return",
     };
     request = next;
     const origin: NavState["origin"] =
@@ -148,9 +147,9 @@ export function createNavigator(
     request = null;
     if (outcome.kind === "Arrived" || outcome.kind === "Unchanged") {
       publish(
-        req.completes
+        req.kind === "return" || req.kind === "apply"
           ? READING
-          : outcome.kind === "Unchanged" && !req.entry
+          : outcome.kind === "Unchanged" && req.kind !== "entry"
             ? { ...req.previous, positioning: false }
             : { ...state, positioning: false },
       );
@@ -163,7 +162,7 @@ export function createNavigator(
         failure,
         originUnavailable:
           state.originUnavailable ||
-          (req.returning && failure === "TargetUnavailable"),
+          (req.kind === "return" && failure === "TargetUnavailable"),
       });
     }
     return outcome;
@@ -175,6 +174,18 @@ export function createNavigator(
     const outcome: NavOutcome = handle
       ? await handle.position(to, req.controller.signal)
       : { kind: "Unavailable", reason: "PositioningFailed" };
+    if (
+      request === req && !req.controller.signal.aborted &&
+      req.kind !== "reflow" &&
+      (outcome.kind === "Arrived" || outcome.kind === "Unchanged")
+    ) {
+      // PDF commands can focus or depend on mutable viewer state;
+      // reflow uses their measured placement.
+      reflowTarget =
+        "kind" in to && (to.kind === "pdfMatch" || to.kind === "pdfDest")
+          ? null
+          : to;
+    }
     return settle(req, req.controller.signal.aborted ? { kind: "Cancelled" } : outcome);
   }
 
@@ -197,13 +208,14 @@ export function createNavigator(
     enter: (target, saved) => run(begin("entry", saved), target),
     apply: (to) => run(begin("apply"), to),
     reflow({ placement, change }) {
-      if (state.positioning || placement === null) {
+      const to = reflowTarget ?? placement;
+      if (state.positioning || to === null) {
         change();
         return Promise.resolve({ kind: "Unchanged" });
       }
       const req = begin("reflow");
       change();
-      return run(req, placement);
+      return run(req, to);
     },
     seek() {
       const req = begin("inspect");
@@ -232,16 +244,28 @@ export function createNavigator(
       return run(begin("return"), to);
     },
     continueHere() {
-      if (state.positioning || state.mode === "Reading") return null;
+      reflowTarget = null;
+      request?.controller.abort();
+      request = null;
+      if (state.mode === "Reading") {
+        if (state.positioning) publish(READING);
+        return null;
+      }
       const placement = surface()?.capture() ?? null;
       if (placement === null) {
-        fail("CaptureUnavailable");
+        publish({ ...state, positioning: false, failure: "CaptureUnavailable" });
         return null;
       }
       publish(READING);
       return placement;
     },
-    cancel: () => request?.controller.abort(),
+    cancel() {
+      reflowTarget = null;
+      if (request === null) return;
+      request.controller.abort();
+      request = null;
+      publish({ ...state, positioning: false });
+    },
     invalidateOrigin(identity) {
       const { origin } = state;
       if (

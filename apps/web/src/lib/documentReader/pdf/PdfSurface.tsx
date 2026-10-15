@@ -401,6 +401,7 @@ export default function PdfSurface({
     }
 
     const handle: Omit<SurfaceHandle, "find"> = {
+      identity: doc.identity,
       capture() {
         const measured = capture();
         return measured && { ...measured.placement, identity: doc.identity };
@@ -477,7 +478,7 @@ export default function PdfSurface({
       live.current = null;
       void task?.destroy();
     };
-  }, [attempt, capture, doc, measure, paint, runtime]);
+  }, [attempt, capture, doc.file, doc.identity, measure, paint, runtime]);
 
   // Selection inside one page's text layer becomes page-space quads.
   useEffect(() => {

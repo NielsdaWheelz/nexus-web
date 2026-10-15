@@ -29,7 +29,8 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
-- [open] x / title fidelity · 2026-10-14 full production review · two untouched labels reverse speaker/listener roles; normal repair follows the generic attribution correction: [ticket](tickets/x-title-biblical-speaker-attribution.md).
+- [unverified] workspace / scrollbar input · 2026-10-14 · classic gutter passed; default overlay thumb produced no motion and remains unqualified: [ticket](tickets/canvas-overlay-scrollbar-release-unqualified.md).
+- [open] x / reader reopening · 2026-10-14 production consumer check · bare-route saved position remains below the reading line despite unchanged server locator: [ticket](tickets/x-reader-bare-route-position-not-restored.md).
 - [open] release / host storage · 2026-10-14 corrective rollout · image pulls can consume the preflight disk reserve: [ticket](tickets/release-image-cache-consumes-disk-reserve.md).
 - [deferred] x / saved positions · 2026-10-14 owner decision · inline quotation becomes an embedded document; preserve the saved copy and explicit refresh conflict: [ticket](tickets/x-inline-quote-refresh-loses-saved-position.md).
 - [open] x / thread selection · 2026-10-14 archive review · an absent conversation root drops available preceding same-author posts: [ticket](tickets/x-thread-missing-root-drops-available-ancestors.md).
@@ -436,7 +437,7 @@ unexpected timeouts. See
 - [open] web / chat, keyboard · 2026-10-14 shortcut-removal review · an active docent walk can steal modified keys such as command/control+p: [ticket](tickets/docent-shortcuts-steal-modified-keys.md).
 - [open] web / player, overlays · 2026-10-14 shortcut-removal review · player shortcuts remain active on a focused library chooser sheet: [ticket](tickets/player-shortcuts-ignore-overlays.md).
 - [open] web / keyboard verification · 2026-10-14 shortcut removal · fixed shortcuts passed static checks; authenticated browser journeys remain unverified: [ticket](tickets/fixed-shortcuts-browser-verification.md).
-- [open] release / x titles · 2026-10-14 implementation · production migration and frozen refresh census remain with the aligned release: [ticket](tickets/x-title-production-cutover.md).
+- [open] release / x titles · 2026-10-14 · source/title census accepted; failed actual reader reopening holds corrective release and final consumer handoff: [ticket](tickets/x-title-production-cutover.md).
 - [open] browser / replay · 2026-10-14 review · unresolved intents survive mounted runtime only, not navigation/login: [ticket](tickets/admission-intents-do-not-survive-navigation.md).
 - [open] reader / embeds · 2026-10-14 review · mounted parent cards do not refresh another media's changed label: [ticket](tickets/reader-embed-target-metadata-stays-stale.md).
 - [open] generation / queue locks · 2026-10-14 recovery review · tool generation→job order opposes dead-letter job→generation: [ticket](tickets/generation-dead-letter-inverts-tool-lock-order.md).

@@ -156,6 +156,20 @@ for editors that resolve a typed link.
 panning, header drag panning, in-view pane tracking, edge state, and
 scrolling the active pane into view.
 
+activation centers instantly and holds that pane
+through actual layout growth. a changed pane position/width or canvas width
+re-exposes it instantly using nearest native alignment; observer setup and
+scroll events alone never re-aim. a pane that fits must remain fully visible;
+oversized panes use native alignment/clamping. sibling observer rebinds retain
+the target; removal, disable and unmount clear it.
+activation has no smooth transition; browser animation must not outlive the
+layout it targeted.
+
+deliberate horizontal canvas pan releases the target, including wheel, header
+drag, its native scrollbar gutter, unhandled horizontal keys and horizontal touch. inner
+horizontal scrolling and vertical reading do not. key classification runs after
+react handlers. no gesture prevention or custom touch scrolling is added.
+
 The hook takes `enabled` (desktop). Enabled, one `ResizeObserver` watches the
 canvas and every pane wrap, so the edge fades follow a pane that resizes,
 minimizes, restores or opens its Companion as well as canvas scroll and resize;
