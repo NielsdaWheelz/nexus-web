@@ -1,6 +1,6 @@
 # contributor apply does not consume the reviewed preview
 
-status: open; implemented in draft #613, clone apply qualification pending
+status: implemented in merged #613; final-artifact apply qualification pending
 origin: 2026-10-14 book-repair planning at `75b17c030`
 area: contributor maintenance / approval fence
 

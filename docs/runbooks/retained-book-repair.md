@@ -1,9 +1,11 @@
 # retained-book maintenance
 
-status: rebasing onto cleanup main cd0e430420 (schema 0286); qualification pending.
+status: book and native fixes merged; combined release qualification pending.
 production repair NOT_RUN. previous 0278 and partial 0283 runs prove only their
-recorded candidates. close the partial 0283 read-only bracket before continuing
-migrations; it does not imply completion of the held reader audit.
+recorded candidates. the partial 0283 read-only bracket is closed: all 96 tables
+and 3,272,528 rows equal the accepted baseline. this does not complete the 465
+held reader inspections. final source includes the approved feature composition,
+schema 0287 and matched wire 2 consumers; freeze exact identities before use.
 contract: [book-repair plan](../book-repair-plan.md). this runbook owns execution;
 the plan owns scope, allowed changes, proofs and acceptance.
 
@@ -36,11 +38,16 @@ allocator settings do not qualify a normal worker's memory behavior.
 2. download and verify the entire archive. restore it into an isolated postgres
    cluster with the same engine/extensions, using `pg_restore --exit-on-error
    --single-transaction`. record actual restore success separately from archive
-   verification. for the current 0278 backup, replay main's 0279–0283 through
+   verification. for the current 0278 backup, replay main's 0279–0287 through
    the canonical migration owner before taking qualification baselines. record
    actual revision and migration effects; the cleanup owner's rehearsal does
-   not substitute for this candidate's proof. restore each lane when ready to
-   qualify it; retire superseded clones only after reconciliation and preserved
+   not substitute for this candidate's proof. the accepted, reconciled 0283
+   clone can continue through 0284–0287 without another restore. prove the exact
+   summary/job rewrite, media-column removals, teardown-payload rewrite, ledger
+   drop and three new suggestions tables; preserve the current-summary identity
+   set, not merely its count. refresh select-only grants for the new tables and
+   take the baseline from the actual relation inventory. restore each lane when
+   ready to qualify it; retire superseded clones only after reconciliation and preserved
    receipts. keep the active lane, backup, cluster and volume. the extra restore
    time avoids retaining three full copies. repair code adds no migration.
 3. provision one clone inspection login: no superuser, role creation, database
@@ -104,6 +111,12 @@ timeout, confirm both the container and its database backend have stopped.
 fault injection is clone-only; remove its fixtures before the selected apply
 set. every row excluded from global hashes needs its own complete permitted-
 change and raw-identity proof.
+after 0287, a changed reader or credit apply also advances the single
+`suggestion_inputs.revision` by exactly one; no other field changes. fresh
+unchanged applies, refusals and rollbacks advance zero. compare feeds and
+shortlists exactly with their workers stopped. account for this explicit
+counter effect in fault/positive fixtures and the selected-set comparison;
+do not reset the counter or hide its table from the proof.
 
 contributor preview uses the exact shipped script supplied read-only. audit
 verified opf observations and actual credits for all 245 ids. only a real
@@ -128,7 +141,7 @@ newest archive was actually restored. recheck runtime, schema, source and
 item fences. inventory affected downloads, sync progress and close affected
 readers for each small batch. defer an unsynced title.
 bind actual api/web/phone identities after the canonical release; old consumer
-receipts do not qualify the new wire. use `X-Nexus-Wire` and the current
+receipts do not qualify the new wire. use `X-Nexus-Wire: 2` and the current
 snake-case nullable request/response contract in live probes.
 
 apply only reviewed, freshly fenced proposals. verify persisted projection,

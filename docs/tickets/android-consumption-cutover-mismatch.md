@@ -1,10 +1,10 @@
 # android still writes the retired consumption contract
 
-status: open; blocks the next phone/backend cutover
+status: implemented in merged #630; native/runtime and phone acceptance pending
 origin: 2026-10-15 book coordinator release review, candidate `702ba2b826`
 area: android playback / api consumption
 
-`ListeningRecorder.kt:290` sends `media_ref` to `/consumption/activity`;
+the pre-fix candidate `ListeningRecorder.kt:290` sends `media_ref` to `/consumption/activity`;
 the current closed activity schema requires `media_id`.
 `NexusOriginClient.kt:161` still posts to removed `/consumption/commands`.
 the recorder sends `SettleNaturalEnd` and expects `next_item`; the current

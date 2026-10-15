@@ -1,20 +1,22 @@
 # retained-book repair plan
 
-status: implementation in prs [#608](https://github.com/NielsdaWheelz/nexus-web/pull/608),
+status: implementation merged in prs [#608](https://github.com/NielsdaWheelz/nexus-web/pull/608),
 [#609](https://github.com/NielsdaWheelz/nexus-web/pull/609),
 [#613](https://github.com/NielsdaWheelz/nexus-web/pull/613) and
-[#619](https://github.com/NielsdaWheelz/nexus-web/pull/619). cleanup main advanced
-again to `cd0e4304203816687f0afd443b36c5eb9552646a`, including migrations
-0284–0286 and changes to configuration, storage and media publication. rebase
-and current qualification are pending. the restored backup passed 0279–0283;
+[#619](https://github.com/NielsdaWheelz/nexus-web/pull/619). the native correction
+is merged in [#630](https://github.com/NielsdaWheelz/nexus-web/pull/630).
+the owner requested the remaining feature merges before final qualification.
+the combined release includes migrations through 0287 and wire revision 2;
+bind its final source and canonical artifacts in the private run receipt.
+current qualification is pending. the restored backup passed 0279–0283;
 its 0283 baseline is independently accepted. that candidate completed 241
 contributor inspections and 30 reader inspections; 465 reader inspections were
 held before invocation on discovering the new main. four later deletions are
-accounted separately. the shared read-only preservation bracket still needs
-closing; old proofs do not qualify the new candidate. production repair and
+accounted separately. the shared read-only bracket closed with exact equality
+across all 96 tables and 3,272,528 rows; old proofs do not qualify the new candidate. production repair and
 consumer acceptance remain NOT_RUN. the separate
 [native consumption cutover](tickets/android-consumption-cutover-mismatch.md)
-also needs correction before the next phone/backend release.
+still needs actual native/backend and physical-phone verification.
 owner decisions settled 2026-10-14. planning base: `75b17c0301be59da4a45dec8b35ab97d998e9199`.
 planning-time production: `665e7b3af03282d37ac1a2aac3c6589e2a0f5932`, schema 0277.
 recheck identities before execution. this work does not gate the usable release.
@@ -67,9 +69,9 @@ repair framework. reuse the source, contributor-identity, publication and job ow
 
 | operation | may change | must preserve |
 | --- | --- | --- |
-| reader repair | sections/toc locations, note groups, source-proved apparatus presentation and additions, navigation source issues; publication generation; article-index reconciliation only when effective index blocks change | original source bytes/path/hash, fragment ids/order/hrefs/html/text/offsets/assets; existing apparatus ids/keys/kinds/exact locators/source identity and edge keys/endpoints/relations; ownership, libraries, annotations, highlights, progress, saved links and retrievals |
-| credit repair | uniquely matched `epub_opf` observations and proved additions through the existing identity owner | manual/unrelated credits, existing person identities; all reader/publication/index state and `metadata_enriched_at` |
-| portrait recovery | new attempt/job and appended history; first publication/index/metadata effects | media/source/creator identities, original bytes/hash and historical attempts; no mutation of an already published reader |
+| reader repair | sections/toc locations, note groups, source-proved apparatus presentation and additions, navigation source issues; publication generation; article-index reconciliation only when effective index blocks change; one transactional suggestion-input revision increment per changed apply | original source bytes/path/hash, fragment ids/order/hrefs/html/text/offsets/assets; existing apparatus ids/keys/kinds/exact locators/source identity and edge keys/endpoints/relations; ownership, libraries, annotations, highlights, progress, saved links and retrievals |
+| credit repair | uniquely matched `epub_opf` observations and proved additions through the existing identity owner; one transactional suggestion-input revision increment per changed apply | manual/unrelated credits, existing person identities; all reader/publication/index state and `metadata_enriched_at` |
+| portrait recovery | new attempt/job and appended history; first publication/index/metadata effects; ordinary transactional suggestion invalidation | media/source/creator identities, original bytes/hash and historical attempts; no mutation of an already published reader |
 
 inspect is read-only. reader apply reparses outside its short locked transaction,
 then checks source, full inspected proposal and current generation atomically.
@@ -77,12 +79,17 @@ changed means exactly one generation increment; unchanged means zero mutation.
 stale, ambiguous or invalid input means zero mutation for that item.
 snapshots and allowed diffs are per operation; one lane's legitimate changes
 are not another lane's baseline corruption.
+the suggestion counter is acquired last, through its existing owner, in the
+same transaction as changed domain state. unchanged, refused, rolled-back
+and landed-successor replay operations do not advance it. preserve the counter
+row's identity and every other field; compare feeds/shortlists exactly while
+their worker is not admitted. never exclude the whole suggestions subsystem.
 
 ## lane a: bounded maintenance
 
 change only the private `epub_ingest._build_plan` contract: required keyword
 `parse_budget_ms: int`, no default. ordinary ingestion supplies its existing
-`MAX_EPUB_ARCHIVE_PARSE_TIME_MS` (30,000 ms); maintenance supplies a fixed,
+`_ARCHIVE_MAX_PARSE_MS` (30,000 ms); maintenance supplies a fixed,
 reviewed 120,000 ms candidate. no environment/cli override or parser fork.
 all archive, expansion, output, source-correspondence and identity limits remain.
 
@@ -265,7 +272,7 @@ the independent reviewer rejects plausible-looking but unproved output.
 
 | feature / existing schema owner | what good content means |
 | --- | --- |
-| navigation / `schemas/media.py:MediaNavigationOut` | routine sections are reading divisions; full `toc_nodes` preserve publisher hierarchy/destinations. notes remain reachable without becoming routine chapters merely because they have headings. keep authored labels; repeated numbers stay distinct; no global label/filename blacklist |
+| navigation / `schemas/media_navigation.py:MediaNavigationOut` | routine sections are reading divisions; full `toc_nodes` preserve publisher hierarchy/destinations. notes remain reachable without becoming routine chapters merely because they have headings. keep authored labels; repeated numbers stay distinct; no global label/filename blacklist |
 | notes / `schemas/reader_apparatus.py` | source-faithful sanitized prose and structure, correct marker/body pairing and note groups. ambiguous targets stay explicitly unresolved. no generated prose or invented location |
 | reader / `schemas/reader_document.py:ReaderDocumentOut` | note inspection/jump preserves departure and progress; return restores it; only explicit continue-reading changes position. verify epub and article consumers |
 | credits / existing contributor taxonomy and `credits.ts` | preserve source spelling, punctuation and order; author/editor/translator stay distinct. unsupported roles retain unknown/raw-role semantics; never a plausible guessed author |
@@ -332,13 +339,21 @@ declare any real provider calls. normal production entrypoint proof remains live
    frozen reader set and reconcile every contributor id. review every apply
    proposal; rehearse the selected apply set, protected-state diff and unchanged
    reinspection. these repair changes add no migration. before qualification,
-   replay main's 0279–0283 on the restored 0278 backup and take new protected
+   replay main's 0279–0287 on the restored 0278 backup and take new protected
    baselines. 0279 recursively unwraps exact Presence objects; only workspace
    state receives its snake-case key migration. compare every old reviewed reader
    field through that explicit conversion against fresh complete proposals;
    any additional semantic change returns to review. 0281 changes reader-state
-   rows, so old full-database hashes cannot prove the new baseline. consumer
-   requests use current snake-case nullable wire and `X-Nexus-Wire`.
+   rows; 0284 rewrites current summary/job fingerprints, 0285 removes retired
+   media fields and rewrites teardown payloads, 0286 drops the replay ledger,
+   and 0287 adds three suggestions tables. prove exact migration effects,
+   preserve the identity set of current summaries, and discover the new table
+   inventory before freezing its baseline. the existing reconciled 0283 clone
+   may continue through 0284–0287 without another restore. run one current
+   495-item reader inspection pass; old content reviews carry only through
+   exact source/input/full-proposal equality. reuse those fresh fences for
+   selected applies without a redundant pre-apply inspection pass. consumer
+   requests use current snake-case nullable wire and `X-Nexus-Wire: 2`.
 5. **live:** take a fresh verified pre-apply production backup and record its
    cutoff; reuse the rehearsed backup only if no intervening relevant writes
    are proved. distinguish checksum verification from an actual restore;

@@ -1,6 +1,6 @@
 # reader repair can delete an existing apparatus identity
 
-status: open; replacement contract specified, implementation not run
+status: implemented in merged #609; final-artifact qualification pending
 origin: 2026-10-14 book-repair planning at `75b17c030`
 area: reader maintenance / identity preservation
 

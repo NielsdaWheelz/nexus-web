@@ -1,6 +1,6 @@
 # reader inspection cannot fully expose or reconcile its proposed apparatus
 
-status: open; operator-only output change specified, implementation not run
+status: implemented in merged #609; final-artifact qualification pending
 origin: 2026-10-14 book-repair adversarial review at `75b17c030`
 area: reader maintenance / proposal review and uncertain commit
 

@@ -33,8 +33,11 @@ the failed initial serializer attempt remains failed, not a book disposition.
 the fresh 0283 audit on `702ba2b826` accounts for all 245 ids: 235 guarded
 `unmatched_creator` skips, five unchanged, one frankenstein proposal and four
 later deleted books, including `08d23b86`. no deleted source was fetched or
-recreated. all 241 invoked items preserve their complete target state; shared
-whole-database preservation remains pending the reader audit. root receipt:
+recreated. all 241 invoked items preserve their complete target state. the
+partial 0283 interval subsequently closed with exact equality across all 96
+tables and 3,272,528 rows; root closure `40fd2cfe28c69c53c3969ab3ffdc14980929e3c0a87ad08812816f7f5f62e1f8`,
+independent review `cfccbd9e7d2b03b878d5758ea1005f8312712cc5959a848f9469f011ce3cea75`.
+these prove the historical audit, not the final 0287 candidate. audit root receipt:
 `c-sources/contributor-audit-702-remaining240-v1/root-final-collection-v1/root-review.json`,
 sha256 `e6c889851b805327eb1f8821ce06fed913bcb9d6a5fa9ec209a2c0c3822c55cd`.
 independent review: `9f21b020aff17473185960d9de73ac4f7af16e5f90bc1710abcec28214ccb416`.
