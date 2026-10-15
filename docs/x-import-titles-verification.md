@@ -102,11 +102,11 @@ grammar then passed the two native cases and independent content review, preserv
 non-title metadata, nonempty manual credits, source and reader rows. three calls
 total, zero tools; the failed first result remains recorded. the final attribution
 release `3839b96a0` completed through the canonical controller. api, both workers,
-web and the current release pointer agree; all seven services are healthy at
+web and the release pointer agreed; all seven services were healthy at
 schema `0278`. its verified backup is 1,271,225,421 bytes, sha256
 `4c6f06829cfffb163e7e0edf162f09ad50a966faf3de31a41ee0bbaa27884971`,
 receipt `/var/backups/nexus/r2/3839b96a0cf2f5c5c103e32917cea130b61c016f/receipt.json`.
-final independently observed disk space is 2,633,871,360 bytes, above the 2-gib floor.
+independently observed disk space then was 2,633,871,360 bytes, above the 2-gib floor.
 selective removal of unreferenced retired images restored that reserve; the
 [controller's post-pull reserve gap](tickets/release-image-cache-consumes-disk-reserve.md)
 remains separate work.
@@ -135,18 +135,115 @@ including source attempts 1–3, search revisions 1–2 and both completed title
 generations. nested operation details were not expanded. receipt:
 `/tmp/nexus-session-entry-release-20261014/firefox-qualification/03-history-expanded-ui.json`.
 
-actual bare-route `114a` reopening FAILED on both arrival axes despite unchanged
+actual bare-route `114a` reopening on `3839` FAILED on both arrival axes despite unchanged
 canonical text and full cursor. isolated actual-module browser probes reproduce
 late-image loss of a clamped saved endpoint and preceding-pane growth hiding the
 active pane. separate source-reload probes also expose wrong-surface restoration,
-input lifetime and queued old-coordinate saves. the combined correction is
-locally qualified; `3839` remains deployed. final consumer proof and packet rebinding
-remain held; [the release item](tickets/x-title-production-cutover.md) stays open.
+input lifetime and queued old-coordinate saves. the combined correction is now
+deployed as `0bd6619236`; consumer checks, cleanup and final session handoff are
+accepted with the limits below.
 native foreground browser qualification previously
 exposed unrelated credential content in a tool transcript; that path was stopped
 and the [incident](tickets/native-browser-credential-output.md) remains unresolved.
 
 ## reader correction
+
+pr #614 merged qualified commit `8cbad9c81e3d94bc3d48c7caee55e991dc787e33`
+as `0bd6619236ae911bb35741aa2017a4a44312cdf2`, preserving the exact tree
+`2d32a0afe68d0ce35d34c150486056fc009a769a`. first backend run `38669629402`,
+attempt 1, succeeded. api, workers, web and the release pointer agree on `0bd`;
+the canonical custom alias points to `dpl_Fm5CBnH3BZjFTRMhHFWGhvUk3DkF`.
+all seven services are healthy at schema `0278`; final independently observed
+disk space is 2,631,368,704 bytes, above the 2-gib floor.
+
+the fresh verified backup is 1,268,609,995 bytes, sha256
+`f6f5b1d6c9de6af020f224736e2eb5e3ff2e4215538087bbe525e19eae62ccd9`, receipt
+`/var/backups/nexus/r2/0bd6619236ae911bb35741aa2017a4a44312cdf2/receipt.json`.
+the controller's direct exit code is unavailable. its retained final success line,
+independent deployed-state observations and absence of a remaining controller
+establish completion; the controller was not replayed. remote archive verification
+and traversal passed; no database restore was executed. evidence:
+`reader-release-independent-audit.json` in the proof directory.
+
+`reader-release-conservation-audit.json` records unchanged source/title/reader/credit
+hashes and current title-job identities for all 65 native x items and 64 snapshots.
+all 149 scoped source attempts, 179 source/metadata jobs and 95 enrichment
+generations retain complete row hashes; no scoped work is unfinished. the complete
+`114a` and approved `8e08` cursor/publication/fragment collections are unchanged.
+this audit makes no claim about unrelated media or engagement, or browser behavior.
+
+the exact-`0bd` android packet passed physical qualification with explicit limits.
+the pulled apk hash is
+`cc50b1c6a90f0447696d811d4159b50866226e9dd7ce247c4656301ceb92076c`,
+version `0.3.1`, code `21`, with the expected signer and retained app data.
+the published latest release `android-v0.3.1` is pinned to `0bd6619236`;
+all six downloaded release assets are byte-equal to the qualified artifacts.
+authenticated cold launcher entry, unscoped canonical link delivery to the
+already-running app, packaged `03` text reading with no default network, and online
+return passed. network preferences and the empty 0-byte shelf were restored;
+only the probe-owned download and execution files were removed. app-link state
+changed only its installation verification uuid; signer, verified domain, allowed
+handling and user selections were conserved, including disabled host selection.
+general cold automatic link routing remains unestablished; natural token
+expiry/renewal and password entry were unobserved. native google sign-in remains
+the historical `3839` proof on unchanged owners, not a repeated `0bd` result.
+no device `114a` or pdf replay was performed. receipts: `summary.json` and `cleanup.json` under
+`/tmp/nexus-session-entry-release-20261014/physical-android/final-0bd6619/`;
+independent artifact review: `final-android-receipt-review.md` in the proof directory.
+
+the first bare-route `114a` opening on exact `0bd` passed both arrival axes without
+query/hash targeting or operator input/scroll. its 664-px pane occupied x=616–1280
+inside the canvas x=240–1280. the authored glyph at 133 witnesses endpoint 134;
+it was visible at scrolltop 560.55/max 561. this valid bottom clamp leaves it
+353.45 px below the reading line; it is not line-aligned. geometry stayed stable
+for 7.185 seconds after image/font completion and on the passive return at 238 seconds.
+the ordinary cursor response matched the full positioned handoff at revision 6,
+fragment `826c3bed-826d-482c-a338-c1f5dc08b065`, offset 134. the public reader showed
+generation 3, three units, index 2 and matching canonical/window hashes. publication
+uuid and timestamps remain conserved owner-audit facts; public reader wire omits them.
+
+the original-context observer stayed healthy from before boot at 02:35:37.708
+through explicit unsubscribe at 03:02:48.751 utc on 2026-10-15, covering the late
+02:54:13.854 return. all 179 request rows have start and terminal events.
+document, reader, reader-state and map gets returned 200; reader-state puts and
+reading-activity posts were zero, while one workspace autosave put occurred.
+this absence claim ends before normal browser cleanup and excludes other contexts.
+the ancillary [favicon failure](tickets/final-firefox-favicon-request-failed.md)
+remains unassigned.
+the earlier `3839` failure remains historical. browser receipts under
+`/tmp/nexus-session-entry-release-20261014/firefox-qualification/`:
+`final-0bd-114a-arrival.json`, `final-0bd-114a-late-arrival.json`,
+`final-0bd-114a-cursor.json`, `final-0bd-114a-publication.json` and
+`final-0bd-network-closing.json`.
+
+actual `03` title, three-post body, metadata and expanded history passed on `0bd`.
+current/prior title operation ids matched. nested operation details stayed collapsed;
+their identifiers were checked in mounted dom, and the screenshot covers only its
+viewport, not every below-fold entry. receipts in the same directory:
+`final-0bd-03-reader.json`, `final-0bd-03-metadata-settled.json` and
+`final-0bd-03-history-expanded.json`.
+
+the exact unsigned extension archive hash is
+`3e8bab77294eaf3daaa61bf5b48ebaa571e53d4ce7c59735479bbc7ef4bdc172`;
+all ten installed payloads matched. the actual toolbar popup retained the expected
+owner's authenticated session. fresh sign-in, renewal and capture were not tested;
+production capture remains owner-deferred. `temporarilyInstalled=true`: activation
+ended with normal owned firefox close; persistent installation is not claimed.
+the package, profiles and shared dependencies were preserved. owned observer,
+driver, browser and helper cleanup completed, with the owned ports closed.
+receipts in the same directory: `final-0bd-extension-installed.json`,
+`final-0bd-extension-popup-before.json`, `final-0bd-network-cleanup.json` and
+`final-0bd-execution-cleanup.json`.
+
+the accepted final handoff is
+`/tmp/nexus-book-repair-20261014/session-release-handoff.json`, sha256
+`4fba4debfc461a72b08dca8952860eeec0533f37720c3f253c1922c5e68cce13`.
+all scoped consumer receipts and cleanup are complete. book production writes
+remain with its coordinator after both handoffs and its own current pre-apply
+census and backup; the `0bd` release backup is not the book pre-apply backup.
+the separately flagged docs-only main advance leaves deployed runtime and packets
+at `0bd`; it requires no controller replay or packet rebind. no new source/model
+requests were made for this closeout.
 
 the consolidated correction keeps existing module boundaries and adds no api,
 schema, dependency or permanent test seam. local red/green qualification passed:
@@ -171,6 +268,9 @@ and `pdf-title-green.json` in the proof directory. input ports in the progress
 check are controlled public interfaces, not a physical gesture claim. the pdf
 uses actual trusted wheel/button input and the installed renderer. fixture-only
 setup failures and superseded invalid-port receipts remain labelled as such.
+cursor recovery here covers source replacement; initial-load failure followed by
+focus-driven recovery remains a separate
+[qualification gap](tickets/reader-cursor-load-failure-has-no-recovery.md).
 the final combined peer receipts are
 `/tmp/nexus-session-entry-release-20261014/reader-qualification-receipts/final.json`
 and `canvas-qualification/final-summary.json` in that campaign directory; their

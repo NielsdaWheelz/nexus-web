@@ -40,3 +40,12 @@ desktop harness journey (J11.deleted-media-in-saved-workspace: open media X,
 delete it through the api, reload) passes, but it passed before the rewrite
 too, so it does not reproduce the android failure. still needed: the android
 webview reproduction above, now without the registry.
+
+2026-10-15 `0bd6619236` qualification: an unrelated retained workspace pane's
+`GET /api/media/08d23b86-7042-4c72-bfe6-7faa5a696bee` completed with 404 while
+the requested `114a` and `03` readers and metadata/history worked in firefox.
+evidence: `final-0bd-network.json` under
+`/tmp/nexus-session-entry-release-20261014/firefox-qualification/`, request
+`1792032616947`, completion `1792032617408` ms. no deletion or android
+reproduction was performed; the 404 cause is unassigned. this observation does
+not close the original android qualification gap.
