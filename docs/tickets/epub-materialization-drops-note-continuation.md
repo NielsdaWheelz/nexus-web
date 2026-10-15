@@ -1,6 +1,6 @@
 # external note materialization drops an authored continuation
 
-status: open; two whole-book repairs unsafe, not applied
+status: open; six whole-book repairs unsafe, not applied
 origin: 2026-10-15 book-repair source review, operator `150328b65`
 area: epub apparatus body materialization
 
@@ -38,6 +38,30 @@ independent review:
 both bind the original numbered-note interval and final proposal sha256
 `b9161eb981056e82539e25dd0d6d212d3abca40557055e9ab734c30d3d58618c`.
 
+four further exact original intervals reproduce the same materialization loss:
+
+| media | target | omitted paragraphs / canonical characters |
+| --- | --- | ---: |
+| `dc0c28e2-8263-4bdd-8ef6-dcfd6781051c` | `OEBPS/text/9780007590087_Footnote.xhtml#fn-4` | 3 / 935 |
+| `6fc37025-9aab-4a0f-aa0c-b94db2437e9c` | `OPS/html/chapter005.html#fn18` | 1 / 705 |
+| `260d82bd-251c-404c-ba1d-3cb30a65232c` | `main-13a.xhtml#bookmark11` | 6 / 1,609 |
+| `d580cfca-da7e-4a2c-b011-754a7c4df040` | `dummy_split_009.html#filepos135707` | 1 / 273 |
+
+each continuation lies inside the uninterrupted numbered-note interval before
+the next reciprocal note. source note headings, classes and adjacent return
+links corroborate that ownership; no independent full-prose reading is claimed.
+the existing body-boundary owner collects the complete interval, but the target
+materializer reconstructs only its leading paragraph. these are whole-proposal
+refusals; other fields are unadjudicated and installed text loss is not claimed.
+
+exact source bytes, current/next reciprocal pairs and all four full proposals:
+`b-reader/four-note-continuation-review-v2/receipt.json`, sha256
+`e199dff75e94addc9b058b82562983b8ff1e51c88cbaad896ad8ca712f7d15b6`;
+independent review `c-sources/four-note-continuations-independent-review.json`,
+sha256 `ba76c18e93d15a9c1c66b0d06d391f5e35f66bb47f03297fd7735ae42d6cf334`.
+earlier local assumptions about an empty named anchor are retained as proof
+failures; the corrected checks bind its exact adjacent reciprocal link.
+
 in `python/nexus/services/html_apparatus.py`, `_inferred_note_html` collects
 continuation paragraphs, but `_materialize_external_targets_in_document`
 recovers the leading paragraph and rebuilds the body from that paragraph alone.
@@ -45,7 +69,7 @@ preserve the verified complete body at this owner. retain refusal for unproved
 boundaries; do not broaden inference, special-case this book or alter retained
 fragments. this shared extraction fix is outside the bounded repair campaign.
 
-acceptance: real-source previews preserve every authored paragraph in both
+acceptance: real-source previews preserve every authored paragraph in all six
 cases, rich structure, labels, reciprocal links and valid retained locators.
 qualify each full book proposal and normal consumers before applying it. the
 essays positive raw-fragment bridge remains not run because it cannot make

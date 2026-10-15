@@ -1,6 +1,6 @@
 # title-page containers override cross-document publisher divisions
 
-status: open; both whole-book repairs unsafe, not applied
+status: open; three whole-book repairs unsafe, not applied
 origin: 2026-10-15 book-repair retained-source review, operator `150328b65`
 area: epub section ownership and semantic extents
 
@@ -50,6 +50,23 @@ this is explicit authored part membership, not a rule requiring every semantic
 section to copy a flat publisher outline. stored text remains intact; no
 runtime consumer failure was executed.
 
+media `cf26ed31-1cf3-433f-b310-ee923e197652` supplies another explicit
+part-membership failure. the original title page has the adjacent `PART I`
+and part-title headings; its first chapter has a separate numbered chapter
+title. the declared ncx assigns three chapters to that part. the proposal
+clears all three memberships while retaining the part title and clipping its
+extent to the local title page. only these three source-proved memberships
+justify this refusal; other changed memberships and fields are unadjudicated.
+the old part extent was already incomplete and is not endorsed.
+
+evidence:
+`b-reader/three-navigation-boundary-review-v3/cf26ed31-1cf3-433f-b310-ee923e197652.json`,
+sha256 `d976f8fdb8494bf7cd1666c82756d6fe5adf567e88dfe09589d0a895815ab834`;
+independent `c-sources/cf26-authored-part-independent-review.json`, sha256
+`87dff4362d6ae1de3c08b08a78fe70c404b7dff9aa2ea200ce1808dacd7d82c3`.
+the original source, five admitted members and complete final proposal are
+bound. its separately proved note bodies do not authorize this hierarchy loss.
+
 `python/nexus/services/epub_structure.py:700` assigns the local container end
 to the merged owner. `reader_structure.py:112` uses that end for the reading
 division; `epub_read.py:128` exposes it as the section extent. separately,
@@ -61,7 +78,8 @@ or discard all source container bounds. this shared range-owner fix is outside
 the bounded repair campaign.
 
 acceptance: the real-source full proposal preserves the three authored body
-scopes and cyberiad's twelve authored part memberships, with all section
+scopes, cyberiad's twelve authored part memberships and cf26's three proved
+part memberships, with all section
 identities and destinations required by the reviewed contract. also verify a genuine container that ends before the next
 publisher division. qualify complete installed extents and reader consumers
-before applying either book; other proposal fields remain separately reviewed.
+before applying these books; other proposal fields remain separately reviewed.

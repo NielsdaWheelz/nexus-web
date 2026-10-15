@@ -1,6 +1,6 @@
 # heading rank overrides an authored publisher root
 
-status: open; eight whole-book repairs unsafe, not applied
+status: open; nine whole-book repairs unsafe, not applied
 origin: 2026-10-15 book-repair original-source review, operator `150328b65`
 area: epub semantic hierarchy
 
@@ -93,6 +93,19 @@ ce72's original bytes were verified from its existing rehearsal copy; present
 production-source availability was not rechecked. this navigation refusal
 does not supersede its independently qualified credit correction or ownership.
 
+media `781fc83c-3804-4611-9a7a-b475dbacebdf` has the same explicit
+work-end/footer boundary. the original names the literary work in its end
+separator before `pg-footer-heading` within `pg-boilerplate`. the candidate
+newly parents the license under that work and moves the work end from `2:0`
+to `40:38481`, the license end. source role and the named end declaration
+establish the contradiction; the separately proved two notes do not approve
+this whole proposal. evidence:
+`b-reader/three-navigation-boundary-review-v3/781fc83c-3804-4611-9a7a-b475dbacebdf.json`,
+sha256 `a0d2ee245142e9efed1649c9d27a27146d48b75fde91a367fb4fb2720751bd05`;
+independent `a-maintenance/two-b-navigation-boundaries-independent-review.json`,
+sha256 `1d080de77eb5ea87f1a6c0318ac8ae33af6c63e06240f2acd8c73b7495f30822`.
+both bind the exact original documents and complete proposed metadata.
+
 media `eef19922-06e4-4d10-bd49-2445057bf4c1` provides a separate concrete
 scope contradiction. its original appendix explicitly describes a dramatis
 personae across both *dust of dreams* and *the crippled god*. the candidate
@@ -115,7 +128,7 @@ and chapter 14's authored scope, and keeps chapter eleven a peer of chapter
 four with four ending at `43:0`. row232 preserves publisher history outside
 chapter 15 and source-proved part/chapter membership; independently justify
 any reading-division regrouping without changing its full publisher outline.
-the four literary-title extents exclude the separately declared licensing
+the five literary-title extents exclude the separately declared licensing
 footers while preserving their destinations. retain genuine source nesting
 in all cases, and keep eef's cross-book reference appendix outside the last
 part's scope; do not infer a universal flat-outline rule.

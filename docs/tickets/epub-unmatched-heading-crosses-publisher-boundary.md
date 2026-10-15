@@ -1,7 +1,7 @@
 # an unmatched heading range crosses later publisher divisions
 
-status: open; whole-book repair unsafe, not applied
-origin: 2026-10-15 book-repair original-source review, operator `150328b65`
+status: open; two whole-book repairs unsafe, neither applied
+origin: 2026-10-15 book-repair original/retained-source review, operator `150328b65`
 area: epub semantic extents
 
 media `895cc902-b1b6-4e69-93ca-30fff2ace5b6` declares epigraph and introduction
@@ -10,6 +10,17 @@ h2 titles explicitly name those roles. the retained epigraph heading stays a
 root with the same label and target, but its proposed end changes from the
 introduction boundary `4:0` to book end `43:5636`. a prefatory epigraph becomes
 a range over the remaining book.
+
+media `2baa6224-e88b-4c25-a416-074064cde3d2` has the same new range failure.
+its unmatched heading for the introduction to *savage messiah* keeps its
+identity, target and root parent, but changes `32:0–33:0` to `32:0–39:1181`,
+the book end. six later essays each have a distinct title and body; the
+retained contents lists all seven separately, and their stored publisher
+entries remain peers under the part. the source heading's edition suffix
+differs from its publisher label, so it remains unmatched while the six later
+headings coalesce. those later publisher children cannot close the unrelated
+root under the depth-only rule. their inherited missing extents are separate
+from this newly expanded essay range.
 
 `python/nexus/services/epub_structure.py:276` coalesces matching later
 headings into their publisher sections; the unmatched epigraph heading stays
@@ -35,8 +46,22 @@ the receipts bind original roles/navigation, retained text and the complete
 current proposal. remaining fields are not approved. stored text is intact;
 apply and reader consumers were not executed.
 
+the fixed essay evidence is
+`a-maintenance/navigation2baa-essay-scope-review-v1.json`, sha256
+`6631926070dac52e3bb9cb6993c243b0ed0011f74c2fa394834384650a1087e9`.
+it binds the complete proposal and ten retained documents: contents, part
+title, all seven essay documents and final backmatter. source sha256 is
+`5d53a9e44f064f217574d6672c00b4b2c33d0f83cfb432ca173cd10664c3e542`.
+original ncx was not acquired for this case. independent semantic review:
+`c-sources/a2baa-essay-scope-independent-review.json`, sha256
+`7e0c12d205530f107cb689ac2873626e64ca5768d2022914511c616abcea0030`.
+the full proposal is
+`d9c0a0ed042e15c8d462f29b7114d1a6fb0e60f6150ca60ad9a6d957765cf5a3`.
+other changed fields remain unadjudicated.
+
 acceptance: the real-source epigraph ends at the introduction's authored
-boundary; unrelated publisher ancestry cannot hide that boundary. also
+boundary, and the first essay ends at the next separately titled essay;
+unrelated publisher ancestry cannot hide either boundary. also
 qualify a genuine multi-document division and installed reader extents before
-applying this book. this shared range fix is outside the bounded campaign,
+applying these books. this shared range fix is outside the bounded campaign,
 separate from both publisher-root reassignment and title-container clipping.
