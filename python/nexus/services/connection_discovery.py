@@ -50,6 +50,7 @@ from nexus.services.resource_graph.resolve import resolve_ref, resolve_refs
 from nexus.services.resource_items.capabilities import expand_owned_child_refs
 from nexus.services.search.query import SearchQuery
 from nexus.services.search.service import search
+from nexus.services.suggestion_changes import record_input_change
 
 logger = get_logger(__name__)
 
@@ -204,6 +205,7 @@ def dismiss_connection_discovery_edge(db: Session, *, viewer_id: UUID, edge_id: 
         if db.get(ConnectionDiscoverySuppression, key) is None:
             db.add(ConnectionDiscoverySuppression(**key))
         delete_edge(db, viewer_id=viewer_id, edge_id=edge_id)
+        record_input_change(db)
         db.commit()
 
     retry_serializable(db, "connection_discovery.dismiss", attempt)
@@ -323,6 +325,7 @@ def _publish(
                 if not item.missing and _work(db, target) not in excluded
             ],
         )
+        record_input_change(db)
         db.commit()
         return "ok", None
 

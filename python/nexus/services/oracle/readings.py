@@ -45,6 +45,7 @@ from nexus.services.resource_graph.citations import (
 )
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.search.semantic import embed_text, nearest_chunks
+from nexus.services.suggestion_changes import record_input_change
 
 _PASSAGES = TypeAdapter(list[OracleStoredPassage])
 
@@ -84,7 +85,8 @@ def create_reading(
         db.flush()
         reading_id = reading.id
         enqueue_job(db, kind="oracle_reading_generate", payload={"reading_id": str(reading_id)})
-        libraries.join_system_library(db, system_key=corpus.SYSTEM_KEY, user_id=viewer_id)
+        if libraries.join_system_library(db, system_key=corpus.SYSTEM_KEY, user_id=viewer_id):
+            record_input_change(db)
     db.commit()
     return OracleReadingCreatedOut(reading_id=reading_id)
 

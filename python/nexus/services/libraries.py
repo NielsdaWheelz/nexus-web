@@ -225,6 +225,10 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
     from nexus.services.dossier import engine as dossier
     from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
     from nexus.services.resource_graph.refs import ResourceRef
+    from nexus.services.suggestion_changes import (
+        delete_suggestion_feeds_for_library,
+        record_input_change,
+    )
 
     ref = ResourceRef(scheme="library", id=library_id)
 
@@ -272,9 +276,11 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
                         db, default_id, library_entries.media_target(media_id)
                     )
             library_entries.delete_library_entries(db, library_id)
+            delete_suggestion_feeds_for_library(db, library_id=library_id)
             db.execute(text("DELETE FROM libraries WHERE id = :id"), {"id": library_id})
             for user_id in members:
                 dossier.on_visibility_lost(db, user_id=user_id)
+            record_input_change(db)
 
     retry_read_committed(db, "delete_library", attempt, retries=5)
 
@@ -304,15 +310,18 @@ def ensure_system_library(db: Session, *, system_key: str, name: str, owner_user
         return library_id
 
 
-def join_system_library(db: Session, *, system_key: str, user_id: UUID) -> None:
-    """Make the user a member of an existing system library; flush only."""
-    db.execute(
-        text("""
+def join_system_library(db: Session, *, system_key: str, user_id: UUID) -> bool:
+    """Join an existing system library; return whether membership changed. Flush only."""
+    return (
+        db.scalar(
+            text("""
             INSERT INTO memberships (library_id, user_id, role)
             SELECT id, :user_id, 'member' FROM libraries WHERE system_key = :key
-            ON CONFLICT DO NOTHING
+            ON CONFLICT DO NOTHING RETURNING library_id
         """),
-        {"key": system_key, "user_id": user_id},
+            {"key": system_key, "user_id": user_id},
+        )
+        is not None
     )
 
 

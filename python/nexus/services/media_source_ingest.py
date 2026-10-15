@@ -61,6 +61,7 @@ from nexus.services import source_types as st
 from nexus.services.media_processing_state import mark_extracting
 from nexus.services.reader_publication import ensure_reader_publication
 from nexus.services.remote_file import remote_file_kind_from_url
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.transcripts.request_reason import TranscriptRequestReason
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 from nexus.services.x_identity import classify_x_url, is_x_url, x_post_provider_id
@@ -273,7 +274,9 @@ def accept_url_source(
             payload: dict[str, object] = {"library_ids": [str(i) for i in library_ids]}
             if ingest_purpose is not None:
                 payload["ingest_purpose"] = ingest_purpose
-            return _accept_url(db, viewer_id, id, url, library_ids, payload, request_id)
+            result = _accept_url(db, viewer_id, id, url, library_ids, payload, request_id)
+            record_input_change(db)
+            return result
 
     return retry_read_committed(db, "accept_url_source", admit)
 
@@ -667,8 +670,10 @@ def retry_source(
                 recovery=RetrySourceRecovery(new_source_attempt_id=successor.id),
             ),
         )
+        result = _admission(successor)
+        record_input_change(db)
         db.commit()
-        return _admission(successor)
+        return result
 
     return admit_serializable(db, "retry_source", admit)
 
@@ -727,8 +732,10 @@ def reprocess_failed_stored_epub(
                 recovery=ReprocessSourceRecovery(new_source_attempt_id=successor.id),
             ),
         )
+        result = _admission(successor)
+        record_input_change(db)
         db.commit()
-        return _admission(successor)
+        return result
 
     return admit_serializable(db, "reprocess_failed_stored_epub", admit)
 
@@ -768,8 +775,10 @@ def refresh_source(
             # the readable copy is retained while the refresh runs, and if it fails
             ensure_reader_publication(db, media_id=media.id)
         successor = _admit_successor(db, media, latest, actor_id=viewer_id, request_id=request_id)
+        result = _admission(successor)
+        record_input_change(db)
         db.commit()
-        return _admission(successor)
+        return result
 
     return admit_serializable(db, "refresh_source", admit)
 

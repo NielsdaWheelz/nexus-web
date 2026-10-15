@@ -27,8 +27,9 @@ from nexus.db.listen import Listener, open_listener
 from nexus.db.session import get_repeatable_read_db, get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.conversation import EXECUTION_ADVISORY_EVENT_TYPE
+from nexus.schemas.suggestions import SuggestionCurrentOut, SuggestionWithdrawnOut
 from nexus.services import media as media_service
-from nexus.services import metadata_operations
+from nexus.services import metadata_operations, suggestion_changes, suggestion_shortlists
 from nexus.services.chat import events as chat_events
 from nexus.services.chat import reads as chat_reads
 from nexus.services.dossier import engine as dossier_engine
@@ -133,6 +134,40 @@ async def _snapshot_stream(
 ) -> StreamingResponse:
     await run_in_threadpool(read)
     listener = await open_listener(channel, str(key))
+    return _respond(_snapshot_frames(request, listener, read))
+
+
+@router.get("/stream/lectern/suggestions")
+async def stream_lectern_suggestions(request: Request, viewer: ViewerDep) -> StreamingResponse:
+    return await _stream_suggestions(request, viewer_id=viewer.user_id, library_id=None)
+
+
+@router.get("/stream/libraries/{library_id}/suggestions")
+async def stream_library_suggestions(
+    request: Request, library_id: UUID, viewer: ViewerDep
+) -> StreamingResponse:
+    return await _stream_suggestions(request, viewer_id=viewer.user_id, library_id=library_id)
+
+
+async def _stream_suggestions(
+    request: Request, *, viewer_id: UUID, library_id: UUID | None
+) -> StreamingResponse:
+    def read(*, initial: bool = False) -> Snapshot:
+        try:
+            with _snapshot() as db:
+                state = suggestion_shortlists.read_suggestion_state(
+                    db, viewer_id=viewer_id, library_id=library_id
+                )
+        except ApiError as exc:
+            if initial or exc.code != ApiErrorCode.E_LIBRARY_NOT_FOUND:
+                raise
+            return SuggestionWithdrawnOut().model_dump(mode="json"), True
+        if state.capability == "NotApplicable":
+            return SuggestionWithdrawnOut().model_dump(mode="json"), True
+        return SuggestionCurrentOut(state=state).model_dump(mode="json"), False
+
+    await run_in_threadpool(read, initial=True)
+    listener = await open_listener(suggestion_changes.CHANNEL, suggestion_changes.NOTIFY_KEY)
     return _respond(_snapshot_frames(request, listener, read))
 
 

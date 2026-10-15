@@ -48,6 +48,7 @@ from nexus.services.reader_publication import (
     replace_reader_publication,
 )
 from nexus.services.sanitize_html import sanitize_html
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.web_article_structure import (
     WebArticleIndexBlockSpec,
     build_web_article_index_blocks,
@@ -201,6 +202,7 @@ def apply_reader_navigation_repair(
         )
         if _installed_metadata(db, media_id, snapshot.kind) != prepared.metadata:
             raise ValueError("Reader repair installation differs from its inspected proposal")
+        record_input_change(db)
         db.commit()
     return "changed"
 

@@ -8,11 +8,18 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import RepeatableReadDbSession
+from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.responses import Data
 from nexus.schemas import consumption as wire
-from nexus.schemas.suggestions import QuickReadsOut, SuggestionsOut
-from nexus.services import suggestions
+from nexus.schemas.suggestions import (
+    QuickReadsOut,
+    SuggestionRefreshIn,
+    SuggestionsOut,
+    SuggestionStateOut,
+    SuggestionViewIn,
+    SuggestionViewOut,
+)
+from nexus.services import suggestion_shortlists, suggestions
 from nexus.services.consumption import lectern, state
 
 router = APIRouter(tags=["consumption"])
@@ -38,7 +45,29 @@ def remove_from_lectern(media_id: UUID, viewer: ViewerDep) -> Response:
 
 @router.get("/lectern/suggestions")
 def get_lectern_suggestions(viewer: ViewerDep, db: RepeatableReadDbSession) -> Data[SuggestionsOut]:
-    return Data(data=suggestions.build_lectern_suggestions(db, viewer_id=viewer.user_id))
+    return Data(data=suggestion_shortlists.read_suggestions(db, viewer_id=viewer.user_id))
+
+
+@router.post("/lectern/suggestions/view")
+def reconcile_lectern_suggestions(
+    request: SuggestionViewIn, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[SuggestionViewOut]:
+    return Data(
+        data=suggestion_shortlists.reconcile_suggestions_view(
+            db, viewer_id=viewer.user_id, request=request
+        )
+    )
+
+
+@router.post("/lectern/suggestions/refresh", status_code=202)
+def refresh_lectern_suggestions(
+    request: SuggestionRefreshIn, viewer: ViewerDep, db: DbSession
+) -> Data[SuggestionStateOut]:
+    return Data(
+        data=suggestion_shortlists.request_suggestions_refresh(
+            db, viewer_id=viewer.user_id, request=request
+        )
+    )
 
 
 @router.get("/lectern/quick-reads")

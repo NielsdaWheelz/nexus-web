@@ -1,0 +1,180 @@
+{
+  "date": "2026-10-15",
+  "source": {
+    "baseline": "367da80e0c1beb1c426f6d2d72201b0733809b50",
+    "first_candidate": "fde33a16367b4d04bb4fcf92d7dc47962897675d",
+    "interaction_frontend_build": "e8312f80e7a282532ca69808f94d9c09257f69a2",
+    "final_frontend_build": "2a856b824e22736d7176b1d900e5c4df04080569",
+    "final_next_build_id": "JCBY1ucZaC5-ri1ZsaC_m",
+    "api_and_worker_during_interaction_cases": "fde33a16367b4d04bb4fcf92d7dc47962897675d; backend code unchanged by the frontend corrections",
+    "api_and_worker_during_final_delta_cases": "2a856b824e22736d7176b1d900e5c4df04080569",
+    "browser": "firefox 148.0.2, headless",
+    "runtime": "built next standalone, ordinary bff, authenticated direct suggestion sse, owned api/postgres and normal background worker"
+  },
+  "method": [
+    "ordinary invited account and password login; normal session renewal; no authentication bypass",
+    "isolated campaign data: ordinary ui-created libraries, valid controlled media fixtures, genuine 1999-item capacity boundary and 102-member paginated library",
+    "actual command/read responses held and released unchanged, or lost after the real server receipt; no synthesized successful api responses",
+    "faults restored after each case; owned fixture cleanup coordinated with the backend owner. the final default-library addition remains in the preserved campaign database: ordinary removal correctly returned 409 E_MEDIA_LAST_REFERENCE because it was the only physical library entry; creator access had supplied the original candidate",
+    "final latency uses three quiet full-document navigations per surface on the isolated copied corpus; a preinstalled observer records the second animation frame after active-destination content has nonzero geometry, relative to performance.timeOrigin"
+  ],
+  "baseline_reds": [
+    {
+      "case": "successful empty lectern",
+      "observed": "suggestions heading absent; quick reads heading present"
+    },
+    {
+      "case": "library response held",
+      "observed": "neither heading nor loading copy before the actual response"
+    },
+    {
+      "case": "successful empty library",
+      "observed": "neither heading nor empty copy"
+    },
+    {
+      "case": "accepted lectern add with subsequent reads held",
+      "observed": "accepted row still present after 509ms; no immediate local refill"
+    }
+  ],
+  "first_candidate_reds": [
+    {
+      "case": "new publication first observed through retained-pool view while sse unavailable",
+      "observed": "zero latest reads and no adoption control after the view exposed the new publication",
+      "final": "one latest read and staged adoption control"
+    },
+    {
+      "case": "external full-capacity recovery",
+      "observed": "available suggestion capability still vetoed by stale canonical lectern capacity",
+      "final": "fresh adds re-enabled without a focus event"
+    }
+  ],
+  "first_candidate_cold_proof": [
+    "unpublished queued feed shows finding suggestions before the worker runs",
+    "first normal publication installs ten rows without requiring adoption"
+  ],
+  "interaction_build_passed": {
+    "view-first-publication": [
+      "a latest publication first learned from /view is fetched and advertised despite unavailable sse"
+    ],
+    "add-refill": [
+      "acknowledged add disappears and refills from retained pool without network",
+      "acknowledged add preserves eligible survivor order",
+      "accepted add does not steal focus moved away before its real receipt"
+    ],
+    "empty-stage": [
+      "successful first empty publication settles without admission loop",
+      "later nonempty publication stays staged over an adopted empty view",
+      "explicit adoption revalidates full pool and returns owned button focus to persistent section",
+      "library accepted add removes and refills locally while preserving survivors"
+    ],
+    "adoption-race": [
+      "new publication stays staged and leaves adopted eligible order unchanged",
+      "accepted add removes and refills while staged adoption read remains held",
+      "late staged response cannot resurrect acknowledged ref or steal moved focus"
+    ],
+    "lifecycle": [
+      "inactive pane closes its suggestion stream and issues no reads or admission after real source change or focus",
+      "reactivated pane reconciles current eligibility and refills",
+      "focus wake reconciles without adopting a staged order",
+      "fresh pane revisit adopts the validated staged publication"
+    ],
+    "lost-refresh": [
+      "worker publication witnessed before lost refresh receipt deadline never gains a late admission error",
+      "normal replacement with identical ordered refs is silent and retains displayed order",
+      "lost receipt with observed publication does not automatically resend the refresh"
+    ],
+    "pagination": [
+      "suggestions mount and start reading while entry pagination remains incomplete"
+    ],
+    "capacity": [
+      "full lectern preserves browsable rows and uncertain-command check",
+      "confirmed check-add retires its row and refills locally at full capacity",
+      "external capacity recovery re-enables fresh adds from observed capability without focus"
+    ],
+    "suspended": [
+      "suspended durable work retains usable rows and truthful repair copy without fresh-work retry or automatic admission",
+      "same-job operator repair clears the repair notice through ordinary observation"
+    ],
+    "recovery": [
+      "failed wake read retains order and mounted usable controls with explicit retry",
+      "interrupted observation stays visible with usable retained rows",
+      "explicit retry restores observation and clears error without order replacement"
+    ],
+    "layout": [
+      "steady 320px view shows ten hydrated rows with contained usable controls",
+      "suggestions preserve readable controls at 200% root text"
+    ]
+  },
+  "interaction_build_reds_fixed_in_final": [
+    {
+      "case": "default-library suggestion add",
+      "observed": "ordinary ui submitted explicit default library id through named placement; real 400 E_INVALID_REQUEST: Default library cannot be selected; row retained",
+      "final": "existing saved-in-nexus PUT returns 204; row disappears and retained pool refills immediately"
+    },
+    {
+      "case": "first library entry-prefetch response held beyond 500ms",
+      "observed": "ordinary authenticated document returned an empty resource cache; successful metadata was lost with the compound entry seed",
+      "final": "metadata and published suggestions seeds survive; only the delayed entry seed is absent"
+    },
+    {
+      "case": "quiet copied-corpus default-library full navigation",
+      "observed_ms": [979, 976, 1188],
+      "method": "active successful-empty content with nonzero geometry at the second animation frame; the 1188ms visit genuinely missed the one-second target",
+      "final_ms": [760, 846, 744]
+    }
+  ],
+  "final_delta_build_passed": {
+    "default-and-named-add": [
+      "default saved-in-nexus PUT and named-library POST each return 204 through the actual suggestion control",
+      "both accepted rows disappear and refill to ten while subsequent reads are held; all nine displayed survivors retain order"
+    ],
+    "independent-server-seeds": [
+      "real upstream entry response held two seconds exceeds unchanged 500ms prefetch deadline; document remains 200 with metadata and suggestion seeds, without entry seed",
+      "unfinished query does not install canonical entry seed: zero entry rows while the actual matching response is held, ten suggestion rows; matching response then commits 102 entries",
+      "published suggestions remain visible while a real later cursor page is held"
+    ],
+    "copied-corpus-render": [
+      "three full-document navigations each for lectern, named library and default library pass the one-second rendered-content target",
+      "timing excludes locator polling and requires the correct active destination, rendered rows or successful-empty copy, nonzero geometry and two animation frames"
+    ]
+  },
+  "measurements": {
+    "lectern_receipt_to_local_remove_and_refill_ms": 46.93,
+    "library_receipt_to_local_remove_and_refill_ms": 80.03,
+    "real_worker_publication_after_held_202_ms": 1894,
+    "lost_refresh_observation": "new publication id and identical 40-reference pool before the ten-second deadline; no late error after eleven seconds; one refresh request total",
+    "failed_read_to_visible_retry_ms": 1005,
+    "pagination": "one actual later entry page held while suggestion heading mounted and independent snapshot reads started",
+    "narrow_layout": "320px viewport, 286px section width and scroll width; ten rows and contained nonzero-width controls",
+    "enlarged_text": "200% root text, 545px section width and scroll width; controls remain readable without clipping",
+    "capacity": "real final-slot commit lost; same mutation id checked successfully; external ordinary removal restored availability without focus",
+    "suspended": "three actual relation-lock failures; retained ten usable rows; same-job operator repair observed",
+    "final_default_receipt_to_local_remove_and_refill_ms": 103.94,
+    "final_named_receipt_to_local_remove_and_refill_ms": 148.72,
+    "final_delayed_entry_document_ms": 921.28,
+    "final_copied_corpus_render_ms": {
+      "lectern_ten_rows": [339, 349, 344],
+      "named_library_one_row": [403, 656, 667],
+      "default_library_successful_empty": [760, 846, 744]
+    }
+  },
+  "visual_review": [
+    "320px titles wrap and add controls occupy their own line",
+    "doubled text retains readable titles and controls",
+    "empty adopted view retains its section and explicit adoption control when a later publication arrives"
+  ],
+  "limits": [
+    "headless firefox and headed chromium kept document visibility visible, including an actual minimize attempt; no hidden-document claim. real pane inactivity closed observation and requests; visibility cleanup was inspected in source",
+    "window focus recovery used a dispatched browser focus event; pane activation/revisit and keyboard adoption used actual ui actions",
+    "no wall-clock mutation or uninterrupted fifteen-minute soak here. monotonic server-relative scheduling was source-reviewed; natural clean-age active-only admission is recorded in inputs-and-corpus.json",
+    "identical-publication silence used an actual clean explicit refresh and normal worker publication with identical ordered refs; no separate media-title edit was performed",
+    "modeled withdrawal, not-applicable capability and same-system defect escalation were source-reviewed here; backend authorization/state proofs live in backend.json",
+    "environment failures, stale fixture assumptions and premature harness waits were corrected and excluded; no application result was inferred from them",
+    "initial node-side locator latency included polling delay and is not render latency. it was replaced by passive in-page double-frame timing before the actual 1188ms miss was diagnosed and repaired",
+    "the 29 interaction cases and two screenshots belong to the e831 frontend build; the final 2a build repeats the affected library add, independent seed, query, pagination and render cases. unchanged lectern interaction code was not retested wholesale"
+  ],
+  "screenshots": [
+    "frontend-320px.png",
+    "frontend-empty-staged.png"
+  ]
+}

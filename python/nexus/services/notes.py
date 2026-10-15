@@ -42,6 +42,7 @@ from nexus.services.resource_graph.cleanup import (
 from nexus.services.resource_graph.highlight_notes import note_blocks_for_highlight
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items import versions
+from nexus.services.suggestion_changes import record_input_change
 
 _DAILY = uuid5(NAMESPACE_URL, "nexus:daily-page")
 
@@ -103,11 +104,14 @@ def list_pages(
 def create_page(db: Session, viewer_id: UUID, page_id: UUID, title: str) -> NotePageSummaryOut:
     def op() -> NotePageSummaryOut:
         page = db.get(Page, page_id)
+        created = page is None
         if page is None:
             page = _new_page(db, viewer_id, page_id, title)
         elif page.user_id != viewer_id:
             raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Page id is taken")
         out = NotePageSummaryOut(id=page.id, title=page.title, updated_at=page.updated_at)
+        if created:
+            record_input_change(db)
         db.commit()
         return out
 
@@ -147,6 +151,7 @@ def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
             db.execute(delete(DailyPageBinding).where(DailyPageBinding.page_id == page_id))
             delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
             db.delete(page)
+            record_input_change(db)
         db.commit()
 
     retry_serializable(db, "delete_page", op)
@@ -199,6 +204,7 @@ def capture(db: Session, viewer_id: UUID, *, local_date: date, note_id: UUID, te
         page_id = capture_in_current_transaction(
             db, viewer_id, local_date=local_date, note_id=note_id, body_pm_json=body
         )
+        record_input_change(db)
         db.commit()
         return page_id
 
@@ -266,6 +272,7 @@ def set_highlight_note(
                 reason="highlight_note_update",
             )
         out = note_bodies.read_note(db, viewer_id=viewer_id, note_id=note_id)
+        record_input_change(db)
         db.commit()
         return out
 
@@ -339,6 +346,7 @@ def detach_highlight_note(
         ).first()
         if removed is not None:
             versions.bump_version(db, viewer_id=viewer_id, ref=source, lane="links")
+        record_input_change(db)
         db.commit()
 
     retry_serializable(db, "detach_highlight_note", op)
@@ -370,6 +378,7 @@ def delete_highlight_note(
             db, viewer_id=viewer_id, note_id=note_id, version=expected_version
         )
         note_bodies.delete_note(db, viewer_id=viewer_id, note_id=note_id)
+        record_input_change(db)
         db.commit()
 
     retry_serializable(db, "delete_highlight_note", op)

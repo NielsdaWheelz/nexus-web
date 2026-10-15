@@ -62,7 +62,9 @@ newest 11 at the cap. entry awaits only the guaranteed visible active pane's
 first-paint reads (`paneSeeds`), with the existing 500 ms per-request deadline,
 seeded by that pane's id under the api paths its hooks read. named transport
 failures and route-specific missing resources use normal client reads; other seed
-errors terminate. inactive panes load through their existing owners. the
+errors terminate. library metadata, canonical entries and published suggestions
+seed independently: a named miss loses only its own result. inactive panes load
+through their existing owners. the
 authenticated group has one optional catch-all page (`[[...path]]/page.tsx`), so
 unknown paths render unsupported panes.
 

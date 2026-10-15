@@ -1382,10 +1382,12 @@ lenses and the one page statement; no DML), and `services/library_members.py` (t
   policy-neutral read ports from consumption, libraries, the resource graph,
   contributors and the semantic index. it owns quick reads, lectern and library
   suggestions; fact owners retain their tables and mutations. library entry
-  ordering belongs to `library_listing`. `GET /libraries/{id}/suggestions`
-  returns at most ten deterministic, destination-addable suggestions outside
-  complete membership. successful add preserves visible survivors and appends
-  at most one novel result. suggestion payloads carry target, factual publication date,
+  ordering belongs to `library_listing`. `suggestion_shortlists.py` publishes
+  ranked pools on the existing fenced background lane. get and independent
+  `/view` hydrate at most 80 currently eligible refs without ranking; the pane
+  displays ten in retained order and refills locally after an acknowledged add.
+  active observation admits coalesced work; later publications stage until request
+  or revisit. see [suggestions](modules/suggestions.md). payloads carry target, factual publication date,
   consumption and shared reading estimate; relation reasons remain internal.
   inline related discovery and `/media/{id}/related` are retired; the resource
   graph and opened-resource connections remain.
@@ -1560,11 +1562,11 @@ payloads), and `projection.py` (the one read-state ladder and batched
 `PlayerDescriptor`s reusing `derive_playback_source`; the server owns
 the resume point, so a finished episode's descriptor starts at 0). Consumption exposes
 policy-neutral engagement and complete queue-membership reads to suggestions; it
-does not own a second public Recent product. `GET /lectern/suggestions` builds
-the on-demand **Suggestions** list from Continuity, Arrival, and factual graph,
-author, and calibrated semantic evidence. It returns at most ten placeable
-media outside the complete queue and excludes `Finished` targets; a full queue
-suppresses it. `GET /lectern/quick-reads` returns at most five visible
+does not own a second public Recent product. background suggestions ranking uses
+Continuity, Arrival, and factual graph, author and calibrated semantic evidence.
+`GET /lectern/suggestions` serves the latest successful pool outside complete
+queue membership, excluding `Finished` targets. a full queue retains browsable
+suggestions and separately disables fresh adds. `GET /lectern/quick-reads` returns at most five visible
 unfinished documents with `0 < remaining_seconds < 600`, Lectern members
 included, in progress first (most recently read), then newest added. Both perform no model
 calls. Every write runs under the viewer row lock, is absolute and states its
@@ -1609,12 +1611,12 @@ full file map. The shared player also owns an exhaustive ephemeral
 origin, heartbeat, podcast preference, activity/completion writes, or
 previous/next behavior. After Episode Add, the
 consumption owner may install the observed Preview position once, only when
-owned progress is still empty. The shared
-`SuggestionsSection` (Quick reads, Lectern and library suggestions) reads once
-when its pane becomes active and on Retry, never on a change topic. It
-delegates Add to the existing Lectern or library mutation owner and owns
-deterministic stable refill, not destination state: after an Add the list
-keeps its rows and one replacement until the next activation. the lectern
+owned progress is still empty. `SuggestionsSection` delegates add to the existing
+lectern or library owner; its suggestions hook owns adopted/staged pools,
+current-fact reconciliation, active-only observation/admission and local refill.
+rows survive refresh, errors and suspended work; successful empty and first
+preparation remain visible. acknowledgement cannot reclaim focus moved elsewhere.
+quick reads retain their separate direct read. the lectern
 section order is queue, quick reads, then suggestions. quick reads have no
 selection controls; each row's shared `LecternAddControl` (also in the
 transcript) offers add/check/on-lectern; opening navigates without enqueueing
@@ -1845,8 +1847,8 @@ through the media query revision some lists also follow).
 | topic | publishers | observers |
 | --- | --- | --- |
 | `Libraries` | create, rename, delete library; accept invitation | libraries index; library pane (detail); placement overlay |
-| `Entries` | placement add/remove; library delete; invitation accept; media delete; podcast subscribe, unsubscribe and episode add; upload, upload retry, URL add; entries reorder | library entries; placement overlay; quick reads; suggestions; imports summary |
-| `Consumption` | accepted listening heartbeat; native and offline engines; reader-state save; lectern commands; stats exclusions; episodes marked played | entries in consumption views; state-filtered episodes; quick reads; suggestions; stats; media summaries |
+| `Entries` | placement add/remove; library delete; invitation accept; media delete; podcast subscribe, unsubscribe and episode add; upload, upload retry, URL add; entries reorder | library entries; placement overlay; quick reads; imports summary |
+| `Consumption` | accepted listening heartbeat; native and offline engines; reader-state save; lectern commands; stats exclusions; episodes marked played | entries in consumption views; state-filtered episodes; quick reads; stats; media summaries |
 | `Metadata` | metadata research that changed a title, contributors or first publication, seen by an open view or by the tab that admitted the run | media summaries (the media query revision); lectern |
 | `Podcasts` | every podcast write in `lib/podcasts/api.ts` | followed podcasts; podcast detail and its episodes; author detail and works |
 | `Chats` | chat delete; message send and delete | chats index |

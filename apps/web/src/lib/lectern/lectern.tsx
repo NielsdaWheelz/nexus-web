@@ -57,6 +57,7 @@ const LecternContext = createContext<{
   read: ServerValue<Lectern>;
   adds: ReadonlyMap<string, LecternAdd>;
   add(input: { mediaId: string; title: string }): Promise<AddAnswer>;
+  onAcknowledged(listener: (mediaId: string) => void): () => void;
 } | null>(null);
 
 export function LecternProvider({ children }: { children: ReactNode }) {
@@ -78,6 +79,11 @@ export function LecternProvider({ children }: { children: ReactNode }) {
   workspaceRef.current = workspace;
   const fail = useThrowLater();
   const pending = useRef(new Map<string, PendingAdd>());
+  const acknowledgements = useRef(new Set<(mediaId: string) => void>());
+  const onAcknowledged = useCallback((listener: (mediaId: string) => void) => {
+    acknowledgements.current.add(listener);
+    return () => { acknowledgements.current.delete(listener); };
+  }, []);
   const live = useRef(true);
   const [adds, setAdds] = useState<ReadonlyMap<string, LecternAdd>>(new Map());
   const publishAdds = useCallback(() => {
@@ -146,6 +152,7 @@ export function LecternProvider({ children }: { children: ReactNode }) {
       pending.current.delete(add.mediaId);
       publishAdds();
       publishChange("Lectern");
+      for (const listener of acknowledgements.current) listener(add.mediaId);
       feedback.resolve(add.key);
       feedback.publish({
         kind: "Hud",
@@ -186,7 +193,7 @@ export function LecternProvider({ children }: { children: ReactNode }) {
     };
   }, [feedback]);
 
-  const value = useMemo(() => ({ read, adds, add }), [read, adds, add]);
+  const value = useMemo(() => ({ read, adds, add, onAcknowledged }), [read, adds, add, onAcknowledged]);
   return (
     <LecternContext.Provider value={value}>
       {children}
@@ -209,9 +216,10 @@ export function useLectern(): ServerValue<Lectern> {
 export function useLecternAdds(): {
   adds: ReadonlyMap<string, LecternAdd>;
   add(input: { mediaId: string; title: string }): Promise<AddAnswer>;
+  onAcknowledged(listener: (mediaId: string) => void): () => void;
 } {
-  const { adds, add } = useLecternContext();
-  return { adds, add };
+  const { adds, add, onAcknowledged } = useLecternContext();
+  return { adds, add, onAcknowledged };
 }
 
 /** The loaded rows, empty until the first read lands. */

@@ -25,9 +25,14 @@ from nexus.schemas.library import (
     PlaceItemRequest,
     RenameLibraryRequest,
 )
-from nexus.schemas.suggestions import SuggestionsOut
-from nexus.services import libraries, library_entries, library_listing
-from nexus.services import suggestions as suggestions_service
+from nexus.schemas.suggestions import (
+    SuggestionRefreshIn,
+    SuggestionsOut,
+    SuggestionStateOut,
+    SuggestionViewIn,
+    SuggestionViewOut,
+)
+from nexus.services import libraries, library_entries, library_listing, suggestion_shortlists
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 
 router = APIRouter(tags=["libraries"])
@@ -131,8 +136,36 @@ def get_suggestions(
             ApiErrorCode.E_INVALID_REQUEST, "Reading Slate does not accept query parameters"
         )
     return Data(
-        data=suggestions_service.build_library_suggestions(
+        data=suggestion_shortlists.read_suggestions(
             db, viewer_id=viewer.user_id, library_id=library_id
+        )
+    )
+
+
+@router.post("/libraries/{library_id}/suggestions/view")
+def reconcile_library_suggestions(
+    library_id: UUID,
+    request: SuggestionViewIn,
+    viewer: ViewerDep,
+    db: RepeatableReadDbSession,
+) -> Data[SuggestionViewOut]:
+    return Data(
+        data=suggestion_shortlists.reconcile_suggestions_view(
+            db, viewer_id=viewer.user_id, library_id=library_id, request=request
+        )
+    )
+
+
+@router.post("/libraries/{library_id}/suggestions/refresh", status_code=202)
+def refresh_library_suggestions(
+    library_id: UUID,
+    request: SuggestionRefreshIn,
+    viewer: ViewerDep,
+    db: DbSession,
+) -> Data[SuggestionStateOut]:
+    return Data(
+        data=suggestion_shortlists.request_suggestions_refresh(
+            db, viewer_id=viewer.user_id, library_id=library_id, request=request
         )
     )
 

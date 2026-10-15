@@ -44,6 +44,7 @@ from nexus.services.contributor_taxonomy import (
 )
 from nexus.services.contributor_writes import MediaTarget
 from nexus.services.contributors import replace_observed_role_slices_batch
+from nexus.services.suggestion_changes import record_input_change
 from nexus.storage.client import StorageError, get_storage_client
 from nexus.storage.paths import build_source_artifact_storage_path
 
@@ -137,6 +138,7 @@ def accept_email_message(
             )
             library_entries.ensure_media_in_default_library(db, owner_user_id, media_id)
             sa.enqueue_attempt(db, attempt, actor_id=owner_user_id, request_id=request_id)
+            record_input_change(db)
     except IntegrityError:
         # a concurrent delivery of this Message-ID committed first: the index decides
         if (raced := _media_for(db, message_id)) is None:

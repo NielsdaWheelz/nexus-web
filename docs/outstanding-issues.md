@@ -63,7 +63,6 @@ area · opened YYYY-MM-DD by <who> · P2
 
 - [open] shared collections / accessibility · 2026-10-14 live qualification · enlarged text clips reading facts at narrow widths: [ticket](tickets/collection-metadata-clips-with-enlarged-text.md).
 
-- [open] suggestions / focus · 2026-10-14 source review · async add completion can reclaim focus the user moved: [ticket](tickets/suggestion-add-can-reclaim-moved-focus.md).
 - [open] release / provider credentials · 2026-10-14 release · local and production openai/brave exposure confirmed; owner explicitly deferred rotation: [ticket](tickets/metadata-qualification-provider-key-output.md).
 - [open] web / workspace persistence · 2026-10-13 add/import live verification · p2 · context teardown can reach workspace save without its body: [ticket](tickets/workspace-session-unload-can-send-empty-body.md).
 - [deferred] nexus query / share extraction · 2026-10-13 add/import cutover · shared prose extraction still combines ambiguous urls and strips valid punctuation; add is repaired: [ticket](tickets/add-link-paste-mutates-url-input.md).
@@ -404,3 +403,5 @@ unexpected timeouts. See
 
 - [open] reader / evidence editor · 2026-10-15 · externally detached notes can remain in the attached editor: [ticket](tickets/evidence-note-editor-survives-external-detachment.md).
 - [open] web / nexus launch · 2026-10-15 chooser integration · a click on the server-rendered add control before hydration is lost before reaching the existing receiver queue: [ticket](tickets/nexus-launch-click-before-hydration-is-lost.md).
+- [open] web / read transport · 2026-10-14 latency diagnosis · ordinary browser reads have no total deadline through body consumption and retries: [ticket](tickets/browser-read-deadline-does-not-cover-response-body.md).
+- [open] web / api transport · 2026-10-15 suggestions review · proxy incoming post-body acquisition can outlive its upstream deadline: [ticket](tickets/proxy-incoming-body-is-outside-cancellation.md).

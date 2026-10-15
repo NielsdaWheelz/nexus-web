@@ -37,6 +37,7 @@ from nexus.schemas.library_members import (
 )
 from nexus.services import libraries
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
+from nexus.services.suggestion_changes import record_input_change
 
 _NEWEST = (
     SortKey("created_at", "desc", KeysetValueKind.DateTime),
@@ -130,6 +131,7 @@ def set_member_role(
                 """),
                 params,
             )
+            record_input_change(db)
 
     retry_serializable(db, "set_member_role", attempt)
 
@@ -161,6 +163,7 @@ def remove_member(db: Session, viewer_id: UUID, library_id: UUID, user_id: UUID)
             )
             if removed is not None:
                 on_visibility_lost(db, user_id=user_id)
+                record_input_change(db)
 
     retry_serializable(db, "remove_member", attempt)
 
@@ -195,6 +198,7 @@ def transfer_ownership(db: Session, viewer_id: UUID, library_id: UUID, user_id: 
                 """),
                 params,
             )
+            record_input_change(db)
 
     retry_serializable(db, "transfer_ownership", attempt)
 
@@ -347,6 +351,7 @@ def respond_to_invitation(
                     """),
                     {"library_id": row.library_id, "viewer_id": viewer_id, "role": row.role},
                 )
+                record_input_change(db)
 
     retry_serializable(db, "respond_to_invitation", attempt)
 

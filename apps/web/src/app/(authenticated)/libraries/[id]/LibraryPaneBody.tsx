@@ -10,7 +10,9 @@ import { useCallback, useId, useMemo, useState } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
-import SuggestionsSection, { suggestionTargetId } from "@/components/collections/SuggestionsSection";
+import SuggestionsSection from "@/components/collections/SuggestionsSection";
+import { suggestionTargetId } from "@/lib/suggestions";
+import { useSuggestions } from "@/lib/useSuggestions";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import LibraryMembers, { useLibraryMembers } from "@/components/libraries/LibraryMembers";
@@ -128,6 +130,9 @@ function LibraryPane({ id }: { readonly id: string }) {
   // A 404 on the first read or a reread: the library is gone for the viewer.
   const missing = detail.status !== "loading" && detail.error?.status === 404;
   const library = !missing && detail.status === "ready" ? detail.data : null;
+  const suggestionDestination = { kind: "Library" as const, id, name: library ? libraryDisplayName(library) : "library" };
+  const suggestions = useSuggestions(suggestionDestination, active && library !== null);
+  const { refresh: refreshSuggestionFeed } = suggestions;
   const consumption = useChangeStamp("Consumption");
   // Views whose rows or order move with reading and listening reread with it.
   const followsConsumption =
@@ -259,12 +264,18 @@ function LibraryPane({ id }: { readonly id: string }) {
   // Refresh asks the library's shows to sync, then rereads the library.
   const execute = useCallback<PaneRefreshExecute>(
     async (context) => {
-      const result = await podcastRefresh({ kind: "Library", library_id: id })(context);
+      const [result, requested] = await Promise.all([
+        podcastRefresh({ kind: "Library", library_id: id })(context),
+        refreshSuggestionFeed(context.signal),
+      ]);
       refetchDetail();
       await refetchEntries().catch(() => {});
-      return result;
+      return requested ? result : {
+        kind: result.kind === "Complete" ? "Partial" : result.kind,
+        announcement: `${result.announcement}. couldn’t request suggestions.`,
+      };
     },
-    [id, refetchDetail, refetchEntries],
+    [id, refetchDetail, refetchEntries, refreshSuggestionFeed],
   );
   // Leaving asks first in the pane; the left library's panes settle like a deleted one's.
   const workspace = useLatestWorkspace();
@@ -495,17 +506,15 @@ function LibraryPane({ id }: { readonly id: string }) {
             : undefined
         }
       />
-      {list.complete ? (
-        <SuggestionsSection
-          kind="Library"
-          library={{ id, name }}
-          isActive={active}
+      <SuggestionsSection
+          destination={suggestionDestination}
+          suggestions={suggestions}
+          returnScope="Library.Suggestions"
           accept={async (target) => {
             const accepted = await addToLibrary({ kind: target.kind, id: suggestionTargetId(target) }, id);
             return accepted ? "Accepted" : "Retained";
           }}
         />
-      ) : null}
     </PaneSurface>
   );
 }

@@ -33,6 +33,7 @@ from nexus.services.media_source_ingest import (
 )
 from nexus.services.oracle.synthesis import Candidate
 from nexus.services.search.semantic import Embedding, nearest_chunks
+from nexus.services.suggestion_changes import record_input_change
 
 SYSTEM_KEY = "oracle_corpus"
 TOKEN = re.compile(r"[a-z]{3,}")
@@ -298,6 +299,7 @@ def seed(session_factory: sessionmaker[Session], *, owner_user_id: UUID) -> dict
     for work in works():
         with session_factory() as db:
             counts.update(_seed_work(db, work=work, library_id=library_id, owner=owner_user_id))
+            record_input_change(db)
             db.commit()
     with session_factory() as db:
         kept = [f"{work.key}/{p.key}" for work in works() for p in work.passages]

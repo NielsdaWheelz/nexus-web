@@ -1,0 +1,86 @@
+{
+  "format": "suggestions-remote-cleanup-v1",
+  "completed_at": "2026-10-15T09:23:25.877839+00:00",
+  "owner": "suggestions-publication-20261015",
+  "source_sha": "2a856b824e22736d7176b1d900e5c4df04080569",
+  "removed_containers": [
+    {
+      "name": "nexus-suggestions-qualification-api",
+      "id": "589e60743d729f44ef3b052b904c8431859c1eb9dfa502634ba219bc178984c8",
+      "ownership_checked": true,
+      "stopped_and_removed": true
+    },
+    {
+      "name": "nexus-suggestions-qualification-worker",
+      "id": "1dfa0836e02b546fda6fc33dc24b945853860fff1eee13b290db05233308e4c7",
+      "ownership_checked": true,
+      "stopped_and_removed": true
+    },
+    {
+      "name": "nexus-suggestions-qualification-library-worker",
+      "id": "28cab80cde07ccea9e7391f40c08b315aafc0d4705a275635163b706dc8493e3",
+      "ownership_checked": true,
+      "stopped_and_removed": true
+    }
+  ],
+  "postgres": {
+    "name": "nexus-suggestions-production-shape",
+    "id": "f5ebe5b32e08585c32a9f5fd20a0bb74a43f2ae75ff36522bd9d02e68490857d",
+    "stopped": true,
+    "exit_code": 0,
+    "retained_for_recovery_configuration": true,
+    "mounts_unchanged": true
+  },
+  "preserved_volumes": [
+    {
+      "name": "nexus-suggestions-production-shape-data",
+      "driver": "local",
+      "created_at": "2026-10-15T07:00:39Z",
+      "metadata_identical": true,
+      "control_system_id_after_stop": "7696786006199500844",
+      "control_cluster_state_after_stop": "shut down"
+    }
+  ],
+  "logical_database_before_stop": {
+    "database_system_id": "7696786006199500844",
+    "schema": "0279",
+    "media": 766,
+    "embeddings": 717006,
+    "feeds": 4,
+    "shortlists": 4,
+    "database_bytes": 4783291751
+  },
+  "all_preexisting_remote_volume_names_preserved": true,
+  "data_verification": "read-only catalog counts before shutdown; unchanged retained mount and volume metadata; matching database system identity and clean shutdown verified afterward through a temporary read-only volume mount; no volume or database-data deletion commands executed",
+  "temporary_files": {
+    "directory": "/tmp/nexus-suggestions-campaign",
+    "files_removed": 944,
+    "top_level_entries_removed": 36,
+    "ownership_names_checked": true,
+    "directory_absent": true,
+    "sanitized_receipts_copied_before_deletion": true
+  },
+  "excluded_source": {
+    "name": "nexus-repairs-rehearsal-20261014-postgres",
+    "id": "d060608c78a2003ef9f26320c807a772db719c8eed54882a9ad67f598d7cb3d4",
+    "state_and_mounts_unchanged": true
+  },
+  "retained_network": "nexus-suggestions-production-shape",
+  "explicit_exclusions": [
+    "all task and foreign volumes and data",
+    "retained source rehearsal database",
+    "all foreign and production services",
+    "docker images and caches",
+    "local campaign services, which root owns"
+  ],
+  "no_prune_or_volume_removal": true,
+  "ssh_tunnel": {
+    "pid": 90830,
+    "exact_args_checked": true,
+    "local_forward": "127.0.0.1:38389 -> remote 127.0.0.1:38389",
+    "reverse_forward": "remote 127.0.0.1:35981 -> local 127.0.0.1:59811",
+    "terminated": true,
+    "process_absent": true,
+    "local_forward_closed": true
+  }
+}

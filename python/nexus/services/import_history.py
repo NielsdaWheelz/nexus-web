@@ -56,6 +56,7 @@ from nexus.schemas.import_history import (
     queue_failure_code,
 )
 from nexus.services.source_types import source_failure_progress, source_history_stage
+from nexus.services.suggestion_changes import record_input_change
 
 _APPEND_UPLOAD_EVENT = text(
     """
@@ -357,6 +358,10 @@ def on_source_job_outcome(db: Session, job: JobRow, execution_id: UUID) -> None:
         .one_or_none()
     )
     if attempt is None:
+        if job.status == "dead":
+            # The preceding source on_dead reaction may have published failure.
+            # Its final history reaction owns invalidation after all source writes.
+            record_input_change(db)
         return
     failure, terminal, next_at = _queue_outcome(job)
     stage: Stage | None = source_history_stage(

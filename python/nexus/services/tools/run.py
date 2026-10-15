@@ -75,6 +75,7 @@ from nexus.services.chat.citations import number_candidates
 from nexus.services.chat.retrievals import RetrievalCitation, insert_retrieval
 from nexus.services.generation.contract import Owner
 from nexus.services.generation.ledger import lock_open_generation
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.tools import contract, memory, reads, writes
 
 type ArgumentRefusal = Literal["InvalidJson", "InputTooLarge"]
@@ -384,6 +385,8 @@ def _complete(call: Call, position: int, result: ToolResult) -> str:
     model_text = encoded.decode()
     if chat_run is not None:
         model_text = _project(call, chat_run, position, result) or model_text
+    if result["type"] == "Success" and call.tool_id in contract.WRITES:
+        record_input_change(db)
     db.commit()
     return model_text
 

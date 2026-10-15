@@ -62,7 +62,7 @@ once the reread says the viewer no longer manages the library.
 | `PUT /libraries/{id}/items/{ref} {replace_episodes}` → 204 | file a media (All = Saved in Nexus) or a followed show (named only) | keyed by (library, item): a no-op when already there |
 | `DELETE /libraries/{id}/items/{ref}` → 204 | the last entry of a media anywhere → 409 `E_MEDIA_LAST_REFERENCE` | absent → 204 |
 | `GET /libraries/destinations`, `GET /extension/library-destinations` | complete `[{id,name}]` of named libraries the viewer admins; query parameters rejected | read |
-| `GET /libraries/{id}/suggestions` | the Reading Slate (below) | read |
+| `GET /libraries/{id}/suggestions`, `POST .../view`, `POST .../refresh` | published shortlist, independent eligibility read, coalesced admission (below) | reads; refresh admits background work |
 | `GET /libraries/{id}/members?cursor&limit` | admin; `{user_id, role, is_owner, email, display_name, created_at}` by user id | read |
 | `PATCH /libraries/{id}/members/{user_id} {role, expected_role}` → 204 | admin of a mutable library; the owner's role is fixed (403 `E_OWNER_EXIT_FORBIDDEN`) | already that role → ok; changed meanwhile → 409 `{current_role}` |
 | `DELETE /libraries/{id}/members/{user_id}` → 204 | admin, or the viewer themself; never the owner | absent, or a library the viewer cannot see → 204 |
@@ -153,10 +153,14 @@ reread (deleted meanwhile, or the viewer left or was removed).
 
 ## Reading Slate
 
-`services/suggestions.py` owns relevance (see [connections](connections.md)).
-`GET /libraries/{id}/suggestions` returns up to ten suggestions outside the
-library's complete placement, related to one of five anchors; member-only and
-system libraries get none. Add files through the placement route.
+`services/suggestions.py` owns relevance; the
+[shortlist owner](suggestions.md) publishes up to 80 candidate refs outside the
+complete placement. delivery checks current authority and eligibility; member-only
+and system libraries expose no content. the pane displays ten, retains survivor
+order and refills locally after acknowledgement. add uses the current placement
+route, including all. metadata, canonical entries and published suggestions seed
+independently under their existing server-state keys; entry pagination cannot
+gate suggestions, and a filtered entry query cannot consume the canonical seed.
 
 ## System libraries
 

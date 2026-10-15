@@ -60,6 +60,7 @@ from nexus.services.resource_graph.resolve import assert_ref_visible, resolve_re
 from nexus.services.resource_items import versions
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.routing import resource_activations_for_refs
+from nexus.services.suggestion_changes import record_input_change
 
 
 @dataclass(slots=True)
@@ -104,6 +105,8 @@ def execute(
         outlines = [read(db, viewer_id=viewer_id, ref=ref) for ref in touched if _alive(db, ref)]
         nodes = _nodes(db, viewer_id, [ref for ref in written if _alive(db, ref)])
         deleted = [ref.uri for ref in touched if not _alive(db, ref)]
+        if commands:
+            record_input_change(db)
         db.commit()
         return OutlineCommandsOut(outlines=outlines, nodes=nodes, deleted=deleted)
 

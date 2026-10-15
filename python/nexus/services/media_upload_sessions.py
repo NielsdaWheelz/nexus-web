@@ -75,6 +75,7 @@ from nexus.services.import_history import (
     delete_upload_history_in_current_transaction,
 )
 from nexus.services.media_processing_state import mark_extracting
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.url_normalize import normalize_url_for_display
 from nexus.storage.client import StorageClient, StorageError, get_storage_client
 from nexus.storage.paths import (
@@ -411,7 +412,9 @@ def confirm_session(
             failure_code=None,
         )
         logger.info("upload_published", upload_session_id=str(session_id), media_id=str(media.id))
-        return _published(session)
+        result = _published(session)
+        record_input_change(db)
+        return result
 
 
 def _new_media(
