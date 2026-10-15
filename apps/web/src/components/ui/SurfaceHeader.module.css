@@ -79,20 +79,28 @@
 
 .statusMarker {
   position: absolute;
-  inset-block-start: 4px;
-  inset-inline-end: 4px;
+  /* The bordered button replaces the borderless menu wrapper as its anchor. */
+  inset-block-start: calc(4px - 1px);
+  inset-inline-end: calc(4px - 1px);
   inline-size: 5px;
   block-size: 5px;
   border-radius: var(--radius-full);
   background: var(--accent);
+  pointer-events: none;
 }
 
-/* Pane chrome's 32px control, taller than Button's sm; pressed outranks
-   Button's ghost hover, whatever the stylesheet order. */
+/* This header owns both axes through Button's existing density contract. */
 .trailing .companion {
-  height: var(--size-md);
+  --pane-control-size: var(--size-md);
 }
 
+@media (any-pointer: coarse) {
+  .trailing .companion {
+    --pane-control-size: var(--size-xl);
+  }
+}
+
+/* Pressed outranks Button's ghost hover, whatever the stylesheet order. */
 .trailing .pressed,
 .trailing .pressed:hover:not(:disabled) {
   background: var(--surface-active);
@@ -204,6 +212,11 @@
 }
 
 @media (forced-colors: active) {
+  .statusMarker {
+    background: currentColor;
+    forced-color-adjust: none;
+  }
+
   .header,
   :global([data-theme="elvish"] [data-pane-shell]:focus-within) .header {
     border-block-end-color: CanvasText;

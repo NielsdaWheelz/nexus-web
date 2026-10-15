@@ -1,0 +1,22 @@
+{
+  "baseline": "7bc7c8a13d7f0c866bef49ad1fc218b603393594",
+  "source_sha256": "02538018251608745b2609cadcf206024fdc75d4a90eeb3bcb2a330afb5d7016",
+  "files": [
+    "apps/web/src/app/(authenticated)/media/[id]/SelectionDock.tsx",
+    "apps/web/src/app/(authenticated)/media/[id]/media.module.css",
+    "apps/web/src/components/appnav/AppNav.module.css",
+    "apps/web/src/components/appnav/MobilePaneBar.tsx",
+    "apps/web/src/components/collections/CollectionRow.tsx",
+    "apps/web/src/components/nexus/Nexus.module.css",
+    "apps/web/src/components/nexus/desktop/DesktopNexus.tsx",
+    "apps/web/src/components/resources/ContextEdgeMenu.module.css",
+    "apps/web/src/components/resources/ContextEdgeMenu.tsx",
+    "apps/web/src/components/switchboard/SwitchboardTask.tsx",
+    "apps/web/src/components/ui/ActionMenu.module.css",
+    "apps/web/src/components/ui/ActionMenu.tsx",
+    "apps/web/src/components/ui/OverflowMenuButton.module.css",
+    "apps/web/src/components/ui/OverflowMenuButton.tsx",
+    "apps/web/src/components/ui/SurfaceHeader.module.css",
+    "apps/web/src/components/ui/SurfaceHeader.tsx"
+  ]
+}

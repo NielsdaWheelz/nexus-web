@@ -68,6 +68,28 @@ first client render already have the reader's width. During a session `AppNav`
 holds it above its mobile switch, so a resize or rotation across the
 breakpoint, which unmounts the rail, keeps the reader's latest choice.
 
+## desktop launcher and collapsed help
+
+the desktop entrance is a native `Search` button: a 20px magnifier, the same
+row geometry/type as destinations, and the existing platform shortcut. its
+transparent rest state has no field border or destination-selection marker.
+activation opens the existing nexus root; its `Find anything…` query owns input
+and focus. the launcher has no query state.
+
+collapsed help names the launcher plus its shortcut and retains destination
+labels. `components/appnav/useRailTooltip.tsx` owns one caption for the launcher
+and `NAV_RAIL` links. mouse/pen entry or keyboard-visible focus reveals it;
+trigger focus or pointer presence over trigger, connecting corridor or caption
+retains it. plain escape dismisses without moving focus or reaching underlying
+escape actions. modified/composing keys and another interaction owner retain
+their existing handling. cleared help reopens only on a fresh entry/focus event.
+
+help is text-only and nonfocusable. only its active trigger describes the
+positioned, visible caption. activation, expansion, desktop unmount, a wholly
+clipped anchor or modal coverage clears it. positioning follows scroll/resize;
+footer controls and mobile keep their existing entrances. the passive overlay
+contract is documented in [overlays](overlays.md#passive-navigation-help).
+
 ## Nexus content grammar
 
 Nexus is one typed intent router with platform-native renderers. Its input is
@@ -148,7 +170,8 @@ actions remain accessible through nexus and ordinary controls.
 | Nexus sections, Places projection, ranking, caps, and stability  | `apps/web/src/lib/nexus/rows.ts`                                                                                   |
 | Nexus retrieval, latency gate, and history writes                | `apps/web/src/lib/nexus/useNexusFind.ts`                                                                           |
 | Route-to-semantic-section ownership                               | section `header.destinationId`, or resource `sectionDestinationId`, in `apps/web/src/lib/panes/paneRouteModel.ts` |
-| The rail itself: activation, collapse, indicator, tooltip, commands | `apps/web/src/components/appnav/AppNav.tsx`                                                                     |
+| The rail itself: activation, collapse, indicator, commands | `apps/web/src/components/appnav/AppNav.tsx`                                                                     |
+| collapsed rail help and dismissal | `apps/web/src/components/appnav/useRailTooltip.tsx` |
 | Mobile top bar                                                     | `apps/web/src/components/appnav/MobilePaneBar.tsx` over `lib/mobileShell/chrome.tsx`                            |
 | Internal-link gesture policy                                      | `apps/web/src/lib/panes/targetLinkActivation.ts`                                                                  |
 | Target selection, restoration, creation, and activation           | `activateWorkspaceTarget` in `apps/web/src/lib/workspace/store.tsx`                                               |
