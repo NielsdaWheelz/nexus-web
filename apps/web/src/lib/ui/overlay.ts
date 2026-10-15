@@ -1,9 +1,10 @@
 "use client";
 
 // The overlay stack (docs/modules/overlays.md). Every open dialog, sheet, task,
-// menu, chooser, floating surface and preview is a layer, in activation order.
-// One owner answers Escape, Back and global commands: the newest eligible
-// transient of the newest modal, else that modal; with no modal, the newest
+// menu, chooser, floating surface and preview is a layer, in activation order;
+// tooltips register while pending or visible. One interactive owner answers
+// Escape, Back and global commands: the newest eligible transient of the newest
+// modal, else that modal; with no modal, the newest
 // eligible page transient. A press outside transients closes them, newest
 // first; a modal's scrim closes it only on a click that starts and ends there.
 // While any modal is open exactly one synthetic history entry exists, so Back
@@ -12,7 +13,9 @@
 // Escape and Tab are read by a document listener installed with the first
 // layer, after React's root listeners: a component's own key handler runs
 // first and keeps a key by preventing its default. A feature's global Escape
-// command must yield while hasActiveInteractionOwner().
+// command must yield while hasActiveInteractionOwner(). Tooltip Escape runs in
+// capture: it cancels pending hints and, without an interactive owner, dismisses
+// the newest visible hint before the focused control can handle that key.
 
 import {
   createContext,
@@ -30,25 +33,40 @@ export type ReturnFocusTarget = () =>
   | { readonly element: HTMLElement; readonly preventScroll: true }
   | null;
 
-export interface OverlayOptions {
-  readonly kind: "modal" | "transient";
+export type OverlayOptions = {
   /** The one dismissal entry point; the feature closes by changing its state. */
   readonly onDismiss: (reason: DismissReason) => void;
-  /** A transient's own boxes: a press there is not outside. Absent: no press closes it. */
-  readonly inside?: () => readonly (Element | null)[];
-  /** Read at dispatch: false passes Escape and Back to the next layer. */
-  readonly eligible?: () => boolean;
-  /** Names the layer for isTopmostInteractionOwner. */
-  readonly scope?: string;
-  /** A modal always returns focus when it closes; a transient only when set. */
-  readonly returnFocus?: boolean;
-  readonly returnFocusTo?: ReturnFocusTarget;
-  readonly returnFocusFallback?: ReturnFocusTarget;
-  /** Read at close: true when the close already put focus elsewhere. */
-  readonly skipReturnFocus?: () => boolean;
-  /** Opt-in transient Tab exit. Its controls precede the next control after its opener. */
-  readonly tabContinuation?: () => HTMLElement | null;
-}
+} & (
+  | {
+      readonly kind: "modal" | "transient";
+      /** A transient's own boxes: a press there is not outside. Absent: no press closes it. */
+      readonly inside?: () => readonly (Element | null)[];
+      /** Read at dispatch: false passes Escape and Back to the next layer. */
+      readonly eligible?: () => boolean;
+      /** Names the layer for isTopmostInteractionOwner. */
+      readonly scope?: string;
+      /** A modal always returns focus when it closes; a transient only when set. */
+      readonly returnFocus?: boolean;
+      readonly returnFocusTo?: ReturnFocusTarget;
+      readonly returnFocusFallback?: ReturnFocusTarget;
+      /** Read at close: true when the close already put focus elsewhere. */
+      readonly skipReturnFocus?: () => boolean;
+      /** Opt-in transient Tab exit. Its controls precede the next control after its opener. */
+      readonly tabContinuation?: () => HTMLElement | null;
+    }
+  | {
+      readonly kind: "tooltip";
+      readonly inside: () => readonly (Element | null)[];
+      /** Registered while pending or visible; true only while visible. */
+      readonly eligible: () => boolean;
+      readonly scope?: never;
+      readonly returnFocus?: never;
+      readonly returnFocusTo?: never;
+      readonly returnFocusFallback?: never;
+      readonly skipReturnFocus?: never;
+      readonly tabContinuation?: never;
+    }
+);
 
 export interface Layer {
   /** The modal this layer renders inside (React context), or null on the page. */
@@ -56,7 +74,7 @@ export interface Layer {
   readonly options: { readonly current: OverlayOptions };
   /** A modal's role="dialog" panel: the Tab trap root and its transients' container. */
   element: HTMLElement | null;
-  /** The trigger, captured at open: where focus goes back to. */
+  /** The interactive layer's trigger, captured at open; tooltips keep null. */
   opener: ReturnType<ReturnFocusTarget>;
   /** The last dismissal dispatched to it. */
   reason: DismissReason | null;
@@ -77,7 +95,10 @@ function owner(): Layer | undefined {
   const eligible = (layer: Layer) => layer.options.current.eligible?.() ?? true;
   return (
     layers.findLast(
-      (layer) => layer.parent === modal && !isModal(layer) && eligible(layer),
+      (layer) =>
+        layer.parent === modal &&
+        layer.options.current.kind === "transient" &&
+        eligible(layer),
     ) ?? (modal && eligible(modal) ? modal : undefined)
   );
 }
@@ -89,6 +110,11 @@ function dispatch(layer: Layer, reason: DismissReason): void {
 
 export function hasActiveInteractionOwner(): boolean {
   return owner() !== undefined;
+}
+
+/** Observes interactive ownership without registering a layer. */
+export function useHasActiveInteractionOwner(): boolean {
+  return useSyncExternalStore(subscribe, hasActiveInteractionOwner, () => false);
 }
 
 export function isTopmostInteractionOwner(scope: string): boolean {
@@ -213,6 +239,24 @@ function onPopState(): void {
   queueMicrotask(syncHistory);
 }
 
+function onTooltipEscape(event: KeyboardEvent): void {
+  if (event.key !== "Escape" || event.defaultPrevented || event.isComposing)
+    return;
+  const modal = topModal();
+  const interactionOwned = owner() !== undefined;
+  let visible: Layer | null = null;
+  for (const layer of layers.toReversed()) {
+    const options = layer.options.current;
+    if (options.kind !== "tooltip") continue;
+    if (!options.eligible()) dispatch(layer, "escape");
+    else if (visible === null && layer.parent === modal) visible = layer;
+  }
+  if (interactionOwned || visible === null) return;
+  event.preventDefault();
+  event.stopPropagation();
+  dispatch(visible, "escape");
+}
+
 function onKeyDown(event: KeyboardEvent): void {
   if (event.defaultPrevented || event.isComposing) return;
   if (event.key === "Escape") {
@@ -278,11 +322,14 @@ function onPointerDown(event: PointerEvent): void {
   scrimPress = null;
   let closed = false;
   for (const layer of layers.toReversed()) {
-    const { inside } = layer.options.current;
-    if (layer.parent !== modal || isModal(layer) || !inside) continue;
-    if (inside().some((element) => element?.contains(target))) return;
-    dispatch(layer, "outside");
-    closed = true;
+    const { kind, inside } = layer.options.current;
+    if (layer.parent !== modal || kind === "modal" || !inside) continue;
+    if (inside().some((element) => element?.contains(target))) {
+      if (kind === "transient") return;
+    } else {
+      dispatch(layer, "outside");
+      if (kind === "transient") closed = true;
+    }
   }
   if (!closed && modal && target === modal.element?.parentElement) {
     scrimPress = modal;
@@ -307,6 +354,7 @@ let installed = false;
 function install(): void {
   if (installed) return;
   installed = true;
+  document.addEventListener("keydown", onTooltipEscape, true);
   document.addEventListener("keydown", onKeyDown);
   document.addEventListener("pointerdown", onPointerDown, true);
   document.addEventListener("click", onClick, true);
@@ -334,7 +382,7 @@ function subscribe(listener: () => void): () => void {
 /** Provided by ModalFrame: the modal its children render inside. */
 export const OverlayContext = createContext<Layer | null>(null);
 
-/** Where a transient renders: its containing modal's panel, else the body. */
+/** Where a transient or tooltip renders: its containing modal's panel, else the body. */
 export function useOverlayContainer(): HTMLElement | null {
   const parent = useContext(OverlayContext);
   if (typeof document === "undefined") return null;
@@ -344,7 +392,7 @@ export function useOverlayContainer(): HTMLElement | null {
 /**
  * Keeps a layer on the stack while `open`. `topmost` is false while a newer
  * modal covers the layer (or its containing modal); `depth` is a modal's index
- * among open modals.
+ * among open modals. Tooltips register while pending or visible.
  */
 export function useOverlay(
   open: boolean,
@@ -367,7 +415,9 @@ export function useOverlay(
 
   useLayoutEffect(() => {
     if (!open) return;
-    layer.opener = optionsRef.current.returnFocusTo?.() ?? trigger();
+    const opening = optionsRef.current;
+    layer.opener =
+      opening.kind === "tooltip" ? null : (opening.returnFocusTo?.() ?? trigger());
     layer.reason = null;
     install();
     layers.push(layer);

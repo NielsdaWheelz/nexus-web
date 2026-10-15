@@ -1,0 +1,140 @@
+{
+  "project": "nexus-pane-return-20261015",
+  "startedAt": "2026-10-15T07:54:50.736462+00:00",
+  "removed": {
+    "processes": [
+      {
+        "pid": 98442,
+        "pgid": 98442
+      },
+      {
+        "pid": 98443,
+        "pgid": 98443
+      },
+      {
+        "pid": 98445,
+        "pgid": 98443
+      },
+      {
+        "pid": 98547,
+        "pgid": 98443
+      }
+    ],
+    "containers": [
+      {
+        "name": "nexus-pane-return-20261015-worker-background-1",
+        "id": "adea0059bb67348d9a077bb57c5fd78d6a6acd4441d6bcc5af381946ba5df4e9"
+      },
+      {
+        "name": "supabase_inbucket_nexus-pane-return-20261015",
+        "id": "9058bdc3656ea621a54a59471e833f59d662dfe494f47be8b41eb3abb3dbcf63"
+      },
+      {
+        "name": "supabase_auth_nexus-pane-return-20261015",
+        "id": "f8cd94c26f3ba85adf99a1e1c0a39bfcfd7487f27acc293ef7a1acc1a675837e"
+      },
+      {
+        "name": "supabase_kong_nexus-pane-return-20261015",
+        "id": "8c04db57d91d60dfe14d438131a477599435578bc2ba0654337dcacfcc63d299"
+      },
+      {
+        "name": "supabase_db_nexus-pane-return-20261015",
+        "id": "e529b22def3158b03a0c1f4606afe0a4ba7a96b0232e20d42b5b56b0132e2b1d"
+      },
+      {
+        "name": "nexus-pane-return-20261015-postgres-1",
+        "id": "d197ae8f0df6a8d56a5b017868c312437e706e1292dcf70ed00574f521bf6c82"
+      },
+      {
+        "name": "nexus-pane-return-20261015-minio-1",
+        "id": "e84e44c284714f8f71cf50d740cef52c952d30f32ef1e7878507edea1964c6e3"
+      }
+    ],
+    "volumes": [
+      "nexus-pane-return-20261015_minio-data",
+      "nexus-pane-return-20261015_postgres-data",
+      "supabase_db_nexus-pane-return-20261015"
+    ],
+    "networks": [
+      "nexus-pane-return-20261015_default",
+      "supabase_network_nexus-pane-return-20261015"
+    ],
+    "image": {
+      "tag": "nexus-pane-return-worker:20261015",
+      "id": "sha256:eae5ec5d15ac4f2b65cb3f07bdb19eab8a9e8b7ea3b3c2d0db6c99e94a29e5d3"
+    },
+    "worktreeSymlinks": [
+      "apps/web/node_modules",
+      "node/ingest/node_modules",
+      "python/.venv"
+    ],
+    "worktreeBuildCache": "apps/web/.next",
+    "privateProofEntries": [
+      "admission-private.json",
+      "app-env.json",
+      "artifacts",
+      "auth",
+      "auth-state.json",
+      "auth-status.json",
+      "auth-user.json",
+      "bootstrap.py",
+      "cleanup-task.py",
+      "compose.yml",
+      "credentials.json",
+      "fixture-private.json",
+      "harness",
+      "invitation-message.json",
+      "invitation-url.txt",
+      "lectern-private.json",
+      "logs",
+      "ports.json",
+      "prepare-fixture.py",
+      "processes.json",
+      "reader-return.epub",
+      "receipts",
+      "resume-apps.py",
+      "runtime-identity.json",
+      "stack.env",
+      "start-apps.py",
+      "worker-context",
+      "worker.env"
+    ]
+  },
+  "verification": {
+    "sourceUnchanged": true,
+    "containersAbsent": true,
+    "volumesAbsent": true,
+    "networksAbsent": true,
+    "imageAbsent": true,
+    "portsClosed": {
+      "3209": true,
+      "8209": true,
+      "28001": true,
+      "28002": true,
+      "28011": true,
+      "28012": true,
+      "28013": true,
+      "28014": true,
+      "28015": true,
+      "28019": true,
+      "28027": true
+    },
+    "recordedPidsAbsent": true,
+    "sharedDependenciesPresent": true,
+    "privateProofArtifactsAbsent": true
+  },
+  "sourceBefore": {
+    "head": "367da80e0c1beb1c426f6d2d72201b0733809b50",
+    "servedSourceTreeSha256": "9155f72b1886ccfa42e609903b431f8acd7e1ab9deb77a5db83306f28b27f642",
+    "webDiffSha256": "12cbaffcf51986fbaa3a18b606758822447b9518e3a25fe5516b2ba522ee0272",
+    "fileCount": 1168
+  },
+  "sourceAfter": {
+    "head": "367da80e0c1beb1c426f6d2d72201b0733809b50",
+    "servedSourceTreeSha256": "9155f72b1886ccfa42e609903b431f8acd7e1ab9deb77a5db83306f28b27f642",
+    "webDiffSha256": "12cbaffcf51986fbaa3a18b606758822447b9518e3a25fe5516b2ba522ee0272",
+    "fileCount": 1168
+  },
+  "completedAt": "2026-10-15T07:54:53.001079+00:00",
+  "complete": true
+}

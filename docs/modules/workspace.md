@@ -240,17 +240,30 @@ active, visible mobile find holds chrome. navigation/find disclosure and empty
 focused inputs survive an active-pane breakpoint change; source retirement
 ends disclosure and transient companion results.
 
-`PaneQueryToolbar` owns presentation: input/clear, optional submit/match actions,
-inline options disclosure and native sort. chips, status and expanded options
-share one bounded refinement region, capped by the shell's declared geometry
-contract. checkboxes represent booleans/sets; uniquely named radio groups
-represent singular choices. domains own options, draft/applied text, timing,
-results, urls and reset. clear removes draft AND applied text while retaining
-facets/order; browse immediately returns to its empty-query state. an aborted
-response cannot publish as current. browse labels its provider-scoped control
+`PaneQueryToolbar` owns presentation: a stable input/clear entry with optional
+submit, followed by operation actions, inline options disclosure and native
+sort. applied text, chips, status and reset share one compact summary; errors
+and expanded options remain in its single bounded refinement region, capped
+by the shell. submitted queries use a form; local filters/find use labelled
+groups, with details/options outside the form. checkboxes represent booleans/sets;
+uniquely named radio groups represent singular choices. domains own options,
+draft/applied text, timing, results, urls and reset. clear removes draft AND
+applied text while retaining facets/order; browse immediately returns to its
+empty-query state. an aborted response cannot publish as current. browse labels its provider-scoped control
 “youtube sort”; other sources keep relevance. newest survives facet removal
 while the planned sections include youtube and resets only when the scope
 excludes it.
+
+every status requires `{ id, content, visible }`. visibility changes only the
+wrapper's sighted presentation (`sr-only` when false); the described element
+and domain-owned live subtree stay mounted. collection publishers derive
+header metadata once and use `paneFilterRowsStatusVisible` to hide only a
+complete default-view count identical to the header's count of the same
+committed rows. one `canReset` predicate includes raw text, facets and sort;
+changed views retain status beside reset. resource row filters, browse,
+search, imports and find keep their distinct status visible. empty details
+have zero visual height and no tab stop; if they still own focus when emptied,
+the toolbar returns it to the input before paint.
 
 clear and reset preserve a live focus target; chip removal uses the surviving
 neighbour/input. options escape collapses only options, preserving selections.
@@ -270,6 +283,10 @@ query toolbar; companion results remain transient. current capability and
 keyboard details are specified in [the pane controls plan](../pane-controls-plan.md);
 its chrome sketch's `actionSubject?: ResourceActionSubject` is now
 `resourceRef?: CanonicalResourceRef`.
+current toolbar presentation is specified in the
+[query toolbar plan](../pane-query-toolbar-plan.md); its
+[verification](../pane-query-toolbar-verification.md) records browser and dom
+evidence, including native page/text zoom, with no spoken assistive-technology claim.
 
 A resource pane publishes only its canonical `resourceRef`
 (`CanonicalResourceRef`). `PaneShell` composes its pane commands and the body's
@@ -295,18 +312,28 @@ empty groups disappear. Route Share is omitted for a resource pane because its
 canonical plan owns Share. A single marker on More represents hidden status.
 Owner separation never creates a second trigger.
 
+the overflow control uses `OverflowMenuButton`: 32px desktop, at least 44px with a
+coarse pointer, and 48px in the mobile bar. its glyph and open/disabled/focus
+paint belong to the [visual system](visual-system.md#overflow-buttons).
+headers own only placement and the decorative status marker. the menu retains
+its existing commands, composition, refs and focus policy.
+
 Every primary identity projection uses one 60px track. The mobile safe area is
 additive.
 
 The sole promoted action is the typed companion action. `PaneShell` derives it
 (`companionAction` in `Companion.tsx`) iff the body publishes a Companion, and
 it is the only source of its name (`Inspector`), `PanelRight` icon and disclosure
-state; desktop renders it in `SurfaceHeader` as one labelled ghost `Button`
-(icon and label at natural width, 32px; the identity yields width first),
-mobile as an icon-only 48px bar button. Its open state is visually distinct and
-announced through `aria-expanded`; `aria-controls` names the
-mounted region while open, and the hover title is the projected
-`Show inspector`/`Hide inspector` command copy.
+state. both headers render its decorative 20px glyph with the stable accessible
+name `Inspector`. desktop uses an icon-only ghost `Button`: the header sets its
+local `--pane-control-size` to 32px, or 44px when any coarse pointer is available;
+mobile keeps its 48px bar button. its open state is visually distinct and
+announced through `aria-expanded`; `aria-controls` names the mounted region
+while open. the shared text-only `Tooltip` shows the projected
+`Show inspector`/`Hide inspector` command copy on mouse/pen hover or keyboard
+focus, including mobile keyboard use. it preserves button focus and ordinary
+commands; touch only activates the inspector. its lifecycle and passive overlay
+contract live in [overlays](overlays.md).
 
 `ContextualActionMenu` projects every remaining command through the existing
 `ActionMenu` in desktop and mobile chrome. `ReaderNavigation` presents canonical

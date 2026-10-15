@@ -120,6 +120,7 @@ const FindBar = forwardRef<
         }}
         status={{
           id: statusId,
+          visible: true,
           content: <span id={statusId} className={styles.status} role="status" aria-live="polite" aria-atomic="true">
             {find ? status(find.result) : "Find is not ready."}
           </span>,

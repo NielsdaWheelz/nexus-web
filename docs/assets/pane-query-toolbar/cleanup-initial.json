@@ -1,0 +1,145 @@
+{
+  "project": "nexus-pane-query-20261014",
+  "startedAt": "2026-10-15T07:34:23.000763+00:00",
+  "removed": {
+    "processes": [
+      {
+        "pid": 58986,
+        "pgid": 58986
+      },
+      {
+        "pid": 58987,
+        "pgid": 58987
+      },
+      {
+        "pid": 58988,
+        "pgid": 58987
+      },
+      {
+        "pid": 59005,
+        "pgid": 58987
+      }
+    ],
+    "containers": [
+      {
+        "name": "nexus-pane-query-20261014-worker-background-1",
+        "id": "db81e8eedbbb9a637a85063504987ccda32f31c7d0fc21e36d4ab6678d5e0641"
+      },
+      {
+        "name": "supabase_inbucket_nexus-pane-query-20261014",
+        "id": "59356b8755cfe7f9ec8a0fe424dad684f8579e16abc9ef36a50bb608e7486d89"
+      },
+      {
+        "name": "supabase_auth_nexus-pane-query-20261014",
+        "id": "57c83dd09e6701a8924d4dc382c014537bbf8688d1c43e6908a34336ed01c2a9"
+      },
+      {
+        "name": "supabase_kong_nexus-pane-query-20261014",
+        "id": "dfcb4ac71f34f749b7cd31307326cefca5a9676191d9603d9f02f4bc39df6658"
+      },
+      {
+        "name": "supabase_db_nexus-pane-query-20261014",
+        "id": "5668ddcd5f5ed12019f10e81af83e9fedc5c67652d81b6c36b09dc7a5adfb8ed"
+      },
+      {
+        "name": "nexus-pane-query-20261014-postgres-1",
+        "id": "4674473a8b987a8df81ed73b2a28055ff8aeb8f7c6753dc89f6cef3601a2e508"
+      },
+      {
+        "name": "nexus-pane-query-20261014-minio-1",
+        "id": "c4120021699e273fe46d2e8156cf0b831925fc8778f1666cd9f9c57674f72468"
+      }
+    ],
+    "volumes": [
+      "nexus-pane-query-20261014_minio-data",
+      "nexus-pane-query-20261014_postgres-data",
+      "supabase_db_nexus-pane-query-20261014"
+    ],
+    "networks": [
+      "nexus-pane-query-20261014_default",
+      "supabase_network_nexus-pane-query-20261014"
+    ],
+    "image": {
+      "tag": "nexus-pane-query-worker:20261014",
+      "id": "sha256:8fdac272dc09828b38bc62ebaa8bbf9e0a378417d5c8891d3725618aa06c3f9f"
+    },
+    "worktreeSymlinks": [
+      "apps/web/node_modules",
+      "node/ingest/node_modules",
+      "python/.venv"
+    ],
+    "worktreeBuildCache": "apps/web/.next",
+    "privateProofEntries": [
+      "app-env.json",
+      "artifacts",
+      "auth",
+      "auth-state.json",
+      "auth-status.json",
+      "auth-user.json",
+      "bootstrap.py",
+      "cleanup-inventory.json",
+      "cleanup-processes.json",
+      "cleanup-task.py",
+      "compose.override.yml",
+      "credentials.json",
+      "document-private.json",
+      "fixtures.json",
+      "harness",
+      "invitation-mail.json",
+      "invitation-url.txt",
+      "logs",
+      "mail-list.json",
+      "native-zoom",
+      "ports.json",
+      "prepare-worker.py",
+      "processes.json",
+      "proof.epub",
+      "receipts",
+      "runtime-identity.json",
+      "stack.env",
+      "start-apps.py",
+      "surface-private.json",
+      "upload-private.json",
+      "worker-context",
+      "worker.compose.yml",
+      "worker.env"
+    ]
+  },
+  "verification": {
+    "sourceUnchanged": true,
+    "containersAbsent": true,
+    "volumesAbsent": true,
+    "networksAbsent": true,
+    "imageAbsent": true,
+    "portsClosed": {
+      "3199": true,
+      "8199": true,
+      "27901": true,
+      "27902": true,
+      "27911": true,
+      "27912": true,
+      "27913": true,
+      "27914": true,
+      "27915": true,
+      "27919": true,
+      "27927": true
+    },
+    "recordedPidsAbsent": true,
+    "sharedDependenciesPresent": true,
+    "privateProofArtifactsAbsent": true
+  },
+  "sourceBefore": {
+    "head": "367da80e0c1beb1c426f6d2d72201b0733809b50",
+    "servedSourceTreeSha256": "9155f72b1886ccfa42e609903b431f8acd7e1ab9deb77a5db83306f28b27f642",
+    "webDiffSha256": "12cbaffcf51986fbaa3a18b606758822447b9518e3a25fe5516b2ba522ee0272",
+    "fileCount": 1168
+  },
+  "sourceAfter": {
+    "head": "367da80e0c1beb1c426f6d2d72201b0733809b50",
+    "servedSourceTreeSha256": "9155f72b1886ccfa42e609903b431f8acd7e1ab9deb77a5db83306f28b27f642",
+    "webDiffSha256": "12cbaffcf51986fbaa3a18b606758822447b9518e3a25fe5516b2ba522ee0272",
+    "fileCount": 1168
+  },
+  "completedAt": "2026-10-15T07:34:25.712033+00:00",
+  "complete": true
+}

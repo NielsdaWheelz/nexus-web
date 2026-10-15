@@ -9,7 +9,8 @@ losing their place. owners, under `apps/web/src/`:
   commands, light dismiss, the scrim rule, the Tab trap, return focus, the
   synthetic history entry.
 - `lib/ui/useAnchoredPosition.ts`: where a floating box goes (an element, a
-  rect or a text selection's lines; flip, clamp, re-measure on scroll and
+  rect or a text selection's lines; element placement above/below/right,
+  cross-axis alignment, flip, clamp, re-measure on scroll and
   resize). a captured rect does not move with a scroll, so the selection
   surfaces stay put ([ticket](../tickets/selection-dock-does-not-follow-scroll.md)).
 - `lib/ui/useKeyboardInset.ts`: the ios keyboard geometry and its report to the
@@ -22,15 +23,16 @@ losing their place. owners, under `apps/web/src/`:
 - `components/ui/ActionMenu.tsx` (menu semantics),
   `components/ui/FloatingActionSurface.tsx` (the non-modal action surface),
   `components/ui/HoverPreview.tsx` (`useHoverPreview`: hover intent and the
-  preview card or sheet).
+  preview card or sheet), `components/ui/Tooltip.tsx` (passive button help).
 
 ## the stack
 
 every open dialog, sheet, task, menu, chooser, floating surface and preview is a
-layer pushed by `useOverlay(open, options)`, in activation order. a layer is a
-**modal** (an exclusive task, always a `ModalFrame`) or a **transient** (a brief
-choice). a transient belongs to the modal it renders inside (react context from
-the frame) or to the page.
+layer pushed by `useOverlay(open, options)`, in activation order. tooltips also
+register during their opening delay. a layer is a **modal** (an exclusive task,
+always a `ModalFrame`), a **transient** (a brief choice), or a **tooltip** (passive
+help). transients and tooltips belong to the modal they render inside (react
+context from the frame) or to the page.
 
 the **owner** answers Escape, Back and global commands: the newest eligible
 transient of the newest modal, else that modal; with no modal, the newest
@@ -38,7 +40,16 @@ eligible page transient. a transient of a covered modal never outranks a newer
 modal, and a page transient never outranks a modal. `eligible()` is read at
 dispatch (the author search owns keys only while focus is inside it).
 `hasActiveInteractionOwner()` and `isTopmostInteractionOwner(scope)` read the
-same rule; a sheet's scope is its `panelId`.
+same rule; a sheet's scope is its `panelId`. tooltips never become this owner.
+`useHasActiveInteractionOwner()` subscribes to the same stack without registering
+a layer; the tooltip uses it even while closed so a new owner cancels pending
+help. `useOverlay` keeps its own narrower subscription to a layer's registration,
+coverage and depth.
+
+a tooltip requires `inside()` and `eligible()`: false means pending, true means
+visible. its options forbid command scope and return focus. it never captures
+an opener, moves focus or owns Back/history. interactive ownership suppresses
+help; removing that owner does not reopen it without fresh engagement.
 
 every dismissal is `onDismiss(reason)` with reason `escape`, `back` or
 `outside`; the feature closes by changing its state. a modal asks its
@@ -53,6 +64,12 @@ transient of the top modal (or of the page) until one whose `inside()` boxes
 contain the press. a transient's anchor element is inside it, so pressing a
 trigger never closes and reopens its own surface. a transient without `inside`
 is never closed by a press.
+
+the same traversal dismisses pending or visible tooltips outside their
+`inside()` boxes. a tooltip neither stops the traversal at an inside box nor
+counts as closing a transient, so help never consumes a control or scrim press.
+the tooltip's trigger handles its own pointerdown; pressing the help itself
+preserves text selection.
 
 **the scrim.** a modal closes from its scrim only on a click that starts and
 ends on the scrim and closed no transient on the way: a scrim press with a menu
@@ -75,9 +92,9 @@ the first closes to the opener. that close does not run normal return-focus agai
 mobile chooser sheets retain the modal tab cycle. keyboard invocation focuses
 search; touch invocation may focus the sheet instead.
 
-**return focus.** at open a layer records its trigger: `returnFocusTo()`, else
-the focused element, else (safari never focuses a clicked button) the focusable
-element the last press landed on. at close, focus goes to the live
+**return focus.** at open an interactive layer records its trigger:
+`returnFocusTo()`, else the focused element, else (safari never focuses a clicked
+button) the focusable element the last press landed on. at close, focus goes to the live
 `returnFocusTo()`, else the trigger, else `returnFocusFallback()`, only for the
 layer being exposed: a modal that was topmost, or a transient that opted in
 (`returnFocus`) whose modal is topmost and that no outside press closed.
@@ -112,7 +129,7 @@ modal reopens on load). giving them up means giving up Back on desktop.
 
 frames render in `document.body` and stack at `calc(var(--z-modal) + depth)`,
 depth being the frame's index among open modals: activation order alone decides
-which is on top. transients render in their containing modal's panel
+which is on top. transients and tooltips render in their containing modal's panel
 (`useOverlayContainer()`), else in the body at `--z-popover` (900): above mobile
 chrome (`--z-overlay`), below every modal. the feedback HUD (`--z-toast`) stays
 above everything and the quick-note handoff input (`--z-nexus`) above every
@@ -128,9 +145,16 @@ rotation. sheet and dialog content unmount when closed.
 
 ## listener order
 
-the kernel's document listeners are installed with the first layer, after
-react's root listeners: a component's own key handler runs first and keeps a
-key by preventing its default (the Nexus inputs own Escape this way). a
+the kernel's document listeners are installed with the first layer. the
+tooltip-only capture listener ignores prevented/composing Escape, snapshots
+interactive ownership and cancels every pending hint across scopes without
+taking the key. without an interactive owner, it dismisses only the newest
+visible hint in the current modal scope, preventing default and stopping
+propagation. this runs before a focused inspector's own Escape handler.
+
+modal/transient Escape and Tab remain in the bubble listener, after react's
+root listeners: a component's own key handler runs first and keeps a key by
+preventing its default (the Nexus inputs own Escape this way). a
 feature's own global Escape command must yield while
 `hasActiveInteractionOwner()`; the reader (`media/[id]/chrome.tsx`) does, so
 Escape with its inspector sheet on top closes only the sheet. react listens on
@@ -139,6 +163,21 @@ propagation hides it from the document. `ActionMenu` stops every key, since
 react bubbles a portaled menu's keys through its owners (the linked-notes
 editor's block keys would take Escape and Delete), and so answers Escape itself
 (focus in the menu makes it the owner).
+
+## passive navigation help
+
+the collapsed rail tooltip uses a transient with `eligible: () => false` and
+no return-focus behavior. the kernel supplies outside-press dismissal and
+modal coverage; the caption never becomes the interaction owner or suppresses
+command/control+k. the rail owns its one dismiss-only escape capture listener
+while help is positioned/visible. it consumes only plain, unhandled,
+non-composing escape while no actual interaction owner is active.
+
+the host mounts hidden for measurement before exposing a description id.
+coverage hides the caption/relationship immediately and clears its state;
+unchanged hover cannot revive it. `useAnchoredPosition` places the host to the
+right, while the host's full-height transparent corridor keeps pointer transfer
+continuous. this local mechanism is not a generic interactive-preview owner.
 
 ## surfaces
 
@@ -176,6 +215,18 @@ closes it 150 ms later unless the pointer reaches the card; a press on the
 citation, Escape, an outside press and focus moving away close it. touch never
 hover-opens; `show()` opens at once, and on a touch screen the preview is a
 modal sheet that Back closes.
+
+**Tooltip**: plain-text help for the inspector button. mouse/pen hover opens
+after 500ms; leaving during that delay cancels it. focus-visible opens at once,
+including in the mobile layout; touch never opens help. while visible, pointer
+engagement with the trigger or help, or keyboard focus on the trigger, retains
+it. departure has 150ms grace and the surface includes an 8px transparent
+corridor to support slow pointer travel. trigger activation, outside press,
+Escape, window blur, unmount or interactive ownership closes and cancels it;
+only fresh pointer/focus entry rearms it. the trigger keeps its accessible name
+and references the rendered `role="tooltip"` with `aria-describedby`. no native
+title, automatic expiry, focusable contents or touch sheet. the portal stops
+mousedown/click bubbling into the pane chrome without preventing selection.
 
 ## why no native dialog
 

@@ -111,6 +111,12 @@ unchanged; inactive panes unmounted by mobile keep their existing reset behavior
 
 ## shared query presentation
 
+the prop table and composition below record the 2026-10-13 cutover. they are
+superseded by the [query toolbar specification](pane-query-toolbar-plan.md),
+qualified separately in [toolbar verification](pane-query-toolbar-verification.md).
+the domain, keyboard and reader contracts in this plan remain in force; the
+original [verification](pane-controls-verification.md) remains historical evidence.
+
 one `components/workspace/PaneQueryToolbar.tsx` owns the input and clear button,
 optional submit, options disclosure, sort, summary and wrapping. its props are:
 
@@ -264,6 +270,11 @@ mobile results sheet as though it succeeded. migrate text, pdf, conversation
 and artifact adapters together; generic find does not import reader outcomes.
 
 ## geometry and content design
+
+query-control geometry below is historical; the
+[toolbar specification](pane-query-toolbar-plan.md#final-composition-and-geometry)
+owns its current form. reader positioning, shell cap and domain content
+contracts remain applicable.
 
 retain the header token and identity model. one shell control-row density owns field,
 button and select sizes: start with 40px minimum rows, 32px desktop controls,

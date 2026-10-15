@@ -61,7 +61,8 @@ import {
 } from "@/lib/media/MediaSummaryProvider";
 import { requestNexusOpen } from "@/lib/nexus/events";
 import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
-import { matchesPaneFilterQuery, usePaneFilterRows } from "@/lib/panes/paneFilterRows";
+import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
+import { matchesPaneFilterQuery, paneFilterRowsStatusVisible, usePaneFilterRows } from "@/lib/panes/paneFilterRows";
 import {
   usePaneIsActive,
   usePaneParam,
@@ -243,6 +244,10 @@ function LibraryPane({ id }: { readonly id: string }) {
     ...(projection ? [{ id: "projection", label: `View: ${views.find((option) => option.value === projection)!.label}` }] : []),
     ...(hideFinished ? [{ id: "completion", label: "Hide finished" }] : []),
   ];
+  const canReset = sort.length > 0 || type.length > 0 || projection.length > 0 || hideFinished || filterRows.query.length > 0;
+  const headerMeta: PaneHeaderMeta = list.complete
+    ? { kind: "Count", value: shown.length, unit: "entry" }
+    : { kind: "Pending" };
   const clearFilters = { entry_type: null, projection: null, completion: null };
   // Recoveries and resets return focus to the permanent query input.
   const recover = (changes: ViewChanges) => {
@@ -325,8 +330,16 @@ function LibraryPane({ id }: { readonly id: string }) {
           }}
           sort={{ label: "Sort", value: sort, choices: offered(entrySorts(isAll), sort), onChange: (value) => change({ sort: value || null }) }}
           chips={{ items: chips, onRemove: (param) => change({ [param]: null }) }}
-          status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} /> }}
-          onReset={sort || type || projection || hideFinished || text ? () => {
+          status={{
+            id: queryStatusId,
+            visible: paneFilterRowsStatusVisible({
+              status: filterRows.rowStatus,
+              identityCount: headerMeta.kind === "Count" ? headerMeta.value : null,
+              atDefaultView: !canReset,
+            }),
+            content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
+          }}
+          onReset={canReset ? () => {
             filterRows.clearQuery();
             change({ sort: null, ...clearFilters });
           } : undefined}
@@ -338,12 +351,7 @@ function LibraryPane({ id }: { readonly id: string }) {
       : undefined,
     resourceRef: canonicalResourceRef({ scheme: "library", id }),
     menuActions,
-    header: {
-      kind: "Section",
-      meta: list.complete
-        ? { kind: "Count", value: shown.length, unit: "entry" }
-        : { kind: "Pending" },
-    },
+    header: { kind: "Section", meta: headerMeta },
   });
 
   if (missing) {

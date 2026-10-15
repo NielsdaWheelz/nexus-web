@@ -94,10 +94,39 @@ no module styles another module's internal dom. a caller adjusts a primitive
 only through its props, its `className` (a field primitive's rules weigh one
 class, so the caller's class meets them at equal weight) or a context token the
 primitive declares. pane query/navigation controls share declared density
-tokens owned by `PaneShell`'s control row; `SelectField`'s `Inline` layout owns its label and native select.
-`PaneQueryToolbar` owns wrapping and one bounded refinement region; shell
-measurement publishes its maximum height. essential controls never depend on
-horizontal scrolling. see [workspace controls](workspace.md).
+tokens owned by `PaneShell`'s control row: field/button heights grow with
+content, with 32px fine-pointer and 44px coarse-pointer minima. non-pane size
+defaults remain unchanged. `SelectField`'s `Inline` layout owns the label and
+native intrinsic value width; the whole control wraps before its label stacks.
+`Stacked` forms keep their layout.
+
+`PaneQueryToolbar` groups controls by pane width. its boxed input always reserves
+the clear slot, so typing/clearing preserves the input's bounds and node.
+applied text, chips, visible status and reset wrap in one compact summary;
+errors and expanded options share its bounded refinement region. shell
+measurement publishes the cap. essential controls never depend on horizontal
+scrolling. see [workspace controls](workspace.md), the
+[toolbar specification](../pane-query-toolbar-plan.md) and
+[browser qualification](../pane-query-toolbar-verification.md). the latter
+includes native firefox 158 page/text zoom at 200% in a 320px pane; it makes
+no spoken assistive-technology claim.
+
+## overflow buttons
+
+`OverflowMenuButton` owns ellipsis trigger appearance: one native button,
+centered 18px lucide glyph, 6px corners, a persistent neutral border and
+hover/press/open/disabled/focus paint. it forwards native attributes, handlers
+and refs without owning interaction state. `ActionMenu` supplies behavior and
+aria bindings, not a visual class. semantic custom triggers own their appearance;
+`ContextEdgeMenu` retains its distinct relationship-control styling.
+
+default targets are 32px, at least 44px with any coarse pointer. consumer classes
+adjust geometry and noninteractive adornments only: mobile chrome/switchboard
+retain 48px and desktop nexus retains its wider shortcut-bearing button.
+disabled paint overrides engagement; focus remains visible. forced colors use
+system colors, including a contrasting focus ring for disabled expanded controls.
+theme colors and motion come from existing tokens; reduced motion removes the
+color transitions. no geometry motion or state-dependent sizing.
 
 ## the lint
 
