@@ -1,6 +1,6 @@
 # contributor apply does not consume the reviewed preview
 
-status: open; no contributor apply authorized by a current proposal
+status: open; source-proved frankenstein proposal activates implementation
 origin: 2026-10-14 book-repair planning at `75b17c030`
 area: contributor maintenance / approval fence
 
@@ -11,8 +11,9 @@ also resolves proposed person identities separately for preview and apply;
 an alias winner can change while the source and current media credits do not.
 the current counts and moved/added descriptions do not identify the full proposal.
 
-prerequisite: the bounded source audit must find an actual correction. its
-recorded 244-book preview had zero proposals; do not add code for a no-op.
+prerequisite met: the bounded 245-item source audit found one proved
+frankenstein `raw_role` correction; the original 244 remain five unchanged and
+239 unresolved. no apply may proceed until this fence is qualified.
 
 fix if needed: follow the [book-repair plan](../book-repair-plan.md). bind
 viewer/media, source, ordered existing credits/manual state, and complete

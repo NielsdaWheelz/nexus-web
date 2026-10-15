@@ -67,6 +67,12 @@ frozen id, including refusals. review every complete proposal before selecting
 apply. rehearse the selected set, transactional refusal/uncertainty controls,
 full protected-state comparison and fresh unchanged inspection/apply. keep
 failed proofs and missing results visible.
+the full portrait clone snapshot uses a separately reviewed 90-second statement
+budget, with the same 180-second outer deadline and read-only capability. its
+30-second sorted-hash attempt and 180-second primary-key-order attempt failed;
+the restored sorted-hash query passed in 84.6 seconds across all 96 tables.
+this exception does not change reader inspect/apply or parser limits. after a
+timeout, confirm both the container and its database backend have stopped.
 fault injection is clone-only; remove its fixtures before the selected apply
 set. every row excluded from global hashes needs its own complete permitted-
 change and raw-identity proof.

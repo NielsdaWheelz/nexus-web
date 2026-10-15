@@ -1,6 +1,6 @@
-# legacy epub source credit belongs to another viewer's saved scope
+# frankenstein source role correction needs a reviewed-preview fence
 
-status: exact-item audit planned; read-only visibility diagnosis complete
+status: source and existing identity proved; fenced correction pending
 origin: 2026-10-14 release r4 scope follow-up
 area: contributors
 
@@ -11,26 +11,31 @@ owner. there is no failure, tombstone or teardown evidence; this is not an
 orphaned or failed media item. it correctly lies outside the owner's 244-item
 [r4 preview](epub-contributors-production-repair-pending.md).
 
-it has one historical `epub_opf` author credit with null `raw_role`, outside
-that owner scope. incorrect source credit is NOT PROVED. persisted source
-metadata records 474,401 bytes and sha256
+the restored-clone audit verified the original 474,401-byte epub and sha256
 `dd7ec02d2c8db4162bf587aa09a692ed5394ead3dfb12d8cc14b449d89795a6a`;
-this follow-up made no source object request; the verified other-viewer source
-preview did not run. object existence and agreement with that persisted hash
-remain unproved. no ownership, credit or other metadata was changed.
+its sole creator explicitly has role `aut`. the planner matches the existing
+author/person and proposes only `raw_role: null → "aut"`. this restores source
+role metadata; it does not change the displayed author.
 
-evidence: `release/attempts/58c7ecae6/r4-ce72-scope-followup-v1/manifest.json`,
-sha256 `2ce17a11ed5ab13353f569d65938731ca8e27b3792e61bb506af1da3b9692676`.
-the single read-only production query established viewer scope only; it does
-not extend the guarded owner no-op into global saved-credit repair closure.
+credit `bf9b3748-9de0-44f1-bd5b-1bad8c5de044`, person
+`83550d2e-74f3-49b3-bf74-fc838650cb03`, name, handle, author role, `epub_opf`
+provenance and ordinal zero remain unchanged. the exact observed-spelling alias
+already exists; no person, key or alias addition is proposed. the read-only
+whole-clone proof passed; actual apply and its preservation proof remain pending.
 
-the owner deferred this preview from the usable release, then included this
-exact item in the 2026-10-14 [book-repair plan](../book-repair-plan.md).
-next: reverify its viewer/media scope and original source, then obtain the
-planner's actual credit-row preview. preserve
-current ownership and manual/unrelated credits. do not auto-file the media,
-guess a person identity, broaden source guards or change unrelated metadata.
+private evidence: `book-repair/c-sources/frankenstein-proposal-review.json`,
+sha256 `62769ca7ce5451682e75184285747ad1d36638c94634258f754e56c810500b2c`;
+independent source review `a-maintenance/frankenstein-source-review.json`,
+sha256 `7925a8ee64c4e9ad528f875592a39a9adb60c03788a80d2c32cca9ca101e7d6a`;
+alias snapshot `c-sources/frankenstein-alias-v2`, sha256
+`a742efe4e49053d09f8f4b1dfc54721198ebd6259dafb5177b37d9ee561876df`.
 
-acceptance: a source-proved scoped disposition, followed only if needed by a
-separately reviewed fenced correction with reader/person identities preserved.
-a verified unchanged preview may establish that no credit repair is needed.
+next: implement and qualify the [preview fence](epub-contributor-apply-does-not-bind-preview.md),
+then rehearse this exact correction before fresh production inspection/apply.
+preserve viewer `579543d7-64ec-4282-9f1b-7a445ebf672a`, ownership and library;
+do not auto-file the media or broaden matching.
+
+acceptance: the reviewed role correction applies once, fresh preview is
+unchanged and stale preview refuses. all other credit/person, reader, index,
+progress and metadata timestamp state matches baseline; live consumers keep
+the existing author presentation. no production mutation has run.
