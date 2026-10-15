@@ -273,7 +273,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                     "fence" -> {
                         resuming?.cancel()
                         player.pause()
-                        recorder.fence()
+                        if (!recorder.fence()) return failure("Unavailable")
                     }
                     "reconcile" -> if (!reconcile()) return failure("Unavailable")
                     "sessionShortenPauses" -> {
@@ -364,7 +364,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         val loaded = source
         val mediaId = if (isEpisode()) UUID.fromString(key()) else return true
         // A timed-out preparation can still be draining this episode's old writes.
-        recorder.fence()
+        if (!recorder.fence()) return false
         if (loaded !== source) return false
         val fresh = try {
             origin.player(mediaId)
