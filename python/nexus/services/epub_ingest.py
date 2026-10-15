@@ -34,7 +34,6 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus import web_paths
-from nexus.config import Settings, get_settings
 from nexus.db.models import (
     EpubFragmentSource,
     EpubNavLocation,
@@ -118,6 +117,11 @@ EPUB_APPARATUS_MAX_TARGETS = 10_000
 EPUB_APPARATUS_MAX_BACKLINKS = 10_000
 EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES = 8 * 1024 * 1024
 EPUB_APPARATUS_MAX_CANDIDATE_INDEX_PAGES = 16_384
+_ARCHIVE_MAX_ENTRIES = 10_000
+_ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
+_ARCHIVE_MAX_ENTRY_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
+_ARCHIVE_MAX_COMPRESSION_RATIO = 100
+_ARCHIVE_MAX_PARSE_MS = 30_000
 
 _XHTML_DECODED_BYTES_MESSAGE = "EPUB XHTML decoded bytes exceed the 16 MiB per-entry limit"
 
@@ -446,7 +450,7 @@ def extract_epub_metadata(epub_path: Path) -> EpubExtractionResult | EpubExtract
     """Read OPF metadata only, retaining archive bounds without publishing content."""
     try:
         with zipfile.ZipFile(epub_path) as zf:
-            package_document = _open_package_document(zf, get_settings())
+            package_document = _open_package_document(zf)
             if isinstance(package_document, EpubExtractionError):
                 return package_document
             return _extract_opf_metadata(package_document[1])
@@ -456,11 +460,9 @@ def extract_epub_metadata(epub_path: Path) -> EpubExtractionResult | EpubExtract
         return _resource_limit(str(exc), dimension=exc.dimension)
 
 
-def _open_package_document(
-    zf: zipfile.ZipFile, settings: Settings
-) -> tuple[str, ET.Element] | EpubExtractionError:
+def _open_package_document(zf: zipfile.ZipFile) -> tuple[str, ET.Element] | EpubExtractionError:
     """Check the archive, locate the OPF rootfile, and parse it."""
-    safety_error = _check_archive_safety(zf, settings)
+    safety_error = _check_archive_safety(zf)
     if safety_error is not None:
         return safety_error
     opf_path = _find_opf_path(zf)
@@ -483,10 +485,9 @@ def _build_plan(
     retained_fragments: tuple[RetainedEpubFragment, ...] | None = None,
 ) -> tuple[_ParsedEpub, _Package] | EpubExtractionError:
     """Parse one opened archive and stage its attempt-owned assets."""
-    settings = get_settings()
     started = time.monotonic()
 
-    package_document = _open_package_document(zf, settings)
+    package_document = _open_package_document(zf)
     if isinstance(package_document, EpubExtractionError):
         return package_document
     opf_path, opf = package_document
@@ -764,9 +765,9 @@ def _build_plan(
         return _resource_limit("EPUB output exceeds the 64 MiB limit", dimension="Output")
 
     elapsed_ms = int((time.monotonic() - started) * 1000)
-    if elapsed_ms > settings.max_epub_archive_parse_time_ms:
+    if elapsed_ms > _ARCHIVE_MAX_PARSE_MS:
         return _resource_limit(
-            f"Parse time {elapsed_ms}ms exceeded limit {settings.max_epub_archive_parse_time_ms}ms",
+            f"Parse time {elapsed_ms}ms exceeded limit {_ARCHIVE_MAX_PARSE_MS}ms",
             dimension="Time",
         )
 
@@ -833,11 +834,9 @@ def _write_epub_assets(
                         )
                         asset.size_bytes = sanitized_stream.tell()
                         sanitized_stream.seek(0)
-                        storage_client.put_object_stream(
-                            storage_key, sanitized_stream, asset.content_type
-                        )
+                        storage_client.put_object(storage_key, sanitized_stream, asset.content_type)
                 else:
-                    storage_client.put_object_stream(
+                    storage_client.put_object(
                         storage_key, cast(BinaryIO, asset_stream), asset.content_type
                     )
             asset_storage_paths[asset.asset_key] = storage_key
@@ -963,12 +962,12 @@ def publish_epub_extraction_plan(
     return plan.result, old_storage_paths
 
 
-def _check_archive_safety(zf: zipfile.ZipFile, settings: Settings) -> EpubExtractionError | None:
+def _check_archive_safety(zf: zipfile.ZipFile) -> EpubExtractionError | None:
     """Refuse unsafe entry paths and over-budget archives before reading entries."""
     infos = zf.infolist()
-    if len(infos) > settings.max_epub_archive_entries:
+    if len(infos) > _ARCHIVE_MAX_ENTRIES:
         return _resource_limit(
-            f"Archive has {len(infos)} entries (limit {settings.max_epub_archive_entries})",
+            f"Archive has {len(infos)} entries (limit {_ARCHIVE_MAX_ENTRIES})",
             dimension="Structure",
         )
 
@@ -989,25 +988,25 @@ def _check_archive_safety(zf: zipfile.ZipFile, settings: Settings) -> EpubExtrac
             return _error(ApiErrorCode.E_ARCHIVE_UNSAFE, unsafe, terminal=True)
         seen_names.add(name)
 
-        limit = settings.max_epub_archive_single_entry_uncompressed_bytes
-        if info.file_size > limit:
+        if info.file_size > _ARCHIVE_MAX_ENTRY_UNCOMPRESSED_BYTES:
             return _resource_limit(
-                f"Entry '{name}' uncompressed size {info.file_size} exceeds limit {limit}",
+                f"Entry '{name}' uncompressed size {info.file_size} exceeds limit "
+                f"{_ARCHIVE_MAX_ENTRY_UNCOMPRESSED_BYTES}",
                 dimension="Output",
             )
         total_uncompressed += info.file_size
-        ratio_limit = settings.max_epub_archive_compression_ratio
-        if info.compress_size > 0 and info.file_size / info.compress_size > ratio_limit:
+        ratio = info.file_size / info.compress_size if info.compress_size > 0 else 0
+        if ratio > _ARCHIVE_MAX_COMPRESSION_RATIO:
             return _resource_limit(
-                f"Entry '{name}' compression ratio "
-                f"{info.file_size / info.compress_size:.1f} exceeds limit {ratio_limit}",
+                f"Entry '{name}' compression ratio {ratio:.1f} exceeds limit "
+                f"{_ARCHIVE_MAX_COMPRESSION_RATIO}",
                 dimension="Output",
             )
 
-    if total_uncompressed > settings.max_epub_archive_total_uncompressed_bytes:
+    if total_uncompressed > _ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES:
         return _resource_limit(
             f"Total uncompressed {total_uncompressed} exceeds limit "
-            f"{settings.max_epub_archive_total_uncompressed_bytes}",
+            f"{_ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES}",
             dimension="Output",
         )
     return None

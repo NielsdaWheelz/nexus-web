@@ -30,7 +30,7 @@ def get_engine() -> Engine:
         f"-c {key}={value}"
         for key, value in (
             ("statement_timeout", settings.database_statement_timeout_ms),
-            ("lock_timeout", settings.database_lock_timeout_ms),
+            ("lock_timeout", 10_000),
             ("idle_in_transaction_session_timeout", settings.database_idle_in_tx_timeout_ms),
         )
         if value

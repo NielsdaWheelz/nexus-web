@@ -1,62 +1,48 @@
-"""Canonical storage object keys. Path shapes are the DB-owner contract."""
+"""Object keys, built from owner ids and our own constant extensions; a key is never a
+content hash or a user identity. The row named beside each builder owns the object; the
+orphan sweep reclaims anything under ``media/`` that no row names."""
 
-import re
 from uuid import UUID
-
-_BARE_EXTENSION_RE = re.compile(r"[a-z0-9][a-z0-9_-]*")
-
-
-def _require_bare_storage_extension(ext: str) -> str:
-    if not _BARE_EXTENSION_RE.fullmatch(ext):
-        raise ValueError("Storage extension must be a bare file extension.")
-    return ext
 
 
 def get_file_extension(kind: str) -> str:
-    """The storage extension of a file-backed media kind."""
-    extensions = {"pdf": "pdf", "epub": "epub"}
-    if kind not in extensions:
+    """The extension of a file-backed media kind."""
+    if kind not in ("pdf", "epub"):
         raise ValueError(f"Kind '{kind}' is not a file-backed media type")
-    return extensions[kind]
+    return kind
 
 
 def build_source_artifact_storage_path(
     media_id: UUID | str, attempt_id: UUID | str, ext: str
 ) -> str:
-    """media/{media_id}/source/{attempt_id}.{ext} — the durable capture artifact."""
-    return f"media/{media_id}/source/{attempt_id}.{_require_bare_storage_extension(ext)}"
+    """An attempt's stored source: ``source_payload.storage_path`` or a ``media_file``."""
+    return f"media/{media_id}/source/{attempt_id}.{ext}"
 
 
 def build_upload_verification_candidate_storage_path(
     media_id: UUID | str, candidate_id: UUID | str, ext: str
 ) -> str:
-    """The immutable published source of one upload confirmation.
-
-    Fenced by a fresh candidate id, so a stolen or superseded lease never
-    overwrites a published source.
-    """
-    ext = _require_bare_storage_extension(ext)
+    """One confirmation's published source (``media_file`` or a packet attempt); a fresh
+    candidate id per confirmation, so nothing published is ever overwritten."""
     return f"media/{media_id}/candidates/{candidate_id}/original.{ext}"
 
 
 def build_upload_session_staging_storage_path(
     session_id: UUID | str, generation: int, ext: str
 ) -> str:
-    """The generation-fenced staging path of one direct-upload capability."""
-    if generation < 1:
-        raise ValueError("Upload generation must be positive.")
-    ext = _require_bare_storage_extension(ext)
+    """A session generation's staged bytes; only the R2 one-day ``uploads/`` rule deletes them."""
     return f"uploads/sessions/{session_id}/{generation}/original.{ext}"
 
 
 def build_epub_attempt_asset_storage_path(
     media_id: UUID | str, attempt_id: UUID | str, asset_key: str
 ) -> str:
-    """An immutable EPUB asset key owned by one source attempt."""
-    if not asset_key:
-        raise ValueError("EPUB asset key must be non-empty.")
-    if asset_key.startswith("/"):
-        raise ValueError("EPUB asset key must not start with a slash.")
-    if any(part in {"", ".", ".."} for part in asset_key.split("/")):
-        raise ValueError("EPUB asset key must not contain empty, dot, or dot-dot path parts.")
+    """An ``epub_resources`` row's object. The key comes from the archive, so it is checked."""
+    if asset_key.startswith("/") or any(p in ("", ".", "..") for p in asset_key.split("/")):
+        raise ValueError(f"unsafe EPUB asset key: {asset_key!r}")
     return f"media/{media_id}/source/{attempt_id}/assets/{asset_key}"
+
+
+def build_reading_copy_storage_path(media_id: UUID, copy_id: UUID) -> str:
+    """An offline reading copy. No row owns it: the sweep reclaims it after its min age."""
+    return f"media/{media_id}/reading-copies/{copy_id}.zip"

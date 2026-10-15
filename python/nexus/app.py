@@ -20,7 +20,7 @@ from nexus.api.edge import EdgeMiddleware
 from nexus.api.routes import create_api_router
 from nexus.auth.middleware import AuthMiddleware
 from nexus.auth.verifier import SupabaseJwksVerifier
-from nexus.config import Environment, get_settings
+from nexus.config import get_settings
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
@@ -94,10 +94,10 @@ async def _invalid_request(request: Request, exc: Exception) -> JSONResponse:
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    if not settings.supabase_jwks_url or not settings.normalized_issuer:
+    if not settings.supabase_jwks_url or not settings.supabase_issuer:
         raise RuntimeError("Supabase auth settings are not configured")
     # the schema and its docs are served outside staging and prod only
-    hidden = settings.nexus_env in (Environment.STAGING, Environment.PROD)
+    hidden = settings.deployed
     app = FastAPI(
         title="Nexus API",
         version="0.1.0",
@@ -115,11 +115,11 @@ def create_app() -> FastAPI:
         AuthMiddleware,
         verifier=SupabaseJwksVerifier(
             jwks_url=settings.supabase_jwks_url,
-            issuer=settings.normalized_issuer,
-            audiences=settings.audience_list,
+            issuer=settings.supabase_issuer,
+            audiences=list(settings.supabase_audiences),
         ),
         bootstrap_callback=_bootstrap,
-        requires_internal_header=settings.requires_internal_header,
+        requires_internal_header=settings.deployed,
         internal_secret=settings.nexus_internal_secret,
     )
     app.add_middleware(EdgeMiddleware)

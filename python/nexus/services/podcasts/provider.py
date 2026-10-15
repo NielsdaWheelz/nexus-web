@@ -4,7 +4,7 @@ import hashlib
 import time
 from typing import Any
 
-from nexus.coerce import coerce_positive_int
+from nexus.coerce import coerce_int
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.net.http_retry import get_json_with_retry
@@ -63,7 +63,7 @@ def _episode(item: dict[str, Any]) -> EpisodeFacts:
         provider_ref=text_or_none(item.get("id")),
         guid=text_or_none(item.get("guid")),
         published_at=parse_datetime(item.get("datePublished")),
-        duration_seconds=coerce_positive_int(item.get("duration")),
+        duration_seconds=coerce_int(item.get("duration"), minimum=1),
         authors=[author] if author else [],
     )
 

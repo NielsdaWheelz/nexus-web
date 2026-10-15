@@ -67,17 +67,10 @@ function serialize(
 }
 
 // connect: the presigned storage origin (the api is reached only through the
-// bff); media: explicit media origins beyond https:.
+// bff).
 export const appCsp = (
-  request: PolicyRequest & {
-    readonly connect: readonly string[];
-    readonly media: readonly string[];
-  },
-) =>
-  serialize(APP, request, {
-    "connect-src": request.connect,
-    "media-src": request.media,
-  });
+  request: PolicyRequest & { readonly connect: readonly string[] },
+) => serialize(APP, request, { "connect-src": request.connect });
 
 export const publicReaderCsp = (request: PolicyRequest) =>
   serialize(PUBLIC_READER, request);

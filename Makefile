@@ -9,7 +9,6 @@
 -include .dev-ports
 export
 
-SUPABASE_DB_PORT ?= 54322
 SUPABASE_URL ?= http://127.0.0.1:54321
 
 POSTGRES_PORT ?= 54320

@@ -165,7 +165,7 @@ def registry() -> dict[str, JobDefinition]:
             "background",
             "nexus.tasks.storage_orphan_sweep:storage_orphan_sweep",
             retry_delays=(300, 900, 3600),
-            periodic_seconds=s.storage_orphan_sweep_interval_seconds,
+            periodic_seconds=6 * 3600,
             keep_dead=True,
         ),
         "prune_background_jobs_job": JobDefinition(

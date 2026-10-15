@@ -32,6 +32,7 @@ from nexus.services import (
 from nexus.services.consumption import state
 from nexus.services.resource_graph import reader_targets
 from nexus.storage.client import get_storage_client
+from nexus.storage.paths import build_reading_copy_storage_path
 
 router = APIRouter(tags=["media"])
 
@@ -125,7 +126,7 @@ def create_reading_copy(
     Each call stores a fresh object under the media's prefix that no row owns, so the
     storage orphan sweep reclaims it after its minimum age; a retry builds another.
     """
-    key = f"media/{media_id}/reading-copies/{uuid4()}.zip"
+    key = build_reading_copy_storage_path(media_id, uuid4())
     storage = get_storage_client()
     with tempfile.TemporaryDirectory(prefix="nexus-reading-copy-") as directory:
         path = Path(directory) / "copy.zip"
@@ -133,7 +134,7 @@ def create_reading_copy(
             db, viewer_id=viewer.user_id, media_id=media_id, path=path
         )
         with path.open("rb") as file:
-            storage.put_object_stream(key, file, content_type="application/zip")
+            storage.put_object(key, file, content_type="application/zip")
     expiry = get_settings().signed_url_expiry_s
     return Data(
         data=ReadingCopyOut(
