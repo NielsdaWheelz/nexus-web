@@ -31,13 +31,14 @@ def main() -> None:
     apply.add_argument("--inspection-digest", required=True)
     args = parser.parse_args()
     factory = get_session_factory()
-    storage = get_storage_client()
     exit_code = 0
     try:
         if args.command == "inspect":
             result = asdict(
                 inspect_reader_navigation_repair(
-                    session_factory=factory, storage_client=storage, media_id=args.media_id
+                    session_factory=factory,
+                    storage_factory=get_storage_client,
+                    media_id=args.media_id,
                 )
             )
         else:
@@ -45,7 +46,7 @@ def main() -> None:
                 "media_id": str(args.media_id),
                 "result": apply_reader_navigation_repair(
                     session_factory=factory,
-                    storage_client=storage,
+                    storage_factory=get_storage_client,
                     media_id=args.media_id,
                     expected_generation=args.generation,
                     expected_inspection_digest=args.inspection_digest,
