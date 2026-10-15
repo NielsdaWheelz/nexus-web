@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 1;
+export const WIRE_REVISION = 2;
 
 export interface paths {
     "/artifact-builds/{artifact_build_id}/cancel": {
@@ -911,7 +911,7 @@ export interface paths {
         };
         /**
          * List Destinations
-         * @description The named libraries the viewer may file into, best match first.
+         * @description The complete named libraries the viewer may file into.
          */
         get: operations["list_destinations_libraries_destinations_get"];
         put?: never;
@@ -3653,13 +3653,6 @@ export interface components {
             /** Next Cursor */
             next_cursor: string | null;
         };
-        /** CollectionPage[LibraryDestinationOut] */
-        CollectionPage_LibraryDestinationOut_: {
-            /** Items */
-            items: components["schemas"]["LibraryDestinationOut"][];
-            /** Next Cursor */
-            next_cursor: string | null;
-        };
         /** CollectionPage[LibraryInvitationOut] */
         CollectionPage_LibraryInvitationOut_: {
             /** Items */
@@ -4439,10 +4432,6 @@ export interface components {
         Data_CollectionPage_ConversationListItemOut__: {
             data: components["schemas"]["CollectionPage_ConversationListItemOut_"];
         };
-        /** Data[CollectionPage[LibraryDestinationOut]] */
-        Data_CollectionPage_LibraryDestinationOut__: {
-            data: components["schemas"]["CollectionPage_LibraryDestinationOut_"];
-        };
         /** Data[CollectionPage[LibraryInvitationOut]] */
         Data_CollectionPage_LibraryInvitationOut__: {
             data: components["schemas"]["CollectionPage_LibraryInvitationOut_"];
@@ -4764,6 +4753,11 @@ export interface components {
         /** Data[WorkspaceSessionsOut] */
         Data_WorkspaceSessionsOut_: {
             data: components["schemas"]["WorkspaceSessionsOut"];
+        };
+        /** Data[list[LibraryDestinationOut]] */
+        Data_list_LibraryDestinationOut__: {
+            /** Data */
+            data: components["schemas"]["LibraryDestinationOut"][];
         };
         /** Data[list[LibraryPlacementOut]] */
         Data_list_LibraryPlacementOut__: {
@@ -13384,11 +13378,7 @@ export interface operations {
     };
     list_library_destinations_extension_library_destinations_get: {
         parameters: {
-            query?: {
-                q?: string;
-                cursor?: string | null;
-                limit?: number;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -13401,16 +13391,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_CollectionPage_LibraryDestinationOut__"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["Data_list_LibraryDestinationOut__"];
                 };
             };
         };
@@ -13910,11 +13891,7 @@ export interface operations {
     };
     list_destinations_libraries_destinations_get: {
         parameters: {
-            query?: {
-                q?: string;
-                cursor?: string | null;
-                limit?: number;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -13927,16 +13904,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_CollectionPage_LibraryDestinationOut__"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["Data_list_LibraryDestinationOut__"];
                 };
             };
         };

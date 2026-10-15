@@ -15,6 +15,7 @@ import MobileSheet from "@/components/ui/MobileSheet";
 import {
   useOverlay,
   useOverlayContainer,
+  wasOverlayInvokedByTouch,
   type ReturnFocusTarget,
 } from "@/lib/ui/overlay";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
@@ -36,8 +37,7 @@ export default function ChooserSurface({
   readonly active: boolean;
   /** A region in the caller's layout, not the anchored panel or the sheet. */
   readonly inline?: boolean;
-  /** Null while the caller finishes a creation: nothing closes it. */
-  readonly onClose: (() => void) | null;
+  readonly onClose: () => void;
   /** Positions the panel and takes focus back on close. */
   readonly anchor: ReturnFocusTarget;
   readonly returnFocusFallback?: ReturnFocusTarget;
@@ -65,12 +65,13 @@ export default function ChooserSurface({
   const container = useOverlayContainer();
   useOverlay(desktop || region, {
     kind: "transient",
-    onDismiss: () => onClose?.(),
+    onDismiss: onClose,
     inside: region ? undefined : () => [panel.ref.current, anchorEl],
     returnFocus: true,
     returnFocusTo: anchor,
     returnFocusFallback,
     skipReturnFocus,
+    tabContinuation: () => region ? regionRef.current : panel.ref.current,
   });
   useEffect(() => {
     if (!desktop || !panel.placed) return;
@@ -81,8 +82,11 @@ export default function ChooserSurface({
   }, [desktop, panel.placed, panel.ref]);
   useEffect(() => {
     if (!region) return;
-    // The region takes focus, not its search: no phone keyboard unasked.
-    const frame = requestAnimationFrame(() => regionRef.current?.focus());
+    const focusSearch = !wasOverlayInvokedByTouch();
+    const frame = requestAnimationFrame(() => {
+      const target = regionRef.current;
+      (focusSearch ? target?.querySelector<HTMLInputElement>("input") ?? target : target)?.focus();
+    });
     return () => cancelAnimationFrame(frame);
   }, [region, focusKey]);
 
@@ -103,8 +107,7 @@ export default function ChooserSurface({
             iconOnly
             className={styles.close}
             aria-label={`Close ${title}`}
-            disabled={onClose === null}
-            onClick={() => onClose?.()}
+            onClick={onClose}
           >
             <X size={16} aria-hidden="true" />
           </Button>
@@ -132,12 +135,11 @@ export default function ChooserSurface({
         : null}
       <MobileSheet
         active={active && !inline && isMobile}
-        onDismiss={() => onClose?.()}
-        onDismissRequest={() => (onClose === null ? "blocked" : "accepted")}
+        onDismiss={onClose}
         ariaLabel={title}
         focusKey={focusKey}
         panelId={panelId}
-        initialFocus={(sheet) => sheet}
+        initialFocus={(sheet) => wasOverlayInvokedByTouch() ? sheet : sheet.querySelector<HTMLInputElement>("input") ?? sheet}
         returnFocusTo={anchor}
         returnFocusFallback={returnFocusFallback}
         skipReturnFocus={skipReturnFocus}

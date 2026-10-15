@@ -29,6 +29,7 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+- [unverified] library chooser / physical accessibility · 2026-10-15 · browser checks do not establish physical ime, speech, soft keyboard or native zoom: [ticket](tickets/library-chooser-physical-accessibility-unverified.md).
 - [open] deployment / postgres maintenance · 2026-10-15 platform restack · the 64 MiB default /dev/shm fails a parallel VACUUM DiskFull under the 512 MiB cap; autovacuum is unaffected: [issue](issues/postgres-shm-blocks-parallel-maintenance.md).
 - [unverified] workspace / scrollbar input · 2026-10-14 · classic gutter passed; default overlay thumb produced no motion and remains unqualified: [ticket](tickets/canvas-overlay-scrollbar-release-unqualified.md).
 - [open] release / host storage · 2026-10-14 corrective rollout · image pulls can consume the preflight disk reserve: [ticket](tickets/release-image-cache-consumes-disk-reserve.md).

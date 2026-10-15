@@ -36,7 +36,6 @@ from nexus.schemas.library import (
     RenameLibraryRequest,
 )
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
-from nexus.text import escape_like
 
 _COLUMNS = """
     l.id, l.name, l.owner_user_id, l.is_default, l.system_key,
@@ -374,53 +373,19 @@ def list_libraries(
     )
 
 
-_DESTINATION_PLAN = (
-    SortKey("match_rank", "asc", KeysetValueKind.Int),
-    SortKey("name_key", "asc", KeysetValueKind.Text),
-    SortKey("name", "asc", KeysetValueKind.Text),
-    _ID,
-)
-
-
-def list_writable_library_destinations(
-    db: Session, viewer_id: UUID, *, q: str, cursor: str | None, limit: int
-) -> CollectionPage[LibraryDestinationOut]:
-    """Named libraries the viewer may file into: exact, prefix, contains, then by name."""
-    q = q.strip().lower()
-    rows, next_cursor = keyset_page(
-        db,
-        binding={"list": "LibraryDestinations", "viewer": viewer_id, "q": q},
-        plan=_DESTINATION_PLAN,
-        alias="ranked",
-        cursor=cursor,
-        limit=limit,
-        params={
-            "viewer_id": viewer_id,
-            "q": q,
-            "prefix": f"{escape_like(q)}%",
-            "contains": f"%{escape_like(q)}%",
-        },
-        sql=lambda keyset, order: f"""
-            WITH ranked AS (
-                SELECT l.id, l.name, lower(l.name) AS name_key,
-                       CASE WHEN :q = '' THEN 3
-                            WHEN lower(l.name) = :q THEN 0
-                            WHEN lower(l.name) LIKE :prefix ESCAPE '\\' THEN 1
-                            ELSE 2
-                       END AS match_rank
-                FROM libraries l
-                JOIN memberships m
-                  ON m.library_id = l.id AND m.user_id = :viewer_id AND m.role = 'admin'
-                WHERE NOT l.is_default AND l.system_key IS NULL
-                  AND lower(l.name) LIKE :contains ESCAPE '\\'
-            )
-            SELECT * FROM ranked WHERE true {keyset} ORDER BY {order} LIMIT :limit
-        """,
+def list_writable_library_destinations(db: Session, viewer_id: UUID) -> list[LibraryDestinationOut]:
+    """The complete named-library catalog the viewer may file into."""
+    rows = db.execute(
+        text("""
+            SELECT l.id, l.name FROM libraries l
+            JOIN memberships m
+              ON m.library_id = l.id AND m.user_id = :viewer_id AND m.role = 'admin'
+            WHERE NOT l.is_default AND l.system_key IS NULL
+            ORDER BY lower(l.name), l.name, l.id
+        """),
+        {"viewer_id": viewer_id},
     )
-    return CollectionPage[LibraryDestinationOut](
-        items=[LibraryDestinationOut(id=row["id"], name=row["name"]) for row in rows],
-        next_cursor=next_cursor,
-    )
+    return [LibraryDestinationOut(id=row.id, name=row.name) for row in rows]
 
 
 def resolve_writable_destinations(

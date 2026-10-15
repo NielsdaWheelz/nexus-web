@@ -31,9 +31,15 @@ their followed shows. Libraries do not own ingestion or asset delivery.
 Web: `lib/libraries/api.ts` (typed calls; a committed write publishes its change
 topics), `views.tsx` (the url's view options), `errors.ts` (the one failure-copy
 map), the two panes, `LibrarySettingsDialog`, and the chooser stack:
-`LibraryChooser` (the listbox) under `DestinationChooser` (pick destinations;
-`DestinationField` on the web, inline in the extension popup) and
+`LibraryChooser` (the action combobox, also used directly by the extension) under
+`DestinationChooser` (`DestinationField` on the web) and
 `PlacementOverlay` ("Libraries…", opened through `placementController`).
+the [chooser contract](../library-chooser-plan.md) owns keyboard behavior and
+draft scope. complete catalog reads use the existing keyed read owner; matching
+is local, including selected rows. the mounted placement controller owns accepted
+explicit intent in per-target order and rereads after every outcome; closing a
+picker does not cancel accepted work. no placement journal or historical replay
+receipt exists. an unknown delayed request can still land after a later edit.
 Membership: `LibraryMembers` (the inspector's Members tab; its hook runs in the
 library pane), `LibraryInvitations` (the viewer's inbox above the index) and
 `components/users/PeopleSearch` (shared with the Share overlay). Each command is
@@ -55,7 +61,7 @@ once the reread says the viewer no longer manages the library.
 | `GET /libraries/placements/{ref}` | `[{library_id, name, is_default, relation, blocked}]`; `ref` is `media:<id>` or `podcast:<id>` | read |
 | `PUT /libraries/{id}/items/{ref} {replace_episodes}` → 204 | file a media (All = Saved in Nexus) or a followed show (named only) | keyed by (library, item): a no-op when already there |
 | `DELETE /libraries/{id}/items/{ref}` → 204 | the last entry of a media anywhere → 409 `E_MEDIA_LAST_REFERENCE` | absent → 204 |
-| `GET /libraries/destinations?q&cursor&limit≤50`, `GET /extension/library-destinations` | named libraries the viewer admins, exact → prefix → contains → name | read |
+| `GET /libraries/destinations`, `GET /extension/library-destinations` | complete `[{id,name}]` of named libraries the viewer admins; query parameters rejected | read |
 | `GET /libraries/{id}/suggestions` | the Reading Slate (below) | read |
 | `GET /libraries/{id}/members?cursor&limit` | admin; `{user_id, role, is_owner, email, display_name, created_at}` by user id | read |
 | `PATCH /libraries/{id}/members/{user_id} {role, expected_role}` → 204 | admin of a mutable library; the owner's role is fixed (403 `E_OWNER_EXIT_FORBIDDEN`) | already that role → ok; changed meanwhile → 409 `{current_role}` |

@@ -4,7 +4,6 @@
 // Pure: no network, no storage, no page DOM. The three bundles come from one
 // build, so these types are the contract and nothing re-validates them.
 
-import type { ListPage } from "@/lib/api/useServerList";
 import type { LibraryDestination } from "@/lib/libraries/api";
 
 export const VIEW_PORT = "nexus-capture-view";
@@ -72,11 +71,14 @@ export interface ViewState {
   /** origins Firefox must grant before login or save; granted ones omitted */
   requiredOrigins: string[];
   draft: {
+    id: string;
     target: TargetView;
     phase: CapturePhase;
     destinations: LibraryDestination[];
     /** a save was attempted: the libraries are fixed until Discard */
     locked: boolean;
+    /** no command currently owns the draft and its selection may change */
+    editable: boolean;
   } | null;
   /** why nothing could be pinned, while no draft exists */
   unsupported: string | null;
@@ -84,18 +86,42 @@ export interface ViewState {
 
 export type Command =
   | { kind: "activate" }
-  | { kind: "set_destinations"; destinations: LibraryDestination[] }
-  | { kind: "search_destinations"; q: string; cursor: string | null }
+  | { kind: "list_destinations" }
   | { kind: "login" }
-  | { kind: "save" }
   | { kind: "retry" }
   | { kind: "discard" }
   | { kind: "disconnect" };
 
 export type CommandResult =
   | { kind: "state"; state: ViewState }
-  | { kind: "page"; page: ListPage<LibraryDestination> }
+  | { kind: "destinations"; destinations: LibraryDestination[] }
   | { kind: "failure"; failure: CaptureFailure };
+
+/** Selection and its save barrier share this port's ordered message stream. */
+export type ViewCommand = {
+  sequence: number;
+  draftId: string;
+  accountId: string;
+} & (
+  | { kind: "set_destination"; destination: LibraryDestination; included: boolean }
+  | { kind: "save" }
+);
+
+export interface ViewMessage {
+  state: ViewState;
+  /** every command through this sequence is represented in state */
+  acknowledged: number;
+  failure: CaptureFailure | null;
+}
+
+/** Explicit intent applies equally to the background and the popup's posted suffix. */
+export function setDestination(
+  current: readonly LibraryDestination[],
+  change: { destination: LibraryDestination; included: boolean },
+): LibraryDestination[] {
+  const remaining = current.filter(item => item.id !== change.destination.id);
+  return change.included ? [...remaining, change.destination] : remaining;
+}
 
 // --- article packet -----------------------------------------------------------
 
