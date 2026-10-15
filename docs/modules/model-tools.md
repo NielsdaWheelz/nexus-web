@@ -49,9 +49,10 @@ Code: `python/nexus/services/tools/` (`contract`, `run`, `reads`, `writes`,
   `running`, not cancel-requested. The row is committed, with the chat's start
   frames, before the handler runs.
 - I2 one call in flight per generation; positions dense from 1 in dispatch order.
-- I3 a name outside the frozen plan never runs and leaves no row; it answers
-  `ToolUnavailable` (provider route; on codex see ticket
-  `codex-unpublished-tool-call-ends-the-answer`).
+- I3 a name outside the frozen plan never runs and leaves no row, and the answer
+  goes on. the provider route answers `ToolUnavailable`; on codex the binary
+  answers its own refusal (`unsupported call: <name>`), a model error, not
+  authority.
 - I4 lock order: generation -> chat run -> job claim -> `tool_calls` row; chat's
   finalize takes run -> rows. generation closure locks its generation rows before
   settling their unfinished tool rows in the same transaction.

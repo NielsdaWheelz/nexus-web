@@ -86,7 +86,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] generation / background jobs · 2026-10-10 generation rewrite · a dead background generation job closes its ledger row but leaves its reading, build or summary pending: [ticket](tickets/dead-background-jobs-leave-domain-rows-pending.md).
 - [open] generation / provider runtime · 2026-10-10 generation rewrite · the 24-turn and whole-generation timeout bounds on provider tool loops were chosen without evidence: [ticket](tickets/provider-tool-loop-bounds.md).
 - [open] chat tool runtime / codex · 2026-10-10 generation rewrite · codex calls with invalid arguments (and repeated call ids) leave no tool row: [ticket](tickets/codex-invalid-tool-arguments-invisible.md).
-- [open] chat tool runtime / codex · 2026-10-10 model tools rewrite · p2 · a codex call to an unpublished tool ends the answer `policy_violation` (provider-runtime + kernel containment; T4e): [ticket](tickets/codex-unpublished-tool-call-ends-the-answer.md).
 - [open] chat wire · 2026-10-10 model tools rewrite · p3 · `tool_call_done` repeats `tool_call_start` plus an `input` no client reads: [ticket](tickets/tool-call-done-frame-duplicates-start.md).
 - [open] chat tool runtime · 2026-10-10 model tools rewrite · p3 · `tool_calls.arguments` is written and never read: [ticket](tickets/tool-call-arguments-unread.md).
 - [open] ingest / egress · 2026-10-10 url acquisition reauthor · `getaddrinfo` runs with no timeout, so resolver limits, not the fetch deadline, bound resolution: [ticket](tickets/egress-dns-resolution-outside-the-deadline.md).
