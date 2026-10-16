@@ -111,6 +111,22 @@ scrolling. see [workspace controls](workspace.md), the
 includes native firefox 158 page/text zoom at 200% in a 320px pane; it makes
 no spoken assistive-technology claim.
 
+## choice controls
+
+`ChoicePicker` renders one controlled exclusive choice: the current value and a
+chevron, with the category in its accessible name. its plain list has separate
+active and selected states, a selected checkmark and visible unavailable reasons.
+labels wrap rather than truncate; the bounded list scrolls vertically. status
+and refresh content sits outside the listbox. it has no search field or visible
+category heading. command menus and library membership retain their own content
+and semantics; [overlays](overlays.md#surfaces) owns the responsive picker shell.
+
+choice triggers have a 32px minimum height; triggers and option rows have at
+least 44px with any coarse pointer. text can increase those heights. engagement
+uses existing colour and motion tokens; reduced motion removes transitions.
+chat's three-control composition, native effort gauge/range and whole-control
+wrapping belong to [chat](chat.md#generation-selection), not this primitive.
+
 ## overflow buttons
 
 `OverflowMenuButton` owns ellipsis trigger appearance: one native button,

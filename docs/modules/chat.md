@@ -134,7 +134,8 @@ goes to login.
 `Conversation.tsx` is the pane adapter. The route id keys a fresh conversation
 (store, scroll, docent); a changed id never reuses state. It owns route state
 (`?message`, `?draft`, the quote hash) and the fork being composed, and wires
-the store, the draft, the inspector and the docent. It owns no server state.
+the store, the draft, the inspector and the docent. the store owns transcript
+state; the pane owns the shared catalog read.
 
 An existing Conversation publishes one Resource Inspector group with
 `Context | Forks | Dossier`; `/conversations/new` publishes none until the

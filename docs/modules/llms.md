@@ -55,8 +55,9 @@ keys, `(mode, effort)` and `(mode, effort_order)` are unique within a model,
 and a declared default names an actual row. mode order is source order; effort
 order applies only within that model/mode. the browser groups actual rows and
 never parses execution keys or manufactures model/mode/effort combinations.
-this required catalog contract is wire revision 4; no database migration is
-needed. the runtime and kernel dependency pins form one reviewed cohort.
+this required catalog contract was introduced with wire revision 4; no database
+migration is needed. the runtime and kernel dependency pins form one reviewed
+cohort.
 
 The strict Chat selection is one tagged value:
 
