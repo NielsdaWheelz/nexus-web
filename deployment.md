@@ -454,6 +454,15 @@ source metadata. the operator still needs the private backup and postgres
 inputs, an explicit writer disposition and execution admission. archive
 verification does not claim an actual restore.
 
+the isolated qualification used the exact public operator file (`20267776`) in
+the unchanged fdd api image: two rehearsal snapshots at one associated source
+restored the expected different fixture rows; replay and three refusal cases
+left the original archives/manifests unchanged. retained actual receipt:
+`c-sources/fresh-maintenance-backup-proof-v1/green-v1/completion-receipt.json`
+(`8e003e40`), independently reviewed by `5621496e`. this establishes the
+bounded mechanism, not a production backup
+or a full nexus restore.
+
 ### database backup recovery
 
 A verified archive is a recovery point, not an automatic rollback. Restoring it

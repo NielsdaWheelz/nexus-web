@@ -356,7 +356,7 @@ unexpected timeouts. See
 
 - [open] inbound share / account policy candidate · 2026-10-02 producer review · valid dependency failures reach the defect owner; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/share-account-transient-failures-escape-inline-feedback.md).
 - [open] nexus / command policy candidate · 2026-10-02 producer review · valid auth-dependency503 reaches all three writes; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/nexus-auth-dependency-failure-escapes-retry-feedback.md).
-- [open] local docker / inventory · 2026-10-03 selection-concurrency allocation · full enumeration failed again, then passed at cleanup; intermittent recurrence remains open, cause and initial stopped-state comparison unproved: [ticket](tickets/local-docker-stopped-container-snapshot-missing.md).
+- [open] local docker / inventory · 2026-10-03 selection-concurrency allocation · full enumeration failed again on 2026-10-15; exact-name and running checks work, but stopped-state census and root cause remain unproved: [ticket](tickets/local-docker-stopped-container-snapshot-missing.md).
 
 - [open] metadata bibliography · 2026-10-01 council · local book/collection/essay dates are qualified; targeted saved-production correction remains behind the historical release gate: [ticket](tickets/metadata-book-date-counts-serialization.md) · [github #485](https://github.com/NielsdaWheelz/nexus-web/issues/485).
 - [open] metadata production admission · 2026-10-01 investigation · catalog cause and three reviewed retry dispositions await runtime repair; an unavailable catalog is now a terminal `model_unavailable`: [ticket](tickets/metadata-production-catalog-refresh-fails.md).
@@ -441,4 +441,3 @@ unexpected timeouts. See
 - [open] email ingest / activation · 2026-10-15 · production post room remains unconfigured; delivery behavior is unqualified: [ticket](tickets/production-post-room-unconfigured.md).
 
 - [open] playback / accessibility · 2026-10-15 physical release check · normal pending saves can announce a false pause and leave stale feedback: [ticket](tickets/player-announces-paused-sync-during-normal-save.md).
-- [open] backup / maintenance · 2026-10-15 book campaign · fresh pre-apply backups need an archive key independent of runtime source provenance: [ticket](tickets/fresh-backup-key-coupled-to-release.md).
