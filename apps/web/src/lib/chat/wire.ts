@@ -66,6 +66,8 @@ const DETAIL: Record<string, string> = {
   E_READER_SELECTION_TOO_LARGE: UNQUOTABLE,
   E_CONVERSATION_NO_LONGER_EMPTY:
     "This chat already has messages. Review them and send again.",
+  E_CONVERSATION_CHANGED:
+    "Chat changed elsewhere. Refresh to review it before trying again.",
 };
 export const failureDetail = (code: string) =>
   DETAIL[code] ?? "Please try again.";

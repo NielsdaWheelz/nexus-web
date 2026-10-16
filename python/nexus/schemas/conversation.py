@@ -81,6 +81,7 @@ class ReaderSelectionInput(Wire):
 class ConversationOut(Wire):
     id: UUID
     title: str
+    branch_revision: int = Field(ge=0)
 
 
 class ConversationListItemOut(Wire):
@@ -130,6 +131,7 @@ class ConversationTreeOut(Wire):
 
 class SetActivePathRequest(Wire):
     active_leaf_message_id: UUID
+    expected_revision: int = Field(ge=0)
 
 
 class ForkTitleRequest(Wire):
@@ -191,6 +193,7 @@ class ReplyInsertion(Wire):
 class ExistingChatDestination(Wire):
     kind: Literal["Existing"]
     conversation_id: UUID
+    expected_revision: int = Field(ge=0)
     insertion: Annotated[EmptyInsertion | ReplyInsertion, Field(discriminator="kind")]
 
 
@@ -211,9 +214,11 @@ class ChatRunRepeatRequest(Wire):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     selection: GenerationSelection
+    expected_revision: int = Field(ge=0)
 
 
 RejectionCode = Literal[
+    "E_CONVERSATION_CHANGED",
     "E_MESSAGE_TOO_LONG",
     "E_INVALID_GENERATION_SELECTION",
     "E_GENERATION_SELECTION_UNAVAILABLE",

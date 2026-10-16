@@ -95,6 +95,12 @@ mobile chooser sheets retain the modal tab cycle. searchable library choosers
 default to search for keyboard invocation and the sheet for touch. a picker's
 `initialFocus(panel)` overrides that policy without adding another focus owner.
 
+action menus use the same continuation. their items (custom items included) have
+`tabIndex={-1}`: arrows move within the menu; tab closes it and continues after
+its opener, shift-tab closes to the opener. disabled items remain arrow-focusable
+and show their reason as wrapped text. dialog close targets are 44px on any
+coarse pointer.
+
 **return focus.** at open an interactive layer records its trigger:
 `returnFocusTo()`, else the focused element, else (safari never focuses a clicked
 button) the focusable element the last press landed on. at close, focus goes to the live

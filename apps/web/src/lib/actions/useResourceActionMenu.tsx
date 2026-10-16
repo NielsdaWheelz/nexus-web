@@ -114,6 +114,7 @@ export function useResourceActionMenu(
         <button
           type="button"
           role="menuitem"
+          tabIndex={-1}
           className={menuStyles.menuItem}
           onClick={fetchActions}
         >
