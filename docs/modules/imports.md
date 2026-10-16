@@ -1,150 +1,46 @@
 # imports
 
-owner: `services/imports.py` composes and reads; source, search, and metadata owners supply their facts and recovery policies. `schemas/imports.py` and `schemas/import_history.py` own the output contracts; `schemas/import_refs.py` owns import identity. the web presents those facts through `apps/web/src/lib/imports/`.
+imports is the reader's one place to see what happened to everything they brought in (and what the visible shared items they did not bring in are doing), what still needs them, and the one command that recovers it. it is one read model and one narration log; it owns no work.
 
-## obligations
+owners: `python/nexus/services/imports.py` (the read model), `python/nexus/services/import_history.py` (the only writer and reader of `media_upload_events` and `media_processing_events`), `python/nexus/schemas/imports.py` (the wire), `python/nexus/schemas/import_history.py` (stages, the failure catalog, the stored facts), `python/nexus/schemas/import_refs.py` (the ref grammar), `python/nexus/api/routes/imports.py`. web: `apps/web/src/lib/imports/` (`api.ts` reads and the media recovery admission, `ImportsProvider.tsx` the observer, `query.ts` the url, `copy.ts` every import, upload and acquisition string) and `apps/web/src/components/imports/` (list, toolbar, row, actions, inspector, badge), mounted by `app/(authenticated)/imports/ImportsPaneBody.tsx`. the owners it reads: ingest (attempts, sessions, progress, the recovery policy), the media projection (`media_facts`: readiness, offers, restrictions, the metadata view), metadata (`metadata_operations_sql`), content indexing.
 
-an import has independent `source`, `search`, and `metadata` nullable slots. source includes unpublished uploads. search applies when a current index exists and the media is ready; it does not require a succeeded source attempt. metadata uses the metadata owner's latest operation, oldest unfinished operation, unfinished count, retry policy, and personal review. null means no applicable recorded obligation, not success.
+## concepts
 
-needs attention takes precedence: an applicable source/search failure, latest metadata failure, or latest unreviewed no-findings result. otherwise applicable source/search activity or any unfinished metadata job makes the row active. otherwise it is complete. attention and progress counts are exclusive row counts. history includes all current states. a newer metadata result supersedes older attention; older unfinished jobs still block research and keep observation alive.
+- **import.** one row per thing brought in: `upload:<session id>` for every upload session the viewer created (kept after publication), `media:<id>` for each visible media with a source attempt or metadata job that none of the viewer's sessions published. a published session whose media the viewer cannot see is dropped.
+- **obligation.** three independent nullable slots. source: the unpublished upload, else the latest attempt (a dead job of an unsettled attempt, or a failed attempt without a live job, needs attention; unsettled is active). search: a ready media's current index revision (a dead job needs attention; pending, indexing or a live job is active). metadata: the metadata owner's view (the latest failed or unreviewed no-findings result needs attention; any unfinished job is active). null means nothing applies, not success.
+- **classification.** needs attention > active > complete over the slots. the **primary** obligation speaks for the import: the earliest by pipeline stage (`STAGES`: Upload, Validate, Extract, Finalize, SourceProcessing, Index, Metadata), then failure or acceptance time, then key; under a stage or reason filter, the one that matched. the server names it; the web reads `obligations[primary]` and derives nothing.
+- **offer / restriction.** the source and search owners' answer for this viewer, as `media_facts` carries it (the same answer the action menu shows): a command naming the exact attempt, job or revision it acts on, or why there is none. an unpublished upload answers for itself: Retry upload (not for a rejected session or a browser capture), or `UploadRejected`.
+- **history event.** an append-only narration of a session's or a media's source and index work, written by its owner in the transaction that commits the fact. its payload names its `kind` and holds only what a reader is told; 0225 baselines are stored once-only facts of that cut. metadata operations are projected at read time from their jobs, never stored. history is narration only: no other owner reads it as an identity (an accepted attempt's surviving media is ingest's `media_source_supersessions`).
+- **observation.** the newest successful summary's `observed_at`: the only token on which the list, the inspector and an open history reread.
 
-metadata jobs retain their admitted `purpose`: native x uses `title`; other media uses `bibliography`. history never infers purpose from the current provider. a completed title may use its source label; this is successful abstention, without no-findings or review. naming failure leaves readable source intact. [media metadata](media-metadata.md) owns the generation and outcome contracts.
+## contracts
 
-population includes existing upload/source imports and visible media with retained metadata jobs, including rss episodes without source attempts. published uploads retain the upload-first identity. metadata-only rows take their acceptance time from the earliest retained metadata job. no missing historical job is inferred or backfilled.
+http (all authenticated repeatable reads, `Data{data}`; the web under `/api`):
 
-each item carries readiness hydrated from current media capabilities, independently of obligation completion. before publication all readiness is false. published upload titles use the current media title; their immutable `original_filename` remains present and searchable. media-only rows have absent filenames. an active unpublished upload says `AwaitingUploadConfirmation`, with no measured transfer progress; recorded failure and expiry take precedence.
+| route | request | answer |
+|---|---|---|
+| `GET /imports/summary` | none | `ImportSummary{observed_at, needs_attention_count, active_count, unfinished_work_count}` |
+| `GET /imports` | `view` (NeedsAttention \| InProgress \| History), `q`, `media_kind`, `stage`, `failure_code`, `state`, `had_failures`, `from`, `before`, `cursor`, `limit` 1..100 = 50 | `ImportPage{matched_count, items, next_cursor}`; 400 `E_INVALID_REQUEST` for a filter the view cannot correlate (In progress: `failure_code`; any non-History view: `state`, `had_failures`, `from`, `before`), `failure_code` with `had_failures=false`, a date without an offset or an unknown parameter; 400 `E_INVALID_CURSOR` |
+| `GET /imports/{ref}` | none | `ImportDetail{item, source_issues}`; 400 for a malformed ref, 404 `E_IMPORT_NOT_FOUND` |
+| `GET /imports/{ref}/history` | `cursor`, `limit` 1..100 = 50 | `HistoryPage{entries, next_cursor}`, newest first by `(occurred_at, id)`; 400, 404, 400 `E_INVALID_CURSOR` |
 
-document readability requires the reader-publication owner's shared eligible-kind, persisted-ready and existing-publication predicate; pdf also requires its original file. media hydration and the quote projection share that predicate. an uploaded original alone remains downloadable, without a read promise. a readable document, an x article's retained copy included, stays readable while its source recovery proceeds independently.
+`ImportItem{ref, media_id, title, original_filename, media_kind, source_label, can_read, can_play, classification, primary, accepted_at, updated_at, matched_event, obligations{source, search, metadata}, source_issue_count}`; `primary` is null exactly when complete. source and search are `ImportObligation{classification, stage, status, waiting_reason, progress, next_retry_at, failure_code, recovery, unavailable_reason}` (status, waiting reason, progress and next retry describe active work, the code attention); metadata is `MetadataEnrichmentView`. `HistoryEntry{id: upload:|processing:|metadata:<uuid>, occurred_at, stage, failure_code, facts}` with `facts` one stored kind or `MetadataOperation`. a list cursor binds the viewer, the view and `ImportListQuery.normalized()`; a history cursor binds the viewer and the ref.
 
-classify before filtering. attention considers only attention obligations; progress only active obligations. stage and failure code must match the same obligation. primary matching work is ordered by stage rank, failure/acceptance time, then obligation key. each row appears once; source, search, and metadata remain separately inspectable and actionable. source and search recovery are separate actions of the media (one `Recovery` each), sent with the exact attempt/job/revision the reader saw; the row, the inspector and the menu share one busy key per recovery.
+imports sends no write of its own. its commands go to their owners with their retry rules: `POST /media/{id}/retry` and `/repair` (`recoverMedia`, the offer's exact expectation; a stale one is 409 and reads "This import changed"), `POST /media/uploads` with the session's own id and the original file, and `DELETE /media/uploads/{id}` (a session that published meanwhile is done), metadata research and review through `lib/media`.
 
-## reads
+in process: `append_upload_event` and `append_processing_event` (caller's transaction, nothing returned), `delete_upload_history_in_current_transaction` and `delete_processing_history_in_current_transaction` (history dies with its session or media), `events_of_import_sql`, the queue hooks `on_source_job_outcome` and `on_index_job_outcome` (inside the job transition), `assume_safe_failure_code`, `queue_failure_code`, `parse_import_ref`, `format_import_ref`. web: `publishImportsInvalidation` / `subscribeImportsInvalidations` (the in-tab `Imports.Invalidated` event), `encodeImportsUrl` (Add's "view import"), `ImportsBadge`, the companion group `imports-inspector` with surface `import-detail`, `FAILURE_COPY` (the media banner) and the acquisition copy the add panel, share, Connections and note attachments word their outcomes with.
 
-four authenticated repeatable-read routes return their models through `Data`: `/imports/summary` (`ImportSummary`), `/imports` (`ImportPage`), `/imports/{ref}` (`ImportDetail`) and `/imports/{ref}/history` (`HistoryPage`). snake-case json, plain nullable and always-sent fields; the web reads them as generated types (`lib/imports/api.ts`) and decodes nothing by hand. `ImportPage` owns its consistency checks (item count ≤ matched count, unique refs, a continuing page is nonempty); `ImportDetail` owns issue-count equality. pages contain flat server-ordered items, without stage groups or stage totals.
+url: `/imports?view&q&media_kind&stage&failure_code&state&had_failures&from&before&selected`, by wire name in one order; decoding is tolerant and keeps what the reader wrote; dates are UTC days, `[from, before)`; `selected` is admitted only as one `upload:` or `media:` path segment. no browser storage.
 
-a published upload keeps its `upload:<session id>` identity; the server owns the ref grammar. the url decoder admits a `?selected=` only as `upload:` or `media:` and one path segment (no `/`), so it cannot reach `/imports/summary` or another route; anything else is absent. a ref the server rejects (400 `E_INVALID_REQUEST`) or does not know (404 `E_IMPORT_NOT_FOUND`) reads "This import is no longer available".
+## invariants
 
-every read is a pane-free `usePaneFreeServerValue` (`lib/api/serverState.tsx`): it loads on its key, refetches when its `stale` string changes, keeps its data while it refetches, coalesces (one queued run, never aborting the one in flight), keeps a failed refetch's error beside the last good data, retries transport failures three times, sends 401 to the sign-in handler and throws defects in render.
-
-## observation (`lib/imports/ImportsProvider.tsx`)
-
-- the summary read's `stale` is a wake counter. a wake is `visibilitychange` to visible, `focus` after a `blur`, `pageshow`, `online`, the pane opening, an in-tab `Imports.Invalidated` event, an `Entries` change (architecture §8.12), and Refresh.
-- the server stamps `observed_at` on every read; the newest successful summary's stamp is the only observation token. the list, inspector and mounted history put it in their `stale`, so they reread when an observation lands. collapsing history retains its loaded prefix; there is no history poller.
-- polling: every 5 s while the newest summary read succeeded, `unfinished_work_count > 0`, the document is visible, and the pane is open or a wake happened within the last 15 minutes. this count covers distinct unfinished source/index/metadata jobs across attempts and revisions, plus active uploads or applicable obligations without such a job. attention precedence and inapplicable older work cannot stop observation. a failed summary read stops polling until the next wake or Refresh.
-- invalidation is in-tab only: other tabs catch up on their next wake or poll.
-- metadata admission (answered or lost) and personal review invalidate imports, so an idle summary wakes. both restart the media's metadata stream without a bibliography change event.
-- a transcript request (a media menu, a podcast's batch) invalidates imports: it queues source work.
-- upload commands (`dispatchUpload`) are pending per `session id|command`, so the row and the inspector both show "Starting…"; a duplicate in flight is ignored and a refusal is the caller's to report.
-
-## lists
-
-a view is the first `pages` server pages of its query (`lib/imports/query.ts` narrows it to what the view correlates, so `GET /imports` never answers 400). every observation rereads that prefix, so a refresh keeps the pages the reader loaded and a row removed anywhere in it disappears; Load more is one page longer (a reread of the whole prefix); a query change, including a return to an earlier one, starts again at one page (`usePagePrefix` in `lib/api/pagePrefix.ts`). a failed reread keeps rows with a stale notice and retry; a failed continuation keeps the prefix with its own retry. detail and history use the same retained-facts rule. a genuinely unavailable ref replaces retained actionable details with the gone notice.
-
-modes live in shell navigation; draft/submit/clear/reset and filters use `PaneQueryToolbar` in the shell query slot. one flat resource list presents a consequence, contextual facts and actions per row. readiness gates visible open; the item's current activation, read when open is pressed (`resolveResourceItem`), authorizes it. desktop `Adopt` reuses a matching reader or creates beside imports; mobile `Follow` uses the existing back path. pane limits remain the workspace planner's responsibility.
-
-title activation selects details and supplies its actual trigger. selection restoration alone never opens a dismissed companion; explicit row/header/add activation does. closing retains selection and returns focus through the shell. recovery of a disappearing list control locally returns to the same row title, following row title, then query, only while focus is lost and this pane is active; explicit focus elsewhere wins.
-a refused upload restores its surviving enabled trigger under those same focus and active-pane guards.
-foreign focus retires list ownership immediately, even if it returns to body before the next commit. busy inline source/search recovery uses focusable `aria-disabled` controls with guarded activation; unavailable actions retain native disabling.
-
-## history and review
-
-stored upload/processing events keep their existing write grammar. `HistoryEntry.facts` additionally projects one metadata operation per retained job; no metadata events are invented. the metadata owner decodes each job with that job's latest generation in a batch. ids are namespaced text (`upload:`, `processing:`, `metadata:`), ordered by `(occurred_at desc, id desc)`. terminal metadata uses completion time; live metadata uses creation time. cursor bindings were cut over with this grammar; old cursors are rejected. the “recorded failures” filter includes metadata failures but excludes no-findings results.
-
-mark reviewed records a personal acknowledgement of one exact no-findings job. any current reader may acknowledge it; only the creator can request research. older results remain reviewable, and reviewing them never clears newer attention. review decorates the existing history entry without changing its identity, time, or durable outcome. each attempt sends no body; a repeat after an uncertain response finds the review already recorded (204). no generic failure dismissal or unreview exists.
-
-item `updated_at` includes owner job updates and the viewer's review. a heartbeat may refresh live history, but never creates a history entry.
-
-history starts collapsed unless the row matches a past event. match evidence belongs to the exact ref and applied api query; it never survives either changing. a new match expands once, and a user's collapse persists for that same match across observations. current obligations remain separate from matched historical failure. partial coverage remains explicit; loaded events survive failed continuation and retry.
-
-## url
-
-`/imports?view&q&media_kind&stage&failure_code&state&had_failures&from&before&selected`, by wire name, in one canonical order. decoding is tolerant (unknown or invalid values are absent) and keeps what the reader wrote, including History-only filters while another view is open. dates are UTC days, `[from, before)`. the first entry without a view lands on Needs attention, else In progress, else History with `from` = today − 30 local days, once; later counts never move the reader.
-
-## copy (`lib/imports/copy.ts`)
-
-the owner of import, upload, and acquisition copy. `FAILURE_COPY` remains exhaustive over source/search `SafeFailureCode`; `lib/media/mediaMetadataCopy.ts` owns metadata status, safe reasons, and contextual action labels for imports and the metadata overlay. `IMPORT_FAILURE_CODES` combines their generated domains without a second metadata failure catalog. the inspector presents each obligation's own explanation and action. partial metadata success says “not established by this run”; readable/playable claims require readiness. older unfinished research is shown alongside the latest result.
-
-## acquisition (`lib/imports/ingest.ts`)
-
-`addMediaFromUrl`, `uploadIngestFile` and `removeUploadSession`; see [ingest](ingest.md) for the upload-session protocol. each endpoint's declared codes map to one `UploadSessionOutcome`; the outcomes that change what Imports owes invalidate it. create/publication receipts carry producer-owned exact refs. Retry upload keeps basic file validation and sends the chosen file as `uploadIngestFile({file, libraryIds: [], id: <session id>})`: the server owns normalized filename, content type and size admission (another intent is 409 `E_UPLOAD_INTENT_MISMATCH` before any byte), and the session advances (or answers what it published) under its first destinations; `Superseded` counts as done. an `UploadFailed` history row is narrated from its envelope code.
-
-## native x sources
-
-`services/x_client.py` acquires the requested post or same-author thread plus one
-hop of direct quotes, reply parents and repost targets. `schemas/x_source.py` owns
-normalized evidence; `services/x_source.py` owns its current persisted snapshot,
-coverage and excerpt. retain full authored wording, url observations, supplied image
-descriptions and attributed context. nested references never trigger another fetch.
-author-thread searches explicitly begin at the provider's archive floor,
-`2006-03-21T00:00:00Z`, on every page; omitting this bound restricts results to
-the last 30 days. the existing post budget still limits acquisition.
-`post_limit` means enumeration stopped at the configured bound; `exhausted` means
-enumeration ended, not that every historical post remains available.
-
-`services/x_ingest.py` prepares source and reader content before publication. the
-source coordinator's exact claim and ordered media locks fence one transaction that
-installs reader content, snapshot and excerpt, settles the attempt, and admits indexing
-and naming. a newly completed quoted child receives its own snapshot and naming job.
-a child with a reader publication retains its independent source, including an ongoing
-refresh. identity reuse transfers access and supersedes onto the existing holder;
-it installs no new evidence or naming obligation.
-
-reader content and naming consume the same evidence. quotes retain their existing
-embeds; external reply/repost context follows the primary content, and references to
-other primary posts do not repeat them. the reader retains attachment links to
-preserve source wording and saved positions. standalone posts keep their generic
-quote footer when enhanced with embeds; threads keep their attributed footer.
-the immediate title is the first
-nonempty authored opening, shortened at a unicode word boundary within 120 code
-points without splitting a grapheme. when that would retain only an opening mention
-or hashtag, keep the grapheme prefix. quote/attachment tokens are removed from title
-evidence; meaningful links remain. textless evidence uses
-`x post by @handle` or `x thread by @handle`. generated titles belong to the existing
-metadata job, independently of source readiness.
-
-## source refresh
-
-`POST /media/{id}/refresh` requires `expected_attempt_id`; its 202 response is a
-`SourceAdmission` with media, attempt and job ids. `services/media_source_ingest.py`
-admits retry and refresh through one successor step while keeping their policies
-distinct ([ingest](ingest.md)). authorization, the exact latest attempt and source
-policy precede mutation; the new attempt and its job commit together. a resend of
-the same expectation answers the successor that landed; a fresh stale expectation
-conflicts. browser retries resend the original expectation.
-
-native x retains its readable publication while refresh is queued, running, failed
-or stopped. first imports keep ordinary failure behavior. authorized refresh first
-initializes any ready legacy copy's missing reader publication through its existing
-owner; it never reconstructs normalized evidence from rendered fragments. a failed
-refresh remains visible on its source attempt and supports ordinary retry or exact
-dead-job repair while the saved copy remains readable.
-
-replacement composes the [reader's position owner](reader-implementation.md): every
-saved position must map exactly into the replacement before fragments are deleted.
-`E_SOURCE_POSITION_UNMAPPABLE` rolls back source, snapshot and naming admission and
-keeps the saved copy. retry alone may repeat the refusal; deliberate repositioning
-or a changed source can resolve it. title-only changes preserve content identity.
-
-## x source cutover
-
-`python -m nexus.ops.refresh_x_sources plan --manifest <path>` freezes existing
-native-x media, creators and expected attempts before admission and previews
-refusals. run after the release backup, writer stop and migration preflight.
-`apply` uses ordinary refresh admission; rerun it to recover lost responses (the
-same expected attempt answers its landed successor) and observe source/title
-settlement. it neither runs workers nor bypasses exact-job repair.
-
-receipts survive replacement of current snapshots. retained jobs after the database's
-frozen timestamp account for each target's first title obligation and inline children,
-including children completed before their own planned refresh. a frozen child may be
-counted as refreshed only when its current successful publication records this
-manifest's exact admitted parent attempt; retain the real child attempt and job
-receipts without inventing an admission or changing the frozen request. ordinary
-refresh clones do not inherit inline publication provenance. new children add naming
-obligations, never refresh targets. `release_accounted` requires zero unfinished and
-unaccounted work; recorded unavailable copies, source refusals and title failures remain
-explicit exceptions requiring follow-up. retain the manifest with release evidence.
-
-## vocabulary history
-
-`E_BILLING_REQUIRED`, `E_LLM_BAD_REQUEST` and `E_PODCAST_QUOTA_EXCEEDED` left the catalog; migration `0272` rewrote every stored import failure that named one to `E_INGEST_FAILED` (media, source attempts, processing and upload events, baseline outcomes, and the queue rows imports reads). `media_transcript_states.last_error_code` keeps transcription's own reason.
+- **I1** summary, page and detail read one classification, so a count and a row cannot disagree.
+- **I2** a view never shows a filter it does not apply, and the web never sends one `GET /imports` refuses (`VIEW_FILTERS` is the one table); of a reason and "no recorded failures", the latest choice wins.
+- **I3** every shown source or search code is catalogued (`SafeFailureCode`, which `FAILURE_COPY` is exhaustive over); a queue code outside it reads as `E_WORKER_HANDLER_FAILED`, and recording history never aborts a queue transition.
+- **I4** history is written only by its owners' transactions through `import_history`, records nothing for a settled attempt or a deleted media, and decodes only the kinds it stores.
+- **I5** a History row carries its matched event only when a newer event follows it; match evidence belongs to one ref under one applied query.
+- **I6** the first view is chosen once from the counts; restoring a url never opens the inspector; explicit activation (a title, the Inspector control, Add's "view import") does.
+- **I7** one command per import and command is in flight on the action runtime (`media:<id>|<offer>`, `upload:<id>|RetryUpload|RemoveUpload`); the row, the inspector and the menu show the same "Starting…".
+- **I8** polling runs every 5 s only while the newest summary succeeded, work is unfinished, the tab is visible and an Imports pane is open or a wake is under 15 minutes old; a failed summary stops it until a wake. history reads only while open.
+- **I9** a failed reread keeps the last data beside its error (list prefix, detail, history); a reread never shows one ref or event twice.
+- **I10** a disappearing list control hands focus to the same row's title, else the next surviving row's, else the query input, only while focus was lost and the pane is active.

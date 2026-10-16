@@ -173,12 +173,6 @@
   font-weight: var(--weight-semibold);
 }
 
-.historyCoverage {
-  margin-block: var(--space-2);
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
-}
-
 .attempt {
   display: flex;
   flex-direction: column;

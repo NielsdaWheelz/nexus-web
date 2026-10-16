@@ -31,6 +31,7 @@ import {
   SquareDashedText,
   Trash2,
   Undo2,
+  Upload,
   Users,
   Waypoints,
   Wrench,
@@ -227,6 +228,8 @@ export const ACTION_CATALOG = {
     group: "Manage",
   },
   RefreshSource: { label: "refresh source", icon: RefreshCw, group: "Manage" },
+  // Imports runs the two upload commands on this runtime; no resource menu offers them.
+  RetryUpload: { label: "Retry upload", icon: Upload, group: "Manage" },
   RetryMetadata: {
     label: "research metadata",
     icon: Sparkles,
@@ -258,6 +261,7 @@ export const ACTION_CATALOG = {
     icon: RotateCcw,
     group: "Manage",
   },
+  RemoveUpload: { label: "Remove import", icon: Trash2, group: "Danger" },
   RemoveMedia: {
     label: "Remove from Nexus",
     icon: Trash2,

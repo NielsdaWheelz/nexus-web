@@ -405,9 +405,7 @@ def confirm_session(
         append_upload_event(
             db,
             session_id=session.id,
-            facts=UploadPublished(
-                generation=generation, media_id=media.id, source_attempt_id=published_attempt_id
-            ),
+            facts=UploadPublished(generation=generation),
             stage="Upload",
             failure_code=None,
         )

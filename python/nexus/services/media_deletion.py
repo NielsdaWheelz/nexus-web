@@ -32,14 +32,12 @@ from nexus.services import (
     metadata_operations,
     passage_anchors,
     resource_grants,
+    source_attempts,
 )
 from nexus.services.consumption import state as consumption_state
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.contributor_writes import MediaTarget
-from nexus.services.import_history import (
-    delete_processing_history_in_current_transaction,
-    rehome_source_supersessions,
-)
+from nexus.services.import_history import delete_processing_history_in_current_transaction
 from nexus.services.reader_apparatus import delete_media_apparatus
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
@@ -61,6 +59,7 @@ _CHILD_TABLES = (
     "podcast_transcript_segments",
     "podcast_transcription_jobs",
     "podcast_episode_chapters",
+    "media_source_supersessions",
 )
 _HIGHLIGHTS_OF_MEDIA = "SELECT id FROM highlights WHERE anchor_media_id = :m"
 
@@ -218,7 +217,9 @@ def delete_duplicate_document_media(
         db, loser_media_id=loser_media_id, winner_media_id=winner_media_id
     )
     resource_grants.delete_media_and_child_highlight_subjects(db, loser_media_id)
-    rehome_source_supersessions(db, loser_media_id=loser_media_id, winner_media_id=winner_media_id)
+    source_attempts.rehome_supersessions(
+        db, loser_media_id=loser_media_id, winner_media_id=winner_media_id
+    )
     if _lock_kind(db, loser_media_id) not in _DOCUMENT_KINDS:
         return
     libraries.lock_library_rows_in_order(

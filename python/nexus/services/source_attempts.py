@@ -1,11 +1,13 @@
 """Source attempts: the durable obligation that one source becomes one media's content.
 
-Owns ``media_source_attempts``. Every attempt is created here with its history
-event and enqueued here, in the caller's transaction: an accepted attempt commits
-with its job (I11). A media's attempts form a chain ordered by ``attempt_no``; the
-latest is authoritative, and an attempt has at most one successor, whose id is
-derived from it (``successor_id``, I10), so a repeated recovery request finds its
-own effect in the chain instead of in a replay record.
+Owns ``media_source_attempts`` and ``media_source_supersessions``. Every attempt is
+created here with its history event and enqueued here, in the caller's transaction: an
+accepted attempt commits with its job (I11). A media's attempts form a chain ordered by
+``attempt_no``; the latest is authoritative, and an attempt has at most one successor,
+whose id is derived from it (``successor_id``, I10), so a repeated recovery request finds
+its own effect in the chain instead of in a replay record. An attempt whose source
+converged on another media keeps that answer in ``media_source_supersessions`` after its
+own media is torn down.
 
 The recovery policy lives here too: one answer per latest attempt, read by Imports,
 the media projection, action menus and every recovery admission.
@@ -106,18 +108,12 @@ def create_attempt(
     db.flush()
     record_event(db, attempt, SourceAccepted(source_attempt_id=id, attempt_no=attempt.attempt_no))
     if status == st.SUCCEEDED:
-        record_event(db, attempt, SourceSucceeded(source_attempt_id=id, execution_id=None))
+        record_event(db, attempt, SourceSucceeded(source_attempt_id=id))
     elif status == st.FAILED:
         record_event(
             db,
             attempt,
-            SourceFailed(
-                source_attempt_id=id,
-                execution_id=None,
-                origin="Domain",
-                terminal=True,
-                progress=None,
-            ),
+            SourceFailed(source_attempt_id=id, origin="Domain", terminal=True, progress=None),
             failure_code=assume_safe_failure_code(
                 media.last_error_code or ApiErrorCode.E_INGEST_FAILED.value
             ),
@@ -160,6 +156,41 @@ def record_event(
             source_type=attempt.source_type, processing_stage=attempt.processing_stage
         ),
         failure_code=failure_code,
+    )
+
+
+# --- supersession ---------------------------------------------------------------
+
+
+def record_supersession(db: Session, *, source_attempt_id: UUID, media_id: UUID) -> None:
+    """An accepted attempt's source converged on ``media_id`` (its own media is torn down);
+    the first answer stands."""
+    db.execute(
+        text(
+            "INSERT INTO media_source_supersessions (source_attempt_id, media_id)"
+            " VALUES (:attempt_id, :media_id) ON CONFLICT (source_attempt_id) DO NOTHING"
+        ),
+        {"attempt_id": source_attempt_id, "media_id": media_id},
+    )
+
+
+def rehome_supersessions(db: Session, *, loser_media_id: UUID, winner_media_id: UUID) -> None:
+    """A media folded into a duplicate's winner hands it the attempts that resolved to it."""
+    db.execute(
+        text("UPDATE media_source_supersessions SET media_id = :winner WHERE media_id = :loser"),
+        {"loser": loser_media_id, "winner": winner_media_id},
+    )
+
+
+def superseding_media_id(db: Session, *, source_attempt_id: UUID) -> UUID | None:
+    """The media an accepted attempt's source resolved to once its own was superseded; held
+    shared so a concurrent teardown cannot move it under the caller."""
+    return db.scalar(
+        text(
+            "SELECT media_id FROM media_source_supersessions"
+            " WHERE source_attempt_id = :attempt_id FOR SHARE"
+        ),
+        {"attempt_id": source_attempt_id},
     )
 
 

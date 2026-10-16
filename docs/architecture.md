@@ -371,15 +371,15 @@ original-file object metadata), `project_gutenberg_catalog`,
 `user_media_deletions`.
 
 **Import history** — `media_upload_events` (owner `media_upload_sessions`) and
-`media_processing_events` (owner `media`) are the two append-only lifecycle
-tables the Imports workspace reads. Each carries `occurred_at`, an
-application-validated `event_type`, nullable `stage`/`failure_code` query
-columns, and a closed typed `payload`. `services/import_history.py` is their
-only writer: transaction-scoped helpers with no commit, scheduling, or
-domain-policy authority, recording each fact atomically with the transition it
-documents. Migration `0227` records one `HistoryBaseline` per extant upload
-session and source attempt at recording time, which is why pre-cut coverage is
-`Partial` and a baseline can never satisfy a dated historical-failure query.
+`media_processing_events` (owner `media`) are the two append-only narration
+tables the Imports workspace reads. Each carries `occurred_at`, nullable
+`stage`/`failure_code` query columns, and a closed typed `payload` that names its
+own `kind`. `services/import_history.py` is their only writer: transaction-scoped
+helpers with no commit, scheduling, or domain-policy authority, recording each
+fact atomically with the transition it documents. The cut's one-time baselines
+(one per extant upload session and source attempt) stay as stored facts. No
+other owner reads history as an identity: an accepted attempt's surviving media
+is ingest's `media_source_supersessions`.
 
 **Reader content / fragments** — `fragments` (current render units carrying
 `canonical_text` + `html_sanitized` and a same-row STORED
@@ -1078,11 +1078,11 @@ new source attempt through `POST /media/{id}/retry`.
 
 **Imports workspace:** the `/imports` pane is the one reader-facing view of
 this pipeline. `services/imports.py` classifies every upload session and every
-media with a source attempt into `Active | NeedsAttention | Complete`, answers
-`GET /imports{,/summary,/{ref},/{ref}/history}`, and reuses the same owner
-policies the catalog does — `source_attempts.source_recovery` for source
-retry/repair and `content_indexing` for search repair — so counts, membership,
-and offered recovery cannot disagree. A published upload keeps its
+media with a source attempt into `Active | NeedsAttention | Complete` in one
+query, so counts and membership cannot disagree; names the obligation that speaks
+for each (`primary`); answers `GET /imports{,/summary,/{ref},/{ref}/history}`; and
+takes each row's recovery offer from the media projection (`media_facts`), so a
+row offers what the action menu shows. A published upload keeps its
 `upload:<session id>` identity for life, so one import is one row from acceptance to
 History. its stationary query controls keep the committed query and applied
 constraints visible; a failed later page retains loaded rows, marks the loaded

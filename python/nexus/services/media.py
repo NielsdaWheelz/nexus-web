@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -40,6 +40,9 @@ from nexus.schemas.media_summary import (
 )
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.services.capabilities import (
+    SearchRecoveryAnswer,
+    SourceRecoveryAnswer,
+    SourceRecoveryRestriction,
     media_file_exists_sql,
     publication_readable,
     reading_capabilities,
@@ -215,10 +218,11 @@ def hydrate_compact_media_targets(
 
 def _recovery(
     row: Row[Any], *, is_creator: bool
-) -> tuple[RetrySourceOffer | RepairSourceOffer | None, RepairSearchOffer | None, bool]:
-    """The source and search owners' offers to this viewer, and whether the source refreshes."""
-    source: RetrySourceOffer | RepairSourceOffer | None = None
-    search: RepairSearchOffer | None = None
+) -> tuple[SourceRecoveryAnswer, SearchRecoveryAnswer, bool]:
+    """The source and search owners' answers to this viewer (an offer, why none, or
+    nothing), and whether the source refreshes."""
+    source: SourceRecoveryAnswer = None
+    search: SearchRecoveryAnswer = None
     refreshable = False
     if row.attempt_id is not None:
         facts = SourceRecoveryFacts(
@@ -231,11 +235,10 @@ def _recovery(
             repairable=row.repairable,
             is_creator=is_creator,
         )
-        answer = source_recovery(facts)
-        source = answer if isinstance(answer, RetrySourceOffer | RepairSourceOffer) else None
+        source = source_recovery(facts)
         refreshable = source_refreshable(facts)
     if row.index_revision is not None:
-        answer = search_recovery(
+        search = search_recovery(
             SearchRecoveryFacts(
                 revision=row.index_revision,
                 dead_job_id=row.dead_index_job_id,
@@ -243,7 +246,6 @@ def _recovery(
                 ready_for_reading=row.persisted_status == "ready_for_reading",
             )
         )
-        search = answer if isinstance(answer, RepairSearchOffer) else None
     return source, search, refreshable
 
 
@@ -293,8 +295,11 @@ class MediaFacts:
     progress_resettable: bool
     metadata: MetadataEnrichmentView
     source_offer: RetrySourceOffer | RepairSourceOffer | None
+    source_restriction: SourceRecoveryRestriction | None
+    """Why the source owner offers this viewer nothing, when it says (Imports reads it)."""
     creator_source_offer: RetrySourceOffer | RepairSourceOffer | None
     search_offer: RepairSearchOffer | None
+    search_restriction: Literal["NotOwner"] | None
     creator_search_offer: RepairSearchOffer | None
     source_attempt_id: UUID | None
     """The latest source attempt: what a refresh replaces."""
@@ -332,10 +337,12 @@ def media_facts(
             can_delete=row.can_delete,
             progress_resettable=states[media_id].resettable,
             metadata=metadata[media_id],
-            source_offer=source,
-            creator_source_offer=creator_source,
-            search_offer=search,
-            creator_search_offer=creator_search,
+            source_offer=None if isinstance(source, str) else source,
+            source_restriction=source if isinstance(source, str) else None,
+            creator_source_offer=None if isinstance(creator_source, str) else creator_source,
+            search_offer=None if isinstance(search, str) else search,
+            search_restriction=search if isinstance(search, str) else None,
+            creator_search_offer=None if isinstance(creator_search, str) else creator_search,
             source_attempt_id=row.attempt_id,
             refreshable=refreshable,
         )

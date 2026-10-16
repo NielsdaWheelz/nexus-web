@@ -1,11 +1,14 @@
 "use client";
 
 /**
- * The one Imports observer (docs/modules/imports.md). The summary is one
- * server read whose `stale` is a wake counter; the server stamps every read
- * with `observed_at`, and that stamp is the only observation token: the list,
- * the detail and the history refetch exactly when it changes. Reads happen on a
- * wake, an in-tab invalidation, Refresh, or a 5 s poll while work is active.
+ * The one Imports observer (docs/modules/imports.md). The summary is one server
+ * read whose `stale` is a wake counter; its `observed_at` is the only
+ * observation token, so the list, the detail and an open history reread
+ * exactly when it changes. Reads happen on a wake (visible again, focus after
+ * a blur, pageshow, online, a pane opening, an in-tab invalidation, an
+ * `Entries` change, Refresh) and every 5 s while the newest read succeeded,
+ * work is unfinished, the tab is visible and a pane is open or the last wake is
+ * under 15 minutes old.
  */
 
 import {
@@ -17,58 +20,42 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useChangeStamp } from "@/lib/api/changes";
 import {
   usePaneFreeServerValue,
   type ServerValue,
 } from "@/lib/api/serverState";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
-  UploadSessionError,
   fetchImportSummary,
   subscribeImportsInvalidations,
   type ImportSummary,
 } from "@/lib/imports/api";
-import { removeUploadSession, uploadIngestFile } from "@/lib/imports/ingest";
-import { useChangeStamp } from "@/lib/api/changes";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 
 const POLL_MS = 5_000;
-/** A closed pane keeps polling this long after the last wake. */
+/** With no pane open, polling lasts this long after the last wake. */
 const CLOSED_PANE_WINDOW_MS = 15 * 60_000;
-
-export type UploadCommand =
-  | { readonly kind: "RetryUpload"; readonly sessionId: string; readonly file: File }
-  | { readonly kind: "RemoveUpload"; readonly sessionId: string };
 
 interface ImportsContextValue {
   readonly summary: ServerValue<ImportSummary>;
-  /** The `observed_at` of the newest successful summary read ("" before). */
+  /** The `observed_at` of the newest successful summary read ("" before one). */
   readonly observation: string;
-  /** The `pendingKey`s of upload commands in flight. */
-  readonly pending: ReadonlySet<string>;
-  /** A wake: read now and open the polling window. */
+  /** A wake: read now and reopen the polling window. */
   refresh(): void;
-  /** An open pane polls without a window; opening it is a wake. */
-  setPaneOpen(open: boolean): void;
-  /** Rejects with the command's failure for the caller to report. */
-  dispatchUpload(command: UploadCommand): Promise<void>;
+  /**
+   * A mounted Imports pane: polling needs no window while any pane is open, and
+   * opening one wakes. Returns the close.
+   */
+  paneOpened(): () => void;
 }
 
 const ImportsContext = createContext<ImportsContextValue | null>(null);
 
-/** One command against one import is pending at most once (contract D7). */
-export function pendingKey(command: Pick<UploadCommand, "kind" | "sessionId">) {
-  return `${command.sessionId}|${command.kind}`;
-}
-
 export function ImportsProvider({ children }: { children: ReactNode }) {
   const [wake, setWake] = useState(() => ({ count: 0, at: Date.now() }));
-  const [paneOpen, setPaneOpenState] = useState(false);
+  const [openPanes, setOpenPanes] = useState(0);
   const [visible, setVisible] = useState(true);
   const [windowOpen, setWindowOpen] = useState(true);
-  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
-  // A second click in the same tick must see the first one's key.
-  const pendingRef = useRef(pending);
   const summary = usePaneFreeServerValue({
     key: "imports-summary",
     stale: String(wake.count),
@@ -78,6 +65,11 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
     () => setWake((last) => ({ count: last.count + 1, at: Date.now() })),
     [],
   );
+  const paneOpened = useCallback(() => {
+    setOpenPanes((count) => count + 1);
+    refresh();
+    return () => setOpenPanes((count) => count - 1);
+  }, [refresh]);
 
   useEffect(() => subscribeImportsInvalidations(refresh), [refresh]);
 
@@ -91,8 +83,8 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
     refresh();
   }, [entries, refresh]);
 
-  // Wakes: visible again, focus after a blur, pageshow, back online. A tab
-  // opened in the background reports its state once rather than assuming.
+  // A tab opened in the background reports its visibility once rather than
+  // assuming it.
   useEffect(() => {
     let blurred = false;
     const onVisibility = () => {
@@ -122,7 +114,6 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
     };
   }, [refresh]);
 
-  // The closed-pane window opens at every wake and lapses 15 minutes later.
   useEffect(() => {
     setWindowOpen(true);
     const timer = window.setTimeout(
@@ -132,9 +123,7 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timer);
   }, [wake.at]);
 
-  // justify-polling: Imports is a composed projection with no push plane. Poll
-  // only known active work on a visible document, while the pane is open or
-  // its closed-pane window lasts, and only while the newest read succeeded; a
+  // justify-polling: Imports is a composed projection with no push plane. A
   // failed read stops polling until the next wake or Refresh.
   const ready = summary.status === "ready" ? summary : null;
   useIntervalPoll({
@@ -143,55 +132,16 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
       ready.error === null &&
       ready.data.unfinished_work_count > 0 &&
       visible &&
-      (paneOpen || windowOpen),
+      (openPanes > 0 || windowOpen),
     pollIntervalMs: POLL_MS,
     onPoll: summary.refetch,
   });
 
-  const setPaneOpen = useCallback(
-    (open: boolean) => {
-      setPaneOpenState(open);
-      if (open) refresh();
-    },
-    [refresh],
-  );
-
-  const dispatchUpload = useCallback(async (command: UploadCommand) => {
-    const key = pendingKey(command);
-    if (pendingRef.current.has(key)) return;
-    const settle = (next: Set<string>) => {
-      pendingRef.current = next;
-      setPending(next);
-    };
-    settle(new Set(pendingRef.current).add(key));
-    try {
-      if (command.kind === "RetryUpload") {
-        // the session's own id: it advances, or answers what it published;
-        // its destinations are the first create's
-        const { file, sessionId: id } = command;
-        await uploadIngestFile({ file, libraryIds: [], id });
-      } else {
-        await removeUploadSession(command.sessionId);
-      }
-    } catch (error) {
-      // a session that moved on (published or replaced elsewhere) is done
-      if (error instanceof UploadSessionError && error.outcome.kind === "Superseded") return;
-      if (!handleUnauthenticatedApiError(error)) throw error;
-    } finally {
-      const next = new Set(pendingRef.current);
-      next.delete(key);
-      settle(next);
-    }
-  }, []);
-
-  const observation = ready?.data.observed_at ?? "";
   const value = {
     summary,
-    observation,
-    pending,
+    observation: ready?.data.observed_at ?? "",
     refresh,
-    setPaneOpen,
-    dispatchUpload,
+    paneOpened,
   };
   return <ImportsContext value={value}>{children}</ImportsContext>;
 }

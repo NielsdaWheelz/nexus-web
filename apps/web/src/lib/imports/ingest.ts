@@ -9,9 +9,11 @@
  * only what it cannot send.
  */
 
+import type { FeedbackContextValue } from "@/components/feedback/Feedback";
 import { publishChange } from "@/lib/api/changes";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   UploadSessionError,
   publishImportsInvalidation,
@@ -259,4 +261,71 @@ export async function addMediaFromUrl({
           ? "ready"
           : "processing",
   };
+}
+
+/**
+ * Re-fetch a media's source from the attempt the viewer saw; the refreshed facts
+ * arrive through Imports. A refusal throws; acceptance and an unknown outcome are
+ * huds. "confirm request" resends the same expectation, which answers the refresh
+ * that landed. An access reply (401/403/404) settles nothing.
+ */
+export async function requestSourceRefresh(
+  mediaId: string,
+  expectedAttemptId: string | null,
+  hud: { feedback: FeedbackContextValue; showMetadata: () => void },
+): Promise<void> {
+  if (expectedAttemptId === null) {
+    // justify-defect: an available refresh carries the attempt it replaces.
+    throw new TypeError("Source refresh lost its inspected expectation");
+  }
+  const hudKey = `source-refresh:${mediaId}`;
+  const metadata = { label: "metadata…", onClick: hud.showMetadata };
+  try {
+    await apiFetch<ApiJson<"/media/{media_id}/refresh", "post">>(
+      `/api/media/${encodeURIComponent(mediaId)}/refresh`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          expected_attempt_id: expectedAttemptId,
+        } satisfies Schema<"RefreshSourceRequest">),
+      },
+    );
+  } catch (error) {
+    if (isApiError(error) && error.status >= 400 && error.status < 500) {
+      if (![401, 403, 404].includes(error.status)) hud.feedback.resolve(hudKey);
+      throw error;
+    }
+    const confirm = () =>
+      void requestSourceRefresh(mediaId, expectedAttemptId, hud).catch(
+        (refused: unknown) => {
+          if (handleUnauthenticatedApiError(refused)) return;
+          hud.feedback.publish({
+            kind: "Hud",
+            content: {
+              tone: "Danger",
+              title: "could not confirm source refresh",
+              message: isApiError(refused) ? refused.message : undefined,
+            },
+          });
+        },
+      );
+    hud.feedback.publish({
+      kind: "Hud",
+      key: hudKey,
+      content: {
+        tone: "Danger",
+        title: "source refresh unconfirmed",
+        message: "confirm this request to safely check whether it was accepted",
+      },
+      actions: [{ label: "confirm request", onClick: confirm }, metadata],
+    });
+    return;
+  }
+  publishImportsInvalidation();
+  hud.feedback.publish({
+    kind: "Hud",
+    key: hudKey,
+    content: { tone: "Neutral", title: "source refresh request confirmed" },
+    actions: [metadata],
+  });
 }

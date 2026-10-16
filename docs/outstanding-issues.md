@@ -131,7 +131,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] jobs runtime / interactive lane · 2026-10-10 jobs runtime reauthor · p2 · the interactive worker ignores SIGTERM inside a running job, so a long chat run makes the release's stop exit 137: [ticket](tickets/interactive-worker-ignores-sigterm-mid-job.md).
 - [open] jobs / verification · 2026-10-10 jobs runtime reauthor, narrowed 2026-10-13 · p3 · reindex OOM, prune batch limit, media unit requeue, dead-index search repair, teardown exhaustion and one source-hook producer remain unqualified: [ticket](tickets/jobs-runtime-checks-not-run-live.md).
 - [open] jobs / database · 2026-10-10 jobs runtime reauthor · p3 · 13 `background_jobs` indexes are unverified against the claim, wait, prune and payload queries: [ticket](tickets/background-job-indexes-unverified.md).
-- [open] imports / import history · 2026-10-10 jobs runtime reauthor · p3 · an embedding provider outage reads as "Processing failed" (`E_WORKER_HANDLER_FAILED`) in import history: [ticket](tickets/import-history-reads-embedding-outage-as-handler-failure.md).
 - [open] release / web auth · 2026-10-10 auth reauthor · before promoting set one `NEXUS_EXTENSION_REDIRECT_ORIGINS` and check hosted `jwt_expiry` > 120 s; after, forbid the three retired origin vars: [ticket](tickets/auth-reauthor-release-steps.md).
 - [open] android / auth · 2026-10-10 auth reauthor · p3 · identity linking cannot complete inside the android shell (spec D1): [ticket](tickets/android-identity-linking-cannot-complete-in-shell.md).
 - [open] web auth / headers · 2026-10-10 auth harness · p3 · next replaces middleware's `Vary: Cookie` on auth documents; harmless while they are private, no-store: [ticket](tickets/auth-documents-lose-vary-cookie.md).
@@ -224,13 +223,6 @@ frontend · opened 2026-09-09 by Claude (imports cutover, Track E) · P3
 carries the same column as `Literal["Page", "Chapter"]`, so the copy owner
 lowercases the recorded unit instead of matching it exhaustively. See
 [docs/tickets/history-failure-progress-unit-is-free-text-on-the-wire.md](tickets/history-failure-progress-unit-is-free-text-on-the-wire.md).
-
-### [OPEN] OI-035 — The Imports summary counts a row its own page read would reject
-backend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain P) · P3
-Every Imports defect check is now per row in `_item`/`_state`, and
-`read_import_summary` materializes no row, so the badge is computed from a state
-no owner transition produces. See
-[docs/tickets/imports-summary-read-cannot-see-a-per-row-defect.md](tickets/imports-summary-read-cannot-see-a-per-row-defect.md).
 
 ### [OPEN] OI-043 — The collapsed count chip scales out of its fixed-width rail
 frontend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain W2) · P3
