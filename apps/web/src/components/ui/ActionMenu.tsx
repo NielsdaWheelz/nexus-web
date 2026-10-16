@@ -246,6 +246,7 @@ export default function ActionMenu({
               closeMenu: close,
               closeMenuWithoutFocus: () => close(false),
               triggerEl: trigger.current,
+              presentation: "menu",
             })}
           </div>
         </li>

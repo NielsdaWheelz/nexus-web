@@ -146,6 +146,7 @@ class ReaderEvidenceItemBaseOut(_ReaderMapOut):
 class ReaderEvidenceHighlightOut(ReaderEvidenceItemBaseOut):
     kind: Literal["Highlight"] = "Highlight"
     highlight_id: UUID
+    version: str
     quote: str
     prefix: str
     suffix: str

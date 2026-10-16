@@ -219,10 +219,47 @@ is disabled at the actual viewport end, even when a fully visible final page is
 below that line. the pdf.js page keeps its required content-box sizing so canvas
 text and text-layer highlights agree.
 
-**selection.** `selectionchange` (120 ms desktop, 400 ms phone) → a capture clipped
-to one unit (or one pdf page: quads plus `exact`) → the host's dock. the host acts
-on the retained capture, never the live selection. focus dimming is suspended
-while a selection is live.
+**selection.** completed trusted source gestures publish a `SelectionEvent` with
+publication identity and input origin. `Captured` carries one unit's canonical
+range or one pdf page's quads plus `exact`; `Rejected` identifies a cross-unit
+or cross-page selection. the host explains rejection without writing or clipping,
+retires the old foreground composer and retains its draft. collapsed, outside
+and uncapturable selections remain silent. editor selection and unowned
+`selectionchange` never admit a source command. a pointer release admits a range
+only when that gesture changed it or pressed and released within the already
+selected text. an unchanged native range elsewhere does not reopen its composer
+or suppress the click; native clearing keeps its usual meaning. trusted native
+long press also admits its touch session. an admitted native touch session
+continues through handle changes; repeated rejection is deduplicated until a
+fresh gesture or valid capture. focus dimming is suspended during live selection.
+
+the composer keeps its rich textbox below an icon command row. explicit names
+appear on hover and keyboard focus, including unavailable reasons. the split
+highlighter applies yellow in one activation on a fresh passage; a saved mark
+shows its persisted colour with the primary inactive. its disclosure opens a
+local anchored palette without reflowing or remounting the editor. palette
+selection applies only to that passage; the next fresh passage starts yellow.
+the picker reuses the overlay owner's dismissal, return focus and tab
+continuation. a passive tooltip press preserves existing composer ownership;
+actual focus moves and outside presses keep their usual ownership rules.
+
+bounds editing retains the original unit, publication and observed highlight
+version in one reader-local session. it focuses the source and shows an owned
+instruction/cancel notice while selecting. another unit is rejected before a
+request. the media host publishes bounds and selection-rejection feedback in
+the reader chrome's existing navigation slot, where the pane measures its
+height and reserves source clearance. an active visible mobile pane holds that
+chrome open while the notice exists; cancel uses the shared large button and
+inherits the chrome's coarse-pointer target size. the notice neither scrolls
+away nor floats over selectable source content.
+a valid range synchronously enters submitting, freezes unit/offsets and
+version, and joins the tab's existing write fifo. submitting has no cancel
+claim; source retirement hides its presentation without cancelling a sent write.
+only its own still-active session handles completion. unit/version conflicts
+refresh and require reopening; duplicate ranges return to selection. the
+annotation acknowledgement map publishes quote/colour/ownership/version with
+paint until a read begun after acknowledgement replaces them, so older map data
+cannot replace an acknowledged command's observed state.
 
 **find.** the attached surface publishes a `FindSource`; hosted media exposes
 it only after restore. `useFind` receives the pane's required `ownerKey`.
@@ -294,8 +331,9 @@ the dom is never rewritten (`text/paint.ts`).
 | `MediaPaneBody.tsx` | composition: media record (+ processing stream, metadata re-read), the reader, annotations, arrivals, find, evidence/contents bodies, render states, banners, end of document and the lectern prompt |
 | `hostedReader.ts` | `hostedSource`, `hostedProgress`, the one locator → target map (`targetOfGroup`, pulses), deep links: `useReaderEntry` (hash `#highlight-\|#evidence-\|#passage-<id>`, `#fragment-\|#text-<id>[:s:e]`, `?fragment`, `?apparatus_id`, pending pulse; read once per mount, consumed with one replace) and `useLiveReaderTargets` (later pulses and hash pushes, the same link again included; a query pushed into an open pane is not read: nothing in the app emits one) |
 | `annotations.ts` | `AnnotationStore`: one document-map read → marks of every visible highlight (topmost first), note refs, rail markers, evidence; writes paint at once from their acknowledgement through a pending ledger that a map read issued after the write settles; a failed read keeps the last map painted; `twin` finds the viewer's own highlight of an exact extent (a library-mate's never blocks theirs) |
-| `useAnnotationVerbs.ts` | selection and mark verbs: highlight, note (created under the open editor), link (creates nothing until confirmed), ask, ask in existing chat, learn, share, note chord `n`; app-global highlight intents while the mark is mounted |
-| `SelectionDock.tsx` | the dock (Highlight with colours, Note, Link, Ask, More), the quick note (floating or sheet), the highlight menu, the overlap chooser, recolour dialog, link dialog, chat chooser |
+| `useAnnotationVerbs.ts` | admitted selection/rejection, canonical mark verbs, cancellable bounds sessions and highlight pane entries scoped to this reader visit |
+| `SelectionDock.tsx` | one passage composer with an icon command row, focused rich editor, canonical resource actions and retained note conflict/retry controls; overlap chooser, recolour dialog and chat chooser |
+| `HighlightColourPicker.tsx` | split one-click highlight command, anchored palette and shared accessible swatches; its ephemeral presentation never owns or remounts the note draft |
 | `evidence/` | Evidence: type filters, all items / follow text, passage groups in document order (*go to passage*), whole-document items, *needs attention*; rows by kind with actions, notes, source notes and associations |
 | `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (activity, reader settings, theme), the 52 px document-map rail (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+shift+F, shift+Esc, Esc) |
 | `Transcript.tsx` | transcript states and request; playback, show notes with seekable times, chapters following the player |

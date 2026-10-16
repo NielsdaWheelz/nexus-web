@@ -37,6 +37,7 @@ export function useReaderChrome(input: {
   readonly readable: boolean;
   readonly contents: ReactNode;
   readonly evidence: ReactNode;
+  readonly annotationNotice: ReactNode;
   readonly markers: readonly RailMarker[];
   readonly onMarker: (id: string) => void;
   readonly isMobile: boolean;
@@ -61,15 +62,16 @@ export function useReaderChrome(input: {
     bodies: { contents: input.contents, linkedItems: input.evidence },
   });
   const navigation = useMemo(
-    () =>
-      !readable
-        ? undefined
-        : kind === "pdf"
-          ? { label: "PDF controls", content: <ReaderNavigation reader={reader} /> }
-          : kind === "text" && sectioned
-            ? { label: "section navigation", content: <ReaderNavigation reader={reader} /> }
-            : undefined,
-    [kind, readable, reader, sectioned],
+    () => {
+      if (!readable) return undefined;
+      const hasNavigation = kind === "pdf" || kind === "text" && sectioned;
+      if (!hasNavigation && !input.annotationNotice) return undefined;
+      return {
+        label: input.annotationNotice ? "reader controls" : kind === "pdf" ? "PDF controls" : "section navigation",
+        content: <>{hasNavigation ? <ReaderNavigation reader={reader} /> : null}{input.annotationNotice}</>,
+      };
+    },
+    [input.annotationNotice, kind, readable, reader, sectioned],
   );
   const menuActions = useMemo<ActionDescriptor[]>(() => {
     const resolving = media === null;

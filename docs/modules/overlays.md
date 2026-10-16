@@ -25,7 +25,7 @@ losing their place. owners, under `apps/web/src/`:
   `components/ui/PickerSurface.tsx` (responsive picker placement and focus),
   `components/ui/FloatingActionSurface.tsx` (the non-modal action surface),
   `components/ui/HoverPreview.tsx` (`useHoverPreview`: hover intent and the
-  preview card or sheet), `components/ui/Tooltip.tsx` (passive button help).
+  preview card or sheet), `components/ui/Tooltip.tsx` (passive control help).
 
 ## the stack
 
@@ -43,15 +43,17 @@ modal, and a page transient never outranks a modal. `eligible()` is read at
 dispatch (the author search owns keys only while focus is inside it).
 `hasActiveInteractionOwner()` and `isTopmostInteractionOwner(scope)` read the
 same rule; a sheet's scope is its `panelId`. tooltips never become this owner.
-`useHasActiveInteractionOwner()` subscribes to the same stack without registering
-a layer; the tooltip uses it even while closed so a new owner cancels pending
-help. `useOverlay` keeps its own narrower subscription to a layer's registration,
-coverage and depth.
+`useOverlay` subscribes to its layer's registration, coverage and depth. for a
+tooltip, `topmost` additionally requires a live trigger inside the current
+owner's boxes or modal panel, or on the page when no owner is open. hidden,
+inert and detached triggers are ineligible. this permits help within an active
+composer or chooser while suppressing help behind another surface.
 
-a tooltip requires `inside()` and `eligible()`: false means pending, true means
-visible. its options forbid command scope and return focus. it never captures
-an opener, moves focus or owns Back/history. interactive ownership suppresses
-help; removing that owner does not reopen it without fresh engagement.
+a tooltip requires `trigger()`, `inside()` and `eligible()`: false means pending,
+true means visible. its options forbid command scope and return focus. it never
+captures an opener, moves focus or owns Back/history. fresh engagement arms help
+without consulting stale closed-state exposure; its render checks the current
+stack. coverage cancels it; uncovering alone does not rearm it.
 
 every dismissal is `onDismiss(reason)` with reason `escape`, `back` or
 `outside`; the feature closes by changing its state. a modal asks its
@@ -70,8 +72,9 @@ is never closed by a press.
 the same traversal dismisses pending or visible tooltips outside their
 `inside()` boxes. a tooltip neither stops the traversal at an inside box nor
 counts as closing a transient, so help never consumes a control or scrim press.
-the tooltip's trigger handles its own pointerdown; pressing the help itself
-preserves text selection.
+a press on exposed help counts as a press on its trigger when checking older
+surfaces, keeping the containing composer or chooser open. the tooltip's
+trigger handles its own pointerdown; help preserves native text selection.
 
 **the scrim.** a modal closes from its scrim only on a click that starts and
 ends on the scrim and closed no transient on the way: a scrim press with a menu
@@ -155,11 +158,11 @@ rotation. sheet and dialog content unmount when closed.
 ## listener order
 
 the kernel's document listeners are installed with the first layer. the
-tooltip-only capture listener ignores prevented/composing Escape, snapshots
-interactive ownership and cancels every pending hint across scopes without
-taking the key. without an interactive owner, it dismisses only the newest
-visible hint in the current modal scope, preventing default and stopping
-propagation. this runs before a focused inspector's own Escape handler.
+tooltip-only capture listener ignores prevented/composing Escape and cancels
+every pending hint across scopes without taking the key. it dismisses only the
+newest visible exposed hint in the current modal scope, preventing default and
+stopping propagation. that Escape leaves the containing task and its focus
+alone; a subsequent Escape follows the task's existing dismissal path.
 
 modal/transient Escape and Tab remain in the bubble listener, after react's
 root listeners: a component's own key handler runs first and keeps a key by
@@ -235,17 +238,24 @@ citation, Escape, an outside press and focus moving away close it. touch never
 hover-opens; `show()` opens at once, and on a touch screen the preview is a
 modal sheet that Back closes.
 
-**Tooltip**: plain-text help for the inspector button. mouse/pen hover opens
+**Tooltip**: plain-text help for native buttons and links. callers spread its
+callback ref, handlers and description onto the actual control (the inner anchor
+for `Button asChild`), preserving the control's name and activation semantics.
+mouse/pen hover opens
 after 500ms; leaving during that delay cancels it. focus-visible opens at once,
 including in the mobile layout; touch never opens help. while visible, pointer
 engagement with the trigger or help, or keyboard focus on the trigger, retains
 it. departure has 150ms grace and the surface includes an 8px transparent
 corridor to support slow pointer travel. trigger activation, outside press,
-Escape, window blur, unmount or interactive ownership closes and cancels it;
+Escape, window blur, unmount or coverage closes and cancels it;
 only fresh pointer/focus entry rearms it. the trigger keeps its accessible name
 and references the rendered `role="tooltip"` with `aria-describedby`. no native
 title, automatic expiry, focusable contents or touch sheet. the portal stops
 mousedown/click bubbling into the pane chrome without preventing selection.
+its outer surface, including the hover corridor, carries `data-passive-tooltip`.
+features may ignore pointerdown there when tracking destination ownership;
+focusin, blur and outside presses retain their own meaning. the marker denotes
+passive help, not an interactive preview card.
 
 ## why no native dialog
 
