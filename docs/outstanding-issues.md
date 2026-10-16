@@ -356,7 +356,7 @@ unexpected timeouts. See
 
 - [open] inbound share / account policy candidate · 2026-10-02 producer review · valid dependency failures reach the defect owner; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/share-account-transient-failures-escape-inline-feedback.md).
 - [open] nexus / command policy candidate · 2026-10-02 producer review · valid auth-dependency503 reaches all three writes; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/nexus-auth-dependency-failure-escapes-retry-feedback.md).
-- [open] local docker / inventory · 2026-10-03 selection-concurrency allocation · full enumeration failed again, then passed at cleanup; intermittent recurrence remains open, cause and initial stopped-state comparison unproved: [ticket](tickets/local-docker-stopped-container-snapshot-missing.md).
+- [open] local docker / inventory · 2026-10-03 selection-concurrency allocation · full enumeration failed again on 2026-10-15; exact-name and running checks work, but stopped-state census and root cause remain unproved: [ticket](tickets/local-docker-stopped-container-snapshot-missing.md).
 
 - [open] metadata bibliography · 2026-10-01 council · local book/collection/essay dates are qualified; targeted saved-production correction remains behind the historical release gate: [ticket](tickets/metadata-book-date-counts-serialization.md) · [github #485](https://github.com/NielsdaWheelz/nexus-web/issues/485).
 - [open] metadata production admission · 2026-10-01 investigation · catalog cause and three reviewed retry dispositions await runtime repair; an unavailable catalog is now a terminal `model_unavailable`: [ticket](tickets/metadata-production-catalog-refresh-fails.md).
