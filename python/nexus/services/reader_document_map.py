@@ -29,7 +29,7 @@ from nexus.services.reader_publication import read_publication_generation
 def get_reader_document_map(
     db: Session, *, viewer_id: UUID, media_id: UUID
 ) -> ReaderDocumentMapOut:
-    """Read each annotation owner once and assemble the media's Document Map."""
+    """Assemble one read-only snapshot; the route completes locator repair first."""
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     media = (

@@ -11,12 +11,9 @@ import {
   type MouseEventHandler,
   type PointerEventHandler,
   type ReactElement,
-  type Ref,
 } from "react";
 import { createPortal } from "react-dom";
 import {
-  hasActiveInteractionOwner,
-  useHasActiveInteractionOwner,
   useOverlay,
   useOverlayContainer,
 } from "@/lib/ui/overlay";
@@ -26,18 +23,20 @@ import styles from "./Tooltip.module.css";
 const OPEN_DELAY_MS = 500;
 const CLOSE_DELAY_MS = 150;
 
+type Trigger = HTMLButtonElement | HTMLAnchorElement;
+
 interface TooltipTriggerProps {
-  ref: Ref<HTMLButtonElement>;
+  ref: (node: Trigger | null) => void;
   "aria-describedby": string | undefined;
-  onPointerEnter: PointerEventHandler<HTMLButtonElement>;
-  onPointerLeave: PointerEventHandler<HTMLButtonElement>;
-  onPointerDown: PointerEventHandler<HTMLButtonElement>;
-  onFocus: FocusEventHandler<HTMLButtonElement>;
-  onBlur: FocusEventHandler<HTMLButtonElement>;
-  onClickCapture: MouseEventHandler<HTMLButtonElement>;
+  onPointerEnter: PointerEventHandler<Trigger>;
+  onPointerLeave: PointerEventHandler<Trigger>;
+  onPointerDown: PointerEventHandler<Trigger>;
+  onFocus: FocusEventHandler<Trigger>;
+  onBlur: FocusEventHandler<Trigger>;
+  onClickCapture: MouseEventHandler<Trigger>;
 }
 
-/** Text help for one native button; its command, name and state remain the caller's. */
+/** Text help for a native button or link; its name, command and state remain the caller's. */
 export default function Tooltip({
   text,
   renderTrigger,
@@ -46,12 +45,12 @@ export default function Tooltip({
   renderTrigger: (props: TooltipTriggerProps) => ReactElement;
 }) {
   const id = useId();
-  const trigger = useRef<HTMLButtonElement>(null);
+  const trigger = useRef<Trigger | null>(null);
+  const setTrigger = useCallback((node: Trigger | null) => { trigger.current = node; }, []);
   const timer = useRef<number | null>(null);
   const pointerTarget = useRef<HTMLElement | null>(null);
   const keyboardFocus = useRef(false);
   const [phase, setPhase] = useState<"Pending" | "Visible" | null>(null);
-  const owned = useHasActiveInteractionOwner();
   const clearTimer = useCallback(() => {
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = null;
@@ -61,7 +60,7 @@ export default function Tooltip({
     setPhase(null);
   }, [clearTimer]);
   const position = useAnchoredPosition<HTMLDivElement>(trigger, {
-    enabled: phase === "Visible" && !owned,
+    enabled: phase === "Visible",
     placement: "below",
     align: "end",
     gap: 0,
@@ -69,16 +68,17 @@ export default function Tooltip({
   });
   const { topmost } = useOverlay(phase !== null, {
     kind: "tooltip",
+    trigger: () => trigger.current,
     eligible: () => phase === "Visible",
     inside: () => [trigger.current, position.ref.current],
     onDismiss: close,
   });
   const container = useOverlayContainer();
-  const visible = phase === "Visible" && topmost && !owned && container !== null;
+  const visible = phase === "Visible" && topmost && container !== null;
 
   useLayoutEffect(() => {
-    if (owned || !topmost) close();
-  }, [owned, topmost, close]);
+    if (phase !== null && !topmost) close();
+  }, [phase, topmost, close]);
   useEffect(() => {
     window.addEventListener("blur", close);
     return () => {
@@ -99,27 +99,24 @@ export default function Tooltip({
   return (
     <>
       {renderTrigger({
-        ref: trigger,
+        ref: setTrigger,
         "aria-describedby": visible ? id : undefined,
         onPointerEnter: (event) => {
           if (event.pointerType === "touch" || event.buttons !== 0) return;
           pointerTarget.current = event.currentTarget;
-          if (hasActiveInteractionOwner() || !topmost) return;
           clearTimer();
           if (phase === "Visible") return;
           setPhase("Pending");
           timer.current = window.setTimeout(() => {
             timer.current = null;
-            if (hasActiveInteractionOwner()) close();
-            else setPhase("Visible");
+            setPhase("Visible");
           }, OPEN_DELAY_MS);
         },
         onPointerLeave: leave,
         onPointerDown: close,
         onFocus: (event) => {
           keyboardFocus.current = event.currentTarget.matches(":focus-visible");
-          if (!keyboardFocus.current || hasActiveInteractionOwner() || !topmost)
-            return;
+          if (!keyboardFocus.current) return;
           clearTimer();
           setPhase("Visible");
         },
@@ -134,6 +131,7 @@ export default function Tooltip({
             <div
               ref={position.ref}
               className={styles.surface}
+              data-passive-tooltip="true"
               data-side={position.side}
               style={position.style}
               onPointerEnter={(event) => {

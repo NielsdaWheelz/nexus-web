@@ -14,10 +14,11 @@ import {
   readerHighlightChatIntentHref,
 } from "@/lib/chat/readerIntent";
 import { createRandomId } from "@/lib/createRandomId";
-import type {
-  Mark,
-  MarkEvent,
-  SelectionCapture,
+import {
+  useReaderState,
+  type Mark,
+  type MarkEvent,
+  type SelectionEvent,
 } from "@/lib/documentReader/DocumentReader";
 import type { HighlightColor } from "@/lib/documentReader/model";
 import { artifactPaneHref, learnDossier } from "@/lib/dossiers/dossierApi";
@@ -26,9 +27,20 @@ import { requirePaneRuntime, usePaneEntryDelivery, usePaneRuntime } from "@/lib/
 import { useShareController } from "@/lib/sharing/controller";
 import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
 import { resourceShareTarget } from "@/lib/sharing/targets";
+import { useOverlay } from "@/lib/ui/overlay";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useSelectionComposer, type SelectionComposer } from "./useSelectionComposer";
 import type { AnnotationStore } from "./annotations";
+
+interface BoundsSession {
+  readonly id: string;
+  readonly highlightId: string;
+  readonly identity: string;
+  readonly unit: string;
+  readonly version: string;
+  readonly phase: "Selecting" | "Submitting";
+  readonly issue: string | null;
+}
 
 export interface AnnotationVerbs {
   readonly menu: Extract<MarkEvent, { kind: "activate" }> | null;
@@ -41,7 +53,10 @@ export interface AnnotationVerbs {
   readonly noteEdit: { readonly kind: "highlight" | "link"; readonly id: string; readonly request: number } | null;
   /** A highlight waiting for an existing chat to be chosen. */
   readonly choosingChat: string | null;
-  onSelection(capture: SelectionCapture): void;
+  readonly selectionIssue: string | null;
+  readonly bounds: BoundsSession | null;
+  cancelBounds(): void;
+  onSelection(event: SelectionEvent): void;
   onMarks(event: MarkEvent): void;
   highlight(color: HighlightColor): void;
   linkSelection(): void;
@@ -78,7 +93,29 @@ export function useAnnotationVerbs(input: {
   const [choosingChat, setChoosingChat] = useState<string | null>(null);
   const [colour, setColour] = useState<string | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const bounds = useRef<string | null>(null);
+  const [selectionIssue, setSelectionIssue] = useState<string | null>(null);
+  const [bounds, setBounds] = useState<BoundsSession | null>(null);
+  const currentBounds = useRef<BoundsSession | null>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const publication = useReaderState(reader, (state) => state.document.status === "ready" ? state.document.doc.identity : null);
+  // Admission changes synchronously, before another source event or queue completion.
+  const showBounds = useCallback((next: BoundsSession | null) => { currentBounds.current = next; setBounds(next); }, []);
+  const cancelBounds = useCallback(() => {
+    if (currentBounds.current?.phase !== "Selecting") return;
+    showBounds(null);
+    setSelectionIssue(null);
+    reader.focusSource();
+  }, [reader, showBounds]);
+  useOverlay(active && bounds !== null && bounds.identity === publication && bounds.phase === "Selecting", {
+    kind: "transient",
+    onDismiss: cancelBounds,
+  });
+  useEffect(() => {
+    showBounds(null);
+    setSelectionIssue(null);
+  }, [active, publication, showBounds]);
+  useEffect(() => () => { currentBounds.current = null; activeRef.current = false; }, []);
 
   const fail = useCallback(
     (error: unknown, title: string) => {
@@ -93,6 +130,7 @@ export function useAnnotationVerbs(input: {
   const composer = useSelectionComposer({ mediaId, reader, annotations: store, active, onError: fail });
   const { highlightDeleted } = composer;
   const withHighlight = composer.ensure;
+  const recolouringHighlight = colour ? store.highlight(colour) : null;
 
   // Resource actions target this visit; no other mounted reader may consume them.
   const { delivery, claim } = usePaneEntryDelivery();
@@ -105,7 +143,8 @@ export function useAnnotationVerbs(input: {
     const notice = (title: string) => feedback.publish({ kind: "Hud", content: { tone: "Neutral", title } });
     if (!mark) return notice("This highlight is no longer available.");
     setColour(null);
-    bounds.current = null;
+    showBounds(null);
+    setSelectionIssue(null);
     setMenu(null);
     switch (entry.kind) {
       case "EditHighlight":
@@ -113,11 +152,16 @@ export function useAnnotationVerbs(input: {
       case "EditHighlightNote":
         setNoteEdit((current) => ({ kind: "highlight", id, request: (current?.request ?? 0) + 1 }));
         return openEvidence(`highlight:${id}`);
-      case "EditHighlightBounds":
+      case "EditHighlightBounds": {
         if (mark.anchor.kind !== "text") return notice("This highlight’s bounds can’t be edited.");
-        bounds.current = id;
+        const highlight = store.highlight(id);
+        if (!highlight || !publication) return notice("This highlight is no longer available.");
+        composer.dismiss();
+        showBounds({ id: createRandomId(), highlightId: id, identity: publication, unit: mark.anchor.unit,
+          version: highlight.version, phase: "Selecting", issue: null });
         setFocused(id);
-        return notice("Select the new passage for this highlight");
+        return reader.focusSource();
+      }
       case "DeleteHighlight":
         void store.remove(id).then(
           () => {
@@ -127,7 +171,7 @@ export function useAnnotationVerbs(input: {
           (error: unknown) => fail(error, "Highlight wasn’t deleted"),
         );
     }
-  }, [claim, delivery, fail, feedback, highlightDeleted, marks, openEvidence, store]);
+  }, [claim, composer, delivery, fail, feedback, highlightDeleted, marks, openEvidence, publication, reader, showBounds, store]);
 
   const closeNoteEdit = useCallback(() => {
     setNoteEdit(null);
@@ -143,11 +187,51 @@ export function useAnnotationVerbs(input: {
     recolouring: colour,
     noteEdit,
     choosingChat,
+    selectionIssue,
+    bounds,
+    cancelBounds,
     onSelection(next) {
-      const id = bounds.current;
-      if (id && next.anchor.kind === "text") {
-        bounds.current = null;
-        void store.rebound(id, next.anchor).catch((error: unknown) => fail(error, "Highlight wasn’t changed"));
+      const document = reader.getState().document;
+      if (!active || document.status !== "ready" || next.identity !== document.doc.identity) return;
+      const session = currentBounds.current;
+      setSelectionIssue(null);
+      if (session?.phase === "Selecting" && session.identity === next.identity) {
+        if (next.kind === "Rejected" || next.anchor.kind !== "text" || next.anchor.unit !== session.unit) {
+          showBounds({ ...session, issue: "select within the same text section as this highlight." });
+          return;
+        }
+        const submitted: BoundsSession = { ...session, phase: "Submitting", issue: null };
+        showBounds(submitted);
+        const owns = () => {
+          const document = reader.getState().document;
+          return activeRef.current && currentBounds.current?.id === submitted.id &&
+            document.status === "ready" && document.doc.identity === submitted.identity;
+        };
+        void store.rebound(submitted.highlightId, next.anchor, submitted.version).then(
+          () => { if (owns()) showBounds(null); },
+          (error: unknown) => {
+            if (isApiError(error) && error.code === "E_HIGHLIGHT_CONFLICT") {
+              if (error.details?.reason === "unit_mismatch" || error.details?.reason === "version_mismatch") {
+                store.refresh();
+                if (owns()) {
+                  showBounds(null);
+                  setSelectionIssue("this highlight changed. reopen change highlighted passage.");
+                }
+              } else if (owns()) showBounds({ ...submitted, phase: "Selecting",
+                issue: "a highlight already covers that passage. select another passage or cancel." });
+            } else {
+              if (owns()) showBounds(null);
+              fail(error, "Highlight wasn’t changed");
+            }
+          },
+        );
+        return;
+      }
+      showBounds(null);
+      if (next.kind === "Rejected") {
+        composer.dismiss();
+        setMenu(null);
+        setSelectionIssue(next.reason === "CrossUnit" ? "select within one text section." : "select within one pdf page.");
         return;
       }
       composer.select(next);
@@ -155,6 +239,9 @@ export function useAnnotationVerbs(input: {
     },
     onMarks(event) {
       if (event.kind === "hover") return setHovered(event.ids[0] ?? null);
+      if (currentBounds.current?.phase === "Selecting") return;
+      showBounds(null);
+      setSelectionIssue(null);
       setFocused(event.marks[0]?.id ?? null);
       if (event.marks.length > 1) setMenu(event);
       else if (event.marks[0]) composer.activate(event.marks[0], event.identity, event.input !== "touch");
@@ -231,8 +318,11 @@ export function useAnnotationVerbs(input: {
     recolour(color) {
       const id = colour;
       setColour(null);
-      if (!id || !color) return;
-      void store.recolor(id, color).catch((error: unknown) => fail(error, "Highlight wasn’t changed"));
+      if (!id || !color || !recolouringHighlight) return;
+      void store.recolor(id, color, recolouringHighlight.version).catch((error: unknown) => {
+        if (isApiError(error) && error.code === "E_HIGHLIGHT_CONFLICT") store.refresh();
+        fail(error, "Highlight wasn’t changed");
+      });
     },
     closeNoteEdit,
   };

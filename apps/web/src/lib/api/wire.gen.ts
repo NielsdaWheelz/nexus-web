@@ -5609,6 +5609,11 @@ export interface components {
              * @enum {string}
              */
             type: "fragment_offsets";
+            /**
+             * Unit Id
+             * Format: uuid
+             */
+            unit_id: string;
         };
         /** FragmentPassageTarget */
         FragmentPassageTarget: {
@@ -8992,6 +8997,8 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Version */
+            version: string;
         };
         /** ReaderEvidenceLinkOut */
         ReaderEvidenceLinkOut: {
@@ -11563,6 +11570,8 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Version */
+            version: string;
         };
         /** UndoAssistantWriteMutation */
         UndoAssistantWriteMutation: {
@@ -11605,6 +11614,8 @@ export interface components {
             color?: ("yellow" | "green" | "blue" | "pink" | "purple") | null;
             /** Exact */
             exact?: string | null;
+            /** Expected Version */
+            expected_version: string;
         };
         /**
          * UpdateProfileRequest

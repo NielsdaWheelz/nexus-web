@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from sqlalchemy import delete, func, text, update
+from sqlalchemy import delete, func, update
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
@@ -21,6 +21,7 @@ from nexus.schemas.highlights import (
 from nexus.services.capabilities import is_document_status_ready
 from nexus.services.highlights import (
     project_highlight,
+    require_highlight_version,
     require_pdf_highlight_or_404,
 )
 from nexus.services.pdf_highlight_geometry import (
@@ -82,7 +83,7 @@ def create_pdf_highlight_in_txn(
         return existing
 
     prefix, suffix = _quote_context(db, media, page_number, exact)
-    _lock_pdf_highlight_write_or_404(db, media_id)
+    lock_pdf_highlight_write_or_404(db, media_id)
     duplicate = _find_duplicate_pdf_anchor(db, viewer_id, media_id, canonical)
     if duplicate is not None:
         if reuse_exact:
@@ -132,8 +133,9 @@ def update_pdf_highlight_bounds(
     highlight: Highlight,
     bounds: PdfBoundsUpdate,
     new_color: str | None,
+    expected_version: str,
 ) -> TypedHighlightOut:
-    """Replace geometry and optionally colour; the caller has verified ownership."""
+    """Replace geometry/quote/colour under the caller's media and highlight locks."""
     anchor = require_pdf_highlight_or_404(highlight)
     media = db.get(Media, highlight.anchor_media_id)
     if media is None or media.kind != "pdf":
@@ -148,9 +150,6 @@ def update_pdf_highlight_bounds(
     except GeometryValidationError as exc:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, exc.message) from exc
 
-    # Parent before child, matching highlight deletion's lock order.
-    _lock_pdf_highlight_write_or_404(db, media.id)
-    db.execute(text("SELECT id FROM highlights WHERE id = :hid FOR UPDATE"), {"hid": highlight.id})
     effective_color = new_color if new_color is not None else highlight.color
     if (
         anchor.page_number == canonical.page_number
@@ -158,7 +157,10 @@ def update_pdf_highlight_bounds(
         and effective_color == highlight.color
         and bounds.exact == highlight.exact
     ):
-        return project_highlight(db, highlight, viewer_id)
+        response = project_highlight(db, highlight, viewer_id)
+        db.commit()
+        return response
+    require_highlight_version(highlight, expected_version)
 
     prefix, suffix = _quote_context(db, media, canonical.page_number, bounds.exact)
     if (
@@ -180,10 +182,11 @@ def update_pdf_highlight_bounds(
     db.execute(delete(HighlightPdfQuad).where(HighlightPdfQuad.highlight_id == highlight.id))
     _write_quads(db, highlight.id, canonical)
     db.flush()
+    db.expire(highlight, ["pdf_quads"])
     record_input_change(db)
+    response = project_highlight(db, highlight, viewer_id)
     db.commit()
-    db.refresh(highlight)
-    return project_highlight(db, highlight, viewer_id)
+    return response
 
 
 def _require_readable_pdf(db: Session, viewer_id: UUID, media_id: UUID) -> Media:
@@ -277,7 +280,7 @@ def _stored_quads_match(
     )
 
 
-def _lock_pdf_highlight_write_or_404(db: Session, media_id: UUID) -> None:
+def lock_pdf_highlight_write_or_404(db: Session, media_id: UUID) -> None:
     """Fence geometry writes; an older SERIALIZABLE snapshot must retry, not miss one.
 
     No semantic field changes. The media notification wakes snapshot readers, which

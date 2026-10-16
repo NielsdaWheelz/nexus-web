@@ -228,6 +228,7 @@ def _add_highlight_facts(
             label=highlight.exact or "Highlight",
             excerpt=highlight.exact if highlight.exact else None,
             highlight_id=highlight.id,
+            version=highlight.version,
             quote=highlight.exact,
             prefix=highlight.prefix,
             suffix=highlight.suffix,

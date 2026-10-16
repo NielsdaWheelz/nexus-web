@@ -40,9 +40,10 @@ export interface TextGeometry {
   ranges(unit: string, start: number, end: number): StaticRange[];
   measurePassage(anchor: TextRange): PassageGeometry | null;
   selection(selection: Selection): {
+    readonly kind: "Captured";
     readonly anchor: { kind: "text"; unit: string; start: number; end: number };
     readonly quote: string;
-  } | null;
+  } | { readonly kind: "Rejected"; readonly reason: "CrossUnit" } | null;
   /** An element id, looked up only inside its unit (ids repeat across spine documents). */
   anchor(unit: string, id: string): HTMLElement | null;
 }
@@ -296,7 +297,9 @@ export function createTextGeometry(
         )?.closest<HTMLElement>("[data-reader-unit]");
       const unit = owner(range.startContainer);
       const id = unit?.dataset.readerUnit;
-      if (!id || owner(range.endContainer) !== unit) return null;
+      const end = owner(range.endContainer);
+      if (!unit || !id || !end || !column.contains(unit) || !column.contains(end)) return null;
+      if (end !== unit) return { kind: "Rejected", reason: "CrossUnit" };
       const found = entry(id);
       const offsets = found && resolveDomRangeOffsets(found.cursor, range);
       if (!offsets || offsets.endOffset <= offsets.startOffset) return null;
@@ -304,6 +307,7 @@ export function createTextGeometry(
         .slice(offsets.startOffset, offsets.endOffset)
         .join("");
       return {
+        kind: "Captured",
         anchor: {
           kind: "text",
           unit: id,
