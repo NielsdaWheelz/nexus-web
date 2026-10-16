@@ -225,7 +225,11 @@ range or one pdf page's quads plus `exact`; `Rejected` identifies a cross-unit
 or cross-page selection. the host explains rejection without writing or clipping,
 retires the old foreground composer and retains its draft. collapsed, outside
 and uncapturable selections remain silent. editor selection and unowned
-`selectionchange` never admit a source command. an admitted native touch session
+`selectionchange` never admit a source command. a pointer release admits a range
+only when that gesture changed it or pressed and released within the already
+selected text. an unchanged native range elsewhere does not reopen its composer
+or suppress the click; native clearing keeps its usual meaning. trusted native
+long press also admits its touch session. an admitted native touch session
 continues through handle changes; repeated rejection is deduplicated until a
 fresh gesture or valid capture. focus dimming is suspended during live selection.
 
