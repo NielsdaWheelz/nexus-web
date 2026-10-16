@@ -4,6 +4,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/serverState";
+import { readCatalog } from "@/lib/chat/catalog";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { publishChange } from "@/lib/api/changes";
 import {
@@ -27,7 +28,6 @@ import {
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
 import { isDeletedResource, subscribeLinkMutations } from "@/lib/resourceGraph/links";
-import { loadCatalog } from "./GenerationPicker";
 
 // The browser's one copy of a conversation: the server's messages and leaf,
 // plus a live overlay per pending answer it tails. Saved state changes only by
@@ -311,7 +311,7 @@ export function createChatStore(conversationId: string | null) {
       try {
         if (!command) {
           const source = state.messages.get(assistantId)?.trust_trail?.run;
-          const catalog = explicit ? null : await loadCatalog(true);
+          const catalog = explicit ? null : await readCatalog(null);
           const body = explicit
             ? { selection: explicit }
             : catalog &&

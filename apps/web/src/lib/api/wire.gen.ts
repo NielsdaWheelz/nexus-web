@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 3;
+export const WIRE_REVISION = 4;
 
 export interface paths {
     "/artifact-builds/{artifact_build_id}/cancel": {
@@ -5717,10 +5717,16 @@ export interface components {
         GenerationReasoningRow: {
             /** Chat State */
             chat_state: components["schemas"]["Selectable"] | components["schemas"]["Ineligible"] | components["schemas"]["OperatorActionRequired"] | components["schemas"]["TemporarilyUnavailable"];
+            /** Effort */
+            effort: string;
+            /** Effort Order */
+            effort_order: number;
             /** Key */
             key: string;
             /** Label */
             label: string;
+            /** Mode */
+            mode: string | null;
             /** Readiness */
             readiness: components["schemas"]["Ready"] | components["schemas"]["OperatorActionRequired"] | components["schemas"]["TemporarilyUnavailable"];
         };

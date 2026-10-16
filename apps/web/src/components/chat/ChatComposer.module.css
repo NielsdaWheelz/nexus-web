@@ -37,15 +37,14 @@
 }
 
 .input {
-  min-height: 3em;
+  min-height: 1.5em;
   color: var(--ink);
   caret-color: var(--accent);
 }
 
 .row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--size-lg);
-  align-items: end;
+  display: flex;
+  align-items: flex-end;
   gap: var(--space-2);
 }
 
@@ -60,7 +59,7 @@
 }
 
 .send {
-  grid-column: 2;
+  flex: 0 0 var(--size-lg);
   width: var(--size-lg);
   height: var(--size-lg);
   border-radius: var(--radius-full);
@@ -71,11 +70,29 @@
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: var(--space-2);
+  gap: var(--space-1);
+}
+
+.picker {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .picker > * {
-  flex: 1 1 10rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.pickerFooter {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--size-lg);
+  padding: var(--space-1) var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
 }
 
 .candidate {
@@ -169,11 +186,8 @@
     font-size: var(--text-md);
   }
 
-  .row {
-    grid-template-columns: minmax(0, 1fr) var(--size-xl);
-  }
-
   .send {
+    flex-basis: var(--size-xl);
     width: var(--size-xl);
     height: var(--size-xl);
   }

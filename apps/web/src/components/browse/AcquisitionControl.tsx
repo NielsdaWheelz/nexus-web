@@ -9,7 +9,7 @@
 import { useId, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
-import ChooserSurface from "@/components/libraries/ChooserSurface";
+import PickerSurface from "@/components/ui/PickerSurface";
 import DestinationChooser, { setDestination } from "@/components/libraries/DestinationChooser";
 import { useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import Button from "@/components/ui/Button";
@@ -306,7 +306,7 @@ export default function AcquisitionControl({
           {staged > 0 ? <span>+{staged}</span> : null}
         </button>
       </div>
-      <ChooserSurface
+      <PickerSurface
         active={pickerOpen}
         onClose={() => setPickerOpen(false)}
         anchor={() => chevronRef.current}
@@ -328,7 +328,7 @@ export default function AcquisitionControl({
           status={creation.status}
           disabled={busy || frozen !== null}
         />
-      </ChooserSurface>
+      </PickerSurface>
       {!pickerOpen && creation.status ? <p role="status">{creation.status}</p> : null}
       {!pickerOpen && creation.error ? <FeedbackNotice content={creation.error.content} announcement="Assertive"
         actions={creation.error.retry ? [{ label: "retry", onClick: creation.error.retry }] : undefined} /> : null}

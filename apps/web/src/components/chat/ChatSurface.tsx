@@ -13,9 +13,10 @@ import { ArrowDown } from "lucide-react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import Button from "@/components/ui/Button";
+import type { ServerValue } from "@/lib/api/serverState";
 import type { Live } from "@/lib/chat/runTail";
 import type { BranchDraft, ChatView } from "@/lib/chat/tree";
-import type { Message } from "@/lib/chat/wire";
+import type { Catalog, Message } from "@/lib/chat/wire";
 import type { ReaderSourceTarget } from "@/lib/resourceGraph/citations";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
@@ -46,6 +47,7 @@ const ChatSurface = forwardRef<
   ChatScrollHandle,
   {
     view: ChatView;
+    catalogRead: ServerValue<Catalog>;
     live: ChatState["live"];
     busy: ReadonlySet<string>;
     loading: boolean;
@@ -55,7 +57,7 @@ const ChatSurface = forwardRef<
     overlay: ReactNode;
   }
 >(function ChatSurface(
-  { view, live, busy, loading, targetMessageId, actions, composer, overlay },
+  { view, catalogRead, live, busy, loading, targetMessageId, actions, composer, overlay },
   ref,
 ) {
   const scrollport = useRef<HTMLDivElement>(null);
@@ -102,6 +104,7 @@ const ChatSurface = forwardRef<
           {view.path.map((message, index) => (
             <Fragment key={message.id}>
               <Row
+                catalogRead={catalogRead}
                 message={message}
                 ordinal={index + 1}
                 live={live[message.id] ?? null}
@@ -147,12 +150,14 @@ export default ChatSurface;
 
 /** One message and its resource menu. */
 const Row = memo(function Row({
+  catalogRead,
   message,
   ordinal,
   live,
   busy,
   actions,
 }: {
+  catalogRead: ServerValue<Catalog>;
   message: Message;
   ordinal: number;
   live: Live | null;
@@ -163,6 +168,7 @@ const Row = memo(function Row({
   if (message.role === "assistant")
     return (
       <AssistantMessage
+        catalogRead={catalogRead}
         message={message}
         ordinal={ordinal}
         live={live}

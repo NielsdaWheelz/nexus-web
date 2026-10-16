@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
-import ChooserSurface from "@/components/libraries/ChooserSurface";
+import PickerSurface from "@/components/ui/PickerSurface";
 import DestinationChooser, { DestinationTrigger, type DestinationChange } from "@/components/libraries/DestinationChooser";
 import type { ChooserCreation, ChooserError } from "@/components/libraries/LibraryChooser";
 import type { LibraryDestination } from "@/lib/libraries/api";
@@ -23,10 +23,10 @@ export default function DestinationField({ label, emptyLabel, chosen, onSet, dis
   return <div style={{ minWidth: 0 }}>
     <DestinationTrigger ref={trigger} label={label} emptyLabel={emptyLabel} chosen={chosen}
       expanded={open} disabled={disabled && !open} onToggle={() => setOpen(current => !current)} controls={{ kind: "dialog" }} />
-    <ChooserSurface active={open} onClose={() => setOpen(false)} anchor={() => trigger.current} title={label}>
+    <PickerSurface active={open} onClose={() => setOpen(false)} anchor={() => trigger.current} title={label}>
       <DestinationChooser selection={{ kind: "Item", chosen }} onSet={onSet} disabled={disabled}
         create={create} error={error} status={status} />
-    </ChooserSurface>
+    </PickerSurface>
     {!open && status ? <p className={styles.status} role="status">{status}</p> : null}
     {!open && error ? <FeedbackNotice content={error.content} announcement="Assertive"
       actions={error.retry ? [{ label: "retry", onClick: error.retry }] : undefined} /> : null}

@@ -1,15 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { useCatalog } from "@/components/chat/GenerationPicker";
 import { useFeedback } from "@/components/feedback/Feedback";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import { useServerValue, type Visit } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { assertNever } from "@/lib/assertNever";
 import { createReaderChatSend } from "@/lib/chat/drafts";
+import { readCatalog } from "@/lib/chat/catalog";
 import { assumeReaderSelectionKey, getReaderQuotePreview, readerHighlightChatIntent, readerHighlightChatIntentHref } from "@/lib/chat/readerIntent";
-import { failureDetail, type Selection } from "@/lib/chat/wire";
+import { failureDetail, type Catalog, type Selection } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import type { Mark, SelectionCapture } from "@/lib/documentReader/DocumentReader";
 import type { Reader } from "@/lib/documentReader/runtime";
@@ -26,6 +27,7 @@ import type { AnnotationStore } from "./annotations";
 import { createSelectionDrafts, initialBody, isEmptyParagraph, noteBase, samePassage, type ComposerDraft, type SelectionDrafts } from "./selectionDrafts";
 
 const VISIT_DRAFTS = definePaneVisitDataKey<SelectionDrafts>("Reader.AnnotationDrafts");
+const CATALOG_VISIT = definePaneVisitDataKey<Visit<Catalog>>("Reader.ChatCatalog");
 type Highlight = Schema<"TypedHighlightOut">;
 type Note = Schema<"LinkedNoteBlockRef">;
 type Opening = { id: string; draftId: string; focus: boolean; ownsFocus: boolean; serial: number };
@@ -71,7 +73,9 @@ export function useSelectionComposer(input: {
   const { mediaId, reader, annotations, active, onError } = input;
   const latestWorkspace = useLatestWorkspace();
   const feedback = useFeedback();
-  const { catalog, refresh: refreshCatalog } = useCatalog();
+  const catalogRead = useServerValue({ key: "/llm-catalog", stale: "", visit: CATALOG_VISIT, load: readCatalog });
+  const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
+  const refreshCatalog = catalogRead.refetch;
   const holder = useRef<SelectionDrafts | null>(null);
   const retained = usePaneVisitData(VISIT_DRAFTS, () => holder.current);
   const [store] = useState(() => retained ?? createSelectionDrafts());

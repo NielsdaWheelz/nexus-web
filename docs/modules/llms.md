@@ -48,6 +48,16 @@ value the source catalog reports. the catalog keeps typed readiness for all
 pairs; the picker offers only selectable pairs and retains an unavailable
 current identity without substitution.
 
+each reasoning row carries required `mode: string | null`, `effort: string`
+and nonnegative `effort_order`. provider-runtime owns these native facts beside
+its dispatch fragment; nexus projects them with readiness and eligibility.
+keys, `(mode, effort)` and `(mode, effort_order)` are unique within a model,
+and a declared default names an actual row. mode order is source order; effort
+order applies only within that model/mode. the browser groups actual rows and
+never parses execution keys or manufactures model/mode/effort combinations.
+this required catalog contract is wire revision 4; no database migration is
+needed. the runtime and kernel dependency pins form one reviewed cohort.
+
 The strict Chat selection is one tagged value:
 
 ```text

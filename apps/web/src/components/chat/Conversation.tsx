@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
+import { useServerValue, type Visit } from "@/lib/api/serverState";
+import { readCatalog } from "@/lib/chat/catalog";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { parseReaderSelectionHash } from "@/lib/chat/readerIntent";
 import { chatView, type BranchDraft } from "@/lib/chat/tree";
-import type { AcceptedReceipt } from "@/lib/chat/wire";
+import type { AcceptedReceipt, Catalog } from "@/lib/chat/wire";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { useFind } from "@/lib/find/useFind";
 import {
@@ -32,6 +34,7 @@ import {
 } from "@/lib/resources/activation";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { useLatestWorkspace } from "@/lib/workspace/store";
+import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import ChatComposer from "./ChatComposer";
 import ChatSurface, {
@@ -50,6 +53,8 @@ import {
 import type { ChatScrollHandle } from "./useChatScroll";
 import styles from "./ChatSurface.module.css";
 
+const CATALOG_VISIT = definePaneVisitDataKey<Visit<Catalog>>("Chat.Catalog");
+
 /** The conversation pane. A changed route id mounts a fresh conversation. */
 export default function ConversationPane() {
   const id = usePaneParam("id");
@@ -60,6 +65,12 @@ export default function ConversationPane() {
 // composed live here; the store owns server state, the draft owns sending.
 function Conversation({ conversationId }: { conversationId: string | null }) {
   const [state, store] = useChatStore(conversationId);
+  const catalogRead = useServerValue({
+    key: "/llm-catalog",
+    stale: "",
+    visit: CATALOG_VISIT,
+    load: readCatalog,
+  });
   const runtime = requirePaneRuntime(usePaneRuntime(), "Conversation");
   const router = usePaneRouter();
   const isPaneActive = usePaneIsActive();
@@ -288,6 +299,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
       ) : null}
       <ChatSurface
         ref={scroll}
+        catalogRead={catalogRead}
         view={view}
         live={state.live}
         busy={state.busy}
@@ -297,6 +309,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         overlay={<DocentOverlay docent={docent} />}
         composer={
           <ChatComposer
+            catalogRead={catalogRead}
             scope={conversationId ?? "new"}
             view={view}
             liveExecution={

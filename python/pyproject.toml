@@ -55,8 +55,8 @@ packages = ["nexus"]
 
 [tool.uv.sources]
 universal-memory = { git = "https://github.com/NielsdaWheelz/universal-memory.git", rev = "5d52e6a266c9769dafa318a24c21236db8929903" }
-provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "3e4b5e51cd55046f051e2a75855e60be8ce300c8" }
-llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "59e3327951c6cfd8fb1a011cae3057e0abdfa614" }
+provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "2586d82719984d17b9cf26e3f5a0864de18b0b39" }
+llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "e28cbef3eca8a88e1f143f48d3042485b334cf6c" }
 llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "5a37102bc73c1af0c23e63c5b70df320661f63ed" }
 
 [tool.ruff]
