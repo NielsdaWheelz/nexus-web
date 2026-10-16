@@ -7,8 +7,9 @@ import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
 import type { Schema } from "@/lib/api/wire";
+import type { ServerValue } from "@/lib/api/serverState";
 import type { Link, Live } from "@/lib/chat/runTail";
-import type { Message } from "@/lib/chat/wire";
+import type { Catalog, Message } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import { formatDisplayDate } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
@@ -76,12 +77,14 @@ type Card = {
 
 /** One answer: the saved message, or a pending one painted from its live overlay. */
 export default function AssistantMessage({
+  catalogRead,
   message,
   ordinal,
   live,
   busy,
   actions,
 }: {
+  catalogRead: ServerValue<Catalog>;
   message: Message;
   ordinal: number;
   live: Live | null;
@@ -315,6 +318,7 @@ export default function AssistantMessage({
           {run &&
           (message.status === "complete" || (failed && message.can_rerun)) ? (
             <CandidatePicker
+              catalogRead={catalogRead}
               op={failed ? "rerun" : "regenerate"}
               source={run.run_selection.selection}
               disabled={busy}

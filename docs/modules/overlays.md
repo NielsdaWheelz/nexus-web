@@ -22,6 +22,7 @@ losing their place. owners, under `apps/web/src/`:
   sheet, drag to dismiss), `MobileFullScreenTask` (opaque task on the visual
   viewport).
 - `components/ui/ActionMenu.tsx` (menu semantics),
+  `components/ui/PickerSurface.tsx` (responsive picker placement and focus),
   `components/ui/FloatingActionSurface.tsx` (the non-modal action surface),
   `components/ui/HoverPreview.tsx` (`useHoverPreview`: hover intent and the
   preview card or sheet), `components/ui/Tooltip.tsx` (passive button help).
@@ -90,8 +91,9 @@ once per open and `focusKey`.
 chooser transients opt into `tabContinuation` through the existing key dispatcher:
 tab past their last control closes and continues after the opener; shift-tab from
 the first closes to the opener. that close does not run normal return-focus again.
-mobile chooser sheets retain the modal tab cycle. keyboard invocation focuses
-search; touch invocation may focus the sheet instead.
+mobile chooser sheets retain the modal tab cycle. searchable library choosers
+default to search for keyboard invocation and the sheet for touch. a picker's
+`initialFocus(panel)` overrides that policy without adding another focus owner.
 
 **return focus.** at open an interactive layer records its trigger:
 `returnFocusTo()`, else the focused element, else (safari never focuses a clicked
@@ -181,6 +183,16 @@ right, while the host's full-height transparent corridor keeps pointer transfer
 continuous. this local mechanism is not a generic interactive-preview owner.
 
 ## surfaces
+
+**PickerSurface**: a desktop transient anchored above or below its trigger,
+with flip/clamp, or the existing mobile sheet. the default desktop shell is a
+named dialog; a listbox consumer supplies its own named root and sets
+`desktopRole={null}`. `initialFocus(panel)` chooses the focus target after
+placement. the caller owns choice semantics and content; the surface owns
+dismissal, tab continuation and return focus through the existing kernel.
+`--picker-surface-width` sets desktop width (380px by default); mobile geometry
+belongs to `MobileSheet`. inline presentation is a named region with an explicit
+close action and no outside-press dismissal.
 
 **MobileSheet**: scrim (`"default"`, or `"soft"` for in-context companion sheets),
 grabber drag past 96 px asks the guard (not under reduced motion), lift above

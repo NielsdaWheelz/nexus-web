@@ -134,7 +134,8 @@ goes to login.
 `Conversation.tsx` is the pane adapter. The route id keys a fresh conversation
 (store, scroll, docent); a changed id never reuses state. It owns route state
 (`?message`, `?draft`, the quote hash) and the fork being composed, and wires
-the store, the draft, the inspector and the docent. It owns no server state.
+the store, the draft, the inspector and the docent. the store owns transcript
+state; the pane owns the shared catalog read.
 
 An existing Conversation publishes one Resource Inspector group with
 `Context | Forks | Dossier`; `/conversations/new` publishes none until the
@@ -255,8 +256,9 @@ Draft editing stays available while a run is pending.
 The action button is one socket: `Send message`, `Sending message`,
 `Stop response`, `Stop requested`, or `Retry send`. Desktop Enter sends and
 Shift+Enter inserts a newline; every Enter inserts a newline in the mobile
-viewport. IME composition owns Enter. The shared `Textarea` grows from two to
-six rows. Focus returns to the input after a completed or known-failed send.
+viewport. IME composition owns Enter. the shared `Textarea` grows from one to
+six rows. an uncertain send makes it readonly and leaves it focusable; async
+completion never moves focus back from another control.
 
 The request:
 
@@ -316,16 +318,34 @@ storage version is read.
 
 ### Generation selection
 
-`GenerationPicker.tsx` holds one catalog per tab (`GET /api/llm-catalog`),
-loaded on first use and reread only after a rejection or an explicit Retry,
-never on focus. `lib/chat/selection.ts` owns the draft union
-`Uninitialized | ModelRequired | ThinkingRequired | Selected` and its
-transitions: changing a parent clears its children; a model takes a selectable
-source default, otherwise its sole thinking setting, otherwise requires one.
-Only an uninitialized draft is initialized, once history and the catalog are
-ready, from the selection of the answer it replies to, else the catalog seed.
-A current choice the catalog no longer offers stays shown, disabled, and blocks
-send with its reason. The browser owns no allowlist and substitutes nothing.
+`Conversation` owns one pane-visit `useServerValue` read of the catalog and
+passes it to composer and candidate controls. `lib/chat/catalog.ts::readCatalog`
+is the uncached typed loader; the reader owns its own read and an imperative
+repeat reads it directly. opening a picker or pressing refresh rereads through
+the existing request owner, retaining usable data on refresh failure. no
+component cache, focus refresh or polling exists.
+
+`GenerationPicker` composes three controls: provider, actual model/mode variant,
+and effort. `ChoicePicker` owns exclusive listbox selection through maintained
+react aria hooks; the shared `PickerSurface` owns anchored placement and the
+existing mobile sheet/overlay behavior. navigation does not commit a provider
+or model. `EffortPicker` uses native range indices over the selected variant's
+ordered legal rows; each stop commits the exact execution key immediately.
+missing effort requires an explicit choice, with no invented range thumb.
+
+`lib/chat/selection.ts` owns exact selection transitions. changing provider
+requires a model. changing model/mode within a provider preserves a selectable
+native effort name, else takes that mode's declared default, else its sole
+selectable effort, else requires effort. selecting the current value is a no-op.
+refresh never substitutes a different identity. unavailable choices keep known
+labels, block send and offer explicit repair.
+
+the composer keeps incomplete provider/model/mode edits in memory. only a
+complete `Selected` value reaches the existing draft owner; reload or leaving
+the conversation restores the last complete choice. the persisted draft codec
+is unchanged. untouched drafts still inherit the parent selection or seed.
+candidate editors initialize from their source run, remain local, and execute
+only through their explicit regenerate/rerun confirmation.
 
 ## Rerun And Regenerate
 
