@@ -3,10 +3,11 @@
 Summaries feed every list, facts the action menu and Imports, the detail the media pane and
 overlay, the processing snapshot the live stream; a media the viewer cannot read is in none
 (I1). The displayed processing status is ``suspended`` while the latest source attempt is
-repairable, unless a stopped refresh left an x article's retained publication readable; the
-displayed retrieval status while the current index revision's job is dead (I2); capabilities
-and metadata eligibility read the persisted status, and a document reads from its ready
-reader publication.
+repairable and no publication is readable (``publication_readable``), whatever the source:
+a readable document stays ready, and downloadable, beside its source remedy. The displayed
+retrieval status is ``suspended`` while the current index revision's job is dead (I2);
+capabilities and metadata eligibility read the persisted status, and a document reads from
+its ready reader publication.
 """
 
 from __future__ import annotations
@@ -38,7 +39,11 @@ from nexus.schemas.media_summary import (
     MediaSummaryOut,
 )
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
-from nexus.services.capabilities import media_file_exists_sql, reading_capabilities
+from nexus.services.capabilities import (
+    media_file_exists_sql,
+    publication_readable,
+    reading_capabilities,
+)
 from nexus.services.consumption import projection
 from nexus.services.content_indexing import SearchRecoveryFacts, search_recovery
 from nexus.services.contributor_credits import load_contributor_credits_for_media
@@ -55,7 +60,7 @@ from nexus.services.source_attempts import (
     source_repairable_sql,
 )
 from nexus.services.source_types import LATEST_ORDER_SQL
-from nexus.services.x_source import retained_x_publication_sql, x_source_contexts
+from nexus.services.x_source import x_source_contexts
 
 _DOCUMENT_KINDS = ("web_article", "epub", "pdf")
 _TRANSCRIPT_KINDS = ("video", "podcast_episode")
@@ -73,7 +78,6 @@ _ROWS_SQL = f"""
         ({non_system_media_ref_exists_sql("m.id")} OR {media_grant_path_exists_sql("m.id")})
             AS can_delete,
         {source_repairable_sql("m")} AS repairable,
-        {retained_x_publication_sql("m")} AS retained_x_publication,
         attempt.id AS attempt_id, attempt.status AS attempt_status,
         attempt.error_code AS attempt_error_code, attempt.source_type,
         attempt.job_id AS attempt_job_id,
@@ -112,10 +116,12 @@ def _rows(db: Session, viewer_id: UUID, media_ids: Sequence[UUID]) -> dict[UUID,
 
 
 def _status(row: Row[Any]) -> MediaProcessingStatus:
-    # A stopped refresh leaves a retained x publication readable.
-    return (
-        "suspended" if row.repairable and not row.retained_x_publication else row.persisted_status
+    # Dead source work suspends only a media with nothing readable; a readable publication,
+    # an x article's retained copy included, keeps its stored status.
+    readable = publication_readable(
+        row.kind, has_file=row.has_file, publication_ready=row.publication_ready
     )
+    return "suspended" if row.repairable and not readable else row.persisted_status
 
 
 def _retrieval_status(row: Row[Any]) -> str:

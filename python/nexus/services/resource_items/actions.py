@@ -187,9 +187,8 @@ def _media(db: Session, viewer_id: UUID, media_id: UUID) -> list[ResourceActionO
     item_ids = lectern.item_ids_for_media(db, viewer_id=viewer_id, media_ids=[media_id])
     actions.append(LecternMembershipAction(blocked=None, lectern_item_id=item_ids.get(media_id)))
     actions.append(_simple("LibraryPlacement"))
-    readable_copy = kind in ("web_article", "epub", "pdf") and (
-        media.summary.processing_status == "ready_for_reading"
-    )
+    # A document's copy is its readable publication, the one the reading copy builds from.
+    readable_copy = kind in ("web_article", "epub", "pdf") and media.can_read
     if media.audio_url is not None or readable_copy:
         actions.append(
             DownloadAction(

@@ -148,6 +148,14 @@ player descriptor is renamed and chapter presentation is owned there as describe
 [reader module](reader-implementation.md); requested-media identity stays checked until
 the pane drops it ([leftovers](../issues/media-pane-contract-leftovers.md)).
 
+the displayed `processing_status` (summaries, media facts, detail and the processing frame
+alike) is the stored status, except `suspended` while the latest source attempt is
+repairable (in flight, its exact job dead) and no publication is readable
+(`capabilities.publication_readable`: a ready reader publication, a pdf's file too). the
+rule has no source branch: a readable article, x or not, reads `ready_for_reading` and keeps
+Download while the menu offers its source remedy (`RepairSource`); an unreadable one reads
+`suspended`.
+
 - `/stream/media/{id}/events` emits the processing frame (status, failure code,
   retrieval status and reason, capabilities, transcript state and coverage) and ends
   (`done`) once nothing it shows is in flight: source work (an unsettled latest attempt
