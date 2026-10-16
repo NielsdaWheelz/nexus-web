@@ -1,8 +1,10 @@
 """Conversations: create, the chats index, tree writes, deletes, and facts others read.
 
-A chat is its owner's only; foreign ids mask as not found. Deletion locks the
-conversation, as admission does, deletes messages and lets the FK cascades take runs,
-events, tool calls and retrievals; edges and web snapshots are cleaned here.
+A chat is its owner's only. Branch writes compare an observed revision under the
+conversation lock. Selection retries succeed when the desired leaf is current;
+deletion retries treat absent/foreign targets alike without changing the revision.
+Surviving subtree deletion repairs the stored leaf and advances the revision once.
+Edges and web snapshots are cleaned here; tool calls retain the write history.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from uuid import UUID
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun, Conversation
+from nexus.db.models import ChatRun, Conversation, Message
 from nexus.db.retries import retry_read_committed
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.jobs.queue import revoke_jobs_by_dedupe_keys
@@ -75,7 +77,9 @@ def create(
             target=materialize_link_endpoint(db, viewer_id=viewer_id, endpoint=endpoint),
         )
     db.commit()
-    return ConversationOut(id=conversation.id, title=conversation.title)
+    return ConversationOut(
+        id=conversation.id, title=conversation.title, branch_revision=conversation.branch_revision
+    )
 
 
 def index(
@@ -133,28 +137,38 @@ def index(
     )
 
 
-def select_leaf(db: Session, *, viewer_id: UUID, conversation_id: UUID, leaf_id: UUID) -> None:
+def select_leaf(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    conversation_id: UUID,
+    leaf_id: UUID,
+    expected_revision: int,
+) -> None:
     """The owner's chosen leaf: a message of this chat with no children.
 
     The conversation lock orders the choice against admissions, which move the leaf.
     """
 
-    _lock_owned(db, viewer_id, conversation_id)
-    moved = db.execute(
+    conversation = _lock_owned(db, viewer_id, conversation_id)
+    if conversation is None:
+        raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
+    if conversation.active_leaf_message_id != leaf_id:
+        require_branch_revision(conversation, expected_revision)
+    leaf = db.scalar(
         text(
             """
-            UPDATE conversations SET active_leaf_message_id = :leaf
-            WHERE id = :id AND EXISTS (
-                SELECT 1 FROM messages m WHERE m.id = :leaf AND m.conversation_id = :id
-                  AND NOT EXISTS (SELECT 1 FROM messages c WHERE c.parent_message_id = m.id)
-            )
-            RETURNING id
+            SELECT m.id FROM messages m WHERE m.id = :leaf AND m.conversation_id = :id
+              AND NOT EXISTS (SELECT 1 FROM messages c WHERE c.parent_message_id = m.id)
             """
         ),
         {"leaf": leaf_id, "id": conversation_id},
-    ).first()
-    if moved is None:
+    )
+    if leaf is None:
         raise ApiError(ApiErrorCode.E_BRANCH_PATH_INVALID, "active_leaf_message_id must be a leaf")
+    if conversation.active_leaf_message_id != leaf_id:
+        conversation.active_leaf_message_id = leaf_id
+        conversation.branch_revision += 1
     db.commit()
 
 
@@ -177,42 +191,55 @@ def rename_fork(db: Session, *, viewer_id: UUID, message_id: UUID, title: str | 
     db.commit()
 
 
-def delete_conversation(db: Session, *, viewer_id: UUID, conversation_id: UUID) -> None:
+def delete_conversation(
+    db: Session, *, viewer_id: UUID, conversation_id: UUID, expected_revision: int
+) -> None:
     def attempt() -> None:
-        _lock_owned(db, viewer_id, conversation_id)
-        _delete(db, conversation_id, None)
+        conversation = _lock_owned(db, viewer_id, conversation_id)
+        if conversation is not None:
+            require_branch_revision(conversation, expected_revision)
+            _delete(db, conversation, None)
         db.commit()
 
     retry_read_committed(db, "delete_conversation", attempt)
 
 
-def delete_message(db: Session, *, viewer_id: UUID, message_id: UUID) -> MessageDeleteOut:
+def delete_message(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    conversation_id: UUID,
+    message_id: UUID,
+    expected_revision: int,
+) -> MessageDeleteOut:
     """The message and its subtree; the chat too when nothing remains."""
 
     def attempt() -> MessageDeleteOut:
-        conversation_id = db.execute(
-            text(
-                """
-                SELECT c.id FROM conversations c JOIN messages m ON m.conversation_id = c.id
-                WHERE m.id = :message AND c.owner_user_id = :viewer
-                FOR UPDATE OF c
-                """
-            ),
-            {"message": message_id, "viewer": viewer_id},
-        ).scalar_one_or_none()
-        if conversation_id is None:
-            raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
-        deleted = _delete(db, conversation_id, message_id)
+        conversation = _lock_owned(db, viewer_id, conversation_id)
+        if conversation is None:
+            db.commit()
+            return MessageDeleteOut(conversation_id=conversation_id, conversation_deleted=True)
+        message = db.scalar(
+            select(Message.id).where(
+                Message.id == message_id, Message.conversation_id == conversation_id
+            )
+        )
+        if message is None:
+            db.commit()
+            return MessageDeleteOut(conversation_id=conversation_id, conversation_deleted=False)
+        require_branch_revision(conversation, expected_revision)
+        deleted = _delete(db, conversation, message_id)
         db.commit()
         return MessageDeleteOut(conversation_id=conversation_id, conversation_deleted=deleted)
 
     return retry_read_committed(db, "delete_message", attempt)
 
 
-def _delete(db: Session, conversation_id: UUID, root_id: UUID | None) -> bool:
+def _delete(db: Session, conversation: Conversation, root_id: UUID | None) -> bool:
     """Delete one subtree (every root's when ``root_id`` is None), then the chat when
     nothing remains, under the caller's conversation lock. Returns whether it went."""
 
+    conversation_id = conversation.id
     ids = (
         db.execute(
             text(
@@ -223,6 +250,7 @@ def _delete(db: Session, conversation_id: UUID, root_id: UUID | None) -> bool:
                   AND (id = :root OR (CAST(:root AS uuid) IS NULL AND parent_message_id IS NULL))
                 UNION ALL
                 SELECT m.id FROM messages m JOIN subtree s ON m.parent_message_id = s.id
+                WHERE m.conversation_id = :chat
             )
             SELECT id FROM subtree
             """
@@ -258,11 +286,28 @@ def _delete(db: Session, conversation_id: UUID, root_id: UUID | None) -> bool:
     # FK and outlives the chat as the operational ledger.
     db.execute(text("DELETE FROM messages WHERE id = ANY(:ids)"), {"ids": ids})
     cleanup.delete_orphaned_external_snapshots(db, snapshot_ids=snapshots)
-    remaining = db.execute(
-        text("SELECT EXISTS (SELECT 1 FROM messages WHERE conversation_id = :chat)"),
-        {"chat": conversation_id},
-    ).scalar_one()
-    if remaining:
+    leaf = conversation.active_leaf_message_id
+    if leaf is None or leaf in ids:
+        leaf = db.scalar(
+            text(
+                """
+                SELECT m.id FROM messages m WHERE m.conversation_id = :chat
+                  AND NOT EXISTS (SELECT 1 FROM messages c WHERE c.parent_message_id = m.id)
+                ORDER BY m.seq DESC, m.id DESC LIMIT 1
+                """
+            ),
+            {"chat": conversation_id},
+        )
+    if leaf is not None:
+        db.execute(
+            text(
+                """
+                UPDATE conversations SET active_leaf_message_id = :leaf,
+                  branch_revision = branch_revision + 1 WHERE id = :chat
+                """
+            ),
+            {"chat": conversation_id, "leaf": leaf},
+        )
         return False
     chat = ResourceRef("conversation", conversation_id)
     cleanup.delete_edges_for_deleted_resource(db, ref=chat)
@@ -271,14 +316,19 @@ def _delete(db: Session, conversation_id: UUID, root_id: UUID | None) -> bool:
     return True
 
 
-def _lock_owned(db: Session, viewer_id: UUID, conversation_id: UUID) -> None:
-    owner = db.scalar(
-        select(Conversation.owner_user_id)
-        .where(Conversation.id == conversation_id)
+def require_branch_revision(conversation: Conversation, expected_revision: int) -> None:
+    if conversation.branch_revision != expected_revision:
+        raise ApiError(
+            ApiErrorCode.E_CONVERSATION_CHANGED, "Conversation changed; refresh to review it"
+        )
+
+
+def _lock_owned(db: Session, viewer_id: UUID, conversation_id: UUID) -> Conversation | None:
+    return db.scalar(
+        select(Conversation)
+        .where(Conversation.id == conversation_id, Conversation.owner_user_id == viewer_id)
         .with_for_update()
     )
-    if owner != viewer_id:
-        raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
 
 
 @dataclass(frozen=True, slots=True)

@@ -115,8 +115,9 @@ export default function ActionMenu({
   const closeRef = useRef<(restoreFocus: boolean) => void>(() => undefined);
   const { layer } = useOverlay(open, {
     kind: "transient",
-    onDismiss: (reason) => closeRef.current(reason !== "outside"),
+    onDismiss: (reason) => closeRef.current(reason !== "outside" && reason !== "tab"),
     inside: () => [menu.ref.current, root.current],
+    tabContinuation: () => menu.ref.current,
     // A triggered menu returns to its trigger (Safari never focuses a clicked
     // button), an anchored one to its opener.
     returnFocusTo: () => trigger.current ?? opener,
@@ -176,10 +177,7 @@ export default function ActionMenu({
       const active = document.activeElement;
       if (active !== list && list.contains(active)) return;
       const items = [...list.querySelectorAll<HTMLElement>(ITEMS)];
-      const enabled = items.some(
-        (item) => item.getAttribute("aria-disabled") !== "true",
-      );
-      const pool = enabled ? items : focusableElements(list);
+      const pool = items.length ? items : focusableElements(list);
       const target = pool[edge === "last" ? pool.length - 1 : 0] ?? list;
       target.focus({ preventScroll: direct });
     });
@@ -187,6 +185,8 @@ export default function ActionMenu({
   }, [open, menu.placed, menu.ref, edge, direct, firstOption]);
 
   const onMenuKeyDown = (event: KeyboardEvent<HTMLUListElement>) => {
+    // Tab belongs to the overlay's continuation after this menu's opener.
+    if (event.key === "Tab") return;
     // Menu keys never reach the page's handlers: React bubbles a portaled
     // menu's keys through its owners (the linked-notes editor would take
     // Escape and Delete). Stopped at the portal container, they never reach
@@ -205,14 +205,7 @@ export default function ActionMenu({
       event.preventDefault();
       items[(index + items.length) % items.length]?.focus();
     };
-    if (event.key === "Tab") {
-      const tabbable = focusableElements(list);
-      const from = event.shiftKey ? tabbable[0] : tabbable.at(-1);
-      if (document.activeElement === from) {
-        event.preventDefault();
-        (event.shiftKey ? tabbable.at(-1) : tabbable[0])?.focus();
-      }
-    } else if (items.length === 0) {
+    if (items.length === 0) {
       return;
     } else if (event.key === "ArrowDown") {
       go(at < 0 ? 0 : at + 1);
@@ -269,8 +262,10 @@ export default function ActionMenu({
     const common = {
       ...attributes,
       className: `${styles.menuItem} ${option.tone === "danger" ? styles.menuItemDanger : ""}`,
+      "aria-label": control.menuLabel,
       "aria-disabled": option.disabled || undefined,
       "aria-describedby": reason,
+      tabIndex: -1,
       onKeyDown: (event: KeyboardEvent) => {
         if (option.disabled && (event.key === "Enter" || event.key === " ")) {
           event.preventDefault();
@@ -291,7 +286,14 @@ export default function ActionMenu({
             {option.icon}
           </span>
         ) : null}
-        <span>{control.menuLabel}</span>
+        <span className={styles.itemText}>
+          <span>{control.menuLabel}</span>
+          {reason ? (
+            <span id={reason} className={styles.disabledReason}>
+              {option.disabledReason}
+            </span>
+          ) : null}
+        </span>
       </>
     );
     return (
@@ -301,7 +303,6 @@ export default function ActionMenu({
             {...common}
             href={option.disabled ? undefined : option.href}
             role="menuitem"
-            tabIndex={option.disabled ? -1 : undefined}
           >
             {body}
           </a>
@@ -317,11 +318,6 @@ export default function ActionMenu({
             {body}
           </button>
         )}
-        {reason ? (
-          <span id={reason} className="sr-only">
-            {option.disabledReason}
-          </span>
-        ) : null}
       </li>
     );
   };
@@ -349,6 +345,11 @@ export default function ActionMenu({
     },
     onKeyDown: (event) => {
       if (triggerDisabled) return;
+      // Placement focuses the menu on the next frame. Tab can arrive first.
+      if (event.key === "Tab" && open) {
+        close(false);
+        return;
+      }
       const opening =
         event.key === "ArrowUp"
           ? "last"

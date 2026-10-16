@@ -1,12 +1,19 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { apiFetch, type ApiPath } from "@/lib/api/client";
+import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { apiFetch, isApiError } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/serverState";
-import { readCatalog } from "@/lib/chat/catalog";
-import type { ApiJson, Schema } from "@/lib/api/wire";
-import { publishChange } from "@/lib/api/changes";
+import type { ApiJson } from "@/lib/api/wire";
+import {
+  confirmChatDeletion,
+  getConversationCommands,
+  IDLE_COMMAND,
+  type CommandOutcome,
+  type CommandState,
+  type ConversationTree,
+} from "@/lib/chat/commands";
 import {
   emptyLive,
   foldLive,
@@ -14,11 +21,9 @@ import {
   type Link,
   type Live,
 } from "@/lib/chat/runTail";
-import { isSelectable, sameSelection } from "@/lib/chat/selection";
 import { indexChildren, leafUnder, pathTo } from "@/lib/chat/tree";
 import {
   chatFailure,
-  type AcceptedReceipt,
   type ChatFailure,
   type Conversation,
   type Message,
@@ -40,8 +45,8 @@ export type ChatState = Readonly<{
   history: "Loading" | "Ready" | "Unavailable";
   /** By assistant id: pending answers being tailed, and only those. */
   live: Readonly<Record<string, Live>>;
-  /** Assistant ids with a rerun or regenerate in flight. */
-  busy: ReadonlySet<string>;
+  command: CommandState;
+  gone: boolean;
   error: FeedbackContent | null;
   /** Rethrown by the pane during render. */
   defect: { error: unknown } | null;
@@ -49,19 +54,20 @@ export type ChatState = Readonly<{
   contextVersion: number;
 }>;
 export type ChatStore = ReturnType<typeof createChatStore>;
-type RepeatBody = { selection: Selection };
 
 const runRead = (runId: string) =>
   apiFetch<ApiJson<"/chat-runs/{run_id}", "get">>(`/api/chat-runs/${runId}`);
 
-export function createChatStore(conversationId: string | null) {
+export function createChatStore(accountId: string, conversationId: string | null) {
+  const commands = conversationId === null ? null : getConversationCommands(accountId, conversationId);
   let state: ChatState = {
     conversation: null,
     messages: new Map(),
     leafId: null,
     history: conversationId ? "Loading" : "Ready",
     live: {},
-    busy: new Set(),
+    command: commands?.getSnapshot() ?? IDLE_COMMAND,
+    gone: false,
     error: null,
     defect: null,
     contextVersion: 0,
@@ -69,11 +75,11 @@ export function createChatStore(conversationId: string | null) {
   const listeners = new Set<() => void>();
   const tails = new Map<string, () => void>();
   const reading = new Set<string>();
-  const repeatKeys = new Map<string, { key: string; body: RepeatBody }>();
   let frame = 0;
   let active = false;
   let loading: AbortController | null = null;
   let unsubscribeLinks: (() => void) | null = null;
+  let unsubscribeCommands: (() => void) | null = null;
 
   const set = (patch: Partial<ChatState>) => {
     state = { ...state, ...patch };
@@ -126,11 +132,32 @@ export function createChatStore(conversationId: string | null) {
     set({ ...patch, messages, contextVersion });
     syncTails();
   };
-  const applyRead = (read: RunRead, select: boolean) =>
-    apply([read.user_message, read.assistant_message], false, {
-      conversation: read.conversation,
-      ...(select ? { leafId: read.assistant_message.id } : {}),
+  const applyTree = (tree: ConversationTree | null) => {
+    if (tree === null) {
+      apply([], true, {
+        conversation: null, leafId: null, history: "Unavailable", gone: true,
+        error: { tone: "Neutral", title: "this chat is no longer available" },
+      });
+      return;
+    }
+    if (state.gone || (state.conversation && tree.conversation.branch_revision < state.conversation.branch_revision)) return;
+    apply(tree.messages, true, {
+      conversation: tree.conversation,
+      leafId: tree.active_leaf_message_id,
+      history: "Ready",
+      error: null,
     });
+  };
+  const applyRead = (read: RunRead) => {
+    if (!active || state.gone || (commands && !commands.isActive())) return;
+    if (!state.conversation || read.conversation.branch_revision > state.conversation.branch_revision) {
+      setLink(read.assistant_message.id, { kind: "Lost" });
+      void store.load();
+      return;
+    }
+    // A partial pair can update known fields, never graph membership or path.
+    apply([read.user_message, read.assistant_message].filter((message) => state.messages.has(message.id)), false, {});
+  };
 
   /** Tail each pending answer once; drop tails and overlays of settled ones. */
   const syncTails = () => {
@@ -179,11 +206,13 @@ export function createChatStore(conversationId: string | null) {
     try {
       const { data } = await runRead(runId);
       reading.delete(id);
+      if (!active) return;
       if (data.assistant_message.status === "pending")
         setLink(id, { kind: retail ? "Live" : "Lost" });
-      applyRead(data, false);
+      applyRead(data);
     } catch (error) {
       reading.delete(id);
+      if (!active) return;
       const failure = chatFailure(error, "Couldn’t reconnect");
       if (failure.kind !== "Feedback") report(failure);
       setLink(
@@ -208,6 +237,23 @@ export function createChatStore(conversationId: string | null) {
       return false;
     }
   };
+  const commandAttempt = async (run: () => Promise<CommandOutcome>): Promise<CommandOutcome> => {
+    try {
+      const outcome = await run();
+      if (outcome.kind === "Failed") set({ error: outcome.feedback });
+      return outcome;
+    } catch (error) {
+      const failure = chatFailure(error, "chat change failed");
+      report(failure);
+      return failure.kind === "Feedback"
+        ? { kind: "Failed", feedback: failure.feedback, rejection: null, acceptance: null }
+        : { kind: "Handled" };
+    }
+  };
+  const unavailable = (): CommandOutcome => ({
+    kind: "Failed", feedback: { tone: "Neutral", title: "conversation history is not available" },
+    rejection: null, acceptance: null,
+  });
   const onOnline = () => {
     for (const [id, live] of Object.entries(state.live))
       if (live.link.kind === "Lost") store.reconnect(id);
@@ -222,7 +268,13 @@ export function createChatStore(conversationId: string | null) {
 
     async load() {
       if (!active) {
+        active = true;
         window.addEventListener("online", onOnline);
+        unsubscribeCommands = commands?.subscribe(
+          () => set({ command: commands.getSnapshot() }),
+          applyTree,
+        ) ?? null;
+        set({ command: commands?.getSnapshot() ?? IDLE_COMMAND });
         unsubscribeLinks = subscribeLinkMutations((mutation) => {
           if (mutation.kind !== "resource_deleted") return;
           set({
@@ -232,8 +284,7 @@ export function createChatStore(conversationId: string | null) {
           void store.load();
         });
       }
-      active = true;
-      if (conversationId === null) return;
+      if (conversationId === null || state.gone) return;
       loading?.abort();
       const controller = (loading = new AbortController());
       try {
@@ -246,35 +297,26 @@ export function createChatStore(conversationId: string | null) {
           controller.signal,
         );
         if (controller.signal.aborted) return;
-        apply(data.messages, true, {
-          conversation: data.conversation,
-          leafId: data.active_leaf_message_id,
-          history: "Ready",
-          error: null,
-        });
+        applyTree(data);
       } catch (error) {
         if (controller.signal.aborted || isAbortError(error)) return;
+        if (isApiError(error) && error.code === "E_CONVERSATION_NOT_FOUND") {
+          applyTree(null);
+          return;
+        }
         report(chatFailure(error, "This chat couldn’t be opened."));
         if (state.history === "Loading") set({ history: "Unavailable" });
+      } finally {
+        if (loading === controller) loading = null;
       }
     },
 
-    /** The sending view adopts its accepted send: read the run, select it, tail it. */
-    async adopt(receipt: AcceptedReceipt) {
-      const read = async () =>
-        applyRead((await runRead(receipt.outcome.run_id)).data, true);
-      if (!(await attempt("Your answer couldn’t load.", read)))
-        await store.load();
-    },
-
-    async switchTo(leafId: string) {
-      set({ leafId, error: null });
-      const path = `/api/conversations/${conversationId}/active-path` as const;
-      const body = JSON.stringify({ active_leaf_message_id: leafId });
-      const post = () => apiFetch<void>(path, { method: "POST", body });
-      // no snapshot to restore on failure: the server tree is the truth
-      if (!(await attempt("This fork couldn’t be opened.", post)))
-        await store.load();
+    switchTo(leafId: string): Promise<CommandOutcome> {
+      const conversation = state.conversation;
+      if (!commands || !conversation || state.gone) return Promise.resolve(unavailable());
+      return commandAttempt(() => commands.execute({
+        kind: "SelectLeaf", leafId, expectedRevision: conversation.branch_revision,
+      }));
     },
 
     /** Make a message visible: switch to the newest leaf under it when off-path. */
@@ -284,89 +326,36 @@ export function createChatStore(conversationId: string | null) {
       const children = indexChildren(state.messages.values());
       if (!onPath() && state.messages.has(messageId))
         await store.switchTo(leafUnder(children, messageId));
-      if (!onPath())
+      if (!onPath() && state.command.kind === "Idle")
         set({ error: { tone: "Danger", title: "This message isn’t here." } });
     },
 
-    /**
-     * A new sibling answer. Without an explicit choice it reuses the source's
-     * exact selection, only while the catalog still offers it. An ambiguous
-     * failure keeps the key, so an identical retry replays the same command.
-     */
-    async repeat(
-      op: "rerun" | "regenerate",
+    /** Reuse the exact source choice unless the user explicitly chooses another. */
+    repeat(
+      operation: "rerun" | "regenerate",
       assistantId: string,
       explicit?: Selection,
-    ): Promise<boolean> {
-      if (state.busy.has(assistantId)) return false;
-      set({ busy: new Set(state.busy).add(assistantId), error: null });
-      const slot = `${op}:${assistantId}`;
-      let command = repeatKeys.get(slot);
-      if (
-        explicit &&
-        command &&
-        !sameSelection(command.body.selection, explicit)
-      )
-        command = undefined;
-      try {
-        if (!command) {
-          const source = state.messages.get(assistantId)?.trust_trail?.run;
-          const catalog = explicit ? null : await readCatalog(null);
-          const body = explicit
-            ? { selection: explicit }
-            : catalog &&
-                source &&
-                isSelectable(catalog, source.run_selection.selection)
-              ? { selection: source.run_selection.selection }
-              : null;
-          if (!body) {
-            const message =
-              "Choose a different model for this run; nothing was substituted.";
-            set({
-              error: {
-                tone: "Warning",
-                title: "The original model is unavailable.",
-                message,
-              },
-            });
-            return false;
-          }
-          command = { key: createRandomId(), body };
-          repeatKeys.set(slot, command);
-        }
-        const { data } = await apiFetch<
-          ApiJson<"/messages/{assistant_message_id}/rerun", "post">
-        >(`/api/messages/${assistantId}/${op}` as ApiPath, {
-          method: "POST",
-          headers: { "Idempotency-Key": command.key },
-          body: JSON.stringify(command.body),
-        });
-        repeatKeys.delete(slot);
-        applyRead(data, true);
-        return true;
-      } catch (error) {
-        const failure = chatFailure(
-          error,
-          `This response couldn’t be ${op === "rerun" ? "run again" : "regenerated"}.`,
-        );
-        if (failure.kind !== "Feedback" || !failure.ambiguous)
-          repeatKeys.delete(slot);
-        report(failure);
-        return false;
-      } finally {
-        set({
-          busy: new Set([...state.busy].filter((id) => id !== assistantId)),
-        });
-      }
+    ): Promise<CommandOutcome> {
+      const conversation = state.conversation;
+      const source = state.messages.get(assistantId)?.trust_trail?.run;
+      const selection = explicit ?? source?.run_selection.selection;
+      if (!commands || !conversation || !selection || state.gone) return Promise.resolve(unavailable());
+      return commandAttempt(() => commands.execute({
+        kind: "Repeat", messageId: assistantId, operation, selection,
+        expectedRevision: conversation.branch_revision, runId: createRandomId(),
+        implicit: explicit === undefined,
+      }));
     },
+
+    retryCommand: () => commandAttempt(() => commands?.retry() ?? Promise.resolve(unavailable())),
+    refreshCommand: () => commandAttempt(() => commands?.refresh() ?? Promise.resolve(unavailable())),
 
     cancel: (runId: string) =>
       attempt("This response couldn’t be stopped.", async () => {
         type Cancel = ApiJson<"/chat-runs/{run_id}/cancel", "post">;
-        const path = `/api/chat-runs/${runId}/cancel` as ApiPath;
+        const path = `/api/chat-runs/${runId}/cancel` as const;
         applyRead(
           (await apiFetch<Cancel>(path, { method: "POST" })).data,
-          false,
         );
       }),
 
@@ -378,24 +367,15 @@ export function createChatStore(conversationId: string | null) {
       void readRun(assistantId, live.runId, true);
     },
 
-    /** Delete a message's subtree; the tree is reread unless the chat went with it. */
-    async deleteMessage(
-      messageId: string,
-    ): Promise<Schema<"MessageDeleteOut">> {
-      try {
-        const path = `/api/messages/${messageId}` as ApiPath;
-        const { data } = await apiFetch<
-          ApiJson<"/messages/{message_id}", "delete">
-        >(path, {
-          method: "DELETE",
-        });
-        publishChange("Chats");
-        if (!data.conversation_deleted) await store.load();
-        return data;
-      } catch (error) {
-        report(chatFailure(error, "This message couldn’t be deleted."));
-        throw error;
-      }
+    /** Freeze the pane's observed tree before asking for destructive confirmation. */
+    deleteMessage(messageId: string): Promise<CommandOutcome> {
+      if (!state.conversation || state.gone) return Promise.resolve(unavailable());
+      const tree: ConversationTree = {
+        conversation: state.conversation,
+        messages: [...state.messages.values()],
+        active_leaf_message_id: state.leafId,
+      };
+      return commandAttempt(() => confirmChatDeletion(accountId, { kind: "Message", tree, messageId }));
     },
 
     /** True once saved; a failure is reported and leaves the title as it was. */
@@ -405,6 +385,7 @@ export function createChatStore(conversationId: string | null) {
           method: "PATCH",
           body: JSON.stringify({ title }),
         });
+        if (!active || (commands && !commands.isActive())) return;
         const message = state.messages.get(userMessageId);
         const messages = new Map(state.messages);
         if (message)
@@ -423,6 +404,8 @@ export function createChatStore(conversationId: string | null) {
       window.removeEventListener("online", onOnline);
       unsubscribeLinks?.();
       unsubscribeLinks = null;
+      unsubscribeCommands?.();
+      unsubscribeCommands = null;
       loading?.abort();
       for (const stop of tails.values()) stop();
       tails.clear();
@@ -434,7 +417,8 @@ export function createChatStore(conversationId: string | null) {
 }
 
 export function useChatStore(conversationId: string | null) {
-  const [store] = useState(() => createChatStore(conversationId));
+  const { accountId } = useAuthenticatedAccount();
+  const store = useMemo(() => createChatStore(accountId, conversationId), [accountId, conversationId]);
   useEffect(() => {
     void store.load();
     return store.dispose;

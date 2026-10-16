@@ -42,10 +42,11 @@ const BLOCKED = {
     "Choose a complete assistant response before sending.",
 };
 
-/** The draft, its exact generation choice, and the one durable send per draft. */
+/** Draft text/choice and controls for the chat's current admission state. */
 export default function ChatComposer(props: {
   catalogRead: ServerValue<Catalog>;
   scope: string;
+  expectedRevision: number | null;
   view: ChatView;
   /** The pending leaf's live advisory, when its stream is tailed. */
   liveExecution: Execution | null;
@@ -65,20 +66,27 @@ export default function ChatComposer(props: {
 }) {
   const { target, branch, activeRun: run, inherited } = props.view;
   const { quote, historyReady, initialText, focusKey, isPaneActive } = props;
-  const { draft, sending, setText, setSelection, seed, send, retry } =
-    useChatDraft(props.scope);
+  const { draft, sending, command, setText, setSelection, seed, send, retry } =
+    useChatDraft(props.scope, props.expectedRevision);
   const { catalogRead } = props;
   const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
   const [incomplete, setIncomplete] = useState<Extract<SelectionEditor,
     { kind: "ModelRequired" | "EffortRequired" }> | null>(null);
-  const selection = incomplete ?? draft.selection;
+  const selection: SelectionEditor = draft.pending
+    ? { kind: "Selected", selection: draft.pending.request.selection }
+    : incomplete ?? draft.selection;
   const isMobile = useIsMobileViewport();
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const mounted = useRef(false);
   const composing = useRef(false);
   const focused = useRef<string | null>(null);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [stopping, setStopping] = useState(false);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   // An uninitialized draft inherits the answer it replies to, else the seed.
   const fresh = draft.selection.kind === "Uninitialized" && !draft.pending;
@@ -98,12 +106,21 @@ export default function ChatComposer(props: {
     if (isPaneActive) textarea.current?.focus({ preventScroll: true });
   }, [focusKey, isPaneActive]);
 
-  const unknown = draft.pending !== null && !sending;
+  const existingSend = command.kind !== "Idle" && command.command.kind === "Send";
+  const savedExistingPending = props.scope !== "new" && draft.pending !== null && !existingSend;
+  const unknown = props.scope === "new"
+    ? draft.pending !== null && !sending
+    : existingSend && command.kind === "Unconfirmed";
+  const refresh = existingSend && (command.kind === "RefreshRequired" ||
+    (command.kind === "Reconciling" && command.feedback !== null));
+  const recovery = unknown || refresh;
   const locked = draft.pending !== null;
   const reason = catalog ? unavailability(catalog, selection) : null;
   const quoted = quote?.kind === "Ready" ? quote.selection : null;
   const canSend =
     !locked &&
+    command.kind === "Idle" &&
+    (props.scope === "new" || props.expectedRevision !== null) &&
     target.kind !== "Blocked" &&
     !!catalog &&
     selection.kind === "Selected" &&
@@ -112,6 +129,7 @@ export default function ChatComposer(props: {
     (!quote || !!quoted);
 
   const finish = (outcome: SendOutcome) => {
+    if (!mounted.current) return;
     const failure = outcome.kind === "Failed" ? outcome.failure : null;
     if (failure?.kind === "Defect") return setDefect(failure);
     // an ambiguous failure keeps its command: "Send status unknown"
@@ -161,9 +179,9 @@ export default function ChatComposer(props: {
   const stop = () => {
     if (!run) return;
     setStopping(true);
-    void props.onStop(run.runId).finally(() => setStopping(false));
+    void props.onStop(run.runId).finally(() => { if (mounted.current) setStopping(false); });
   };
-  const icon = (label: string, node: ReactNode, onClick: () => void) => (
+  const icon = (label: string, node: ReactNode, onClick: () => void, disabled = false) => (
     <Button
       variant="ghost"
       size="sm"
@@ -171,6 +189,7 @@ export default function ChatComposer(props: {
       aria-label={label}
       title={label}
       onClick={onClick}
+      disabled={disabled}
     >
       {node}
     </Button>
@@ -186,7 +205,13 @@ export default function ChatComposer(props: {
         {error ? (
           <FeedbackNotice content={error} announcement="Assertive" />
         ) : null}
-        {unknown ? (
+        {savedExistingPending ? (
+          <FeedbackNotice
+            content={{ tone: "Warning", title: "saved send needs separate recovery", message: "this saved request cannot be upgraded or sent again automatically." }}
+            announcement="Assertive"
+          />
+        ) : null}
+        {unknown && props.scope === "new" ? (
           <p className={styles.alert} role="alert">
             Send status unknown. The message and its exact model choice are
             locked for retry.
@@ -210,6 +235,7 @@ export default function ChatComposer(props: {
               "Cancel branch reply",
               <X size={16} aria-hidden="true" />,
               props.onClearBranch,
+              locked,
             )}
           </section>
         ) : null}
@@ -265,16 +291,18 @@ export default function ChatComposer(props: {
             disabled={locked}
           />
           <Button
-            variant={unknown || run ? "ghost" : "primary"}
+            variant={recovery || run ? "ghost" : "primary"}
             iconOnly
             className={styles.send}
-            loading={unknown ? false : run ? stopping : sending}
-            disabled={unknown ? false : run ? stopRequested : !canSend}
+            loading={recovery ? false : run ? stopping : sending}
+            disabled={recovery ? false : run ? stopRequested : !canSend}
             onClick={
-              unknown ? () => void retry()?.then(finish) : run ? stop : submit
+              recovery ? () => void retry()?.then(finish) : run ? stop : submit
             }
             aria-label={
-              unknown
+              refresh
+                ? "Retry refresh"
+                : unknown
                 ? "Retry send"
                 : run
                   ? stopRequested
@@ -285,7 +313,7 @@ export default function ChatComposer(props: {
                     : "Send message"
             }
           >
-            {unknown ? (
+            {recovery ? (
               <RotateCcw size={16} aria-hidden="true" />
             ) : run ? (
               <Square size={16} aria-hidden="true" />

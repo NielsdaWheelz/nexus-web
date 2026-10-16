@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { undoAssistantWrite, undoFailureMessage } from "@/lib/assistantWrites";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -11,6 +11,7 @@ import {
   toReaderCitationData,
   type CitationOut,
 } from "@/lib/resourceGraph/citations";
+import { isDeletedResource } from "@/lib/resourceGraph/links";
 import type { ActivateSource } from "./ChatSurface";
 import styles from "./ChatSurface.module.css";
 
@@ -23,46 +24,9 @@ const KICKERS: Record<string, string> = {
   queue: "Queued",
 };
 
-/** What an answer did and used: its write trail, its sources, its details. */
-export default function AssistantTrust({
-  message,
-  activate,
-}: {
-  message: Message;
-  activate: ActivateSource;
-}) {
-  const trail = message.trust_trail;
-  const cite = (citation: CitationOut, label: (title: string) => string) => {
-    const data = toReaderCitationData(citation);
-    return (
-      <button
-        type="button"
-        className={styles.link}
-        onClick={(event) => activate(data.activation, data.target, event)}
-      >
-        {label(data.preview.title || `Source ${data.index}`)}
-      </button>
-    );
-  };
-  if (!trail) return null;
-  return (
-    <>
-      <WriteTrail trail={trail} />
-      {message.citations.length ? (
-        <details className={styles.sources}>
-          <summary>Sources ({message.citations.length})</summary>
-          <ol aria-label="Sources">
-            {message.citations.map((citation) => (
-              <li key={citation.ordinal}>
-                {cite(citation, (title) => `${citation.ordinal}. ${title}`)}
-              </li>
-            ))}
-          </ol>
-        </details>
-      ) : null}
-      <Details trail={trail} cite={cite} />
-    </>
-  );
+/** Completed writes remain visible because they changed the user's world. */
+export default function AssistantTrust({ message }: { message: Message }) {
+  return message.trust_trail ? <WriteTrail trail={message.trust_trail} /> : null;
 }
 
 /** Assistant writes; Undo only where a created target is proven and not yet undone. */
@@ -146,15 +110,22 @@ function WriteTrail({ trail }: { trail: Trail }) {
   );
 }
 
-/** Closed by default: the run, counts, tools and retrievals, citations and context refs. */
-function Details({
-  trail,
-  cite,
-}: {
-  trail: Trail;
-  cite(citation: CitationOut, label: (title: string) => string): ReactNode;
+/** The complete saved trust report, shown only when information is requested. */
+export function AssistantReport({ message, activate }: {
+  message: Message;
+  activate: ActivateSource;
 }) {
   const display = useRenderEnvironment();
+  const trail = message.trust_trail;
+  if (!trail) return null;
+  const cite = (citation: CitationOut, label: (title: string) => string) => {
+    const data = toReaderCitationData(citation);
+    const text = label(data.preview.title || `source ${data.index}`);
+    return data.activation.kind === "none" || isDeletedResource(`${citation.target_ref.type}:${citation.target_ref.id}`) ? <span>{text} · unavailable</span> : (
+      <button type="button" className={styles.link}
+        onClick={(event) => activate(data.activation, data.target, event)}>{text}</button>
+    );
+  };
   const run = trail.run;
   const shown = run?.run_selection.display_at_dispatch;
   const retrievals = [
@@ -177,9 +148,7 @@ function Details({
       run?.support_id != null ? run.support_id : null,
   };
   return (
-    <details className={styles.details}>
-      <summary>Details</summary>
-      <div className={styles.inspector}>
+    <div className={styles.inspector}>
         <p>
           {trail.tool_calls.length} tools · {retrievals.length} retrieved ·{" "}
           {retrievals.filter((r) => r.selected).length} selected ·{" "}
@@ -189,7 +158,7 @@ function Details({
         </p>
         <dl>
           {Object.entries(facts).map(([term, value]) =>
-            value ? (
+            value != null ? (
               <div key={term}>
                 <dt>{term}</dt>
                 <dd>{value}</dd>
@@ -240,8 +209,7 @@ function Details({
             ))}
           </ol>
         ) : null}
-      </div>
-    </details>
+    </div>
   );
 }
 

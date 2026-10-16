@@ -28,11 +28,15 @@
 .transcript {
   display: flex;
   flex-direction: column;
-  min-height: 100%;
+  /* The scroll owner measures natural content height to size its spacer. */
   max-width: var(--content-max-width);
   margin: 0 auto;
-  padding: var(--space-4);
-  line-height: var(--leading-relaxed);
+  padding: var(--space-3);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-normal);
+  letter-spacing: normal;
 }
 
 .spacer {
@@ -56,17 +60,20 @@
 .message {
   position: relative;
   min-width: 0;
-  margin-bottom: 1.5em;
-  font-family: var(--font-sans);
-  font-size: var(--text-md);
-  line-height: 1.58;
+  margin-bottom: var(--space-5);
 }
+
+.message[data-role="user"] { margin-bottom: var(--space-3); }
 
 .userPrompt {
   display: grid;
   gap: var(--space-2);
-  padding-inline-start: var(--space-3);
-  border-inline-start: 2px solid var(--accent-muted);
+  width: fit-content;
+  max-width: 100%;
+  margin-inline-start: auto;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-xl);
+  background: var(--surface-2);
 }
 
 .userBody,
@@ -77,21 +84,14 @@
 }
 
 .userBody {
+  display: block;
   white-space: pre-wrap;
 }
 
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  margin: var(--space-2) 0;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .message:not(:hover, :focus-within) :is(.actions, .time) {
-    opacity: 0;
-  }
+.rootAlternatives {
+  margin-bottom: var(--space-3);
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
 }
 
 /* The live answer's gutter pulse. */
@@ -109,11 +109,8 @@
   }
 }
 
-.time,
 .runStatus,
-.tool,
-.details,
-.sources {
+.tool {
   display: block;
   margin: var(--space-1) 0;
   color: var(--ink-faint);
@@ -202,24 +199,15 @@ button.kicker:hover:not(:disabled) {
   cursor: pointer;
 }
 
-.sources {
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--edge-subtle);
-}
-
-:is(.sources, .details) summary {
-  cursor: pointer;
-}
-
-.sources ol {
-  display: grid;
-  gap: var(--space-1);
-  padding: 0;
-  list-style: none;
+button.kicker,
+.actionControl {
+  min-inline-size: var(--size-sm);
+  min-block-size: var(--size-sm);
 }
 
 .link,
 .inspector button {
+  min-height: var(--size-sm);
   padding: 0;
   border: 0;
   background: none;
@@ -233,12 +221,9 @@ button.kicker:hover:not(:disabled) {
 
 .inspector {
   display: grid;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-  padding: var(--space-3);
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--surface-1);
+  gap: var(--space-3);
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
 }
 
 .inspector :is(p, h2, ol, dl, dd) {
@@ -253,7 +238,7 @@ button.kicker:hover:not(:disabled) {
 
 .inspector dl {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(10rem, 100%), 1fr));
   gap: var(--space-1) var(--space-3);
 }
 
@@ -261,9 +246,14 @@ button.kicker:hover:not(:disabled) {
   color: var(--ink-faint);
 }
 
-@media (max-width: 640px) {
-  .transcript {
-    padding: var(--space-3);
+@container primaryPane (min-width: 480px) {
+  .transcript { padding: var(--space-4); }
+}
+
+@media (any-pointer: coarse) {
+  .link, .inspector button, button.kicker, .actionControl {
+    min-inline-size: var(--size-xl);
+    min-block-size: var(--size-xl);
   }
 }
 

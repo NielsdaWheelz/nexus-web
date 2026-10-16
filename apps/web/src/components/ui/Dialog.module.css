@@ -67,3 +67,10 @@
   padding: var(--space-4);
   overflow-y: auto;
 }
+
+@media (any-pointer: coarse) {
+  .closeBtn {
+    min-width: var(--size-xl);
+    min-height: var(--size-xl);
+  }
+}

@@ -143,7 +143,11 @@ def run_response(db: Session, *, viewer_id: UUID, run_id: UUID) -> ChatRunRespon
         ).all()
         user, assistant = _message_outs(db, viewer_id, list(pair))
         return ChatRunResponse(
-            conversation=ConversationOut(id=conversation.id, title=conversation.title),
+            conversation=ConversationOut(
+                id=conversation.id,
+                title=conversation.title,
+                branch_revision=conversation.branch_revision,
+            ),
             user_message=user,
             assistant_message=assistant,
         )
@@ -164,10 +168,21 @@ def tree(db: Session, *, viewer_id: UUID, conversation_id: UUID) -> Conversation
             .order_by(Message.seq, Message.id)
         )
     )
-    # A deleted leaf (FK SET NULL) falls back to the newest message, always a leaf.
-    leaf = conversation.active_leaf_message_id or (messages[-1].id if messages else None)
+    leaf = conversation.active_leaf_message_id
+    if (leaf is None) != (not messages) or (
+        leaf is not None
+        and (
+            not any(message.id == leaf for message in messages)
+            or any(message.parent_message_id == leaf for message in messages)
+        )
+    ):
+        raise RuntimeError("Conversation's stored active message is not its leaf")
     return ConversationTreeOut(
-        conversation=ConversationOut(id=conversation.id, title=conversation.title),
+        conversation=ConversationOut(
+            id=conversation.id,
+            title=conversation.title,
+            branch_revision=conversation.branch_revision,
+        ),
         messages=_message_outs(db, viewer_id, messages),
         active_leaf_message_id=leaf,
     )

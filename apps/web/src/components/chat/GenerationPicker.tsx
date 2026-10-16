@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import Button from "@/components/ui/Button";
 import ChoicePicker, { type ChoiceOption } from "@/components/ui/ChoicePicker";
 import type { ServerValue } from "@/lib/api/serverState";
@@ -15,11 +14,10 @@ import {
   modelKeyOf,
   modelVariants,
   routeKey,
-  unavailability,
   type SelectionEditor,
   type ModelVariant,
 } from "@/lib/chat/selection";
-import type { Catalog, Selection } from "@/lib/chat/wire";
+import type { Catalog } from "@/lib/chat/wire";
 import EffortPicker from "./EffortPicker";
 import styles from "./ChatComposer.module.css";
 
@@ -121,54 +119,6 @@ export default function GenerationPicker({
         onChange={(key) => {
           if (route && variant) onChange(chooseThinking(route, variant.model.key, key));
         }} />
-    </div>
-  );
-}
-
-/** Settings stay local to this candidate; only its execution button starts a run. */
-export function CandidatePicker({
-  op,
-  source,
-  disabled,
-  onConfirm,
-  catalogRead,
-}: {
-  op: "rerun" | "regenerate";
-  source: Selection;
-  disabled: boolean;
-  onConfirm(selection: Selection): Promise<boolean>;
-  catalogRead: ServerValue<Catalog>;
-}) {
-  const [draft, setDraft] = useState<SelectionEditor | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const reason = catalogRead.status === "ready" && draft
-    ? unavailability(catalogRead.data, draft) : null;
-  return (
-    <div className={styles.candidate}>
-      <Button variant="ghost" size="sm" disabled={disabled || submitting}
-        aria-expanded={draft !== null}
-        onClick={() => setDraft(draft ? null : { kind: "Selected", selection: source })}>
-        {draft ? "cancel" : `${op} with…`}
-      </Button>
-      {draft ? (
-        <>
-          <GenerationPicker catalogRead={catalogRead} value={draft} onChange={setDraft}
-            disabled={disabled || submitting} />
-          {reason ? <p className={styles.status} role="status">{reason}</p> : null}
-          <Button variant="secondary" size="sm" loading={submitting}
-            disabled={disabled || catalogRead.status !== "ready" || reason !== null || draft.kind !== "Selected"}
-            onClick={async () => {
-              if (draft.kind !== "Selected") return;
-              setSubmitting(true);
-              const accepted = await onConfirm(draft.selection);
-              setSubmitting(false);
-              if (accepted) setDraft(null);
-              else catalogRead.refetch();
-            }}>
-            {op}
-          </Button>
-        </>
-      ) : null}
     </div>
   );
 }
