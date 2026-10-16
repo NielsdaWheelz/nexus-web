@@ -79,7 +79,7 @@ function HighlightActions({ id, blockedReason }: { readonly id: string; readonly
   }, [onOpenChange]);
   return <>
     {options.filter((action) => !COMPOSER_ACTIONS.has(action.id)).map((action) => {
-      if (action.kind === "custom") return <div key={action.id}>{action.render({ triggerEl: null, closeMenu: () => {}, closeMenuWithoutFocus: () => {} })}</div>;
+      if (action.kind === "custom") return <div key={action.id}>{action.render({ triggerEl: null, closeMenu: () => {}, closeMenuWithoutFocus: () => {}, presentation: "bar" })}</div>;
       return <SelectionAction key={action.id} action={action} blockedReason={blockedReason}
         help={action.id === "LearnHighlight" ? "create a dossier from this passage" : undefined} />;
     })}
