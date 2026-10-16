@@ -94,13 +94,17 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
     for (const group of data?.evidence.passage_groups ?? []) {
       const anchor = anchorOf(group.resolution);
       for (const item of anchor ? group.items : []) {
-        if (item.kind === "Highlight")
+        if (item.kind === "Highlight") {
+          const body = item.item.preview.body;
+          // justify-defect: a resolved saved highlight has a passage and its color.
+          if (body.kind !== "passage" || body.color === null) throw new Error("Resolved highlight has no colored passage");
           marks.set(item.highlight_id, {
             id: item.highlight_id,
-            color: item.color,
+            color: body.color,
             anchor: anchor!,
             order: `${item.created_at} ${item.highlight_id}`,
           });
+        }
         if (item.kind === "SourceReference" && anchor!.kind === "text") {
           const { unit, start, end } = anchor!;
           noteRefs.push({ key: item.stable_key, unit, start, end });

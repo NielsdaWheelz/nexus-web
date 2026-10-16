@@ -157,7 +157,7 @@ policy and must be updated with it. release remains forward repair.
 
 the pinned local minio-client pull failure required a disposable override using
 the cli bundled in the same pinned server image. shipped pins remain unchanged;
-[that issue](tickets/local-minio-image-pull-fails-on-devbox.md) remains open.
+[that issue](issues/local-minio-image-pull-fails-on-devbox.md) remains open.
 superseded-object deletion (since resolved by the ingest slice)
 and [reported local provider-key exposure](tickets/metadata-qualification-provider-key-output.md)
 remain separate follow-ups. the latter needs credential-owner revocation/replacement;

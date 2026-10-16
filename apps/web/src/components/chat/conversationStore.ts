@@ -26,7 +26,7 @@ import {
 } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
-import { isDeletedResource, subscribeLinkMutations } from "@/lib/resourceGraph/links";
+import { subscribeLinkMutations } from "@/lib/resourceGraph/links";
 import { loadCatalog } from "./GenerationPicker";
 
 // The browser's one copy of a conversation: the server's messages and leaf,
@@ -98,12 +98,7 @@ export function createChatStore(conversationId: string | null) {
       set({ defect: { error: failure.error } });
     else if (failure.kind === "Feedback") set({ error: failure.feedback });
   };
-  const withoutDeletedCitations = (message: Message): Message => {
-    const citations = message.citations.filter((citation) =>
-      !isDeletedResource(`${citation.target_ref.type}:${citation.target_ref.id}`),
-    );
-    return citations.length === message.citations.length ? message : { ...message, citations };
-  };
+
 
   /** Replace whole messages from a read; an older copy never wins. */
   const apply = (
@@ -119,7 +114,7 @@ export function createChatStore(conversationId: string | null) {
         old && Date.parse(message.updated_at) < Date.parse(old.updated_at);
       // A read begun before deletion may still complete afterward. Its text and
       // run state remain useful; its deleted citations must never reappear.
-      messages.set(message.id, withoutDeletedCitations(stale ? old : message));
+      messages.set(message.id, stale ? old : message);
       if (!stale && old?.status === "pending" && message.status !== "pending")
         contextVersion += 1;
     }
@@ -226,7 +221,6 @@ export function createChatStore(conversationId: string | null) {
         unsubscribeLinks = subscribeLinkMutations((mutation) => {
           if (mutation.kind !== "resource_deleted") return;
           set({
-            messages: new Map([...state.messages].map(([id, message]) => [id, withoutDeletedCitations(message)])),
             contextVersion: state.contextVersion + 1,
           });
           void store.load();

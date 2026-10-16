@@ -56,7 +56,11 @@ from nexus.services.generation.catalog import (
 )
 from nexus.services.generation.contract import GenerationSpec
 from nexus.services.generation.policy import chat_tool_plan
-from nexus.services.resource_graph.context import add_context_ref_without_commit, list_context_refs
+from nexus.services.resource_graph.context import (
+    add_context_ref_without_commit,
+    context_version,
+    list_context_refs,
+)
 from nexus.services.resource_graph.edges import create_link
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.seq import assign_next_message_seq
@@ -363,6 +367,7 @@ def _quote(
         conversation_id=conversation_id,
         target=ResourceRef("media", key.media_id),
         origin="system",
+        user_edit=True,
     )
     return quotes.encode(snapshot)
 
@@ -458,6 +463,9 @@ def _start_run(
         output_budget_tokens=output_budget,
     )
     run = ChatRun(
+        admitted_context_version=context_version(
+            db, viewer_id=viewer_id, conversation_id=conversation_id
+        ),
         id=run_id,
         owner_user_id=viewer_id,
         conversation_id=conversation_id,

@@ -1,17 +1,14 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { undoAssistantWrite, undoFailureMessage } from "@/lib/assistantWrites";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { Message } from "@/lib/chat/wire";
 import { formatDisplayNumber, truncateText } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import {
-  toReaderCitationData,
-  type CitationOut,
-} from "@/lib/resourceGraph/citations";
-import type { ActivateSource } from "./ChatSurface";
+import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
+import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import styles from "./ChatSurface.module.css";
 
 type Trail = NonNullable<Message["trust_trail"]>;
@@ -24,45 +21,18 @@ const KICKERS: Record<string, string> = {
 };
 
 /** What an answer did and used: its write trail, its sources, its details. */
-export default function AssistantTrust({
-  message,
-  activate,
-}: {
-  message: Message;
-  activate: ActivateSource;
-}) {
+export default function AssistantTrust({ message }: { message: Message }) {
   const trail = message.trust_trail;
-  const cite = (citation: CitationOut, label: (title: string) => string) => {
-    const data = toReaderCitationData(citation);
-    return (
-      <button
-        type="button"
-        className={styles.link}
-        onClick={(event) => activate(data.activation, data.target, event)}
-      >
-        {label(data.preview.title || `Source ${data.index}`)}
-      </button>
-    );
-  };
-  if (!trail) return null;
-  return (
-    <>
-      <WriteTrail trail={trail} />
-      {message.citations.length ? (
-        <details className={styles.sources}>
-          <summary>Sources ({message.citations.length})</summary>
-          <ol aria-label="Sources">
-            {message.citations.map((citation) => (
-              <li key={citation.ordinal}>
-                {cite(citation, (title) => `${citation.ordinal}. ${title}`)}
-              </li>
-            ))}
-          </ol>
-        </details>
-      ) : null}
-      <Details trail={trail} cite={cite} />
-    </>
-  );
+  return <>
+    {trail ? <WriteTrail trail={trail} /> : null}
+    {message.citations.length ? <details className={styles.sources}>
+      <summary>Sources ({message.citations.length})</summary>
+      <ResourceOutlineList scope={`message-sources:${message.id}`} ariaLabel="Sources">
+        {message.citations.map((citation) => <ResourceOutlineRow key={citation.edge_id} item={citation.item} occurrenceKey={`citation:${citation.edge_id}`} historical occurrenceLabel={`citation ${citation.ordinal}`} />)}
+      </ResourceOutlineList>
+    </details> : null}
+    {trail ? <Details trail={trail} messageId={message.id} /> : null}
+  </>;
 }
 
 /** Assistant writes; Undo only where a created target is proven and not yet undone. */
@@ -147,13 +117,7 @@ function WriteTrail({ trail }: { trail: Trail }) {
 }
 
 /** Closed by default: the run, counts, tools and retrievals, citations and context refs. */
-function Details({
-  trail,
-  cite,
-}: {
-  trail: Trail;
-  cite(citation: CitationOut, label: (title: string) => string): ReactNode;
-}) {
+function Details({ trail, messageId }: { trail: Trail; messageId: string }) {
   const display = useRenderEnvironment();
   const run = trail.run;
   const shown = run?.run_selection.display_at_dispatch;
@@ -202,7 +166,7 @@ function Details({
             <li>
               Attached context
               {trail.attached.map((r) => (
-                <Retrieval key={r.id} retrieval={r} />
+                <Retrieval key={r.id} retrieval={r} occurrenceKey={`attached:${messageId}:${r.id}`} />
               ))}
             </li>
           </ol>
@@ -214,47 +178,25 @@ function Details({
                 #{tool.tool_call_index} {tool.activity_label} - {tool.status}
                 {tool.error_type ? ` - ${tool.error_type}` : ""}
                 {tool.retrievals.map((r) => (
-                  <Retrieval key={r.id} retrieval={r} />
+                  <Retrieval key={r.id} retrieval={r} occurrenceKey={`tool:${tool.id}:${r.id}`} />
                 ))}
               </li>
             ))}
           </ol>
         ) : null}
-        {trail.citations.length ? (
-          <ol aria-label="Citations">
-            {trail.citations.map((item) => (
-              <li key={item.citation_edge_id}>
-                {cite(item.citation, (title) => `[${item.ordinal}] ${title}`)}
-              </li>
-            ))}
-          </ol>
-        ) : null}
-        {trail.context_refs_added.length ? (
-          <ol aria-label="Context refs">
-            {trail.context_refs_added.map((ref) => (
-              <li key={`${ref.chat_run_event_seq}:${ref.id}`}>
-                {ref.label || ref.resource_ref} —{" "}
-                {ref.missing ? "missing" : "added"}
-                <span className={styles.code}>{ref.resource_ref}</span>
-              </li>
-            ))}
-          </ol>
-        ) : null}
+        {trail.citations.length ? <ResourceOutlineList scope={`message-citations:${messageId}`} ariaLabel="Citations">
+          {trail.citations.map(({ citation }) => <ResourceOutlineRow key={citation.edge_id} item={citation.item} occurrenceKey={`detail-citation:${citation.edge_id}`} historical occurrenceLabel={`citation ${citation.ordinal}`} />)}
+        </ResourceOutlineList> : null}
+        {trail.context_refs_added.length ? <ResourceOutlineList scope={`message-context:${messageId}`} ariaLabel="Added context">
+          {trail.context_refs_added.map((ref) => <ResourceOutlineRow key={`${ref.chat_run_event_seq}:${ref.id}`} item={ref.item} occurrenceKey={`added-context:${messageId}:${ref.chat_run_event_seq}:${ref.id}`} />)}
+        </ResourceOutlineList> : null}
       </div>
     </details>
   );
 }
 
-function Retrieval({
-  retrieval: r,
-}: {
-  retrieval: Trail["attached"][number];
-}) {
-  return (
-    <span className={styles.code}>
-      {r.source_title || r.source_id} — {r.selected ? "selected" : "retrieved"}
-      {r.included_in_prompt ? " · included" : ""}
-      {r.cited_edge_id ? " · cited" : ""}
-    </span>
-  );
+function Retrieval({ retrieval: r, occurrenceKey }: { retrieval: Trail["attached"][number]; occurrenceKey: string }) {
+  return <ResourceOutlineList scope={occurrenceKey} ariaLabel="Retrieved resource">
+    <ResourceOutlineRow item={r.item} occurrenceKey={occurrenceKey} historical occurrenceLabel={`${r.selected ? "selected" : "retrieved"}${r.included_in_prompt ? " · included" : ""}${r.cited_edge_id ? " · cited" : ""}`} />
+  </ResourceOutlineList>;
 }

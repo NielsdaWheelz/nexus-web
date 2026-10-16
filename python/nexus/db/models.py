@@ -1685,6 +1685,7 @@ class MessageRetrieval(Base):
     )
     scope: Mapped[str] = mapped_column(Text, nullable=False, server_default="all")
     context_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    captured_evidence: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     result_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     deep_link: Mapped[str | None] = mapped_column(Text, nullable=True)
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -1756,6 +1757,7 @@ class ChatRun(Base):
         JSONB(none_as_null=True),
         nullable=False,
     )
+    admitted_context_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
     cancel_requested_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True),

@@ -40,7 +40,7 @@ those facts or a writer of targets.
 - a unit whose rendered text differs from its `canonical_text` disables selection
   and paint for that unit; captures fall back to its start, never a wrong offset.
 - the document dom is never rewritten for decorations: marks, find, focus dimming
-  and pulses are css custom highlights.
+  and transient inspection use css custom highlights.
 
 ## module map
 
@@ -128,11 +128,12 @@ change and offers retry). `READER_PROFILE_DEFAULTS` in
 
 ## flows
 
-**open and restore.** the runtime awaits the source, the cursor and the fresh
-entry together, mounts the surface, then restores once: a fresh target (hash,
-pending chat pulse, `?apparatus_id`, resolved through `reader-targets`) enters
-exploring with the saved cursor as origin; else a positioned cursor applies;
-else a cold target (`?fragment`) applies; else the start. a cursor naming a unit
+**open and restore.** the runtime awaits the source and cursor, mounts the surface,
+then restores once. a destination-owned source arrival takes precedence over a
+source-valid visit snapshot, then the durable cursor, then the start. inspection
+holds the prior reading origin without advancing it. canonical hrefs and workspace
+entries share one source-target resolver; media-wide pulses and competing hash
+effects are absent. a cursor naming a unit
 this publication lacks opens at the start with *saved reading spot unavailable*
 and saves nothing until genuine input. genuine input during that source load
 skips restoration; earlier reading does not cancel a later publication's restore.
@@ -257,18 +258,18 @@ the dom is never rewritten (`text/paint.ts`).
 - **static only.** every registered range is a `StaticRange`, including
   `lib/find`'s `highlightPainter` (live ranges tax every dom mutation).
 - **repaint triggers, exhaustively:** the decorations change (marks, focus, hover,
-  evidence, pulse); the document (re)mounts (a new painter); a unit enters or
+  composing passage, inspection); the document (re)mounts (a new painter); a unit enters or
   leaves the window one viewport above and below the visible band
   (`IntersectionObserver`). width,
   font, line height, column, theme and rotation need nothing: static ranges follow
   the text.
-- **priorities:** `hl-<colour>` −4, `hl-hover` −3, `hl-evidence`/`hl-focus`/
-  `reader-pulse` −2, `reader-focus` −1 (colour-setting dimming above background
+- **priorities:** `hl-<colour>` −4, `hl-hover` −3, `hl-focus` −2,
+  `source-inspection`/`source-inspection-coarse`/`reader-focus` −1 (colour-setting dimming above background
   tints), `nexus-find-all` 0, `nexus-find-active` 1.
 - **colours are literal** (chromium and android webview ≤ 113 ignore `var()` in
   `::highlight`); dark inks under `.frame[data-theme="dark"]`. focus is an
-  underline, evidence a dotted underline, hover a translucent tint, the pulse a
-  1.2 s js toggle. highlight pseudos carry no radius, outline, shadow or
+  underline, inspection a persistent distinct mark, hover a translucent tint.
+  exact and coarse inspection remain visually different. highlight pseudos carry no radius, outline, shadow or
   animation.
 - **hit-testing.** a click or mouse move resolves the grapheme under the pointer:
   `caretPositionFromPoint(x, y, {shadowRoots})` else `caretRangeFromPoint`,
@@ -292,22 +293,23 @@ the dom is never rewritten (`text/paint.ts`).
 | file | owns |
 | --- | --- |
 | `MediaPaneBody.tsx` | composition: media record (+ processing stream, metadata re-read), the reader, annotations, arrivals, find, evidence/contents bodies, render states, banners, end of document and the lectern prompt |
-| `hostedReader.ts` | `hostedSource`, `hostedProgress`, the one locator → target map (`targetOfGroup`, pulses), deep links: `useReaderEntry` (hash `#highlight-\|#evidence-\|#passage-<id>`, `#fragment-\|#text-<id>[:s:e]`, `?fragment`, `?apparatus_id`, pending pulse; read once per mount, consumed with one replace) and `useLiveReaderTargets` (later pulses and hash pushes, the same link again included; a query pushed into an open pane is not read: nothing in the app emits one) |
+| `hostedReader.ts` | `hostedSource`, `hostedProgress`, locator/extent conversion, displayed-publication validation and visit-owned source inspection |
 | `annotations.ts` | `AnnotationStore`: one document-map read → marks of every visible highlight (topmost first), note refs, rail markers, evidence; writes paint at once from their acknowledgement through a pending ledger that a map read issued after the write settles; a failed read keeps the last map painted; `twin` finds the viewer's own highlight of an exact extent (a library-mate's never blocks theirs) |
 | `useAnnotationVerbs.ts` | selection and mark verbs: highlight, note (created under the open editor), link (creates nothing until confirmed), ask, ask in existing chat, learn, share, note chord `n`; app-global highlight intents while the mark is mounted |
 | `SelectionDock.tsx` | the dock (Highlight with colours, Note, Link, Ask, More), the quick note (floating or sheet), the highlight menu, the overlap chooser, recolour dialog, link dialog, chat chooser |
-| `evidence/` | Evidence: type filters, all items / follow text, passage groups in document order (*go to passage*), whole-document items, *needs attention*; rows by kind with actions, notes, source notes and associations |
+| `evidence/` | type filters, follow/browse modes, measured non-overlapping source alignment, focus retention and shared recursive resource rows; unanchored items use normal flow |
 | `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (activity, reader settings, theme), the 52 px document-map rail (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+shift+F, shift+Esc, Esc) |
 | `Transcript.tsx` | transcript states and request; playback, show notes with seekable times, chapters following the player |
 | `activity.ts` | consumption activity from reader viewports (word ordinal when reading) |
 | `Embeds.tsx` | embed cards |
 
-deep-link arrivals focus a highlight, underline evidence, or flash a passage; a
-target that no longer resolves says *That passage is no longer available.* an
-arrival that moves a transcript also moves playback there (a time target's start,
-else its segment's), without resuming; a video seeks its embed instead of the
-global player. a map measured against another publication is re-read before
-anything paints.
+source arrivals persistently inspect the complete target in the chosen pane only.
+resolution, positioning and paint share cancellation and source identity; a newer
+arrival or changed publication cannot apply an older result. unavailable location
+is explicit. transcript inspection marks the full interval without seeking playback.
+saved colours and the durable reading cursor remain unchanged. see
+[resource references](resource-references.md) for the shared capability and focus
+contract. a map measured against another publication is re-read before paint.
 
 ## around the reader
 
@@ -320,8 +322,9 @@ anything paints.
   add the document fraction and word ordinal. inspection counts time only. see
   [consumption-activity.md](consumption-activity.md).
 - **quote to chat.** a quote is a durable highlight first; the chat send captures an
-  immutable per-message snapshot of it (`reader_selection = {media_id,
-  highlight_id, revision}`), so later edits never change a sent quote.
+  immutable per-message `{key, evidence}` snapshot. the admission key is
+  `{media_id, highlight_id, revision}`; the captured words, attribution and
+  complete target never change with later highlight edits.
 - **offline copies.** a reading copy zips the same `GET /media/{id}/reader`
   document; the shelf maps it with `readerDocument()` and renders the same
   `DocumentReaderView` with a device progress port. see [offline](offline.md).
@@ -334,6 +337,5 @@ anything paints.
 `./scripts/test` checks static consistency, generated contracts and shelf/
 extension builds. it runs no unit or live suite. affected behavior is qualified
 under [the local verification contract](../local-rules/testing-standards.md).
-historical reader harnesses are retired. the pane controls change uses a
-user-authorized disposable live proof, removed after qualification; retain its
-observations and material limits, rather than a second test platform.
+historical reader harnesses are retired; this module owns the contract, not
+verification receipts.

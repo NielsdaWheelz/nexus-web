@@ -65,10 +65,6 @@ export interface Decorations {
   readonly noteRefs: readonly NoteRef[];
   readonly focused: string | null;
   readonly hovered: string | null;
-  /** The active deep-link target, underlined. */
-  readonly evidence: TextRange | null;
-  /** Flashed once; a new object flashes again. */
-  readonly pulse: TextRange | null;
 }
 export type DraftAnchor =
   | TextRange
@@ -76,6 +72,14 @@ export type DraftAnchor =
 export interface Passage {
   readonly identity: string;
   readonly anchor: MarkAnchor;
+}
+/** A source being inspected, independent of saved marks and a composing selection. */
+export interface Inspection {
+  readonly identity: string;
+  readonly anchors: readonly MarkAnchor[];
+  /** Coarse page targets have no invented text geometry. */
+  readonly pages: readonly number[];
+  readonly precision: "exact" | "approximate" | "page" | "time";
 }
 export interface SelectionCapture extends Passage {
   readonly anchor: DraftAnchor;
@@ -102,6 +106,7 @@ export interface DocumentReaderViewProps {
   readonly decorations?: Decorations;
   /** The composing passage, independent of the saved decoration map. */
   readonly activePassage?: Passage | null;
+  readonly inspection?: Inspection | null;
   /** Absent: selection is inert. */
   readonly onSelection?: (capture: SelectionCapture) => void;
   readonly onMarks?: (event: MarkEvent) => void;

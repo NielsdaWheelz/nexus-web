@@ -30,6 +30,7 @@ from nexus.jobs.queue import project_execution_phase
 from nexus.schemas.conversation import (
     AssistantTrustTrailOut,
     ChatPublicationWarning,
+    ChatRunContextRefAddedEventPayload,
     ChatRunExecutionOut,
     ChatRunResponse,
     ConversationOut,
@@ -51,10 +52,14 @@ from nexus.schemas.llm import (
     OperatorDefectChatFailure,
     RunSelectionOut,
 )
+from nexus.schemas.resource_evidence import CapturedEvidence
+from nexus.schemas.resource_items import RetrievalSourceTargetKey
 from nexus.services.chat import events, quotes
 from nexus.services.generation.contract import GenerationSpec
 from nexus.services.resource_graph.citations import build_citation_outs_for_sources
-from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
+from nexus.services.resource_items.evidence import evidence_items
+from nexus.services.resource_items.items import resource_items_out
 from nexus.services.tools import assistant_writes, contract
 
 # An errored run's code -> its failure card; an unlisted code has no card.
@@ -211,7 +216,9 @@ def _message_outs(db: Session, viewer_id: UUID, messages: list[Message]) -> list
         trail, rerun = trails.get(message.id, (None, False))
         snapshot = message.reader_selection_snapshot
         reader_selection = (
-            quotes.selection_out(db, viewer_id=viewer_id, snapshot=quotes.decode(snapshot))
+            quotes.selection_out(
+                db, viewer_id=viewer_id, snapshot=quotes.decode(snapshot), message_id=message.id
+            )
             if snapshot is not None
             else None
         )
@@ -252,27 +259,40 @@ def _trails(
     usage: dict[UUID, Any] = {}
     added: dict[UUID, list[TrustContextRefAddedOut]] = defaultdict(list)
     # Stored payloads carry at least their current model's keys; read them by name.
-    for event in db.scalars(
-        select(ChatRunEvent)
-        .where(
-            ChatRunEvent.run_id.in_([run.id for run in runs.values()]),
-            ChatRunEvent.event_type.in_(("done", "context_ref_added")),
+    saved_events = list(
+        db.scalars(
+            select(ChatRunEvent)
+            .where(
+                ChatRunEvent.run_id.in_([run.id for run in runs.values()]),
+                ChatRunEvent.event_type.in_(("done", "context_ref_added")),
+            )
+            .order_by(ChatRunEvent.seq)
         )
-        .order_by(ChatRunEvent.seq)
-    ):
+    )
+    added_payloads = {
+        (event.run_id, event.seq): ChatRunContextRefAddedEventPayload.model_validate(event.payload)
+        for event in saved_events
+        if event.event_type == "context_ref_added"
+    }
+    added_items = {
+        item.ref: item
+        for item in resource_items_out(
+            db,
+            viewer_id=viewer_id,
+            refs=[assert_resource_ref(payload.resource_ref) for payload in added_payloads.values()],
+        )
+    }
+    for event in saved_events:
         payload = event.payload
         if event.event_type == "done":
             usage[event.run_id] = payload["usage"]
             continue
+        context_added = added_payloads[(event.run_id, event.seq)]
         added[event.run_id].append(
-            TrustContextRefAddedOut.model_validate(
-                {
-                    "id": payload["id"],
-                    "resource_ref": payload["resource_ref"],
-                    "label": payload["label"],
-                    "missing": payload["missing"],
-                    "chat_run_event_seq": event.seq,
-                }
+            TrustContextRefAddedOut(
+                id=context_added.id,
+                item=added_items[context_added.resource_ref],
+                chat_run_event_seq=event.seq,
             )
         )
     calls = list(
@@ -285,15 +305,27 @@ def _trails(
     # a retrieval hangs off its call, or (attached context) off the answer alone.
     retrieved: dict[UUID, list[TrustRetrievalOut]] = defaultdict(list)
     attached: dict[UUID, list[TrustRetrievalOut]] = defaultdict(list)
-    for row in db.scalars(
-        select(MessageRetrieval)
-        .where(MessageRetrieval.assistant_message_id.in_(ids))
-        .order_by(MessageRetrieval.ordinal)
-    ):
+    retrieval_rows = list(
+        db.scalars(
+            select(MessageRetrieval)
+            .where(MessageRetrieval.assistant_message_id.in_(ids))
+            .order_by(MessageRetrieval.ordinal)
+        )
+    )
+    occurrences = []
+    for row in retrieval_rows:
+        captured = CapturedEvidence.model_validate(row.captured_evidence)
+        uri = cast(str | None, row.result_ref.get("citation_target")) or captured.target.owner_ref
+        if uri is None:
+            raise AssertionError("Saved retrieval has no resource identity")
+        occurrences.append(
+            (assert_resource_ref(uri), captured, RetrievalSourceTargetKey(retrieval_id=row.id))
+        )
+    retrieval_items = evidence_items(db, viewer_id=viewer_id, occurrences=occurrences)
+    for row, item in zip(retrieval_rows, retrieval_items, strict=True):
         out = TrustRetrievalOut(
             id=row.id,
-            source_id=row.source_id,
-            source_title=row.source_title,
+            item=item,
             selected=row.selected,
             included_in_prompt=row.included_in_prompt,
             cited_edge_id=row.cited_edge_id,

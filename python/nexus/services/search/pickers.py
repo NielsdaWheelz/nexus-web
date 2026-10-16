@@ -29,7 +29,7 @@ from nexus.services.resource_graph.refs import (
 )
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.items import resource_items_out
-from nexus.services.search.project import SCHEMES, snippet
+from nexus.services.search.project import SCHEMES
 from nexus.services.search.query import MIN_QUERY_LENGTH, decode_offset, encode_cursor, is_offset
 from nexus.services.search.semantic import Embedding, embed_text
 from nexus.services.search.service import read_snapshot
@@ -109,13 +109,14 @@ def _targets(
         hits = merge(hit for family in (*_DIRECT, *_PASSAGES) for hit in rank(db, r, family))
         candidates = _refs(hits[: r.k])
     candidates = [ref for ref in candidates if ref.uri not in excluded]
-    direct = [ref for ref in candidates if capability(ref.scheme).link_mode == "direct"]
-    items = {item.ref: item for item in resource_items_out(db, viewer_id=viewer_id, refs=direct)}
+    items = {
+        item.ref: item for item in resource_items_out(db, viewer_id=viewer_id, refs=candidates)
+    }
     admitted: dict[str, ResourceTargetOut] = {}
     for ref in candidates:
         passage = capability(ref.scheme).link_mode == "materialize_passage"
         quote = candidate_owner_and_quote(db, ref=ref) if passage else None
-        if ref.uri in items and not items[ref.uri].missing:
+        if not passage and ref.uri in items and not items[ref.uri].missing:
             key = ref.uri
             link = _link(db, viewer_id, link_source, ref)
             target = ResourceTargetResourceOut(item=items[ref.uri], existing_link_id=link)
@@ -127,9 +128,7 @@ def _targets(
             key, anchor = identity
             target = ResourceTargetPassageOut(
                 candidate_ref=ref.uri,
-                source=owner,
-                label=owner.label,
-                excerpt=snippet(quote[1], q),
+                item=items[ref.uri],
                 existing_link_id=_link(db, viewer_id, link_source, anchor),
             )
         else:

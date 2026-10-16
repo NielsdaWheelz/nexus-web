@@ -2,11 +2,15 @@
 
 // One note body editor: a ProseMirror view over one block, its formatting toolbar and
 // link dialog, paste normalised to one block, one dropped or pasted file uploaded into
-// a media embed, embeds that open on click or Enter, passage pulses and, in an
+// a media embed, shared resource rows, persistent source inspection and, in an
 // outline, the structural keys. Undo is the outline's when `history` is given, else
 // the editor's own. The view lives as long as `editorKey`; a new `revision` replaces
 // its document by a diff (never while composing, never into its history).
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
+import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
+import { resolveResourceItem, type ResourceItem } from "@/lib/resources/items";
 import { Fragment, Slice, type Node as PMNode } from "prosemirror-model";
 import {
   EditorState,
@@ -20,6 +24,7 @@ import { DecorationSet, EditorView } from "prosemirror-view";
 import { history as ownHistory, redo as ownRedo, undo as ownUndo } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
 import { Bold, Code2, Italic, Link2, Strikethrough, Underline } from "lucide-react";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { useFeedback } from "@/components/feedback/Feedback";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { getFileUploadError, uploadIngestFile } from "@/lib/imports/ingest";
@@ -29,19 +34,20 @@ import {
   docFromBody,
   hrefFromInput,
   noteBodySchema as schema,
-  pulseDecorations,
+  inspectionDecorations,
   type NoteBody,
 } from "@/lib/notes/noteBody";
 import type { FocusSelection, NoteEdit } from "@/lib/notes/useOutline";
-import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
-import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import "prosemirror-view/style/prosemirror.css";
 import styles from "./NoteEditor.module.css";
 
-export interface NotePulse {
+export interface NoteInspection {
   readonly startOffset: number;
   readonly endOffset: number;
-  readonly serial: number;
+  readonly activationId: string;
+  readonly signal: AbortSignal;
+  readonly mayFocus: () => boolean;
+  readonly restored: boolean;
 }
 
 /** What an outline row does with the keys that change structure. */
@@ -62,7 +68,8 @@ export interface NoteEditorProps {
   label: string;
   placeholder?: string;
   compact?: boolean;
-  pulse?: NotePulse | null;
+  inspection?: NoteInspection | null;
+  embeddedItem?: ResourceItem | null;
   focus?: { selection: FocusSelection; serial: number; preventScroll?: boolean } | null;
   history: { undo(): void; redo(): void; boundary(): void } | null;
   keys?: StructuralKeys | null;
@@ -71,7 +78,6 @@ export interface NoteEditorProps {
   onSave?(): void;
   onNewChat?(): void;
   onEmptyBackspace?(): void;
-  onOpenEmbed(ref: string, disposition: WorkspaceTargetDisposition): void;
 }
 
 // [mark, label, key]; the title spells the key as "⌘/Ctrl+B".
@@ -86,8 +92,7 @@ type Format = (typeof FORMATS)[number][0];
 const shortcut = (key: string) =>
   `⌘/Ctrl+${key.startsWith("Shift") ? "Shift+" : ""}${key.at(-1)!.toUpperCase()}`;
 const SOURCE = "noteEditSource";
-const PULSE_MS = 2400;
-const pulseKey = new PluginKey<DecorationSet>("notePulse");
+const inspectionKey = new PluginKey<DecorationSet>("noteInspection");
 
 interface LinkDialog {
   from: number;
@@ -109,6 +114,7 @@ export default function NoteEditor(props: NoteEditorProps) {
   const busy = useRef(false);
   const linkInputId = useId();
   const linkInput = useRef<HTMLInputElement | null>(null);
+  const [embed, setEmbed] = useState<{ dom: HTMLElement; ref: string } | null>(null);
   const [toolbar, setToolbar] = useState(false);
   const [active, setActive] = useState<ReadonlySet<Format>>(new Set());
   const [link, setLink] = useState<LinkDialog | null>(null);
@@ -256,20 +262,11 @@ export default function NoteEditor(props: NoteEditorProps) {
     };
     const undoCommand = outline ? run(() => latest.current.history!.undo()) : ownUndo;
     const redoCommand = outline ? run(() => latest.current.history!.redo()) : ownRedo;
-    const embedOf = (target: EventTarget | null) =>
-      target instanceof HTMLElement
-        ? target.closest<HTMLElement>("[data-object-type][data-object-id]")
-        : null;
-    const open = (embed: HTMLElement, event: { detail: number; shiftKey: boolean }) =>
-      latest.current.onOpenEmbed(
-        `${embed.dataset.objectType}:${embed.dataset.objectId}`,
-        workspaceTargetClickIntent(event).disposition,
-      );
     const view = new EditorView(element, {
       state: EditorState.create({
         doc: docFromBody(latest.current.body),
         plugins: [
-          pulsePlugin(),
+          inspectionPlugin(),
           ...(outline ? [] : [ownHistory()]),
           keymap({
             Enter: enter,
@@ -290,6 +287,21 @@ export default function NoteEditor(props: NoteEditorProps) {
         "data-placeholder": latest.current.placeholder ?? "",
         "data-empty": String(state.doc.firstChild?.type === schema.nodes.paragraph && state.doc.firstChild?.content.size === 0),
       }),
+      nodeViews: {
+        object_embed(node) {
+          const dom = document.createElement("div");
+          dom.contentEditable = "false";
+          dom.className = "note-object-embed";
+          const ref = `${node.attrs.objectType}:${node.attrs.objectId}`;
+          setEmbed({ dom, ref });
+          return {
+            dom,
+            stopEvent: () => true,
+            ignoreMutation: () => true,
+            destroy: () => setEmbed((current) => current?.dom === dom ? null : current),
+          };
+        },
+      },
       editable: () => latest.current.editable && !busy.current,
       transformPasted: (slice, current) =>
         current.state.selection.$from.parent.type.spec.code ? slice : (oneBlock(slice) ?? slice),
@@ -312,8 +324,7 @@ export default function NoteEditor(props: NoteEditorProps) {
               event.target.closest("input, textarea, select, button")) return true;
           // Without an outline command, Escape belongs to the containing overlay.
           if (event.key === "Escape" && !latest.current.keys) return true;
-          if ((!latest.current.editable || busy.current) &&
-              !(embedOf(event.target) && (event.key === "Enter" || event.key === " "))) return true;
+          if (!latest.current.editable || busy.current) return true;
           return false;
         },
         // the browser's own undo (a menu, or Cmd-Z while no editor has focus) goes to ours.
@@ -347,13 +358,6 @@ export default function NoteEditor(props: NoteEditorProps) {
           }, 0);
           return false;
         },
-        click(_current, event) {
-          const embed = embedOf(event.target);
-          if (!embed || !element.contains(embed)) return false;
-          event.preventDefault();
-          open(embed, event);
-          return true;
-        },
         drop(current, event) {
           const files = [...(event.dataTransfer?.files ?? [])];
           if (!files.length) return false;
@@ -374,12 +378,6 @@ export default function NoteEditor(props: NoteEditorProps) {
       },
       handleKeyDown(current, event) {
         if (current.composing || event.isComposing || event.keyCode === 229) return false;
-        const embed = embedOf(event.target);
-        if (embed && element.contains(embed) && (event.key === "Enter" || event.key === " ")) {
-          event.preventDefault();
-          open(embed, { detail: 0, shiftKey: event.shiftKey });
-          return true;
-        }
         if (event.target instanceof HTMLElement && event.target !== current.dom &&
             event.target.closest("input, textarea, select, button, [contenteditable='false']")) return false;
         if (!latest.current.editable || busy.current) return false;
@@ -487,17 +485,20 @@ export default function NoteEditor(props: NoteEditorProps) {
     view.focus();
   }, [props.editorKey, focusSerial]);
 
-  const { pulse } = props;
+  const { inspection } = props;
   useEffect(() => {
     const view = viewRef.current;
-    if (!view || !pulse) return;
-    view.dispatch(view.state.tr.setMeta(pulseKey, pulse));
-    view.dom.querySelector("[data-note-pulse-range]")?.scrollIntoView({ block: "center" });
-    const timer = window.setTimeout(() => {
-      if (!view.isDestroyed) view.dispatch(view.state.tr.setMeta(pulseKey, null));
-    }, PULSE_MS);
-    return () => window.clearTimeout(timer);
-  }, [pulse]);
+    if (!view) return;
+    const clear = () => { if (!view.isDestroyed) view.dispatch(view.state.tr.setMeta(inspectionKey, null)); };
+    if (!inspection || inspection.signal.aborted) { clear(); return; }
+    view.dispatch(view.state.tr.setMeta(inspectionKey, inspection));
+    if (!inspection.restored) {
+      view.dom.querySelector("[data-note-inspection-range]")?.scrollIntoView({ block: "center" });
+      if (inspection.mayFocus()) shell.current?.focus({ preventScroll: true });
+    }
+    inspection.signal.addEventListener("abort", clear, { once: true });
+    return () => { inspection.signal.removeEventListener("abort", clear); clear(); };
+  }, [inspection]);
 
   useLayoutEffect(() => {
     viewRef.current?.setProps({ editable: () => latest.current.editable && !busy.current });
@@ -513,6 +514,7 @@ export default function NoteEditor(props: NoteEditorProps) {
   return (
     <div
       ref={shell}
+      tabIndex={-1}
       className={styles.shell}
       onBlurCapture={() =>
         window.requestAnimationFrame(() => {
@@ -523,6 +525,7 @@ export default function NoteEditor(props: NoteEditorProps) {
       }
     >
       <div ref={host} className={styles.host} />
+      {embed ? createPortal(<EmbeddedResource resourceRef={embed.ref} supplied={props.embeddedItem ?? null} scope={`${props.editorKey}:embed`} />, embed.dom, embed.ref) : null}
       {props.editable && toolbar && !link ? (
         <div className={styles.toolbar} role="toolbar" aria-label="Text formatting">
           {FORMATS.map(([name, label, key, Icon]) => (
@@ -655,17 +658,42 @@ function replaceable(view: EditorView): boolean {
   return !selection.empty && selection.from <= 1 && selection.to >= view.state.doc.content.size - 1;
 }
 
-function pulsePlugin(): Plugin<DecorationSet> {
+function inspectionPlugin(): Plugin<DecorationSet> {
   return new Plugin<DecorationSet>({
-    key: pulseKey,
+    key: inspectionKey,
     state: {
       init: () => DecorationSet.empty,
       apply(tr, set) {
-        const pulse = tr.getMeta(pulseKey) as NotePulse | null | undefined;
-        if (pulse === undefined) return set.map(tr.mapping, tr.doc);
-        return pulse ? pulseDecorations(tr.doc, pulse) : DecorationSet.empty;
+        if (tr.docChanged) return DecorationSet.empty;
+        const inspection = tr.getMeta(inspectionKey) as NoteInspection | null | undefined;
+        if (inspection === undefined) return set;
+        return inspection ? inspectionDecorations(tr.doc, inspection) : DecorationSet.empty;
       },
     },
-    props: { decorations: (state) => pulseKey.getState(state) },
+    props: { decorations: (state) => inspectionKey.getState(state) },
   });
+}
+
+/** Existing bodies arrive batched; a newly pasted/uploaded target resolves once. */
+function EmbeddedResource({ resourceRef, supplied, scope }: { resourceRef: string; supplied: ResourceItem | null; scope: string }) {
+  const [resolved, setResolved] = useState<ResourceItem | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const item = supplied?.ref === resourceRef ? supplied : resolved?.ref === resourceRef ? resolved : null;
+  const handleUnauthenticated = useUnauthenticatedApiHandler();
+  useEffect(() => {
+    if (item) return;
+    const controller = new AbortController();
+    setFailed(false);
+    void resolveResourceItem(resourceRef, controller.signal).then(setResolved, (error: unknown) => {
+      if (controller.signal.aborted || handleUnauthenticated(error)) return;
+      if (!isApiError(error) || isSameSystemApiDefect(error)) setDefect({ error });
+      else setFailed(true);
+    });
+    return () => controller.abort();
+  }, [resourceRef, item, attempt, handleUnauthenticated]);
+  if (defect) throw defect.error;
+  return item ? <ResourceOutlineList scope={scope} ariaLabel="Embedded resource"><ResourceOutlineRow item={item} occurrenceKey={scope} /></ResourceOutlineList>
+    : <p role={failed ? "alert" : "status"}>{failed ? <>couldn’t load embedded resource <button type="button" onClick={() => setAttempt((value) => value + 1)}>retry</button></> : "loading embedded resource…"}</p>;
 }

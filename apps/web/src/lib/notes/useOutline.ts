@@ -9,10 +9,10 @@
 // structure write is pending. A refused write cancels the structure writes queued
 // after it, reloads every loaded outline, resets the texts those writes carried, clears
 // every pane's history and says so in a hud.
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState, useLayoutEffect } from "react";
 import { useFeedback } from "@/components/feedback/Feedback";
-import { apiFetch, type ApiPath } from "@/lib/api/client";
-import { publishChange } from "@/lib/api/changes";
+import { apiFetch, isApiError, isSameSystemApiDefect, type ApiPath } from "@/lib/api/client";
+import { publishChange, useChangeStamp } from "@/lib/api/changes";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { docFromBody, emptyBody, parseBody, type NoteBody } from "@/lib/notes/noteBody";
@@ -20,7 +20,11 @@ import * as model from "@/lib/notes/outline";
 import * as store from "@/lib/notes/texts";
 import { enqueueWrite } from "@/lib/notes/writes";
 import { isDeletedResource, subscribeLinkMutations } from "@/lib/resourceGraph/links";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitDataWriter } from "@/lib/workspace/paneReturnMemento";
 import { resolveResourceItem } from "@/lib/resources/items";
+
+const OUTLINE_VIEW = definePaneVisitDataKey<model.View>("Notes.OutlineView");
 
 type Reply = Schema<"OutlineCommandsOut">;
 
@@ -29,6 +33,8 @@ type Reply = Schema<"OutlineCommandsOut">;
 const graph: model.Graph = new Map();
 const latest = new Map<string, model.OutlineData>();
 const loading = new Map<string, Promise<void>>();
+const reloadAfterFlight = new Set<string>();
+const loadErrors = new Map<string, unknown>();
 const listeners = new Set<(invalidated: ReadonlySet<string> | null) => void>();
 /** The texts and resource dependencies of each unsettled structure write. */
 const carried = new Map<number, { texts: ReadonlySet<string>; refs: ReadonlySet<string> }>();
@@ -44,8 +50,8 @@ function publish(invalidated: ReadonlySet<string> | null = null) {
 }
 
 function liveOutline(outline: model.OutlineData): model.OutlineData | null {
-  if (isDeletedResource(outline.source.ref)) return null;
-  return { ...outline, links: outline.links.filter((link) => !isDeletedResource(link.target.ref)) };
+  if (isDeletedResource(outline.source.item.ref)) return null;
+  return { ...outline, links: outline.links.filter((link) => !isDeletedResource(link.target.item.ref)) };
 }
 
 /** The retained graph outlives its panes, so its invalidation subscription does too. */
@@ -65,7 +71,7 @@ function observeLinks() {
       publish(new Set([mutation.ref]));
       return;
     }
-    const refs = mutation.kind === "created"
+    const refs = mutation.kind === "created" || mutation.kind === "context_detached"
       ? [mutation.sourceRef, mutation.targetRef].filter((ref) => graph.has(ref))
       : [...graph].flatMap(([ref, outline]) => outline.links.some((link) => link.link_id === mutation.linkId) ? [ref] : []);
     for (const ref of refs) void load(ref, true).catch(() => undefined);
@@ -75,17 +81,17 @@ function observeLinks() {
 function adopt(outline: model.OutlineData) {
   const live = liveOutline(outline);
   if (!live) {
-    graph.delete(outline.source.ref);
-    store.setGone(outline.source.ref);
+    graph.delete(outline.source.item.ref);
+    store.setGone(outline.source.item.ref);
     return;
   }
-  graph.set(live.source.ref, live);
+  graph.set(live.source.item.ref, live);
   for (const node of [live.source, ...live.links.map((l) => l.target)]) {
     const body = bodyOf(node);
     if (body && node.content.kind === "note")
-      store.adoptText(node.ref, body, node.content.body_version);
+      store.adoptText(node.item.ref, body, node.content.body_version);
     else if (node.content.kind === "page" && node === live.source)
-      store.adoptText(node.ref, node.content.title, node.content.title_version);
+      store.adoptText(node.item.ref, node.content.title, node.content.title_version);
   }
 }
 
@@ -93,8 +99,8 @@ function adopt(outline: model.OutlineData) {
 function receive(outlines: readonly model.OutlineData[]) {
   for (const outline of outlines) {
     const live = liveOutline(outline);
-    if (live) latest.set(live.source.ref, live);
-    else latest.delete(outline.source.ref);
+    if (live) latest.set(live.source.item.ref, live);
+    else latest.delete(outline.source.item.ref);
   }
   if (pendingStructure > 0) return;
   for (const outline of latest.values()) adopt(outline);
@@ -107,17 +113,23 @@ function load(ref: string, force = false): Promise<void> {
   if (isDeletedResource(ref)) return Promise.resolve();
   if (!force && graph.has(ref)) return Promise.resolve();
   const inflight = loading.get(ref);
-  if (inflight) return inflight;
+  if (inflight) {
+    if (force) reloadAfterFlight.add(ref);
+    return inflight;
+  }
   const path = `/api/notes/outline/${encodeURIComponent(ref)}` as ApiPath;
+  loadErrors.delete(ref);
   const request = apiFetch<ApiJson<"/notes/outline/{ref}", "get">>(path, {
     cache: "no-store",
   })
     .then(({ data }) => {
       if (!graph.has(ref) || pendingStructure === 0) adopt(data);
     })
+    .catch((error: unknown) => { loadErrors.set(ref, error); throw error; })
     .finally(() => {
       loading.delete(ref);
       publish();
+      if (reloadAfterFlight.delete(ref)) void load(ref, true).catch(() => undefined);
     });
   loading.set(ref, request);
   return request;
@@ -146,11 +158,11 @@ function editReferences(edits: readonly model.Edit[]): Set<string> {
     if (edit.kind === "relink") refs.add(edit.destination);
     if (!("endpoint" in edit)) continue;
     refs.add(edit.endpoint);
-    const target = graph.get(edit.endpoint)?.links.find((link) => link.link_id === edit.link_id)?.target.ref;
+    const target = graph.get(edit.endpoint)?.links.find((link) => link.link_id === edit.link_id)?.target.item.ref;
     if (target) refs.add(target);
     if ("after" in edit && edit.after !== null) {
       const endpoint = edit.kind === "relink" ? edit.destination : edit.endpoint;
-      const preceding = graph.get(endpoint)?.links.find((link) => link.link_id === edit.after)?.target.ref;
+      const preceding = graph.get(endpoint)?.links.find((link) => link.link_id === edit.after)?.target.item.ref;
       if (preceding) refs.add(preceding);
     }
   }
@@ -192,7 +204,7 @@ function sendEdits(
       carried.delete(serial);
       acknowledge(reply, edits);
       receive(reply.outlines);
-      if (edits.some((edit) => edit.kind === "ensure_daily")) publishChange("Notes");
+      publishChange("Notes");
       publish();
     },
     fail(error) {
@@ -211,11 +223,11 @@ function acknowledge(reply: Reply, edits: readonly model.Edit[]) {
     edits.flatMap((e) => (e.kind === "insert_note" ? [model.noteRef(e.note_id)] : [])),
   );
   const targets = reply.outlines.flatMap((outline) => outline.links.map((l) => l.target));
-  for (const node of [...reply.nodes, ...targets.filter((t) => inserted.has(t.ref))]) {
-    if (isDeletedResource(node.ref)) continue;
+  for (const node of [...reply.nodes, ...targets.filter((t) => inserted.has(t.item.ref))]) {
+    if (isDeletedResource(node.item.ref)) continue;
     const body = bodyOf(node);
     if (body && node.content.kind === "note")
-      store.acknowledgeText(node.ref, body, node.content.body_version);
+      store.acknowledgeText(node.item.ref, body, node.content.body_version);
   }
 }
 
@@ -300,8 +312,8 @@ function showDraft(draft: Draft, onMade: () => void) {
   const node = model.newNoteNode(draft.note, emptyBody());
   const link = { link_id: draft.link, has_link_note: false, target: node };
   graph.set(draft.page, { ...outline, links: [link] });
-  graph.set(node.ref, { source: node, links: [{ ...link, target: outline.source }] });
-  store.createText(node.ref, emptyBody(), {
+  graph.set(node.item.ref, { source: node, links: [{ ...link, target: outline.source }] });
+  store.createText(node.item.ref, emptyBody(), {
     request: () => ({
       path: "/api/notes/outline/commands",
       method: "POST",
@@ -314,7 +326,7 @@ function showDraft(draft: Draft, onMade: () => void) {
       onMade();
       publishChange("Notes");
       publish();
-      const made = outlines.flatMap((o) => o.links).find((l) => l.target.ref === node.ref);
+      const made = outlines.flatMap((o) => o.links).find((l) => l.target.item.ref === node.item.ref);
       return made?.target.content.kind === "note" ? made.target.content.body_version : 1;
     },
   });
@@ -323,15 +335,31 @@ function showDraft(draft: Draft, onMade: () => void) {
 /** A page (`root`) or a day (`dailyDate`, latent until its first write). */
 export function useOutline(input: { root: string | null; dailyDate: string | null }) {
   const { dailyDate } = input;
+  const visitId = usePaneRuntime()?.visitId;
   const feedback = useFeedback();
   const [, rerender] = useReducer((n: number) => n + 1, 0);
   const [dailyRoot, setDailyRoot] = useState<string | null>(null);
   const root = input.root ?? dailyRoot;
+  const previewStamp = useChangeStamp("Notes", "Metadata");
+  const observedPreviewStamp = useRef(previewStamp);
   const [status, setStatus] = useState<"loading" | "ready" | "failed">("loading");
   const [latent, setLatent] = useState(false);
   const [selection, setSelection] = useState<Selection>(null);
   const [focus, setFocus] = useState<FocusRequest | null>(null);
-  const view = useRef({ folds: new Map<string, boolean>(), zoom: [] as string[] });
+  const capture = useRef<model.View | null>(null);
+  const saved = usePaneVisitData(OUTLINE_VIEW, useCallback(() => capture.current, []));
+  const writeView = usePaneVisitDataWriter(OUTLINE_VIEW);
+  const view = useRef({ visitId, folds: new Map(saved?.folds ?? []), zoom: [...(saved?.zoom ?? [])] });
+  if (view.current.visitId !== visitId) {
+    view.current = { visitId, folds: new Map(saved?.folds ?? []), zoom: [...(saved?.zoom ?? [])] };
+    setSelection(null);
+    setFocus(null);
+  }
+  useLayoutEffect(() => {
+    const snapshot = { folds: new Map(view.current.folds), zoom: [...view.current.zoom] };
+    capture.current = snapshot;
+    writeView(snapshot);
+  });
   const history = useRef({ items: [] as Item[], index: 0, refusals });
   const boundaryNext = useRef(true);
   const draft = useRef<Draft | null>(null);
@@ -382,7 +410,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
         const { data } = await apiFetch<ApiJson<"/notes/daily/{local_date}", "get">>(path, {
           cache: "no-store",
         });
-        const page = data.outline.source.ref;
+        const page = data.outline.source.item.ref;
         if (!graph.has(page) || pendingStructure === 0) adopt(data.outline);
         setDailyRoot(page);
         setLatent(!data.materialized);
@@ -404,6 +432,16 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
   }, [dailyDate, input.root]);
   useEffect(() => void reload(), [reload]);
 
+  useEffect(() => {
+    if (observedPreviewStamp.current === previewStamp) return;
+    observedPreviewStamp.current = previewStamp;
+    if (!root || latent) return;
+    // Refresh each visible owner once; shared text adoption preserves unsaved drafts.
+    const refs = new Set([root, model.zoomEndpoint(graph, root, view.current.zoom) ?? root, ...model.outlineRows(graph, root, view.current)
+      .filter((row) => row.open).map((row) => row.link.target.item.ref)]);
+    for (const ref of refs) void load(ref, true).catch(() => undefined);
+  }, [previewStamp, root, latent]);
+
   const rows = root && graph.has(root) ? model.outlineRows(graph, root, view.current) : [];
   const endpoint = (root && model.zoomEndpoint(graph, root, view.current.zoom)) ?? root ?? "";
 
@@ -424,7 +462,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     for (const edit of edits) {
       if (edit.kind !== "remove") continue;
       const link = graph.get(edit.endpoint)?.links.find((l) => l.link_id === edit.link_id);
-      if (link?.target.content.kind === "note") removed.set(edit.link_id, link.target.ref);
+      if (link?.target.content.kind === "note") removed.set(edit.link_id, link.target.item.ref);
     }
     const inverse = model.applyEdits(graph, edits, textBody, (ref) => resolved.current.get(ref) ?? null);
     const texts = new Set<string>();
@@ -494,6 +532,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     else setSelection(null);
   }
 
+  for (const error of loadErrors.values()) if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
   return {
     status,
     root: root ? (graph.get(root) ?? null) : null,
@@ -504,6 +543,18 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     selection,
     focus,
     loading: new Set(loading.keys()),
+    loadErrors,
+    retryBranch(ref: string) { void load(ref, true).catch(() => undefined); publish(); },
+    childLinks(ref: string) { return graph.get(ref)?.links ?? []; },
+    node(ref: string) {
+      const loaded = graph.get(ref)?.source;
+      if (loaded) return loaded;
+      for (const value of graph.values()) {
+        const node = value.links.find((link) => link.target.item.ref === ref)?.target;
+        if (node) return node;
+      }
+      return null;
+    },
     reload,
     select(key: string, extend = false) {
       if (extend && selection?.kind === "blocks") {
@@ -518,14 +569,15 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     focusRow,
     toggle(row: model.Row) {
       view.current.folds.set(row.key, !row.open);
-      if (!row.open) void load(row.link.target.ref, pendingStructure === 0).catch(() => undefined);
+      if (!row.open) void load(row.link.target.item.ref, pendingStructure === 0).catch(() => undefined);
       rerender();
     },
     zoom(row: model.Row) {
       if (row.terminal === null) {
-        void load(row.link.target.ref).catch(() => undefined);
+        void load(row.link.target.item.ref, pendingStructure === 0).catch(() => undefined);
         view.current.zoom = [...row.path];
         setSelection(null);
+        focusRow("", "end");
         return rerender();
       }
       // Return to the ancestor already showing this target: unzoom, open its branch.
@@ -590,7 +642,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     indent(row: model.Row, at: FocusSelection = "end") {
       const parent = model.indentParent(rows, row);
       if (!parent || !model.isNoteRow(row) || !root) return;
-      void load(parent.link.target.ref).then(() => {
+      void load(parent.link.target.item.ref).then(() => {
         const fresh = model.outlineRows(graph, root, view.current);
         const current = fresh.find((r) => r.key === row.key);
         const edits = current ? model.indentEdits(graph, fresh, current) : null;
@@ -628,7 +680,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       focusRow(key, { anchor: 1, head: 1 });
     },
     drop(row: model.Row, target: model.Row, placement: "before" | "after" | "inside") {
-      const destination = placement === "inside" ? target.link.target.ref : target.endpoint;
+      const destination = placement === "inside" ? target.link.target.item.ref : target.endpoint;
       void load(destination).then(() => {
         const edits = model.dropEdits(graph, row, target, placement);
         if (!edits) return;
@@ -651,8 +703,8 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       const refs = items.flatMap((item) => (item.kind === "resource" ? [item.ref] : []));
       void Promise.all(refs.map((ref) => resolveResourceItem(ref))).then(
         (found) => {
-          for (const { ref, label, summary, missing, activation } of found)
-            resolved.current.set(ref, { ref, label, summary, missing, activation, content: { kind: "resource" } });
+          for (const item of found)
+            resolved.current.set(item.ref, { item, content: { kind: "resource" } });
           commit(edits, selection);
         },
         (error: unknown) => {

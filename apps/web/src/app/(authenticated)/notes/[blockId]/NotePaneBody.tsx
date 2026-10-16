@@ -1,12 +1,11 @@
 "use client";
 
 // A note (/notes/{id}): its body is the masthead, its links the outline below.
-// `#passage-{anchor}` and chat citations pulse a range of the body; EditNoteBody focuses
-// the body's end. Labelled by the body's first line.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// Source arrivals inspect the acknowledged body without editing or selecting it.
+import { useEffect, useMemo, useRef, useState } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
-import type { NotePulse } from "@/components/notes/NoteEditor";
+import type { NoteInspection } from "@/components/notes/NoteEditor";
 import OutlineEditor, { useOutlineFilter } from "@/components/notes/OutlineEditor";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
@@ -16,14 +15,11 @@ import { usePaneChrome } from "@/lib/panes/paneChrome";
 import {
   requirePaneRuntime,
   usePaneEntryDelivery,
-  usePaneHash,
   usePaneParam,
   usePaneRuntime,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
-import { usePassageResolution } from "@/lib/reader/passageResolution";
-import { consumePendingNoteActivation } from "@/lib/reader/pendingNoteActivation";
-import { useNotePulseHighlight, type NotePulseTarget } from "@/lib/reader/pulseEvent";
+import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { isDeletedResource } from "@/lib/resourceGraph/links";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
@@ -38,6 +34,7 @@ export default function NotePaneBody() {
   const outline = useOutline({ root: ref, dailyDate: null });
   const text = useText(ref);
   const titleRef = useRef<HTMLInputElement | null>(null);
+  const sourceView = useRef<HTMLDivElement | null>(null);
   const { query, queryControls } = useOutlineFilter(outline, ref, "Filter note items");
   usePaneReturnReady(deleted || outline.status !== "loading");
   const firstLine = typeof text?.value === "object" ? text.value.body_text.split("\n")[0]!.trim() : "";
@@ -56,35 +53,38 @@ export default function NotePaneBody() {
       });
   }, [blockId, claim, deleted, delivery, feedback, outline]);
 
-  const [pulse, setPulse] = useState<NotePulse | null>(null);
-  const pulseAt = useCallback(
-    (target: Pick<NotePulseTarget, "startOffset" | "endOffset">) =>
-      setPulse((current) => ({
-        startOffset: target.startOffset,
-        endOffset: target.endOffset,
-        serial: (current?.serial ?? 0) + 1,
-      })),
-    [],
-  );
-  useNotePulseHighlight((target) => {
-    if (target.blockId === blockId) pulseAt(target);
+  const [inspection, setInspection] = useState<{ view: NoteInspection; bodyText: string; version: number } | null>(null);
+  const arrival = useSourceArrival({
+    ready: !deleted && outline.status === "ready" && Boolean(text?.acked),
+    sourceIdentity: text?.acked ? `${ref}:${text.acked.version}` : null,
+    apply: async (result, context) => {
+      if (result.location.kind === "resource") {
+        if (context.mayFocus()) sourceView.current?.focus({ preventScroll: true });
+        return true;
+      }
+      if (result.location.kind !== "located" || result.location.locator.type !== "note_block_offsets") return false;
+      const locator = result.location.locator;
+      const saved = text?.acked;
+      const shown = text?.value;
+      if (!saved || typeof saved.value === "string" || typeof shown !== "object" ||
+          locator.block_id !== blockId || locator.body_version !== saved.version ||
+          shown.body_text !== saved.value.body_text) return false;
+      const exact = Array.from(shown.body_text).slice(locator.start_offset, locator.end_offset).join("");
+      if (locator.text_quote_selector?.exact !== exact || context.signal.aborted) return false;
+      setInspection({ bodyText: shown.body_text, version: saved.version, view: {
+        startOffset: locator.start_offset, endOffset: locator.end_offset,
+        activationId: context.activationId, signal: context.signal,
+        mayFocus: context.mayFocus, restored: context.restored,
+      } });
+      context.signal.addEventListener("abort", () => {
+        setInspection((current) => current?.view.activationId === context.activationId ? null : current);
+      }, { once: true });
+      return true;
+    },
   });
-  useEffect(() => {
-    const pending = consumePendingNoteActivation(blockId);
-    if (pending) pulseAt(pending);
-  }, [blockId, pulseAt]);
-  const hash = usePaneHash();
-  const passage = usePassageResolution({ hash, ownerScheme: "note_block", ownerId: blockId });
-  const appliedHash = useRef<string | null>(null);
-  useEffect(() => {
-    if (!hash) appliedHash.current = null;
-    if (passage.status !== "ready" || passage.data?.kind !== "NoteTextOffsets") return;
-    if (appliedHash.current === hash) return;
-    appliedHash.current = hash;
-    pulseAt({ startOffset: passage.data.start_offset, endOffset: passage.data.end_offset });
-    const query = runtime.searchParams.size ? `?${runtime.searchParams}` : "";
-    runtime.router.replace(runtime.pathname + query);
-  }, [hash, passage, pulseAt, runtime]);
+
+  const currentInspection = inspection && typeof text?.value === "object" && text.value.body_text === inspection.bodyText && text.acked?.version === inspection.version ? inspection.view : null;
+  const changedDraft = (inspection !== null || arrival.failure !== null) && typeof text?.value === "object" && typeof text.acked?.value === "object" && text.value.body_text !== text.acked.value.body_text;
 
   const connections = useMemo(
     () => <ConnectionsSurface resourceRef={{ scheme: "note_block", id: blockId }} />,
@@ -105,18 +105,15 @@ export default function NotePaneBody() {
     );
   if (!outline.root) return <PaneLoadingState label="Loading note…" announcement="Polite" />;
   return (
-    <>
-      {passage.status === "ready" && passage.data === null ? (
-        <p role="status">This passage is no longer available.</p>
-      ) : null}
-      {passage.status === "failed" ? <p role="alert">The passage could not be opened.</p> : null}
+    <div ref={sourceView} tabIndex={-1}>
+      {changedDraft ? <p role="status">location unavailable in current draft</p> : arrival.failure ? <p role="status">{arrival.failure}</p> : null}
       <OutlineEditor
         outline={outline}
         filter={query}
-        pulse={pulse}
+        inspection={currentInspection}
         titleRef={titleRef}
         activateTarget={runtime.activateTarget}
       />
-    </>
+    </div>
   );
 }

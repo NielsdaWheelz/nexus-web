@@ -39,6 +39,7 @@ interface Live {
 
 const MARK = "data-reader-mark";
 const PASSAGE = "data-reader-passage";
+const INSPECTION = "data-reader-inspection";
 /** pdf.js leaves this much of the container's width beside a page fitted to it. */
 const PAGE_WIDTH_PADDING_PX = 40;
 
@@ -146,7 +147,7 @@ export default function PdfSurface({
   const [attempt, setAttempt] = useState(0);
   const readPosition = () => runtime.getState().pdf;
   const position = useSyncExternalStore(runtime.subscribe, readPosition, readPosition);
-  const { decorations, activePassage, isMobile } = view;
+  const { decorations, activePassage, inspection, isMobile } = view;
   const selectionInput = useReaderSelection(container, {
     identity: doc.identity,
     textSelector: ".textLayer",
@@ -269,7 +270,7 @@ export default function PdfSurface({
     (page: number) => {
       const shown = pageView(live.current?.viewer, page);
       if (!shown) return;
-      for (const old of shown.div.querySelectorAll(`[${MARK}],[${PASSAGE}]`)) old.remove();
+      for (const old of shown.div.querySelectorAll(`[${MARK}],[${PASSAGE}],[${INSPECTION}]`)) old.remove();
       const current = viewRef.current.decorations;
       const below = shown.div.querySelector(".textLayer");
       for (const mark of current?.identity === doc.identity ? current.marks : []) {
@@ -295,6 +296,24 @@ export default function PdfSurface({
           shown.div.insertBefore(element, below);
         }
       }
+      const inspected = viewRef.current.inspection;
+      if (inspected?.identity === doc.identity && inspected.pages.includes(page)) {
+        const element = document.createElement("div");
+        element.className = styles.pdfInspection;
+        element.setAttribute(INSPECTION, "page");
+        element.style.cssText = "inset:0";
+        shown.div.insertBefore(element, below);
+      }
+      for (const anchor of inspected?.identity === doc.identity ? inspected.anchors : []) {
+        if (anchor.kind !== "pdf" || anchor.page !== page) continue;
+        for (const rect of quadRects(anchor.quads, shown.viewport)) {
+          const element = document.createElement("div");
+          element.className = styles.pdfInspection;
+          element.setAttribute(INSPECTION, inspected!.precision);
+          element.style.cssText = `left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px`;
+          shown.div.insertBefore(element, below);
+        }
+      }
     },
     [doc.identity],
   );
@@ -303,7 +322,7 @@ export default function PdfSurface({
     const viewer = live.current?.viewer;
     if (!viewer || status !== "open") return;
     for (let page = 1; page <= viewer.pagesCount; page += 1) paint(page);
-  }, [decorations, activePassage, paint, status]);
+  }, [decorations, activePassage, inspection, paint, status]);
 
   useEffect(() => {
     const controller = new AbortController();

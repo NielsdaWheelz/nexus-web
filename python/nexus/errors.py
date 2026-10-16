@@ -20,6 +20,7 @@ class ApiErrorCode(str, Enum):
         return member
 
     # Authentication errors
+    E_CONTEXT_CHANGED = ("E_CONTEXT_CHANGED", 409)
     E_UNAUTHENTICATED = ("E_UNAUTHENTICATED", 401)
 
     # Authorization errors

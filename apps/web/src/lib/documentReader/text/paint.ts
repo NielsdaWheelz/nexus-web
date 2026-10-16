@@ -6,7 +6,7 @@
 // when its dom (re)mounts and when it enters or leaves the window; layout
 // changes need nothing (static ranges follow the text through every reflow).
 import type { Schema } from "@/lib/api/wire";
-import type { Decorations, Passage, TextRange } from "../DocumentReader";
+import type { Decorations, Inspection, Passage, TextRange } from "../DocumentReader";
 import type { TextPoint } from "../model";
 import type { TextGeometry } from "./geometry";
 
@@ -17,9 +17,9 @@ type FocusMode = Schema<"ReaderProfileOut">["focus_mode"];
 const PRIORITY: Record<string, number> = {
   "hl-hover": -3,
   "hl-focus": -2,
-  "hl-evidence": -2,
-  "reader-pulse": -2,
   "reader-focus": -1,
+  "source-inspection": -1,
+  "source-inspection-coarse": -1,
 };
 const shares = new Map<string, Map<string, readonly StaticRange[]>>();
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -74,7 +74,7 @@ function textPosition(root: Element, utf16: number): [Node, number] {
 }
 
 export interface Painter {
-  paint(decorations: Decorations | undefined, passage: Passage | null | undefined): void;
+  paint(decorations: Decorations | undefined, passage: Passage | null | undefined, inspection: Inspection | null | undefined): void;
   focus(mode: FocusMode, at: TextPoint | null, suspended: boolean): void;
   /** The marks under a client point, topmost first. */
   hit(x: number, y: number): readonly string[];
@@ -95,9 +95,9 @@ export function createPainter(
   const index = new Map<string, Map<Node, Piece[]>>();
   let decorations: Decorations | null = null;
   let passage: TextRange | null = null;
+  let inspection: Inspection | null = null;
   let focus = { mode: "off" as FocusMode, at: null as TextPoint | null };
   let suspended = false;
-  let pulseTimer = 0;
   let notify = () => {};
   const probe = new Range(); // reused: each live range taxes every dom mutation
   const pieces = (unit: string, start: number, end: number) =>
@@ -143,13 +143,14 @@ export function createPainter(
         list.push({ start: r.startOffset, end: r.endOffset, ids });
       }
     }
-    const evidence = decorations?.evidence;
-    if (near.has(unit) && evidence?.unit === unit)
-      add("hl-evidence", pieces(unit, evidence.start, evidence.end));
     if (near.has(unit) && passage?.unit === unit) {
       const ranges = pieces(unit, passage.start, passage.end);
       add("hl-focus", ranges);
       add("hl-hover", ranges);
+    }
+    for (const anchor of near.has(unit) ? inspection?.anchors ?? [] : []) {
+      if (anchor.kind === "text" && anchor.unit === unit)
+        add(inspection?.precision === "exact" ? "source-inspection" : "source-inspection-coarse", pieces(unit, anchor.start, anchor.end));
     }
     for (const ref of near.has(unit) ? (decorations?.noteRefs ?? []) : []) {
       if (ref.unit !== unit) continue;
@@ -267,22 +268,13 @@ export function createPainter(
   return {
     near,
     onNear: (listener) => void (notify = listener),
-    paint(next, activePassage) {
+    paint(next, activePassage, sourceInspection) {
       const current = next?.identity === identity ? next : null;
-      const pulse = current?.pulse;
-      if (pulse && pulse !== decorations?.pulse) {
-        window.clearTimeout(pulseTimer);
-        const ranges = pieces(pulse.unit, pulse.start, pulse.end);
-        share(`${id}:pulse`, "reader-pulse", ranges);
-        pulseTimer = window.setTimeout(
-          () => share(`${id}:pulse`, "reader-pulse", []),
-          1_200,
-        );
-      }
       decorations = current;
       passage = activePassage?.identity === identity && activePassage.anchor.kind === "text"
         ? activePassage.anchor
         : null;
+      inspection = sourceInspection?.identity === identity ? sourceInspection : null;
       for (const unit of new Set([...painted.keys(), ...near])) paintUnit(unit);
     },
     focus(mode, at, off) {
@@ -306,11 +298,10 @@ export function createPainter(
     },
     dispose() {
       observer.disconnect();
-      window.clearTimeout(pulseTimer);
       decorations = null;
       passage = null;
+      inspection = null;
       near.clear();
-      share(`${id}:pulse`, "reader-pulse", []);
       for (const unit of painted.keys()) paintUnit(unit);
     },
   };

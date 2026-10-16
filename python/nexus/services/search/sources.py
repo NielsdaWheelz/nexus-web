@@ -115,7 +115,11 @@ SOURCES: dict[str, str] = {
             to_tsvector('english', nb.body_text) AS doc, ann.cosine, nb.body_text AS text,
             nb.body_text, 'Note' AS title, 'note' AS source_label,
             jsonb_build_object('type', 'note_block_offsets', 'block_id', nb.id, 'start_offset', 0,
-                'end_offset', char_length(nb.body_text)) AS locator
+                'end_offset', char_length(nb.body_text),
+                'text_quote_selector', jsonb_build_object('exact', nb.body_text),
+                'body_version', COALESCE((SELECT v.version FROM resource_versions v
+                    WHERE v.user_id=:viewer_id AND v.resource_scheme='note_block'
+                    AND v.resource_id=nb.id AND v.lane='body'),1)) AS locator
         FROM note_blocks nb LEFT JOIN (SELECT cc.owner_id, max(ann.cosine) AS cosine
             FROM {_ANN} JOIN content_chunks cc ON cc.id = ann.id GROUP BY cc.owner_id) ann
             ON ann.owner_id = nb.id
@@ -146,7 +150,8 @@ SOURCES: dict[str, str] = {
             'Conversation message #' || ms.seq AS title, 'message #' || ms.seq AS source_label,
             jsonb_build_object('type', 'message_offsets', 'conversation_id', ms.conversation_id,
                 'message_id', ms.id, 'message_seq', ms.seq, 'start_offset', 0,
-                'end_offset', char_length(ms.content)) AS locator
+                'end_offset', char_length(ms.content),
+                'text_quote_selector', jsonb_build_object('exact', ms.content)) AS locator
         FROM messages ms JOIN visible_conversations vc ON vc.conversation_id = ms.conversation_id
         WHERE ms.status = 'complete' AND ms.content <> '' {where}""",
     "conversation": """SELECT 'conversation' AS type, c.id, c.title AS label,
@@ -388,10 +393,17 @@ def merge(hits: Iterable[Hit]) -> list[Hit]:
 def hydrate(
     db: Session, viewer_id: UUID, family: str, ids: Sequence[Any], terms: str
 ) -> list[RowMapping]:
-    """The visible rows of ``ids`` with their projection columns and, given terms, a headline."""
-    options = "'MaxWords=50, MinWords=10, MaxFragments=1'"
-    headline = f"ts_headline('english', s.text, {TSQ}, {options})" if terms else "NULL"
-    sql = f"""{_CTES} SELECT s.*, {headline} AS headline
+    """The visible rows and frozen source identity in one statement snapshot."""
+    identity = ""
+    if family in (
+        "highlight",
+        "fragment",
+        "content_chunk",
+        "evidence_span",
+        "reader_apparatus_item",
+    ):
+        identity = ", (SELECT generation FROM reader_publications rp WHERE rp.media_id=s.media_id) AS publication_generation, ARRAY(SELECT f.id::text FROM fragments f WHERE f.media_id=s.media_id ORDER BY f.t_start_ms NULLS LAST,f.idx) AS source_unit_ids, (SELECT v.version FROM resource_versions v WHERE v.user_id=:viewer_id AND v.resource_scheme='note_block' AND v.resource_id=s.media_id AND v.lane='body') AS note_body_version"
+    sql = f"""{_CTES} SELECT s.* {identity}
         FROM ({SOURCES[family].replace("{where}", "")}) s WHERE s.id = ANY(:ids)"""
     params = {"viewer_id": viewer_id, "ids": list(ids), "q": terms, "ann_ids": [], "ann_cos": []}
     return list(db.execute(text(sql), params).mappings())

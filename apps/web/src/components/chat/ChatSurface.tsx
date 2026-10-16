@@ -5,7 +5,6 @@ import {
   Fragment,
   memo,
   useImperativeHandle,
-  useLayoutEffect,
   useRef,
   type ReactNode,
 } from "react";
@@ -16,29 +15,19 @@ import Button from "@/components/ui/Button";
 import type { Live } from "@/lib/chat/runTail";
 import type { BranchDraft, ChatView } from "@/lib/chat/tree";
 import type { Message } from "@/lib/chat/wire";
-import type { ReaderSourceTarget } from "@/lib/resourceGraph/citations";
-import type { ResourceActivation } from "@/lib/resources/activation";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import AssistantMessage, { MessageTime } from "./AssistantMessage";
 import type { ChatState, ChatStore } from "./conversationStore";
 import { ForkStrip } from "./Forks";
-import QuotedPassageCard, {
-  readerTargetFromSelection,
-} from "./QuotedPassageCard";
+import QuotedPassage from "./QuotedPassage";
 import { useChatScroll, type ChatScrollHandle } from "./useChatScroll";
 import styles from "./ChatSurface.module.css";
 
-export type ActivateSource = (
-  activation: ResourceActivation,
-  target: ReaderSourceTarget | null,
-  event?: React.MouseEvent,
-) => void;
 export type RowActions = Readonly<{
   store: ChatStore;
   fork(draft: BranchDraft): void;
   walk(message: Message): void;
   openLeaf(leafId: string, anchorId: string | null): void;
-  activate: ActivateSource;
 }>;
 
 /** The transcript of the active path, its fork strips, and the docked composer. */
@@ -49,13 +38,12 @@ const ChatSurface = forwardRef<
     live: ChatState["live"];
     busy: ReadonlySet<string>;
     loading: boolean;
-    targetMessageId: string | null;
     actions: RowActions;
     composer: ReactNode;
     overlay: ReactNode;
   }
 >(function ChatSurface(
-  { view, live, busy, loading, targetMessageId, actions, composer, overlay },
+  { view, live, busy, loading, actions, composer, overlay },
   ref,
 ) {
   const scrollport = useRef<HTMLDivElement>(null);
@@ -64,14 +52,6 @@ const ChatSurface = forwardRef<
     view.path.findLast((message) => message.role === "user")?.id ?? null;
   const scroll = useChatScroll(scrollport, transcript, lastUserId, !loading);
   useImperativeHandle(ref, () => scroll.handle, [scroll.handle]);
-  const revealed = useRef<string | null>(null);
-  useLayoutEffect(() => {
-    if (!targetMessageId || loading || revealed.current === targetMessageId)
-      return;
-    if (!view.pathIds.has(targetMessageId)) return;
-    revealed.current = targetMessageId;
-    scroll.handle.scrollToMessage(targetMessageId);
-  }, [targetMessageId, loading, view.pathIds, scroll.handle]);
 
   return (
     <div className={styles.surface}>
@@ -181,11 +161,9 @@ const Row = memo(function Row({
     >
       <div className={styles.userPrompt}>
         {quote ? (
-          <QuotedPassageCard
+          <QuotedPassage
             quote={{ kind: "Sent", selection: quote }}
-            onOpen={(s) =>
-              actions.activate(s.activation, readerTargetFromSelection(s))
-            }
+            occurrenceKey={`quote:${message.id}`}
           />
         ) : null}
         <span

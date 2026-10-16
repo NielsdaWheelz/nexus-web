@@ -276,7 +276,7 @@ def edge_create(value: EdgeCreateInput, call: Call) -> EdgeCreateSuccess:
             target=target,
             kind=kind,
             origin="assistant",
-            snapshot=CitationSnapshot(excerpt=rationale),
+            snapshot=CitationSnapshot(rationale=rationale),
         ),
     )
     call.created_refs.append({"kind": "edge", "id": str(edge.id), "label": rationale})

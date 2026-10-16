@@ -16,6 +16,7 @@ current note); ``delete_note`` is idempotent.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID
 
@@ -106,6 +107,47 @@ def read_note(db: Session, *, viewer_id: UUID, note_id: UUID) -> NoteBlockOut:
 def read_notes(
     db: Session, *, viewer_id: UUID, note_ids: Sequence[UUID]
 ) -> dict[UUID, NoteBlockOut]:
+    rows = _read_note_rows(db, viewer_id, note_ids)
+    from nexus.services.resource_items.items import resource_items_out
+
+    targets = {note_id: _embeds(body) for note_id, body, _, _ in rows}
+    embedded = {
+        item.ref: item
+        for item in resource_items_out(
+            db,
+            viewer_id=viewer_id,
+            refs=list({ref.uri: ref for refs in targets.values() for ref in refs}.values()),
+        )
+    }
+    return {
+        note_id: NoteBlockOut(
+            id=note_id,
+            body_pm_json=body,
+            body_text=body_text,
+            body_version=version,
+            embedded_item=embedded.get(targets[note_id][0].uri) if targets[note_id] else None,
+        )
+        for note_id, body, body_text, version in rows
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class NoteSource:
+    body_text: str
+    body_version: int
+
+
+def read_note_sources(
+    db: Session, *, viewer_id: UUID, note_ids: Sequence[UUID]
+) -> dict[UUID, NoteSource]:
+    """Location validation needs text/version, without recursively projecting embeds."""
+    return {
+        note_id: NoteSource(body_text, version)
+        for note_id, _, body_text, version in _read_note_rows(db, viewer_id, note_ids)
+    }
+
+
+def _read_note_rows(db: Session, viewer_id: UUID, note_ids: Sequence[UUID]):
     """Read each owned body and its version in one statement snapshot.
 
     Separate queries under READ COMMITTED can pair an older body with a newer
@@ -130,12 +172,7 @@ def read_notes(
         )
         .where(NoteBlock.user_id == viewer_id, NoteBlock.id.in_(note_ids))
     )
-    return {
-        note_id: NoteBlockOut(
-            id=note_id, body_pm_json=body, body_text=body_text, body_version=version
-        )
-        for note_id, body, body_text, version in rows
-    }
+    return list(rows)
 
 
 def ensure_note(

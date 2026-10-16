@@ -378,6 +378,7 @@ def _project_anchored(
                 body_pm_json=note.body_pm_json,
                 body_text=note.body_text,
                 body_version=note.body_version,
+                embedded_item=note.embedded_item,
             )
             for block in blocks
             if (note := note_outputs.get(block.id)) is not None

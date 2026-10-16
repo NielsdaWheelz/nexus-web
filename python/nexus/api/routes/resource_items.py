@@ -12,7 +12,12 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
-from nexus.schemas.resource_items import ResourceActionsOut, ResourceItemOut
+from nexus.schemas.resource_items import (
+    ResolveSourceTargetRequest,
+    ResourceActionsOut,
+    ResourceItemOut,
+    SourceTargetOut,
+)
 from nexus.schemas.resource_search import (
     ResourceOpenableSearchRequest,
     ResourceOpenableSearchResponse,
@@ -54,6 +59,15 @@ def search_openable_resources(
     request: ResourceOpenableSearchRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[ResourceOpenableSearchResponse]:
     return Data(data=pickers.search_openables(db, viewer_id=viewer.user_id, request=request))
+
+
+@router.post("/source-targets/resolve")
+def resolve_source_target(
+    request: ResolveSourceTargetRequest, viewer: ViewerDep, db: DbSession
+) -> Data[SourceTargetOut]:
+    from nexus.services.resource_items.evidence import resolve_source_target as resolve
+
+    return Data(data=resolve(db, viewer_id=viewer.user_id, target=request.target))
 
 
 @router.get("/{resource_ref}")

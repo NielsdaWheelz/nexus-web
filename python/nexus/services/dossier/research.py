@@ -166,7 +166,7 @@ def read_source(
     else:
         title, body = loaded[read.uri].title or "", loaded[read.uri].body or ""
     title = title or "Untitled"
-    return offer(target, f"{title}\n{body}", body, None, title) if body.strip() else None
+    return offer(db, user_id, target, f"{title}\n{body}") if body.strip() else None
 
 
 async def _web_step(

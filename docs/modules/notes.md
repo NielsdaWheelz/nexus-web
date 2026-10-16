@@ -18,7 +18,7 @@ capture, annotations), `api/routes/notes.py`. web (under `apps/web/src/`):
 | `DELETE /notes/pages/{id}` → 204 | idempotent; the page's notes stay |
 | `GET /notes/daily/{date}` → `{local_date, materialized, outline}` | read; writes nothing |
 | `POST /notes/daily/{date}/captures {note_id, text}` → `{page_id}` | an existing own note id has landed |
-| `GET /notes/blocks/{id}` → `{id, body_pm_json, body_text, body_version}` | read |
+| `GET /notes/blocks/{id}` → `{id, body_pm_json, body_text, body_version, embedded_item}` | read; immediate embed projection is nullable and batched |
 | `GET /notes/outline/{ref}` → `{source, links[{link_id, has_link_note, target}]}` | read |
 | `POST /notes/outline/commands {commands}` → `{outlines, nodes, deleted}` | every primitive idempotent |
 | `PUT /highlights/{id}/note {note_id, body_pm_json, expected}` | absent: loaded highlight `links_version`; version: exact attachment and note `body_version` |
@@ -26,9 +26,10 @@ capture, annotations), `api/routes/notes.py`. web (under `apps/web/src/`):
 | `DELETE …/note/{note_id}` → 204 | idempotent; the note stays |
 | `POST /highlights/{id}/note/delete {note_id, expected_version}` → `{deleted_note_id}` | exact attached note/body version; an already absent note stays absent |
 
-an outline node is `{ref, label, summary, missing, activation, content}`, content
+an outline node is `{item, content}`, where `item` is the shared
+`ResourceItemOut`; content is
 `page{title, title_version, daily_date}` | `note{body_pm_json, body_text,
-body_version, places}` | `resource{}`. a latent day's outline carries its page's
+body_version, places, embedded_item}` | `resource{}`. a latent day's outline carries its page's
 future id (`uuid5` of viewer and date) and default title, and no links.
 
 commands, applied in order in one serializable transaction:
@@ -51,7 +52,7 @@ the outline, a self-link or an endpoint that is not a page or note is 400.
 
 - I1 `body_text == text_from_pm_json(body_pm_json)`; `lib/notes/noteBody.ts`
   `projectBody` mirrors it byte for byte (python whitespace and line breaks), the
-  offset basis of passage anchors and pulses.
+  offset basis of passage anchors and source inspection.
 - I2 a body is one paragraph (text, hard_break, image; marks strong, em, code,
   link, strikethrough, underline), code_block (text) or object_embed; a link href
   is `/`-relative (not `//`), http(s) with a host and no `%` in the authority, or a
@@ -78,13 +79,25 @@ the outline, a self-link or an endpoint that is not a page or note is 400.
 
 ## writing in the browser (online only)
 
+the editor composes the [shared resource row and recursive list](resource-references.md).
+its ordered placements precede other direct relationships; duplicate edge ids are
+removed. graph-only descendants stay outside structural selection, drag, joining,
+deletion and undo. editable bodies are never preview-clamped. note embeds render
+their batched `embedded_item` with the same row; the containing note retains its
+own identity and stored-label preview elsewhere.
+
+source inspection decorates acknowledged canonical text without changing the
+editor selection or history. the resolved body version and displayed projection
+must match; a differing draft makes location unavailable until reopened against
+compatible text. deletion still invalidates shared drafts and undo entries.
+
 - `texts`: one in-memory text per note body or page title, shared by every editor
   showing it. a change saves 1.5 s after the last one, at once when the tab hides
   (`visibilitychange`, `pagehide`), on a title's blur, and as part of a structure
   edit that carries it. a server value never replaces local changes or moves the
   version they were based on, so their save 409s; a 409 parks the server's value
   until the user keeps theirs or takes the saved one. any other refusal marks the
-  text "Not saved" until its next save. a title save publishes "Notes".
+  text "Not saved" until its next save. body and title saves publish "Notes".
   `beforeunload` warns while any text is unsaved or any write is queued. nothing is
   persisted: a tab that dies offline loses its unsaved text.
 - `writes`: one FIFO per tab, one request in flight, each request built once at the
@@ -100,6 +113,9 @@ the outline, a self-link or an endpoint that is not a page or note is 400.
   history and says so. a reply's `deleted` or an acknowledged global note deletion
   stops the removed note's text saving. global deletion removes loaded placements,
   rejects older reads and clears histories that could recreate that note.
+  notes/metadata invalidation refreshes the root, zoom owner and open branch owners;
+  text adoption preserves dirty drafts. invalidation during an owner read retains
+  one follow-up read, so an older response cannot be the final preview.
 - a latent day shows one draft row; its first non-empty save sends `ensure_daily`
   and its insert. panes take the entries `EditPageTitle`, `EditNoteBody`,
   `AppendNote` and `FocusNote`; the launcher's quick note is one capture, then the

@@ -16,6 +16,7 @@ export type LinkTarget = Schema<"CreateLinkRequest">["target"];
 export type LinkMutation =
   | { kind: "created"; sourceRef: string; targetRef: string }
   | { kind: "deleted"; linkId: string }
+  | { kind: "context_detached"; sourceRef: string; targetRef: string }
   | { kind: "resource_deleted"; ref: string };
 
 const listeners = new Set<(mutation: LinkMutation) => void>();
@@ -52,7 +53,7 @@ export async function queryConnections(
   >("/api/resource-graph/connections/query", {
     method: "POST",
     signal,
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, limit: input.limit === undefined ? undefined : Math.min(input.limit, 100) }),
   });
   return data;
 }
@@ -89,9 +90,10 @@ export async function mutateConnection(
       return dismissDiscoveryLink(edgeId);
     case "detach_context":
       await apiFetch(
-        `/api/conversations/${mutation.conversation_id}/context-refs/${edgeId}`,
+        `/api/conversations/${mutation.conversation_id}/context/${encodeURIComponent(mutation.target_ref)}?expected_context_version=${mutation.expected_context_version}`,
         { method: "DELETE" },
       );
+      announce({ kind: "context_detached", sourceRef: `conversation:${mutation.conversation_id}`, targetRef: mutation.target_ref });
       return;
     case "undo_assistant_write":
       return undoAssistantWrite(mutation.tool_call_id);
@@ -104,6 +106,7 @@ const GONE = new Set([
   "E_FORBIDDEN",
   "E_INVALID_REQUEST",
   "E_RESOURCE_CONFLICT",
+  "E_CONTEXT_CHANGED",
 ]);
 
 export function connectionMutationErrorMessage(

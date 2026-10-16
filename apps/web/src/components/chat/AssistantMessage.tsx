@@ -252,7 +252,6 @@ export default function AssistantMessage({
           <MarkdownMessage
             content={text}
             citations={citations}
-            onCitationActivate={actions.activate}
           />
         </div>
       ) : null}
@@ -267,7 +266,7 @@ export default function AssistantMessage({
         </div>
       ) : null}
       {pending ? null : (
-        <AssistantTrust message={message} activate={actions.activate} />
+        <AssistantTrust message={message} />
       )}
       {passage ? (
         <FloatingActionSurface

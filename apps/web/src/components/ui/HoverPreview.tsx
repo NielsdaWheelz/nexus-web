@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type FocusEvent,
@@ -25,7 +26,7 @@ const DELAY_MS = 150;
  * close it too. `show` opens at once; on a touch screen the preview is a modal
  * bottom sheet, which Back closes.
  */
-export function useHoverPreview(enabled: boolean): {
+export function useHoverPreview(enabled: boolean, label: string): {
   readonly trigger: {
     onPointerEnter(event: PointerEvent<HTMLElement>): void;
     onPointerLeave(): void;
@@ -33,12 +34,13 @@ export function useHoverPreview(enabled: boolean): {
     onFocus(event: FocusEvent<HTMLElement>): void;
     onBlur(event: FocusEvent<HTMLElement>): void;
   };
-  show(anchor: HTMLElement): void;
+  show(anchor: HTMLElement, focus?: boolean): void;
   close(): void;
   render(body: ReactNode): ReactNode;
 } {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const timer = useRef<number | undefined>(undefined);
+  const focusNext = useRef(false);
   const later = (run: () => void) => {
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(run, DELAY_MS);
@@ -63,10 +65,17 @@ export function useHoverPreview(enabled: boolean): {
     flip: true,
   });
   const container = useOverlayContainer();
+  useLayoutEffect(() => {
+    if (!anchor || !position.placed || !focusNext.current) return;
+    focusNext.current = false;
+    position.ref.current?.querySelector<HTMLElement>("[data-row-focusable]")?.focus({ preventScroll: true });
+  }, [anchor, position.placed, position.ref]);
   useOverlay(card, {
     kind: "transient",
     onDismiss: close,
     inside: () => [position.ref.current, anchor],
+    returnFocusTo: () => anchor,
+    tabContinuation: () => position.ref.current,
   });
 
   return {
@@ -86,8 +95,13 @@ export function useHoverPreview(enabled: boolean): {
         if (!position.ref.current?.contains(next)) close();
       },
     },
-    show: (element) => {
-      if (enabled) setAnchor(element);
+    show: (element, focus = false) => {
+      focusNext.current = focus;
+      if (!enabled) return;
+      if (focus && anchor === element && position.placed) {
+        focusNext.current = false;
+        position.ref.current?.querySelector<HTMLElement>("[data-row-focusable]")?.focus({ preventScroll: true });
+      } else setAnchor(element);
     },
     close,
     render: (body) =>
@@ -95,7 +109,7 @@ export function useHoverPreview(enabled: boolean): {
         <ModalFrame
           open
           onDismiss={close}
-          label="Preview"
+          label={label}
           backdropClassName={styles.sheetBackdrop}
           className={styles.sheet}
         >
@@ -106,10 +120,15 @@ export function useHoverPreview(enabled: boolean): {
           <div
             ref={position.ref}
             className={styles.card}
-            role="tooltip"
+            role="dialog"
+            aria-label={label}
             style={position.style}
             onPointerEnter={() => window.clearTimeout(timer.current)}
-            onPointerLeave={() => later(close)}
+            onPointerLeave={() => later(() => {
+              const preview = position.ref.current;
+              if (!preview?.contains(document.activeElement) && !preview?.querySelector('[aria-haspopup="menu"][aria-expanded="true"]')) close();
+            })}
+            onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); anchor.focus({ preventScroll: true }); } }}
           >
             {body}
           </div>,

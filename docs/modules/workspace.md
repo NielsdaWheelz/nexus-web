@@ -513,9 +513,11 @@ pane creation directly.
 - `Adopt`: activate an exact match; otherwise create after the origin. Only
   named workflows that must preserve their source use it.
 
-Exact identity is route plus normalized query and ignores hash. With duplicate
+identity is resource plus material view: arrival parameters and fragments do not
+defeat reuse; collection filters and sorts still distinguish views. with duplicate
 matches, selection is origin first, then the first visible match, then the first
-minimized match. A different hash pushes in the selected pane. An unsupported
+minimized match. a different arrival href pushes in the selected pane; repeating
+the same target still delivers a new activation. An unsupported
 href opens the unsupported pane instead of throwing; it has the standard section
 header, so its pane Back and Forward work like any route's. A requested inspector
 surface is attached in the same commit (when the route offers its group); if the
@@ -533,15 +535,26 @@ add to Today therefore reuse an open daily pane under either href.
 
 Accepted activation may carry one pane-entry delivery addressed to the chosen
 pane and the exact visit the target lands on (`WorkspacePaneEntry`: a page's new
-empty row or one of its notes, or a resource menu's edit: page title, note body,
+empty row or one of its notes, a typed `InspectSource` target, or a resource menu's edit: page title, note body,
 highlight colour, note, bounds or delete, message fork, walk, rerun, regenerate or
 delete); the store mints its activation id. The
-pane body reads it through `usePaneEntryDelivery` and acts only once ready: it
-claims first and acts only when `claim` returned true (the one call that
-removed it); ready but unable to serve it (the subject is gone), it claims and
+pane body reads its entry and acts only once ready. commands claim before acting
+and act only when `claim` returned true (the one call that removed it). source
+inspection persists its pending target in visit data BEFORE claiming, so an
+unmount cannot lose it; the destination owns resolution, positioning and paint.
+ready but unable to serve a command (the subject is gone), it claims and
 says so in a hud; it owns every outcome. A newer entry supersedes (cancels) the
-pane's previous delivery, a rejected activation drops it, and a commit that changes
-the pane's visit drops it; nothing expires otherwise.
+pane's previous delivery. a rejected activation leaves existing deliveries unchanged;
+a commit that changes the pane's visit drops its delivery. nothing expires otherwise. source arrivals also cancel
+on source replacement. focus requires an active destination and no intervening
+user interaction; a background arrival can paint without taking focus.
+
+a fork copies only the selected source pane's reader view memento, not pending
+commands or domain drafts. new arrival takes precedence over a source-valid
+visit memento, which takes precedence over the shared durable reading cursor.
+canonical source hrefs and their single parser cover current resources, captured
+quote messages, citation edges and saved retrieval ids. native tab, copy, reload
+and in-app activation identify the same target. see [resource references](resource-references.md).
 
 Learn is one of the named Adopt workflows. It preserves the source reader and
 opens `/artifacts/artifact:<id>` as a standalone resource pane after its durable

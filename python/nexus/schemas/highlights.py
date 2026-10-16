@@ -6,9 +6,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.notes import AnnotationNoteRequest
+from nexus.schemas.resource_items import ResourceItemOut
 
-HIGHLIGHT_COLORS = Literal["yellow", "green", "blue", "pink", "purple"]
+HIGHLIGHT_COLORS = HighlightColor
 
 
 class FragmentAnchorOut(BaseModel):
@@ -49,6 +51,7 @@ class LinkedNoteBlockRef(BaseModel):
     body_pm_json: dict[str, object]
     body_text: str
     body_version: int
+    embedded_item: ResourceItemOut | None = None
 
 
 class TypedHighlightOut(BaseModel):

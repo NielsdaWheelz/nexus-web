@@ -8,7 +8,6 @@ import {
   useRef,
   useState,
   type ComponentProps,
-  type MouseEvent,
   type ReactNode,
 } from "react";
 import ReactMarkdown from "react-markdown";
@@ -16,19 +15,12 @@ import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import type {
   ReaderCitationData,
-  ReaderSourceTarget,
 } from "@/lib/resourceGraph/citations";
-import type { ResourceActivation } from "@/lib/resources/activation";
 import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
 import ReaderCitation from "./ReaderCitation";
 import "./hljs-theme.css";
 import styles from "./MarkdownMessage.module.css";
 
-type OnCitationActivate = (
-  activation: ResourceActivation,
-  target: ReaderSourceTarget | null,
-  event?: MouseEvent,
-) => void;
 type Components = ComponentProps<typeof ReactMarkdown>["components"];
 type MdNode = {
   type: string;
@@ -72,7 +64,6 @@ function remarkCitations() {
 
 const CitationContext = createContext<{
   byIndex: Map<number, ReaderCitationData>;
-  onActivate?: OnCitationActivate;
 } | null>(null);
 
 function Link({
@@ -90,7 +81,6 @@ function Link({
     return (
       <ReaderCitation
         {...citation}
-        onActivate={citations.onActivate ?? (() => undefined)}
       />
     );
   }
@@ -195,21 +185,18 @@ const components: Components = {
 export const MarkdownMessage = memo(function MarkdownMessage({
   content,
   citations,
-  onCitationActivate,
 }: {
   content: string;
   citations?: ReaderCitationData[];
-  onCitationActivate?: OnCitationActivate;
 }) {
   const cited = useMemo(
     () =>
       citations?.length
         ? {
             byIndex: new Map(citations.map((c) => [c.index, c])),
-            onActivate: onCitationActivate,
           }
         : null,
-    [citations, onCitationActivate],
+    [citations],
   );
   return (
     <div className={styles.markdown}>

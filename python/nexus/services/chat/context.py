@@ -76,6 +76,7 @@ SYSTEM_PROMPT = (
     "user clearly means something else. Other referenced resources appear in a "
     "<resources> block; a highlight there carries a <quote> with the passage and "
     "its surrounding context. Each citable resource has an n attribute; each citable "
+    "resource marked quote=reader_selection uses the reader_selection passage above. "
     "tool result contains one or more tool_citation sections whose n attribute numbers "
     "that result's selected evidence. "
     "When you use information from a numbered resource or tool citation, cite it as [N] "
@@ -152,7 +153,7 @@ def assemble(
         # A quote turn: <subject> is identity only, so the quote text appears once.
         subject_uri = f"highlight:{snapshot.key.highlight_id}"
         context.append(
-            f'<subject kind="reader_highlight" source="{quotes.attribute(snapshot.source_label)}">\n'
+            f'<subject kind="reader_highlight" source="{quotes.attribute(snapshot.evidence.source.title or "")}">\n'
             f"<highlight_id>{snapshot.key.highlight_id}</highlight_id>\n"
             f"<media_id>{snapshot.key.media_id}</media_id>\n"
             "</subject>"
@@ -176,13 +177,16 @@ def assemble(
         lines = ["<resources>"]
         for ref in refs:
             citation = _attached_citation(db, ref.resolved, viewer_id)
+            quoted_subject = snapshot is not None and ref.target.uri == subject_uri
+            if citation is not None and snapshot is not None and quoted_subject:
+                citation.captured_evidence = snapshot.evidence
             if citation is not None:
                 attached.append(citation)
             lines.append(
                 _resource(
                     ref.resolved,
                     n=len(attached) if citation is not None else None,
-                    compact=ref.target.uri == subject_uri,
+                    quoted_subject=quoted_subject,
                     citation=citation,
                 )
             )
@@ -282,22 +286,39 @@ def _attached_citation(
 
 
 def _resource(
-    resource: ResolvedResource, n: int | None, *, compact: bool, citation: RetrievalCitation | None
+    resource: ResolvedResource,
+    n: int | None,
+    *,
+    quoted_subject: bool,
+    citation: RetrievalCitation | None,
 ) -> str:
     uri = quotes.attribute(resource.uri)
     if resource.missing:
         return f'<resource uri="{uri}" missing="true">resource unavailable</resource>'
     ref = parse_resource_ref(resource.uri)
-    if not isinstance(ref, ResourceRefParseFailure):
-        compact = compact or capability(ref.scheme).prompt_render in ("label", "none")
-    n_attr = f' n="{n}"' if n is not None and not compact else ""
+    label_only = not isinstance(ref, ResourceRefParseFailure) and capability(
+        ref.scheme
+    ).prompt_render in ("label", "none")
+    n_attr = f' n="{n}"' if n is not None and not label_only else ""
+    quote_attr = ' quote="reader_selection"' if quoted_subject else ""
     head = (
-        f'<resource uri="{uri}"{n_attr} label="{quotes.attribute(resource.label)}" '
+        f'<resource uri="{uri}"{n_attr}{quote_attr} label="{quotes.attribute(resource.label)}" '
         f'summary="{quotes.attribute(resource.summary)}" '
         f'fetch_hint="{quotes.attribute(resource.fetch_hint)}">'
     )
-    if compact:
+    if quoted_subject or label_only:
         return f"{head}</resource>"
+    captured = citation.captured_evidence if citation else None
+    if captured is not None and captured.quote is not None:
+        inner = quotes.quote_block(
+            "quote",
+            exact=captured.quote.exact,
+            prefix=captured.quote.prefix,
+            suffix=captured.quote.suffix,
+            source=captured.source.title,
+            note=resource.quote.note if resource.quote else None,
+        )
+        return f"{head}\n{inner}\n</resource>"
     if resource.quote is not None:
         quote = resource.quote
         inner = quotes.quote_block(
