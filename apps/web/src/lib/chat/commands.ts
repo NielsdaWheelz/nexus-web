@@ -101,11 +101,6 @@ export function getConversationCommands(accountId: string, conversationId: strin
 
 export type ConversationCommands = ReturnType<typeof createConversationCommands>;
 
-const revisionOf = (command: ChatCommand) =>
-  command.kind === "Send"
-    ? command.request.destination.expected_revision
-    : command.expectedRevision;
-
 export async function readConversationTree(conversationId: string) {
   try {
     return (await apiFetch<ApiJson<"/conversations/{conversation_id}/tree", "get">>(
@@ -248,7 +243,10 @@ function createConversationCommands(
         const tree = await readConversationTree(conversationId);
         if (!isActive()) return { kind: "Handled" };
         if (!tree) return settle(null);
-        if (missing || tree.conversation.branch_revision > revisionOf(attempt.command)) {
+        const observedRevision = attempt.command.kind === "Send"
+          ? attempt.command.request.destination.expected_revision
+          : attempt.command.expectedRevision;
+        if (missing || tree.conversation.branch_revision > observedRevision) {
           deliver(tree);
           const outcome = conflict(rejection);
           handoff = null;

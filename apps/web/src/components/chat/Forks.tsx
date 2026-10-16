@@ -18,9 +18,6 @@ import { truncateText } from "@/lib/display/format";
 import footerStyles from "./MessageFooter.module.css";
 import styles from "./ChatPanels.module.css";
 
-const titleOf = ({ user }: Alternative, length: number) =>
-  user.fork_title || truncateText(user.content, length);
-
 /** A stable split-point control. Choosing a branch never edits the saved tree. */
 export const AlternativeSelector = memo(function AlternativeSelector({
   options,
@@ -201,7 +198,7 @@ export function ForksPanel({
       <ul className={styles.outline} aria-label="Conversation forks">
         {visible.map((row) => {
           const id = row.user.id;
-          const title = titleOf(row, 90);
+          const title = row.user.fork_title || truncateText(row.user.content, 90);
           const quote = anchorQuote(row.user);
           return (
             <li
