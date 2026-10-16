@@ -5,8 +5,8 @@ origin: 2026-10-16 approved chat control specification
 area: generation catalog / client pairing
 
 the controls require catalog fields `mode`, `effort` and `effort_order` and
-introduce wire revision 4. runtime pin `2586d82719984d17b9cf26e3f5a0864de18b0b39`
-and kernel pin `e28cbef3eca8a88e1f143f48d3042485b334cf6c` are one dependency
+introduce wire revision 4. runtime pin `a26f30f7a6f1a25c31b06537614e87cc518cdf49`
+and kernel pin `f922193c718a48cfeecad3165cf6851b55f4e09c` are one dependency
 cohort. the existing contained codex host requires no change. the web must not
 run against the old catalog or infer missing fields.
 
