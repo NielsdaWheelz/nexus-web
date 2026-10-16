@@ -123,7 +123,8 @@ export function createCompanionController(input: {
           ? shownSurface(companion, secondary)
           : companion?.defaultSurfaceId);
       if (!target || !published(companion, target)) return;
-      const opener = options?.returnFocusTo;
+      // commands without an invoker return to the pane, preserving its viewport.
+      const opener = options?.returnFocusTo ?? findPaneLandmarkFocusTarget(paneId);
       chrome.returnFocus = opener?.isConnected ? opener : null;
       open(target);
     },
