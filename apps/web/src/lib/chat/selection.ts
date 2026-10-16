@@ -198,7 +198,9 @@ export function unavailability(
     return variant.reasoning.some((choice) => choice.chat_state.kind === "Selectable")
       ? "choose effort" : choiceUnavailable(variant.reasoning[0]);
   }
-  if (draft.kind !== "Selected") return "choose model";
+  if (draft.kind !== "Selected")
+    return draft.kind !== "Uninitialized" && !catalogRoute(catalog, draft.route)
+      ? "provider unavailable. choose provider." : "choose model";
   if (!routeOf(catalog, draft.selection)) return "provider unavailable. choose provider.";
   const { model, choice } = lookup(catalog, draft.selection);
   if (!model)

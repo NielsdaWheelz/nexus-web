@@ -108,7 +108,7 @@ export default function GenerationPicker({
           const selected = routes.find((row) => routeKey(row.route) === key);
           if (selected) onChange(chooseRoute(catalog, selected.route, value));
         }} />
-      <ChoicePicker label="model" value={modelId} options={models} disabled={disabled || !route}
+      <ChoicePicker label="model" value={modelId} options={models} disabled={disabled || !routeRow}
         footer={footer} onOpen={catalogRead.refetch}
         onChange={(key) => {
           const selected = variants.find((item) => item.key === key);
