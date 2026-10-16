@@ -2,7 +2,7 @@ name: backend images
 
 on:
   push:
-    branches: [main]
+    branches: [main, "release/**"]
 
 permissions: {}
 
@@ -43,7 +43,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          test "$GITHUB_REF" = refs/heads/main
+          [[ "$GITHUB_REF" == refs/heads/main || "$GITHUB_REF" == refs/heads/release/* ]]
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           rm -rf -- "$WORKSPACE"
           mkdir -p -- "$WORKSPACE"

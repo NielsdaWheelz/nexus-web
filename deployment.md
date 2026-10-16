@@ -30,9 +30,10 @@ deployment, the API and worker image digests, and the expected Alembic revision.
   resume mode and no rollback settlement: after a failure, repair the named
   cause and rerun the same command. The only durable release state on the host
   is `/var/lib/nexus/releases/current`.
-- A release requires a clean checkout where `HEAD == origin/main == source-sha`.
-- The images deployed are the ones the **first** CI run of that exact main SHA
-  built. `backend-images.yml` publishes only under `github.run_attempt == 1`,
+- a release requires a clean checkout where `HEAD == source-sha`, with that
+  commit an ancestor of the freshly fetched `origin/main`.
+- the images deployed come from attempt **1** of a `main` or `release/` branch
+  push for that exact SHA. `backend-images.yml` publishes only under `github.run_attempt == 1`,
   and the release refuses a run whose `run_attempt` is not 1. A rerun therefore
   cannot produce a deployable candidate: merge a new commit instead.
 - Production pulls GHCR digests named by the candidate manifest. It never
@@ -117,14 +118,16 @@ capacity deliberately, then publish a fresh source commit under the same
 first-attempt rule. qualify the budget against the actual successor publication.
 
 The release resolves that artifact through `gh`, requires exactly one unexpired
-copy, and requires its workflow run to be a `push` to `main` at that exact SHA
+copy, and requires its workflow run to be a `push` to `main` or a `release/`
+branch at that exact SHA
 with `conclusion == success` and `run_attempt == 1`. It then re-proves the OCI
 label and runtime identity of each pulled digest on the host. The manifest, the
 digest and the image content are therefore bound to one another and to one CI
 run that was never re-run.
 
 Compose, the Caddyfile and the boot-guard unit come from
-the checkout, which preflight has already pinned to `origin/main == source-sha`.
+the checkout, which preflight pins to `HEAD == source-sha` and proves is in
+`origin/main` history.
 
 the universal-memory source repository is private; its installed python source
 is included in these public images, as explicitly approved by the owner. keep
@@ -231,8 +234,8 @@ it binds, and re-proves the public `/version`.
 
 `deploy/hetzner/release.py` is the backend release, top to bottom:
 
-1. **preflight** — ssh reachable; clean checkout at `origin/main`; candidate
-   manifest resolved from the first CI run; Docker Engine, memory, swap and
+1. **preflight** — ssh reachable; clean checkout at the requested commit in `origin/main` history; candidate
+   manifest resolved from one first-attempt push; Docker Engine, memory, swap and
    disk within the envelope; config pointers readable; Codex state mounted.
 2. **inputs** — install `docker-compose.yml`, the boot-guard script, its
    systemd unit and the `docker.service` drop-in; enable the boot guard.
