@@ -1,14 +1,14 @@
 # release: imports (the imports pane and import history)
 
 the slice changes the Imports wire and the stored history at once; there is no compatibility
-arm: web and api deploy together from the release sha. the base already sends
-`X-Nexus-Wire: 2` (the 2026-10-15 release); a tab open across the deploy would read the old
-Imports wire, so the end release carries one bump past 2 (conventions: the first breaking
-change merged after a release bumps once; the coordinator names the PR that carries it).
-android reads no imports key natively (webview); the extension reads none (it relies on
-Imports offering Remove for a capture session it could not remove, which holds). beyond that
-bump (its PR owns the apk and extension rebuild), no apk, no extension build, no env change,
-no job payload change.
+arm: web and api deploy together from the release sha. it is the first breaking change after
+the 2026-10-15 release (wire 2), so it bumps `WIRE_REVISION` to 3: a tab open across the deploy
+reloads instead of reading the old Imports wire. the apk and the extension read the revision
+from `wire.gen.ts` at build, so the next release ships both rebuilt; until a client is
+updated, the apk treats 426 as retryable and keeps its queues, and the extension says
+"Update the Nexus extension to keep capturing." neither reads an imports key (android through
+its webview; the extension relies only on Imports offering Remove for a capture session it
+could not remove, which holds). no env change, no job payload change.
 
 | before | after |
 |---|---|
