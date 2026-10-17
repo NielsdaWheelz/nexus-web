@@ -189,7 +189,7 @@ def bind_epub_source_structure(
             raise ValueError("EPUB authored structure has no unique retained correspondence")
         return position + len(before), position + len(before) + len(content)
 
-    for marker, tag, names, roles, in_navigation, group in facts:
+    for marker, tag, names, source_roles, in_navigation, group in facts:
         source_index = source_structure.anchors.get(marker)
         if source_index is None:
             continue
@@ -225,7 +225,7 @@ def bind_epub_source_structure(
             raise ValueError("EPUB authored elements have overlapping retained correspondence")
         used.add(index)
         element = elements[index]
-        element.roles = roles
+        element.roles = source_roles
         element.in_navigation = in_navigation
         if group is not None and tag in HEADING_TAGS:
             group_index = source_structure.anchors.get(group)
